@@ -2330,7 +2330,7 @@ function renderAllTasks() {
     return;
   }
 
-  list.innerHTML = tasks.map(t => {
+ list.innerHTML = tasks.map((t, index) => {
     const person = people.find(p => p.name === t.assignedTo);
     return `
       <div class="task-card">
@@ -2341,15 +2341,19 @@ function renderAllTasks() {
         </div>
        <div class="task-actions">
   <span class="task-status ${t.status === 'done' ? 'status-sent' : 'status-pending'}">${t.status}</span>
-  <button class="mini-btn" onclick="markTaskDone(${t.id})">Done</button>
-  <button class="mini-btn danger" onclick="deleteTask(${t.id})">Delete</button>
+  <button class="mini-btn" onclick="markTaskDone(${index})">Done</button>
+<button class="mini-btn danger" onclick="deleteTask(${index})">Delete</button>
 </div>
       </div>`;
   }).join('');
 }
-function markTaskDone(id) {
-  tasks = tasks.map(t => t.id === id ? { ...t, status: 'done' } : t);
-  followUps = followUps.filter(f => f.taskId !== id);
+
+ function markTaskDone(index) {
+ const task = tasks[index];
+  if (!task) return;
+
+  tasks[index] = { ...task, status: 'done' };
+  followUps = followUps.filter(f => f.taskId !== task.id);
   saveUserData();
   renderAllTasks();
   renderRecentTasks();
@@ -2357,10 +2361,14 @@ function markTaskDone(id) {
   showToast('Task marked done ✓');
 }
 
-function deleteTask(id) {
-  tasks = tasks.filter(t => t.id !== id);
-  followUps = followUps.filter(f => f.taskId !== id);
-  messages = messages.filter(m => m.taskId !== id);
+function deleteTask(index) {
+  const task = tasks[index];
+  if (!task) return;
+
+  tasks.splice(index, 1);
+  followUps = followUps.filter(f => f.taskId !== task.id);
+  messages = messages.filter(m => m.taskId !== task.id);
+
   saveUserData();
   renderAllTasks();
   renderRecentTasks();
@@ -2368,7 +2376,7 @@ function deleteTask(id) {
   renderMessages();
   showToast('Task deleted');
 }
-window.markTaskDone = markTaskDone;
+  window.markTaskDone = markTaskDone;
 window.deleteTask = deleteTask;  
 function renderRecentTasks() {
   const list = document.getElementById('recentTasks');
