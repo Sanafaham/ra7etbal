@@ -1637,6 +1637,7 @@ let people = [];
 let tasks = [];
 let messages = [];
 let selectedRole = '';
+let editingPersonId = null;  
 let selectedContact = 'WhatsApp';
 let reviewMode = 'tasks';
 let pendingExtracted = [];
@@ -2170,7 +2171,31 @@ function goBack() {
 }
 
 // PEOPLE
+function openEditPerson(id) {
+  const person = people.find(p => p.id === id);
+  if (!person) return;
+
+  editingPersonId = id;
+
+  document.getElementById('addPersonModal').classList.add('active');
+  document.getElementById('newEmoji').value = person.emoji || '👤';
+  document.getElementById('newName').value = person.name || '';
+  document.getElementById('newPhone').value = person.phone || '';
+
+  selectedRole = person.role || '';
+  selectedContact = person.contact || 'WhatsApp';
+
+  document.querySelectorAll('#roleChips .chip').forEach(c => {
+    c.classList.toggle('selected', c.dataset.role === selectedRole);
+  });
+
+  document.querySelectorAll('#contactChips .chip').forEach(c => {
+    c.classList.toggle('selected', c.dataset.contact === selectedContact);
+  });
+}  
 function openAddPerson() {
+  
+  editingPersonId = null;
   document.getElementById('addPersonModal').classList.add('active');
   document.getElementById('newEmoji').value = '👤';
   document.getElementById('newName').value = '';
@@ -2203,19 +2228,28 @@ function savePerson() {
   if (!name) { showToast('Please enter a name'); return; }
   if (!selectedRole) { showToast('Please pick a role'); return; }
 
+ const personData = {
+  emoji: document.getElementById('newEmoji').value || '👤',
+  name,
+  role: selectedRole,
+  contact: selectedContact,
+  phone: document.getElementById('newPhone').value.trim()
+};
+
+if (editingPersonId) {
+  people = people.map(p => p.id === editingPersonId ? { ...p, ...personData } : p);
+} else {
   people.push({
     id: Date.now(),
-    emoji: document.getElementById('newEmoji').value || '👤',
-    name,
-    role: selectedRole,
-    contact: selectedContact,
-    phone: document.getElementById('newPhone').value.trim()
+    ...personData
   });
+}
 
   saveUserData();
   closeAddPerson();
   renderPeople();
-  showToast(name + ' added ✓');
+  showToast(name + (editingPersonId ? ' updated ✓' : ' added ✓'));
+   editingPersonId = null;
 }
 
 function renderPeople() {
@@ -2228,7 +2262,7 @@ function renderPeople() {
   }
 
   list.innerHTML = people.map(p => `
-    <div class="person-card">
+    <div class="person-card" onclick="openEditPerson(${p.id})">
       <div class="person-avatar">${p.emoji}</div>
       <div class="person-info">
         <div class="person-name">${p.name}</div>
