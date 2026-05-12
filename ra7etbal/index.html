@@ -499,6 +499,32 @@
   .status-pending { background: #FEF3C7; color: #92400E; }
   .status-sent { background: var(--sage-pale); color: var(--accent-dark); }
 
+  .task-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mini-btn {
+  border: 1px solid var(--border);
+  background: var(--warm-white);
+  color: var(--warm-gray);
+  border-radius: 20px;
+  padding: 3px 8px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.mini-btn:active {
+  background: var(--sand);
+}
+
+.mini-btn.danger {
+  color: #9A4A3F;
+}
+
   .empty-state {
     text-align: center;
     padding: 40px 20px;
@@ -2313,11 +2339,35 @@ function renderAllTasks() {
           <div class="task-who">${t.assignedTo === '__me__' ? 'For me' : t.assignedTo === '__later__' ? 'Decide later' : t.assignedTo || 'Unassigned'}</div>
           <div class="task-text">${t.description}</div>
         </div>
-        <span class="task-status ${t.status === 'sent' ? 'status-sent' : 'status-pending'}">${t.status}</span>
+       <div class="task-actions">
+  <span class="task-status ${t.status === 'done' ? 'status-sent' : 'status-pending'}">${t.status}</span>
+  <button class="mini-btn" onclick="markTaskDone(${t.id})">Done</button>
+  <button class="mini-btn danger" onclick="deleteTask(${t.id})">Delete</button>
+</div>
       </div>`;
   }).join('');
 }
+function markTaskDone(id) {
+  tasks = tasks.map(t => t.id === id ? { ...t, status: 'done' } : t);
+  followUps = followUps.filter(f => f.taskId !== id);
+  saveUserData();
+  renderAllTasks();
+  renderRecentTasks();
+  renderFollowUps();
+  showToast('Task marked done ✓');
+}
 
+function deleteTask(id) {
+  tasks = tasks.filter(t => t.id !== id);
+  followUps = followUps.filter(f => f.taskId !== id);
+  messages = messages.filter(m => m.taskId !== id);
+  saveUserData();
+  renderAllTasks();
+  renderRecentTasks();
+  renderFollowUps();
+  renderMessages();
+  showToast('Task deleted');
+}
 function renderRecentTasks() {
   const list = document.getElementById('recentTasks');
   if (!list) return;
