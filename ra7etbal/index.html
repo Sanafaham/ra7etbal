@@ -1898,6 +1898,24 @@ Classify each item into one of these types:
 - reminder: time-based or needs to be remembered
 - message: something to communicate to someone
 - delegation: a task to give to someone else
+
+IMPORTANT INTENT RULE:
+If the user says "tell [person] [task/result]" and that person is responsible for making it happen, treat it as a delegation, not just a message.
+
+Example:
+"Tell Christopher dinner should be ready at 8 tonight"
+means Christopher must have dinner ready by 8 tonight.
+
+Correct output:
+description: "Ask Christopher to have dinner ready by 8 tonight"
+message: "Can you please have dinner ready by 8 tonight?"
+assignedTo: "Christopher"
+needsFollowUp: true
+
+Do NOT write:
+"Inform Christopher dinner will be ready at 8pm tonight"
+
+Only treat it as informational if the user clearly says the task is already done or the person only needs to know.
 - decision: unresolved, needs a choice
 - followup: user is waiting on someone or something
 - errand: shopping, pickup, errand outside
