@@ -1695,15 +1695,46 @@ function showLoginScreen() {
 }
 
 let magicLinkCooldown = false;
+let magicLinkTimer = null;
+
+// Check for otp_expired or error in URL on page load
+function checkUrlForAuthErrors() {
+  const params = new URLSearchParams(window.location.hash.replace('#', '?'));
+  const errorCode = params.get('error_code') || new URLSearchParams(window.location.search).get('error_code');
+  const errorDesc = params.get('error_description') || new URLSearchParams(window.location.search).get('error_description');
+
+  if (errorCode === 'otp_expired' || (errorDesc && errorDesc.toLowerCase().includes('expired'))) {
+    document.getElementById('loginNote').textContent = 'This magic link expired or was already used. Please request a new one.';
+    document.getElementById('loginNote').style.color = '#EF4444';
+    // Clean up URL
+    window.history.replaceState({}, document.title, window.location.pathname);
+  }
+}
 
 async function handleMagicLink() {
   if (magicLinkCooldown) {
-    showToast('Please wait a few minutes before requesting another link.');
+    showToast('Please wait before requesting another link.');
     return;
   }
+
   const email = document.getElementById('emailInput').value.trim();
-  if (!email) { showToast('Please enter your email'); return; }
-  if (!email.includes('@')) { showToast('Please enter a valid email'); return; }
+  const note = document.getElementById('loginNote');
+
+  // Reset note color
+  note.style.color = '';
+
+  if (!email) {
+    note.textContent = 'Please enter your email address.';
+    note.style.color = '#EF4444';
+    return;
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    note.textContent = 'Please enter a valid email address.';
+    note.style.color = '#EF4444';
+    return;
+  }
 
   const btn = document.getElementById('loginBtn');
   btn.disabled = true;
@@ -1712,40 +1743,57 @@ async function handleMagicLink() {
 
   const { error } = await sbClient.auth.signInWithOtp({
     email,
-    options: { emailRedirectTo: window.location.href }
+    options: { emailRedirectTo: window.location.origin }
   });
 
   if (error) {
-    const is429 = error.status === 429 || (error.message && error.message.toLowerCase().includes('rate'));
+    const msg = error.message || '';
+    const is429 = error.status === 429 || msg.toLowerCase().includes('rate') || msg.toLowerCase().includes('too many');
+
     if (is429) {
-      showToast('Too many requests. Please wait a few minutes, then try again.');
-      btn.textContent = 'Please wait a few minutes...';
+      note.textContent = 'Too many attempts. Please wait 10 minutes before trying again.';
+      note.style.color = '#EF4444';
+      btn.textContent = 'Too many attempts. Wait 10 minutes.';
+      // 10 minute cooldown
+      if (magicLinkTimer) clearTimeout(magicLinkTimer);
+      magicLinkTimer = setTimeout(() => {
+        magicLinkCooldown = false;
+        btn.disabled = false;
+        btn.textContent = 'Send Magic Link →';
+        document.getElementById('emailInput').disabled = false;
+        note.textContent = 'Enter your email to receive a magic link. No password needed.';
+        note.style.color = '';
+      }, 600000);
+    } else if (msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('otp')) {
+      note.textContent = 'This magic link expired or was already used. Please request a new one.';
+      note.style.color = '#EF4444';
+      btn.textContent = 'Send Magic Link →';
+      btn.disabled = false;
+      magicLinkCooldown = false;
     } else {
-      showToast(error.message || 'Something went wrong. Try again.');
+      note.textContent = 'Something went wrong. Please try again.';
+      note.style.color = '#EF4444';
       btn.textContent = 'Send Magic Link →';
       btn.disabled = false;
       magicLinkCooldown = false;
-      return;
     }
-    setTimeout(() => {
-      magicLinkCooldown = false;
-      btn.disabled = false;
-      btn.textContent = 'Send Magic Link →';
-      document.getElementById('emailInput').disabled = false;
-    }, 180000);
     return;
   }
 
-  document.getElementById('loginNote').textContent = 'Magic link sent to ' + email + '. Check your inbox and tap the link to sign in.';
+  // Success
+  note.textContent = 'Magic link sent to ' + email + '. Check your inbox and tap the link to sign in.';
+  note.style.color = '';
   btn.textContent = 'Magic link sent. Check your email ✓';
   document.getElementById('emailInput').disabled = true;
 
-  setTimeout(() => {
+  // Re-enable after 60 seconds
+  if (magicLinkTimer) clearTimeout(magicLinkTimer);
+  magicLinkTimer = setTimeout(() => {
     magicLinkCooldown = false;
     btn.disabled = false;
     btn.textContent = 'Send another link →';
     document.getElementById('emailInput').disabled = false;
-  }, 180000);
+  }, 60000);
 }
 
 
@@ -2355,6 +2403,7 @@ function showToast(msg) {
 
 // SETTINGS SAVE
 document.addEventListener('DOMContentLoaded', () => {
+  checkUrlForAuthErrors();
   init();
 });
 
