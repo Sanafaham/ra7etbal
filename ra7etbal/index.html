@@ -2353,7 +2353,9 @@ function renderAllTasks() {
   if (!task) return;
 
   tasks[index] = { ...task, status: 'done' };
+ if (typeof followUps !== 'undefined') {
   followUps = followUps.filter(f => f.taskId !== task.id);
+}
   saveUserData();
   renderAllTasks();
   renderRecentTasks();
@@ -2366,7 +2368,9 @@ function deleteTask(index) {
   if (!task) return;
 
   tasks.splice(index, 1);
+ if (typeof followUps !== 'undefined') {
   followUps = followUps.filter(f => f.taskId !== task.id);
+}
   messages = messages.filter(m => m.taskId !== task.id);
 
   saveUserData();
