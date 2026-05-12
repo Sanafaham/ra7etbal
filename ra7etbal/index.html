@@ -2368,6 +2368,8 @@ function deleteTask(id) {
   renderMessages();
   showToast('Task deleted');
 }
+window.markTaskDone = markTaskDone;
+window.deleteTask = deleteTask;  
 function renderRecentTasks() {
   const list = document.getElementById('recentTasks');
   if (!list) return;
