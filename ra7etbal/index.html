@@ -2500,9 +2500,11 @@ function renderBrief() {
 
   // Only show followup type items and delegated items pending confirmation
   const followupItems = tasks.filter(t =>
+  t.status !== 'done' && (
     t.type === 'followup' ||
-    (t.type === 'delegation' && t.status === 'pending' && t.assignedTo && t.assignedTo !== '__me__' && t.assignedTo !== '__later__')
-  );
+    (t.type === 'delegation' && t.assignedTo && t.assignedTo !== '__me__' && t.assignedTo !== '__later__')
+  )
+);
 
   if (followupItems.length === 0) {
     el.innerHTML = '<div class="empty-state"><div class="empty-icon">🔁</div><div class="empty-text">No follow-ups yet.<br>Items you are waiting on will appear here.</div></div>';
