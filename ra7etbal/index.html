@@ -2522,7 +2522,11 @@ function renderBrief() {
       + '<div class="task-who">' + (person ? person.name + ', ' + person.role : 'Follow-up') + '</div>'
       + '<div class="task-text">' + label + '</div>'
       + '</div>'
-      + '<span class="task-status status-pending">waiting</span>'
+      + '<div class="task-actions">'
++ '<span class="task-status status-pending">waiting</span>'
++ '<button class="mini-btn" onclick="markTaskDone(tasks.indexOf(t))">Done</button>'
++ '<button class="mini-btn danger" onclick="deleteTask(tasks.indexOf(t))">Delete</button>'
++ '</div>'
       + '</div>';
   }).join('');
 }
