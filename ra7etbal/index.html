@@ -1749,6 +1749,10 @@ async function showConfirmScreen(taskId) {
     document.getElementById('confirmTaskBox').style.display = 'block';
 
     if (data.status === 'done') {
+      try {
+        localStorage.setItem('ra7_status_changed', JSON.stringify({ taskId: taskId, status: 'done', time: Date.now() }));
+        console.log('CONFIRM_ALREADY_DONE_ON_LOAD_SIGNAL', taskId);
+      } catch(e) {}
       document.getElementById('confirmIcon').textContent = '';
       document.getElementById('confirmTitle').textContent = 'Already done';
       document.getElementById('confirmDesc').textContent = 'This task has already been marked done.';
@@ -1784,6 +1788,10 @@ async function submitConfirmation() {
     document.getElementById('confirmTaskBox').style.display = 'none';
 
     if (data.already_done) {
+      try {
+        localStorage.setItem('ra7_status_changed', JSON.stringify({ taskId: taskId, status: 'done', time: Date.now() }));
+        console.log('CONFIRM_ALREADY_DONE_SIGNAL', taskId);
+      } catch(e) {}
       document.getElementById('confirmIcon').textContent = '';
       document.getElementById('confirmTitle').textContent = 'Already done';
       document.getElementById('confirmDesc').textContent = 'This task has already been marked done.';
@@ -2860,34 +2868,47 @@ function showToast(msg) {
 }
 
 // SETTINGS SAVE
-// LIVE SYNC -- lightweight targeted polling
+// LIVE SYNC
 let pollingInterval = null;
 
+// Pull fresh task statuses from Supabase and update local state
 async function syncTaskStatuses() {
   if (!currentUser) return;
   try {
-    const tRes = await sbClient
+    console.log('FORCED_REFRESH_START');
+    const { data: freshTasks, error } = await sbClient
       .from('tasks')
       .select('id, status')
       .eq('user_id', currentUser.id);
 
-    if (!tRes.data) return;
+    if (error) { console.error('TASKS_FROM_SUPABASE error:', error); return; }
+    console.log('TASKS_FROM_SUPABASE count:', freshTasks ? freshTasks.length : 0);
+
+    if (!freshTasks || freshTasks.length === 0) return;
 
     const statusMap = {};
-    tRes.data.forEach(t => { statusMap[String(t.id)] = t.status; });
+    freshTasks.forEach(t => { statusMap[String(t.id)] = t.status; });
 
     let changed = false;
 
     tasks = tasks.map(t => {
       const fresh = statusMap[String(t.id)];
-      if (fresh && fresh !== t.status) { changed = true; return Object.assign({}, t, { status: fresh }); }
+      if (fresh && fresh !== t.status) {
+        changed = true;
+        console.log('MESSAGE_TASK_STATUS changed:', t.id, t.status, '->', fresh);
+        return Object.assign({}, t, { status: fresh });
+      }
       return t;
     });
 
     messages = messages.map(m => {
       if (!m.taskId) return m;
       const fresh = statusMap[String(m.taskId)];
-      if (fresh && fresh !== m.taskStatus) { changed = true; return Object.assign({}, m, { taskStatus: fresh }); }
+      if (fresh && fresh !== m.taskStatus) {
+        changed = true;
+        console.log('MESSAGE_TASK_STATUS msg updated:', m.taskId, m.taskStatus, '->', fresh);
+        return Object.assign({}, m, { taskStatus: fresh });
+      }
       return m;
     });
 
@@ -2896,10 +2917,24 @@ async function syncTaskStatuses() {
       renderBrief();
       renderAllTasks();
       renderRecentTasks();
+      console.log('FORCED_REFRESH_DONE');
     }
-  } catch(e) {}
+  } catch(e) {
+    console.error('syncTaskStatuses error:', e);
+  }
 }
 
+// Listen for localStorage event written by confirmation page
+window.addEventListener('storage', async (event) => {
+  if (event.key === 'ra7_status_changed') {
+    console.log('STORAGE_EVENT_RECEIVED', event.newValue);
+    if (currentUser) {
+      await syncTaskStatuses();
+    }
+  }
+});
+
+// Polling every 2 seconds while signed in
 function startPolling() {
   if (pollingInterval) return;
   pollingInterval = setInterval(() => {
@@ -2913,7 +2948,7 @@ function stopPolling() {
 }
 
 async function refreshUserData() {
-  if (currentUser) await loadUserData();
+  if (currentUser) await syncTaskStatuses();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
