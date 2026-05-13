@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -46,6 +47,43 @@
   /* SCREENS */
   .screen { display: none; flex-direction: column; min-height: 100vh; position: fixed; top: 0; left: 0; width: 100%; max-width: 480px; overflow-y: auto; background: var(--cream); z-index: 1; }
   .screen.active { display: flex; z-index: 10; }
+
+  /* CONFIRMATION SCREEN */
+  #screen-confirm {
+    background: var(--cream);
+    align-items: center;
+    justify-content: center;
+    padding: 40px 32px;
+    text-align: center;
+    z-index: 100;
+  }
+
+  .confirm-icon { font-size: 48px; margin-bottom: 20px; }
+  .confirm-title { font-family: 'Fraunces', serif; font-size: 28px; font-weight: 300; color: var(--ink); margin-bottom: 12px; letter-spacing: -0.5px; }
+  .confirm-desc { font-size: 16px; color: var(--warm-gray); font-weight: 300; line-height: 1.6; margin-bottom: 32px; }
+  .confirm-task-box { background: var(--warm-white); border: 1.5px solid var(--border); border-radius: 16px; padding: 20px; margin-bottom: 32px; text-align: left; width: 100%; }
+  .confirm-task-label { font-size: 11px; font-weight: 500; color: var(--sage); letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 8px; }
+  .confirm-task-text { font-size: 17px; color: var(--ink); font-weight: 300; line-height: 1.5; }
+  .confirm-success { color: var(--accent); font-size: 18px; font-weight: 400; margin-top: 16px; }
+
+  /* VOICE BUTTON */
+  .voice-record-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: none;
+    border: 1.5px solid var(--border);
+    border-radius: 20px;
+    padding: 8px 14px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    color: var(--warm-gray);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .voice-record-btn.recording { background: #FEE2E2; border-color: #EF4444; color: #EF4444; }
+  .voice-record-btn.transcribing { background: var(--sage-pale); border-color: var(--sage); color: var(--sage); }
+  .voice-dot-red { width: 8px; height: 8px; border-radius: 50%; background: #EF4444; animation: pulse 1s infinite; }
 
   /* ONBOARDING SCREEN */
   #screen-onboarding {
@@ -498,32 +536,6 @@
 
   .status-pending { background: #FEF3C7; color: #92400E; }
   .status-sent { background: var(--sage-pale); color: var(--accent-dark); }
-
-  .task-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.mini-btn {
-  border: 1px solid var(--border);
-  background: var(--warm-white);
-  color: var(--warm-gray);
-  border-radius: 20px;
-  padding: 3px 8px;
-  font-family: 'DM Sans', sans-serif;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.mini-btn:active {
-  background: var(--sand);
-}
-
-.mini-btn.danger {
-  color: #9A4A3F;
-}
 
   .empty-state {
     text-align: center;
@@ -1427,9 +1439,9 @@
           oninput="updateCharCount()"
         ></textarea>
         <div class="input-toolbar">
-          <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()">
-            <div class="voice-dot"></div>
-            <span id="voiceLabel">Hold to speak</span>
+          <button class="voice-record-btn" id="voiceRecordBtn" onclick="toggleVoiceRecord()">
+            <div class="voice-dot" id="voiceRecordDot"></div>
+            <span id="voiceRecordLabel">🎙 Record</span>
           </button>
           <span class="char-count" id="charCount">0</span>
         </div>
@@ -1591,6 +1603,23 @@
   </div>
 </div>
 
+<!-- CONFIRMATION SCREEN (for public confirmation links) -->
+<div class="screen" id="screen-confirm">
+  <div style="width:100%">
+    <div class="confirm-icon" id="confirmIcon">✅</div>
+    <div class="confirm-title" id="confirmTitle">Confirm task</div>
+    <div class="confirm-desc" id="confirmDesc">Please confirm this task is done.</div>
+    <div class="confirm-task-box" id="confirmTaskBox" style="display:none">
+      <div class="confirm-task-label">Task</div>
+      <div class="confirm-task-text" id="confirmTaskText"></div>
+    </div>
+    <button class="btn-primary" id="confirmBtn" onclick="submitConfirmation()" style="display:none">
+      Mark as done
+    </button>
+    <div class="confirm-success" id="confirmSuccess" style="display:none"></div>
+  </div>
+</div>
+
 <!-- ADD PERSON MODAL -->
 <div class="modal-overlay" id="addPersonModal">
   <div class="modal-sheet">
@@ -1663,7 +1692,6 @@ let people = [];
 let tasks = [];
 let messages = [];
 let selectedRole = '';
-let editingPersonId = null;  
 let selectedContact = 'WhatsApp';
 let reviewMode = 'tasks';
 let pendingExtracted = [];
@@ -1673,16 +1701,24 @@ let currentTab = 'home';
 
 // INIT
 async function init() {
+  // Check if this is a confirmation link
+  const urlParams = new URLSearchParams(window.location.search);
+  const confirmTaskId = urlParams.get('task');
+  if (window.location.pathname === '/confirm' && confirmTaskId) {
+    showConfirmScreen(confirmTaskId);
+    return;
+  }
+
   const { data: { session } } = await sbClient.auth.getSession();
   if (session) {
     currentUser = session.user;
-    loadUserData();
+    await loadUserData();
     showApp();
   }
-  sbClient.auth.onAuthStateChange((event, session) => {
+  sbClient.auth.onAuthStateChange(async (event, session) => {
     if (event === 'SIGNED_IN' && session) {
       currentUser = session.user;
-      loadUserData();
+      await loadUserData();
       showApp();
     }
     if (event === 'SIGNED_OUT') {
@@ -1693,10 +1729,197 @@ async function init() {
   setBriefDate();
 }
 
-function loadUserData() {
-  people = JSON.parse(localStorage.getItem('ra7_people_' + currentUser.id) || '[]');
-  tasks = JSON.parse(localStorage.getItem('ra7_tasks_' + currentUser.id) || '[]');
-  messages = JSON.parse(localStorage.getItem('ra7_messages_' + currentUser.id) || '[]');
+// CONFIRMATION SCREEN
+async function showConfirmScreen(taskId) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-confirm').classList.add('active');
+
+  try {
+    const res = await fetch('/api/get-confirm-task?taskId=' + taskId);
+    const data = await res.json();
+
+    if (!res.ok || data.error) {
+      document.getElementById('confirmIcon').textContent = '';
+      document.getElementById('confirmTitle').textContent = 'Invalid link';
+      document.getElementById('confirmDesc').textContent = data.error || 'This confirmation link is invalid or expired.';
+      return;
+    }
+
+    document.getElementById('confirmTaskText').textContent = data.description;
+    document.getElementById('confirmTaskBox').style.display = 'block';
+
+    if (data.status === 'done') {
+      document.getElementById('confirmIcon').textContent = '';
+      document.getElementById('confirmTitle').textContent = 'Already done';
+      document.getElementById('confirmDesc').textContent = 'This task has already been marked done.';
+      return;
+    }
+
+    document.getElementById('confirmIcon').textContent = '';
+    document.getElementById('confirmTitle').textContent = 'Confirm task';
+    document.getElementById('confirmDesc').textContent = 'Please confirm this task is complete.';
+    document.getElementById('confirmBtn').style.display = 'flex';
+    document.getElementById('confirmBtn').dataset.taskId = taskId;
+  } catch(e) {
+    document.getElementById('confirmTitle').textContent = 'Something went wrong';
+    document.getElementById('confirmDesc').textContent = 'Please try again.';
+  }
+}
+
+async function submitConfirmation() {
+  const btn = document.getElementById('confirmBtn');
+  const taskId = btn.dataset.taskId;
+  btn.disabled = true;
+  btn.textContent = 'Confirming...';
+
+  try {
+    const res = await fetch('/api/confirm-task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId })
+    });
+    const data = await res.json();
+
+    btn.style.display = 'none';
+    document.getElementById('confirmTaskBox').style.display = 'none';
+
+    if (data.already_done) {
+      document.getElementById('confirmIcon').textContent = '';
+      document.getElementById('confirmTitle').textContent = 'Already done';
+      document.getElementById('confirmDesc').textContent = 'This task has already been marked done.';
+      return;
+    }
+
+    if (data.success) {
+      document.getElementById('confirmIcon').textContent = '';
+      document.getElementById('confirmTitle').textContent = 'Done!';
+      document.getElementById('confirmDesc').textContent = 'Done confirmed. Thank you.';
+    } else {
+      document.getElementById('confirmTitle').textContent = 'Something went wrong';
+      document.getElementById('confirmDesc').textContent = 'Please try again.';
+      btn.style.display = 'flex';
+      btn.disabled = false;
+      btn.textContent = 'Mark as done';
+    }
+  } catch(e) {
+    document.getElementById('confirmTitle').textContent = 'Something went wrong';
+    document.getElementById('confirmDesc').textContent = 'Please try again.';
+    btn.style.display = 'flex';
+    btn.disabled = false;
+    btn.textContent = 'Mark as done';
+  }
+}
+
+// VOICE RECORDING
+let mediaRecorder = null;
+let audioChunks = [];
+let isRecording = false;
+
+async function toggleVoiceRecord() {
+  const btn = document.getElementById('voiceRecordBtn');
+  const label = document.getElementById('voiceRecordLabel');
+  const dot = document.getElementById('voiceRecordDot');
+
+  if (isRecording) {
+    // Stop recording
+    mediaRecorder.stop();
+    isRecording = false;
+    btn.classList.remove('recording');
+    btn.classList.add('transcribing');
+    label.textContent = 'Transcribing...';
+    dot.style.background = 'var(--sage)';
+    dot.style.animation = 'none';
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioChunks = [];
+    mediaRecorder = new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) audioChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      stream.getTracks().forEach(t => t.stop());
+      await transcribeAudio(audioBlob);
+    };
+
+    mediaRecorder.start();
+    isRecording = true;
+    btn.classList.add('recording');
+    label.textContent = 'Recording... tap to stop';
+    dot.className = 'voice-dot-red';
+  } catch(e) {
+    showToast('Microphone access denied. Please allow microphone access.');
+  }
+}
+
+async function transcribeAudio(audioBlob) {
+  const btn = document.getElementById('voiceRecordBtn');
+  const label = document.getElementById('voiceRecordLabel');
+  const dot = document.getElementById('voiceRecordDot');
+
+  try {
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'audio.webm');
+
+    const res = await fetch('/api/transcribe', {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await res.json();
+
+    if (data.text) {
+      const input = document.getElementById('mainInput');
+      input.value = (input.value ? input.value + ' ' : '') + data.text;
+      updateCharCount();
+      showToast('Transcribed. Review and tap Clear My Head.');
+    } else {
+      showToast('Could not transcribe. Please try again.');
+    }
+  } catch(e) {
+    showToast('Transcription failed. Please try again.');
+  } finally {
+    btn.classList.remove('recording', 'transcribing');
+    label.textContent = '🎙 Record';
+    dot.className = 'voice-dot';
+    dot.style.background = '';
+    dot.style.animation = '';
+    isRecording = false;
+  }
+}
+
+async function loadUserData() {
+  if (!currentUser) return;
+  try {
+    const [pRes, tRes, mRes] = await Promise.all([
+      sbClient.from('people').select('*').eq('user_id', currentUser.id).order('created_at'),
+      sbClient.from('tasks').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false }),
+      sbClient.from('messages').select('*').eq('user_id', currentUser.id).order('created_at', { ascending: false })
+    ]);
+    people = (pRes.data || []).map(p => ({
+      id: p.id, name: p.name, role: p.role, emoji: p.emoji || '👤',
+      contact: p.contact_method || 'WhatsApp', phone: p.phone || ''
+    }));
+    tasks = (tRes.data || []).map(t => ({
+      id: t.id, type: t.type, description: t.description,
+      assignedTo: t.assigned_to, status: t.status, createdAt: t.created_at
+    }));
+    messages = (mRes.data || []).map(m => ({
+      id: m.id, to: m.recipient_name, text: m.body,
+      channel: m.channel, status: m.status, confirmationUrl: m.confirmation_url,
+      createdAt: m.created_at
+    }));
+  } catch(e) {
+    // Fallback to localStorage if Supabase fails
+    people = JSON.parse(localStorage.getItem('ra7_people_' + currentUser.id) || '[]');
+    tasks = JSON.parse(localStorage.getItem('ra7_tasks_' + currentUser.id) || '[]');
+    messages = JSON.parse(localStorage.getItem('ra7_messages_' + currentUser.id) || '[]');
+  }
   renderPeople();
   renderAllTasks();
   renderMessages();
@@ -1704,29 +1927,65 @@ function loadUserData() {
   renderRecentTasks();
 }
 
-function saveUserData() {
+async function savePersonToSupabase(person) {
+  if (!currentUser) return null;
+  const { data, error } = await sbClient.from('people').insert({
+    user_id: currentUser.id,
+    name: person.name,
+    role: person.role,
+    emoji: person.emoji,
+    contact_method: person.contact,
+    phone: person.phone || ''
+  }).select().single();
+  if (error) { console.error('Save person error:', error); return null; }
+  return data;
+}
+
+async function saveTaskToSupabase(task) {
+  if (!currentUser) return null;
+  const { data, error } = await sbClient.from('tasks').insert({
+    user_id: currentUser.id,
+    type: task.type,
+    description: task.description,
+    assigned_to: task.assignedTo || null,
+    status: task.status || 'pending',
+    suggested_message: task.suggestedMessage || null,
+    needs_follow_up: (task.type === 'delegation' || task.type === 'followup')
+  }).select().single();
+  if (error) { console.error('Save task error:', error); return null; }
+  return data;
+}
+
+async function saveMessageToSupabase(msg, taskId, confirmationUrl) {
+  if (!currentUser) return null;
+  const { data, error } = await sbClient.from('messages').insert({
+    user_id: currentUser.id,
+    task_id: taskId || null,
+    recipient_name: msg.to,
+    channel: msg.channel || 'WhatsApp',
+    body: msg.text,
+    confirmation_url: confirmationUrl || null,
+    status: 'prepared'
+  }).select().single();
+  if (error) { console.error('Save message error:', error); return null; }
+  return data;
+}
+
+async function updateTaskStatus(taskId, status) {
+  const { error } = await sbClient.from('tasks').update({
+    status: status,
+    confirmed_at: status === 'done' ? new Date().toISOString() : null
+  }).eq('id', taskId);
+  if (error) console.error('Update task error:', error);
+}
+
+// Keep localStorage as backup only
+function saveUserDataLocal() {
   if (!currentUser) return;
   localStorage.setItem('ra7_people_' + currentUser.id, JSON.stringify(people));
   localStorage.setItem('ra7_tasks_' + currentUser.id, JSON.stringify(tasks));
   localStorage.setItem('ra7_messages_' + currentUser.id, JSON.stringify(messages));
 }
-
-  function clearTestData() {
-  if (!confirm('Clear all actions and messages? Your people will stay saved.')) return;
-
-  tasks = [];
-  messages = [];
-
-  saveUserData();
-  renderAllTasks();
-  renderRecentTasks();
-  renderMessages();
-  renderBrief();
-
-  showToast('Data cleared ✓');
-}
-
-window.clearTestData = clearTestData;
 
 function showApp() {
   document.getElementById('screen-onboarding').classList.remove('active');
@@ -1941,24 +2200,6 @@ Classify each item into one of these types:
 - reminder: time-based or needs to be remembered
 - message: something to communicate to someone
 - delegation: a task to give to someone else
-
-IMPORTANT INTENT RULE:
-If the user says "tell [person] [task/result]" and that person is responsible for making it happen, treat it as a delegation, not just a message.
-
-Example:
-"Tell Christopher dinner should be ready at 8 tonight"
-means Christopher must have dinner ready by 8 tonight.
-
-Correct output:
-description: "Ask Christopher to have dinner ready by 8 tonight"
-message: "Can you please have dinner ready by 8 tonight?"
-assignedTo: "Christopher"
-needsFollowUp: true
-
-Do NOT write:
-"Inform Christopher dinner will be ready at 8pm tonight"
-
-Only treat it as informational if the user clearly says the task is already done or the person only needs to know.
 - decision: unresolved, needs a choice
 - followup: user is waiting on someone or something
 - errand: shopping, pickup, errand outside
@@ -2004,9 +2245,9 @@ Write suggested messages warmly and naturally. Always use "Can you please..." fo
 User input: "${text}"`;
 
   try {
-    const res = await fetch('/api/anthropic', {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1000,
@@ -2171,48 +2412,147 @@ function reviewAction() {
   }
 }
 
-function saveAll() {
-  // Collect final messages
+async function saveAll() {
+  showLoading(true);
+
+  // Collect final messages from review screen
   pendingExtracted.forEach((item, i) => {
     const finalEl = document.getElementById('final-msg-' + i);
     if (finalEl) item.finalMessage = finalEl.value;
   });
 
-  // Save tasks
-  pendingExtracted.forEach(item => {
+  for (const item of pendingExtracted) {
     const assignedTo = item.finalAssignedTo || item.assignedTo || null;
-    tasks.push({
-      id: item.id || Date.now() + Math.random(),
+    const isDelegated = assignedTo && assignedTo !== '__me__' && assignedTo !== '__later__';
+
+    // Save task to Supabase -- get real UUID back
+    let taskId = null;
+    try {
+      const savedTask = await saveTaskToSupabase({
+        type: item.type,
+        description: item.description,
+        assignedTo: isDelegated ? assignedTo : null,
+        status: 'pending',
+        suggestedMessage: item.suggestedMessage || null
+      });
+      if (savedTask && savedTask.id) {
+        taskId = savedTask.id;
+      }
+    } catch(e) {
+      console.error('Task save failed:', e);
+    }
+
+    // Generate confirmation URL -- requires real Supabase UUID
+    let confirmationUrl = null;
+    if (isDelegated && taskId) {
+      confirmationUrl = window.location.origin + '/confirm?task=' + taskId;
+    }
+
+    // Add to local state
+    tasks.unshift({
+      id: taskId || crypto.randomUUID(),
       type: item.type,
       description: item.description,
-      assignedTo: assignedTo,
+      assignedTo: isDelegated ? assignedTo : null,
       status: 'pending',
       createdAt: new Date().toISOString()
     });
 
-    if (item.finalMessage || item.suggestedMessage) {
-      const msg = item.finalMessage || item.suggestedMessage;
-      if (msg && (item.assignedTo || item.finalAssignedTo)) {
-        messages.push({
-          id: Date.now() + Math.random(),
-          to: item.assignedTo || item.finalAssignedTo,
-          text: msg,
-          channel: getPersonContact(item.assignedTo || item.finalAssignedTo),
-          status: 'ready',
-          createdAt: new Date().toISOString()
-        });
+    // Save delegated message with confirmation link appended
+    const msgText = item.finalMessage || item.suggestedMessage;
+    if (isDelegated && msgText) {
+      const fullMsg = confirmationUrl
+        ? msgText + '
+
+When done, tap here:
+' + confirmationUrl
+        : msgText;
+
+      let msgId = null;
+      try {
+        const savedMsg = await saveMessageToSupabase({
+          to: assignedTo,
+          text: fullMsg,
+          channel: getPersonContact(assignedTo)
+        }, taskId, confirmationUrl);
+        if (savedMsg && savedMsg.id) msgId = savedMsg.id;
+      } catch(e) {
+        console.error('Message save failed:', e);
       }
+
+      messages.unshift({
+        id: msgId || crypto.randomUUID(),
+        to: assignedTo,
+        text: fullMsg,
+        channel: getPersonContact(assignedTo),
+        status: 'prepared',
+        confirmationUrl: confirmationUrl,
+        createdAt: new Date().toISOString()
+      });
     }
-  });
+  }
 
-  saveUserData();
-
+  saveUserDataLocal();
+  showLoading(false);
   document.getElementById('mainInput').value = '';
   updateCharCount();
   pendingExtracted = [];
 
   goBack();
-  showToast('Tasks and messages saved ✓');
+  showToast('Saved ✓');
+  renderAllTasks();
+  renderMessages();
+  renderRecentTasks();
+  renderBrief();
+}
+
+    // Add to local state
+    tasks.unshift({
+      id: taskId || (Date.now() + Math.random()),
+      type: item.type,
+      description: item.description,
+      assignedTo: isDelegated ? assignedTo : null,
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    });
+
+    // Save message if delegated and has text
+    const msgText = item.finalMessage || item.suggestedMessage;
+    if (isDelegated && msgText) {
+      // Append confirmation link to message body
+      const fullMsg = confirmationUrl
+        ? msgText + '
+
+When done, tap here:
+' + confirmationUrl
+        : msgText;
+
+      const savedMsg = await saveMessageToSupabase({
+        to: assignedTo,
+        text: fullMsg,
+        channel: getPersonContact(assignedTo)
+      }, taskId, confirmationUrl);
+
+      messages.unshift({
+        id: savedMsg ? savedMsg.id : (Date.now() + Math.random()),
+        to: assignedTo,
+        text: fullMsg,
+        channel: getPersonContact(assignedTo),
+        status: 'prepared',
+        confirmationUrl: confirmationUrl,
+        createdAt: new Date().toISOString()
+      });
+    }
+  }
+
+  saveUserDataLocal();
+  showLoading(false);
+  document.getElementById('mainInput').value = '';
+  updateCharCount();
+  pendingExtracted = [];
+
+  goBack();
+  showToast('Saved ✓');
   renderAllTasks();
   renderMessages();
   renderRecentTasks();
@@ -2232,31 +2572,7 @@ function goBack() {
 }
 
 // PEOPLE
-function openEditPerson(id) {
-  const person = people.find(p => p.id === id);
-  if (!person) return;
-
-  editingPersonId = id;
-
-  document.getElementById('addPersonModal').classList.add('active');
-  document.getElementById('newEmoji').value = person.emoji || '👤';
-  document.getElementById('newName').value = person.name || '';
-  document.getElementById('newPhone').value = person.phone || '';
-
-  selectedRole = person.role || '';
-  selectedContact = person.contact || 'WhatsApp';
-
-  document.querySelectorAll('#roleChips .chip').forEach(c => {
-    c.classList.toggle('selected', c.dataset.role === selectedRole);
-  });
-
-  document.querySelectorAll('#contactChips .chip').forEach(c => {
-    c.classList.toggle('selected', c.dataset.contact === selectedContact);
-  });
-}  
 function openAddPerson() {
-  
-  editingPersonId = null;
   document.getElementById('addPersonModal').classList.add('active');
   document.getElementById('newEmoji').value = '👤';
   document.getElementById('newName').value = '';
@@ -2284,33 +2600,26 @@ function selectContact(el) {
   selectedContact = el.dataset.contact;
 }
 
-function savePerson() {
+async function savePerson() {
   const name = document.getElementById('newName').value.trim();
   if (!name) { showToast('Please enter a name'); return; }
   if (!selectedRole) { showToast('Please pick a role'); return; }
 
- const personData = {
-  emoji: document.getElementById('newEmoji').value || '👤',
-  name,
-  role: selectedRole,
-  contact: selectedContact,
-  phone: document.getElementById('newPhone').value.trim()
-};
+  const newPerson = {
+    emoji: document.getElementById('newEmoji').value || '👤',
+    name,
+    role: selectedRole,
+    contact: selectedContact,
+    phone: document.getElementById('newPhone').value.trim()
+  };
 
-if (editingPersonId) {
-  people = people.map(p => p.id === editingPersonId ? { ...p, ...personData } : p);
-} else {
-  people.push({
-    id: Date.now(),
-    ...personData
-  });
-}
-
-  saveUserData();
+  const saved = await savePersonToSupabase(newPerson);
+  newPerson.id = saved ? saved.id : Date.now();
+  people.push(newPerson);
+  saveUserDataLocal();
   closeAddPerson();
   renderPeople();
-  showToast(name + (editingPersonId ? ' updated ✓' : ' added ✓'));
-   editingPersonId = null;
+  showToast(name + ' added ✓');
 }
 
 function renderPeople() {
@@ -2323,7 +2632,7 @@ function renderPeople() {
   }
 
   list.innerHTML = people.map(p => `
-    <div class="person-card" onclick="openEditPerson(${p.id})">
+    <div class="person-card">
       <div class="person-avatar">${p.emoji}</div>
       <div class="person-info">
         <div class="person-name">${p.name}</div>
@@ -2347,11 +2656,7 @@ function renderAllTasks() {
     return;
   }
 
- list.innerHTML = `
-  <button class="mini-btn danger" onclick="clearTestData()" style="margin-bottom: 12px;">
-   Clear data
-  </button>
-` + tasks.map((t, index) => {
+  list.innerHTML = tasks.map(t => {
     const person = people.find(p => p.name === t.assignedTo);
     return `
       <div class="task-card">
@@ -2360,59 +2665,11 @@ function renderAllTasks() {
           <div class="task-who">${t.assignedTo === '__me__' ? 'For me' : t.assignedTo === '__later__' ? 'Decide later' : t.assignedTo || 'Unassigned'}</div>
           <div class="task-text">${t.description}</div>
         </div>
-       <div class="task-actions">
-  <span class="task-status ${t.status === 'done' ? 'status-sent' : 'status-pending'}">${t.status}</span>
-  <button class="mini-btn" onclick="markTaskDone(${index})">Done</button>
-<button class="mini-btn danger" onclick="deleteTask(${index})">Delete</button>
-</div>
+        <span class="task-status ${t.status === 'sent' ? 'status-sent' : 'status-pending'}">${t.status}</span>
       </div>`;
   }).join('');
 }
 
- function markTaskDone(index) {
- const task = tasks[index];
-  if (!task) return;
-
-  tasks[index] = { ...task, status: 'done' };
- if (typeof followUps !== 'undefined') {
-  followUps = followUps.filter(f => f.taskId !== task.id);
-}
-  saveUserData();
-  renderAllTasks();
-  renderRecentTasks();
-renderBrief();
-  showToast('Task marked done ✓');
-   }
-function markFollowUpDone(index) {
-  markTaskDone(index);
-  setTimeout(() => {
-   renderBrief();
-  }, 50);
-}
-
-window.markFollowUpDone = markFollowUpDone;
- 
-
-
-function deleteTask(index) {
-  const task = tasks[index];
-  if (!task) return;
-
-  tasks.splice(index, 1);
- if (typeof followUps !== 'undefined') {
-  followUps = followUps.filter(f => f.taskId !== task.id);
-}
-  messages = messages.filter(m => m.taskId !== task.id);
-
-  saveUserData();
-  renderAllTasks();
-  renderRecentTasks();
-  renderBrief();
-  renderMessages();
-  showToast('Task deleted');
-}
-  window.markTaskDone = markTaskDone;
-window.deleteTask = deleteTask;  
 function renderRecentTasks() {
   const list = document.getElementById('recentTasks');
   if (!list) return;
@@ -2481,18 +2738,21 @@ function renderMessages() {
   list.innerHTML = messages.map(m => {
     const person = people.find(p => p.name === m.to);
     const time = new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    return `
-      <div class="message-card">
-        <div class="message-header">
-          <div class="message-recipient">
-            <div class="message-avatar">${person ? person.emoji : '👤'}</div>
-            <div class="message-name">${m.to || 'Unknown'}</div>
-          </div>
-          <span class="message-channel">${m.channel}</span>
-        </div>
-        <div class="message-preview">${m.text}</div>
-        <div class="message-time">${time}</div>
-      </div>`;
+    const msgId = 'msg-' + m.id;
+    return '<div class="message-card">'
+      + '<div class="message-header">'
+      + '<div class="message-recipient">'
+      + '<div class="message-avatar">' + (person ? person.emoji : '👤') + '</div>'
+      + '<div class="message-name">' + (m.to || 'Unknown') + '</div>'
+      + '</div>'
+      + '<span class="message-channel">' + m.channel + '</span>'
+      + '</div>'
+      + '<div class="message-preview" id="' + msgId + '" style="white-space:pre-wrap">' + m.text + '</div>'
+      + '<div style="display:flex;gap:8px;margin-top:8px">'
+      + '<button onclick="copyMessage('' + msgId + '')" style="background:var(--sage-pale);border:none;border-radius:8px;padding:6px 12px;font-size:12px;color:var(--accent-dark);cursor:pointer;font-family:DM Sans,sans-serif">Copy message</button>'
+      + '</div>'
+      + '<div class="message-time">' + time + '</div>'
+      + '</div>';
   }).join('');
 }
 
@@ -2510,11 +2770,9 @@ function renderBrief() {
 
   // Only show followup type items and delegated items pending confirmation
   const followupItems = tasks.filter(t =>
-  t.status !== 'done' && (
     t.type === 'followup' ||
-    (t.type === 'delegation' && t.assignedTo && t.assignedTo !== '__me__' && t.assignedTo !== '__later__')
-  )
-);
+    (t.type === 'delegation' && t.status === 'pending' && t.assignedTo && t.assignedTo !== '__me__' && t.assignedTo !== '__later__')
+  );
 
   if (followupItems.length === 0) {
     el.innerHTML = '<div class="empty-state"><div class="empty-icon">🔁</div><div class="empty-text">No follow-ups yet.<br>Items you are waiting on will appear here.</div></div>';
@@ -2532,13 +2790,20 @@ function renderBrief() {
       + '<div class="task-who">' + (person ? person.name + ', ' + person.role : 'Follow-up') + '</div>'
       + '<div class="task-text">' + label + '</div>'
       + '</div>'
-      + '<div class="task-actions">'
-+ '<span class="task-status status-pending">waiting</span>'
-+ '<button class="mini-btn" onclick="markFollowUpDone(' + tasks.indexOf(t) + ')">Done</button>'
-+ '<button class="mini-btn danger" onclick="deleteTask(' + tasks.indexOf(t) + ')">Delete</button>'
-+ '</div>'
+      + '<button onclick="markFollowupDone(\'' + t.id + '\')" style="background:var(--sage-pale);border:none;border-radius:8px;padding:6px 12px;font-size:12px;color:var(--accent-dark);cursor:pointer;font-family:DM Sans,sans-serif">Mark done</button>'
       + '</div>';
   }).join('');
+}
+
+async function markFollowupDone(taskId) {
+  await updateTaskStatus(taskId, 'done');
+  // Update local state
+  const t = tasks.find(t => String(t.id) === String(taskId));
+  if (t) t.status = 'done';
+  saveUserDataLocal();
+  renderBrief();
+  renderAllTasks();
+  showToast('Marked as done');
 }
 
 // LOADING
@@ -2560,16 +2825,29 @@ document.addEventListener('DOMContentLoaded', () => {
   init();
 });
 
-function clearData() {
-  if (confirm('This will delete all your tasks, messages, and people. Are you sure?')) {
+function copyMessage(elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    showToast('Message copied to clipboard');
+  }).catch(() => {
+    showToast('Could not copy. Please copy manually.');
+  });
+}
+
+async function clearData() {
+  if (confirm('This will delete all your tasks and messages. Your people will stay. Are you sure?')) {
     if (currentUser) {
-      localStorage.removeItem('ra7_people_' + currentUser.id);
+      // Delete from Supabase (messages will cascade delete with tasks)
+      await sbClient.from('messages').delete().eq('user_id', currentUser.id);
+      await sbClient.from('tasks').delete().eq('user_id', currentUser.id);
+      // Clear localStorage backup
       localStorage.removeItem('ra7_tasks_' + currentUser.id);
       localStorage.removeItem('ra7_messages_' + currentUser.id);
     }
-    tasks = []; messages = []; people = [];
-    renderAllTasks(); renderMessages(); renderPeople(); renderRecentTasks(); renderBrief();
-    showToast('All data cleared');
+    tasks = []; messages = [];
+    renderAllTasks(); renderMessages(); renderRecentTasks(); renderBrief();
+    showToast('Tasks and messages cleared');
   }
 }
 </script>
