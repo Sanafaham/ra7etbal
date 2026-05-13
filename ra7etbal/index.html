@@ -2380,13 +2380,13 @@ function renderAllTasks() {
   saveUserData();
   renderAllTasks();
   renderRecentTasks();
-  renderFollowUps();
+renderBrief();
   showToast('Task marked done ✓');
    }
 function markFollowUpDone(index) {
   markTaskDone(index);
   setTimeout(() => {
-    renderFollowUps();
+   renderBrief();
   }, 50);
 }
 
@@ -2407,7 +2407,7 @@ function deleteTask(index) {
   saveUserData();
   renderAllTasks();
   renderRecentTasks();
-  renderFollowUps();
+  renderBrief();
   renderMessages();
   showToast('Task deleted');
 }
