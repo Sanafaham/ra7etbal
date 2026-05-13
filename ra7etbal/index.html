@@ -2462,12 +2462,8 @@ async function saveAll() {
     const msgText = item.finalMessage || item.suggestedMessage;
     if (isDelegated && msgText) {
       const fullMsg = confirmationUrl
-        ? msgText + '
-
-When done, tap here:
-' + confirmationUrl
-        : msgText;
-
+   ? msgText + '\n\nWhen done, tap here:\n' + confirmationUrl
+: msgText;
       let msgId = null;
       try {
         const savedMsg = await saveMessageToSupabase({
