@@ -2857,38 +2857,52 @@ function showToast(msg) {
 }
 
 // SETTINGS SAVE
-// AUTO REFRESH -- detects when user returns to tab after confirmation
-let lastRefresh = 0;
-const DEBOUNCE_MS = 3000; // 3 seconds normal debounce
+// AUTO REFRESH -- live sync after confirmation
+let isRefreshing = false;
 
-async function refreshUserData(force) {
+async function forceRefresh() {
   if (!currentUser) return;
-  const now = Date.now();
-  if (!force && (now - lastRefresh < DEBOUNCE_MS)) return;
-  lastRefresh = now;
-  await loadUserData();
+  if (isRefreshing) return;
+  isRefreshing = true;
+  try {
+    await loadUserData();
+  } finally {
+    isRefreshing = false;
+  }
 }
 
-// Tab becomes visible again (user switches back from confirmation tab)
+// Fires when user switches back to this tab from confirmation page
 document.addEventListener('visibilitychange', async () => {
   if (!document.hidden && currentUser) {
-    await refreshUserData(true); // always force on tab return
+    await forceRefresh();
   }
 });
 
-// Window gets focus (user clicks back into browser window)
+// Fires when browser window gets focus
 window.addEventListener('focus', async () => {
   if (currentUser) {
-    await refreshUserData(true); // always force on focus
+    await forceRefresh();
   }
 });
 
-// Cross-tab storage event -- confirmation page writes ra7_status_changed
+// Fires when confirmation page writes to localStorage
 window.addEventListener('storage', async (event) => {
   if (event.key === 'ra7_status_changed' && currentUser) {
-    await refreshUserData(true); // force immediately, bypass debounce
+    await forceRefresh();
   }
 });
+
+// Polling fallback -- checks every 5 seconds while app is open and user is logged in
+setInterval(async () => {
+  if (currentUser && !document.hidden) {
+    await forceRefresh();
+  }
+}, 5000);
+
+// Keep refreshUserData for showTab calls
+async function refreshUserData(force) {
+  await forceRefresh();
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   checkUrlForAuthErrors();
