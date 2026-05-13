@@ -2007,6 +2007,7 @@ function saveUserDataLocal() {
 function showApp() {
   document.getElementById('screen-onboarding').classList.remove('active');
   document.getElementById('screen-app').classList.add('active');
+  startPolling();
 }
 
 function showLoginScreen() {
@@ -2118,6 +2119,7 @@ async function handleMagicLink() {
 
 
 async function signOut() {
+  stopPolling();
   await sbClient.auth.signOut();
   people = []; tasks = []; messages = [];
   showToast('Signed out');
@@ -2858,39 +2860,26 @@ function showToast(msg) {
 }
 
 // SETTINGS SAVE
-// AUTO REFRESH -- live sync after confirmation
-let lastRefreshTime = 0;
+// LIVE SYNC -- polls Supabase every 2 seconds while user is signed in
+let pollingInterval = null;
 
-async function forceRefresh() {
-  if (!currentUser) return;
-  const now = Date.now();
-  if (now - lastRefreshTime < 2000) return; // block only if another refresh finished within 2 seconds
-  lastRefreshTime = now;
-  await loadUserData();
+function startPolling() {
+  if (pollingInterval) return;
+  pollingInterval = setInterval(async () => {
+    if (!currentUser) { stopPolling(); return; }
+    await loadUserData();
+  }, 2000);
 }
 
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && currentUser) forceRefresh();
-});
-
-window.addEventListener('focus', () => {
-  if (currentUser) forceRefresh();
-});
-
-window.addEventListener('storage', (event) => {
-  if (event.key === 'ra7_status_changed' && currentUser) {
-    lastRefreshTime = 0; // reset so it runs immediately
-    forceRefresh();
+function stopPolling() {
+  if (pollingInterval) {
+    clearInterval(pollingInterval);
+    pollingInterval = null;
   }
-});
-
-// Poll every 4 seconds while tab is visible and user is logged in
-setInterval(() => {
-  if (currentUser && !document.hidden) forceRefresh();
-}, 4000);
+}
 
 async function refreshUserData() {
-  await forceRefresh();
+  if (currentUser) await loadUserData();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
