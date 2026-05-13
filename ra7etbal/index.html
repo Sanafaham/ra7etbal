@@ -1339,72 +1339,75 @@
     html, body { font-size: 18px; }
 
     body {
-      max-width: 1000px;
+      max-width: 900px;
       margin: 0 auto;
       background: var(--cream);
     }
 
-    /* Screens flow normally -- not fixed viewport columns */
+    /* Screens: normal document flow, not fixed viewport */
     .screen {
       position: relative !important;
       left: auto !important;
       transform: none !important;
-      max-width: 1000px !important;
+      max-width: 900px !important;
       width: 100% !important;
       min-height: 100vh;
       overflow-y: visible;
+      padding-bottom: 0 !important;
     }
 
-    /* App screen needs bottom padding for nav bar */
-    #screen-app { padding-bottom: 180px; }
+    /* App screen: no bottom padding needed since nav is sticky not fixed */
+    #screen-app { padding-bottom: 0; }
 
-    /* Review screen scrolls naturally with space for bottom bar */
+    /* Review screen */
     #screen-review {
       position: relative !important;
-      padding-bottom: 220px;
+      padding-bottom: 0 !important;
     }
 
     .review-body {
       max-width: 820px;
       margin: 0 auto;
-      padding: 24px 40px 160px;
+      padding: 24px 40px 40px;
     }
 
-    /* Fixed bottom bars centered and full container width */
+    /* BOTTOM NAV -- sticky on desktop, sits at bottom of page flow */
     .bottom-nav {
-      position: fixed;
+      position: sticky !important;
       bottom: 0;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 1000px;
-      max-width: 1000px;
-      padding: 12px 40px 28px;
+      left: auto !important;
+      transform: none !important;
+      width: 100% !important;
+      max-width: 900px !important;
+      padding: 12px 40px 20px;
       z-index: 100;
+      margin-top: auto;
     }
 
+    /* REVIEW ACTIONS -- sticky on desktop */
     .review-actions {
-      position: fixed;
+      position: sticky !important;
       bottom: 0;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 1000px;
-      max-width: 1000px;
-      padding: 16px 40px 32px;
+      left: auto !important;
+      transform: none !important;
+      width: 100% !important;
+      max-width: 900px !important;
+      padding: 16px 40px 24px;
       z-index: 100;
     }
 
-    /* Sticky header */
+    /* Header */
     .app-header {
       position: sticky;
       top: 0;
-      max-width: 1000px;
+      max-width: 900px;
       width: 100%;
-      z-index: 100;
+      z-index: 200;
     }
 
     /* Review header */
     .review-header {
-      max-width: 1000px;
+      max-width: 900px;
       width: 100%;
       padding: 24px 40px;
     }
@@ -1430,7 +1433,7 @@
 
     /* Onboarding */
     #screen-onboarding {
-      max-width: 700px;
+      max-width: 680px;
       margin: 0 auto;
     }
     #screen-onboarding .onboarding-top { padding: 80px 60px 40px; }
@@ -1455,41 +1458,25 @@
 
     /* Buttons */
     .btn-organize,
-    .btn-primary {
-      font-size: 17px;
-      padding: 18px 28px;
-      border-radius: 14px;
-    }
-    .btn-confirm {
-      font-size: 16px;
-      padding: 16px 28px;
-    }
-    .btn-secondary {
-      font-size: 15px;
-      padding: 15px 24px;
-    }
+    .btn-primary { font-size: 17px; padding: 18px 28px; border-radius: 14px; }
+    .btn-confirm { font-size: 16px; padding: 16px 28px; }
+    .btn-secondary { font-size: 15px; padding: 15px 24px; }
 
     /* Cards */
     .task-card,
     .message-card,
     .person-card,
     .extracted-task-card,
-    .brief-card {
-      padding: 20px 24px;
-      border-radius: 18px;
-      margin-bottom: 12px;
-    }
+    .brief-card { padding: 20px 24px; border-radius: 18px; margin-bottom: 12px; }
 
     /* Card text */
     .task-text,
     .message-preview,
     .task-description { font-size: 17px; line-height: 1.5; }
-    .task-who,
-    .message-name,
-    .person-name { font-size: 14px; }
+    .task-who, .message-name, .person-name { font-size: 14px; }
     .person-role { font-size: 14px; }
 
-    /* Review cards */
+    /* Review */
     .review-title { font-size: 26px; }
     .review-subtitle { font-size: 15px; }
 
