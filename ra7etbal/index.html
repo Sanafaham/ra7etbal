@@ -2220,8 +2220,8 @@ Known people in the user's life: ${peopleList || 'None added yet'}
 Classify each item into one of these types:
 - action: needs to be done, clear next step
 - reminder: time-based or needs to be remembered
-- message: something to communicate to someone
-- delegation: a task to give to someone else
+- message: a one-way communication to someone, like telling them information or a time. Example: "Tell Christopher dinner is at 8."
+- delegation: a task you are assigning to someone that requires them to DO something and confirm. Example: "Make sure the school bag is ready." "Ask Ghulam to pick up Loulya." Only use delegation when the person needs to complete an action, not just receive information.
 - decision: unresolved, needs a choice
 - followup: user is waiting on someone or something
 - errand: shopping, pickup, errand outside
@@ -2256,8 +2256,10 @@ If people exist in the list, suggest the most relevant person using this logic:
 - Sending documents, invoices, emails, scheduling = suggest Personal Assistant if exists. Otherwise __me__.
 - Cleaning, laundry, household chores = suggest Cleaner or House Manager if exists. Otherwise __me__.
 - Decisions, choices, personal calls, personal appointments = always __me__.
-- Messages or tasks explicitly named to a person = assign to that person.
-- If a person is named explicitly (tell Ahmed, ask Sara) = assign to that person.
+- "Tell X that..." or "Let X know..." = type message, assign to that person.
+- "Ask X to do..." or "Make sure X does..." or "Remind X to..." = type delegation, assign to that person.
+- "Make sure [thing] is ready" with a relevant staff person available = type delegation, assign to most relevant person (cook for food, nanny for kids, cleaner for cleaning, driver for errands).
+- If a person is named explicitly with a task to complete = delegation. If just informing = message.
 - If the item involves someone but no one is named and no relevant person exists = needsPerson true, assignedTo null.
 
 The goal is to reduce thinking. Make the best suggestion. The user can always change it.
@@ -2445,68 +2447,108 @@ async function saveAll() {
 
   for (const item of pendingExtracted) {
     const assignedTo = item.finalAssignedTo || item.assignedTo || null;
-    const isDelegated = assignedTo && assignedTo !== '__me__' && assignedTo !== '__later__';
+    const hasRecipient = assignedTo && assignedTo !== '__me__' && assignedTo !== '__later__';
+    const isDelegated = item.type === 'delegation' && hasRecipient;
+    const isOneWayMessage = item.type === 'message' && hasRecipient;
+    const msgText = item.finalMessage || item.suggestedMessage;
 
-    // Save task to Supabase -- get real UUID back
-    let taskId = null;
-    try {
-      const savedTask = await saveTaskToSupabase({
+    if (isDelegated) {
+      // DELEGATION: task + confirmation link + message
+      let taskId = null;
+      try {
+        const savedTask = await saveTaskToSupabase({
+          type: item.type,
+          description: item.description,
+          assignedTo: assignedTo,
+          status: 'pending',
+          suggestedMessage: msgText || null
+        });
+        if (savedTask && savedTask.id) taskId = savedTask.id;
+      } catch(e) { console.error('Task save failed:', e); }
+
+      const confirmationUrl = taskId
+        ? window.location.origin + '/confirm?task=' + taskId
+        : null;
+
+      tasks.unshift({
+        id: taskId || crypto.randomUUID(),
         type: item.type,
         description: item.description,
-        assignedTo: isDelegated ? assignedTo : null,
+        assignedTo: assignedTo,
         status: 'pending',
-        suggestedMessage: item.suggestedMessage || null
+        createdAt: new Date().toISOString()
       });
-      if (savedTask && savedTask.id) {
-        taskId = savedTask.id;
-      }
-    } catch(e) {
-      console.error('Task save failed:', e);
-    }
 
-    // Generate confirmation URL -- requires real Supabase UUID
-    let confirmationUrl = null;
-    if (isDelegated && taskId) {
-      confirmationUrl = window.location.origin + '/confirm?task=' + taskId;
-    }
+      if (msgText) {
+        const confirmLine = confirmationUrl ? ('\n\nWhen done, tap here:\n' + confirmationUrl) : '';
+        const fullMsg = msgText + confirmLine;
+        let msgId = null;
+        try {
+          const savedMsg = await saveMessageToSupabase(
+            { to: assignedTo, text: fullMsg, channel: getPersonContact(assignedTo) },
+            taskId, confirmationUrl
+          );
+          if (savedMsg && savedMsg.id) msgId = savedMsg.id;
+        } catch(e) { console.error('Message save failed:', e); }
 
-    // Add to local state
-    tasks.unshift({
-      id: taskId || crypto.randomUUID(),
-      type: item.type,
-      description: item.description,
-      assignedTo: isDelegated ? assignedTo : null,
-      status: 'pending',
-      createdAt: new Date().toISOString()
-    });
-
-    // Save delegated message with confirmation link appended
-    const msgText = item.finalMessage || item.suggestedMessage;
-    if (isDelegated && msgText) {
-      const confirmLine = confirmationUrl ? ('\n\nWhen done, tap here:\n' + confirmationUrl) : '';
-      const fullMsg = msgText + confirmLine;
-
-      let msgId = null;
-      try {
-        const savedMsg = await saveMessageToSupabase({
+        messages.unshift({
+          id: msgId || crypto.randomUUID(),
+          taskId: taskId,
           to: assignedTo,
           text: fullMsg,
-          channel: getPersonContact(assignedTo)
-        }, taskId, confirmationUrl);
-        if (savedMsg && savedMsg.id) msgId = savedMsg.id;
-      } catch(e) {
-        console.error('Message save failed:', e);
+          channel: getPersonContact(assignedTo),
+          status: 'prepared',
+          confirmationUrl: confirmationUrl,
+          taskStatus: 'pending',
+          createdAt: new Date().toISOString()
+        });
       }
 
-      messages.unshift({
-        id: msgId || crypto.randomUUID(),
-        taskId: taskId,
-        to: assignedTo,
-        text: fullMsg,
-        channel: getPersonContact(assignedTo),
-        status: 'prepared',
-        confirmationUrl: confirmationUrl,
-        taskStatus: 'pending',
+    } else if (isOneWayMessage) {
+      // ONE-WAY MESSAGE: message only, no task, no confirmation link
+      if (msgText) {
+        let msgId = null;
+        try {
+          const savedMsg = await saveMessageToSupabase(
+            { to: assignedTo, text: msgText, channel: getPersonContact(assignedTo) },
+            null, null
+          );
+          if (savedMsg && savedMsg.id) msgId = savedMsg.id;
+        } catch(e) { console.error('Message save failed:', e); }
+
+        messages.unshift({
+          id: msgId || crypto.randomUUID(),
+          taskId: null,
+          to: assignedTo,
+          text: msgText,
+          channel: getPersonContact(assignedTo),
+          status: 'prepared',
+          confirmationUrl: null,
+          taskStatus: null,
+          createdAt: new Date().toISOString()
+        });
+      }
+
+    } else {
+      // TASK ONLY: action, reminder, errand, decision, parked, followup
+      let taskId = null;
+      try {
+        const savedTask = await saveTaskToSupabase({
+          type: item.type,
+          description: item.description,
+          assignedTo: null,
+          status: 'pending',
+          suggestedMessage: null
+        });
+        if (savedTask && savedTask.id) taskId = savedTask.id;
+      } catch(e) { console.error('Task save failed:', e); }
+
+      tasks.unshift({
+        id: taskId || crypto.randomUUID(),
+        type: item.type,
+        description: item.description,
+        assignedTo: null,
+        status: 'pending',
         createdAt: new Date().toISOString()
       });
     }
@@ -2757,6 +2799,7 @@ function renderBrief() {
   // Only show followup type items and delegated items pending confirmation
   const followupItems = tasks.filter(t =>
     t.status === 'pending' &&
+    t.type === 'delegation' &&
     t.assignedTo &&
     t.assignedTo !== '__me__' &&
     t.assignedTo !== '__later__'
