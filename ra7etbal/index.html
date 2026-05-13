@@ -2860,22 +2860,56 @@ function showToast(msg) {
 }
 
 // SETTINGS SAVE
-// LIVE SYNC -- polls Supabase every 2 seconds while user is signed in
+// LIVE SYNC -- lightweight targeted polling
 let pollingInterval = null;
+
+async function syncTaskStatuses() {
+  if (!currentUser) return;
+  try {
+    const tRes = await sbClient
+      .from('tasks')
+      .select('id, status')
+      .eq('user_id', currentUser.id);
+
+    if (!tRes.data) return;
+
+    const statusMap = {};
+    tRes.data.forEach(t => { statusMap[String(t.id)] = t.status; });
+
+    let changed = false;
+
+    tasks = tasks.map(t => {
+      const fresh = statusMap[String(t.id)];
+      if (fresh && fresh !== t.status) { changed = true; return Object.assign({}, t, { status: fresh }); }
+      return t;
+    });
+
+    messages = messages.map(m => {
+      if (!m.taskId) return m;
+      const fresh = statusMap[String(m.taskId)];
+      if (fresh && fresh !== m.taskStatus) { changed = true; return Object.assign({}, m, { taskStatus: fresh }); }
+      return m;
+    });
+
+    if (changed) {
+      renderMessages();
+      renderBrief();
+      renderAllTasks();
+      renderRecentTasks();
+    }
+  } catch(e) {}
+}
 
 function startPolling() {
   if (pollingInterval) return;
-  pollingInterval = setInterval(async () => {
+  pollingInterval = setInterval(() => {
     if (!currentUser) { stopPolling(); return; }
-    await loadUserData();
+    syncTaskStatuses();
   }, 2000);
 }
 
 function stopPolling() {
-  if (pollingInterval) {
-    clearInterval(pollingInterval);
-    pollingInterval = null;
-  }
+  if (pollingInterval) { clearInterval(pollingInterval); pollingInterval = null; }
 }
 
 async function refreshUserData() {
