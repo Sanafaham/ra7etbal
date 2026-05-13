@@ -1334,6 +1334,42 @@
 
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+  /* DESKTOP LAYOUT */
+  @media (min-width: 768px) {
+    body {
+      max-width: 900px;
+    }
+    .screen {
+      max-width: 900px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    .bottom-nav,
+    .review-actions {
+      max-width: 900px;
+    }
+    .home-section,
+    .people-section,
+    .messages-section,
+    .tasks-section,
+    .settings-section,
+    .brief-section,
+    .review-body {
+      max-width: 720px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .app-header {
+      max-width: 900px;
+    }
+    .input-area {
+      font-size: 17px;
+    }
+    .hero-title {
+      font-size: 56px;
+    }
+  }
+
   /* FADE IN */
   @keyframes fadeUp {
     from { opacity: 0; transform: translateY(12px); }
