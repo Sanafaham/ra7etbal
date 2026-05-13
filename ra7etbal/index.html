@@ -1909,9 +1909,18 @@ async function loadUserData() {
       id: t.id, type: t.type, description: t.description,
       assignedTo: t.assigned_to, status: t.status, createdAt: t.created_at
     }));
+    const taskStatusById = {};
+    tasks.forEach(t => { taskStatusById[t.id] = t.status; });
+
     messages = (mRes.data || []).map(m => ({
-      id: m.id, to: m.recipient_name, text: m.body,
-      channel: m.channel, status: m.status, confirmationUrl: m.confirmation_url,
+      id: m.id,
+      taskId: m.task_id,
+      to: m.recipient_name,
+      text: m.body,
+      channel: m.channel,
+      status: m.status,
+      confirmationUrl: m.confirmation_url,
+      taskStatus: m.task_id ? (taskStatusById[m.task_id] || null) : null,
       createdAt: m.created_at
     }));
   } catch(e) {
@@ -2478,11 +2487,13 @@ async function saveAll() {
 
       messages.unshift({
         id: msgId || crypto.randomUUID(),
+        taskId: taskId,
         to: assignedTo,
         text: fullMsg,
         channel: getPersonContact(assignedTo),
         status: 'prepared',
         confirmationUrl: confirmationUrl,
+        taskStatus: 'pending',
         createdAt: new Date().toISOString()
       });
     }
@@ -2682,6 +2693,22 @@ function renderMessages() {
     const person = people.find(p => p.name === m.to);
     const time = new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const msgId = 'msg-' + m.id;
+
+    // Determine status label from linked task
+    const taskStatus = m.taskStatus || null;
+    let statusLabel = '';
+    let statusStyle = '';
+    if (taskStatus === 'done') {
+      statusLabel = 'Confirmed done';
+      statusStyle = 'background:#DCFCE7;color:#166534;';
+    } else if (taskStatus === 'pending' || taskStatus === 'sent') {
+      statusLabel = 'Waiting';
+      statusStyle = 'background:#FEF9C3;color:#854D0E;';
+    } else {
+      statusLabel = 'Prepared';
+      statusStyle = 'background:var(--sage-pale);color:var(--accent-dark);';
+    }
+
     return '<div class="message-card">'
       + '<div class="message-header">'
       + '<div class="message-recipient">'
@@ -2689,6 +2716,9 @@ function renderMessages() {
       + '<div class="message-name">' + (m.to || 'Unknown') + '</div>'
       + '</div>'
       + '<span class="message-channel">' + m.channel + '</span>'
+      + '</div>'
+      + '<div style="margin-bottom:8px">'
+      + '<span style="font-size:11px;font-weight:500;padding:3px 8px;border-radius:20px;' + statusStyle + '">' + statusLabel + '</span>'
       + '</div>'
       + '<div class="message-preview" id="' + msgId + '" style="white-space:pre-wrap">' + m.text + '</div>'
       + '<div style="display:flex;gap:8px;margin-top:8px">'
@@ -2742,12 +2772,18 @@ function renderBrief() {
 
 async function markFollowupDone(taskId) {
   await updateTaskStatus(taskId, 'done');
-  // Update local state
   const t = tasks.find(t => String(t.id) === String(taskId));
   if (t) t.status = 'done';
+  messages = messages.map(m => {
+    if (String(m.taskId) === String(taskId)) {
+      return Object.assign({}, m, { taskStatus: 'done' });
+    }
+    return m;
+  });
   saveUserDataLocal();
   renderBrief();
   renderAllTasks();
+  renderMessages();
   showToast('Marked as done');
 }
 
