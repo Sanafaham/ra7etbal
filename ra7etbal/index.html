@@ -2859,49 +2859,37 @@ function showToast(msg) {
 
 // SETTINGS SAVE
 // AUTO REFRESH -- live sync after confirmation
-let isRefreshing = false;
+let lastRefreshTime = 0;
 
 async function forceRefresh() {
   if (!currentUser) return;
-  if (isRefreshing) return;
-  isRefreshing = true;
-  try {
-    await loadUserData();
-  } finally {
-    isRefreshing = false;
-  }
+  const now = Date.now();
+  if (now - lastRefreshTime < 2000) return; // block only if another refresh finished within 2 seconds
+  lastRefreshTime = now;
+  await loadUserData();
 }
 
-// Fires when user switches back to this tab from confirmation page
-document.addEventListener('visibilitychange', async () => {
-  if (!document.hidden && currentUser) {
-    await forceRefresh();
-  }
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && currentUser) forceRefresh();
 });
 
-// Fires when browser window gets focus
-window.addEventListener('focus', async () => {
-  if (currentUser) {
-    await forceRefresh();
-  }
+window.addEventListener('focus', () => {
+  if (currentUser) forceRefresh();
 });
 
-// Fires when confirmation page writes to localStorage
-window.addEventListener('storage', async (event) => {
+window.addEventListener('storage', (event) => {
   if (event.key === 'ra7_status_changed' && currentUser) {
-    await forceRefresh();
+    lastRefreshTime = 0; // reset so it runs immediately
+    forceRefresh();
   }
 });
 
-// Polling fallback -- checks every 5 seconds while app is open and user is logged in
-setInterval(async () => {
-  if (currentUser && !document.hidden) {
-    await forceRefresh();
-  }
-}, 5000);
+// Poll every 4 seconds while tab is visible and user is logged in
+setInterval(() => {
+  if (currentUser && !document.hidden) forceRefresh();
+}, 4000);
 
-// Keep refreshUserData for showTab calls
-async function refreshUserData(force) {
+async function refreshUserData() {
   await forceRefresh();
 }
 
