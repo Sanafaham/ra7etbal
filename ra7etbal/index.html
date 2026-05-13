@@ -1336,140 +1336,112 @@
 
   /* DESKTOP LAYOUT */
   @media (min-width: 768px) {
-    html { font-size: 17px; }
 
     body {
-      max-width: 1100px;
-      width: 100%;
-      min-height: 100vh;
+      max-width: 1000px;
       margin: 0 auto;
+      min-height: 100vh;
+      position: static;
       overflow-x: hidden;
     }
 
+    /* Screens: normal page flow, not fixed */
     .screen {
-      position: relative !important;
-      top: auto !important;
+      display: none;
+      position: static !important;
       left: auto !important;
+      transform: none !important;
       width: 100% !important;
-      max-width: 1100px !important;
-      min-height: 100vh;
-      overflow-y: visible !important;
+      max-width: 1000px !important;
+      min-height: 100vh !important;
+      overflow: visible !important;
     }
 
-    .screen.active { display: flex; }
+    .screen.active {
+      display: block !important;
+    }
 
-    #screen-app { padding-bottom: 130px !important; }
+    /* App screen: pad for fixed bottom nav (~80px tall) */
+    #screen-app {
+      padding-bottom: 90px !important;
+    }
 
-    .tab-panel { padding-bottom: 150px; }
+    /* Review screen: pad for fixed review action bar (~80px tall) */
+    #screen-review {
+      padding-bottom: 90px !important;
+    }
 
+    /* Bottom nav: stays fixed, centered under the 1000px body */
+    .bottom-nav {
+      position: fixed !important;
+      bottom: 0 !important;
+      left: 50% !important;
+      transform: translateX(-50%) !important;
+      width: 100% !important;
+      max-width: 1000px !important;
+      padding: 10px 40px 20px !important;
+      background: var(--warm-white);
+      border-top: 1px solid var(--border);
+      z-index: 100;
+    }
+
+    /* Review action bar: stays fixed, centered under the 1000px body */
+    .review-actions {
+      position: fixed !important;
+      bottom: 0 !important;
+      left: 50% !important;
+      transform: translateX(-50%) !important;
+      width: 100% !important;
+      max-width: 1000px !important;
+      padding: 16px 40px 24px !important;
+      background: var(--warm-white);
+      border-top: 1px solid var(--border);
+      z-index: 100;
+    }
+
+    /* Header stays sticky */
     .app-header {
-      width: 100%;
-      max-width: 1100px;
-      margin: 0 auto;
-      padding-left: 48px;
-      padding-right: 48px;
       position: sticky;
       top: 0;
       z-index: 200;
     }
 
-    .home-section, .recent-section, .tasks-section, .people-section,
-    .messages-section, .settings-section, .brief-section {
-      width: 100%;
+    /* Content sections: max-width 760px, centered */
+    .home-section,
+    .people-section,
+    .messages-section,
+    .tasks-section,
+    .settings-section,
+    .brief-section {
       max-width: 760px;
       margin: 0 auto;
-      padding-left: 24px;
-      padding-right: 24px;
+      padding: 28px 32px;
     }
 
-    .home-section { padding-top: 36px; }
-    .recent-section { padding-bottom: 170px; }
-
-    .section-title { font-size: 38px; line-height: 1.12; }
-    .section-desc { font-size: 17px; line-height: 1.6; }
-    .input-area { font-size: 17px; min-height: 170px; }
-
-    .task-card, .message-card, .person-card, .extracted-task-card, .brief-card { padding: 18px 20px; }
-    .task-text, .message-preview, .task-description { font-size: 16px; }
-
-    .bottom-nav {
-      position: fixed !important;
-      left: 50% !important;
-      bottom: 0 !important;
-      transform: translateX(-50%) !important;
-      width: min(100%, 1100px) !important;
-      max-width: 1100px !important;
-      padding: 12px 80px 26px !important;
-      z-index: 500 !important;
-    }
-
-    #screen-review {
-      position: relative !important;
-      max-width: 1100px !important;
-      width: 100% !important;
-      min-height: 100vh;
-      padding-bottom: 160px !important;
-      overflow-y: visible !important;
-    }
-
-    .review-header {
+    .recent-section {
       max-width: 760px;
-      width: 100%;
       margin: 0 auto;
-      padding-left: 24px;
-      padding-right: 24px;
+      padding: 0 32px 32px;
     }
 
     .review-body {
       max-width: 760px;
-      width: 100%;
       margin: 0 auto;
-      padding-left: 24px;
-      padding-right: 24px;
-      padding-bottom: 180px !important;
+      padding: 24px 32px 32px;
     }
 
-    .review-actions {
-      position: fixed !important;
-      left: 50% !important;
-      bottom: 0 !important;
-      transform: translateX(-50%) !important;
-      width: min(100%, 1100px) !important;
-      max-width: 1100px !important;
-      padding: 16px 80px 28px !important;
-      z-index: 600 !important;
+    .review-header {
+      padding: 20px 32px;
     }
 
-    .app-brand { font-size: 28px; }
-    .tab-btn { font-size: 16px; padding: 14px 24px; }
-    .section-eyebrow { font-size: 13px; letter-spacing: 1.2px; }
-    .hero-title { font-size: 58px; letter-spacing: -2px; }
-    .hero-body { font-size: 19px; line-height: 1.7; }
-    .btn-organize, .btn-primary { font-size: 17px; padding: 18px 28px; border-radius: 14px; }
-    .btn-confirm { font-size: 16px; padding: 16px 28px; }
-    .btn-secondary { font-size: 15px; padding: 15px 24px; }
-    .task-who, .message-name, .person-name { font-size: 14px; }
-    .person-role { font-size: 14px; }
-    .review-title { font-size: 26px; }
-    .review-subtitle { font-size: 15px; }
-    .nav-icon { font-size: 24px; }
-    .nav-label { font-size: 12px; }
-    .nav-item { min-width: 80px; padding: 6px 20px; }
-    .app-header-top { padding: 18px 24px 0; }
-
-    #screen-onboarding { max-width: 680px; margin: 0 auto; }
-    #screen-onboarding .onboarding-top { padding: 80px 60px 40px; }
-    #screen-onboarding .onboarding-bottom { padding: 0 60px 60px; }
+    /* Onboarding */
+    #screen-onboarding {
+      max-width: 640px;
+      margin: 0 auto;
+    }
+    #screen-onboarding .onboarding-top { padding: 60px 48px 32px; }
+    #screen-onboarding .onboarding-bottom { padding: 0 48px 48px; }
   }
-
-  @media (max-width: 767px) {
-    body { max-width: 480px; }
-    .screen { position: fixed; max-width: 480px; overflow-y: auto; }
-    #screen-app { padding-bottom: 90px; }
-    .tab-panel { padding-bottom: 100px; }
-    .review-body { padding-bottom: 120px; }
-  }
-
   /* FADE IN */
   @keyframes fadeUp {
     from { opacity: 0; transform: translateY(12px); }
