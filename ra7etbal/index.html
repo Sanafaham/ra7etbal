@@ -2713,8 +2713,10 @@ function renderBrief() {
 
   // Only show followup type items and delegated items pending confirmation
   const followupItems = tasks.filter(t =>
-    t.type === 'followup' ||
-    (t.type === 'delegation' && t.status === 'pending' && t.assignedTo && t.assignedTo !== '__me__' && t.assignedTo !== '__later__')
+    t.status === 'pending' &&
+    t.assignedTo &&
+    t.assignedTo !== '__me__' &&
+    t.assignedTo !== '__later__'
   );
 
   if (followupItems.length === 0) {
