@@ -1442,6 +1442,55 @@
     #screen-onboarding .onboarding-top { padding: 60px 48px 32px; }
     #screen-onboarding .onboarding-bottom { padding: 0 48px 48px; }
   }
+    /* MOBILE LOGIN FIX */
+  @media (max-width: 767px) {
+    #screen-onboarding {
+      min-height: 100dvh;
+      justify-content: flex-start;
+      overflow-y: auto;
+      padding-bottom: 120px;
+    }
+
+    #screen-onboarding .onboarding-top {
+      padding: 32px 28px 16px;
+      flex: 0;
+    }
+
+    #screen-onboarding .brand-mark {
+      margin-bottom: 28px;
+    }
+
+    #screen-onboarding .hero-title {
+      font-size: 52px;
+      line-height: 1.04;
+      margin-bottom: 10px;
+    }
+
+    #screen-onboarding .hero-subtitle-ar {
+      font-size: 16px;
+      margin-bottom: 24px;
+    }
+
+    #screen-onboarding .hero-body {
+      font-size: 18px;
+      line-height: 1.55;
+      margin-bottom: 28px;
+      max-width: 100%;
+    }
+
+    #screen-onboarding .api-section {
+      margin-bottom: 12px;
+    }
+
+    #screen-onboarding .onboarding-bottom {
+      padding: 0 28px 40px;
+      flex: 0;
+    }
+
+    #screen-onboarding .btn-primary {
+      min-height: 56px;
+    }
+  }
   /* FADE IN */
   @keyframes fadeUp {
     from { opacity: 0; transform: translateY(12px); }
@@ -1480,10 +1529,9 @@
     <h1 class="hero-title fade-up fade-up-2">Get it out<br>of your<br>head.</h1>
     <p class="hero-subtitle-ar fade-up fade-up-2">Your AI mental load assistant</p>
 
-    <p class="hero-body fade-up fade-up-3">
-      Ra7etBal helps you offload the mental load of life. Not just tasks or schedules. Speak or type anything you are carrying: reminders, decisions, errands, people to message, things to buy, things to check, things to follow up on, or things you do not want to forget. Ra7etBal turns it into clear next steps, messages, reminders, and follow-ups, so your mind does not have to hold it all.
-    </p>
-
+   <p class="hero-body fade-up fade-up-3">
+  Speak or type what you are carrying. Ra7etBal turns it into clear next steps, messages, reminders, and follow-ups, so your mind does not have to hold it all.
+</p>
     <div class="api-section fade-up fade-up-4" id="loginSection">
       <div class="api-label">Get started</div>
       <input
