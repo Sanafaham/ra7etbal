@@ -2245,9 +2245,9 @@ Write suggested messages warmly and naturally. Always use "Can you please..." fo
 User input: "${text}"`;
 
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch('/api/anthropic', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1000,
@@ -2416,7 +2416,7 @@ async function saveAll() {
   showLoading(true);
 
   // Collect final messages from review screen
- pendingExtracted.forEach(async (item, i) => {
+  pendingExtracted.forEach((item, i) => {
     const finalEl = document.getElementById('final-msg-' + i);
     if (finalEl) item.finalMessage = finalEl.value;
   });
@@ -2461,9 +2461,9 @@ async function saveAll() {
     // Save delegated message with confirmation link appended
     const msgText = item.finalMessage || item.suggestedMessage;
     if (isDelegated && msgText) {
-      const fullMsg = confirmationUrl
-   ? msgText + '\n\nWhen done, tap here:\n' + confirmationUrl
-: msgText;
+      const confirmLine = confirmationUrl ? ('\n\nWhen done, tap here:\n' + confirmationUrl) : '';
+      const fullMsg = msgText + confirmLine;
+
       let msgId = null;
       try {
         const savedMsg = await saveMessageToSupabase({
@@ -2495,57 +2495,7 @@ async function saveAll() {
   pendingExtracted = [];
 
   goBack();
-  showToast('Saved ✓');
-  renderAllTasks();
-  renderMessages();
-  renderRecentTasks();
-  renderBrief();
-}
-
-    // Add to local state
-    tasks.unshift({
-      id: taskId || (Date.now() + Math.random()),
-      type: item.type,
-      description: item.description,
-      assignedTo: isDelegated ? assignedTo : null,
-      status: 'pending',
-      createdAt: new Date().toISOString()
-    });
-
-    // Save message if delegated and has text
-    const msgText = item.finalMessage || item.suggestedMessage;
-    if (isDelegated && msgText) {
-      // Append confirmation link to message body
-     const fullMsg = confirmationUrl
-  ? msgText + '\n\nWhen done, tap here:\n' + confirmationUrl
-  : msgText;
-
-      const savedMsg = await saveMessageToSupabase({
-        to: assignedTo,
-        text: fullMsg,
-        channel: getPersonContact(assignedTo)
-      }, taskId, confirmationUrl);
-
-      messages.unshift({
-        id: savedMsg ? savedMsg.id : (Date.now() + Math.random()),
-        to: assignedTo,
-        text: fullMsg,
-        channel: getPersonContact(assignedTo),
-        status: 'prepared',
-        confirmationUrl: confirmationUrl,
-        createdAt: new Date().toISOString()
-      });
-    }
-  }
-
-  saveUserDataLocal();
-  showLoading(false);
-  document.getElementById('mainInput').value = '';
-  updateCharCount();
-  pendingExtracted = [];
-
-  goBack();
-  showToast('Saved ✓');
+  showToast('Saved \u2713');
   renderAllTasks();
   renderMessages();
   renderRecentTasks();
@@ -2742,7 +2692,7 @@ function renderMessages() {
       + '</div>'
       + '<div class="message-preview" id="' + msgId + '" style="white-space:pre-wrap">' + m.text + '</div>'
       + '<div style="display:flex;gap:8px;margin-top:8px">'
-      + '<button onclick="copyMessage('' + msgId + '')" style="background:var(--sage-pale);border:none;border-radius:8px;padding:6px 12px;font-size:12px;color:var(--accent-dark);cursor:pointer;font-family:DM Sans,sans-serif">Copy message</button>'
+      + '<button onclick="copyMsg(this)" data-msgid="' + msgId + '" style="background:var(--sage-pale);border:none;border-radius:8px;padding:6px 12px;font-size:12px;color:var(--accent-dark);cursor:pointer;font-family:DM Sans,sans-serif">Copy message</button>'
       + '</div>'
       + '<div class="message-time">' + time + '</div>'
       + '</div>';
@@ -2817,6 +2767,19 @@ document.addEventListener('DOMContentLoaded', () => {
   checkUrlForAuthErrors();
   init();
 });
+
+function copyMsg(btn) {
+  const msgId = btn.getAttribute('data-msgid');
+  const el = document.getElementById(msgId);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(() => {
+    showToast('Message copied to clipboard');
+    btn.textContent = 'Copied ✓';
+    setTimeout(() => { btn.textContent = 'Copy message'; }, 2000);
+  }).catch(() => {
+    showToast('Could not copy. Please copy manually.');
+  });
+}
 
 function copyMessage(elId) {
   const el = document.getElementById(elId);
