@@ -2801,6 +2801,27 @@ function showToast(msg) {
 }
 
 // SETTINGS SAVE
+// AUTO REFRESH on tab focus or visibility change
+let lastRefresh = 0;
+
+async function refreshUserData() {
+  if (!currentUser) return;
+  const now = Date.now();
+  if (now - lastRefresh < 5000) return; // debounce -- max once every 5 seconds
+  lastRefresh = now;
+  await loadUserData();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    refreshUserData();
+  }
+});
+
+window.addEventListener('focus', () => {
+  refreshUserData();
+});
+
 document.addEventListener('DOMContentLoaded', () => {
   checkUrlForAuthErrors();
   init();
