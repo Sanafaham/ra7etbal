@@ -1712,7 +1712,7 @@ function saveUserData() {
 }
 
   function clearTestData() {
-  if (!confirm('Clear all tasks and messages? Your people will stay saved.')) return;
+  if (!confirm('Clear all actions and messages? Your people will stay saved.')) return;
 
   tasks = [];
   messages = [];
@@ -1723,7 +1723,7 @@ function saveUserData() {
   renderMessages();
   renderFollowUps();
 
-  showToast('Test data cleared ✓');
+  showToast('Data cleared ✓');
 }
 
 window.clearTestData = clearTestData;
@@ -2349,7 +2349,7 @@ function renderAllTasks() {
 
  list.innerHTML = `
   <button class="mini-btn danger" onclick="clearTestData()" style="margin-bottom: 12px;">
-    Clear test data
+   Clear data
   </button>
 ` + tasks.map((t, index) => {
     const person = people.find(p => p.name === t.assignedTo);
