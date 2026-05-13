@@ -2516,12 +2516,9 @@ async function saveAll() {
     const msgText = item.finalMessage || item.suggestedMessage;
     if (isDelegated && msgText) {
       // Append confirmation link to message body
-      const fullMsg = confirmationUrl
-        ? msgText + '
-
-When done, tap here:
-' + confirmationUrl
-        : msgText;
+     const fullMsg = confirmationUrl
+  ? msgText + '\n\nWhen done, tap here:\n' + confirmationUrl
+  : msgText;
 
       const savedMsg = await saveMessageToSupabase({
         to: assignedTo,
