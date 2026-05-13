@@ -2776,8 +2776,9 @@ function renderMessages() {
       + '<span style="font-size:11px;font-weight:500;padding:3px 8px;border-radius:20px;' + statusStyle + '">' + statusLabel + '</span>'
       + '</div>'
       + '<div class="message-preview" id="' + msgId + '" style="white-space:pre-wrap">' + m.text + '</div>'
-      + '<div style="display:flex;gap:8px;margin-top:8px">'
+      + '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">'
       + '<button onclick="copyMsg(this)" data-msgid="' + msgId + '" style="background:var(--sage-pale);border:none;border-radius:8px;padding:6px 12px;font-size:12px;color:var(--accent-dark);cursor:pointer;font-family:DM Sans,sans-serif">Copy message</button>'
+      + (m.confirmationUrl ? '<button onclick="openConfirmLink(this)" data-url="' + m.confirmationUrl + '" style="background:var(--sand);border:none;border-radius:8px;padding:6px 12px;font-size:12px;color:var(--ink);cursor:pointer;font-family:DM Sans,sans-serif">Open confirmation link</button>' : '')
       + '</div>'
       + '<div class="message-time">' + time + '</div>'
       + '</div>';
@@ -2908,6 +2909,11 @@ document.addEventListener('DOMContentLoaded', () => {
   checkUrlForAuthErrors();
   init();
 });
+
+function openConfirmLink(btn) {
+  const url = btn.getAttribute('data-url');
+  if (url) window.open(url, '_blank');
+}
 
 function copyMsg(btn) {
   const msgId = btn.getAttribute('data-msgid');
