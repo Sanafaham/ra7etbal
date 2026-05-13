@@ -2870,10 +2870,12 @@ function showToast(msg) {
 // SETTINGS SAVE
 // LIVE SYNC
 let pollingInterval = null;
+let isClearing = false;
 
 // Pull fresh task statuses from Supabase and update local state
 async function syncTaskStatuses() {
   if (!currentUser) return;
+  if (isClearing) return;
   try {
     console.log('FORCED_REFRESH_START');
     const { data: freshTasks, error } = await sbClient
@@ -2985,18 +2987,55 @@ function copyMessage(elId) {
 }
 
 async function clearData() {
-  if (confirm('This will delete all your tasks and messages. Your people will stay. Are you sure?')) {
+  if (!confirm('This will delete all your tasks and messages. Your people will stay. Are you sure?')) return;
+
+  // Disable button immediately to prevent double-click
+  isClearing = true;
+  const btn = document.querySelector('[onclick="clearData()"]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Clearing...'; }
+
+  try {
     if (currentUser) {
-      // Delete from Supabase (messages will cascade delete with tasks)
-      await sbClient.from('messages').delete().eq('user_id', currentUser.id);
-      await sbClient.from('tasks').delete().eq('user_id', currentUser.id);
+      // Delete messages first, then tasks
+      const { error: msgErr } = await sbClient.from('messages').delete().eq('user_id', currentUser.id);
+      if (msgErr) console.error('Clear messages error:', msgErr);
+
+      const { error: taskErr } = await sbClient.from('tasks').delete().eq('user_id', currentUser.id);
+      if (taskErr) console.error('Clear tasks error:', taskErr);
+
       // Clear localStorage backup
       localStorage.removeItem('ra7_tasks_' + currentUser.id);
       localStorage.removeItem('ra7_messages_' + currentUser.id);
     }
-    tasks = []; messages = [];
-    renderAllTasks(); renderMessages(); renderRecentTasks(); renderBrief();
+
+    // Clear memory immediately
+    tasks = [];
+    messages = [];
+
+    // Re-render everything
+    renderAllTasks();
+    renderMessages();
+    renderRecentTasks();
+    renderBrief();
+
+    // Verify Supabase is empty
+    if (currentUser) {
+      const { data: remainingTasks } = await sbClient.from('tasks').select('id').eq('user_id', currentUser.id);
+      const { data: remainingMsgs } = await sbClient.from('messages').select('id').eq('user_id', currentUser.id);
+
+      if ((remainingTasks && remainingTasks.length > 0) || (remainingMsgs && remainingMsgs.length > 0)) {
+        showToast('Clear data did not finish. Please try again.');
+        return;
+      }
+    }
+
     showToast('Tasks and messages cleared');
+  } catch(e) {
+    console.error('clearData error:', e);
+    showToast('Clear data did not finish. Please try again.');
+  } finally {
+    isClearing = false;
+    if (btn) { btn.disabled = false; btn.textContent = '🗑 Clear all data'; }
   }
 }
 </script>
