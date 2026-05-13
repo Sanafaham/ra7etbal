@@ -2382,7 +2382,17 @@ function renderAllTasks() {
   renderRecentTasks();
   renderFollowUps();
   showToast('Task marked done ✓');
+   }
+function markFollowUpDone(index) {
+  markTaskDone(index);
+  setTimeout(() => {
+    renderFollowUps();
+  }, 50);
 }
+
+window.markFollowUpDone = markFollowUpDone;
+ 
+ }
 
 function deleteTask(index) {
   const task = tasks[index];
@@ -2524,7 +2534,7 @@ function renderBrief() {
       + '</div>'
       + '<div class="task-actions">'
 + '<span class="task-status status-pending">waiting</span>'
-+ '<button class="mini-btn" onclick="markTaskDone(tasks.indexOf(t))">Done</button>'
++ '<button class="mini-btn" onclick="markFollowUpDone(tasks.indexOf(t))">Done</button>'
 + '<button class="mini-btn danger" onclick="deleteTask(tasks.indexOf(t))">Delete</button>'
 + '</div>'
       + '</div>';
