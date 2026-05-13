@@ -1337,16 +1337,18 @@
   /* DESKTOP LAYOUT */
   @media (min-width: 768px) {
     body {
-      max-width: 900px;
+      max-width: 100%;
+      font-size: 18px;
     }
     .screen {
-      max-width: 900px;
+      max-width: 960px;
       left: 50%;
       transform: translateX(-50%);
     }
+    .app-header,
     .bottom-nav,
     .review-actions {
-      max-width: 900px;
+      max-width: 960px;
     }
     .home-section,
     .people-section,
@@ -1356,18 +1358,33 @@
     .brief-section,
     .review-body {
       max-width: 720px;
-      margin: 0 auto;
       width: 100%;
+      margin: 0 auto;
+      padding-left: 32px;
+      padding-right: 32px;
     }
-    .app-header {
-      max-width: 900px;
-    }
-    .input-area {
-      font-size: 17px;
-    }
-    .hero-title {
-      font-size: 56px;
-    }
+    .app-brand { font-size: 28px; }
+    .tab-btn { font-size: 16px; padding: 14px 22px; }
+    .section-eyebrow { font-size: 13px; }
+    .section-title { font-size: 38px; line-height: 1.1; }
+    .section-desc { font-size: 18px; line-height: 1.55; }
+    .input-area { font-size: 18px; min-height: 180px; padding: 24px; }
+    .btn-organize,
+    .btn-primary,
+    .btn-confirm,
+    .btn-secondary { font-size: 17px; padding: 18px 24px; }
+    .task-card,
+    .message-card,
+    .person-card,
+    .extracted-task-card { padding: 20px; border-radius: 18px; }
+    .task-text,
+    .message-preview,
+    .task-description { font-size: 17px; }
+    .message-name,
+    .person-name { font-size: 17px; }
+    .nav-label { font-size: 12px; }
+    .nav-icon { font-size: 24px; }
+    .hero-title { font-size: 56px; }
   }
 
   /* FADE IN */
