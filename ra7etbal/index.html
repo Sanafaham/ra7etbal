@@ -1711,6 +1711,23 @@ function saveUserData() {
   localStorage.setItem('ra7_messages_' + currentUser.id, JSON.stringify(messages));
 }
 
+  function clearTestData() {
+  if (!confirm('Clear all tasks and messages? Your people will stay saved.')) return;
+
+  tasks = [];
+  messages = [];
+
+  saveUserData();
+  renderAllTasks();
+  renderRecentTasks();
+  renderMessages();
+  renderFollowUps();
+
+  showToast('Test data cleared ✓');
+}
+
+window.clearTestData = clearTestData;
+
 function showApp() {
   document.getElementById('screen-onboarding').classList.remove('active');
   document.getElementById('screen-app').classList.add('active');
@@ -2330,7 +2347,11 @@ function renderAllTasks() {
     return;
   }
 
- list.innerHTML = tasks.map((t, index) => {
+ list.innerHTML = `
+  <button class="mini-btn danger" onclick="clearTestData()" style="margin-bottom: 12px;">
+    Clear test data
+  </button>
+` + tasks.map((t, index) => {
     const person = people.find(p => p.name === t.assignedTo);
     return `
       <div class="task-card">
