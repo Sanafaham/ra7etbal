@@ -1344,70 +1344,72 @@
       background: var(--cream);
     }
 
-    /* Screens: normal document flow, not fixed viewport */
+    /* On desktop screens flow as normal document -- no fixed positioning */
     .screen {
       position: relative !important;
       left: auto !important;
       transform: none !important;
       max-width: 900px !important;
       width: 100% !important;
-      min-height: 100vh;
-      overflow-y: visible;
-      padding-bottom: 0 !important;
+      overflow-y: visible !important;
     }
 
-    /* App screen: no bottom padding needed since nav is sticky not fixed */
-    #screen-app { padding-bottom: 0; }
-
-    /* Review screen */
-    #screen-review {
-      position: relative !important;
-      padding-bottom: 0 !important;
-    }
-
-    .review-body {
-      max-width: 820px;
-      margin: 0 auto;
-      padding: 24px 40px 40px;
-    }
-
-    /* BOTTOM NAV -- sticky on desktop, sits at bottom of page flow */
+    /* Bottom nav: normal flow at bottom, not fixed */
     .bottom-nav {
-      position: sticky !important;
-      bottom: 0;
+      position: relative !important;
       left: auto !important;
       transform: none !important;
       width: 100% !important;
       max-width: 900px !important;
-      padding: 12px 40px 20px;
-      z-index: 100;
+      padding: 16px 40px 24px !important;
+      border-top: 1px solid var(--border);
+      background: var(--warm-white);
       margin-top: auto;
     }
 
-    /* REVIEW ACTIONS -- sticky on desktop */
+    /* Review action bar: normal flow too */
     .review-actions {
-      position: sticky !important;
-      bottom: 0;
+      position: relative !important;
       left: auto !important;
       transform: none !important;
       width: 100% !important;
       max-width: 900px !important;
-      padding: 16px 40px 24px;
-      z-index: 100;
+      padding: 16px 40px 24px !important;
+      border-top: 1px solid var(--border);
+      background: var(--warm-white);
     }
 
-    /* Header */
+    /* App screen: flex column so nav sits at bottom */
+    #screen-app {
+      display: flex !important;
+      flex-direction: column !important;
+      min-height: 100vh !important;
+      padding-bottom: 0 !important;
+    }
+
+    /* Tab panels fill available space */
+    .tab-panel.active {
+      flex: 1;
+    }
+
+    /* Review screen: flex column */
+    #screen-review {
+      display: flex !important;
+      flex-direction: column !important;
+      min-height: 100vh !important;
+      padding-bottom: 0 !important;
+    }
+
+    /* Header stays sticky at top */
     .app-header {
       position: sticky;
       top: 0;
-      max-width: 900px;
-      width: 100%;
       z-index: 200;
+      width: 100%;
     }
 
-    /* Review header */
+    /* Review header normal */
     .review-header {
-      max-width: 900px;
       width: 100%;
       padding: 24px 40px;
     }
@@ -1428,7 +1430,14 @@
     .recent-section {
       max-width: 820px;
       margin: 0 auto;
-      padding: 0 40px 28px;
+      padding: 0 40px 40px;
+    }
+
+    .review-body {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 24px 40px 40px;
+      flex: 1;
     }
 
     /* Onboarding */
@@ -1449,46 +1458,31 @@
     .hero-body { font-size: 19px; line-height: 1.7; }
 
     /* Input */
-    .input-area {
-      font-size: 18px;
-      min-height: 180px;
-      padding: 24px;
-      line-height: 1.7;
-    }
+    .input-area { font-size: 18px; min-height: 180px; padding: 24px; line-height: 1.7; }
 
     /* Buttons */
-    .btn-organize,
-    .btn-primary { font-size: 17px; padding: 18px 28px; border-radius: 14px; }
+    .btn-organize, .btn-primary { font-size: 17px; padding: 18px 28px; border-radius: 14px; }
     .btn-confirm { font-size: 16px; padding: 16px 28px; }
     .btn-secondary { font-size: 15px; padding: 15px 24px; }
 
     /* Cards */
-    .task-card,
-    .message-card,
-    .person-card,
-    .extracted-task-card,
-    .brief-card { padding: 20px 24px; border-radius: 18px; margin-bottom: 12px; }
+    .task-card, .message-card, .person-card, .extracted-task-card, .brief-card {
+      padding: 20px 24px; border-radius: 18px; margin-bottom: 12px;
+    }
 
     /* Card text */
-    .task-text,
-    .message-preview,
-    .task-description { font-size: 17px; line-height: 1.5; }
+    .task-text, .message-preview, .task-description { font-size: 17px; line-height: 1.5; }
     .task-who, .message-name, .person-name { font-size: 14px; }
     .person-role { font-size: 14px; }
-
-    /* Review */
     .review-title { font-size: 26px; }
     .review-subtitle { font-size: 15px; }
 
-    /* Nav */
+    /* Nav items */
     .nav-icon { font-size: 24px; }
     .nav-label { font-size: 12px; }
     .nav-item { min-width: 80px; padding: 6px 20px; }
-
-    /* Tab bar */
     .app-header-top { padding: 18px 24px 0; }
   }
-
   /* FADE IN */
   @keyframes fadeUp {
     from { opacity: 0; transform: translateY(12px); }
