@@ -1336,55 +1336,113 @@
 
   /* DESKTOP LAYOUT */
   @media (min-width: 768px) {
+    html { font-size: 17px; }
+
     body {
-      max-width: 100%;
-      font-size: 18px;
+      max-width: 860px;
+      margin: 0 auto;
+      min-height: 100vh;
     }
+
+    /* All screens: normal flow, not fixed position on desktop */
     .screen {
-      max-width: 960px;
+      position: relative !important;
+      max-width: 860px !important;
+      left: auto !important;
+      transform: none !important;
+      overflow-y: auto;
+      min-height: 100vh;
+    }
+
+    /* Review screen stays relative so it scrolls naturally */
+    #screen-review {
+      position: relative !important;
+      padding-bottom: 120px;
+    }
+
+    /* Review body has enough space above the fixed bar */
+    .review-body {
+      padding-bottom: 100px;
+    }
+
+    /* Fixed bars align with container */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
       left: 50%;
       transform: translateX(-50%);
+      width: 860px;
+      max-width: 860px;
     }
-    .app-header,
-    .bottom-nav,
+
     .review-actions {
-      max-width: 960px;
+      position: fixed;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 860px;
+      max-width: 860px;
     }
+
+    /* App header */
+    .app-header {
+      max-width: 860px;
+      width: 100%;
+    }
+
+    /* Content sections */
     .home-section,
     .people-section,
     .messages-section,
     .tasks-section,
     .settings-section,
-    .brief-section,
-    .review-body {
-      max-width: 720px;
+    .brief-section {
+      max-width: 780px;
       width: 100%;
       margin: 0 auto;
-      padding-left: 32px;
-      padding-right: 32px;
+      padding-left: 40px;
+      padding-right: 40px;
     }
-    .app-brand { font-size: 28px; }
-    .tab-btn { font-size: 16px; padding: 14px 22px; }
+
+    /* Onboarding */
+    #screen-onboarding .onboarding-top { padding: 60px 80px 40px; }
+    #screen-onboarding .onboarding-bottom { padding: 0 80px 60px; }
+
+    /* Typography */
+    .app-brand { font-size: 26px; }
+    .tab-btn { font-size: 15px; padding: 12px 20px; }
     .section-eyebrow { font-size: 13px; }
-    .section-title { font-size: 38px; line-height: 1.1; }
-    .section-desc { font-size: 18px; line-height: 1.55; }
-    .input-area { font-size: 18px; min-height: 180px; padding: 24px; }
+    .section-title { font-size: 34px; }
+    .section-desc { font-size: 17px; }
+    .hero-title { font-size: 52px; }
+
+    /* Input */
+    .input-area { font-size: 17px; min-height: 160px; padding: 20px; }
+
+    /* Buttons */
     .btn-organize,
-    .btn-primary,
-    .btn-confirm,
-    .btn-secondary { font-size: 17px; padding: 18px 24px; }
+    .btn-primary { font-size: 16px; padding: 16px 24px; border-radius: 14px; }
+    .btn-confirm { font-size: 16px; padding: 15px 24px; }
+    .btn-secondary { font-size: 15px; padding: 14px 20px; }
+
+    /* Cards */
     .task-card,
     .message-card,
     .person-card,
-    .extracted-task-card { padding: 20px; border-radius: 18px; }
+    .extracted-task-card,
+    .brief-card { padding: 18px 20px; border-radius: 16px; }
+
+    /* Text inside cards */
     .task-text,
     .message-preview,
-    .task-description { font-size: 17px; }
-    .message-name,
-    .person-name { font-size: 17px; }
-    .nav-label { font-size: 12px; }
-    .nav-icon { font-size: 24px; }
-    .hero-title { font-size: 56px; }
+    .task-description,
+    .person-name,
+    .message-name { font-size: 16px; }
+
+    /* Nav */
+    .nav-icon { font-size: 22px; }
+    .nav-label { font-size: 11px; }
+    .bottom-nav { padding: 10px 20px 24px; }
   }
 
   /* FADE IN */
@@ -1828,6 +1886,7 @@ async function submitConfirmation() {
   const taskId = btn.dataset.taskId;
   btn.disabled = true;
   btn.textContent = 'Confirming...';
+  console.log('CONFIRM_CLICKED', taskId);
 
   try {
     const res = await fetch('/api/confirm-task', {
@@ -1836,6 +1895,16 @@ async function submitConfirmation() {
       body: JSON.stringify({ taskId })
     });
     const data = await res.json();
+    console.log('CONFIRM_API_RESPONSE', JSON.stringify(data));
+
+    // Verify task status in Supabase immediately after confirm
+    try {
+      const verifyRes = await fetch('/api/get-confirm-task?taskId=' + taskId);
+      const verifyData = await verifyRes.json();
+      console.log('CONFIRM_TASK_AFTER_UPDATE', 'taskId:', taskId, 'status:', verifyData.status);
+    } catch(e) {
+      console.log('CONFIRM_TASK_AFTER_UPDATE fetch failed:', e.message);
+    }
 
     btn.style.display = 'none';
     document.getElementById('confirmTaskBox').style.display = 'none';
@@ -1859,6 +1928,7 @@ async function submitConfirmation() {
           status: 'done',
           time: Date.now()
         }));
+        console.log('CONFIRM_SIGNAL_WRITTEN', taskId);
       } catch(e) {}
       document.getElementById('confirmIcon').textContent = '';
       document.getElementById('confirmTitle').textContent = 'Done!';
@@ -2924,25 +2994,27 @@ function showToast(msg) {
 // LIVE SYNC
 let pollingInterval = null;
 let isClearing = false;
+let isSyncing = false;
 
-// Pull fresh task statuses from Supabase and update local state
 async function syncTaskStatuses() {
   if (!currentUser) return;
   if (isClearing) return;
+  if (isSyncing) return; // prevent overlap but reset immediately after
+  isSyncing = true;
+
   try {
-    console.log('FORCED_REFRESH_START');
     const { data: freshTasks, error } = await sbClient
       .from('tasks')
       .select('id, status')
       .eq('user_id', currentUser.id);
 
-    if (error) { console.error('TASKS_FROM_SUPABASE error:', error); return; }
-    console.log('TASKS_FROM_SUPABASE count:', freshTasks ? freshTasks.length : 0);
+    console.log('POLL_RUNNING -- tasks from Supabase:', freshTasks ? freshTasks.length : 0, error ? 'ERROR:' + error.message : '');
 
-    if (!freshTasks || freshTasks.length === 0) return;
+    if (error || !freshTasks) { isSyncing = false; return; }
 
     const statusMap = {};
     freshTasks.forEach(t => { statusMap[String(t.id)] = t.status; });
+    console.log('TASK_STATUS_MAP', JSON.stringify(statusMap));
 
     let changed = false;
 
@@ -2950,7 +3022,6 @@ async function syncTaskStatuses() {
       const fresh = statusMap[String(t.id)];
       if (fresh && fresh !== t.status) {
         changed = true;
-        console.log('MESSAGE_TASK_STATUS changed:', t.id, t.status, '->', fresh);
         return Object.assign({}, t, { status: fresh });
       }
       return t;
@@ -2959,9 +3030,9 @@ async function syncTaskStatuses() {
     messages = messages.map(m => {
       if (!m.taskId) return m;
       const fresh = statusMap[String(m.taskId)];
+      console.log('MESSAGE_STATUS_CHECK', m.to, 'taskId:', m.taskId, 'old:', m.taskStatus, 'fresh:', fresh);
       if (fresh && fresh !== m.taskStatus) {
         changed = true;
-        console.log('MESSAGE_TASK_STATUS msg updated:', m.taskId, m.taskStatus, '->', fresh);
         return Object.assign({}, m, { taskStatus: fresh });
       }
       return m;
@@ -2972,24 +3043,33 @@ async function syncTaskStatuses() {
       renderBrief();
       renderAllTasks();
       renderRecentTasks();
-      console.log('FORCED_REFRESH_DONE');
     }
   } catch(e) {
     console.error('syncTaskStatuses error:', e);
+  } finally {
+    isSyncing = false;
   }
 }
 
-// Listen for localStorage event written by confirmation page
-window.addEventListener('storage', async (event) => {
+// Storage event from confirmation page
+window.addEventListener('storage', (event) => {
   if (event.key === 'ra7_status_changed') {
     console.log('STORAGE_EVENT_RECEIVED', event.newValue);
-    if (currentUser) {
-      await syncTaskStatuses();
-    }
+    if (currentUser) syncTaskStatuses();
   }
 });
 
-// Polling every 2 seconds while signed in
+// Visibility -- user returns to tab
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && currentUser) syncTaskStatuses();
+});
+
+// Window focus
+window.addEventListener('focus', () => {
+  if (currentUser) syncTaskStatuses();
+});
+
+// Polling every 2 seconds -- this is the source of truth
 function startPolling() {
   if (pollingInterval) return;
   pollingInterval = setInterval(() => {
