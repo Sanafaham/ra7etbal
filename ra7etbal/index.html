@@ -1791,6 +1791,14 @@ async function submitConfirmation() {
     }
 
     if (data.success) {
+      // Signal main app tab to refresh
+      try {
+        localStorage.setItem('ra7_status_changed', JSON.stringify({
+          taskId: taskId,
+          status: 'done',
+          time: Date.now()
+        }));
+      } catch(e) {}
       document.getElementById('confirmIcon').textContent = '';
       document.getElementById('confirmTitle').textContent = 'Done!';
       document.getElementById('confirmDesc').textContent = 'Done confirmed. Thank you.';
@@ -2131,6 +2139,11 @@ function showTab(tab) {
 
   const navBtn = document.querySelector('[data-nav="' + tab + '"]');
   if (navBtn) navBtn.classList.add('active');
+
+  // Refresh data when switching to key tabs
+  if (currentUser && ['tasks', 'messages', 'followups'].includes(tab)) {
+    refreshUserData();
+  }
 }
 
 // VOICE
@@ -2801,25 +2814,37 @@ function showToast(msg) {
 }
 
 // SETTINGS SAVE
-// AUTO REFRESH on tab focus or visibility change
+// AUTO REFRESH -- detects when user returns to tab
 let lastRefresh = 0;
 
 async function refreshUserData() {
   if (!currentUser) return;
   const now = Date.now();
-  if (now - lastRefresh < 5000) return; // debounce -- max once every 5 seconds
+  if (now - lastRefresh < 4000) return; // debounce max once per 4 seconds
   lastRefresh = now;
   await loadUserData();
 }
 
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    refreshUserData();
+// Tab becomes visible again (switching from confirmation page back)
+document.addEventListener('visibilitychange', async () => {
+  if (!document.hidden && currentUser) {
+    await refreshUserData();
   }
 });
 
-window.addEventListener('focus', () => {
-  refreshUserData();
+// Window gets focus (user clicks back into app window)
+window.addEventListener('focus', async () => {
+  if (currentUser) {
+    await refreshUserData();
+  }
+});
+
+// Cross-tab sync -- confirmation page writes to localStorage, main app picks it up
+window.addEventListener('storage', async (event) => {
+  if (event.key === 'ra7_status_changed' && currentUser) {
+    lastRefresh = 0; // force refresh even if recent
+    await loadUserData();
+  }
 });
 
 document.addEventListener('DOMContentLoaded', () => {
