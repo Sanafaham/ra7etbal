@@ -2140,9 +2140,9 @@ function showTab(tab) {
   const navBtn = document.querySelector('[data-nav="' + tab + '"]');
   if (navBtn) navBtn.classList.add('active');
 
-  // Refresh data when switching to key tabs
-  if (currentUser && ['tasks', 'messages', 'followups'].includes(tab)) {
-    refreshUserData();
+  // Force fresh data when switching to key tabs
+  if (currentUser && ['home', 'tasks', 'messages', 'followups'].includes(tab)) {
+    refreshUserData(true);
   }
 }
 
@@ -2857,36 +2857,36 @@ function showToast(msg) {
 }
 
 // SETTINGS SAVE
-// AUTO REFRESH -- detects when user returns to tab
+// AUTO REFRESH -- detects when user returns to tab after confirmation
 let lastRefresh = 0;
+const DEBOUNCE_MS = 3000; // 3 seconds normal debounce
 
-async function refreshUserData() {
+async function refreshUserData(force) {
   if (!currentUser) return;
   const now = Date.now();
-  if (now - lastRefresh < 4000) return; // debounce max once per 4 seconds
+  if (!force && (now - lastRefresh < DEBOUNCE_MS)) return;
   lastRefresh = now;
   await loadUserData();
 }
 
-// Tab becomes visible again (switching from confirmation page back)
+// Tab becomes visible again (user switches back from confirmation tab)
 document.addEventListener('visibilitychange', async () => {
   if (!document.hidden && currentUser) {
-    await refreshUserData();
+    await refreshUserData(true); // always force on tab return
   }
 });
 
-// Window gets focus (user clicks back into app window)
+// Window gets focus (user clicks back into browser window)
 window.addEventListener('focus', async () => {
   if (currentUser) {
-    await refreshUserData();
+    await refreshUserData(true); // always force on focus
   }
 });
 
-// Cross-tab sync -- confirmation page writes to localStorage, main app picks it up
+// Cross-tab storage event -- confirmation page writes ra7_status_changed
 window.addEventListener('storage', async (event) => {
   if (event.key === 'ra7_status_changed' && currentUser) {
-    lastRefresh = 0; // force refresh even if recent
-    await loadUserData();
+    await refreshUserData(true); // force immediately, bypass debounce
   }
 });
 
