@@ -2254,6 +2254,10 @@ function saveUserDataLocal() {
 function showApp() {
   document.getElementById('screen-onboarding').classList.remove('active');
   document.getElementById('screen-app').classList.add('active');
+  const validTabs = ['home', 'tasks', 'people', 'messages', 'followups', 'settings'];
+  let lastTab = 'home';
+  try { const stored = localStorage.getItem('ra7_last_tab'); if (stored && validTabs.includes(stored)) lastTab = stored; } catch(e) {}
+  showTab(lastTab);
   startPolling();
 }
 
@@ -2376,6 +2380,7 @@ async function signOut() {
 // TAB NAVIGATION
 function showTab(tab) {
   currentTab = tab;
+  try { localStorage.setItem('ra7_last_tab', tab); } catch(e) {}
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
