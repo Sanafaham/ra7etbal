@@ -3239,18 +3239,8 @@ async function clearData() {
 
     const userId = currentUser.id;
 
-    const msgDelete = await sbClient
-      .from('messages')
-      .delete()
-      .eq('user_id', userId);
-
-    const taskDelete = await sbClient
-      .from('tasks')
-      .delete()
-      .eq('user_id', userId);
-
-    if (msgDelete.error) console.error('Messages delete failed:', msgDelete.error);
-    if (taskDelete.error) console.error('Tasks delete failed:', taskDelete.error);
+    await sbClient.from('messages').delete().eq('user_id', userId);
+    await sbClient.from('tasks').delete().eq('user_id', userId);
 
     localStorage.removeItem('ra7_tasks_' + userId);
     localStorage.removeItem('ra7_messages_' + userId);
@@ -3276,7 +3266,8 @@ async function clearData() {
     }
 
     startPolling();
-}
+  }
+
 </script>
 
 
