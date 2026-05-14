@@ -1780,7 +1780,7 @@
 <div class="modal-overlay" id="addPersonModal">
   <div class="modal-sheet">
     <div class="modal-handle"></div>
-    <div class="modal-title">Add Someone</div>
+   <div class="modal-title" id="personModalTitle">Add Someone</div>
 
     <div class="form-group">
       <label class="form-label">Emoji</label>
@@ -1830,7 +1830,7 @@
 
     <div class="modal-actions">
       <button class="btn-secondary" style="flex:1" onclick="closeAddPerson()">Cancel</button>
-      <button class="btn-confirm" style="flex:2" onclick="savePerson()">Save Member</button>
+     <button class="btn-confirm" id="personSaveBtn" style="flex:2" onclick="savePerson()">Save Member</button>
     </div>
   </div>
 </div>
@@ -1843,8 +1843,9 @@ const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // STATE
 let currentUser = null;
-// Anthropic key is handled server-side via /api/anthropic
+// Anthropic key is handled server-side via /api/anthropic  
 let people = [];
+let editingPersonId = null;
 let tasks = [];
 let messages = [];
 let selectedRole = '';
@@ -2790,21 +2791,57 @@ function goBack() {
 
 // PEOPLE
 function openAddPerson() {
+  editingPersonId = null;
+
   document.getElementById('addPersonModal').classList.add('active');
+  document.getElementById('personModalTitle').textContent = 'Add Someone';
+  document.getElementById('personSaveBtn').textContent = 'Save Member';
+
   document.getElementById('newEmoji').value = '👤';
   document.getElementById('newName').value = '';
   document.getElementById('newPhone').value = '';
+
   selectedRole = '';
   selectedContact = 'WhatsApp';
+
   document.querySelectorAll('#roleChips .chip').forEach(c => c.classList.remove('selected'));
   document.querySelectorAll('#contactChips .chip').forEach(c => c.classList.remove('selected'));
   document.querySelector('[data-contact="WhatsApp"]').classList.add('selected');
 }
 
 function closeAddPerson() {
+  editingPersonId = null;
   document.getElementById('addPersonModal').classList.remove('active');
 }
+function openEditPerson(id) {
+  const person = people.find(p => String(p.id) === String(id));
 
+  if (!person) {
+    showToast('Person not found');
+    return;
+  }
+
+  editingPersonId = person.id;
+
+  document.getElementById('addPersonModal').classList.add('active');
+  document.getElementById('personModalTitle').textContent = 'Edit Person';
+  document.getElementById('personSaveBtn').textContent = 'Save Changes';
+
+  document.getElementById('newEmoji').value = person.emoji || '👤';
+  document.getElementById('newName').value = person.name || '';
+  document.getElementById('newPhone').value = person.phone || '';
+
+  selectedRole = person.role || '';
+  selectedContact = person.contact || 'WhatsApp';
+
+  document.querySelectorAll('#roleChips .chip').forEach(c => {
+    c.classList.toggle('selected', c.dataset.role === selectedRole);
+  });
+
+  document.querySelectorAll('#contactChips .chip').forEach(c => {
+    c.classList.toggle('selected', c.dataset.contact === selectedContact);
+  });
+}
 function selectRole(el) {
   document.querySelectorAll('#roleChips .chip').forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
@@ -2819,10 +2856,18 @@ function selectContact(el) {
 
 async function savePerson() {
   const name = document.getElementById('newName').value.trim();
-  if (!name) { showToast('Please enter a name'); return; }
-  if (!selectedRole) { showToast('Please pick a role'); return; }
 
-  const newPerson = {
+  if (!name) {
+    showToast('Please enter a name');
+    return;
+  }
+
+  if (!selectedRole) {
+    showToast('Please pick a role');
+    return;
+  }
+
+  const personData = {
     emoji: document.getElementById('newEmoji').value || '👤',
     name,
     role: selectedRole,
@@ -2830,15 +2875,59 @@ async function savePerson() {
     phone: document.getElementById('newPhone').value.trim()
   };
 
+  if (editingPersonId) {
+    const { data, error } = await sbClient
+      .from('people')
+      .update({
+        emoji: personData.emoji,
+        name: personData.name,
+        role: personData.role,
+        contact_method: personData.contact,
+        phone: personData.phone || ''
+      })
+      .eq('id', editingPersonId)
+      .eq('user_id', currentUser.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Update person error:', error);
+      showToast('Could not update person');
+      return;
+    }
+
+    const index = people.findIndex(p => String(p.id) === String(editingPersonId));
+
+    if (index !== -1) {
+      people[index] = {
+        ...people[index],
+        id: data.id,
+        emoji: data.emoji || personData.emoji,
+        name: data.name || personData.name,
+        role: data.role || personData.role,
+        contact: data.contact_method || personData.contact,
+        phone: data.phone || ''
+      };
+    }
+
+    editingPersonId = null;
+    saveUserDataLocal();
+    closeAddPerson();
+    renderPeople();
+    showToast('Person updated');
+    return;
+  }
+
+  const newPerson = personData;
+
   const saved = await savePersonToSupabase(newPerson);
   newPerson.id = saved ? saved.id : Date.now();
   people.push(newPerson);
   saveUserDataLocal();
   closeAddPerson();
   renderPeople();
-  showToast(name + ' added ✓');
+  showToast('Person added');
 }
-
 function renderPeople() {
   const list = document.getElementById('peopleList');
   if (!list) return;
@@ -2849,7 +2938,7 @@ function renderPeople() {
   }
 
   list.innerHTML = people.map(p => `
-    <div class="person-card">
+    <div class="person-card" onclick="openEditPerson('${p.id}')">
       <div class="person-avatar">${p.emoji}</div>
       <div class="person-info">
         <div class="person-name">${p.name}</div>
