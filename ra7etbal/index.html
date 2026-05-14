@@ -3197,53 +3197,95 @@ function copyMessage(elId) {
 async function clearData() {
   if (!confirm('This will delete all your tasks and messages. Your people will stay. Are you sure?')) return;
 
-  // Disable button immediately to prevent double-click
+  if (!currentUser || !currentUser.id) {
+    showToast('Please sign in first');
+    return;
+  }
+
   isClearing = true;
+  stopPolling();
+
   const btn = document.querySelector('[onclick="clearData()"]');
-  if (btn) { btn.disabled = true; btn.textContent = 'Clearing...'; }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Clearing...';
+  }
 
   try {
-    if (currentUser) {
-      // Delete messages first, then tasks
-      const { error: msgErr } = await sbClient.from('messages').delete().eq('user_id', currentUser.id);
-      if (msgErr) console.error('Clear messages error:', msgErr);
+    const userId = currentUser.id;
 
-      const { error: taskErr } = await sbClient.from('tasks').delete().eq('user_id', currentUser.id);
-      if (taskErr) console.error('Clear tasks error:', taskErr);
+    const { error: msgErr } = await sbClient
+      .from('messages')
+      .delete()
+      .eq('user_id', userId);
 
-      // Clear localStorage backup
-      localStorage.removeItem('ra7_tasks_' + currentUser.id);
-      localStorage.removeItem('ra7_messages_' + currentUser.id);
+    if (msgErr) {
+      throw new Error('Messages delete failed: ' + msgErr.message);
     }
 
-    // Clear memory immediately
+    const { error: taskErr } = await sbClient
+      .from('tasks')
+      .delete()
+      .eq('user_id', userId);
+
+    if (taskErr) {
+      throw new Error('Tasks delete failed: ' + taskErr.message);
+    }
+
+    localStorage.removeItem('ra7_tasks_' + userId);
+    localStorage.removeItem('ra7_messages_' + userId);
+
     tasks = [];
     messages = [];
 
-    // Re-render everything
     renderAllTasks();
     renderMessages();
     renderRecentTasks();
     renderBrief();
 
-    // Verify Supabase is empty
-    if (currentUser) {
-      const { data: remainingTasks } = await sbClient.from('tasks').select('id').eq('user_id', currentUser.id);
-      const { data: remainingMsgs } = await sbClient.from('messages').select('id').eq('user_id', currentUser.id);
+    const { data: remainingTasks, error: checkTasksErr } = await sbClient
+      .from('tasks')
+      .select('id')
+      .eq('user_id', userId);
 
-      if ((remainingTasks && remainingTasks.length > 0) || (remainingMsgs && remainingMsgs.length > 0)) {
-        showToast('Clear data did not finish. Please try again.');
-        return;
-      }
+    if (checkTasksErr) {
+      throw new Error('Task verify failed: ' + checkTasksErr.message);
     }
 
+    const { data: remainingMsgs, error: checkMsgsErr } = await sbClient
+      .from('messages')
+      .select('id')
+      .eq('user_id', userId);
+
+    if (checkMsgsErr) {
+      throw new Error('Message verify failed: ' + checkMsgsErr.message);
+    }
+
+    if ((remainingTasks && remainingTasks.length > 0) || (remainingMsgs && remainingMsgs.length > 0)) {
+      throw new Error('Data still exists after delete');
+    }
+
+    tasks = [];
+    messages = [];
+
+    renderAllTasks();
+    renderMessages();
+    renderRecentTasks();
+    renderBrief();
+
     showToast('Tasks and messages cleared');
-  } catch(e) {
+  } catch (e) {
     console.error('clearData error:', e);
-    showToast('Clear data did not finish. Please try again.');
+    showToast('Clear failed: ' + (e.message || 'Unknown error'));
   } finally {
     isClearing = false;
-    if (btn) { btn.disabled = false; btn.textContent = '🗑 Clear all data'; }
+
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '🗑 Clear all data';
+    }
+
+    startPolling();
   }
 }
 </script>
