@@ -45,7 +45,7 @@
   }
 
   /* SCREENS */
-  .screen { display: none; flex-direction: column; min-height: 100vh; position: fixed; top: 0; left: 0; width: 100%; max-width: 480px; overflow-y: auto; background: var(--cream); z-index: 1; }
+  .screen { display: none; flex-direction: column; height: 100vh; position: fixed; top: 0; bottom: 0; left: 0; width: 100%; max-width: 480px; overflow-y: auto; background: var(--cream); z-index: 1; }
   .screen.active { display: flex; z-index: 10; }
 
   /* CONFIRMATION SCREEN */
@@ -240,7 +240,7 @@
   /* MAIN APP */
  #screen-app {
   background: var(--cream);
-  padding-bottom: 360px;
+  padding-bottom: calc(80px + env(safe-area-inset-bottom, 20px));
 }
 
   /* TOP NAV */
@@ -790,7 +790,7 @@
 
   /* PEOPLE TAB */
   .people-section {
-  padding: 20px 20px 320px;
+  padding: 20px 20px calc(80px + env(safe-area-inset-bottom, 20px));
 }
 
   .add-person-btn {
