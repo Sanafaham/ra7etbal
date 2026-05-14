@@ -2623,18 +2623,7 @@ async function saveAll() {
     saveBtn.textContent = 'Saving...';
   }
 
-  function timeoutPromise(ms, label) {
-    return new Promise((_, reject) => {
-      setTimeout(() => reject(new Error(label + ' timed out')), ms);
-    });
-  }
-
-  async function safeSave(label, promise) {
-    return Promise.race([
-      promise,
-      timeoutPromise(12000, label)
-    ]);
-  }
+ 
 
   try {
     pendingExtracted.forEach((item, i) => {
@@ -2652,13 +2641,13 @@ async function saveAll() {
       if (isDelegated) {
         let taskId = null;
 
-        const savedTask = await safeSave('Task save', saveTaskToSupabase({
+        const savedTask = await saveTaskToSupabase({
           type: item.type,
           description: item.description,
           assignedTo: assignedTo,
           status: 'pending',
           suggestedMessage: msgText || null
-        }));
+        });
 
         if (!savedTask || !savedTask.id) {
           throw new Error('Task did not save');
@@ -2672,11 +2661,11 @@ async function saveAll() {
           ? msgText + '\n\nWhen done, tap here:\n' + confirmationUrl
           : 'When done, tap here:\n' + confirmationUrl;
 
-        const savedMsg = await safeSave('Message save', saveMessageToSupabase(
-          { to: assignedTo, text: fullMsg, channel: getPersonContact(assignedTo) },
-          taskId,
-          confirmationUrl
-        ));
+        const savedMsg = await saveMessageToSupabase(
+  { to: assignedTo, text: fullMsg, channel: getPersonContact(assignedTo) },
+  taskId,
+  confirmationUrl
+);
 
         tasks.unshift({
           id: taskId,
@@ -2701,11 +2690,11 @@ async function saveAll() {
 
       } else if (isOneWayMessage) {
         if (msgText) {
-          const savedMsg = await safeSave('Message save', saveMessageToSupabase(
-            { to: assignedTo, text: msgText, channel: getPersonContact(assignedTo) },
-            null,
-            null
-          ));
+         const savedMsg = await saveMessageToSupabase(
+  { to: assignedTo, text: msgText, channel: getPersonContact(assignedTo) },
+  null,
+  null
+);
 
           messages.unshift({
             id: savedMsg && savedMsg.id ? savedMsg.id : crypto.randomUUID(),
@@ -2721,13 +2710,13 @@ async function saveAll() {
         }
 
       } else {
-        const savedTask = await safeSave('Task save', saveTaskToSupabase({
-          type: item.type,
-          description: item.description,
-          assignedTo: null,
-          status: 'pending',
-          suggestedMessage: null
-        }));
+        const savedTask = await saveTaskToSupabase({
+  type: item.type,
+  description: item.description,
+  assignedTo: null,
+  status: 'pending',
+  suggestedMessage: null
+});
 
         tasks.unshift({
           id: savedTask && savedTask.id ? savedTask.id : crypto.randomUUID(),
