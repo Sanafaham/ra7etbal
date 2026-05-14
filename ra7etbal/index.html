@@ -951,7 +951,26 @@
 
   .form-input:focus { border-color: var(--sage); }
   .form-input::placeholder { color: var(--stone); }
+.emoji-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
 
+.emoji-chip {
+  width: 42px;
+  height: 42px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--cream);
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.emoji-chip:active {
+  transform: scale(0.96);
+}
   .chip-group {
     display: flex;
     flex-wrap: wrap;
@@ -1785,6 +1804,20 @@
     <div class="form-group">
       <label class="form-label">Emoji</label>
       <input type="text" class="form-input" id="newEmoji" placeholder="👤" maxlength="2" value="👤">
+      <div class="emoji-picker">
+  <button type="button" class="emoji-chip" onclick="pickEmoji('👤')">👤</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('👩')">👩</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('👨')">👨</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('👧')">👧</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('👦')">👦</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('👵')">👵</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('👴')">👴</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('🧑‍🍳')">🧑‍🍳</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('🚗')">🚗</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('🧹')">🧹</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('🌿')">🌿</button>
+  <button type="button" class="emoji-chip" onclick="pickEmoji('🏠')">🏠</button>
+</div>
     </div>
 
     <div class="form-group">
@@ -2842,6 +2875,9 @@ function openEditPerson(id) {
     c.classList.toggle('selected', c.dataset.contact === selectedContact);
   });
 }
+function pickEmoji(emoji) {
+  document.getElementById('newEmoji').value = emoji;
+}  
 function selectRole(el) {
   document.querySelectorAll('#roleChips .chip').forEach(c => c.classList.remove('selected'));
   el.classList.add('selected');
