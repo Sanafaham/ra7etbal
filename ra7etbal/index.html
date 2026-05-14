@@ -2745,7 +2745,7 @@ async function saveAll() {
 
   } catch (e) {
     console.error('saveAll failed:', e);
-    showToast('Save failed. Please refresh and try again.');
+    showToast('Save failed: ' + (e.message || 'Unknown error'));
   } finally {
     showLoading(false);
 
