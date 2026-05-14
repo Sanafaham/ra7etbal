@@ -7,7 +7,7 @@
 <title>Ra7etBal · راحة بال</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-<style>
+<style
   :root {
     --cream: #F5F0E8;
     --warm-white: #FAF8F4;
@@ -2209,7 +2209,9 @@ async function savePersonToSupabase(person) {
 
 async function saveTaskToSupabase(task) {
   if (!currentUser) return null;
-  const { data, error } = await sbClient.from('tasks').insert({
+  const id = crypto.randomUUID();
+  const { error } = await sbClient.from('tasks').insert({
+    id: id,
     user_id: currentUser.id,
     type: task.type,
     description: task.description,
@@ -2217,14 +2219,16 @@ async function saveTaskToSupabase(task) {
     status: task.status || 'pending',
     suggested_message: task.suggestedMessage || null,
     needs_follow_up: (task.type === 'delegation' || task.type === 'followup')
-  }).select().single();
+  });
   if (error) { console.error('Save task error:', error); return null; }
-  return data;
+  return { id };
 }
 
 async function saveMessageToSupabase(msg, taskId, confirmationUrl) {
   if (!currentUser) return null;
-  const { data, error } = await sbClient.from('messages').insert({
+  const id = crypto.randomUUID();
+  const { error } = await sbClient.from('messages').insert({
+    id: id,
     user_id: currentUser.id,
     task_id: taskId || null,
     recipient_name: msg.to,
@@ -2232,9 +2236,9 @@ async function saveMessageToSupabase(msg, taskId, confirmationUrl) {
     body: msg.text,
     confirmation_url: confirmationUrl || null,
     status: 'prepared'
-  }).select().single();
+  });
   if (error) { console.error('Save message error:', error); return null; }
-  return data;
+  return { id };
 }
 
 async function updateTaskStatus(taskId, status) {
