@@ -2617,60 +2617,78 @@ function reviewAction() {
 async function saveAll() {
   showLoading(true);
 
-  // Collect final messages from review screen
-  pendingExtracted.forEach((item, i) => {
-    const finalEl = document.getElementById('final-msg-' + i);
-    if (finalEl) item.finalMessage = finalEl.value;
-  });
+  const saveBtn = document.getElementById('reviewActionBtn');
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+  }
 
-  for (const item of pendingExtracted) {
-    const assignedTo = item.finalAssignedTo || item.assignedTo || null;
-    const hasRecipient = assignedTo && assignedTo !== '__me__' && assignedTo !== '__later__';
-    const isDelegated = item.type === 'delegation' && hasRecipient;
-    const isOneWayMessage = item.type === 'message' && hasRecipient;
-    const msgText = item.finalMessage || item.suggestedMessage;
+  function timeoutPromise(ms, label) {
+    return new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(label + ' timed out')), ms);
+    });
+  }
 
-    if (isDelegated) {
-      // DELEGATION: task + confirmation link + message
-      let taskId = null;
-      try {
-        const savedTask = await saveTaskToSupabase({
+  async function safeSave(label, promise) {
+    return Promise.race([
+      promise,
+      timeoutPromise(12000, label)
+    ]);
+  }
+
+  try {
+    pendingExtracted.forEach((item, i) => {
+      const finalEl = document.getElementById('final-msg-' + i);
+      if (finalEl) item.finalMessage = finalEl.value;
+    });
+
+    for (const item of pendingExtracted) {
+      const assignedTo = item.finalAssignedTo || item.assignedTo || null;
+      const hasRecipient = assignedTo && assignedTo !== '__me__' && assignedTo !== '__later__';
+      const isDelegated = item.type === 'delegation' && hasRecipient;
+      const isOneWayMessage = item.type === 'message' && hasRecipient;
+      const msgText = item.finalMessage || item.suggestedMessage;
+
+      if (isDelegated) {
+        let taskId = null;
+
+        const savedTask = await safeSave('Task save', saveTaskToSupabase({
           type: item.type,
           description: item.description,
           assignedTo: assignedTo,
           status: 'pending',
           suggestedMessage: msgText || null
+        }));
+
+        if (!savedTask || !savedTask.id) {
+          throw new Error('Task did not save');
+        }
+
+        taskId = savedTask.id;
+
+        const confirmationUrl = window.location.origin + '/confirm?task=' + taskId;
+
+        const fullMsg = msgText
+          ? msgText + '\n\nWhen done, tap here:\n' + confirmationUrl
+          : 'When done, tap here:\n' + confirmationUrl;
+
+        const savedMsg = await safeSave('Message save', saveMessageToSupabase(
+          { to: assignedTo, text: fullMsg, channel: getPersonContact(assignedTo) },
+          taskId,
+          confirmationUrl
+        ));
+
+        tasks.unshift({
+          id: taskId,
+          type: item.type,
+          description: item.description,
+          assignedTo: assignedTo,
+          status: 'pending',
+          createdAt: new Date().toISOString()
         });
-        if (savedTask && savedTask.id) taskId = savedTask.id;
-      } catch(e) { console.error('Task save failed:', e); }
-
-      const confirmationUrl = taskId
-        ? window.location.origin + '/confirm?task=' + taskId
-        : null;
-
-      tasks.unshift({
-        id: taskId || crypto.randomUUID(),
-        type: item.type,
-        description: item.description,
-        assignedTo: assignedTo,
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      });
-
-      if (msgText) {
-        const confirmLine = confirmationUrl ? ('\n\nWhen done, tap here:\n' + confirmationUrl) : '';
-        const fullMsg = msgText + confirmLine;
-        let msgId = null;
-        try {
-          const savedMsg = await saveMessageToSupabase(
-            { to: assignedTo, text: fullMsg, channel: getPersonContact(assignedTo) },
-            taskId, confirmationUrl
-          );
-          if (savedMsg && savedMsg.id) msgId = savedMsg.id;
-        } catch(e) { console.error('Message save failed:', e); }
 
         messages.unshift({
-          id: msgId || crypto.randomUUID(),
+          id: savedMsg && savedMsg.id ? savedMsg.id : crypto.randomUUID(),
           taskId: taskId,
           to: assignedTo,
           text: fullMsg,
@@ -2680,70 +2698,73 @@ async function saveAll() {
           taskStatus: 'pending',
           createdAt: new Date().toISOString()
         });
-      }
 
-    } else if (isOneWayMessage) {
-      // ONE-WAY MESSAGE: message only, no task, no confirmation link
-      if (msgText) {
-        let msgId = null;
-        try {
-          const savedMsg = await saveMessageToSupabase(
+      } else if (isOneWayMessage) {
+        if (msgText) {
+          const savedMsg = await safeSave('Message save', saveMessageToSupabase(
             { to: assignedTo, text: msgText, channel: getPersonContact(assignedTo) },
-            null, null
-          );
-          if (savedMsg && savedMsg.id) msgId = savedMsg.id;
-        } catch(e) { console.error('Message save failed:', e); }
+            null,
+            null
+          ));
 
-        messages.unshift({
-          id: msgId || crypto.randomUUID(),
-          taskId: null,
-          to: assignedTo,
-          text: msgText,
-          channel: getPersonContact(assignedTo),
-          status: 'prepared',
-          confirmationUrl: null,
-          taskStatus: null,
-          createdAt: new Date().toISOString()
-        });
-      }
+          messages.unshift({
+            id: savedMsg && savedMsg.id ? savedMsg.id : crypto.randomUUID(),
+            taskId: null,
+            to: assignedTo,
+            text: msgText,
+            channel: getPersonContact(assignedTo),
+            status: 'prepared',
+            confirmationUrl: null,
+            taskStatus: null,
+            createdAt: new Date().toISOString()
+          });
+        }
 
-    } else {
-      // TASK ONLY: action, reminder, errand, decision, parked, followup
-      let taskId = null;
-      try {
-        const savedTask = await saveTaskToSupabase({
+      } else {
+        const savedTask = await safeSave('Task save', saveTaskToSupabase({
           type: item.type,
           description: item.description,
           assignedTo: null,
           status: 'pending',
           suggestedMessage: null
-        });
-        if (savedTask && savedTask.id) taskId = savedTask.id;
-      } catch(e) { console.error('Task save failed:', e); }
+        }));
 
-      tasks.unshift({
-        id: taskId || crypto.randomUUID(),
-        type: item.type,
-        description: item.description,
-        assignedTo: null,
-        status: 'pending',
-        createdAt: new Date().toISOString()
-      });
+        tasks.unshift({
+          id: savedTask && savedTask.id ? savedTask.id : crypto.randomUUID(),
+          type: item.type,
+          description: item.description,
+          assignedTo: null,
+          status: 'pending',
+          createdAt: new Date().toISOString()
+        });
+      }
+    }
+
+    saveUserDataLocal();
+
+    document.getElementById('mainInput').value = '';
+    updateCharCount();
+    pendingExtracted = [];
+
+    goBack();
+    renderAllTasks();
+    renderMessages();
+    renderRecentTasks();
+    renderBrief();
+    showTab('messages');
+    showToast('Saved ✓');
+
+  } catch (e) {
+    console.error('saveAll failed:', e);
+    showToast('Save failed. Please refresh and try again.');
+  } finally {
+    showLoading(false);
+
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = '<span id="reviewActionLabel">Save Tasks & Messages</span> →';
     }
   }
-
-  saveUserDataLocal();
-  showLoading(false);
-  document.getElementById('mainInput').value = '';
-  updateCharCount();
-  pendingExtracted = [];
-
-  goBack();
-  showToast('Saved \u2713');
-  renderAllTasks();
-  renderMessages();
-  renderRecentTasks();
-  renderBrief();
 }
 
 function getPersonContact(name) {
