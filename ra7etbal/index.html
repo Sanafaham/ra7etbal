@@ -703,20 +703,20 @@
   .clarify-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
   .clarify-text { font-size: 13px; color: #92400E; line-height: 1.5; font-weight: 400; }
 
- .review-actions {
-  .review-actions {
-  position: sticky;
-  bottom: 0;
-  left: 0;
-  transform: none;
-  width: 100%;
-  max-width: 480px;
+.review-actions {
+  position: fixed;
+  bottom: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 40px);
+  max-width: 440px;
   background: var(--warm-white);
-  border-top: 1px solid var(--border);
-  padding: 16px 20px max(32px, env(safe-area-inset-bottom));
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 12px;
   display: flex;
   gap: 10px;
-  z-index: 100;
+  z-index: 999;
 }
   .btn-secondary {
     flex: 1;
