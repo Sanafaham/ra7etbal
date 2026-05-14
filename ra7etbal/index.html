@@ -2934,66 +2934,78 @@ async function savePerson() {
     return;
   }
 
-  const personData = {
-    emoji: document.getElementById('newEmoji').value || '👤',
-    name,
-    role: selectedRole,
-    contact: selectedContact,
-    phone: document.getElementById('newPhone').value.trim()
-  };
+  const saveBtn = document.getElementById('personSaveBtn');
+  const originalText = saveBtn ? saveBtn.textContent : '';
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
 
-  if (editingPersonId) {
-    const { data, error } = await sbClient
-      .from('people')
-      .update({
-        emoji: personData.emoji,
-        name: personData.name,
-        role: personData.role,
-        contact_method: personData.contact,
-        phone: personData.phone || ''
-      })
-      .eq('id', editingPersonId)
-      .eq('user_id', currentUser.id)
-      .select()
-      .single();
+  try {
+    const personData = {
+      emoji: document.getElementById('newEmoji').value || '👤',
+      name,
+      role: selectedRole,
+      contact: selectedContact,
+      phone: document.getElementById('newPhone').value.trim()
+    };
 
-    if (error) {
-      console.error('Update person error:', error);
-      showToast('Could not update person');
+    if (editingPersonId) {
+      if (!currentUser) { showToast('Not signed in'); return; }
+      const { data, error } = await sbClient
+        .from('people')
+        .update({
+          emoji: personData.emoji,
+          name: personData.name,
+          role: personData.role,
+          contact_method: personData.contact,
+          phone: personData.phone || ''
+        })
+        .eq('id', editingPersonId)
+        .eq('user_id', currentUser.id)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Update person error:', error);
+        showToast('Could not update person');
+        return;
+      }
+
+      const index = people.findIndex(p => String(p.id) === String(editingPersonId));
+
+      if (index !== -1) {
+        people[index] = {
+          ...people[index],
+          id: data.id,
+          emoji: data.emoji || personData.emoji,
+          name: data.name || personData.name,
+          role: data.role || personData.role,
+          contact: data.contact_method || personData.contact,
+          phone: data.phone || ''
+        };
+      }
+
+      editingPersonId = null;
+      saveUserDataLocal();
+      closeAddPerson();
+      renderPeople();
+      showToast('Person updated');
       return;
     }
 
-    const index = people.findIndex(p => String(p.id) === String(editingPersonId));
-
-    if (index !== -1) {
-      people[index] = {
-        ...people[index],
-        id: data.id,
-        emoji: data.emoji || personData.emoji,
-        name: data.name || personData.name,
-        role: data.role || personData.role,
-        contact: data.contact_method || personData.contact,
-        phone: data.phone || ''
-      };
-    }
-
-    editingPersonId = null;
+    const newPerson = personData;
+    const saved = await savePersonToSupabase(newPerson);
+    newPerson.id = saved ? saved.id : Date.now();
+    people.push(newPerson);
     saveUserDataLocal();
     closeAddPerson();
     renderPeople();
-    showToast('Person updated');
-    return;
+    showToast('Person added');
+
+  } catch (e) {
+    console.error('savePerson error:', e);
+    showToast('Something went wrong. Please try again.');
+  } finally {
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = originalText; }
   }
-
-  const newPerson = personData;
-
-  const saved = await savePersonToSupabase(newPerson);
-  newPerson.id = saved ? saved.id : Date.now();
-  people.push(newPerson);
-  saveUserDataLocal();
-  closeAddPerson();
-  renderPeople();
-  showToast('Person added');
 }
 function renderPeople() {
   const list = document.getElementById('peopleList');
