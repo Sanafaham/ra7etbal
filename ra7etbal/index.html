@@ -704,17 +704,20 @@
   .clarify-text { font-size: 13px; color: #92400E; line-height: 1.5; font-weight: 400; }
 
  .review-actions {
+  .review-actions {
   position: sticky;
   bottom: 0;
+  left: 0;
+  transform: none;
   width: 100%;
+  max-width: 480px;
   background: var(--warm-white);
   border-top: 1px solid var(--border);
-  padding: 16px 20px max(32px, env(safe-area-inset-bottom, 16px));
+  padding: 16px 20px max(32px, env(safe-area-inset-bottom));
   display: flex;
   gap: 10px;
-  z-index: 20;
+  z-index: 100;
 }
-
   .btn-secondary {
     flex: 1;
     background: transparent;
