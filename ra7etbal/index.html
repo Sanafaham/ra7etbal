@@ -589,7 +589,7 @@
 
   .review-subtitle { font-size: 13px; color: var(--warm-gray); margin-top: 2px; }
 
-  .review-body { padding: 20px; }
+  .review-body { padding: 20px; padding-bottom: calc(120px + env(safe-area-inset-bottom, 20px)); }
 
   .review-step {
     display: flex;
@@ -1097,7 +1097,7 @@
   }
 
   /* MESSAGES TAB */
-  .messages-section { padding: 20px; }
+  .messages-section { padding: 20px; padding-bottom: calc(80px + env(safe-area-inset-bottom, 20px)); }
 
   .message-card {
     background: var(--warm-white);
@@ -2692,15 +2692,10 @@ function reviewAction() {
 }
 
 async function saveAll() {
+  console.log('[saveAll] starting, items:', pendingExtracted.length);
   showLoading(true);
-
   const saveBtn = document.getElementById('reviewActionBtn');
-  if (saveBtn) {
-    saveBtn.disabled = true;
-    saveBtn.textContent = 'Saving...';
-  }
-
- 
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Saving...'; }
 
   try {
     pendingExtracted.forEach((item, i) => {
@@ -2708,123 +2703,79 @@ async function saveAll() {
       if (finalEl) item.finalMessage = finalEl.value;
     });
 
-    for (const item of pendingExtracted) {
+    for (let idx = 0; idx < pendingExtracted.length; idx++) {
+      const item = pendingExtracted[idx];
       const assignedTo = item.finalAssignedTo || item.assignedTo || null;
       const hasRecipient = assignedTo && assignedTo !== '__me__' && assignedTo !== '__later__';
       const isDelegated = item.type === 'delegation' && hasRecipient;
       const isOneWayMessage = item.type === 'message' && hasRecipient;
       const msgText = item.finalMessage || item.suggestedMessage;
+      console.log('[saveAll] item', idx, 'type:', item.type, 'delegated:', isDelegated, 'oneWay:', isOneWayMessage);
 
       if (isDelegated) {
-        let taskId = null;
-
         const savedTask = await saveTaskToSupabase({
-          type: item.type,
-          description: item.description,
-          assignedTo: assignedTo,
-          status: 'pending',
-          suggestedMessage: msgText || null
+          type: item.type, description: item.description,
+          assignedTo: assignedTo, status: 'pending', suggestedMessage: msgText || null
         });
-
-        if (!savedTask || !savedTask.id) {
-          throw new Error('Task did not save');
-        }
-
-        taskId = savedTask.id;
-
+        if (!savedTask || !savedTask.id) { throw new Error('Task did not save for ' + assignedTo); }
+        const taskId = savedTask.id;
+        console.log('[saveAll] task saved:', taskId);
         const confirmationUrl = window.location.origin + '/confirm?task=' + taskId;
-
         const fullMsg = msgText
           ? msgText + '\n\nWhen done, tap here:\n' + confirmationUrl
           : 'When done, tap here:\n' + confirmationUrl;
-
         const savedMsg = await saveMessageToSupabase(
-  { to: assignedTo, text: fullMsg, channel: getPersonContact(assignedTo) },
-  taskId,
-  confirmationUrl
-);
-
-        tasks.unshift({
-          id: taskId,
-          type: item.type,
-          description: item.description,
-          assignedTo: assignedTo,
-          status: 'pending',
-          createdAt: new Date().toISOString()
-        });
-
+          { to: assignedTo, text: fullMsg, channel: getPersonContact(assignedTo) },
+          taskId, confirmationUrl
+        );
+        console.log('[saveAll] message saved:', savedMsg && savedMsg.id);
+        tasks.unshift({ id: taskId, type: item.type, description: item.description,
+          assignedTo: assignedTo, status: 'pending', createdAt: new Date().toISOString() });
         messages.unshift({
           id: savedMsg && savedMsg.id ? savedMsg.id : crypto.randomUUID(),
-          taskId: taskId,
-          to: assignedTo,
-          text: fullMsg,
-          channel: getPersonContact(assignedTo),
-          status: 'prepared',
-          confirmationUrl: confirmationUrl,
-          taskStatus: 'pending',
-          createdAt: new Date().toISOString()
+          taskId: taskId, to: assignedTo, text: fullMsg,
+          channel: getPersonContact(assignedTo), status: 'prepared',
+          confirmationUrl: confirmationUrl, taskStatus: 'pending', createdAt: new Date().toISOString()
         });
-} else if (isOneWayMessage) {
-  // ONE-WAY MESSAGE: message only, no task, no confirmation link
-  if (msgText) {
-    const msgId = crypto.randomUUID();
 
-    const { error: msgError } = await sbClient
-      .from('messages')
-      .insert({
-        user_id: currentUser.id,
-        task_id: null,
-        recipient_name: assignedTo,
-        channel: getPersonContact(assignedTo),
-        body: msgText,
-        confirmation_url: null,
-        status: 'prepared'
-      });
-
-    if (msgError) {
-      throw new Error('One-way message save failed: ' + msgError.message);
-    }
-
-    messages.unshift({
-      id: msgId,
-      taskId: null,
-      to: assignedTo,
-      text: msgText,
-      channel: getPersonContact(assignedTo),
-      status: 'prepared',
-      confirmationUrl: null,
-      taskStatus: null,
-      createdAt: new Date().toISOString()
-    });
-  }     
-        
-
+      } else if (isOneWayMessage) {
+        if (msgText) {
+          const msgId = crypto.randomUUID();
+          console.log('[saveAll] saving one-way message, id:', msgId);
+          const { error: msgError } = await sbClient.from('messages').insert({
+            id: msgId,
+            user_id: currentUser.id,
+            task_id: null,
+            recipient_name: assignedTo,
+            channel: getPersonContact(assignedTo),
+            body: msgText,
+            confirmation_url: null,
+            status: 'prepared'
+          });
+          if (msgError) { throw new Error('One-way message save failed: ' + msgError.message); }
+          console.log('[saveAll] one-way message saved');
+          messages.unshift({ id: msgId, taskId: null, to: assignedTo, text: msgText,
+            channel: getPersonContact(assignedTo), status: 'prepared',
+            confirmationUrl: null, taskStatus: null, createdAt: new Date().toISOString() });
+        }
       } else {
         const savedTask = await saveTaskToSupabase({
-  type: item.type,
-  description: item.description,
-  assignedTo: null,
-  status: 'pending',
-  suggestedMessage: null
-});
-
+          type: item.type, description: item.description,
+          assignedTo: null, status: 'pending', suggestedMessage: null
+        });
+        console.log('[saveAll] unassigned task saved:', savedTask && savedTask.id);
         tasks.unshift({
           id: savedTask && savedTask.id ? savedTask.id : crypto.randomUUID(),
-          type: item.type,
-          description: item.description,
-          assignedTo: null,
-          status: 'pending',
-          createdAt: new Date().toISOString()
+          type: item.type, description: item.description,
+          assignedTo: null, status: 'pending', createdAt: new Date().toISOString()
         });
       }
     }
 
     saveUserDataLocal();
-
     document.getElementById('mainInput').value = '';
     updateCharCount();
     pendingExtracted = [];
-
     goBack();
     renderAllTasks();
     renderMessages();
@@ -2832,13 +2783,13 @@ async function saveAll() {
     renderBrief();
     showTab('messages');
     showToast('Saved ✓');
+    console.log('[saveAll] complete');
 
   } catch (e) {
-    console.error('saveAll failed:', e);
+    console.error('[saveAll] failed:', e);
     showToast('Save failed: ' + (e.message || 'Unknown error'));
   } finally {
     showLoading(false);
-
     if (saveBtn) {
       saveBtn.disabled = false;
       saveBtn.innerHTML = '<span id="reviewActionLabel">Save Tasks & Messages</span> →';
