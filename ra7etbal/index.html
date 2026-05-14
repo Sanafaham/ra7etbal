@@ -3239,23 +3239,18 @@ async function clearData() {
 
     const userId = currentUser.id;
 
-    const { error: msgErr } = await sbClient
+    const msgDelete = await sbClient
       .from('messages')
       .delete()
       .eq('user_id', userId);
 
-    if (msgErr) {
-      throw new Error('Messages delete failed: ' + msgErr.message);
-    }
-
-    const { error: taskErr } = await sbClient
+    const taskDelete = await sbClient
       .from('tasks')
       .delete()
       .eq('user_id', userId);
 
-    if (taskErr) {
-      throw new Error('Tasks delete failed: ' + taskErr.message);
-    }
+    if (msgDelete.error) console.error('Messages delete failed:', msgDelete.error);
+    if (taskDelete.error) console.error('Tasks delete failed:', taskDelete.error);
 
     localStorage.removeItem('ra7_tasks_' + userId);
     localStorage.removeItem('ra7_messages_' + userId);
@@ -3271,13 +3266,13 @@ async function clearData() {
     showToast('Tasks and messages cleared');
   } catch (e) {
     console.error('clearData error:', e);
-    showToast('Clear failed: ' + (e.message || 'Unknown error'));
+    showToast('Clear failed. Try refresh.');
   } finally {
     isClearing = false;
 
     if (btn) {
       btn.disabled = false;
-      btn.textContent = '🗑️ Clear all data';
+      btn.textContent = '🗑 Clear all data';
     }
 
     startPolling();
