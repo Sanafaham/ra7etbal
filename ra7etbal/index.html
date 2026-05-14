@@ -1,6 +1,6 @@
 
+
 <!DOCTYPE html>
-<!-- saved from url=(0050)file:///Users/sanafaham/Downloads/index%20(7).html -->
 <html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
@@ -2708,7 +2708,139 @@ async function saveAll() {
       const msgText = item.finalMessage || item.suggestedMessage;
 
       if (isDelegated) {
-        const savedTask = await saveTaskTo
+        // Delegation: save task, generate confirmation link, save message
+        const savedTask = await saveTaskToSupabase({
+          type: item.type,
+          description: item.description,
+          assignedTo: assignedTo,
+          status: 'sent',
+          suggestedMessage: msgText
+        });
+        const taskId = savedTask ? savedTask.id : null;
+        const confirmationUrl = taskId
+          ? (window.location.origin + '/confirm?task=' + taskId)
+          : null;
+
+        if (msgText) {
+          await saveMessageToSupabase({
+            to: assignedTo,
+            text: msgText,
+            channel: getPersonContact(assignedTo)
+          }, taskId, confirmationUrl);
+        }
+
+        if (taskId) {
+          tasks.unshift({
+            id: taskId,
+            type: item.type,
+            description: item.description,
+            assignedTo: assignedTo,
+            status: 'sent',
+            createdAt: new Date().toISOString()
+          });
+        }
+        if (taskId && msgText) {
+          messages.unshift({
+            id: crypto.randomUUID(),
+            taskId: taskId,
+            to: assignedTo,
+            text: msgText,
+            channel: getPersonContact(assignedTo),
+            status: 'prepared',
+            confirmationUrl: confirmationUrl,
+            taskStatus: 'sent',
+            createdAt: new Date().toISOString()
+          });
+        }
+
+      } else if (isOneWayMessage && msgText) {
+        // One-way message: save task as sent, save message without confirmation link
+        const savedTask = await saveTaskToSupabase({
+          type: item.type,
+          description: item.description,
+          assignedTo: assignedTo,
+          status: 'sent',
+          suggestedMessage: msgText
+        });
+        const taskId = savedTask ? savedTask.id : null;
+
+        await saveMessageToSupabase({
+          to: assignedTo,
+          text: msgText,
+          channel: getPersonContact(assignedTo)
+        }, taskId, null);
+
+        if (taskId) {
+          tasks.unshift({
+            id: taskId,
+            type: item.type,
+            description: item.description,
+            assignedTo: assignedTo,
+            status: 'sent',
+            createdAt: new Date().toISOString()
+          });
+        }
+        if (taskId && msgText) {
+          messages.unshift({
+            id: crypto.randomUUID(),
+            taskId: taskId,
+            to: assignedTo,
+            text: msgText,
+            channel: getPersonContact(assignedTo),
+            status: 'prepared',
+            confirmationUrl: null,
+            taskStatus: 'sent',
+            createdAt: new Date().toISOString()
+          });
+        }
+
+      } else {
+        // Regular task (action, reminder, errand, decision, parked, followup)
+        const savedTask = await saveTaskToSupabase({
+          type: item.type,
+          description: item.description,
+          assignedTo: assignedTo || '__me__',
+          status: 'pending'
+        });
+        const taskId = savedTask ? savedTask.id : null;
+        if (taskId) {
+          tasks.unshift({
+            id: taskId,
+            type: item.type,
+            description: item.description,
+            assignedTo: assignedTo || '__me__',
+            status: 'pending',
+            createdAt: new Date().toISOString()
+          });
+        }
+      }
+    }
+
+    saveUserDataLocal();
+    pendingExtracted = [];
+    document.getElementById('mainInput').value = '';
+    updateCharCount();
+
+    goBack();
+    showTab('messages');
+    renderAllTasks();
+    renderMessages();
+    renderRecentTasks();
+    renderBrief();
+    showToast('Saved! Check your messages.');
+
+  } catch (e) {
+    console.error('saveAll error:', e);
+    showToast('Something went wrong. Please try again.');
+  } finally {
+    showLoading(false);
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save Tasks & Messages';
+    }
+  }
+}
+
 function getPersonContact(name) {
   const p = people.find(p => p.name === name);
   return p ? p.contact : 'In-app';
@@ -3267,6 +3399,7 @@ async function clearData() {
 
     startPolling();
   }
+}
 
 </script>
 
