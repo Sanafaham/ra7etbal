@@ -2687,27 +2687,47 @@ async function saveAll() {
           taskStatus: 'pending',
           createdAt: new Date().toISOString()
         });
+} else if (isOneWayMessage) {
+  // ONE-WAY MESSAGE: message only, no task, no confirmation link
+  if (msgText) {
+    let msgId = crypto.randomUUID();
 
-      } else if (isOneWayMessage) {
-        if (msgText) {
-         const savedMsg = await saveMessageToSupabase(
-  { to: assignedTo, text: msgText, channel: getPersonContact(assignedTo) },
-  null,
-  null
-);
+    const { data: savedMsg, error: msgError } = await sbClient
+      .from('messages')
+      .insert({
+        user_id: currentUser.id,
+        task_id: null,
+        recipient_name: assignedTo,
+        channel: getPersonContact(assignedTo),
+        body: msgText,
+        confirmation_url: null,
+        status: 'prepared'
+      })
+      .select()
+      .single();
 
-          messages.unshift({
-            id: savedMsg && savedMsg.id ? savedMsg.id : crypto.randomUUID(),
-            taskId: null,
-            to: assignedTo,
-            text: msgText,
-            channel: getPersonContact(assignedTo),
-            status: 'prepared',
-            confirmationUrl: null,
-            taskStatus: null,
-            createdAt: new Date().toISOString()
-          });
-        }
+    if (msgError) {
+      throw new Error('One-way message save failed: ' + msgError.message);
+    }
+
+    if (savedMsg && savedMsg.id) {
+      msgId = savedMsg.id;
+    }
+
+    messages.unshift({
+      id: msgId,
+      taskId: null,
+      to: assignedTo,
+      text: msgText,
+      channel: getPersonContact(assignedTo),
+      status: 'prepared',
+      confirmationUrl: null,
+      taskStatus: null,
+      createdAt: new Date().toISOString()
+    });
+  }
+     
+        
 
       } else {
         const savedTask = await saveTaskToSupabase({
