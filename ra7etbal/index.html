@@ -3366,16 +3366,17 @@ async function clearData() {
     return;
   }
 
-  isClearing = true;
-  stopPolling();
-
   const btn = document.querySelector('[onclick="clearData()"]');
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Clearing...';
-  }
 
   try {
+    isClearing = true;
+    stopPolling();
+
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Clearing...';
+    }
+
     const userId = currentUser.id;
 
     const { error: msgErr } = await sbClient
@@ -3407,36 +3408,6 @@ async function clearData() {
     renderRecentTasks();
     renderBrief();
 
-    const { data: remainingTasks, error: checkTasksErr } = await sbClient
-      .from('tasks')
-      .select('id')
-      .eq('user_id', userId);
-
-    if (checkTasksErr) {
-      throw new Error('Task verify failed: ' + checkTasksErr.message);
-    }
-
-    const { data: remainingMsgs, error: checkMsgsErr } = await sbClient
-      .from('messages')
-      .select('id')
-      .eq('user_id', userId);
-
-    if (checkMsgsErr) {
-      throw new Error('Message verify failed: ' + checkMsgsErr.message);
-    }
-
-    if ((remainingTasks && remainingTasks.length > 0) || (remainingMsgs && remainingMsgs.length > 0)) {
-      throw new Error('Data still exists after delete');
-    }
-
-    tasks = [];
-    messages = [];
-
-    renderAllTasks();
-    renderMessages();
-    renderRecentTasks();
-    renderBrief();
-
     showToast('Tasks and messages cleared');
   } catch (e) {
     console.error('clearData error:', e);
@@ -3446,7 +3417,7 @@ async function clearData() {
 
     if (btn) {
       btn.disabled = false;
-      btn.textContent = '🗑 Clear all data';
+      btn.textContent = '🗑️ Clear all data';
     }
 
     startPolling();
