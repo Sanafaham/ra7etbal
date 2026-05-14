@@ -549,7 +549,6 @@
   /* REVIEW SCREEN */
   #screen-review {
     background: var(--cream);
-    padding-bottom: 100px;
     z-index: 50;
   }
 
@@ -589,7 +588,7 @@
 
   .review-subtitle { font-size: 13px; color: var(--warm-gray); margin-top: 2px; }
 
-  .review-body { padding: 20px; padding-bottom: calc(120px + env(safe-area-inset-bottom, 20px)); }
+  .review-body { flex: 1; padding: 20px; }
 
   .review-step {
     display: flex;
@@ -702,15 +701,12 @@
   .clarify-text { font-size: 13px; color: #92400E; line-height: 1.5; font-weight: 400; }
 
   .review-actions {
-    position: fixed;
+    position: sticky;
     bottom: 0;
-    left: 50%;
-    transform: translateX(-50%);
     width: 100%;
-    max-width: 480px;
     background: var(--warm-white);
     border-top: 1px solid var(--border);
-    padding: 16px 20px 32px;
+    padding: 16px 20px max(32px, env(safe-area-inset-bottom, 16px));
     display: flex;
     gap: 10px;
   }
