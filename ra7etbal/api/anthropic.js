@@ -10,6 +10,9 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'API key not configured on server' });
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 25000);
+
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -18,6 +21,7 @@ export default async function handler(req, res) {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01'
       },
+      signal: controller.signal,
       body: JSON.stringify(req.body)
     });
 
@@ -29,6 +33,11 @@ export default async function handler(req, res) {
 
     return res.status(200).json(data);
   } catch (error) {
-    return res.status(500).json({ error: 'Something went wrong. Try again.' });
+    if (error.name === 'AbortError') {
+      return res.status(504).json({ error: 'Anthropic request timed out. Please try again.' });
+    }
+    return res.status(500).json({ error: 'Anthropic request failed. Please try again.' });
+  } finally {
+    clearTimeout(timeout);
   }
 }
