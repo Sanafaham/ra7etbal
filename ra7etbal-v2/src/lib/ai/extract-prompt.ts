@@ -70,6 +70,9 @@ If people exist in the list, suggest the most relevant person using this logic:
 
 The goal is to reduce thinking. Make the best suggestion. The user can always change it.
 
+CRITICAL — preserve the user's exact time context.
+Never invent time words. Only use a time qualifier ("tonight", "tomorrow", "this morning", "later today", "at 8pm", a specific date, etc.) if the user themselves said it in the input. If the user said "dinner is at 9", write "Dinner is at 9." — NOT "Dinner is at 9 tonight." If the user gave no date or relative day, the description and the suggestedMessage must contain no day word at all. This rule applies to every field: description, suggestedMessage, and clarificationQuestion.
+
 Write suggested messages warmly and naturally. Always use "Can you please..." for staff. For family use warmer phrasing. Keep messages short and clear. Never use "Could you" -- use "Can you please" instead.
 
 User input: "${text}"`;
