@@ -1939,6 +1939,7 @@
 const SUPABASE_URL = 'https://ggarvhgqzpooloacjgcj.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Yd2XcR4mHGW6K0-MMui4LQ_KikFn7VO';
 const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const _isRecoveryLink = window.location.hash.includes('type=recovery');
 
 // STATE
 let currentUser = null;
@@ -1965,18 +1966,6 @@ async function init() {
     return;
   }
 
-  const hashParams = new URLSearchParams(window.location.hash.replace('#', '?'));
-  const isRecoveryLink = hashParams.get('type') === 'recovery';
-
-  const { data: { session } } = await sbClient.auth.getSession();
-  if (session && !isRecoveryLink) {
-    currentUser = session.user;
-    clearAuthUrlParams();
-    await loadUserData();
-    showApp();
-  } else if (!isRecoveryLink) {
-    checkUrlForAuthErrors();
-  }
   sbClient.auth.onAuthStateChange(async (event, session) => {
     if (event === 'PASSWORD_RECOVERY') {
       showResetScreen();
@@ -1994,6 +1983,16 @@ async function init() {
       showLoginScreen();
     }
   });
+
+  const { data: { session } } = await sbClient.auth.getSession();
+  if (session && !_isRecoveryLink) {
+    currentUser = session.user;
+    clearAuthUrlParams();
+    await loadUserData();
+    showApp();
+  } else if (!_isRecoveryLink) {
+    checkUrlForAuthErrors();
+  }
   setBriefDate();
 }
 
