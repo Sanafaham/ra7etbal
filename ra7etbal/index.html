@@ -1560,7 +1560,10 @@
     <div class="api-section fade-up fade-up-4" id="loginSection">
       <div class="api-label">Get started</div>
       <input type="email" class="api-input" id="emailInput" placeholder="your@email.com" autocomplete="email" spellcheck="false">
-      <input type="password" class="api-input" id="passwordInput" placeholder="Password" autocomplete="current-password" style="margin-top:10px">
+      <div style="position:relative;margin-top:10px">
+        <input type="password" class="api-input" id="passwordInput" placeholder="Password" autocomplete="current-password" style="padding-right:44px">
+        <button type="button" onclick="togglePwd()" aria-label="Show password" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;color:#9B9080;padding:4px">👁</button>
+      </div>
       <div class="privacy-note" id="loginNote">Sign in with your email and password.</div>
     </div>
   </div>
@@ -2289,6 +2292,15 @@ let magicLinkCooldown = false;
 let magicLinkTimer = null;
 let magicLinkInFlight = false;
 let passwordAuthInFlight = false;
+
+function togglePwd() {
+  const i = document.getElementById('passwordInput');
+  const b = event.currentTarget;
+  const show = i.type === 'password';
+  i.type = show ? 'text' : 'password';
+  b.textContent = show ? '🙈' : '👁';
+  b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+}
 const MAGIC_LINK_SEND_LOCK_KEY = 'ra7_magic_link_send_lock';
 const MAGIC_LINK_SEND_LOCK_MS = 8000;
 
