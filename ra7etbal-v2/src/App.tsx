@@ -26,23 +26,37 @@ const navItems = [
   { to: "/debug", label: "Debug" },
 ];
 
+function LoadingPane() {
+  return (
+    <div className="flex items-center justify-center py-12 text-ink/60">
+      <Spinner size={20} label="Loading" />
+    </div>
+  );
+}
+
 /**
  * Route-level guard for /auth. Sends signed-in users home and recovery-mode
- * users to /reset (built in Step 4). While loading, render nothing — the
+ * users to /reset (built in Step 4). While loading, render a spinner — the
  * INITIAL_SESSION event resolves within a couple hundred ms.
  */
 function AuthRoute() {
   const { status } = useAuth();
-  if (status === "loading") {
-    return (
-      <div className="flex items-center justify-center py-12 text-ink/60">
-        <Spinner size={20} label="Loading" />
-      </div>
-    );
-  }
+  if (status === "loading") return <LoadingPane />;
   if (status === "signed_in") return <Navigate to="/" replace />;
   if (status === "recovery") return <Navigate to="/reset" replace />;
   return <Auth />;
+}
+
+/**
+ * Wrap any route that requires an authenticated session. Signed-out users
+ * are sent to /auth; recovery-mode users are sent to /reset.
+ */
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { status } = useAuth();
+  if (status === "loading") return <LoadingPane />;
+  if (status === "signed_out") return <Navigate to="/auth" replace />;
+  if (status === "recovery") return <Navigate to="/reset" replace />;
+  return <>{children}</>;
 }
 
 function HeaderUserStrip() {
@@ -98,7 +112,14 @@ export default function App() {
 
       <main className="mx-auto mt-6 max-w-3xl px-5 pb-24">
         <Routes>
-          <Route path="/" element={<Placeholder title="Home / Clear My Head" />} />
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Placeholder title="Home / Clear My Head" />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/auth" element={<AuthRoute />} />
           <Route path="/reset" element={<Placeholder title="Set new password" />} />
           <Route path="/review" element={<Placeholder title="Review extracted items" />} />
