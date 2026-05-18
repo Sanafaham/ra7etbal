@@ -32,7 +32,7 @@ Classify each item into one of these types:
 - errand: shopping, pickup, errand outside
 - parked: idea for later, not actionable yet
 
-Return ONLY valid JSON, no markdown, no explanation.
+Return ONLY valid JSON, no markdown, no explanation. Do NOT include a summary field — Ra7etBal generates the review subtitle on the client.
 
 {
   "extracted": [
@@ -46,8 +46,7 @@ Return ONLY valid JSON, no markdown, no explanation.
       "needsClarification": false,
       "clarificationQuestion": null
     }
-  ],
-  "summary": "one calm sentence summarizing what was offloaded"
+  ]
 }
 
 Smart assignment rules -- think carefully about each item:

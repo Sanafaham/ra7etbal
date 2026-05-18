@@ -23,7 +23,6 @@ export default function Review() {
   const {
     status,
     items,
-    summary,
     sourceText,
     setAssignment,
     setDescription,
@@ -32,7 +31,6 @@ export default function Review() {
     useShallow((s) => ({
       status: s.status,
       items: s.items,
-      summary: s.summary,
       sourceText: s.sourceText,
       setAssignment: s.setAssignment,
       setDescription: s.setDescription,
@@ -54,9 +52,8 @@ export default function Review() {
     if (loadedForUserId !== userId) void loadPeople(userId);
   }, [userId, loadedForUserId, loadPeople]);
 
-  // Empty extraction means user landed on /review without running extraction
-  // first. Send them back to Home.
-  if (status === "idle" || (status === "ready" && items.length === 0 && !summary)) {
+  // No extraction has run — user landed on /review directly. Send them home.
+  if (status === "idle") {
     return <Navigate to="/" replace />;
   }
 
@@ -92,7 +89,13 @@ export default function Review() {
           Review
         </p>
         <h1 className="text-2xl font-semibold text-ink">Here's what I picked up.</h1>
-        {summary && <p className="text-sm text-ink/70">{summary}</p>}
+        {items.length > 0 && (
+          <p className="text-sm text-ink/70">
+            {items.length === 1
+              ? "I found 1 item for you to review."
+              : `I found ${items.length} items for you to review.`}
+          </p>
+        )}
       </header>
 
       {sourceText && (
