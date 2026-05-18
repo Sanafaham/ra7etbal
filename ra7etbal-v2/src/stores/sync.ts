@@ -1,4 +1,5 @@
 import { useAuthStore } from "./auth";
+import { useDraftStore } from "./draft";
 import { usePeopleStore } from "./people";
 
 /**
@@ -23,6 +24,7 @@ if (globalThis.__ra7etbal_store_sync) {
 const unsub = useAuthStore.subscribe((s, prev) => {
   if (prev.status !== s.status && (s.status === "signed_out" || s.status === "recovery")) {
     usePeopleStore.getState().reset();
+    useDraftStore.getState().clear();
   }
 });
 

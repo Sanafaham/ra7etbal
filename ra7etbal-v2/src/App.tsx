@@ -1,6 +1,7 @@
 import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import Auth from "./routes/Auth";
 import Debug from "./routes/Debug";
+import Home from "./routes/Home";
 import People from "./routes/People";
 import Reset from "./routes/Reset";
 import Spinner from "./components/Spinner";
@@ -134,7 +135,7 @@ export default function App() {
             path="/"
             element={
               <ProtectedRoute>
-                <Placeholder title="Home / Clear My Head" />
+                <Home />
               </ProtectedRoute>
             }
           />
