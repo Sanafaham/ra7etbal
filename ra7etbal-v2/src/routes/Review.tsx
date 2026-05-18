@@ -20,13 +20,23 @@ export default function Review() {
   const { user } = useAuth();
   const userId = user?.id ?? null;
 
-  const { status, items, summary, sourceText, setAssignment } = useExtractionStore(
+  const {
+    status,
+    items,
+    summary,
+    sourceText,
+    setAssignment,
+    setDescription,
+    setSuggestedMessage,
+  } = useExtractionStore(
     useShallow((s) => ({
       status: s.status,
       items: s.items,
       summary: s.summary,
       sourceText: s.sourceText,
       setAssignment: s.setAssignment,
+      setDescription: s.setDescription,
+      setSuggestedMessage: s.setSuggestedMessage,
     })),
   );
 
@@ -103,7 +113,13 @@ export default function Review() {
         <ul className="space-y-3">
           {items.map((it) => (
             <li key={it.id}>
-              <ItemCard item={it} people={people} onAssign={setAssignment} />
+              <ItemCard
+                item={it}
+                people={people}
+                onAssign={setAssignment}
+                onDescriptionChange={setDescription}
+                onMessageChange={setSuggestedMessage}
+              />
             </li>
           ))}
         </ul>

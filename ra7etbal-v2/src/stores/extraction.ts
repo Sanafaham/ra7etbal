@@ -23,6 +23,8 @@ export interface ExtractionState {
 
   run: (text: string, people: Person[]) => Promise<void>;
   setAssignment: (itemId: string, assignedTo: Assignment) => void;
+  setDescription: (itemId: string, description: string) => void;
+  setSuggestedMessage: (itemId: string, suggestedMessage: string | null) => void;
   clear: () => void;
 }
 
@@ -62,6 +64,23 @@ export const useExtractionStore = create<ExtractionState>((set, get) => ({
         it.id === itemId
           ? { ...it, assignedTo, needsPerson: assignedTo == null }
           : it,
+      ),
+    });
+  },
+
+  setDescription(itemId, description) {
+    set({
+      items: get().items.map((it) =>
+        it.id === itemId ? { ...it, description } : it,
+      ),
+    });
+  },
+
+  setSuggestedMessage(itemId, suggestedMessage) {
+    const next = suggestedMessage && suggestedMessage.trim() ? suggestedMessage : null;
+    set({
+      items: get().items.map((it) =>
+        it.id === itemId ? { ...it, suggestedMessage: next } : it,
       ),
     });
   },

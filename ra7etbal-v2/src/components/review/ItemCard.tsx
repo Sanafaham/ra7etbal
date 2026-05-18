@@ -1,3 +1,4 @@
+import { useId, type CSSProperties } from "react";
 import type { Assignment, ExtractedItem, ItemType } from "../../types/extraction";
 import type { Person } from "../../types/person";
 
@@ -5,6 +6,8 @@ interface Props {
   item: ExtractedItem;
   people: Person[];
   onAssign: (itemId: string, assignedTo: Assignment) => void;
+  onDescriptionChange: (itemId: string, description: string) => void;
+  onMessageChange: (itemId: string, suggestedMessage: string | null) => void;
 }
 
 /** Visual treatment per type — colour cue + label. */
@@ -19,21 +22,34 @@ const TYPE_META: Record<ItemType, { label: string; cls: string }> = {
   parked: { label: "Parked", cls: "bg-stone-100 text-stone-700 border-stone-300" },
 };
 
-export default function ItemCard({ item, people, onAssign }: Props) {
-  const type = TYPE_META[item.type];
+// `field-sizing: content` lets modern browsers (iOS 17+, Chrome 123+) grow the
+// textarea with the text. Older browsers fall back to native scroll within rows.
+const autoGrow: CSSProperties = { fieldSizing: "content" } as CSSProperties;
 
-  // The current selected value as displayed in the <select>.
+export default function ItemCard({
+  item,
+  people,
+  onAssign,
+  onDescriptionChange,
+  onMessageChange,
+}: Props) {
+  const type = TYPE_META[item.type];
+  const descId = useId();
+  const msgId = useId();
+
   const currentValue =
     item.assignedTo === null ? "" : item.assignedTo === "__me__" ? "__me__" : item.assignedTo;
 
-  // If the AI assigned a name that's not in the current People list, surface it
-  // as an "Other" option so it doesn't silently get dropped.
   const assignedToInList =
     !item.assignedTo ||
     item.assignedTo === "__me__" ||
     people.some((p) => p.name === item.assignedTo);
 
   const showsAssignment = item.type !== "parked" && item.type !== "decision";
+  // Messages and delegations are the two types where a recipient-facing
+  // message makes sense. Other types can still have one if the AI suggested it.
+  const messageRelevant =
+    item.type === "message" || item.type === "delegation" || item.suggestedMessage != null;
 
   return (
     <article className="rounded-2xl border border-sage/30 bg-white/80 p-4 shadow-sm">
@@ -53,18 +69,44 @@ export default function ItemCard({ item, people, onAssign }: Props) {
         )}
       </header>
 
-      <p className="mt-3 text-base leading-snug text-ink">{item.description}</p>
+      <label htmlFor={descId} className="sr-only">
+        Task title
+      </label>
+      <textarea
+        id={descId}
+        value={item.description}
+        onChange={(e) => onDescriptionChange(item.id, e.target.value)}
+        rows={1}
+        spellCheck
+        aria-label="Task title"
+        style={autoGrow}
+        className="mt-3 block w-full resize-none rounded-lg border border-transparent bg-transparent px-2 py-1 text-base leading-snug text-ink outline-none transition placeholder:text-ink/35 hover:border-sage/15 hover:bg-cream/30 focus:border-sage/40 focus:bg-white focus:ring-2 focus:ring-sage/20"
+        placeholder="Describe the task…"
+      />
 
-      {item.suggestedMessage && (
-        <p className="mt-2 rounded-lg border border-sage/20 bg-cream/60 px-3 py-2 text-sm italic text-ink/80">
-          “{item.suggestedMessage}”
-        </p>
+      {messageRelevant && (
+        <>
+          <label
+            htmlFor={msgId}
+            className="mt-3 block text-[10px] font-medium uppercase tracking-wide text-ink/50"
+          >
+            Message to send
+          </label>
+          <textarea
+            id={msgId}
+            value={item.suggestedMessage ?? ""}
+            onChange={(e) => onMessageChange(item.id, e.target.value)}
+            rows={2}
+            spellCheck
+            style={autoGrow}
+            placeholder="Write the message to send…"
+            className="mt-1 block w-full resize-none rounded-lg border border-sage/20 bg-cream/40 px-3 py-2 text-sm italic leading-snug text-ink/85 outline-none transition placeholder:not-italic placeholder:text-ink/35 hover:bg-cream/60 focus:border-sage/40 focus:bg-white focus:ring-2 focus:ring-sage/20"
+          />
+        </>
       )}
 
       {item.clarificationQuestion && (
-        <p className="mt-2 text-xs text-amber-800">
-          {item.clarificationQuestion}
-        </p>
+        <p className="mt-2 text-xs text-amber-800">{item.clarificationQuestion}</p>
       )}
 
       {showsAssignment && (
@@ -88,9 +130,7 @@ export default function ItemCard({ item, people, onAssign }: Props) {
               </option>
             ))}
             {!assignedToInList && item.assignedTo && (
-              <option value={item.assignedTo}>
-                {item.assignedTo} (not in People)
-              </option>
+              <option value={item.assignedTo}>{item.assignedTo} (not in People)</option>
             )}
           </select>
         </div>
