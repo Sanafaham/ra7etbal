@@ -1564,6 +1564,7 @@
         <input type="password" class="api-input" id="passwordInput" placeholder="Password" autocomplete="current-password" style="padding-right:44px">
         <button type="button" onclick="togglePwd()" aria-label="Show password" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;color:#9B9080;padding:4px">👁</button>
       </div>
+      <button type="button" id="forgotBtn" onclick="handleForgotPassword()" style="display:inline-block;margin-top:8px;background:none;border:none;padding:0;font-family:'DM Sans',sans-serif;font-size:12px;color:#5B7245;cursor:pointer;text-align:left">Forgot password?</button>
       <div class="privacy-note" id="loginNote">Sign in with your email and password.</div>
     </div>
   </div>
@@ -1582,6 +1583,30 @@
       <div class="trust-dot"></div>
       <span class="trust-item">Your data stays yours</span>
     </div>
+  </div>
+</div>
+
+<!-- RESET PASSWORD SCREEN -->
+<div class="screen" id="screen-reset">
+  <div class="onboarding-top">
+    <div class="brand-mark fade-up fade-up-1">
+      <div class="brand-icon">🌿</div>
+      <div class="brand-name-small">Ra7etBal · راحة بال</div>
+    </div>
+    <h1 class="hero-title fade-up fade-up-2" style="font-size:40px">Set new<br>password.</h1>
+    <div class="api-section fade-up fade-up-3">
+      <div class="api-label">New password</div>
+      <div style="position:relative;margin-top:10px">
+        <input type="password" class="api-input" id="newPwdInput" placeholder="New password (min 6 chars)" autocomplete="new-password" style="padding-right:44px">
+        <button type="button" onclick="toggleResetPwd()" aria-label="Show password" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:16px;color:#9B9080;padding:4px">👁</button>
+      </div>
+      <div class="privacy-note" id="resetNote">Enter your new password.</div>
+    </div>
+  </div>
+  <div class="onboarding-bottom fade-up fade-up-4">
+    <button type="button" class="btn-primary" id="updatePwdBtn" onclick="handlePasswordUpdate()">
+      Update Password →
+    </button>
   </div>
 </div>
 
@@ -1940,17 +1965,25 @@ async function init() {
     return;
   }
 
+  const hashParams = new URLSearchParams(window.location.hash.replace('#', '?'));
+  const isRecoveryLink = hashParams.get('type') === 'recovery';
+
   const { data: { session } } = await sbClient.auth.getSession();
-  if (session) {
+  if (session && !isRecoveryLink) {
     currentUser = session.user;
     clearAuthUrlParams();
     await loadUserData();
     showApp();
-  } else {
+  } else if (!isRecoveryLink) {
     checkUrlForAuthErrors();
   }
   sbClient.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      showResetScreen();
+      return;
+    }
     if (event === 'SIGNED_IN' && session) {
+      if (document.getElementById('screen-reset').classList.contains('active')) return;
       currentUser = session.user;
       clearAuthUrlParams();
       await loadUserData();
@@ -2300,6 +2333,95 @@ function togglePwd() {
   i.type = show ? 'text' : 'password';
   b.textContent = show ? '🙈' : '👁';
   b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+}
+
+function toggleResetPwd() {
+  const i = document.getElementById('newPwdInput');
+  const b = event.currentTarget;
+  const show = i.type === 'password';
+  i.type = show ? 'text' : 'password';
+  b.textContent = show ? '🙈' : '👁';
+  b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+}
+
+function showResetScreen() {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-reset').classList.add('active');
+  clearAuthUrlParams();
+  const input = document.getElementById('newPwdInput');
+  if (input) { input.value = ''; input.type = 'password'; }
+  const note = document.getElementById('resetNote');
+  note.textContent = 'Enter your new password.';
+  note.style.color = '';
+}
+
+async function handleForgotPassword() {
+  const email = document.getElementById('emailInput').value.trim();
+  const note = document.getElementById('loginNote');
+  note.style.color = '';
+  if (!email) {
+    note.textContent = 'Please enter your email first.';
+    note.style.color = '#EF4444';
+    return;
+  }
+  const btn = document.getElementById('forgotBtn');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    const { error } = await sbClient.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname
+    });
+    if (error) {
+      note.textContent = 'Could not send reset email. Please try again.';
+      note.style.color = '#EF4444';
+    } else {
+      note.textContent = 'Reset email sent. Check your inbox.';
+    }
+  } catch(e) {
+    note.textContent = 'Could not send reset email. Please check your connection.';
+    note.style.color = '#EF4444';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Forgot password?';
+  }
+}
+
+let pwdUpdateInFlight = false;
+
+async function handlePasswordUpdate() {
+  if (pwdUpdateInFlight) return;
+  const newPwd = document.getElementById('newPwdInput').value;
+  const note = document.getElementById('resetNote');
+  note.style.color = '';
+  if (!newPwd || newPwd.length < 6) {
+    note.textContent = 'Please enter a password with at least 6 characters.';
+    note.style.color = '#EF4444';
+    return;
+  }
+  pwdUpdateInFlight = true;
+  const btn = document.getElementById('updatePwdBtn');
+  btn.disabled = true;
+  btn.textContent = 'Updating…';
+  try {
+    const { error } = await sbClient.auth.updateUser({ password: newPwd });
+    if (error) {
+      note.textContent = error.message || 'Could not update password. Please try again.';
+      note.style.color = '#EF4444';
+      return;
+    }
+    showLoginScreen();
+    const loginNote = document.getElementById('loginNote');
+    loginNote.textContent = 'Password updated. You can now sign in.';
+    loginNote.style.color = '';
+    sbClient.auth.signOut();
+  } catch(e) {
+    note.textContent = 'Could not update password. Please check your connection.';
+    note.style.color = '#EF4444';
+  } finally {
+    pwdUpdateInFlight = false;
+    btn.disabled = false;
+    btn.textContent = 'Update Password →';
+  }
 }
 const MAGIC_LINK_SEND_LOCK_KEY = 'ra7_magic_link_send_lock';
 const MAGIC_LINK_SEND_LOCK_MS = 8000;
