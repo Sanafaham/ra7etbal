@@ -1,4 +1,5 @@
 import { NavLink, Route, Routes } from "react-router-dom";
+import Debug from "./routes/Debug";
 
 function Placeholder({ title }: { title: string }) {
   return (
@@ -18,6 +19,7 @@ const navItems = [
   { to: "/review", label: "Review" },
   { to: "/people", label: "People" },
   { to: "/confirm", label: "Confirm" },
+  { to: "/debug", label: "Debug" },
 ];
 
 export default function App() {
@@ -59,6 +61,7 @@ export default function App() {
           <Route path="/review" element={<Placeholder title="Review extracted items" />} />
           <Route path="/people" element={<Placeholder title="People" />} />
           <Route path="/confirm" element={<Placeholder title="Confirm task" />} />
+          <Route path="/debug" element={<Debug />} />
           <Route
             path="*"
             element={
