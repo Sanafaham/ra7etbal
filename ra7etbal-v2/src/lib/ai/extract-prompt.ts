@@ -19,12 +19,51 @@ export function buildExtractionPrompt(text: string, people: Person[]): string {
 Known people in the user's life: ${peopleList}
 
 ================================================================
-RULE 1 (HIGHEST PRIORITY) — ROLE OVERRIDES PHRASING
+RULE 0 (ABSOLUTE) — RELATIONSHIP-NOUN TARGETS
 ================================================================
 
-When the user names a person whose role carries operational responsibility
-for the topic in the sentence, the item is a DELEGATION even if the user
-phrased it as "Tell X" / "Let X know" / "Mention to X".
+If the user wrote a relationship noun as the recipient (husband, wife,
+spouse, partner, boyfriend, girlfriend, fiancé, fiancée, mother, mom,
+mama, father, dad, papa, son, daughter, child, kid, brother, sister,
+sibling, cousin, aunt, uncle, grand-anything, friend, best friend,
+neighbor, neighbour, in-law, colleague, coworker, boss, manager,
+business partner, client, customer), then:
+
+  - type is MESSAGE (never delegation), unless the user explicitly used
+    an action verb against that person ("ask my husband to pick up the
+    milk" stays a message-with-task — still keep type=message unless
+    they used "ask"/"have"/"make sure" with a concrete action verb).
+  - assignedTo is the RELATIONSHIP NOUN itself, written exactly as the
+    user wrote it (e.g. "husband", "mom", "sister"). Do NOT substitute
+    with anyone from the People list, even if a People entry has that
+    relationship as its role. The recipient stays the noun.
+  - needsPerson is TRUE if no People entry has that exact role.
+  - description and suggestedMessage must NOT name an operational
+    person (Cook, Driver, Nanny, etc.) under any circumstances.
+
+This rule takes precedence over RULE 1 below. A relationship noun
+target NEVER triggers operational role-based delegation, regardless of
+whether the sentence mentions dinner, car, school, or any other topic.
+
+Worked example. User says: "Tell husband dinner is at 9."
+  Output (correct, mandatory):
+    type: "message"
+    assignedTo: "husband"
+    description: "Tell husband dinner is at 9."
+    suggestedMessage: "Dinner is at 9."
+    needsPerson: true (unless a People entry has role "husband")
+  Output (forbidden, do not produce):
+    type: "delegation"
+    assignedTo: "<Cook's name>"
+
+================================================================
+RULE 1 — ROLE OVERRIDES PHRASING (only after RULE 0 passes)
+================================================================
+
+When the user names a real person (NOT a relationship noun) whose role
+carries operational responsibility for the topic in the sentence, the
+item is a DELEGATION even if the user phrased it as "Tell X" / "Let X
+know" / "Mention to X".
 
 The user's phrasing does NOT decide the type. The person's role does.
 
@@ -94,6 +133,24 @@ Example E. Input: "Tell my friend Sarah I'm running late."
     description: "Tell Sarah I'm running late."
     suggestedMessage: "Sarah, I'm running late."
 
+Example F. Input: "Order more rice." People includes Ghulam (Driver).
+  Output (correct):
+    type: "errand"
+    assignedTo: "__me__"
+    description: "Order more rice."
+    suggestedMessage: null
+  Reasoning: "order" without a named person is a Me task. Do not
+  auto-assign to Driver just because rice is shoppable.
+
+Example G. Input: "Ask Ghulam to pick up some rice from the store."
+            Ghulam's role is Driver.
+  Output:
+    type: "delegation"
+    assignedTo: "Ghulam"
+    description: "Pick up some rice from the store."
+    suggestedMessage: "Can you please pick up some rice from the store?"
+  Reasoning: the user explicitly assigned Ghulam, so RULE 1 applies.
+
 ================================================================
 TYPES
 ================================================================
@@ -133,19 +190,33 @@ Ra7etBal generates the review subtitle on the client.
 ASSIGNMENT RULES (apply AFTER RULE 1)
 ================================================================
 
-If no people are in the list, set assignedTo to "__me__" for everything personal.
+Default behavior: assignedTo = "__me__".
+You only deviate from this default when the user EXPLICITLY named someone
+(by name or relationship noun) OR when there is a clear, unambiguous
+operational role for the task in the People list. When in doubt, the
+assignee is the user.
 
-If people exist in the list, suggest the most relevant person using this logic:
-- Shopping, groceries, buying things, picking up items, errands outside = suggest Driver, Personal Assistant, House Manager, or Helper if any exist. Otherwise __me__.
-- Cooking, food, meals, dinner, lunch, kitchen = suggest Cook if exists. Otherwise __me__.
-- Kids, school, pickup, appointments for children = suggest Nanny, Driver, or Personal Assistant if any exist. Otherwise __me__.
-- Sending documents, invoices, emails, scheduling = suggest Personal Assistant if exists. Otherwise __me__.
-- Cleaning, laundry, household chores = suggest Cleaner or House Manager if exists. Otherwise __me__.
-- Anything involving a family member by name = use that person directly if they exist.
-- Decisions, choices, personal calls, personal appointments = always __me__.
-- "Ask X to do..." or "Make sure X does..." or "Remind X to..." = delegation.
-- "Make sure [thing] is ready" with a relevant person available = delegation, assign to the most relevant role.
-- If the item involves someone but no one is named and no relevant person exists = needsPerson: true, assignedTo: null.
+If the user did not name a person:
+- "Pick up X from Y" with Y being a school or external location = consider Driver if one exists; otherwise __me__.
+- "Drop off X at Y" = consider Driver if one exists; otherwise __me__.
+- "Clean / laundry / tidy / vacuum / dust" = consider Cleaner or House Manager if one exists; otherwise __me__.
+- "Cook dinner / prepare lunch / make breakfast" (an actual cooking instruction) = consider Cook if one exists; otherwise __me__.
+- "Bathe / feed / pick up from school" referring to a specific child = consider Nanny if one exists; otherwise __me__.
+- "Book / reschedule / cancel / file / send invoice / arrange flight" = consider Personal Assistant if one exists; otherwise __me__.
+- Generic verbs the user owns themselves (order, buy, call, email, message, check, remember, plan, decide, think about, look into, research) = __me__.
+- Decisions, choices, personal calls, personal appointments = __me__.
+- "Order X" (order food, order rice, order anything online) = __me__ unless the user explicitly said "ask <person> to order it".
+
+If the user did name a person (and RULE 0 did not apply):
+- That person is the assignee. RULE 1 then decides delegation vs message based on the named person's role.
+- "Ask X to do…" / "Make sure X does…" / "Remind X to…" = delegation.
+
+If the item involves someone but no person is named and no clear
+operational match exists in People = needsPerson: true, assignedTo: null.
+
+NEVER substitute an operational person (Cook, Driver, Nanny, etc.) for a
+generic action the user is asking about themselves. "Order more rice" is
+not a Driver task by default — it's a Me task.
 
 ================================================================
 STAY TIGHT
