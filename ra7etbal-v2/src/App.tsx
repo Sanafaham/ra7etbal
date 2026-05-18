@@ -1,6 +1,7 @@
 import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import Auth from "./routes/Auth";
 import Debug from "./routes/Debug";
+import People from "./routes/People";
 import Reset from "./routes/Reset";
 import Spinner from "./components/Spinner";
 import { useAuth } from "./hooks/useAuth";
@@ -140,7 +141,14 @@ export default function App() {
           <Route path="/auth" element={<AuthRoute />} />
           <Route path="/reset" element={<ResetRoute />} />
           <Route path="/review" element={<Placeholder title="Review extracted items" />} />
-          <Route path="/people" element={<Placeholder title="People" />} />
+          <Route
+            path="/people"
+            element={
+              <ProtectedRoute>
+                <People />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/confirm" element={<Placeholder title="Confirm task" />} />
           <Route path="/debug" element={<Debug />} />
           <Route
