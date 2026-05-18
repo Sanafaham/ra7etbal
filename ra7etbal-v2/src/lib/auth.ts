@@ -30,6 +30,15 @@ export async function sendResetEmail(email: string): Promise<void> {
   if (error) throw friendly(error, "reset");
 }
 
+/**
+ * Update the signed-in (or recovery-mode) user's password. Caller is
+ * responsible for the post-update flow (clearRecovery + signOut + navigate).
+ */
+export async function updatePassword(newPassword: string): Promise<void> {
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw friendly(error, "update");
+}
+
 // ---------------------------------------------------------------------------
 
 type AuthAction = "signin" | "signup" | "reset" | "update";

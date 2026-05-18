@@ -1,4 +1,5 @@
-import { useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import AuthNotice from "../components/auth/AuthNotice";
 import PasswordField from "../components/auth/PasswordField";
 import Spinner from "../components/Spinner";
@@ -9,13 +10,33 @@ type Notice =
   | { kind: "error" | "info" | "success"; text: string }
   | null;
 
+interface FlashState {
+  flash?: string;
+}
+
 export default function Auth() {
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [sendingReset, setSendingReset] = useState(false);
-  const [notice, setNotice] = useState<Notice>(null);
+
+  // One-shot flash from another route (e.g. Reset → "Password updated. You can
+  // now sign in."). Read once on mount, then drop from history.state so a
+  // hard refresh doesn't re-show it.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const initialFlash = (location.state as FlashState | null)?.flash;
+  const [notice, setNotice] = useState<Notice>(
+    initialFlash ? { kind: "success", text: initialFlash } : null,
+  );
+  useEffect(() => {
+    if (initialFlash) {
+      navigate(location.pathname, { replace: true, state: null });
+    }
+    // initialFlash is captured at mount; we intentionally don't depend on it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Synchronous guard against fast double-clicks before React commits.
   const submittingRef = useRef(false);

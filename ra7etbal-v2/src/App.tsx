@@ -1,6 +1,7 @@
 import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import Auth from "./routes/Auth";
 import Debug from "./routes/Debug";
+import Reset from "./routes/Reset";
 import Spinner from "./components/Spinner";
 import { useAuth } from "./hooks/useAuth";
 import { signOut } from "./lib/session";
@@ -45,6 +46,22 @@ function AuthRoute() {
   if (status === "signed_in") return <Navigate to="/" replace />;
   if (status === "recovery") return <Navigate to="/reset" replace />;
   return <Auth />;
+}
+
+/**
+ * Route-level guard for /reset. Only renders the Reset screen when the auth
+ * machine reports `recovery`. Everything else gets redirected — signed-in
+ * users go home, signed-out users go to /auth. This is the architectural
+ * fix for the v1 bug where Review/refresh could send the user back into
+ * Reset: recovery is a Zustand flag, not a URL hash or DOM check, and it
+ * only ever clears via `clearRecovery()` after a successful updateUser.
+ */
+function ResetRoute() {
+  const { status } = useAuth();
+  if (status === "loading") return <LoadingPane />;
+  if (status === "recovery") return <Reset />;
+  if (status === "signed_in") return <Navigate to="/" replace />;
+  return <Navigate to="/auth" replace />;
 }
 
 /**
@@ -121,7 +138,7 @@ export default function App() {
             }
           />
           <Route path="/auth" element={<AuthRoute />} />
-          <Route path="/reset" element={<Placeholder title="Set new password" />} />
+          <Route path="/reset" element={<ResetRoute />} />
           <Route path="/review" element={<Placeholder title="Review extracted items" />} />
           <Route path="/people" element={<Placeholder title="People" />} />
           <Route path="/confirm" element={<Placeholder title="Confirm task" />} />
