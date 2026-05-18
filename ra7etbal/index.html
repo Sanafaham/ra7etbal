@@ -184,41 +184,6 @@
   .api-input:focus { border-color: var(--sage); }
   .api-input::placeholder { color: var(--stone); }
 
-  .password-field {
-    position: relative;
-    margin-top: 10px;
-  }
-
-  .password-field .api-input {
-    padding-right: 48px;
-  }
-
-  .password-toggle {
-    position: absolute;
-    right: 10px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 34px;
-    height: 34px;
-    border: none;
-    background: transparent;
-    color: var(--warm-gray);
-    font-size: 16px;
-    cursor: pointer;
-  }
-
-  .forgot-password {
-    display: inline-block;
-    margin-top: 10px;
-    background: none;
-    border: none;
-    padding: 0;
-    font-family: 'DM Sans', sans-serif;
-    font-size: 12px;
-    color: var(--accent);
-    cursor: pointer;
-  }
-
   .privacy-note {
     font-size: 12px;
     color: var(--warm-gray);
@@ -626,7 +591,7 @@
 
  .review-body {
   flex: 1;
-  padding: 20px 20px 200px;
+  padding: 20px 20px 140px;
 }
 
   .review-step {
@@ -1593,37 +1558,19 @@
   Speak or type what you are carrying. Ra7etBal turns it into clear next steps, messages, reminders, and follow-ups, so your mind does not have to hold it all.
 </p>
     <div class="api-section fade-up fade-up-4" id="loginSection">
-      <div id="signInView">
-        <div class="api-label">Get started</div>
-        <input type="email" class="api-input" id="emailInput" placeholder="your@email.com" autocomplete="email" spellcheck="false">
-        <div class="password-field">
-          <input type="password" class="api-input" id="passwordInput" placeholder="Password" autocomplete="current-password">
-          <button type="button" class="password-toggle" id="passwordToggle" onclick="togglePasswordVisibility()" aria-label="Show password">👁</button>
-        </div>
-        <button type="button" class="forgot-password" id="forgotPasswordBtn" onclick="handleForgotPassword(event)">Forgot password?</button>
-      </div>
-      <div id="resetView" style="display:none">
-        <div class="api-label">Set new password</div>
-        <div class="password-field" style="margin-top:10px">
-          <input type="password" class="api-input" id="newPasswordInput" placeholder="New password (min 6 chars)" autocomplete="new-password">
-          <button type="button" class="password-toggle" id="newPasswordToggle" onclick="toggleNewPasswordVisibility()" aria-label="Show password">👁</button>
-        </div>
-      </div>
+      <div class="api-label">Get started</div>
+      <input type="email" class="api-input" id="emailInput" placeholder="your@email.com" autocomplete="email" spellcheck="false">
+      <input type="password" class="api-input" id="passwordInput" placeholder="Password" autocomplete="current-password" style="margin-top:10px">
       <div class="privacy-note" id="loginNote">Sign in with your email and password.</div>
     </div>
   </div>
 
   <div class="onboarding-bottom fade-up fade-up-5">
-    <div id="signInButtons">
-      <button type="button" class="btn-primary" id="loginBtn" onclick="handlePasswordAuth('signIn', event)">
-        Sign In →
-      </button>
-      <button type="button" class="btn-secondary" id="createAccountBtn" onclick="handlePasswordAuth('signUp', event)" style="width:100%;margin-top:10px">
-        Create Account
-      </button>
-    </div>
-    <button type="button" class="btn-primary" id="updatePasswordBtn" onclick="handlePasswordUpdate(event)" style="display:none">
-      Update Password →
+    <button type="button" class="btn-primary" id="loginBtn" onclick="handlePasswordAuth('signIn', event)">
+      Sign In →
+    </button>
+    <button type="button" class="btn-secondary" id="createAccountBtn" onclick="handlePasswordAuth('signUp', event)" style="width:100%;margin-top:10px">
+      Create Account
     </button>
     <div class="trust-row">
       <span class="trust-item">Secure login</span>
@@ -2000,14 +1947,7 @@ async function init() {
     checkUrlForAuthErrors();
   }
   sbClient.auth.onAuthStateChange(async (event, session) => {
-    if (event === 'PASSWORD_RECOVERY') {
-      showLoginScreen();
-      showPasswordResetUI();
-      return;
-    }
     if (event === 'SIGNED_IN' && session) {
-      const resetView = document.getElementById('resetView');
-      if (resetView && resetView.style.display !== 'none') return;
       currentUser = session.user;
       clearAuthUrlParams();
       await loadUserData();
@@ -2015,7 +1955,6 @@ async function init() {
     }
     if (event === 'SIGNED_OUT') {
       currentUser = null;
-      hidePasswordResetUI();
       showLoginScreen();
     }
   });
@@ -2350,19 +2289,8 @@ let magicLinkCooldown = false;
 let magicLinkTimer = null;
 let magicLinkInFlight = false;
 let passwordAuthInFlight = false;
-let passwordResetInFlight = false;
-const AUTH_REQUEST_TIMEOUT_MS = 15000;
 const MAGIC_LINK_SEND_LOCK_KEY = 'ra7_magic_link_send_lock';
 const MAGIC_LINK_SEND_LOCK_MS = 8000;
-
-function withAuthTimeout(runRequest, message) {
-  let timer;
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), AUTH_REQUEST_TIMEOUT_MS);
-  });
-  return Promise.race([Promise.resolve().then(runRequest), timeout])
-    .finally(() => clearTimeout(timer));
-}
 
 // Check for otp_expired or error in URL on page load
 function clearAuthUrlParams() {
@@ -2419,16 +2347,10 @@ function clearMagicLinkLock(email) {
 function setPasswordAuthLoading(isLoading, label) {
   const loginBtn = document.getElementById('loginBtn');
   const createBtn = document.getElementById('createAccountBtn');
-  const resetBtn = document.getElementById('forgotPasswordBtn');
-  const updateBtn = document.getElementById('updatePasswordBtn');
   if (loginBtn) loginBtn.disabled = isLoading;
   if (createBtn) createBtn.disabled = isLoading;
-  if (resetBtn) resetBtn.disabled = isLoading;
-  if (updateBtn) updateBtn.disabled = isLoading;
-  if (loginBtn) loginBtn.textContent = isLoading && mode === 'signIn' ? 'Signing in…' : 'Sign In →';
-  if (createBtn) createBtn.textContent = isLoading && mode === 'signUp' ? 'Creating account…' : 'Create Account';
-  if (resetBtn) resetBtn.textContent = isLoading && mode === 'reset' ? 'Sending reset link…' : 'Forgot password?';
-  if (updateBtn) updateBtn.textContent = isLoading && mode === 'update' ? 'Updating password…' : 'Update Password →';
+  if (loginBtn) loginBtn.textContent = isLoading ? label : 'Sign In →';
+  if (!isLoading && createBtn) createBtn.textContent = 'Create Account';
 }
 
 function getPasswordAuthInputs() {
@@ -2443,160 +2365,17 @@ function showPasswordAuthError(note, error, mode) {
   note.style.color = '#EF4444';
 
   if (msg.includes('invalid login') || msg.includes('invalid credentials')) {
-    note.textContent = 'Wrong email or password. Please try again.';
-  } else if (msg.includes('user not found') || msg.includes('not found')) {
-    note.textContent = 'No account found for this email. Please create an account first.';
+    note.textContent = 'The email or password is incorrect.';
   } else if (msg.includes('weak') || msg.includes('password')) {
     note.textContent = 'Please use a stronger password with at least 6 characters.';
   } else if (msg.includes('already') || msg.includes('registered') || msg.includes('exists')) {
     note.textContent = 'An account already exists for this email. Please sign in.';
-  } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('failed to fetch') || msg.includes('timed out') || msg.includes('connection')) {
+  } else if (msg.includes('fetch') || msg.includes('network') || msg.includes('failed to fetch')) {
     note.textContent = 'Network issue. Please check your connection and try again.';
   } else if (mode === 'signUp') {
     note.textContent = 'Could not create the account. Please check your email and password.';
   } else {
     note.textContent = 'Could not sign in. Please check your email and password.';
-  }
-}
-
-function togglePasswordVisibility() {
-  const input = document.getElementById('passwordInput');
-  const toggle = document.getElementById('passwordToggle');
-  if (!input || !toggle) return;
-  const show = input.type === 'password';
-  input.type = show ? 'text' : 'password';
-  toggle.textContent = show ? '🙈' : '👁';
-  toggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
-}
-
-function toggleNewPasswordVisibility() {
-  const input = document.getElementById('newPasswordInput');
-  const toggle = document.getElementById('newPasswordToggle');
-  if (!input || !toggle) return;
-  const show = input.type === 'password';
-  input.type = show ? 'text' : 'password';
-  toggle.textContent = show ? '🙈' : '👁';
-  toggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
-}
-
-function showPasswordResetUI() {
-  document.getElementById('signInView').style.display = 'none';
-  document.getElementById('resetView').style.display = '';
-  document.getElementById('signInButtons').style.display = 'none';
-  document.getElementById('updatePasswordBtn').style.display = '';
-  const note = document.getElementById('loginNote');
-  note.style.color = '';
-  note.textContent = 'Enter your new password below.';
-  const input = document.getElementById('newPasswordInput');
-  if (input) { input.value = ''; input.type = 'password'; }
-  const toggle = document.getElementById('newPasswordToggle');
-  if (toggle) toggle.textContent = '👁';
-}
-
-function hidePasswordResetUI() {
-  const signInView = document.getElementById('signInView');
-  const resetView = document.getElementById('resetView');
-  const signInButtons = document.getElementById('signInButtons');
-  const updateBtn = document.getElementById('updatePasswordBtn');
-  if (signInView) signInView.style.display = '';
-  if (resetView) resetView.style.display = 'none';
-  if (signInButtons) signInButtons.style.display = '';
-  if (updateBtn) updateBtn.style.display = 'none';
-}
-
-let passwordUpdateInFlight = false;
-
-async function handlePasswordUpdate(event) {
-  if (event) { event.preventDefault(); event.stopPropagation(); }
-  if (passwordUpdateInFlight) return;
-
-  const newPassword = document.getElementById('newPasswordInput').value;
-  const note = document.getElementById('loginNote');
-  note.style.color = '';
-
-  if (!newPassword) {
-    note.textContent = 'Please enter a new password.';
-    note.style.color = '#EF4444';
-    return;
-  }
-  if (newPassword.length < 6) {
-    note.textContent = 'Please use a stronger password with at least 6 characters.';
-    note.style.color = '#EF4444';
-    return;
-  }
-
-  passwordUpdateInFlight = true;
-  setPasswordAuthLoading(true, 'update');
-
-  try {
-    const result = await withAuthTimeout(
-      () => sbClient.auth.updateUser({ password: newPassword }),
-      'Password update took too long. Please check your connection and try again.'
-    );
-    if (result.error) {
-      note.textContent = result.error.message || 'Could not update password. Please try again.';
-      note.style.color = '#EF4444';
-      return;
-    }
-    await sbClient.auth.signOut();
-    hidePasswordResetUI();
-    note.textContent = 'Password updated. You can now sign in with your new password.';
-    note.style.color = '';
-  } catch(e) {
-    note.textContent = (e && e.message) || 'Could not update password. Please try again.';
-    note.style.color = '#EF4444';
-  } finally {
-    passwordUpdateInFlight = false;
-    setPasswordAuthLoading(false);
-  }
-}
-
-async function handleForgotPassword(event) {
-  if (event) {
-    event.preventDefault();
-    event.stopPropagation();
-  }
-  if (passwordAuthInFlight || passwordResetInFlight) return;
-
-  const { email, note } = getPasswordAuthInputs();
-  note.style.color = '';
-
-  if (!email) {
-    note.textContent = 'Please enter your email address first.';
-    note.style.color = '#EF4444';
-    return;
-  }
-
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
-    note.textContent = 'Please enter a valid email address.';
-    note.style.color = '#EF4444';
-    return;
-  }
-
-  passwordResetInFlight = true;
-  setPasswordAuthLoading(true, 'reset');
-
-  try {
-    const result = await withAuthTimeout(
-      () => sbClient.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin + window.location.pathname
-      }),
-      'Password reset took too long. Please check your connection and try again.'
-    );
-
-    if (result.error) {
-      showPasswordAuthError(note, result.error, 'reset');
-      return;
-    }
-
-    note.textContent = 'Password reset email sent. Check your inbox.';
-    note.style.color = '';
-  } catch(e) {
-    showPasswordAuthError(note, e, 'reset');
-  } finally {
-    passwordResetInFlight = false;
-    setPasswordAuthLoading(false);
   }
 }
 
@@ -2643,17 +2422,12 @@ async function handlePasswordAuth(mode, event) {
   }
 
   passwordAuthInFlight = true;
-  setPasswordAuthLoading(true, mode);
+  setPasswordAuthLoading(true, mode === 'signUp' ? 'Creating account...' : 'Signing in...');
 
   try {
-    const result = await withAuthTimeout(
-      () => mode === 'signUp'
-        ? sbClient.auth.signUp({ email, password })
-        : sbClient.auth.signInWithPassword({ email, password }),
-      mode === 'signUp'
-        ? 'Account creation took too long. Please check your connection and try again.'
-        : 'Sign in took too long. Please check your connection and try again.'
-    );
+    const result = mode === 'signUp'
+      ? await sbClient.auth.signUp({ email, password })
+      : await sbClient.auth.signInWithPassword({ email, password });
 
     if (result.error) {
       showPasswordAuthError(note, result.error, mode);
@@ -2661,16 +2435,8 @@ async function handlePasswordAuth(mode, event) {
     }
 
     if (mode === 'signUp' && result.data && !result.data.session) {
-      note.textContent = 'Account created successfully. You can now sign in.';
+      note.textContent = 'Account created. Check your email to confirm, then sign in.';
       note.style.color = '';
-      return;
-    }
-
-    if (mode === 'signUp' && result.data && result.data.session) {
-      note.textContent = 'Account created successfully. You can now sign in.';
-      note.style.color = '';
-      await sbClient.auth.signOut();
-      currentUser = null;
       return;
     }
 
@@ -2682,7 +2448,7 @@ async function handlePasswordAuth(mode, event) {
     }
 
     note.textContent = mode === 'signUp'
-      ? 'Account created successfully. You can now sign in.'
+      ? 'Account created. Please sign in.'
       : 'Signed in. Loading your app...';
     note.style.color = '';
   } catch(e) {
