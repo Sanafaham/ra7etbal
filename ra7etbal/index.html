@@ -1926,32 +1926,6 @@ let pendingExtracted = [];
 let isListening = false;
 let recognition = null;
 let currentTab = 'home';
-const AI_REQUEST_TIMEOUT_MS = 30000;
-let organizeRequestId = 0;
-
-function makeTimeoutError(message) {
-  return new Error(message || 'Request timed out. Please try again.');
-}
-
-async function withTimeout(runRequest, ms, message, controller) {
-  let timer;
-  const request = Promise.resolve().then(runRequest).catch(e => {
-    if (e && e.name === 'AbortError') throw makeTimeoutError(message);
-    throw e;
-  });
-  const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      if (controller) controller.abort();
-      reject(makeTimeoutError(message));
-    }, ms);
-  });
-
-  try {
-    return await Promise.race([request, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 // INIT
 async function init() {
@@ -2714,30 +2688,14 @@ function updateCharCount() {
 // ORGANIZE - calls Claude API
 async function organizeInput() {
   const text = document.getElementById('mainInput').value.trim();
-  if (!text) { showToast('Type or speak what's happening first'); return; }
+  if (!text) { showToast('Type or speak what\'s happening first'); return; }
   if (!currentUser) { showToast('Please sign in first'); return; }
 
-  const requestId = ++organizeRequestId;
-  let watchdog = null;
+  showLoading(true);
 
-  try {
-    showLoading(true);
-    watchdog = setTimeout(() => {
-      if (requestId !== organizeRequestId) return;
-      organizeRequestId++;
-      showLoading(false);
-      showToast('Organizing took too long. Your text is still here. Please try again.');
-      console.error('ORGANIZE_TIMEOUT', {
-        stage: 'frontend_watchdog',
-        timeoutMs: AI_REQUEST_TIMEOUT_MS,
-        inputLength: text.length,
-        peopleCount: people.length
-      });
-    }, AI_REQUEST_TIMEOUT_MS);
+  const peopleList = people.map(p => `${p.name} (${p.role})`).join(', ') || 'No people added yet';
 
-    const peopleList = people.map(p => `${p.name} (${p.role})`).join(', ') || 'No people added yet';
-
-    const prompt = `You are Ra7etBal, an AI mental load processor. The user has offloaded their thoughts. Your job is to turn mental noise into the next right step.
+  const prompt = `You are Ra7etBal, an AI mental load processor. The user has offloaded their thoughts. Your job is to turn mental noise into the next right step.
 
 Known people in the user's life: ${peopleList || 'None added yet'}
 
@@ -2792,69 +2750,34 @@ Write suggested messages warmly and naturally. Always use "Can you please..." fo
 
 User input: "${text}"`;
 
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const res = await withTimeout(() => fetch('/api/anthropic', {
+  try {
+    const res = await fetch('/api/anthropic', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: controller ? controller.signal : undefined,
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1000,
         messages: [{ role: 'user', content: prompt }]
       })
-    }), AI_REQUEST_TIMEOUT_MS, 'Ra7etBal took too long to organize this. Your text is still here; please try again.', controller);
-    if (requestId !== organizeRequestId) return;
+    });
 
-    const data = await withTimeout(
-      () => res.json(),
-      AI_REQUEST_TIMEOUT_MS,
-      'Ra7etBal took too long to finish organizing this. Your text is still here; please try again.'
-    );
-    if (requestId !== organizeRequestId) return;
+    const data = await res.json();
+    showLoading(false);
 
-    if (!res.ok || data.error) {
-      console.error('ORGANIZE_API_ERROR', { status: res.status, error: data.error || data });
-      showToast('Could not organize this. The AI service returned an error. Your text is still here.');
+    if (data.error) {
+      showToast('API error: ' + data.error.message);
       return;
     }
 
-    const raw = data.content && data.content[0] && data.content[0].text
-      ? data.content[0].text.replace(/```json|```/g, '').trim()
-      : '';
-    if (!raw) {
-      console.error('ORGANIZE_EMPTY_RESPONSE', data);
-      showToast('Could not read the AI response. Your text is still here.');
-      return;
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch(parseError) {
-      console.error('ORGANIZE_JSON_PARSE_ERROR', { raw, error: parseError.message });
-      showToast('The AI response was not readable. Your text is still here. Please try again.');
-      return;
-    }
-
-    if (!parsed.extracted || !Array.isArray(parsed.extracted)) {
-      console.error('ORGANIZE_BAD_SHAPE', parsed);
-      showToast('The AI response was incomplete. Your text is still here. Please try again.');
-      return;
-    }
-
+    const raw = data.content[0].text.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(raw);
     pendingExtracted = parsed.extracted;
 
-    showLoading(false);
     showReviewScreen('tasks');
   } catch (err) {
-    if (requestId === organizeRequestId) {
-      showLoading(false);
-      showToast(err.message || 'Could not organize this. Your text is still here; please try again.');
-    }
-    console.error('ORGANIZE_FAILED', err);
-  } finally {
-    if (watchdog) clearTimeout(watchdog);
-    if (requestId === organizeRequestId) showLoading(false);
+    showLoading(false);
+    showToast('Something went wrong. Check your API key.');
+    console.error(err);
   }
 }
 
