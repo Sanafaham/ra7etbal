@@ -1,36 +1,49 @@
-import { useId, useMemo } from "react";
+import { useId, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
+import AuthNotice from "../components/auth/AuthNotice";
+import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import { useDraftStore } from "../stores/draft";
+import { useExtractionStore } from "../stores/extraction";
+import { usePeopleStore } from "../stores/people";
 
 /**
- * Home / Clear My Head — the entry surface for offloading thoughts.
+ * Home / Clear My Head — entry surface for offloading thoughts.
  *
- * Step 6 scope: date header + greeting + freeform textarea + char count.
- * The text is held in `useDraftStore` so it survives in-app navigation but
- * NOT refresh (it's an unsaved draft). AI extraction, the "Next" action,
- * and voice input are deferred to their own steps so we don't ship stubs.
+ * Step 6 added the textarea + counts. Step 7 adds the "Organize" action:
+ * loads the People roster (so the AI prompt has the right names/roles),
+ * runs AI extraction, then navigates to /review. No save yet — that's a
+ * later step.
  */
 export default function Home() {
   const { user } = useAuth();
+  const userId = user?.id ?? null;
+  const navigate = useNavigate();
   const textareaId = useId();
 
   const { text, setText } = useDraftStore(
     useShallow((s) => ({ text: s.text, setText: s.setText })),
   );
 
-  const today = useMemo(() => {
-    return new Intl.DateTimeFormat(undefined, {
-      weekday: "long",
-      month: "long",
-      day: "numeric",
-    }).format(new Date());
-  }, []);
+  const { loadFor: loadPeople, items: people } = usePeopleStore(
+    useShallow((s) => ({ loadFor: s.loadFor, items: s.items })),
+  );
+
+  const runExtraction = useExtractionStore((s) => s.run);
+
+  const today = useMemo(
+    () =>
+      new Intl.DateTimeFormat(undefined, {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+      }).format(new Date()),
+    [],
+  );
 
   const greetingName = useMemo(() => {
     if (!user?.email) return null;
-    // Use the part before "@" as a light personal touch; users can adjust their
-    // display later when a profile screen exists.
     const local = user.email.split("@")[0] ?? "";
     if (!local) return null;
     return local.charAt(0).toUpperCase() + local.slice(1);
@@ -41,6 +54,40 @@ export default function Home() {
     const trimmed = text.trim();
     return trimmed ? trimmed.split(/\s+/).length : 0;
   }, [text]);
+
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submittingRef = useRef(false);
+
+  const trimmed = text.trim();
+  const canSubmit = !submitting && trimmed.length > 0 && !!userId;
+
+  async function handleNext() {
+    if (submittingRef.current) return;
+    if (!canSubmit || !userId) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      // Ensure People are loaded so the prompt's role-mapping has the right
+      // roster. loadFor() is a no-op when the cache is already valid for this
+      // user.
+      await loadPeople(userId);
+      // Read the latest people from the store after the await — `people` from
+      // the render closure may be stale on first visit.
+      const peopleNow = usePeopleStore.getState().items;
+      await runExtraction(trimmed, peopleNow);
+      navigate("/review");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Couldn't process that. Please try again.",
+      );
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }
 
   return (
     <section className="space-y-6">
@@ -69,11 +116,9 @@ export default function Home() {
           autoComplete="off"
           spellCheck
           rows={8}
-          // `field-sizing: content` is supported on iOS 17+ / modern Chrome and
-          // makes the box grow with content. Browsers without it fall back to
-          // the `rows` height + native scroll.
+          disabled={submitting}
           style={{ fieldSizing: "content" } as React.CSSProperties}
-          className="block min-h-[180px] w-full resize-y rounded-xl bg-transparent text-base leading-relaxed text-ink outline-none placeholder:text-ink/35 focus:outline-none"
+          className="block min-h-[180px] w-full resize-y rounded-xl bg-transparent text-base leading-relaxed text-ink outline-none placeholder:text-ink/35 focus:outline-none disabled:opacity-60"
         />
 
         <div className="mt-3 flex items-center justify-between border-t border-sage/15 pt-3 text-xs text-ink/55">
@@ -82,6 +127,38 @@ export default function Home() {
           </span>
           <span aria-live="polite">{charCount} characters</span>
         </div>
+      </div>
+
+      {error && (
+        <AuthNotice kind="error">
+          {error}{" "}
+          <button
+            type="button"
+            onClick={handleNext}
+            className="ml-1 underline"
+            disabled={submitting}
+          >
+            Try again
+          </button>
+        </AuthNotice>
+      )}
+
+      <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-ink/45">
+          {people.length === 0
+            ? "Tip: add people first so delegations can be assigned."
+            : "Tap Next to let Ra7etBal organize what you wrote."}
+        </p>
+        <button
+          type="button"
+          onClick={handleNext}
+          disabled={!canSubmit}
+          aria-busy={submitting}
+          className="inline-flex items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {submitting && <Spinner size={16} />}
+          <span>{submitting ? "Organizing…" : "Next →"}</span>
+        </button>
       </div>
 
       <p className="text-xs text-ink/45">

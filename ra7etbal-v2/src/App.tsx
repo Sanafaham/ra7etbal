@@ -4,6 +4,7 @@ import Debug from "./routes/Debug";
 import Home from "./routes/Home";
 import People from "./routes/People";
 import Reset from "./routes/Reset";
+import Review from "./routes/Review";
 import Spinner from "./components/Spinner";
 import { useAuth } from "./hooks/useAuth";
 import { signOut } from "./lib/session";
@@ -141,7 +142,14 @@ export default function App() {
           />
           <Route path="/auth" element={<AuthRoute />} />
           <Route path="/reset" element={<ResetRoute />} />
-          <Route path="/review" element={<Placeholder title="Review extracted items" />} />
+          <Route
+            path="/review"
+            element={
+              <ProtectedRoute>
+                <Review />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/people"
             element={
