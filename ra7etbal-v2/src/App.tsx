@@ -104,7 +104,7 @@ export default function App() {
         <span aria-hidden className="text-2xl">🌿</span>
         <div className="flex flex-col leading-tight">
           <span className="font-semibold">Ra7etBal · راحة بال</span>
-          <span className="text-xs text-ink/60">v2 · Step 3</span>
+          <span className="text-xs text-ink/60">v2</span>
         </div>
         <HeaderUserStrip />
       </header>
