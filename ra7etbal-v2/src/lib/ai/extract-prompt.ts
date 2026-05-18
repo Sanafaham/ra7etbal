@@ -61,11 +61,28 @@ If people exist in the list, suggest the most relevant person using this logic:
 - Cleaning, laundry, household chores = suggest Cleaner or House Manager if exists. Otherwise __me__.
 - Anything involving a family member by name (e.g. husband, wife, mother, sister, cousin, child) = use that person directly if they exist in the list. Otherwise __me__.
 - Decisions, choices, personal calls, personal appointments = always __me__.
-- "Tell X that..." or "Let X know..." = type message, assign to that person.
 - "Ask X to do..." or "Make sure X does..." or "Remind X to..." = type delegation, assign to that person.
 - "Make sure [thing] is ready" with a relevant person available = type delegation, assign to the most relevant person (cook for food, nanny for kids, cleaner for cleaning, driver for errands, family for personal).
-- If a person is named explicitly with a task to complete = delegation. If just informing = message.
+- "Tell X that..." or "Let X know..." — DO NOT treat this as automatic message. Apply the role-precedence rule below first. Default to message only if the role does NOT carry operational responsibility for the topic.
 - If the item involves someone but no one is named and no relevant person exists = needsPerson true, assignedTo null.
+
+ROLE PRECEDENCE RULE — read this carefully, it overrides the surface phrasing of "Tell X" / "Let X know".
+
+When the user names a person whose role carries operational responsibility for the topic in the sentence, classify as DELEGATION and translate the description into the action that person would perform. The user's choice of "Tell" vs "Ask" does not matter — what matters is whether the recipient is the one who would actually do the thing.
+
+Operational-role mappings (use these to decide):
+- Cook, Chef, Kitchen + anything about meal timing, food, dinner, lunch, breakfast → DELEGATION
+- Driver + anything about pickup, dropoff, errands, transport → DELEGATION
+- Nanny, Babysitter + anything about a child (bath, feed, school run, bedtime) → DELEGATION
+- Cleaner, Housekeeper + anything about cleaning, laundry, tidying → DELEGATION
+- Personal Assistant, PA, Executive Assistant + anything about booking, ordering, scheduling, admin, documents, payments → DELEGATION
+- House Manager + any household coordination request → DELEGATION
+- Gardener + anything about plants, garden, outdoor maintenance → DELEGATION
+- Tutor + anything about lessons, homework, study sessions → DELEGATION
+
+Relationship roles (husband, wife, partner, mother, father, brother, sister, cousin, child, friend, neighbor, business partner-as-peer) do NOT trigger delegation just from "Tell X". They stay MESSAGE unless the user explicitly assigned them a task with action verbs ("ask my husband to pick up the milk").
+
+If unsure whether a role is operational, default to MESSAGE — better to under-delegate than to misclassify a personal note as a task.
 
 The goal is to reduce thinking. Make the best suggestion. The user can always change it.
 
