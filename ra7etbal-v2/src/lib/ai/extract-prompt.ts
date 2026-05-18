@@ -1,16 +1,12 @@
 import type { Person } from "../../types/person";
 
 /**
- * Extraction prompt — preserves the v1 prompt structure (which has been
- * battle-tested) with one update: the role-mapping rules now cover family
- * relationships and personal contacts as well as household staff, because
- * the v2 People scope is intentionally open-ended.
+ * Extraction prompt
  *
- * The classification rules are the load-bearing piece — `delegation` vs
- * `message` is the bug that v1 spent the most effort getting right:
- *   - "Tell X that ..." → message, no follow-up
- *   - "Ask X to do ...", "Make sure ... is ready" → delegation, needs follow-up
- *   - "Make sure X does ..." → delegation
+ * The classification rules are the load-bearing piece. The order of sections
+ * matters — the model anchors on what it reads first. Role precedence is
+ * therefore stated BEFORE the type list, and reinforced with worked
+ * examples for the exact failing cases.
  */
 export function buildExtractionPrompt(text: string, people: Person[]): string {
   const peopleList =
@@ -22,17 +18,101 @@ export function buildExtractionPrompt(text: string, people: Person[]): string {
 
 Known people in the user's life: ${peopleList}
 
-Classify each item into one of these types:
-- action: needs to be done, clear next step
-- reminder: time-based or needs to be remembered
-- message: a one-way communication to someone, like telling them information or a time. Example: "Tell Christopher dinner is at 8."
-- delegation: a task you are assigning to someone that requires them to DO something and confirm. Example: "Make sure the school bag is ready." "Ask Ghulam to pick up Loulya." Only use delegation when the person needs to complete an action, not just receive information.
-- decision: unresolved, needs a choice
-- followup: user is waiting on someone or something
-- errand: shopping, pickup, errand outside
-- parked: idea for later, not actionable yet
+================================================================
+RULE 1 (HIGHEST PRIORITY) — ROLE OVERRIDES PHRASING
+================================================================
 
-Return ONLY valid JSON, no markdown, no explanation. Do NOT include a summary field — Ra7etBal generates the review subtitle on the client.
+When the user names a person whose role carries operational responsibility
+for the topic in the sentence, the item is a DELEGATION even if the user
+phrased it as "Tell X" / "Let X know" / "Mention to X".
+
+The user's phrasing does NOT decide the type. The person's role does.
+
+Operational-role mapping. Whenever a named person matches one of these
+roles AND the sentence is about a topic in that role's domain, classify
+as DELEGATION and translate the description into the action they will
+actually perform:
+
+  - Cook / Chef / Kitchen     → meal timing, food, dinner, lunch, breakfast
+  - Driver                    → pickup, dropoff, errands, transport
+  - Nanny / Babysitter        → anything about a child (bath, feed, school run, bedtime)
+  - Cleaner / Housekeeper     → cleaning, laundry, tidying
+  - Personal Assistant / PA   → booking, ordering, scheduling, admin, documents, payments
+  - House Manager             → any household coordination
+  - Gardener                  → plants, garden, outdoor maintenance
+  - Tutor                     → lessons, homework, study sessions
+
+Relationship roles (husband, wife, partner, mother, father, brother, sister,
+cousin, child, friend, neighbor, business partner-as-peer) do NOT trigger
+delegation just from "Tell X". They stay MESSAGE unless the user explicitly
+assigned an action with verbs like "ask my husband to pick up the milk".
+
+When unsure whether a role is operational, default to MESSAGE — better to
+under-delegate than to misclassify a personal note.
+
+================================================================
+WORKED EXAMPLES — these are the calibration set. Match them.
+================================================================
+
+Example A. Input: "Tell Christopher dinner is at 9." Christopher's role is Cook.
+  Output:
+    type: "delegation"
+    assignedTo: "Christopher"
+    description: "Have dinner ready by 9."
+    suggestedMessage: "Can you please have dinner ready by 9?"
+  Reasoning (do NOT include in output): role = Cook, topic = meal timing,
+  so RULE 1 fires. "Tell" phrasing is overridden.
+
+Example B. Input: "Tell Christopher dinner is at 9." Christopher's role is husband.
+  Output:
+    type: "message"
+    assignedTo: "Christopher"
+    description: "Tell Christopher dinner is at 9."
+    suggestedMessage: "Christopher, dinner is at 9."
+  Reasoning: husband is a relationship role, so RULE 1 does not fire.
+
+Example C. Input: "Tell Ghulam I need the car at 8." Ghulam's role is Driver.
+  Output:
+    type: "delegation"
+    assignedTo: "Ghulam"
+    description: "Have the car ready at 8."
+    suggestedMessage: "Can you please have the car ready at 8?"
+
+Example D. Input: "Tell Nasira Loulya has a doctor's appointment at 4."
+            Nasira's role is Nanny. Loulya is a child not in People.
+  Output:
+    type: "delegation"
+    assignedTo: "Nasira"
+    description: "Take Loulya to her doctor's appointment at 4."
+    suggestedMessage: "Can you please take Loulya to her doctor's appointment at 4?"
+
+Example E. Input: "Tell my friend Sarah I'm running late."
+            Sarah's role is friend (or Sarah is not in People).
+  Output:
+    type: "message"
+    assignedTo: "Sarah"
+    description: "Tell Sarah I'm running late."
+    suggestedMessage: "Sarah, I'm running late."
+
+================================================================
+TYPES
+================================================================
+
+- action: needs to be done by the user, clear next step.
+- reminder: time-based or needs to be remembered.
+- message: a one-way communication, no follow-up required (use only when RULE 1 does NOT fire).
+- delegation: assign someone to DO and confirm. Use when RULE 1 fires OR when the user explicitly assigned a task ("ask X to…", "make sure X does…").
+- decision: unresolved choice for the user.
+- followup: user is waiting on someone or something.
+- errand: shopping, pickup, errand outside.
+- parked: idea for later, not actionable yet.
+
+================================================================
+OUTPUT SHAPE
+================================================================
+
+Return ONLY valid JSON. No markdown fences. No prose. No summary field —
+Ra7etBal generates the review subtitle on the client.
 
 {
   "extracted": [
@@ -49,7 +129,9 @@ Return ONLY valid JSON, no markdown, no explanation. Do NOT include a summary fi
   ]
 }
 
-Smart assignment rules -- think carefully about each item:
+================================================================
+ASSIGNMENT RULES (apply AFTER RULE 1)
+================================================================
 
 If no people are in the list, set assignedTo to "__me__" for everything personal.
 
@@ -59,75 +141,38 @@ If people exist in the list, suggest the most relevant person using this logic:
 - Kids, school, pickup, appointments for children = suggest Nanny, Driver, or Personal Assistant if any exist. Otherwise __me__.
 - Sending documents, invoices, emails, scheduling = suggest Personal Assistant if exists. Otherwise __me__.
 - Cleaning, laundry, household chores = suggest Cleaner or House Manager if exists. Otherwise __me__.
-- Anything involving a family member by name (e.g. husband, wife, mother, sister, cousin, child) = use that person directly if they exist in the list. Otherwise __me__.
+- Anything involving a family member by name = use that person directly if they exist.
 - Decisions, choices, personal calls, personal appointments = always __me__.
-- "Ask X to do..." or "Make sure X does..." or "Remind X to..." = type delegation, assign to that person.
-- "Make sure [thing] is ready" with a relevant person available = type delegation, assign to the most relevant person (cook for food, nanny for kids, cleaner for cleaning, driver for errands, family for personal).
-- "Tell X that..." or "Let X know..." — DO NOT treat this as automatic message. Apply the role-precedence rule below first. Default to message only if the role does NOT carry operational responsibility for the topic.
-- If the item involves someone but no one is named and no relevant person exists = needsPerson true, assignedTo null.
+- "Ask X to do..." or "Make sure X does..." or "Remind X to..." = delegation.
+- "Make sure [thing] is ready" with a relevant person available = delegation, assign to the most relevant role.
+- If the item involves someone but no one is named and no relevant person exists = needsPerson: true, assignedTo: null.
 
-ROLE PRECEDENCE RULE — read this carefully, it overrides the surface phrasing of "Tell X" / "Let X know".
+================================================================
+STAY TIGHT
+================================================================
 
-When the user names a person whose role carries operational responsibility for the topic in the sentence, classify as DELEGATION and translate the description into the action that person would perform. The user's choice of "Tell" vs "Ask" does not matter — what matters is whether the recipient is the one who would actually do the thing.
-
-Operational-role mappings (use these to decide):
-- Cook, Chef, Kitchen + anything about meal timing, food, dinner, lunch, breakfast → DELEGATION
-- Driver + anything about pickup, dropoff, errands, transport → DELEGATION
-- Nanny, Babysitter + anything about a child (bath, feed, school run, bedtime) → DELEGATION
-- Cleaner, Housekeeper + anything about cleaning, laundry, tidying → DELEGATION
-- Personal Assistant, PA, Executive Assistant + anything about booking, ordering, scheduling, admin, documents, payments → DELEGATION
-- House Manager + any household coordination request → DELEGATION
-- Gardener + anything about plants, garden, outdoor maintenance → DELEGATION
-- Tutor + anything about lessons, homework, study sessions → DELEGATION
-
-Relationship roles (husband, wife, partner, mother, father, brother, sister, cousin, child, friend, neighbor, business partner-as-peer) do NOT trigger delegation just from "Tell X". They stay MESSAGE unless the user explicitly assigned them a task with action verbs ("ask my husband to pick up the milk").
-
-If unsure whether a role is operational, default to MESSAGE — better to under-delegate than to misclassify a personal note as a task.
-
-The goal is to reduce thinking. Make the best suggestion. The user can always change it.
-
-Make smart, role-aware practical inferences when the intent is obvious.
-The description and suggestedMessage should reflect the PRACTICAL ACTION the named person would actually do, not just echo the user's words back. Use the person's role to translate information into the action it implies.
-
-Worked example. User says: "Tell Christopher dinner is at 9."
-- If Christopher's role is Cook (or Chef, Kitchen, House Cook):
-    type: delegation
-    assignedTo: Christopher
-    description: "Have dinner ready by 9."
-    suggestedMessage: "Can you please have dinner ready by 9?"
-- If Christopher's role is husband, son, brother, or any family/personal role:
-    type: message
-    assignedTo: Christopher
-    description: "Tell Christopher dinner is at 9."
-    suggestedMessage: "Christopher, dinner is at 9."
-- If Christopher is not in the People list:
-    type: message
-    assignedTo: Christopher
-    needsPerson: true
-    description: "Tell Christopher dinner is at 9."
-
-Apply the same kind of judgement to every role. Examples of practical translations:
-- Driver + "pick up Loulya at school" -> delegation, "Pick up Loulya from school."
-- Nanny + "Loulya needs to bathe" -> delegation, "Bathe Loulya."
-- Cleaner + "the living room is a mess" -> delegation, "Clean the living room."
-- Personal Assistant + "send the invoice to the accountant" -> delegation, "Send the invoice to the accountant."
-- Business partner + "we need to confirm Friday's meeting" -> delegation OR action depending on who acts.
-
-The role list is OPEN. People in Ra7etBal may be husband, wife, mother, father, sister, brother, cousin, child, friend, neighbor, business partner, assistant, driver, nanny, cook, cleaner, gardener, tutor, or any free-text role. Do NOT assume the user is only managing household staff. Adapt the practical inference to whoever was added.
-
-The user will review and edit the description and the suggestedMessage before anything is sent or saved. Your job is to give the best practical first draft.
-
-CRITICAL — stay tight. No commentary, no speculation, no operational extras.
 The description and the suggestedMessage must contain only the direct task or message itself.
-- Do NOT add "you may need to…", "you might want to…", "consider…", "don't forget to…", "make sure to also…", "in case…", or any similar speculative helper.
-- Do NOT volunteer prep steps, dependencies, or contingencies that the user did not say (no "prepare ingredients in advance", no "check the fuel", no "leave extra time", no "buy groceries first").
-- Do NOT add encouragement, sign-offs, or stage directions ("good luck", "let me know if…", "thanks!" beyond a plain "thanks").
+
+- Do NOT add "you may need to…", "you might want to…", "consider…", "don't forget to…", "make sure to also…", "in case…", or any speculative helper.
+- Do NOT volunteer prep steps, dependencies, or contingencies that the user did not say.
+- Do NOT add encouragement, sign-offs, or stage directions.
 - Match the user's scope exactly. One sentence per field unless the user clearly asked for multiple actions.
 
-CRITICAL — preserve the user's exact time context.
-Never invent time words. Only use a time qualifier ("tonight", "tomorrow", "this morning", "later today", "at 8pm", a specific date, etc.) if the user themselves said it in the input. If the user said "dinner is at 9", write "Dinner is at 9." — NOT "Dinner is at 9 tonight." If the user gave no date or relative day, the description and the suggestedMessage must contain no day word at all. This rule applies to every field: description, suggestedMessage, and clarificationQuestion.
+================================================================
+PRESERVE TIME CONTEXT EXACTLY
+================================================================
 
-Write suggested messages warmly and naturally. Always use "Can you please..." for staff. For family use warmer phrasing. Keep messages short and clear. Never use "Could you" -- use "Can you please" instead.
+Never invent time words. Only use a time qualifier ("tonight", "tomorrow", "this morning", "later today", "at 8pm", a specific date) if the user themselves said it. If the user said "dinner is at 9", write "by 9" or "at 9" — NEVER "at 9 tonight". This applies to description, suggestedMessage, and clarificationQuestion.
 
-User input: "${text}"`;
+================================================================
+MESSAGE STYLE
+================================================================
+
+Write suggestedMessage naturally. For staff/operational roles use "Can you please …". For family/friends use warmer phrasing. Never use "Could you" — use "Can you please". Keep messages short.
+
+================================================================
+USER INPUT
+================================================================
+
+"${text}"`;
 }

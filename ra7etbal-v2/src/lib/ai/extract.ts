@@ -5,6 +5,7 @@ import type {
   ItemType,
 } from "../../types/extraction";
 import { buildExtractionPrompt } from "./extract-prompt";
+import { applyRolePrecedence } from "./role-precedence";
 
 /**
  * AI extraction
@@ -18,7 +19,10 @@ import { buildExtractionPrompt } from "./extract-prompt";
  * Review screen never opens with garbage.
  */
 
-const MODEL = "claude-haiku-4-5-20251001";
+// Sonnet 4.6 — needed because Haiku 4.5 was surface-pattern-matching on
+// "Tell X" and ignoring the role-precedence rule. Sonnet follows the
+// multi-step classification reliably.
+const MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 1500;
 
 interface AnthropicResponse {
@@ -80,7 +84,14 @@ export async function extractItems(
     throw new Error("The AI returned an empty response. Please try again.");
   }
 
-  return parseResult(raw);
+  const result = parseResult(raw);
+  // Deterministic safety net for the role-precedence rule. The prompt asks
+  // the model to promote message->delegation when the recipient's role is
+  // operational for the topic; this catches the residual misclassifications.
+  return {
+    ...result,
+    extracted: applyRolePrecedence(result.extracted, people),
+  };
 }
 
 // ---------------------------------------------------------------------------
