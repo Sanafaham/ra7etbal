@@ -1,24 +1,29 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import ItemCard from "../components/review/ItemCard";
 import Spinner from "../components/Spinner";
 import AuthNotice from "../components/auth/AuthNotice";
 import { useAuth } from "../hooks/useAuth";
+import { savePending } from "../lib/save";
+import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
+import { useMessagesStore } from "../stores/messages";
 import { usePeopleStore } from "../stores/people";
+import { useTasksStore } from "../stores/tasks";
 
 /**
- * Review — shows AI-extracted items with editable assignments.
- *
- * Saving to Supabase is intentionally not wired here (next step). The user
- * can change assignments locally; navigating away keeps those edits in the
- * store. Sign-out clears the extraction via stores/sync.ts.
+ * Review — shows AI-extracted items with editable assignments, descriptions,
+ * and messages, then saves them to Supabase as tasks + messages on Save.
  */
 export default function Review() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const userId = user?.id ?? null;
+
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const savingRef = useRef(false);
 
   const {
     status,
@@ -128,6 +133,8 @@ export default function Review() {
         </ul>
       )}
 
+      {saveError && <AuthNotice kind="error">{saveError}</AuthNotice>}
+
       <div className="flex flex-col-reverse items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Link
           to="/"
@@ -135,11 +142,46 @@ export default function Review() {
         >
           ← Back to Home
         </Link>
-        <p className="text-xs text-ink/50">
-          Saving these to Actions / Messages / Follow-ups arrives in the next
-          step.
-        </p>
+        {items.length > 0 && (
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={saving}
+            aria-busy={saving}
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving && <Spinner size={16} />}
+            <span>{saving ? "Saving…" : "Save"}</span>
+          </button>
+        )}
       </div>
     </section>
   );
+
+  async function handleSave() {
+    if (savingRef.current) return;
+    if (!items.length) return;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const { tasks, messages } = await savePending(items);
+      // Push into the in-memory stores so Actions/Messages/FollowUps show the
+      // new rows without a refetch.
+      useTasksStore.getState().push(tasks);
+      useMessagesStore.getState().push(messages);
+      // Clear the draft and the extraction — the flow is done.
+      useDraftStore.getState().clear();
+      useExtractionStore.getState().clear();
+      // Default landing: Actions, where everything just saved is visible.
+      navigate("/actions", { replace: true });
+    } catch (err) {
+      setSaveError(
+        err instanceof Error ? err.message : "Could not save. Please try again.",
+      );
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }
 }

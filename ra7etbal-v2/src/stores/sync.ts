@@ -1,7 +1,9 @@
 import { useAuthStore } from "./auth";
 import { useDraftStore } from "./draft";
 import { useExtractionStore } from "./extraction";
+import { useMessagesStore } from "./messages";
 import { usePeopleStore } from "./people";
+import { useTasksStore } from "./tasks";
 
 /**
  * Cross-store coupling: when auth flips to signed_out (or recovery), clear
@@ -27,6 +29,8 @@ const unsub = useAuthStore.subscribe((s, prev) => {
     usePeopleStore.getState().reset();
     useDraftStore.getState().clear();
     useExtractionStore.getState().clear();
+    useTasksStore.getState().reset();
+    useMessagesStore.getState().reset();
   }
 });
 

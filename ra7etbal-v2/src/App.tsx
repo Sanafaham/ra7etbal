@@ -1,7 +1,11 @@
 import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import Actions from "./routes/Actions";
 import Auth from "./routes/Auth";
+import Confirm from "./routes/Confirm";
 import Debug from "./routes/Debug";
+import FollowUps from "./routes/FollowUps";
 import Home from "./routes/Home";
+import Messages from "./routes/Messages";
 import People from "./routes/People";
 import Reset from "./routes/Reset";
 import Review from "./routes/Review";
@@ -9,25 +13,17 @@ import Spinner from "./components/Spinner";
 import { useAuth } from "./hooks/useAuth";
 import { signOut } from "./lib/session";
 
-function Placeholder({ title }: { title: string }) {
-  return (
-    <section className="rounded-2xl border border-sage/30 bg-white/70 p-6 shadow-sm">
-      <h2 className="text-xl font-semibold text-ink">{title}</h2>
-      <p className="mt-2 text-sm text-ink/70">
-        Placeholder — implemented in a later step.
-      </p>
-    </section>
-  );
-}
-
-const navItems = [
+/**
+ * Nav items shown when signed in. Auth/Reset/Confirm/Debug are reachable
+ * by URL but kept off the chip nav (Auth & Reset are state-driven, Confirm
+ * is recipient-facing via shared link, Debug is for verification only).
+ */
+const navItems: { to: string; label: string; end?: boolean }[] = [
   { to: "/", label: "Home", end: true },
-  { to: "/auth", label: "Auth" },
-  { to: "/reset", label: "Reset" },
-  { to: "/review", label: "Review" },
+  { to: "/actions", label: "Actions" },
+  { to: "/follow-ups", label: "Follow-ups" },
+  { to: "/messages", label: "Messages" },
   { to: "/people", label: "People" },
-  { to: "/confirm", label: "Confirm" },
-  { to: "/debug", label: "Debug" },
 ];
 
 function LoadingPane() {
@@ -40,8 +36,8 @@ function LoadingPane() {
 
 /**
  * Route-level guard for /auth. Sends signed-in users home and recovery-mode
- * users to /reset (built in Step 4). While loading, render a spinner — the
- * INITIAL_SESSION event resolves within a couple hundred ms.
+ * users to /reset. While loading, render a spinner — INITIAL_SESSION resolves
+ * within a couple hundred ms.
  */
 function AuthRoute() {
   const { status } = useAuth();
@@ -51,14 +47,7 @@ function AuthRoute() {
   return <Auth />;
 }
 
-/**
- * Route-level guard for /reset. Only renders the Reset screen when the auth
- * machine reports `recovery`. Everything else gets redirected — signed-in
- * users go home, signed-out users go to /auth. This is the architectural
- * fix for the v1 bug where Review/refresh could send the user back into
- * Reset: recovery is a Zustand flag, not a URL hash or DOM check, and it
- * only ever clears via `clearRecovery()` after a successful updateUser.
- */
+/** Recovery-only route. The recovery flag is a Zustand state, not a URL hash. */
 function ResetRoute() {
   const { status } = useAuth();
   if (status === "loading") return <LoadingPane />;
@@ -67,10 +56,7 @@ function ResetRoute() {
   return <Navigate to="/auth" replace />;
 }
 
-/**
- * Wrap any route that requires an authenticated session. Signed-out users
- * are sent to /auth; recovery-mode users are sent to /reset.
- */
+/** Wrap any route that needs an authenticated session. */
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { status } = useAuth();
   if (status === "loading") return <LoadingPane />;
@@ -98,6 +84,36 @@ function HeaderUserStrip() {
   );
 }
 
+/**
+ * Nav is hidden on the recipient-facing confirmation page so the link feels
+ * like a single-purpose action surface, not the host's app.
+ */
+function ChipNav() {
+  const { status } = useAuth();
+  if (status !== "signed_in") return null;
+  return (
+    <nav className="mx-auto mt-4 flex max-w-3xl flex-wrap gap-2 px-5">
+      {navItems.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          className={({ isActive }) =>
+            [
+              "rounded-full border px-3 py-1 text-sm transition",
+              isActive
+                ? "border-sage bg-sage text-white"
+                : "border-sage/30 bg-white/60 text-ink hover:bg-white",
+            ].join(" ")
+          }
+        >
+          {item.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
 export default function App() {
   return (
     <div className="min-h-dvh bg-cream text-ink">
@@ -110,25 +126,7 @@ export default function App() {
         <HeaderUserStrip />
       </header>
 
-      <nav className="mx-auto mt-4 flex max-w-3xl flex-wrap gap-2 px-5">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.to}
-            to={item.to}
-            end={item.end}
-            className={({ isActive }) =>
-              [
-                "rounded-full border px-3 py-1 text-sm transition",
-                isActive
-                  ? "border-sage bg-sage text-white"
-                  : "border-sage/30 bg-white/60 text-ink hover:bg-white",
-              ].join(" ")
-            }
-          >
-            {item.label}
-          </NavLink>
-        ))}
-      </nav>
+      <ChipNav />
 
       <main className="mx-auto mt-6 max-w-3xl px-5 pb-24">
         <Routes>
@@ -151,6 +149,30 @@ export default function App() {
             }
           />
           <Route
+            path="/actions"
+            element={
+              <ProtectedRoute>
+                <Actions />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/follow-ups"
+            element={
+              <ProtectedRoute>
+                <FollowUps />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/messages"
+            element={
+              <ProtectedRoute>
+                <Messages />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/people"
             element={
               <ProtectedRoute>
@@ -158,7 +180,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
-          <Route path="/confirm" element={<Placeholder title="Confirm task" />} />
+          <Route path="/confirm" element={<Confirm />} />
           <Route path="/debug" element={<Debug />} />
           <Route
             path="*"
