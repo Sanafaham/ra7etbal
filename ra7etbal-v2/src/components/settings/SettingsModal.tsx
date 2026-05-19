@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import AuthNotice from "../auth/AuthNotice";
 import Spinner from "../Spinner";
 import Modal from "../ui/Modal";
@@ -12,108 +12,214 @@ interface Props {
   userId: string | null;
 }
 
-const CONFIRM_PHRASE = "clear my history";
+type View = "list" | "confirm-clear";
 
 /**
- * Settings modal — the gear-icon menu.
+ * Settings modal — two-view, iOS-Settings-style.
  *
- * Today this surfaces only the "Clear history" action. The layout is
- * deliberately sectioned ("History" / "Danger zone") so the future
- * History feature drops in as a new section above Danger zone without
- * restructuring this file. History itself will likely be a /history
- * route opened from a row here, not a panel inside this modal.
+ * View 1 (list): grouped rows in a calm consumer-grade layout.
+ *   - History · View history / Archive history (visible Coming-soon
+ *     placeholders for the future first-class History feature).
+ *   - Workspace · Clear history (active row, neutral colour).
+ *
+ * View 2 (confirm-clear): a calm in-modal confirmation pane with a
+ * title, explanation, and two buttons (Cancel + Clear history). No
+ * typed confirmation, no input, no keyboard — so iOS Safari has
+ * nothing to auto-zoom and nothing to cover.
+ *
+ * After success: returns to View 1 with a success notice; the user
+ * dismisses when ready. Stores are reset so every tab is empty when
+ * the user navigates to it.
  */
 export default function SettingsModal({ open, onClose, userId }: Props) {
-  const [phrase, setPhrase] = useState("");
+  const [view, setView] = useState<View>("list");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<
-    { kind: "error" | "success"; text: string } | null
+    { kind: "success" | "error"; text: string } | null
   >(null);
 
-  const canClear =
-    !!userId && !busy && phrase.trim().toLowerCase() === CONFIRM_PHRASE;
+  // Always start on the list view when the modal opens — never strand
+  // the user on the confirmation pane between sessions.
+  useEffect(() => {
+    if (open) {
+      setView("list");
+      setNotice(null);
+    }
+  }, [open]);
 
   async function handleClear() {
-    if (!canClear || !userId) return;
+    if (!userId || busy) return;
     setBusy(true);
-    setNotice(null);
     try {
       const { tasksDeleted, messagesDeleted } = await clearUserData(userId);
-      // Empty the in-memory caches so every tab clears immediately.
+      // Empty the in-memory caches so every tab clears immediately on
+      // next visit — and force-refresh on mount will confirm against
+      // Supabase.
       useTasksStore.getState().reset();
       useMessagesStore.getState().reset();
-      setPhrase("");
       setNotice({
         kind: "success",
-        text: `Cleared ${tasksDeleted} task(s) and ${messagesDeleted} message(s). People and account untouched.`,
+        text:
+          tasksDeleted + messagesDeleted === 0
+            ? "Nothing to clear. People and account untouched."
+            : `Cleared ${tasksDeleted} task${tasksDeleted === 1 ? "" : "s"} and ${messagesDeleted} message${messagesDeleted === 1 ? "" : "s"}. People and account untouched.`,
       });
+      setView("list");
     } catch (err) {
       setNotice({
         kind: "error",
         text: err instanceof Error ? err.message : "Could not clear. Please try again.",
       });
+      // Stay on the confirm view so the user can retry.
     } finally {
       setBusy(false);
     }
   }
 
-  function handleClose() {
+  function close() {
     if (busy) return;
-    // Reset transient state so reopening starts clean.
-    setPhrase("");
-    setNotice(null);
     onClose();
   }
 
+  if (view === "confirm-clear") {
+    return (
+      <Modal open={open} onClose={close} title="Settings" dismissable={!busy}>
+        <ConfirmClear
+          busy={busy}
+          notice={notice?.kind === "error" ? notice.text : null}
+          onCancel={() => {
+            if (busy) return;
+            setNotice(null);
+            setView("list");
+          }}
+          onConfirm={() => void handleClear()}
+        />
+      </Modal>
+    );
+  }
+
   return (
-    <Modal open={open} onClose={handleClose} title="Settings" dismissable={!busy}>
-      <div className="space-y-5">
-        {/* === History (placeholder for future first-class section) ===
-            History / Archive / Clear are conceptually the same surface —
-            "what's already completed". For now only Clear is wired. */}
-
-        <section className="space-y-3 rounded-2xl border border-rose-200 bg-rose-50/40 p-4">
-          <header className="space-y-1">
-            <h3 className="text-sm font-semibold text-rose-900">Danger zone</h3>
-            <p className="text-xs text-rose-900/80">
-              Permanently delete all your tasks and messages, including completed
-              history. People and your account are preserved. Cannot be undone.
-            </p>
-          </header>
-
-          <label className="block text-[10px] font-medium uppercase tracking-wide text-rose-900/80">
-            Type{" "}
-            <span className="rounded bg-rose-100 px-1 font-mono">clear my history</span>{" "}
-            to confirm
-            <input
-              type="text"
-              value={phrase}
-              onChange={(e) => setPhrase(e.target.value)}
-              disabled={busy}
-              autoComplete="off"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-              // 16px (text-base) is required to stop iOS Safari from
-              // auto-zooming on focus. Anything smaller triggers it.
-              className="mt-2 w-full rounded-xl border border-rose-300 bg-white px-3 py-2 font-mono text-base normal-case text-ink outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-300 disabled:opacity-50"
-            />
-          </label>
-
-          {notice && <AuthNotice kind={notice.kind}>{notice.text}</AuthNotice>}
-
-          <button
-            type="button"
-            onClick={() => void handleClear()}
-            disabled={!canClear}
-            aria-busy={busy}
-            className="inline-flex items-center gap-2 rounded-full bg-rose-700 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {busy && <Spinner size={14} />}
-            <span>{busy ? "Clearing…" : "Clear history"}</span>
-          </button>
-        </section>
-      </div>
+    <Modal open={open} onClose={close} title="Settings">
+      <SettingsList
+        notice={notice?.kind === "success" ? notice.text : null}
+        onClickClear={() => {
+          setNotice(null);
+          setView("confirm-clear");
+        }}
+      />
     </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function SettingsList({
+  notice,
+  onClickClear,
+}: {
+  notice: string | null;
+  onClickClear: () => void;
+}) {
+  return (
+    <div className="space-y-5">
+      {notice && <AuthNotice kind="success">{notice}</AuthNotice>}
+
+      <Group label="History">
+        <ComingSoonRow label="View history" />
+        <ComingSoonRow label="Archive history" />
+      </Group>
+
+      <Group label="Workspace">
+        <ActionRow label="Clear history" onClick={onClickClear} />
+      </Group>
+    </div>
+  );
+}
+
+function Group({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-2">
+      <h3 className="px-1 text-[10px] font-medium uppercase tracking-wide text-ink/50">
+        {label}
+      </h3>
+      <div className="overflow-hidden rounded-2xl border border-sage/20 bg-white/80 shadow-sm">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function ComingSoonRow({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 last:border-b-0">
+      <span className="text-sm text-ink/55">{label}</span>
+      <span className="rounded-full border border-sage/20 bg-cream/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink/55">
+        Coming soon
+      </span>
+    </div>
+  );
+}
+
+function ActionRow({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
+    >
+      <span className="text-base text-ink">{label}</span>
+      <span aria-hidden className="text-ink/30">
+        ›
+      </span>
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function ConfirmClear({
+  busy,
+  notice,
+  onCancel,
+  onConfirm,
+}: {
+  busy: boolean;
+  notice: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <header className="space-y-1.5">
+        <h3 className="text-lg font-semibold text-ink">Clear history?</h3>
+        <p className="text-sm leading-snug text-ink/70">
+          This will delete your tasks, messages, follow-ups, and completed
+          history. Your People and account will stay.
+        </p>
+      </header>
+
+      {notice && <AuthNotice kind="error">{notice}</AuthNotice>}
+
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="rounded-full border border-sage/30 bg-white px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:bg-cream disabled:opacity-50"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          disabled={busy}
+          aria-busy={busy}
+          className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {busy && <Spinner size={14} />}
+          <span>{busy ? "Clearing…" : "Clear history"}</span>
+        </button>
+      </div>
+    </div>
   );
 }
