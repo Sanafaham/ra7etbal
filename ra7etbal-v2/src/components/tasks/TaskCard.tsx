@@ -124,7 +124,13 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
           }
         >
           {busy === "done" && <Spinner size={12} />}
-          <span>{isDone ? "Mark pending" : "Mark done"}</span>
+          <span>
+            {isDone
+              ? "Mark pending"
+              : isWaitingDelegation
+                ? "Mark done myself"
+                : "Mark done"}
+          </span>
         </button>
 
         {message?.content && !isDone && (
