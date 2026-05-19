@@ -90,7 +90,13 @@ export default function Home() {
   }
 
   return (
-    <section className="space-y-6">
+    <section
+      className="space-y-6"
+      // Lift the Next button above iOS Safari's floating bottom URL bar
+      // when the keyboard is open. env(safe-area-inset-bottom) covers the
+      // home indicator; +96px is the buffer for Safari's chrome.
+      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 96px)" }}
+    >
       <header className="space-y-1">
         <p className="text-xs font-medium uppercase tracking-wide text-ink/50">
           {today}
