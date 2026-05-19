@@ -18,6 +18,12 @@ import type { Task } from "../types/task";
  *  - The confirmation URL is built from the saved task's id and persisted
  *    on the task so /confirm and Copy-link work without recomputing.
  *
+ * user_id is set EXPLICITLY on every insert. Earlier code relied on the
+ * Supabase column default `auth.uid()`, but if that default wasn't applied
+ * to the existing v1 columns the insert would still succeed (with user_id
+ * = NULL) and the row would then be invisible under the RLS
+ * `user_id = auth.uid()` policy. Belt-and-braces: pass it in directly.
+ *
  * Returns the created rows so the caller can push them straight into the
  * tasks/messages stores without an extra refetch.
  */
@@ -29,7 +35,12 @@ export interface SaveResult {
   skipped: number;
 }
 
-export async function savePending(items: ExtractedItem[]): Promise<SaveResult> {
+export async function savePending(
+  items: ExtractedItem[],
+  userId: string,
+): Promise<SaveResult> {
+  if (!userId) throw new Error("Not signed in.");
+
   const tasks: Task[] = [];
   const messages: Message[] = [];
   let skipped = 0;
@@ -49,6 +60,7 @@ export async function savePending(items: ExtractedItem[]): Promise<SaveResult> {
         continue;
       }
       const row = await createMessage({
+        user_id: userId,
         task_id: null,
         recipient,
         content,
@@ -65,6 +77,7 @@ export async function savePending(items: ExtractedItem[]): Promise<SaveResult> {
     const needsFollowUp = isDelegation || item.type === "followup";
 
     let task = await createTask({
+      user_id: userId,
       description: item.description.trim(),
       type: item.type,
       assigned_to: assignedTo,
@@ -83,6 +96,7 @@ export async function savePending(items: ExtractedItem[]): Promise<SaveResult> {
       const content = (item.suggestedMessage ?? "").trim();
       if (content && assignedTo) {
         const msg = await createMessage({
+          user_id: userId,
           task_id: task.id,
           recipient: assignedTo,
           content,

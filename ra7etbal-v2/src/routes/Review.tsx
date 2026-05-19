@@ -161,21 +161,32 @@ export default function Review() {
   async function handleSave() {
     if (savingRef.current) return;
     if (!items.length) return;
+    if (!userId) {
+      setSaveError("Not signed in.");
+      return;
+    }
     savingRef.current = true;
     setSaving(true);
     setSaveError(null);
     try {
-      const { tasks, messages } = await savePending(items);
-      // Push into the in-memory stores so Actions/Messages/FollowUps show the
-      // new rows without a refetch.
-      useTasksStore.getState().push(tasks);
-      useMessagesStore.getState().push(messages);
+      await savePending(items, userId);
+      // Force-reload from Supabase so Actions/Messages/Follow-ups reflect the
+      // canonical server state, not an optimistic local push. This is the
+      // safety net against any row that didn't actually persist (RLS, missing
+      // default, etc) — if the rows aren't visible on read, the user sees the
+      // empty state immediately rather than a phantom optimistic card.
+      await Promise.all([
+        useTasksStore.getState().loadFor(userId, { force: true }),
+        useMessagesStore.getState().loadFor(userId, { force: true }),
+      ]);
       // Clear the draft and the extraction — the flow is done.
       useDraftStore.getState().clear();
       useExtractionStore.getState().clear();
-      // Default landing: Actions, where everything just saved is visible.
       navigate("/actions", { replace: true });
     } catch (err) {
+      // Surface the original message — Supabase errors are now propagated
+      // (e.g. "null value in column ... violates not-null constraint").
+      console.error("savePending failed:", err);
       setSaveError(
         err instanceof Error ? err.message : "Could not save. Please try again.",
       );

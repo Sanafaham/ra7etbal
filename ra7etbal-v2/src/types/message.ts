@@ -11,6 +11,8 @@ export interface Message {
 }
 
 export interface MessageDraft {
+  /** Required — we set this explicitly instead of relying on a column default. */
+  user_id: string;
   task_id: string | null;
   recipient: string;
   content: string;

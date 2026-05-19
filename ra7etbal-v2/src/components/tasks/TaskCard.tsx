@@ -23,7 +23,7 @@ const TYPE_META: Record<TaskType, { label: string; cls: string }> = {
 export default function TaskCard({ task, message, onToggleDone, onDelete }: Props) {
   const type = TYPE_META[task.type] ?? TYPE_META.action;
   const [busy, setBusy] = useState<"done" | "delete" | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<null | "all" | "link">(null);
   const isDone = task.status === "done";
 
   async function toggle() {
@@ -46,20 +46,20 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
     }
   }
 
-  async function copyShareable() {
-    const lines: string[] = [];
-    if (message?.content) lines.push(message.content);
-    if (task.confirmation_url) lines.push(task.confirmation_url);
-    const payload = lines.join("\n\n");
-    if (!payload) return;
+  async function copy(text: string, which: "all" | "link") {
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(payload);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
+      await navigator.clipboard.writeText(text);
+      setCopied(which);
+      window.setTimeout(() => setCopied(null), 1500);
     } catch {
       /* ignore — older browsers without clipboard API. */
     }
   }
+
+  const shareablePayload = [message?.content, task.confirmation_url]
+    .filter((v): v is string => Boolean(v))
+    .join("\n\n");
 
   const assignedLabel = task.assigned_to ?? "Me";
 
@@ -99,6 +99,31 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
         </p>
       )}
 
+      {task.confirmation_url && (
+        <div className="mt-3 space-y-1.5">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-ink/50">
+            Confirmation link
+          </p>
+          <div className="flex items-center gap-2 rounded-lg border border-sage/20 bg-cream/40 px-3 py-2">
+            <a
+              href={task.confirmation_url}
+              target="_blank"
+              rel="noreferrer"
+              className="block flex-1 truncate font-mono text-xs text-ink/80 underline-offset-2 hover:underline"
+            >
+              {task.confirmation_url}
+            </a>
+            <button
+              type="button"
+              onClick={() => void copy(task.confirmation_url!, "link")}
+              className="shrink-0 rounded-full border border-sage/30 bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-ink shadow-sm transition hover:bg-cream"
+            >
+              {copied === "link" ? "Copied ✓" : "Copy"}
+            </button>
+          </div>
+        </div>
+      )}
+
       <footer className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -115,13 +140,13 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
           <span>{isDone ? "Mark pending" : "Mark done"}</span>
         </button>
 
-        {task.confirmation_url && (
+        {shareablePayload && (
           <button
             type="button"
-            onClick={copyShareable}
+            onClick={() => void copy(shareablePayload, "all")}
             className="rounded-full border border-sage/30 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-cream"
           >
-            {copied ? "Copied ✓" : "Copy message + link"}
+            {copied === "all" ? "Copied ✓" : "Copy message + link"}
           </button>
         )}
 

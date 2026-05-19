@@ -23,6 +23,8 @@ export interface Task {
 }
 
 export interface TaskDraft {
+  /** Required — we set this explicitly instead of relying on a column default. */
+  user_id: string;
   description: string;
   type: TaskType;
   assigned_to: string | null;
