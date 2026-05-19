@@ -79,21 +79,7 @@ export default function MessageCard({ message, linkedTask, onDelete }: Props) {
       </header>
 
       <p className="mt-3 whitespace-pre-wrap text-base italic leading-snug text-ink/85">
-        “{message.content}
-        {hasConfirmLink && (
-          <>
-            {" "}
-            <a
-              href={message.confirmation_url!}
-              target="_blank"
-              rel="noreferrer"
-              className="not-italic font-medium text-sage underline-offset-2 hover:underline"
-            >
-              Click here when done.
-            </a>
-          </>
-        )}
-        ”
+        “{message.content}”
       </p>
 
       {isConfirmed && linkedTask?.confirmed_at && (

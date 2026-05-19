@@ -107,21 +107,7 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
 
       {message?.content && (
         <p className="mt-2 whitespace-pre-wrap rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
-          “{message.content}
-          {hasConfirmLink && (
-            <>
-              {" "}
-              <a
-                href={task.confirmation_url!}
-                target="_blank"
-                rel="noreferrer"
-                className="not-italic font-medium text-sage underline-offset-2 hover:underline"
-              >
-                Click here when done.
-              </a>
-            </>
-          )}
-          ”
+          “{message.content}”
         </p>
       )}
 
