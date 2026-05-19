@@ -86,6 +86,27 @@ export async function savePending(
       confirmation_url: null,
     });
 
+    // Defensive: if any column-level default or trigger flipped the row to
+    // done, immediately correct it. New saves must always start as pending —
+    // only the recipient (via /api/confirm-task) or the host (via the
+    // explicit "Mark done" button) is allowed to mark a task done.
+    if (task.status !== "pending") {
+      console.warn(
+        "savePending: task came back with unexpected status; correcting to pending",
+        { id: task.id, returned: task.status },
+      );
+      const { data, error } = await supabase
+        .from("tasks")
+        .update({ status: "pending", confirmed_at: null })
+        .eq("id", task.id)
+        .select(
+          "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, archived_at, created_at",
+        )
+        .single();
+      if (error) throw error;
+      task = data as Task;
+    }
+
     if (isDelegation) {
       const confirmationUrl = `${window.location.origin}/confirm?task=${task.id}`;
       // Persist the URL on the task now that we know its id. confirmation_url

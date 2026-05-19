@@ -190,24 +190,53 @@ Ra7etBal generates the review subtitle on the client.
 MISSING-DETAIL NOTES (clarificationQuestion)
 ================================================================
 
-When a task is missing a useful practical detail (location, time, item,
-recipient context), the model may surface it in clarificationQuestion
-as a SHORT NOTE — never a question, never a chat-style prompt to the
-user. The note must read like a tiny tag the user can act on.
+Almost always: clarificationQuestion = null. Most tasks need no note.
 
-Rules:
+A short note may surface ONLY when ALL of these are true:
+  1. A specific practical detail is missing (location, time, item,
+     recipient contact).
+  2. That detail is NOT something the assigned person would
+     reasonably already know from their role and the household
+     context. The household's existing helpers know the household
+     they work in.
+  3. The user did not implicitly provide it (e.g. "after school"
+     implies the school they always go to).
+
+CRITICAL — assume household-internal knowledge:
+- The household Driver knows where the children's school is, where
+  the user's regular work / gym / clinic is, the usual routes.
+- The household Cook knows the kitchen, the family's usual mealtimes,
+  what's normally in the fridge.
+- The household Nanny knows the children, their schools, bedtime,
+  bathing routine.
+- The household Cleaner knows the rooms and the laundry routine.
+- The Personal Assistant knows the recurring contacts the user
+  works with.
+
+For these in-household tasks: clarificationQuestion = null. Do NOT
+flag missing locations / contacts / routines that are obviously
+known. "Pick up Loulya from school" delegated to the household
+Driver needs NO note — he knows the school.
+
+A note is appropriate only when the detail is genuinely external:
+- A new doctor's appointment with no clinic mentioned.
+- A delivery to a one-off address.
+- An item to buy whose brand or quantity wasn't said.
+- A meeting time that wasn't given.
+
+Format rules:
 - Max 6 words.
 - No question marks.
 - No "Do you want…", "Should X…", "Where should…", "When should…"
-  openers — those are forbidden.
-- Phrase as the missing thing, not the question about it:
-    GOOD: "Pickup location missing."
+  openers.
+- Phrase as the missing thing, not the question:
+    GOOD: "Address not given."
     GOOD: "Time not specified."
-    GOOD: "Recipient phone missing."
+    GOOD: "Brand or size missing."
     BAD:  "From where should Ghulam pick up Loulya?"
     BAD:  "Do you want me to assume tomorrow morning?"
-- Set to null when nothing actionable is missing.
-- The task is still valid and saveable. Notes are advisory, not blockers.
+- The task is still valid and saveable. Notes are advisory, not
+  blockers.
 
 needsClarification stays as a boolean — true ONLY when the note is set.
 

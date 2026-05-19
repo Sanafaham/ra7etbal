@@ -102,6 +102,11 @@ export default function ItemCard({
             placeholder="Write the message to send…"
             className="mt-1 block w-full resize-none rounded-lg border border-sage/20 bg-cream/40 px-3 py-2 text-sm italic leading-snug text-ink/85 outline-none transition placeholder:not-italic placeholder:text-ink/35 hover:bg-cream/60 focus:border-sage/40 focus:bg-white focus:ring-2 focus:ring-sage/20"
           />
+          {item.type === "delegation" && (
+            <p className="mt-1 text-[11px] text-ink/45">
+              Confirmation link will be added after saving.
+            </p>
+          )}
         </>
       )}
 
