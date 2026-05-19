@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
+import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import { useDraftStore } from "../stores/draft";
@@ -164,7 +165,22 @@ export default function Home() {
         </p>
       </header>
 
-      <div className="rounded-2xl border border-sage/30 bg-white/80 p-4 shadow-sm sm:p-5">
+      <div className="relative rounded-2xl border border-sage/30 bg-white/80 p-4 shadow-sm sm:p-5">
+        {/* Voice input — top-right corner of the textarea card. Hidden when
+            MediaRecorder isn't supported, so the keyboard path stays usable. */}
+        <div className="absolute right-3 top-3 z-10 sm:right-4 sm:top-4">
+          <VoiceButton
+            disabled={submitting}
+            onTranscript={(transcript) => {
+              const current = useDraftStore.getState().text;
+              const trimmed = current.trimEnd();
+              const sep = trimmed.length === 0 ? "" : trimmed.endsWith(".") || trimmed.endsWith("?") || trimmed.endsWith("!") ? " " : " ";
+              useDraftStore.getState().setText(trimmed + sep + transcript);
+            }}
+            onError={(message) => setError(message)}
+          />
+        </div>
+
         <label htmlFor={textareaId} className="sr-only">
           Clear my head
         </label>
@@ -180,7 +196,7 @@ export default function Home() {
           rows={8}
           disabled={submitting}
           style={{ fieldSizing: "content" } as React.CSSProperties}
-          className="block min-h-[180px] w-full resize-y rounded-xl bg-transparent text-base leading-relaxed text-ink outline-none placeholder:text-ink/35 focus:outline-none disabled:opacity-60"
+          className="block min-h-[180px] w-full resize-y rounded-xl bg-transparent pr-24 text-base leading-relaxed text-ink outline-none placeholder:text-ink/35 focus:outline-none disabled:opacity-60 sm:pr-28"
         />
 
         <div className="mt-3 flex items-center justify-between border-t border-sage/15 pt-3 text-xs text-ink/55">
