@@ -218,16 +218,21 @@ export default function Home() {
       </p>
 
       {/*
-        Floating Next button while the iOS keyboard is open. position: fixed
-        elements follow the visual viewport on modern iOS Safari, so anchoring
-        to `bottom: env(safe-area-inset-bottom) + 88px` puts the button above
-        the floating URL bar and the keyboard accessory toolbar.
-        The .always-on-top z-index sits above Safari's chrome.
+        Floating Next button while the iOS keyboard is open. Rendered as a
+        compact pill anchored to the bottom-right of the visual viewport,
+        well above Safari's centred URL bubble (which sits at about
+        +88px from the bottom). 132px clears it completely.
+        position: fixed elements follow the visual viewport on modern iOS
+        Safari, so the anchor stays correct as the keyboard moves. z-50
+        keeps it above the page chrome.
       */}
       {keyboardOpen && (
         <div
-          className="fixed inset-x-0 z-40 flex justify-end px-5"
-          style={{ bottom: "calc(env(safe-area-inset-bottom) + 88px)" }}
+          className="fixed z-50"
+          style={{
+            bottom: "calc(env(safe-area-inset-bottom) + 132px)",
+            right: "24px",
+          }}
         >
           {nextButton}
         </div>
