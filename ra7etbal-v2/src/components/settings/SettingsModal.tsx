@@ -91,8 +91,12 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
               onChange={(e) => setPhrase(e.target.value)}
               disabled={busy}
               autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
               spellCheck={false}
-              className="mt-2 w-full rounded-xl border border-rose-300 bg-white px-3 py-2 font-mono text-sm normal-case text-ink outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-300 disabled:opacity-50"
+              // 16px (text-base) is required to stop iOS Safari from
+              // auto-zooming on focus. Anything smaller triggers it.
+              className="mt-2 w-full rounded-xl border border-rose-300 bg-white px-3 py-2 font-mono text-base normal-case text-ink outline-none focus:border-rose-500 focus:ring-2 focus:ring-rose-300 disabled:opacity-50"
             />
           </label>
 

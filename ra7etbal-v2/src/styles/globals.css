@@ -12,10 +12,37 @@ body,
   height: 100%;
 }
 
+html {
+  /* Prevent iOS Safari from rescaling text on orientation change. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   font-family: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--color-cream);
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Stop accidental horizontal scrolling on small viewports. */
+  overflow-x: hidden;
+}
+
+/*
+ * iOS Safari hardening for form controls.
+ *
+ * touch-action: manipulation removes the 300ms tap delay and double-tap-
+ * to-zoom on interactive controls — taps feel native.
+ *
+ * Font-size on individual inputs is set to 16px (Tailwind text-base) at
+ * the call site to prevent iOS auto-zoom-on-focus. We don't enforce that
+ * globally — it would resize the small dropdowns on Review and People.
+ */
+button,
+a,
+[role="button"],
+input,
+select,
+textarea {
+  touch-action: manipulation;
 }
