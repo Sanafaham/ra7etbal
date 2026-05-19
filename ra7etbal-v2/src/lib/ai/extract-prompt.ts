@@ -181,10 +181,35 @@ Ra7etBal generates the review subtitle on the client.
       "suggestedMessage": "short natural message if this involves another person, otherwise null",
       "needsPerson": false,
       "needsClarification": false,
-      "clarificationQuestion": null
+      "clarificationQuestion": "SHORT NOTE (3-6 words) naming a missing practical detail, or null. NEVER a full question. See examples below."
     }
   ]
 }
+
+================================================================
+MISSING-DETAIL NOTES (clarificationQuestion)
+================================================================
+
+When a task is missing a useful practical detail (location, time, item,
+recipient context), the model may surface it in clarificationQuestion
+as a SHORT NOTE — never a question, never a chat-style prompt to the
+user. The note must read like a tiny tag the user can act on.
+
+Rules:
+- Max 6 words.
+- No question marks.
+- No "Do you want…", "Should X…", "Where should…", "When should…"
+  openers — those are forbidden.
+- Phrase as the missing thing, not the question about it:
+    GOOD: "Pickup location missing."
+    GOOD: "Time not specified."
+    GOOD: "Recipient phone missing."
+    BAD:  "From where should Ghulam pick up Loulya?"
+    BAD:  "Do you want me to assume tomorrow morning?"
+- Set to null when nothing actionable is missing.
+- The task is still valid and saveable. Notes are advisory, not blockers.
+
+needsClarification stays as a boolean — true ONLY when the note is set.
 
 ================================================================
 ASSIGNMENT RULES (apply AFTER RULE 1)

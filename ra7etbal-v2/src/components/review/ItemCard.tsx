@@ -106,7 +106,10 @@ export default function ItemCard({
       )}
 
       {item.clarificationQuestion && (
-        <p className="mt-2 text-xs text-amber-800">{item.clarificationQuestion}</p>
+        <p className="mt-2 text-xs text-amber-800">
+          <span className="font-medium uppercase tracking-wide text-[10px]">Note:</span>{" "}
+          {item.clarificationQuestion}
+        </p>
       )}
 
       {showsAssignment && (
