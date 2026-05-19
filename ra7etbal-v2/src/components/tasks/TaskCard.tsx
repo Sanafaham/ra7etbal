@@ -147,6 +147,12 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
           <span>Delete</span>
         </button>
       </footer>
+
+      {hasConfirmLink && message?.content && (
+        <p className="mt-2 text-[11px] text-ink/55">
+          Copied message includes a done link.
+        </p>
+      )}
     </article>
   );
 }

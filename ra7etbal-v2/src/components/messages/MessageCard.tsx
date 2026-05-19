@@ -115,6 +115,12 @@ export default function MessageCard({ message, linkedTask, onDelete }: Props) {
           <span>Delete</span>
         </button>
       </footer>
+
+      {hasConfirmLink && (
+        <p className="mt-2 text-[11px] text-ink/55">
+          Copied message includes a done link.
+        </p>
+      )}
     </article>
   );
 }
