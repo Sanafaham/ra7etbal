@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
@@ -11,10 +11,20 @@ import { usePeopleStore } from "../stores/people";
 /**
  * Home / Clear My Head — entry surface for offloading thoughts.
  *
- * Step 6 added the textarea + counts. Step 7 adds the "Organize" action:
- * loads the People roster (so the AI prompt has the right names/roles),
- * runs AI extraction, then navigates to /review. No save yet — that's a
- * later step.
+ * iOS keyboard handling
+ *   The textarea is the only input on Home. When focused on iPhone Safari,
+ *   the keyboard opens AND Safari's floating URL bar overlays the bottom of
+ *   the page — both together can hide the Next button.
+ *
+ *   We listen to window.visualViewport (the visible-region API) to detect
+ *   when the visual viewport has shrunk meaningfully relative to the layout
+ *   viewport. When it has, we lift the Next button into a position: fixed
+ *   container pinned just above Safari's URL bar via env(safe-area-inset-
+ *   bottom) + a buffer. When the keyboard closes, the button returns to
+ *   its in-flow location.
+ *
+ *   We also keep textarea focus as a secondary signal — on devices where
+ *   visualViewport isn't reliable, focus alone flips the button.
  */
 export default function Home() {
   const { user } = useAuth();
@@ -59,6 +69,32 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const submittingRef = useRef(false);
 
+  // --- iOS keyboard detection ---
+  const [textareaFocused, setTextareaFocused] = useState(false);
+  const [viewportShrunk, setViewportShrunk] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    function compute() {
+      // If the visible area is more than ~120px shorter than the layout
+      // viewport, the on-screen keyboard is up.
+      setViewportShrunk(window.innerHeight - vv.height > 120);
+    }
+    compute();
+    vv.addEventListener("resize", compute);
+    vv.addEventListener("scroll", compute);
+    return () => {
+      vv.removeEventListener("resize", compute);
+      vv.removeEventListener("scroll", compute);
+    };
+  }, []);
+
+  // Either signal (focused textarea OR shrunken viewport) means the on-screen
+  // keyboard is effectively up. Using both makes us resilient on older
+  // browsers without visualViewport.
+  const keyboardOpen = textareaFocused || viewportShrunk;
+
   const trimmed = text.trim();
   const canSubmit = !submitting && trimmed.length > 0 && !!userId;
 
@@ -70,12 +106,7 @@ export default function Home() {
     setError(null);
 
     try {
-      // Ensure People are loaded so the prompt's role-mapping has the right
-      // roster. loadFor() is a no-op when the cache is already valid for this
-      // user.
       await loadPeople(userId);
-      // Read the latest people from the store after the await — `people` from
-      // the render closure may be stale on first visit.
       const peopleNow = usePeopleStore.getState().items;
       await runExtraction(trimmed, peopleNow);
       navigate("/review");
@@ -89,12 +120,35 @@ export default function Home() {
     }
   }
 
+  const tipText =
+    people.length === 0
+      ? "Tip: add people first so delegations can be assigned."
+      : "Tap Next to let Ra7etBal organize what you wrote.";
+
+  const nextButton = (
+    <button
+      type="button"
+      onClick={handleNext}
+      // Avoid blurring the textarea when the user taps the floating button —
+      // otherwise iOS closes the keyboard, the button un-floats mid-tap, and
+      // the click can land on the wrong element.
+      onMouseDown={(e) => e.preventDefault()}
+      onTouchStart={(e) => e.stopPropagation()}
+      disabled={!canSubmit}
+      aria-busy={submitting}
+      className="inline-flex items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-lg transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {submitting && <Spinner size={16} />}
+      <span>{submitting ? "Organizing…" : "Next →"}</span>
+    </button>
+  );
+
   return (
     <section
       className="space-y-6"
-      // Lift the Next button above iOS Safari's floating bottom URL bar
-      // when the keyboard is open. env(safe-area-inset-bottom) covers the
-      // home indicator; +96px is the buffer for Safari's chrome.
+      // Reserve room at the bottom of the page flow for the floating Next
+      // button when the keyboard is open, so the scrollable content can fully
+      // scroll without being permanently obscured.
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 96px)" }}
     >
       <header className="space-y-1">
@@ -118,6 +172,8 @@ export default function Home() {
           id={textareaId}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onFocus={() => setTextareaFocused(true)}
+          onBlur={() => setTextareaFocused(false)}
           placeholder="e.g. Tell Christopher dinner is at 9. Ask Ghulam to drop Loulya at school. Order more rice."
           autoComplete="off"
           spellCheck
@@ -149,27 +205,33 @@ export default function Home() {
         </AuthNotice>
       )}
 
-      <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-xs text-ink/45">
-          {people.length === 0
-            ? "Tip: add people first so delegations can be assigned."
-            : "Tap Next to let Ra7etBal organize what you wrote."}
-        </p>
-        <button
-          type="button"
-          onClick={handleNext}
-          disabled={!canSubmit}
-          aria-busy={submitting}
-          className="inline-flex items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {submitting && <Spinner size={16} />}
-          <span>{submitting ? "Organizing…" : "Next →"}</span>
-        </button>
-      </div>
+      {/* In-flow Tip + button when keyboard is CLOSED. */}
+      {!keyboardOpen && (
+        <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-ink/45">{tipText}</p>
+          {nextButton}
+        </div>
+      )}
 
       <p className="text-xs text-ink/45">
         Your draft stays on this device only and is cleared when you sign out.
       </p>
+
+      {/*
+        Floating Next button while the iOS keyboard is open. position: fixed
+        elements follow the visual viewport on modern iOS Safari, so anchoring
+        to `bottom: env(safe-area-inset-bottom) + 88px` puts the button above
+        the floating URL bar and the keyboard accessory toolbar.
+        The .always-on-top z-index sits above Safari's chrome.
+      */}
+      {keyboardOpen && (
+        <div
+          className="fixed inset-x-0 z-40 flex justify-end px-5"
+          style={{ bottom: "calc(env(safe-area-inset-bottom) + 88px)" }}
+        >
+          {nextButton}
+        </div>
+      )}
     </section>
   );
 }
