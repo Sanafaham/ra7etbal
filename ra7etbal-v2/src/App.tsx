@@ -5,6 +5,7 @@ import Auth from "./routes/Auth";
 import Confirm from "./routes/Confirm";
 import Debug from "./routes/Debug";
 import FollowUps from "./routes/FollowUps";
+import History from "./routes/History";
 import Home from "./routes/Home";
 import Messages from "./routes/Messages";
 import People from "./routes/People";
@@ -209,6 +210,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <People />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/history"
+            element={
+              <ProtectedRoute>
+                <History />
               </ProtectedRoute>
             }
           />

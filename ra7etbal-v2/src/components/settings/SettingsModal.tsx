@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import AuthNotice from "../auth/AuthNotice";
 import Spinner from "../Spinner";
 import Modal from "../ui/Modal";
+import { archiveCompleted } from "../../lib/archive";
 import { clearUserData } from "../../lib/cleanup";
 import { useMessagesStore } from "../../stores/messages";
 import { useTasksStore } from "../../stores/tasks";
@@ -12,34 +14,26 @@ interface Props {
   userId: string | null;
 }
 
-type View = "list" | "confirm-clear";
+type View = "list" | "confirm-clear" | "confirm-archive";
 
 /**
- * Settings modal — two-view, iOS-Settings-style.
+ * Settings modal — calm iOS-Settings-style with three views.
  *
- * View 1 (list): grouped rows in a calm consumer-grade layout.
- *   - History · View history / Archive history (visible Coming-soon
- *     placeholders for the future first-class History feature).
- *   - Workspace · Clear history (active row, neutral colour).
+ *   list           — grouped rows (History · View / Archive, Workspace · Clear)
+ *   confirm-clear  — destructive clear-all-data confirmation
+ *   confirm-archive — calm move-completed-to-history confirmation
  *
- * View 2 (confirm-clear): a calm in-modal confirmation pane with a
- * title, explanation, and two buttons (Cancel + Clear history). No
- * typed confirmation, no input, no keyboard — so iOS Safari has
- * nothing to auto-zoom and nothing to cover.
- *
- * After success: returns to View 1 with a success notice; the user
- * dismisses when ready. Stores are reset so every tab is empty when
- * the user navigates to it.
+ * Navigation from "View history" closes the modal and routes to /history.
+ * No keyboards, no text inputs anywhere — buttons only.
  */
 export default function SettingsModal({ open, onClose, userId }: Props) {
+  const navigate = useNavigate();
   const [view, setView] = useState<View>("list");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<
     { kind: "success" | "error"; text: string } | null
   >(null);
 
-  // Always start on the list view when the modal opens — never strand
-  // the user on the confirmation pane between sessions.
   useEffect(() => {
     if (open) {
       setView("list");
@@ -52,9 +46,6 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
     setBusy(true);
     try {
       const { tasksDeleted, messagesDeleted } = await clearUserData(userId);
-      // Empty the in-memory caches so every tab clears immediately on
-      // next visit — and force-refresh on mount will confirm against
-      // Supabase.
       useTasksStore.getState().reset();
       useMessagesStore.getState().reset();
       setNotice({
@@ -70,7 +61,33 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
         kind: "error",
         text: err instanceof Error ? err.message : "Could not clear. Please try again.",
       });
-      // Stay on the confirm view so the user can retry.
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleArchive() {
+    if (!userId || busy) return;
+    setBusy(true);
+    try {
+      const { tasksArchived, messagesArchived } = await archiveCompleted(userId);
+      // Reset the active-workspace stores so Actions/Follow-ups/Messages
+      // re-fetch (without the archived rows) on next visit.
+      useTasksStore.getState().reset();
+      useMessagesStore.getState().reset();
+      setNotice({
+        kind: "success",
+        text:
+          tasksArchived === 0
+            ? "Nothing to archive. Completed items will show up here."
+            : `Archived ${tasksArchived} task${tasksArchived === 1 ? "" : "s"} and ${messagesArchived} linked message${messagesArchived === 1 ? "" : "s"}. View them in History.`,
+      });
+      setView("list");
+    } catch (err) {
+      setNotice({
+        kind: "error",
+        text: err instanceof Error ? err.message : "Could not archive. Please try again.",
+      });
     } finally {
       setBusy(false);
     }
@@ -81,11 +98,38 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
     onClose();
   }
 
+  if (view === "confirm-archive") {
+    return (
+      <Modal open={open} onClose={close} title="Settings" dismissable={!busy}>
+        <ConfirmPane
+          title="Archive completed?"
+          body="This moves your completed tasks and their linked messages out of the active workspace. You'll still see them in View history."
+          confirmLabel="Archive completed"
+          tone="neutral"
+          busy={busy}
+          busyLabel="Archiving…"
+          notice={notice?.kind === "error" ? notice.text : null}
+          onCancel={() => {
+            if (busy) return;
+            setNotice(null);
+            setView("list");
+          }}
+          onConfirm={() => void handleArchive()}
+        />
+      </Modal>
+    );
+  }
+
   if (view === "confirm-clear") {
     return (
       <Modal open={open} onClose={close} title="Settings" dismissable={!busy}>
-        <ConfirmClear
+        <ConfirmPane
+          title="Clear history?"
+          body="This will delete your tasks, messages, follow-ups, and completed history. Your People and account will stay."
+          confirmLabel="Clear history"
+          tone="strong"
           busy={busy}
+          busyLabel="Clearing…"
           notice={notice?.kind === "error" ? notice.text : null}
           onCancel={() => {
             if (busy) return;
@@ -102,6 +146,14 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
     <Modal open={open} onClose={close} title="Settings">
       <SettingsList
         notice={notice?.kind === "success" ? notice.text : null}
+        onClickViewHistory={() => {
+          onClose();
+          navigate("/history");
+        }}
+        onClickArchive={() => {
+          setNotice(null);
+          setView("confirm-archive");
+        }}
         onClickClear={() => {
           setNotice(null);
           setView("confirm-clear");
@@ -115,9 +167,13 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
 
 function SettingsList({
   notice,
+  onClickViewHistory,
+  onClickArchive,
   onClickClear,
 }: {
   notice: string | null;
+  onClickViewHistory: () => void;
+  onClickArchive: () => void;
   onClickClear: () => void;
 }) {
   return (
@@ -125,8 +181,8 @@ function SettingsList({
       {notice && <AuthNotice kind="success">{notice}</AuthNotice>}
 
       <Group label="History">
-        <ComingSoonRow label="View history" />
-        <ComingSoonRow label="Archive history" />
+        <ActionRow label="View history" onClick={onClickViewHistory} />
+        <ActionRow label="Archive history" onClick={onClickArchive} />
       </Group>
 
       <Group label="Workspace">
@@ -149,17 +205,6 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function ComingSoonRow({ label }: { label: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 last:border-b-0">
-      <span className="text-sm text-ink/55">{label}</span>
-      <span className="rounded-full border border-sage/20 bg-cream/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink/55">
-        Coming soon
-      </span>
-    </div>
-  );
-}
-
 function ActionRow({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
@@ -177,25 +222,36 @@ function ActionRow({ label, onClick }: { label: string; onClick: () => void }) {
 
 // ---------------------------------------------------------------------------
 
-function ConfirmClear({
+function ConfirmPane({
+  title,
+  body,
+  confirmLabel,
+  busyLabel,
+  tone,
   busy,
   notice,
   onCancel,
   onConfirm,
 }: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  busyLabel: string;
+  tone: "neutral" | "strong";
   busy: boolean;
   notice: string | null;
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const confirmCls =
+    tone === "strong"
+      ? "bg-ink text-white hover:brightness-110"
+      : "bg-sage text-white hover:brightness-105";
   return (
     <div className="space-y-4">
       <header className="space-y-1.5">
-        <h3 className="text-lg font-semibold text-ink">Clear history?</h3>
-        <p className="text-sm leading-snug text-ink/70">
-          This will delete your tasks, messages, follow-ups, and completed
-          history. Your People and account will stay.
-        </p>
+        <h3 className="text-lg font-semibold text-ink">{title}</h3>
+        <p className="text-sm leading-snug text-ink/70">{body}</p>
       </header>
 
       {notice && <AuthNotice kind="error">{notice}</AuthNotice>}
@@ -214,10 +270,13 @@ function ConfirmClear({
           onClick={onConfirm}
           disabled={busy}
           aria-busy={busy}
-          className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+          className={
+            "inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50 " +
+            confirmCls
+          }
         >
           {busy && <Spinner size={14} />}
-          <span>{busy ? "Clearing…" : "Clear history"}</span>
+          <span>{busy ? busyLabel : confirmLabel}</span>
         </button>
       </div>
     </div>

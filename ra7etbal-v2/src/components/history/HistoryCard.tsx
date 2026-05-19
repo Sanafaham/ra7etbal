@@ -1,0 +1,67 @@
+import type { Task, TaskType } from "../../types/task";
+
+interface Props {
+  task: Task;
+  message?: { content: string } | null;
+}
+
+const TYPE_LABEL: Record<TaskType, string> = {
+  action: "Action",
+  reminder: "Reminder",
+  delegation: "Delegation",
+  decision: "Decision",
+  followup: "Follow-up",
+  errand: "Errand",
+  parked: "Parked",
+};
+
+/**
+ * Read-only history card. No actions. No status toggle. No delete.
+ * Just the record of what was coordinated and when.
+ */
+export default function HistoryCard({ task, message }: Props) {
+  const assignedLabel = task.assigned_to ?? "Me";
+  const isDone = task.status === "done";
+  const isArchivedOnly = !isDone && !!task.archived_at;
+  const stamp = task.confirmed_at ?? task.archived_at ?? task.created_at;
+
+  return (
+    <article className="rounded-2xl border border-sage/20 bg-white/80 p-4 shadow-sm">
+      <header className="flex items-center justify-between gap-2 text-xs text-ink/55">
+        <span className="font-medium uppercase tracking-wide">
+          {TYPE_LABEL[task.type] ?? task.type}
+        </span>
+        <span>{assignedLabel === "Me" ? "Me" : `→ ${assignedLabel}`}</span>
+      </header>
+
+      <p className="mt-2 text-base leading-snug text-ink/85">{task.description}</p>
+
+      {message?.content && (
+        <p className="mt-2 rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/70">
+          “{message.content}”
+        </p>
+      )}
+
+      <footer className="mt-2 flex items-center gap-2 text-[11px] text-ink/55">
+        {isDone && (
+          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
+            Confirmed done
+          </span>
+        )}
+        {isArchivedOnly && (
+          <span className="rounded-full border border-sage/20 bg-cream/60 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink/55">
+            Archived
+          </span>
+        )}
+        <span>
+          {new Date(stamp).toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })}
+        </span>
+      </footer>
+    </article>
+  );
+}

@@ -7,6 +7,12 @@ export interface Message {
   content: string;
   /** Confirmation link to share (for delegation messages); null otherwise. */
   confirmation_url: string | null;
+  /**
+   * Non-null when the message has been moved out of the active workspace
+   * (typically as part of archiving its linked task). Archived rows are
+   * filtered out of /messages but remain visible in /history.
+   */
+  archived_at: string | null;
   created_at: string;
 }
 

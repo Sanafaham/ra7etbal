@@ -19,6 +19,12 @@ export interface Task {
   confirmation_url: string | null;
   /** Timestamp when status flipped to done. */
   confirmed_at: string | null;
+  /**
+   * Non-null when the task has been moved out of the active workspace via
+   * "Archive history". Archived rows are filtered out of Actions / Follow-ups
+   * but remain visible in /history.
+   */
+  archived_at: string | null;
   created_at: string;
 }
 
