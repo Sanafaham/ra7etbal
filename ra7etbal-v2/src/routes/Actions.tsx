@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import AuthNotice from "../components/auth/AuthNotice";
+import RefreshButton from "../components/RefreshButton";
 import Spinner from "../components/Spinner";
 import TaskCard from "../components/tasks/TaskCard";
 import { useTaskList } from "../hooks/useTaskList";
@@ -53,11 +54,12 @@ export default function Actions() {
 
   return (
     <section className="space-y-5">
-      <header className="flex items-center justify-between gap-3">
+      <header className="flex items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold text-ink">Actions</h1>
           <p className="text-sm text-ink/60">Everything Ra7etBal is tracking for you.</p>
         </div>
+        <RefreshButton onClick={reload} />
       </header>
 
       <div role="tablist" aria-label="Filter" className="grid grid-cols-3 gap-1 rounded-full border border-sage/30 bg-cream/60 p-1">

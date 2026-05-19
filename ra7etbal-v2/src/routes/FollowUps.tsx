@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import AuthNotice from "../components/auth/AuthNotice";
+import RefreshButton from "../components/RefreshButton";
 import Spinner from "../components/Spinner";
 import TaskCard from "../components/tasks/TaskCard";
 import { useTaskList } from "../hooks/useTaskList";
@@ -47,11 +48,14 @@ export default function FollowUps() {
 
   return (
     <section className="space-y-5">
-      <header>
-        <h1 className="text-2xl font-semibold text-ink">Follow-ups</h1>
-        <p className="text-sm text-ink/60">
-          Delegations and follow-ups still waiting on confirmation.
-        </p>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-ink">Follow-ups</h1>
+          <p className="text-sm text-ink/60">
+            Delegations and follow-ups still waiting on confirmation.
+          </p>
+        </div>
+        <RefreshButton onClick={reload} />
       </header>
 
       {tasksError && tasksStatus !== "loading" && (

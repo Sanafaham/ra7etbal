@@ -17,7 +17,7 @@ export function useTaskList(): {
   messages: ReturnType<typeof useMessagesStore.getState>["items"];
   messagesStatus: ReturnType<typeof useMessagesStore.getState>["status"];
   messagesError: string | null;
-  reload: () => void;
+  reload: () => Promise<void>;
 } {
   const { user } = useAuth();
   const userId = user?.id ?? null;
@@ -60,10 +60,12 @@ export function useTaskList(): {
     if (messagesLoadedFor !== userId) void loadMessages(userId);
   }, [userId, tasksLoadedFor, messagesLoadedFor, loadTasks, loadMessages]);
 
-  function reload() {
+  async function reload(): Promise<void> {
     if (!userId) return;
-    void loadTasks(userId, { force: true });
-    void loadMessages(userId, { force: true });
+    await Promise.all([
+      loadTasks(userId, { force: true }),
+      loadMessages(userId, { force: true }),
+    ]);
   }
 
   return {

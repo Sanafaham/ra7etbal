@@ -1,12 +1,40 @@
+import { useMemo, useState } from "react";
 import AuthNotice from "../components/auth/AuthNotice";
 import MessageCard from "../components/messages/MessageCard";
+import RefreshButton from "../components/RefreshButton";
 import Spinner from "../components/Spinner";
 import { useTaskList } from "../hooks/useTaskList";
 import { useMessagesStore } from "../stores/messages";
 import type { Message } from "../types/message";
 
 export default function Messages() {
-  const { messages, messagesStatus, messagesError, reload } = useTaskList();
+  const { tasks, messages, messagesStatus, messagesError, reload } = useTaskList();
+  const [showConfirmed, setShowConfirmed] = useState(false);
+
+  // Quick task lookup so each MessageCard can render Waiting / Confirmed.
+  const taskById = useMemo(() => {
+    const m = new Map<string, { status: string; confirmed_at: string | null }>();
+    for (const t of tasks) {
+      m.set(t.id, { status: t.status, confirmed_at: t.confirmed_at });
+    }
+    return m;
+  }, [tasks]);
+
+  const { waiting, confirmed, standalone } = useMemo(() => {
+    const w: Message[] = [];
+    const c: Message[] = [];
+    const s: Message[] = [];
+    for (const msg of messages) {
+      if (!msg.task_id) {
+        s.push(msg);
+        continue;
+      }
+      const t = taskById.get(msg.task_id);
+      if (t?.status === "done") c.push(msg);
+      else w.push(msg);
+    }
+    return { waiting: w, confirmed: c, standalone: s };
+  }, [messages, taskById]);
 
   async function handleDelete(msg: Message) {
     if (!window.confirm("Delete this message?")) return;
@@ -19,19 +47,38 @@ export default function Messages() {
 
   const initialLoading = messagesStatus === "loading" && messages.length === 0;
 
+  function renderList(msgs: Message[]) {
+    return (
+      <ul className="space-y-3">
+        {msgs.map((m) => (
+          <li key={m.id}>
+            <MessageCard
+              message={m}
+              linkedTask={m.task_id ? taskById.get(m.task_id) ?? null : null}
+              onDelete={handleDelete}
+            />
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
   return (
     <section className="space-y-5">
-      <header>
-        <h1 className="text-2xl font-semibold text-ink">Messages</h1>
-        <p className="text-sm text-ink/60">
-          Things to say. Copy and send through your usual channel.
-        </p>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold text-ink">Messages</h1>
+          <p className="text-sm text-ink/60">
+            Things to say. Copy and send through your usual channel.
+          </p>
+        </div>
+        <RefreshButton onClick={reload} />
       </header>
 
       {messagesError && messagesStatus !== "loading" && (
         <AuthNotice kind="error">
           {messagesError}{" "}
-          <button type="button" onClick={reload} className="ml-1 underline">
+          <button type="button" onClick={() => void reload()} className="ml-1 underline">
             Try again
           </button>
         </AuthNotice>
@@ -49,14 +96,39 @@ export default function Messages() {
         </div>
       )}
 
-      {messages.length > 0 && (
-        <ul className="space-y-3">
-          {messages.map((m) => (
-            <li key={m.id}>
-              <MessageCard message={m} onDelete={handleDelete} />
-            </li>
-          ))}
-        </ul>
+      {waiting.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-xs font-medium uppercase tracking-wide text-ink/55">
+            Waiting on confirmation · {waiting.length}
+          </h2>
+          {renderList(waiting)}
+        </section>
+      )}
+
+      {standalone.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-xs font-medium uppercase tracking-wide text-ink/55">
+            Messages to send · {standalone.length}
+          </h2>
+          {renderList(standalone)}
+        </section>
+      )}
+
+      {confirmed.length > 0 && (
+        <section className="space-y-3">
+          <button
+            type="button"
+            onClick={() => setShowConfirmed((v) => !v)}
+            aria-expanded={showConfirmed}
+            className="flex w-full items-center justify-between text-xs font-medium uppercase tracking-wide text-ink/55"
+          >
+            <span>Confirmed · {confirmed.length}</span>
+            <span aria-hidden className="text-base">
+              {showConfirmed ? "▾" : "▸"}
+            </span>
+          </button>
+          {showConfirmed && renderList(confirmed)}
+        </section>
       )}
     </section>
   );
