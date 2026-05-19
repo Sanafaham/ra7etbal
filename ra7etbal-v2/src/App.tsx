@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Navigate, NavLink, Route, Routes } from "react-router-dom";
 import Actions from "./routes/Actions";
 import Auth from "./routes/Auth";
@@ -11,10 +11,12 @@ import Messages from "./routes/Messages";
 import People from "./routes/People";
 import Reset from "./routes/Reset";
 import Review from "./routes/Review";
+import ConfirmationNotices from "./components/home/ConfirmationNotices";
 import SettingsModal from "./components/settings/SettingsModal";
 import Spinner from "./components/Spinner";
 import { useAuth } from "./hooks/useAuth";
 import { signOut } from "./lib/session";
+import { useTasksStore } from "./stores/tasks";
 
 /**
  * Nav items shown when signed in. Auth/Reset/Confirm/Debug are reachable
@@ -147,7 +149,26 @@ function ChipNav() {
   );
 }
 
+/**
+ * App-level tasks force-load so the global ConfirmationNotices banner has
+ * fresh data the moment a signed-in user enters the app — regardless of
+ * which route they land on. Fires once per user per session; individual
+ * list screens (Actions / Follow-ups / Messages) still force-refresh on
+ * their own mounts via useTaskList, so this is just the floor.
+ */
+function useGlobalTasksRefresh() {
+  const { status, user } = useAuth();
+  const firedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (status !== "signed_in" || !user?.id) return;
+    if (firedRef.current === user.id) return;
+    firedRef.current = user.id;
+    void useTasksStore.getState().loadFor(user.id, { force: true });
+  }, [status, user?.id]);
+}
+
 export default function App() {
+  useGlobalTasksRefresh();
   return (
     <div className="min-h-dvh bg-cream text-ink">
       <header className="mx-auto flex max-w-3xl items-center gap-3 px-5 pt-6">
@@ -162,6 +183,12 @@ export default function App() {
       <ChipNav />
 
       <main className="mx-auto mt-6 max-w-3xl px-5 pb-24">
+        {/* Owner confirmation banner — global. Self-gates by auth status
+            and by pathname (hidden on /confirm). Rendering above Routes
+            keeps it visible across Home / Actions / Follow-ups / Messages
+            / People / History. */}
+        <ConfirmationNotices />
+
         <Routes>
           <Route
             path="/"

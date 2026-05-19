@@ -2,14 +2,12 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
-import ConfirmationNotices from "../components/home/ConfirmationNotices";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
-import { useTasksStore } from "../stores/tasks";
 
 /**
  * Home / Clear My Head — entry surface for offloading thoughts.
@@ -71,17 +69,6 @@ export default function Home() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submittingRef = useRef(false);
-
-  // Force-refresh tasks once when Home mounts (per user) so the owner-
-  // confirmation banner picks up anything the recipient confirmed while
-  // the host was elsewhere. People/draft/extraction stores are unaffected.
-  const tasksLoadFiredRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!userId) return;
-    if (tasksLoadFiredRef.current === userId) return;
-    tasksLoadFiredRef.current = userId;
-    void useTasksStore.getState().loadFor(userId, { force: true });
-  }, [userId]);
 
   // --- iOS keyboard detection ---
   const [textareaFocused, setTextareaFocused] = useState(false);
@@ -165,8 +152,6 @@ export default function Home() {
       // scroll without being permanently obscured.
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 96px)" }}
     >
-      <ConfirmationNotices />
-
       <header className="space-y-1">
         <p className="text-xs font-medium uppercase tracking-wide text-ink/50">
           {today}

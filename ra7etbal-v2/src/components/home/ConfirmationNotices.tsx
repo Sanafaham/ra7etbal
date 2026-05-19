@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useAuth } from "../../hooks/useAuth";
 import { useDismissedNotifications } from "../../hooks/useDismissedNotifications";
@@ -21,11 +22,17 @@ const MAX_NOTICES = 5;
  * recipient hit /confirm.
  */
 export default function ConfirmationNotices() {
-  const { user } = useAuth();
+  const { status, user } = useAuth();
   const userId = user?.id ?? null;
-  const { dismissed, dismiss } = useDismissedNotifications(userId);
+  const location = useLocation();
 
+  const { dismissed, dismiss } = useDismissedNotifications(userId);
   const tasks = useTasksStore(useShallow((s) => s.items));
+
+  // Hide on the public recipient page and whenever the owner isn't signed in.
+  // This component renders at the app-shell level now, so it must self-gate.
+  const isPublicConfirmPage = location.pathname === "/confirm";
+  if (status !== "signed_in" || isPublicConfirmPage) return null;
 
   const visible = useMemo(() => {
     return tasks
@@ -47,7 +54,7 @@ export default function ConfirmationNotices() {
   if (visible.length === 0) return null;
 
   return (
-    <div className="space-y-2" aria-live="polite">
+    <div className="mb-5 space-y-2" aria-live="polite">
       {visible.map((task) => {
         const who = task.assigned_to ?? "Someone";
         return (
