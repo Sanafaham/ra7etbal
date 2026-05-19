@@ -112,15 +112,30 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
       )}
 
       <footer className="mt-3 flex flex-wrap items-center gap-2">
+        {message?.content && !isDone && (
+          // Primary action for waiting delegations: send the recipient the
+          // message (clipboard for now; real send hooks in later).
+          <button
+            type="button"
+            onClick={() => void copy()}
+            className="inline-flex items-center gap-2 rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105"
+          >
+            {copied ? "Sent ✓" : "Send message"}
+          </button>
+        )}
+
         <button
           type="button"
           onClick={() => void toggle()}
           disabled={!!busy}
           className={
             "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition disabled:opacity-50 " +
-            (isDone
-              ? "border-sage/30 bg-white text-ink hover:bg-cream"
-              : "border-sage/40 bg-sage text-white hover:brightness-105")
+            // Mark done is primary only when there's no Send button — i.e.
+            // non-delegations and confirmed-done items. For waiting
+            // delegations the manual override is intentionally secondary.
+            (!isDone && !isWaitingDelegation
+              ? "border-sage/40 bg-sage text-white hover:brightness-105"
+              : "border-sage/30 bg-white text-ink hover:bg-cream")
           }
         >
           {busy === "done" && <Spinner size={12} />}
@@ -128,20 +143,10 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
             {isDone
               ? "Mark pending"
               : isWaitingDelegation
-                ? "Mark done myself"
+                ? "Mark done manually"
                 : "Mark done"}
           </span>
         </button>
-
-        {message?.content && !isDone && (
-          <button
-            type="button"
-            onClick={() => void copy()}
-            className="rounded-full border border-sage/30 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-cream"
-          >
-            {copied ? "Copied ✓" : "Copy message"}
-          </button>
-        )}
 
         <button
           type="button"
@@ -156,7 +161,12 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
 
       {hasConfirmLink && message?.content && (
         <p className="mt-2 text-[11px] text-ink/55">
-          Copied message includes a done link.
+          Recipient gets a done link to confirm.
+        </p>
+      )}
+      {isWaitingDelegation && (
+        <p className="mt-1 text-[11px] italic text-ink/45">
+          Mark done manually — use only if confirmed outside the app.
         </p>
       )}
     </article>

@@ -102,7 +102,7 @@ export default function MessageCard({ message, linkedTask, onDelete }: Props) {
             onClick={() => void copy()}
             className="rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105"
           >
-            {copied ? "Copied ✓" : "Copy message"}
+            {copied ? "Sent ✓" : "Send message"}
           </button>
         )}
         <button
@@ -118,7 +118,7 @@ export default function MessageCard({ message, linkedTask, onDelete }: Props) {
 
       {hasConfirmLink && (
         <p className="mt-2 text-[11px] text-ink/55">
-          Copied message includes a done link.
+          Recipient gets a done link to confirm.
         </p>
       )}
     </article>
