@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Spinner from "../Spinner";
+import { copyDelegationMessage } from "../../lib/copy-message";
 import type { Message } from "../../types/message";
 
 interface LinkedTaskInfo {
@@ -9,27 +10,30 @@ interface LinkedTaskInfo {
 
 interface Props {
   message: Message;
-  /**
-   * When the message was created alongside a delegation task, pass the
-   * task's current status so the card can render Waiting vs Confirmed.
-   * Omit for standalone messages.
-   */
+  /** When the message was sent alongside a delegation task, pass the
+   * task's current status so the card can render Waiting vs Confirmed. */
   linkedTask?: LinkedTaskInfo | null;
   onDelete: (message: Message) => Promise<unknown>;
 }
 
 export default function MessageCard({ message, linkedTask, onDelete }: Props) {
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState<null | "all" | "link" | "msg">(null);
+  const [copied, setCopied] = useState(false);
 
-  async function copy(text: string, which: "all" | "link" | "msg") {
-    if (!text) return;
+  const isConfirmed = linkedTask?.status === "done";
+  const isWaiting = !!linkedTask && !isConfirmed;
+  const hasConfirmLink = !!message.confirmation_url && isWaiting;
+
+  async function copy() {
     try {
-      await navigator.clipboard.writeText(text);
-      setCopied(which);
-      window.setTimeout(() => setCopied(null), 1500);
+      await copyDelegationMessage({
+        content: message.content,
+        confirmationUrl: hasConfirmLink ? message.confirmation_url : null,
+      });
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      /* ignore */
+      /* ignore — clipboard unsupported */
     }
   }
 
@@ -42,16 +46,6 @@ export default function MessageCard({ message, linkedTask, onDelete }: Props) {
       setBusy(false);
     }
   }
-
-  const isConfirmed = linkedTask?.status === "done";
-  const isWaiting = !!linkedTask && !isConfirmed;
-  // The confirmation link is only meaningful while the task is waiting.
-  // Once confirmed, hide the link UI entirely — the action is over.
-  const showConfirmationLink = !!message.confirmation_url && isWaiting;
-  const shareablePayload =
-    showConfirmationLink && message.confirmation_url
-      ? [message.content, message.confirmation_url].join("\n\n")
-      : "";
 
   return (
     <article
@@ -70,7 +64,7 @@ export default function MessageCard({ message, linkedTask, onDelete }: Props) {
           )}
           {isWaiting && (
             <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800">
-              Waiting
+              Waiting for confirmation
             </span>
           )}
           <time>
@@ -84,7 +78,23 @@ export default function MessageCard({ message, linkedTask, onDelete }: Props) {
         </div>
       </header>
 
-      <p className="mt-3 text-base italic leading-snug text-ink/85">“{message.content}”</p>
+      <p className="mt-3 whitespace-pre-wrap text-base italic leading-snug text-ink/85">
+        “{message.content}
+        {hasConfirmLink && (
+          <>
+            {" "}
+            <a
+              href={message.confirmation_url!}
+              target="_blank"
+              rel="noreferrer"
+              className="not-italic font-medium text-sage underline-offset-2 hover:underline"
+            >
+              Click here when done.
+            </a>
+          </>
+        )}
+        ”
+      </p>
 
       {isConfirmed && linkedTask?.confirmed_at && (
         <p className="mt-2 text-xs text-emerald-800">
@@ -99,51 +109,19 @@ export default function MessageCard({ message, linkedTask, onDelete }: Props) {
         </p>
       )}
 
-      {showConfirmationLink && (
-        <div className="mt-3 space-y-1.5">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-ink/50">
-            Confirmation link
-          </p>
-          <div className="flex items-center gap-2 rounded-lg border border-sage/20 bg-cream/40 px-3 py-2">
-            <a
-              href={message.confirmation_url!}
-              target="_blank"
-              rel="noreferrer"
-              className="block flex-1 truncate font-mono text-xs text-ink/80 underline-offset-2 hover:underline"
-            >
-              {message.confirmation_url}
-            </a>
-            <button
-              type="button"
-              onClick={() => void copy(message.confirmation_url!, "link")}
-              className="shrink-0 rounded-full border border-sage/30 bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-ink shadow-sm transition hover:bg-cream"
-            >
-              {copied === "link" ? "Copied ✓" : "Copy"}
-            </button>
-          </div>
-        </div>
-      )}
-
       <footer className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void copy(message.content, "msg")}
-          className="rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105"
-        >
-          {copied === "msg" ? "Copied ✓" : "Copy message"}
-        </button>
-        {shareablePayload && (
+        {!isConfirmed && (
           <button
             type="button"
-            onClick={() => void copy(shareablePayload, "all")}
-            className="rounded-full border border-sage/30 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-cream"
+            onClick={() => void copy()}
+            className="rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105"
           >
-            {copied === "all" ? "Copied ✓" : "Copy message + link"}
+            {copied ? "Copied ✓" : "Copy message"}
           </button>
         )}
         <button
           type="button"
-          onClick={remove}
+          onClick={() => void remove()}
           disabled={busy}
           className="ml-auto inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
         >

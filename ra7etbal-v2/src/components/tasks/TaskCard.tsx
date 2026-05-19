@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Spinner from "../Spinner";
+import { copyDelegationMessage } from "../../lib/copy-message";
 import type { Task, TaskType } from "../../types/task";
 
 interface Props {
@@ -23,8 +24,10 @@ const TYPE_META: Record<TaskType, { label: string; cls: string }> = {
 export default function TaskCard({ task, message, onToggleDone, onDelete }: Props) {
   const type = TYPE_META[task.type] ?? TYPE_META.action;
   const [busy, setBusy] = useState<"done" | "delete" | null>(null);
-  const [copied, setCopied] = useState<null | "all" | "link">(null);
+  const [copied, setCopied] = useState(false);
   const isDone = task.status === "done";
+  const isWaitingDelegation = task.type === "delegation" && !isDone;
+  const hasConfirmLink = !!task.confirmation_url && isWaitingDelegation;
 
   async function toggle() {
     if (busy) return;
@@ -46,20 +49,19 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
     }
   }
 
-  async function copy(text: string, which: "all" | "link") {
-    if (!text) return;
+  async function copy() {
+    if (!message?.content) return;
     try {
-      await navigator.clipboard.writeText(text);
-      setCopied(which);
-      window.setTimeout(() => setCopied(null), 1500);
+      await copyDelegationMessage({
+        content: message.content,
+        confirmationUrl: hasConfirmLink ? task.confirmation_url : null,
+      });
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      /* ignore — older browsers without clipboard API. */
+      /* ignore */
     }
   }
-
-  const shareablePayload = [message?.content, task.confirmation_url]
-    .filter((v): v is string => Boolean(v))
-    .join("\n\n");
 
   const assignedLabel = task.assigned_to ?? "Me";
 
@@ -79,9 +81,19 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
         >
           {type.label}
         </span>
-        <span className="text-xs text-ink/55">
-          {assignedLabel === "Me" ? "Me" : `→ ${assignedLabel}`}
-        </span>
+        <div className="flex items-center gap-2 text-xs text-ink/55">
+          {isWaitingDelegation && task.confirmation_url && (
+            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800">
+              Waiting for confirmation
+            </span>
+          )}
+          {isDone && task.type === "delegation" && (
+            <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
+              Confirmed done
+            </span>
+          )}
+          <span>{assignedLabel === "Me" ? "Me" : `→ ${assignedLabel}`}</span>
+        </div>
       </header>
 
       <p
@@ -94,40 +106,29 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
       </p>
 
       {message?.content && (
-        <p className="mt-2 rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
-          “{message.content}”
+        <p className="mt-2 whitespace-pre-wrap rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
+          “{message.content}
+          {hasConfirmLink && (
+            <>
+              {" "}
+              <a
+                href={task.confirmation_url!}
+                target="_blank"
+                rel="noreferrer"
+                className="not-italic font-medium text-sage underline-offset-2 hover:underline"
+              >
+                Click here when done.
+              </a>
+            </>
+          )}
+          ”
         </p>
-      )}
-
-      {task.confirmation_url && (
-        <div className="mt-3 space-y-1.5">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-ink/50">
-            Confirmation link
-          </p>
-          <div className="flex items-center gap-2 rounded-lg border border-sage/20 bg-cream/40 px-3 py-2">
-            <a
-              href={task.confirmation_url}
-              target="_blank"
-              rel="noreferrer"
-              className="block flex-1 truncate font-mono text-xs text-ink/80 underline-offset-2 hover:underline"
-            >
-              {task.confirmation_url}
-            </a>
-            <button
-              type="button"
-              onClick={() => void copy(task.confirmation_url!, "link")}
-              className="shrink-0 rounded-full border border-sage/30 bg-white px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-ink shadow-sm transition hover:bg-cream"
-            >
-              {copied === "link" ? "Copied ✓" : "Copy"}
-            </button>
-          </div>
-        </div>
       )}
 
       <footer className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          onClick={toggle}
+          onClick={() => void toggle()}
           disabled={!!busy}
           className={
             "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition disabled:opacity-50 " +
@@ -140,19 +141,19 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
           <span>{isDone ? "Mark pending" : "Mark done"}</span>
         </button>
 
-        {shareablePayload && (
+        {message?.content && !isDone && (
           <button
             type="button"
-            onClick={() => void copy(shareablePayload, "all")}
+            onClick={() => void copy()}
             className="rounded-full border border-sage/30 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-cream"
           >
-            {copied === "all" ? "Copied ✓" : "Copy message + link"}
+            {copied ? "Copied ✓" : "Copy message"}
           </button>
         )}
 
         <button
           type="button"
-          onClick={remove}
+          onClick={() => void remove()}
           disabled={!!busy}
           className="ml-auto inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
         >

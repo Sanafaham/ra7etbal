@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useAuth } from "./useAuth";
 import { useMessagesStore } from "../stores/messages";
@@ -8,6 +8,12 @@ import { useTasksStore } from "../stores/tasks";
  * Loads tasks and messages for the signed-in user. Used by Actions,
  * Follow-ups, and Messages screens so they share the same fetch and the
  * same loading semantics.
+ *
+ * Sync policy: every mount triggers a force-refresh so the host always
+ * sees the latest data after the recipient hits the public confirmation
+ * link. The Refresh button uses the same path. In dev StrictMode this
+ * may fire twice on the first mount — production behavior is one fetch
+ * per visit, which is cheap.
  */
 export function useTaskList(): {
   userId: string | null;
@@ -26,14 +32,12 @@ export function useTaskList(): {
     items: tasks,
     status: tasksStatus,
     error: tasksError,
-    loadedForUserId: tasksLoadedFor,
     loadFor: loadTasks,
   } = useTasksStore(
     useShallow((s) => ({
       items: s.items,
       status: s.status,
       error: s.error,
-      loadedForUserId: s.loadedForUserId,
       loadFor: s.loadFor,
     })),
   );
@@ -42,23 +46,28 @@ export function useTaskList(): {
     items: messages,
     status: messagesStatus,
     error: messagesError,
-    loadedForUserId: messagesLoadedFor,
     loadFor: loadMessages,
   } = useMessagesStore(
     useShallow((s) => ({
       items: s.items,
       status: s.status,
       error: s.error,
-      loadedForUserId: s.loadedForUserId,
       loadFor: s.loadFor,
     })),
   );
 
+  // Force-refresh on every mount. Cached items remain visible during the
+  // brief loading state (loadFor doesn't clear `items` while fetching), so
+  // there's no flicker — the list just updates in place when the fresh
+  // data arrives.
+  const firedRef = useRef<string | null>(null);
   useEffect(() => {
     if (!userId) return;
-    if (tasksLoadedFor !== userId) void loadTasks(userId);
-    if (messagesLoadedFor !== userId) void loadMessages(userId);
-  }, [userId, tasksLoadedFor, messagesLoadedFor, loadTasks, loadMessages]);
+    if (firedRef.current === userId) return;
+    firedRef.current = userId;
+    void loadTasks(userId, { force: true });
+    void loadMessages(userId, { force: true });
+  }, [userId, loadTasks, loadMessages]);
 
   async function reload(): Promise<void> {
     if (!userId) return;
