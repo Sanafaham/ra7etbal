@@ -113,8 +113,7 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
 
       <footer className="mt-3 flex flex-wrap items-center gap-2">
         {message?.content && !isDone && (
-          // Primary action for waiting delegations: send the recipient the
-          // message (clipboard for now; real send hooks in later).
+          // Primary action for waiting delegations.
           <button
             type="button"
             onClick={() => void copy()}
@@ -124,29 +123,26 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
           </button>
         )}
 
-        <button
-          type="button"
-          onClick={() => void toggle()}
-          disabled={!!busy}
-          className={
-            "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition disabled:opacity-50 " +
-            // Mark done is primary only when there's no Send button — i.e.
-            // non-delegations and confirmed-done items. For waiting
-            // delegations the manual override is intentionally secondary.
-            (!isDone && !isWaitingDelegation
-              ? "border-sage/40 bg-sage text-white hover:brightness-105"
-              : "border-sage/30 bg-white text-ink hover:bg-cream")
-          }
-        >
-          {busy === "done" && <Spinner size={12} />}
-          <span>
-            {isDone
-              ? "Mark pending"
-              : isWaitingDelegation
-                ? "Mark done manually"
-                : "Mark done"}
-          </span>
-        </button>
+        {/* Inline toggle only when this is NOT a waiting delegation.
+            For waiting delegations the manual override is tucked into
+            the Manual options disclosure below — it shouldn't compete
+            with Send message as an equal action. */}
+        {!isWaitingDelegation && (
+          <button
+            type="button"
+            onClick={() => void toggle()}
+            disabled={!!busy}
+            className={
+              "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium shadow-sm transition disabled:opacity-50 " +
+              (isDone
+                ? "border-sage/30 bg-white text-ink hover:bg-cream"
+                : "border-sage/40 bg-sage text-white hover:brightness-105")
+            }
+          >
+            {busy === "done" && <Spinner size={12} />}
+            <span>{isDone ? "Mark pending" : "Mark done"}</span>
+          </button>
+        )}
 
         <button
           type="button"
@@ -159,15 +155,36 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
         </button>
       </footer>
 
-      {hasConfirmLink && message?.content && (
-        <p className="mt-2 text-[11px] text-ink/55">
-          Recipient gets a done link to confirm.
+      {/* Calm forward-looking helper under Send. */}
+      {isWaitingDelegation && message?.content && (
+        <p className="mt-2 text-[11px] leading-snug text-ink/55">
+          For now, this prepares the message with a Done link. WhatsApp
+          auto-send is coming next.
         </p>
       )}
+
+      {/* Manual override hidden behind a small disclosure so it doesn't
+          sit beside Send message as an equal action. */}
       {isWaitingDelegation && (
-        <p className="mt-1 text-[11px] italic text-ink/45">
-          Mark done manually — use only if confirmed outside the app.
-        </p>
+        <details className="mt-2 text-xs text-ink/55">
+          <summary className="cursor-pointer select-none text-[11px] text-ink/55 transition hover:text-ink/80">
+            Manual options
+          </summary>
+          <div className="mt-2 flex flex-col gap-1.5">
+            <button
+              type="button"
+              onClick={() => void toggle()}
+              disabled={!!busy}
+              className="inline-flex w-fit items-center gap-2 rounded-full border border-sage/30 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-cream disabled:opacity-50"
+            >
+              {busy === "done" && <Spinner size={12} />}
+              <span>Mark done manually</span>
+            </button>
+            <p className="text-[11px] italic text-ink/45">
+              Use only if confirmed outside the app.
+            </p>
+          </div>
+        </details>
       )}
     </article>
   );

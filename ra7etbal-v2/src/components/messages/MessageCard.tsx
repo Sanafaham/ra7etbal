@@ -118,7 +118,8 @@ export default function MessageCard({ message, linkedTask, onDelete }: Props) {
 
       {hasConfirmLink && (
         <p className="mt-2 text-[11px] text-ink/55">
-          Recipient gets a done link to confirm.
+          For now, this prepares the message with a Done link. WhatsApp
+          auto-send is coming next.
         </p>
       )}
     </article>

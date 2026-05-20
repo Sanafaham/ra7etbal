@@ -52,7 +52,7 @@ export default function FollowUps() {
         <div>
           <h1 className="text-2xl font-semibold text-ink">Follow-ups</h1>
           <p className="text-sm text-ink/60">
-            Delegations and follow-ups still waiting on confirmation.
+            Delegated tasks still waiting for confirmation.
           </p>
         </div>
         <RefreshButton onClick={reload} />

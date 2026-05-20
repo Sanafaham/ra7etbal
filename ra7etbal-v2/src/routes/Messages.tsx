@@ -69,7 +69,7 @@ export default function Messages() {
         <div>
           <h1 className="text-2xl font-semibold text-ink">Messages</h1>
           <p className="text-sm text-ink/60">
-            Things to say. Copy and send through your usual channel.
+            Prepared messages waiting to be sent.
           </p>
         </div>
         <RefreshButton onClick={reload} />
