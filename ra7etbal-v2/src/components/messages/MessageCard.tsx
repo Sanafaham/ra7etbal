@@ -6,6 +6,7 @@ import type { Message } from "../../types/message";
 interface LinkedTaskInfo {
   status: string;
   confirmed_at: string | null;
+  confirmation_url?: string | null;
 }
 
 interface Props {
@@ -28,12 +29,14 @@ export default function MessageCard({
 
   const isConfirmed = linkedTask?.status === "done";
   const isWaiting = !!linkedTask && !isConfirmed;
-  const hasConfirmLink = !!message.confirmation_url && isWaiting;
+  const confirmationUrl =
+    message.confirmation_url ?? linkedTask?.confirmation_url ?? null;
+  const hasConfirmLink = !!confirmationUrl && !isConfirmed;
 
   function send() {
     const opened = openWhatsAppMessage({
       content: message.content,
-      confirmationUrl: hasConfirmLink ? message.confirmation_url : null,
+      confirmationUrl: hasConfirmLink ? confirmationUrl : null,
       phone: recipientPhone,
     });
     if (opened) {
