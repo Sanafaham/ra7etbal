@@ -29,11 +29,6 @@ export default function ConfirmationNotices() {
   const { dismissed, dismiss } = useDismissedNotifications(userId);
   const tasks = useTasksStore(useShallow((s) => s.items));
 
-  // Hide on the public recipient page and whenever the owner isn't signed in.
-  // This component renders at the app-shell level now, so it must self-gate.
-  const isPublicConfirmPage = location.pathname === "/confirm";
-  if (status !== "signed_in" || isPublicConfirmPage) return null;
-
   const visible = useMemo(() => {
     return tasks
       .filter(
@@ -50,6 +45,11 @@ export default function ConfirmationNotices() {
       )
       .slice(0, MAX_NOTICES);
   }, [tasks, dismissed]);
+
+  // Hide on the public recipient page and whenever the owner isn't signed in.
+  // This component renders at the app-shell level now, so it must self-gate.
+  const isPublicConfirmPage = location.pathname === "/confirm";
+  if (status !== "signed_in" || isPublicConfirmPage) return null;
 
   if (visible.length === 0) return null;
 
