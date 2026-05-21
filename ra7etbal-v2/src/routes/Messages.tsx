@@ -1,21 +1,48 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import MessageCard from "../components/messages/MessageCard";
 import RefreshButton from "../components/RefreshButton";
 import Spinner from "../components/Spinner";
 import { useTaskList } from "../hooks/useTaskList";
 import { useMessagesStore } from "../stores/messages";
+import { usePeopleStore } from "../stores/people";
 import type { Message } from "../types/message";
 
 export default function Messages() {
-  const { tasks, messages, messagesStatus, messagesError, reload } = useTaskList();
+  const { userId, tasks, messages, messagesStatus, messagesError, reload } = useTaskList();
   const [showConfirmed, setShowConfirmed] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const { people, loadedForUserId: peopleLoadedForUserId, loadPeople } =
+    usePeopleStore(
+      useShallow((s) => ({
+        people: s.items,
+        loadedForUserId: s.loadedForUserId,
+        loadPeople: s.loadFor,
+      })),
+    );
+
+  useEffect(() => {
+    if (!userId) return;
+    if (peopleLoadedForUserId !== userId) void loadPeople(userId);
+  }, [userId, peopleLoadedForUserId, loadPeople]);
 
   // Quick task lookup so each MessageCard can render Waiting / Confirmed.
   const taskById = useMemo(() => {
-    const m = new Map<string, { status: string; confirmed_at: string | null }>();
+    const m = new Map<
+      string,
+      {
+        status: string;
+        confirmed_at: string | null;
+        confirmation_url: string | null;
+      }
+    >();
     for (const t of tasks) {
-      m.set(t.id, { status: t.status, confirmed_at: t.confirmed_at });
+      m.set(t.id, {
+        status: t.status,
+        confirmed_at: t.confirmed_at,
+        confirmation_url: t.confirmation_url,
+      });
     }
     return m;
   }, [tasks]);
@@ -36,12 +63,24 @@ export default function Messages() {
     return { waiting: w, confirmed: c, standalone: s };
   }, [messages, taskById]);
 
+  const phoneByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const person of people) {
+      const key = person.name.trim().toLowerCase();
+      if (key && person.phone) m.set(key, person.phone);
+    }
+    return m;
+  }, [people]);
+
   async function handleDelete(msg: Message) {
-    if (!window.confirm("Delete this message?")) return;
+    setDeleteError(null);
     try {
       await useMessagesStore.getState().remove(msg.id);
     } catch (e) {
       console.error(e);
+      setDeleteError(
+        e instanceof Error ? e.message : "Could not delete message. Please try again.",
+      );
     }
   }
 
@@ -55,6 +94,9 @@ export default function Messages() {
             <MessageCard
               message={m}
               linkedTask={m.task_id ? taskById.get(m.task_id) ?? null : null}
+              recipientPhone={
+                phoneByName.get(m.recipient.trim().toLowerCase()) ?? null
+              }
               onDelete={handleDelete}
             />
           </li>
@@ -83,6 +125,8 @@ export default function Messages() {
           </button>
         </AuthNotice>
       )}
+
+      {deleteError && <AuthNotice kind="error">{deleteError}</AuthNotice>}
 
       {initialLoading && (
         <div className="flex items-center justify-center py-12 text-ink/60">

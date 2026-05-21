@@ -1,11 +1,12 @@
 import { useState } from "react";
 import Spinner from "../Spinner";
-import { copyDelegationMessage } from "../../lib/copy-message";
+import { openWhatsAppMessage } from "../../lib/whatsapp";
 import type { Message } from "../../types/message";
 
 interface LinkedTaskInfo {
   status: string;
   confirmed_at: string | null;
+  confirmation_url?: string | null;
 }
 
 interface Props {
@@ -13,27 +14,34 @@ interface Props {
   /** When the message was sent alongside a delegation task, pass the
    * task's current status so the card can render Waiting vs Confirmed. */
   linkedTask?: LinkedTaskInfo | null;
+  recipientPhone?: string | null;
   onDelete: (message: Message) => Promise<unknown>;
 }
 
-export default function MessageCard({ message, linkedTask, onDelete }: Props) {
+export default function MessageCard({
+  message,
+  linkedTask,
+  recipientPhone,
+  onDelete,
+}: Props) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const isConfirmed = linkedTask?.status === "done";
   const isWaiting = !!linkedTask && !isConfirmed;
-  const hasConfirmLink = !!message.confirmation_url && isWaiting;
+  const confirmationUrl =
+    message.confirmation_url ?? linkedTask?.confirmation_url ?? null;
+  const hasConfirmLink = !!confirmationUrl && !isConfirmed;
 
-  async function copy() {
-    try {
-      await copyDelegationMessage({
-        content: message.content,
-        confirmationUrl: hasConfirmLink ? message.confirmation_url : null,
-      });
+  function send() {
+    const opened = openWhatsAppMessage({
+      content: message.content,
+      confirmationUrl: hasConfirmLink ? confirmationUrl : null,
+      phone: recipientPhone,
+    });
+    if (opened) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* ignore — clipboard unsupported */
     }
   }
 
@@ -99,7 +107,7 @@ export default function MessageCard({ message, linkedTask, onDelete }: Props) {
         {!isConfirmed && (
           <button
             type="button"
-            onClick={() => void copy()}
+            onClick={send}
             className="rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105"
           >
             {copied ? "Sent ✓" : "Send message"}

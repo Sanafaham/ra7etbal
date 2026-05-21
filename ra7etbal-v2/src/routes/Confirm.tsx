@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AuthNotice from "../components/auth/AuthNotice";
 import Spinner from "../components/Spinner";
+import { openWhatsAppMessage } from "../lib/whatsapp";
 
 /**
  * Recipient-facing confirmation page.
@@ -18,6 +19,7 @@ interface TaskInfo {
   assignedTo: string | null;
   status: "pending" | "done" | "cancelled" | string;
   confirmedAt: string | null;
+  ownerPhone: string | null;
 }
 
 export default function Confirm() {
@@ -55,6 +57,7 @@ export default function Confirm() {
           assignedTo: data.assignedTo ?? null,
           status: data.status ?? "pending",
           confirmedAt: data.confirmedAt ?? null,
+          ownerPhone: data.ownerPhone ?? null,
         });
         setLoadState("ready");
       } catch (err) {
@@ -111,6 +114,14 @@ export default function Confirm() {
     }
   }
 
+  function notifyOwner() {
+    if (!info?.ownerPhone) return;
+    openWhatsAppMessage({
+      content: `${info.assignedTo ?? "Someone"} marked this done:\n${info.description}`,
+      phone: info.ownerPhone,
+    });
+  }
+
   return (
     <section className="mx-auto max-w-md space-y-5 rounded-2xl border border-sage/30 bg-white/85 p-6 shadow-sm">
       <header className="space-y-1">
@@ -141,18 +152,34 @@ export default function Confirm() {
           </div>
 
           {info.status === "done" ? (
-            <AuthNotice kind="success">
-              Marked as done
-              {info.confirmedAt
-                ? ` on ${new Date(info.confirmedAt).toLocaleString(undefined, {
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}`
-                : ""}
-              . Thanks!
-            </AuthNotice>
+            <div className="space-y-3">
+              <AuthNotice kind="success">
+                Marked as done
+                {info.confirmedAt
+                  ? ` on ${new Date(info.confirmedAt).toLocaleString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}`
+                  : ""}
+                . Thanks!
+              </AuthNotice>
+
+              {info.ownerPhone ? (
+                <button
+                  type="button"
+                  onClick={notifyOwner}
+                  className="flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105"
+                >
+                  Notify owner on WhatsApp
+                </button>
+              ) : (
+                <p className="text-sm text-ink/60">
+                  Confirmed. Owner will see this in Ra7etBal.
+                </p>
+              )}
+            </div>
           ) : (
             <>
               {confirmError && <AuthNotice kind="error">{confirmError}</AuthNotice>}

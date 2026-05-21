@@ -1,18 +1,33 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import RefreshButton from "../components/RefreshButton";
 import Spinner from "../components/Spinner";
 import TaskCard from "../components/tasks/TaskCard";
 import { useTaskList } from "../hooks/useTaskList";
+import { usePeopleStore } from "../stores/people";
 import { useTasksStore } from "../stores/tasks";
 import type { Task } from "../types/task";
 
 type Filter = "open" | "done" | "all";
 
 export default function Actions() {
-  const { tasks, tasksStatus, tasksError, messages, reload } = useTaskList();
+  const { userId, tasks, tasksStatus, tasksError, messages, reload } = useTaskList();
   const tasksStore = useTasksStore;
   const [filter, setFilter] = useState<Filter>("open");
+  const { people, loadedForUserId: peopleLoadedForUserId, loadPeople } =
+    usePeopleStore(
+      useShallow((s) => ({
+        people: s.items,
+        loadedForUserId: s.loadedForUserId,
+        loadPeople: s.loadFor,
+      })),
+    );
+
+  useEffect(() => {
+    if (!userId) return;
+    if (peopleLoadedForUserId !== userId) void loadPeople(userId);
+  }, [userId, peopleLoadedForUserId, loadPeople]);
 
   // Map task_id -> linked message (the delegation send payload).
   const messageByTaskId = useMemo(() => {
@@ -28,6 +43,15 @@ export default function Actions() {
     if (filter === "done") return tasks.filter((t) => t.status === "done");
     return tasks.filter((t) => t.status !== "done");
   }, [tasks, filter]);
+
+  const phoneByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const person of people) {
+      const key = person.name.trim().toLowerCase();
+      if (key && person.phone) m.set(key, person.phone);
+    }
+    return m;
+  }, [people]);
 
   async function handleToggleDone(task: Task) {
     const action =
@@ -112,6 +136,11 @@ export default function Actions() {
               <TaskCard
                 task={t}
                 message={messageByTaskId.get(t.id) ?? null}
+                recipientPhone={
+                  t.assigned_to
+                    ? phoneByName.get(t.assigned_to.trim().toLowerCase()) ?? null
+                    : null
+                }
                 onToggleDone={handleToggleDone}
                 onDelete={handleDelete}
               />

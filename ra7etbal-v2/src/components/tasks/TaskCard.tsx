@@ -1,12 +1,13 @@
 import { useState } from "react";
 import Spinner from "../Spinner";
-import { copyDelegationMessage } from "../../lib/copy-message";
+import { openWhatsAppMessage } from "../../lib/whatsapp";
 import type { Task, TaskType } from "../../types/task";
 
 interface Props {
   task: Task;
   /** Linked message for delegations, if present. */
   message?: { content: string } | null;
+  recipientPhone?: string | null;
   onToggleDone: (task: Task) => Promise<unknown>;
   onDelete: (task: Task) => Promise<unknown>;
 }
@@ -21,7 +22,13 @@ const TYPE_META: Record<TaskType, { label: string; cls: string }> = {
   parked: { label: "Parked", cls: "bg-stone-100 text-stone-700 border-stone-300" },
 };
 
-export default function TaskCard({ task, message, onToggleDone, onDelete }: Props) {
+export default function TaskCard({
+  task,
+  message,
+  recipientPhone,
+  onToggleDone,
+  onDelete,
+}: Props) {
   const type = TYPE_META[task.type] ?? TYPE_META.action;
   const [busy, setBusy] = useState<"done" | "delete" | null>(null);
   const [copied, setCopied] = useState(false);
@@ -49,17 +56,16 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
     }
   }
 
-  async function copy() {
+  function send() {
     if (!message?.content) return;
-    try {
-      await copyDelegationMessage({
-        content: message.content,
-        confirmationUrl: hasConfirmLink ? task.confirmation_url : null,
-      });
+    const opened = openWhatsAppMessage({
+      content: message.content,
+      confirmationUrl: hasConfirmLink ? task.confirmation_url : null,
+      phone: recipientPhone,
+    });
+    if (opened) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* ignore */
     }
   }
 
@@ -116,7 +122,7 @@ export default function TaskCard({ task, message, onToggleDone, onDelete }: Prop
           // Primary action for waiting delegations.
           <button
             type="button"
-            onClick={() => void copy()}
+            onClick={send}
             className="inline-flex items-center gap-2 rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105"
           >
             {copied ? "Sent ✓" : "Send message"}

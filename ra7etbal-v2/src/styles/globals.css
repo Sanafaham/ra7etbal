@@ -1,9 +1,22 @@
 @import "tailwindcss";
 
 @theme {
+  /* Calm warm palette — ivory backdrop, beige tones, espresso text,
+     muted gold for accents. Sage stays for accent-positive states
+     elsewhere in the app. */
   --color-cream: #F5EFE4;
-  --color-sage: #5B7245;
+  --color-sand: #E8DDC8;
+  --color-stone: #D8C9AC;
+  --color-gold: #B89968;
+  --color-espresso: #3A2E1F;
   --color-ink: #2B2A26;
+  --color-sage: #5B7245;
+
+  /* Type stack. Display = elegant serif (Cormorant Garamond).
+     Script = handwritten italic (Caveat). Body = DM Sans. */
+  --font-display: "Cormorant Garamond", "Playfair Display", Georgia, serif;
+  --font-script: "Caveat", "Homemade Apple", cursive;
+  --font-sans: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 html,
@@ -19,7 +32,7 @@ html {
 }
 
 body {
-  font-family: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-sans);
   background: var(--color-cream);
   color: var(--color-ink);
   -webkit-font-smoothing: antialiased;
