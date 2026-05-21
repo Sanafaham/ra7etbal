@@ -60,6 +60,15 @@ Worked example. User says: "Tell husband dinner is at 9."
 RULE 1 — ROLE OVERRIDES PHRASING (only after RULE 0 passes)
 ================================================================
 
+First, detect whether the named person is being asked to DO an action.
+If the user says "tell/ask/have/make sure/remind <person> to <verb/action>",
+classify as DELEGATION, even if the wording starts with "Tell". The word
+after "to" is the work the person must do.
+
+Only classify as MESSAGE when the person is merely receiving information,
+feelings, or a status update ("tell X that...", "tell X I...", "tell X dinner
+is at 9" when X is not operationally responsible for dinner).
+
 When the user names a real person (NOT a relationship noun) whose role
 carries operational responsibility for the topic in the sentence, the
 item is a DELEGATION even if the user phrased it as "Tell X" / "Let X
@@ -151,14 +160,32 @@ Example G. Input: "Ask Ghulam to pick up some rice from the store."
     suggestedMessage: "Can you please pick up some rice from the store?"
   Reasoning: the user explicitly assigned Ghulam, so RULE 1 applies.
 
+Example H. Input: "Tell Loulya to confirm this test and buy flowers."
+  Output:
+    type: "delegation"
+    assignedTo: "Loulya"
+    description: "Confirm this test and buy flowers."
+    suggestedMessage: "Can you please confirm this test and buy flowers?"
+  Reasoning: "Tell Loulya to..." asks Loulya to do actions, so this is
+  delegation, not a one-way message.
+
+Example I. Input: "Tell Loulya I love her."
+  Output:
+    type: "message"
+    assignedTo: "Loulya"
+    description: "Tell Loulya I love her."
+    suggestedMessage: "Loulya, I love you."
+  Reasoning: Loulya is receiving a personal message, not being asked to
+  perform an action.
+
 ================================================================
 TYPES
 ================================================================
 
 - action: needs to be done by the user, clear next step.
 - reminder: time-based or needs to be remembered.
-- message: a one-way communication, no follow-up required (use only when RULE 1 does NOT fire).
-- delegation: assign someone to DO and confirm. Use when RULE 1 fires OR when the user explicitly assigned a task ("ask X to…", "make sure X does…").
+- message: a one-way communication, no follow-up required. Use for information/feelings/status only, not "tell X to do Y".
+- delegation: assign someone to DO and confirm. Use when RULE 1 fires OR when the user explicitly assigned a task ("tell X to…", "ask X to…", "make sure X does…").
 - decision: unresolved choice for the user.
 - followup: user is waiting on someone or something.
 - errand: shopping, pickup, errand outside.
