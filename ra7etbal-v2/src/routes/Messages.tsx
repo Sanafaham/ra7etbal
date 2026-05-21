@@ -1,15 +1,30 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import MessageCard from "../components/messages/MessageCard";
 import RefreshButton from "../components/RefreshButton";
 import Spinner from "../components/Spinner";
 import { useTaskList } from "../hooks/useTaskList";
 import { useMessagesStore } from "../stores/messages";
+import { usePeopleStore } from "../stores/people";
 import type { Message } from "../types/message";
 
 export default function Messages() {
-  const { tasks, messages, messagesStatus, messagesError, reload } = useTaskList();
+  const { userId, tasks, messages, messagesStatus, messagesError, reload } = useTaskList();
   const [showConfirmed, setShowConfirmed] = useState(false);
+  const { people, loadedForUserId: peopleLoadedForUserId, loadPeople } =
+    usePeopleStore(
+      useShallow((s) => ({
+        people: s.items,
+        loadedForUserId: s.loadedForUserId,
+        loadPeople: s.loadFor,
+      })),
+    );
+
+  useEffect(() => {
+    if (!userId) return;
+    if (peopleLoadedForUserId !== userId) void loadPeople(userId);
+  }, [userId, peopleLoadedForUserId, loadPeople]);
 
   // Quick task lookup so each MessageCard can render Waiting / Confirmed.
   const taskById = useMemo(() => {
@@ -36,6 +51,15 @@ export default function Messages() {
     return { waiting: w, confirmed: c, standalone: s };
   }, [messages, taskById]);
 
+  const phoneByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const person of people) {
+      const key = person.name.trim().toLowerCase();
+      if (key && person.phone) m.set(key, person.phone);
+    }
+    return m;
+  }, [people]);
+
   async function handleDelete(msg: Message) {
     if (!window.confirm("Delete this message?")) return;
     try {
@@ -55,6 +79,9 @@ export default function Messages() {
             <MessageCard
               message={m}
               linkedTask={m.task_id ? taskById.get(m.task_id) ?? null : null}
+              recipientPhone={
+                phoneByName.get(m.recipient.trim().toLowerCase()) ?? null
+              }
               onDelete={handleDelete}
             />
           </li>
