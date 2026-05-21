@@ -12,6 +12,7 @@ import type { Message } from "../types/message";
 export default function Messages() {
   const { userId, tasks, messages, messagesStatus, messagesError, reload } = useTaskList();
   const [showConfirmed, setShowConfirmed] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const { people, loadedForUserId: peopleLoadedForUserId, loadPeople } =
     usePeopleStore(
       useShallow((s) => ({
@@ -61,11 +62,14 @@ export default function Messages() {
   }, [people]);
 
   async function handleDelete(msg: Message) {
-    if (!window.confirm("Delete this message?")) return;
+    setDeleteError(null);
     try {
       await useMessagesStore.getState().remove(msg.id);
     } catch (e) {
       console.error(e);
+      setDeleteError(
+        e instanceof Error ? e.message : "Could not delete message. Please try again.",
+      );
     }
   }
 
@@ -110,6 +114,8 @@ export default function Messages() {
           </button>
         </AuthNotice>
       )}
+
+      {deleteError && <AuthNotice kind="error">{deleteError}</AuthNotice>}
 
       {initialLoading && (
         <div className="flex items-center justify-center py-12 text-ink/60">
