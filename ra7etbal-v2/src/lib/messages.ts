@@ -52,8 +52,12 @@ export async function createMessage(draft: MessageDraft): Promise<Message> {
 }
 
 export async function deleteMessage(id: string): Promise<void> {
-  const { error } = await supabase.from("messages").delete().eq("id", id);
+  const { count, error } = await supabase
+    .from("messages")
+    .delete({ count: "exact" })
+    .eq("id", id);
   if (error) throw friendly(error);
+  if (count === 0) throw new Error("Message was not deleted. Please try again.");
 }
 
 function friendly(err: { message?: string }): Error {
