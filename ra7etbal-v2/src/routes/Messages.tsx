@@ -29,9 +29,20 @@ export default function Messages() {
 
   // Quick task lookup so each MessageCard can render Waiting / Confirmed.
   const taskById = useMemo(() => {
-    const m = new Map<string, { status: string; confirmed_at: string | null }>();
+    const m = new Map<
+      string,
+      {
+        status: string;
+        confirmed_at: string | null;
+        confirmation_url: string | null;
+      }
+    >();
     for (const t of tasks) {
-      m.set(t.id, { status: t.status, confirmed_at: t.confirmed_at });
+      m.set(t.id, {
+        status: t.status,
+        confirmed_at: t.confirmed_at,
+        confirmation_url: t.confirmation_url,
+      });
     }
     return m;
   }, [tasks]);
