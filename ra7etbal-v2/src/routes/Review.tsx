@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import ItemCard from "../components/review/ItemCard";
@@ -6,6 +7,7 @@ import Spinner from "../components/Spinner";
 import AuthNotice from "../components/auth/AuthNotice";
 import { useAuth } from "../hooks/useAuth";
 import { savePending } from "../lib/save";
+import { sendWhatsAppTask } from "../lib/whatsapp";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { useMessagesStore } from "../stores/messages";
@@ -57,6 +59,17 @@ export default function Review() {
     if (loadedForUserId !== userId) void loadPeople(userId);
   }, [userId, loadedForUserId, loadPeople]);
 
+  const hasSendableMessages = items.some(isSendableReviewMessage);
+
+  const phoneByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const person of people) {
+      const key = person.name.trim().toLowerCase();
+      if (key && person.phone) m.set(key, person.phone);
+    }
+    return m;
+  }, [people]);
+
   // No extraction has run — user landed on /review directly. Send them home.
   if (status === "idle") {
     return <Navigate to="/" replace />;
@@ -64,7 +77,7 @@ export default function Review() {
 
   if (status === "running") {
     return (
-      <div className="flex items-center justify-center py-12 text-ink/60">
+      <div className="flex items-center justify-center py-12 text-text-soft">
         <Spinner size={20} label="Organizing" />
       </div>
     );
@@ -79,7 +92,7 @@ export default function Review() {
         <button
           type="button"
           onClick={() => navigate("/")}
-          className="rounded-full border border-sage/40 bg-white px-4 py-2 text-sm font-medium text-ink shadow-sm transition hover:bg-cream"
+          className="rounded-full border border-border/85 bg-warm-white px-4 py-2 text-sm font-medium text-text shadow-sm transition hover:bg-card"
         >
           ← Back to Home
         </button>
@@ -90,12 +103,12 @@ export default function Review() {
   return (
     <section className="space-y-5">
       <header className="space-y-1">
-        <p className="text-xs font-medium uppercase tracking-wide text-ink/50">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gold">
           Review
         </p>
-        <h1 className="text-2xl font-semibold text-ink">Here's what I picked up.</h1>
+        <h1 className="text-4xl font-semibold leading-tight text-text" style={{ fontFamily: "var(--font-display)" }}>Here's your plan.</h1>
         {items.length > 0 && (
-          <p className="text-sm text-ink/70">
+          <p className="text-sm text-text-soft">
             {items.length === 1
               ? "I found 1 item for you to review."
               : `I found ${items.length} items for you to review.`}
@@ -104,8 +117,8 @@ export default function Review() {
       </header>
 
       {sourceText && (
-        <details className="rounded-2xl border border-sage/20 bg-cream/60 p-3 text-sm text-ink/70">
-          <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-ink/55">
+        <details className="rounded-[24px] border border-border/80 bg-card/70 p-3 text-sm text-text-soft">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.18em] text-text-soft">
             What you wrote
           </summary>
           <p className="mt-2 whitespace-pre-wrap leading-relaxed">{sourceText}</p>
@@ -113,7 +126,7 @@ export default function Review() {
       )}
 
       {items.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-sage/40 bg-white/60 p-6 text-sm text-ink/70">
+        <div className="rounded-[28px] border border-dashed border-gold/30 bg-card/70 p-6 text-sm text-text-soft">
           Ra7etBal didn't find anything actionable in that. Head back and try
           rephrasing.
         </div>
@@ -138,7 +151,7 @@ export default function Review() {
       <div className="flex flex-col-reverse items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Link
           to="/"
-          className="rounded-full border border-sage/30 bg-white px-4 py-2 text-center text-sm font-medium text-ink shadow-sm transition hover:bg-cream"
+          className="rounded-full border border-border/85 bg-warm-white px-4 py-2 text-center text-sm font-medium text-text shadow-sm transition hover:bg-card"
         >
           ← Back to Home
         </Link>
@@ -148,10 +161,18 @@ export default function Review() {
             onClick={() => void handleSave()}
             disabled={saving}
             aria-busy={saving}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-base font-medium text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
           >
             {saving && <Spinner size={16} />}
-            <span>{saving ? "Saving…" : "Save"}</span>
+            <span>
+              {saving
+                ? hasSendableMessages
+                  ? "Saving & sending…"
+                  : "Saving…"
+                : hasSendableMessages
+                  ? "Save & Send Messages"
+                  : "Save"}
+            </span>
           </button>
         )}
       </div>
@@ -169,7 +190,36 @@ export default function Review() {
     setSaving(true);
     setSaveError(null);
     try {
-      await savePending(items, userId);
+      const result = await savePending(items, userId);
+      const sendableSavedMessages = result.messages.filter(
+        (message) =>
+          !!message.recipient.trim() &&
+          !!message.content.trim(),
+      );
+      let sendError: string | null = null;
+
+      if (hasSendableMessages && sendableSavedMessages.length === 0) {
+        sendError = "WhatsApp send could not start";
+      } else if (hasSendableMessages) {
+        try {
+          await Promise.all(
+            sendableSavedMessages.map((message) =>
+              sendWhatsAppTask({
+                to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
+                messageText: message.content,
+                confirmationLink: message.confirmation_url,
+                messageRecordId: message.id,
+                taskId: message.task_id,
+                recipientName: message.recipient,
+              }),
+            ),
+          );
+        } catch (err) {
+          console.error("Review Save & Send WhatsApp failed:", err);
+          sendError =
+            err instanceof Error ? err.message : "Could not send WhatsApp message.";
+        }
+      }
       // Force-reload from Supabase so Actions/Messages/Follow-ups reflect the
       // canonical server state, not an optimistic local push. This is the
       // safety net against any row that didn't actually persist (RLS, missing
@@ -182,7 +232,19 @@ export default function Review() {
       // Clear the draft and the extraction — the flow is done.
       useDraftStore.getState().clear();
       useExtractionStore.getState().clear();
-      navigate("/actions", { replace: true });
+      await stopSavingBeforeBlockingAlert();
+      if (hasSendableMessages) {
+        window.alert(
+          sendError
+            ? sendError === "WhatsApp send could not start"
+              ? "Saved, but WhatsApp send could not start. You can retry from Messages."
+              : `Saved, but WhatsApp send failed: ${sendError}. You can retry from Messages.`
+            : "Saved and sent on WhatsApp.",
+        );
+        navigate("/messages", { replace: true });
+      } else {
+        navigate("/actions", { replace: true });
+      }
     } catch (err) {
       // Surface the original message — Supabase errors are now propagated
       // (e.g. "null value in column ... violates not-null constraint").
@@ -195,4 +257,29 @@ export default function Review() {
       setSaving(false);
     }
   }
+
+  async function stopSavingBeforeBlockingAlert() {
+    savingRef.current = false;
+    flushSync(() => {
+      setSaving(false);
+    });
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    });
+  }
+}
+
+function isSendableReviewMessage(item: {
+  type: string;
+  assignedTo: string | null;
+  suggestedMessage: string | null;
+  description: string;
+}) {
+  if (item.type !== "delegation" && item.type !== "message") return false;
+  const assignedTo = item.assignedTo?.trim();
+  if (!assignedTo || assignedTo === "__me__") return false;
+  const messageText = (item.suggestedMessage ?? item.description).trim();
+  return messageText.length > 0;
 }
