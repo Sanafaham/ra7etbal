@@ -90,7 +90,7 @@ export async function extractItems(
   // operational for the topic; this catches the residual misclassifications.
   return {
     ...result,
-    extracted: applyRolePrecedence(result.extracted, people),
+    extracted: applyRolePrecedence(result.extracted, people, text),
   };
 }
 

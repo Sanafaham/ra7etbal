@@ -61,9 +61,21 @@ RULE 1 — ROLE OVERRIDES PHRASING (only after RULE 0 passes)
 ================================================================
 
 First, detect whether the named person is being asked to DO an action.
-If the user says "tell/ask/have/make sure/remind <person> to <verb/action>",
-classify as DELEGATION, even if the wording starts with "Tell". The word
-after "to" is the work the person must do.
+If the user says "tell/ask/remind/have/let/message/send <person>..." and
+the person appears immediately after that communication verb, this is about
+that person — not a personal reminder for the user. Assign it to that person.
+
+If the content requires the person to reply, confirm, do, check, prepare,
+buy, bring, call, send, pick up, clean, cook, or report back, classify as
+DELEGATION with confirmation tracking. This includes "tell X to confirm...",
+"ask X to bring...", "have X prepare...", and "remind X to check...".
+
+"Tell <person> <information>" is still assigned to that person, but it is a
+MESSAGE when the person is only receiving information and not being asked to
+act. Example: "Tell Grace dinner is at 8" is a message to Grace.
+
+Do NOT treat "tell <person>..." as a personal reminder unless the user
+explicitly says "remind me to tell <person>...".
 
 Only classify as MESSAGE when the person is merely receiving information,
 feelings, or a status update ("tell X that...", "tell X I...", "tell X dinner
@@ -177,6 +189,46 @@ Example I. Input: "Tell Loulya I love her."
     suggestedMessage: "Loulya, I love you."
   Reasoning: Loulya is receiving a personal message, not being asked to
   perform an action.
+
+Example J. Input: "Tell Grace to confirm this message."
+  Output:
+    type: "delegation"
+    assignedTo: "Grace"
+    description: "Confirm this message."
+    suggestedMessage: "Can you please confirm this message?"
+  Reasoning: Grace is being asked to confirm, so this is a delegation with
+  confirmation tracking.
+
+Example K. Input: "Tell Grace dinner is at 8."
+  Output:
+    type: "message"
+    assignedTo: "Grace"
+    description: "Tell Grace dinner is at 8."
+    suggestedMessage: "Grace, dinner is at 8."
+  Reasoning: Grace is receiving information, not being asked to act.
+
+Example L. Input: "Remind me to tell Grace dinner is at 8."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "Tell Grace dinner is at 8."
+    suggestedMessage: null
+  Reasoning: the user explicitly said "Remind me to...", so this is the
+  owner's personal reminder, not a message sent to Grace.
+
+Example M. Input: "Ask Ghulam to bring the car at 5."
+  Output:
+    type: "delegation"
+    assignedTo: "Ghulam"
+    description: "Bring the car at 5."
+    suggestedMessage: "Can you please bring the car at 5?"
+
+Example N. Input: "Let Christopher know the delivery is here."
+  Output:
+    type: "message"
+    assignedTo: "Christopher"
+    description: "Let Christopher know the delivery is here."
+    suggestedMessage: "Christopher, the delivery is here."
 
 ================================================================
 TYPES
