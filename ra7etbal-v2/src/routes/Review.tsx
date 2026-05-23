@@ -59,7 +59,27 @@ export default function Review() {
     if (loadedForUserId !== userId) void loadPeople(userId);
   }, [userId, loadedForUserId, loadPeople]);
 
-  const hasSendableMessages = items.some(isSendableReviewMessage);
+  const sendableChecks = useMemo(
+    () => items.map(getReviewSendableCheck),
+    [items],
+  );
+  const hasSendableMessages = sendableChecks.some((check) => check.isSendable);
+
+  useEffect(() => {
+    if (items.length === 0) return;
+    console.log(
+      "REVIEW_SENDABLE_CHECK",
+      sendableChecks.map((check) => ({
+        type: check.type,
+        kind: check.kind,
+        category: check.category,
+        assignedPerson: check.assignedPerson,
+        messageTextPresent: check.messageTextPresent,
+        isPersonalReminder: check.isPersonalReminder,
+        isSendable: check.isSendable,
+      })),
+    );
+  }, [items.length, sendableChecks]);
 
   const phoneByName = useMemo(() => {
     const m = new Map<string, string>();
@@ -271,15 +291,58 @@ export default function Review() {
   }
 }
 
-function isSendableReviewMessage(item: {
-  type: string;
-  assignedTo: string | null;
-  suggestedMessage: string | null;
-  description: string;
-}) {
-  if (item.type !== "delegation" && item.type !== "message") return false;
-  const assignedTo = item.assignedTo?.trim();
-  if (!assignedTo || assignedTo === "__me__") return false;
-  const messageText = (item.suggestedMessage ?? item.description).trim();
-  return messageText.length > 0;
+interface ReviewSendableCheck {
+  type: string | null;
+  kind: string | null;
+  category: string | null;
+  assignedPerson: string | null;
+  messageTextPresent: boolean;
+  isPersonalReminder: boolean;
+  isSendable: boolean;
+}
+
+function getReviewSendableCheck(item: unknown): ReviewSendableCheck {
+  const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+  const type = readString(record.type);
+  const kind = readString(record.kind);
+  const category = readString(record.category);
+  const assignedPerson =
+    readString(record.assignedTo) ??
+    readString(record.assigned_to) ??
+    readString(record.assignee) ??
+    readString(record.recipient) ??
+    readString(record.recipientName);
+  const messageText =
+    readString(record.suggestedMessage) ??
+    readString(record.message) ??
+    readString(record.content) ??
+    readString(record.body) ??
+    readString(record.text);
+  const normalizedType = (type ?? kind ?? category ?? "").toLowerCase();
+  const normalizedAssignee = assignedPerson?.toLowerCase() ?? "";
+  const hasRealAssignedPerson =
+    !!assignedPerson &&
+    normalizedAssignee !== "__me__" &&
+    normalizedAssignee !== "me" &&
+    normalizedAssignee !== "owner";
+  const messageTextPresent = !!messageText;
+  const isPersonalReminder =
+    normalizedType === "reminder" &&
+    (!hasRealAssignedPerson || normalizedAssignee === "__me__");
+
+  return {
+    type,
+    kind,
+    category,
+    assignedPerson,
+    messageTextPresent,
+    isPersonalReminder,
+    isSendable: hasRealAssignedPerson && messageTextPresent && !isPersonalReminder,
+  };
+}
+
+function readString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
