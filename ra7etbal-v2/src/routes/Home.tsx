@@ -129,7 +129,7 @@ export default function Home() {
       onTouchStart={(e) => e.stopPropagation()}
       disabled={!canSubmit}
       aria-busy={submitting}
-      className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-charcoal px-8 py-3.5 text-[15px] font-medium tracking-[0.02em] text-ivory shadow-[0_22px_55px_-28px_rgba(20,20,20,0.62),0_3px_8px_-4px_rgba(20,20,20,0.16)] transition hover:bg-espresso active:translate-y-[1px] disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft disabled:shadow-none sm:w-auto"
+      className="inline-flex min-h-[52px] w-full items-center justify-center gap-2 rounded-full border border-charcoal/90 bg-charcoal px-8 py-3.5 text-[15px] font-semibold tracking-[0.02em] text-ivory shadow-[0_18px_42px_-18px_rgba(20,20,20,0.55),0_3px_10px_-5px_rgba(20,20,20,0.2)] transition hover:bg-espresso active:translate-y-[1px] disabled:cursor-not-allowed disabled:border-gold-soft/70 disabled:bg-gold-soft/55 disabled:text-text-soft disabled:shadow-none sm:w-auto sm:min-w-[220px]"
     >
       {submitting && <Spinner size={16} />}
       <span>{submitting ? "Organizing…" : "Clear My Head"}</span>
@@ -139,10 +139,9 @@ export default function Home() {
   return (
     <section
       className="mx-auto max-w-2xl"
-      // Reserve bottom space so iOS Safari's floating URL bar can't cover
-      // the CTA or the bottom whisper. 128px clears the bar + the home
-      // indicator (the latter is also added explicitly via env()).
-      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 128px)" }}
+      // Reserve enough bottom room for iOS Safari without creating a long
+      // empty tail after the CTA.
+      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
     >
       {/* 1. Minimal brand area — quiet, centered. */}
       <header className="flex flex-col items-center gap-1 pt-2 text-center sm:pt-1">
@@ -270,12 +269,15 @@ export default function Home() {
 
       {/* 6. Primary CTA — Clear My Head — in flow when keyboard closed. */}
       {!keyboardOpen && (
-        <div className="mt-6 flex flex-col items-center gap-3 sm:mt-8">
+        <div
+          className="sticky bottom-0 z-20 -mx-4 mt-5 flex flex-col items-center gap-2 border-t border-border/70 bg-ivory/92 px-4 pt-3 shadow-[0_-18px_42px_-34px_rgba(20,20,20,0.55)] backdrop-blur-md sm:static sm:mx-0 sm:mt-8 sm:border-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:shadow-none sm:backdrop-blur-0"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
+        >
           {clearMyHeadButton}
 
           {/* 7. Small reassurance line. */}
           <p
-            className="max-w-md text-center text-[14px] italic leading-snug text-text-soft"
+            className="max-w-md text-center text-[13px] italic leading-snug text-text-soft sm:text-[14px]"
             style={{ fontFamily: "var(--font-display)" }}
           >
             Ra7etBal will organize it before anything is saved.
@@ -285,7 +287,7 @@ export default function Home() {
 
       {/* Bottom whisper — replaces the old draft-privacy line, kept calm. */}
       {!keyboardOpen && (
-        <p className="mt-7 text-center text-[11px] tracking-wide text-text-muted sm:mt-9">
+        <p className="mt-3 text-center text-[11px] tracking-wide text-text-muted sm:mt-9">
           Nothing is sent without review.
           {people.length === 0 && (
             <>
