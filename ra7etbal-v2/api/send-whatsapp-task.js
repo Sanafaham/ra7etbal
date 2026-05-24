@@ -1,5 +1,5 @@
 const TEMPLATE_NAME = 'ra7etbal_task_assignment';
-const DEFAULT_TEMPLATE_LANGUAGE = 'en_US';
+const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -55,143 +55,139 @@ export default async function handler(req, res) {
   }
 
   const url = `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`;
-  const textBody = buildDelegationMessage(cleanMessage, cleanLink);
-  const textPayload = {
-    messaging_product: 'whatsapp',
-    to: normalizedTo,
-    type: 'text',
-    text: {
-      preview_url: true,
-      body: textBody,
-    },
-  };
-
-  console.log('WhatsApp task send attempt', {
-    phoneNumberIdLast4,
-    to: normalizedTo,
-    tokenConfigured: Boolean(accessToken),
-    taskId: taskId || null,
-    messageRecordId: messageRecordId || null,
-    recipientName: recipientName || null,
-    mode: 'free-form',
-    payload: redactPayloadForLog(textPayload),
-  });
+  const templatePayload = cleanLink
+    ? {
+        messaging_product: 'whatsapp',
+        to: normalizedTo,
+        type: 'template',
+        template: {
+          name: TEMPLATE_NAME,
+          language: { code: templateLanguage },
+          components: [
+            {
+              type: 'body',
+              parameters: [
+                { type: 'text', text: cleanMessage },
+                { type: 'text', text: cleanLink },
+              ],
+            },
+          ],
+        },
+      }
+    : null;
 
   try {
-    const freeFormResult = await sendMetaMessage({
-      url,
-      accessToken,
-      payload: textPayload,
-    });
-
-    if (freeFormResult.ok) {
-      await markMessageAccepted({
-        supabaseUrl,
-        serviceKey,
-        messageRecordId,
-        messageId: freeFormResult.messageId,
-      });
-
-      return res.status(200).json({
-        success: true,
-        sendType: 'free-form',
-        messageId: freeFormResult.messageId,
-        to: normalizedTo,
-        acceptedAt: new Date().toISOString(),
+    let templateResult = null;
+    if (templatePayload) {
+      console.log('WhatsApp template send attempt', {
         phoneNumberIdLast4,
+        to: normalizedTo,
+        tokenConfigured: Boolean(accessToken),
+        taskId: taskId || null,
+        messageRecordId: messageRecordId || null,
+        recipientName: recipientName || null,
+        mode: 'template',
+        templateName: TEMPLATE_NAME,
+        templateLanguage,
+        payload: redactPayloadForLog(templatePayload),
+      });
+
+      templateResult = await sendMetaMessage({
+        url,
+        accessToken,
+        payload: templatePayload,
+      });
+
+      if (templateResult.ok) {
+        await markMessageAccepted({
+          supabaseUrl,
+          serviceKey,
+          messageRecordId,
+          messageId: templateResult.messageId,
+        });
+
+        return res.status(200).json({
+          success: true,
+          sendMode: 'template',
+          sendType: 'template',
+          messageId: templateResult.messageId,
+          to: normalizedTo,
+          acceptedAt: new Date().toISOString(),
+          phoneNumberIdLast4,
+          templateName: TEMPLATE_NAME,
+          templateLanguage,
+        });
+      }
+
+      console.error('WhatsApp template send failed', {
+        status: templateResult.status,
+        metaError: templateResult.metaError,
+      });
+    } else {
+      console.warn('WhatsApp template send skipped because confirmation link is missing', {
+        to: normalizedTo,
+        taskId: taskId || null,
+        messageRecordId: messageRecordId || null,
       });
     }
 
-    if (!shouldUseTemplateFallback(freeFormResult.metaError)) {
-      console.error('WhatsApp free-form send failed', {
-        status: freeFormResult.status,
-        metaError: freeFormResult.metaError,
-      });
-      return sendFailure(res, freeFormResult);
-    }
-
-    console.log('WhatsApp free-form outside customer window; trying template', {
-      to: normalizedTo,
-      phoneNumberIdLast4,
-      templateName: TEMPLATE_NAME,
-      templateLanguage,
-      freeFormStatus: freeFormResult.status,
-      freeFormError: safeMetaMessage(freeFormResult.metaError),
-    });
-
-    if (!cleanLink) {
-      return res.status(400).json({
-        success: false,
-        error: 'Confirmation link is missing.',
-        errorMessage: 'Confirmation link is missing.',
-        details:
-          'WhatsApp template fallback needs a confirmation link. Retry from Messages after the task is saved.',
-        freeFormError: freeFormResult.metaError,
-      });
-    }
-
-    const templatePayload = {
+    const textBody = buildDelegationMessage(cleanMessage, cleanLink);
+    const textPayload = {
       messaging_product: 'whatsapp',
       to: normalizedTo,
-      type: 'template',
-      template: {
-        name: TEMPLATE_NAME,
-        language: { code: templateLanguage },
-        components: [
-          {
-            type: 'body',
-            parameters: [
-              { type: 'text', text: cleanMessage },
-              { type: 'text', text: cleanLink },
-            ],
-          },
-        ],
+      type: 'text',
+      text: {
+        preview_url: true,
+        body: textBody,
       },
     };
 
-    console.log('WhatsApp template send attempt', {
+    console.log('WhatsApp template failed; trying free-form fallback', {
       phoneNumberIdLast4,
       to: normalizedTo,
       tokenConfigured: Boolean(accessToken),
       taskId: taskId || null,
       messageRecordId: messageRecordId || null,
       recipientName: recipientName || null,
-      mode: 'template',
-      templateName: TEMPLATE_NAME,
-      templateLanguage,
-      payload: redactPayloadForLog(templatePayload),
+      mode: 'free-form',
+      templateStatus: templateResult?.status || null,
+      templateError: templateResult ? safeMetaMessage(templateResult.metaError) : null,
+      payload: redactPayloadForLog(textPayload),
     });
 
-    const templateResult = await sendMetaMessage({
+    const freeFormResult = await sendMetaMessage({
       url,
       accessToken,
-      payload: templatePayload,
+      payload: textPayload,
     });
 
-    if (!templateResult.ok) {
-      console.error('WhatsApp template send failed', {
-        status: templateResult.status,
-        metaError: templateResult.metaError,
+    if (!freeFormResult.ok) {
+      console.error('WhatsApp free-form fallback failed', {
+        status: freeFormResult.status,
+        metaError: freeFormResult.metaError,
       });
-      return sendFailure(res, templateResult, freeFormResult.metaError);
+      return sendFailure(
+        res,
+        freeFormResult,
+        templateResult?.metaError || null,
+      );
     }
 
     await markMessageAccepted({
       supabaseUrl,
       serviceKey,
       messageRecordId,
-      messageId: templateResult.messageId,
+      messageId: freeFormResult.messageId,
     });
 
     return res.status(200).json({
       success: true,
-      sendType: 'template',
-      messageId: templateResult.messageId,
+      sendMode: 'free-form',
+      sendType: 'free-form',
+      messageId: freeFormResult.messageId,
       to: normalizedTo,
       acceptedAt: new Date().toISOString(),
       phoneNumberIdLast4,
-      templateName: TEMPLATE_NAME,
-      templateLanguage,
     });
   } catch (err) {
     console.error('WhatsApp task send route failed', {
