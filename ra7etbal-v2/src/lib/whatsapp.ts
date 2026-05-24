@@ -43,7 +43,7 @@ export function openWhatsAppMessage(payload: WhatsAppPayload): boolean {
 
 export async function sendWhatsAppTask(
   payload: WhatsAppCloudTaskPayload,
-): Promise<{ success: true; messageId?: string | null }> {
+): Promise<{ success: true; messageId?: string | null; sendType?: string | null }> {
   const res = await fetch("/api/send-whatsapp-task", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -58,7 +58,7 @@ export async function sendWhatsAppTask(
   });
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
+  if (!res.ok || data?.success === false) {
     const detailText =
       typeof data?.errorMessage === "string" && data.errorMessage.trim()
         ? data.errorMessage.trim()
@@ -77,6 +77,7 @@ export async function sendWhatsAppTask(
   return {
     success: true,
     messageId: typeof data?.messageId === "string" ? data.messageId : null,
+    sendType: typeof data?.sendType === "string" ? data.sendType : null,
   };
 }
 

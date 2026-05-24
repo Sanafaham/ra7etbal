@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Spinner from "../Spinner";
-import { openWhatsAppMessage } from "../../lib/whatsapp";
+import { openWhatsAppMessage, sendWhatsAppTask } from "../../lib/whatsapp";
 import type { Task, TaskType } from "../../types/task";
 
 interface Props {
@@ -30,7 +30,7 @@ export default function TaskCard({
   onDelete,
 }: Props) {
   const type = TYPE_META[task.type] ?? TYPE_META.action;
-  const [busy, setBusy] = useState<"done" | "delete" | null>(null);
+  const [busy, setBusy] = useState<"done" | "delete" | "send" | null>(null);
   const [copied, setCopied] = useState(false);
   const isDone = task.status === "done";
   const isWaitingDelegation = task.type === "delegation" && !isDone;
@@ -56,16 +56,38 @@ export default function TaskCard({
     }
   }
 
-  function send() {
+  async function send() {
     if (!message?.content) return;
-    const opened = openWhatsAppMessage({
-      content: message.content,
-      confirmationUrl: hasConfirmLink ? task.confirmation_url : null,
-      phone: recipientPhone,
-    });
-    if (opened) {
+    if (busy) return;
+    setBusy("send");
+    try {
+      await sendWhatsAppTask({
+        to: recipientPhone ?? null,
+        messageText: message.content,
+        confirmationLink: hasConfirmLink ? task.confirmation_url : null,
+        taskId: task.id,
+        recipientName: task.assigned_to,
+      });
+      window.alert("Sent through Ra7etBal WhatsApp.");
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      const messageText =
+        err instanceof Error ? err.message : "Could not send WhatsApp message.";
+      window.alert(
+        `WhatsApp send failed: ${messageText}. Opening manual fallback.`,
+      );
+      const opened = openWhatsAppMessage({
+        content: message.content,
+        confirmationUrl: hasConfirmLink ? task.confirmation_url : null,
+        phone: recipientPhone,
+      });
+      if (opened) {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      }
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -122,10 +144,11 @@ export default function TaskCard({
           // Primary action for waiting delegations.
           <button
             type="button"
-            onClick={send}
+            onClick={() => void send()}
+            disabled={!!busy}
             className="inline-flex items-center gap-2 rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105"
           >
-            {copied ? "Sent ✓" : "Send message"}
+            {busy === "send" ? "Sending…" : copied ? "Sent ✓" : "Send message"}
           </button>
         )}
 
@@ -164,8 +187,8 @@ export default function TaskCard({
       {/* Calm forward-looking helper under Send. */}
       {isWaitingDelegation && message?.content && (
         <p className="mt-2 text-[11px] leading-snug text-ink/55">
-          For now, this prepares the message with a Done link. WhatsApp
-          auto-send is coming next.
+          Sent through Ra7etBal WhatsApp. The task stays open until they tap
+          Done.
         </p>
       )}
 

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Spinner from "../Spinner";
-import { openWhatsAppMessage } from "../../lib/whatsapp";
+import { openWhatsAppMessage, sendWhatsAppTask } from "../../lib/whatsapp";
 import type { Message } from "../../types/message";
 
 interface LinkedTaskInfo {
@@ -33,7 +33,42 @@ export default function MessageCard({
     message.confirmation_url ?? linkedTask?.confirmation_url ?? null;
   const hasConfirmLink = !!confirmationUrl && !isConfirmed;
 
-  function send() {
+  async function send() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await sendWhatsAppTask({
+        to: recipientPhone ?? null,
+        messageText: message.content,
+        confirmationLink: hasConfirmLink ? confirmationUrl : null,
+        messageRecordId: message.id,
+        taskId: message.task_id,
+        recipientName: message.recipient,
+      });
+      window.alert("Sent through Ra7etBal WhatsApp.");
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch (err) {
+      const messageText =
+        err instanceof Error ? err.message : "Could not send WhatsApp message.";
+      window.alert(
+        `WhatsApp send failed: ${messageText}. Opening manual fallback.`,
+      );
+      const opened = openWhatsAppMessage({
+        content: message.content,
+        confirmationUrl: hasConfirmLink ? confirmationUrl : null,
+        phone: recipientPhone,
+      });
+      if (opened) {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openManualFallback() {
     const opened = openWhatsAppMessage({
       content: message.content,
       confirmationUrl: hasConfirmLink ? confirmationUrl : null,
@@ -107,10 +142,11 @@ export default function MessageCard({
         {!isConfirmed && (
           <button
             type="button"
-            onClick={send}
+            onClick={() => void send()}
+            disabled={busy}
             className="rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105"
           >
-            {copied ? "Sent ✓" : "Send message"}
+            {busy ? "Sending…" : copied ? "Sent ✓" : "Send message"}
           </button>
         )}
         <button
@@ -126,8 +162,15 @@ export default function MessageCard({
 
       {hasConfirmLink && (
         <p className="mt-2 text-[11px] text-ink/55">
-          For now, this prepares the message with a Done link. WhatsApp
-          auto-send is coming next.
+          Sent through Ra7etBal WhatsApp. The task stays open until they tap
+          Done.
+          <button
+            type="button"
+            onClick={openManualFallback}
+            className="ml-1 underline underline-offset-2"
+          >
+            Manual fallback
+          </button>
         </p>
       )}
     </article>
