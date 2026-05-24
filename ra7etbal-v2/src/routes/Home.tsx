@@ -129,7 +129,7 @@ export default function Home() {
       onTouchStart={(e) => e.stopPropagation()}
       disabled={!canSubmit}
       aria-busy={submitting}
-      className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-espresso px-7 py-3.5 text-base font-medium tracking-wide text-cream shadow-[0_10px_30px_-12px_rgba(58,46,31,0.45)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
+      className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-charcoal px-8 py-3.5 text-[15px] font-medium tracking-[0.02em] text-ivory shadow-[0_22px_55px_-28px_rgba(20,20,20,0.62),0_3px_8px_-4px_rgba(20,20,20,0.16)] transition hover:bg-espresso active:translate-y-[1px] disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft disabled:shadow-none sm:w-auto"
     >
       {submitting && <Spinner size={16} />}
       <span>{submitting ? "Organizing…" : "Clear My Head"}</span>
@@ -139,29 +139,32 @@ export default function Home() {
   return (
     <section
       className="mx-auto max-w-2xl"
-      // Reserve bottom space for the floating CTA when iOS keyboard is open.
-      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 96px)" }}
+      // Reserve bottom space so iOS Safari's floating URL bar can't cover
+      // the CTA or the bottom whisper. 128px clears the bar + the home
+      // indicator (the latter is also added explicitly via env()).
+      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 128px)" }}
     >
       {/* 1. Minimal brand area — quiet, centered. */}
-      <header className="flex flex-col items-center gap-1 pt-2 text-center">
-        <div className="flex items-center gap-2 text-ink/70">
+      <header className="flex flex-col items-center gap-1 pt-2 text-center sm:pt-1">
+        <div className="flex items-center gap-2 text-text-soft">
           <span aria-hidden className="text-base text-gold">✦</span>
           <span
-            className="text-[11px] font-medium uppercase tracking-[0.28em] text-ink/55"
+            className="text-[11px] font-semibold uppercase tracking-[0.3em] text-text-soft"
             style={{ fontFamily: "var(--font-sans)" }}
           >
             Ra7etBal
           </span>
           <span aria-hidden className="text-base text-gold">✦</span>
         </div>
-        <p className="mt-1 text-[10px] uppercase tracking-[0.22em] text-ink/40">
+        <p className="mt-1 text-[10px] uppercase tracking-[0.22em] text-text-muted">
           {today}
         </p>
       </header>
 
-      {/* 2. Daily inspiration — handwritten italic, calm and quiet. */}
+      {/* 2. Daily inspiration — handwritten italic, calm and quiet.
+            Slightly smaller on mobile so it doesn't dominate the fold. */}
       <p
-        className="mt-7 text-center text-[22px] leading-snug text-ink/75 sm:text-2xl"
+        className="mt-6 text-center text-[22px] leading-[1.2] text-text-soft sm:mt-8 sm:text-[28px]"
         style={{
           fontFamily: "var(--font-script)",
           fontStyle: "italic",
@@ -170,45 +173,53 @@ export default function Home() {
         “{inspiration}”
       </p>
 
-      {/* 3. Large calm prompt — serif display. */}
+      {/* 3. Large calm prompt — serif display. Mobile size trimmed so the
+            voice button stays visible above the fold on small iPhones. */}
       <h1
-        className="mt-10 text-center text-[34px] leading-[1.15] tracking-tight text-espresso sm:text-[40px]"
+        className="mt-6 text-center text-[34px] leading-[1.05] tracking-normal text-text sm:mt-9 sm:text-[48px]"
         style={{ fontFamily: "var(--font-display)" }}
       >
         {greetingName ? (
           <>
-            <span className="block text-ink/55 text-[18px] tracking-wide sm:text-[20px]" style={{ fontFamily: "var(--font-display)", fontStyle: "italic" }}>
+            <span className="block text-[18px] tracking-wide text-text-soft sm:text-[21px]" style={{ fontFamily: "var(--font-display)", fontStyle: "italic" }}>
               {`Hello, ${greetingName}.`}
             </span>
-            <span className="mt-2 block">What's on your mind?</span>
+            <span className="mt-1 block sm:mt-2">What's on your mind?</span>
           </>
         ) : (
           "What's on your mind?"
         )}
       </h1>
 
-      {/* 4. Premium input area — ivory card, soft inner light, integrated mic. */}
-      <div className="relative mt-10">
+      <div className="mt-6 flex flex-col items-center gap-3 sm:mt-8">
+        <VoiceButton
+          disabled={submitting}
+          onTranscript={(transcript) => {
+            const current = useDraftStore.getState().text;
+            const trimmedNow = current.trimEnd();
+            const sep = trimmedNow.length === 0 ? "" : " ";
+            useDraftStore.getState().setText(trimmedNow + sep + transcript);
+          }}
+          onError={(message) => setError(message)}
+        />
+        <p className="text-center text-[12px] leading-snug text-stone">
+          Speak once. Ra7etBal will turn it into a plan.
+        </p>
+      </div>
+
+      {/* 4. Premium input area — typing stays available, but quieter.
+            Tighter padding and a shorter min-height on mobile so the card
+            doesn't crowd the CTA below it. */}
+      <div className="relative mt-5 sm:mt-7">
         {/* Soft halo behind the card */}
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 -m-2 rounded-[28px] bg-sand/40 blur-2xl"
+          className="pointer-events-none absolute inset-0 -m-3 rounded-[32px] bg-gold-soft/22 blur-2xl"
         />
-        <div className="relative rounded-[26px] border border-stone/60 bg-cream/85 p-5 shadow-[0_30px_80px_-50px_rgba(58,46,31,0.45)] backdrop-blur-sm sm:p-7">
-          {/* Mic — top-right of the card */}
-          <div className="absolute right-4 top-4 z-10 sm:right-5 sm:top-5">
-            <VoiceButton
-              disabled={submitting}
-              onTranscript={(transcript) => {
-                const current = useDraftStore.getState().text;
-                const trimmedNow = current.trimEnd();
-                const sep = trimmedNow.length === 0 ? "" : " ";
-                useDraftStore.getState().setText(trimmedNow + sep + transcript);
-              }}
-              onError={(message) => setError(message)}
-            />
-          </div>
-
+        <div className="relative rounded-[26px] border border-border/90 bg-card/90 p-4 shadow-[0_30px_80px_-64px_rgba(20,20,20,0.42)] backdrop-blur-sm sm:rounded-[28px] sm:p-6">
+          <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-stone">
+            Prefer typing?
+          </p>
           <label htmlFor={textareaId} className="sr-only">
             Clear my head
           </label>
@@ -221,7 +232,7 @@ export default function Home() {
             placeholder="Say what you're carrying. Tasks, reminders, people to message, things to follow up on."
             autoComplete="off"
             spellCheck
-            rows={7}
+            rows={5}
             disabled={submitting}
             style={
               {
@@ -229,10 +240,10 @@ export default function Home() {
                 fontFamily: "var(--font-sans)",
               } as React.CSSProperties
             }
-            className="block min-h-[180px] w-full resize-y rounded-2xl bg-transparent pr-24 text-[16px] leading-relaxed text-ink/90 outline-none placeholder:text-ink/35 focus:outline-none disabled:opacity-60 sm:pr-28"
+            className="block min-h-[108px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-muted focus:outline-none disabled:opacity-70 sm:min-h-[132px]"
           />
 
-          <div className="mt-4 flex items-center justify-between border-t border-stone/50 pt-3 text-[11px] uppercase tracking-[0.18em] text-ink/40">
+          <div className="mt-3 flex items-center justify-between border-t border-border/70 pt-3 text-[11px] uppercase tracking-[0.18em] text-muted sm:mt-4">
             <span>
               {wordCount} {wordCount === 1 ? "word" : "words"}
             </span>
@@ -259,12 +270,12 @@ export default function Home() {
 
       {/* 6. Primary CTA — Clear My Head — in flow when keyboard closed. */}
       {!keyboardOpen && (
-        <div className="mt-7 flex flex-col items-center gap-3">
+        <div className="mt-6 flex flex-col items-center gap-3 sm:mt-8">
           {clearMyHeadButton}
 
           {/* 7. Small reassurance line. */}
           <p
-            className="max-w-md text-center text-[13px] italic leading-snug text-ink/55"
+            className="max-w-md text-center text-[14px] italic leading-snug text-text-soft"
             style={{ fontFamily: "var(--font-display)" }}
           >
             Ra7etBal will organize it before anything is saved.
@@ -274,7 +285,7 @@ export default function Home() {
 
       {/* Bottom whisper — replaces the old draft-privacy line, kept calm. */}
       {!keyboardOpen && (
-        <p className="mt-10 text-center text-[11px] tracking-wide text-ink/35">
+        <p className="mt-7 text-center text-[11px] tracking-wide text-text-muted sm:mt-9">
           Nothing is sent without review.
           {people.length === 0 && (
             <>
@@ -301,7 +312,7 @@ export default function Home() {
             onTouchStart={(e) => e.stopPropagation()}
             disabled={!canSubmit}
             aria-busy={submitting}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-espresso px-5 py-3 text-base font-medium tracking-wide text-cream shadow-[0_18px_40px_-14px_rgba(58,46,31,0.5)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-[15px] font-medium tracking-[0.02em] text-ivory shadow-[0_22px_55px_-28px_rgba(20,20,20,0.62),0_3px_8px_-4px_rgba(20,20,20,0.16)] transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft disabled:shadow-none"
           >
             {submitting && <Spinner size={16} />}
             <span>{submitting ? "Organizing…" : "Clear My Head"}</span>
