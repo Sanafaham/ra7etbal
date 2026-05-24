@@ -13,6 +13,12 @@ export default async function handler(req, res) {
   const templateLanguage =
     process.env.WHATSAPP_TEMPLATE_LANGUAGE || DEFAULT_TEMPLATE_LANGUAGE;
 
+  console.log('WHATSAPP_SEND_ROUTE_VERSION', {
+    version: 'template-first-2026-05-25',
+    templateName: TEMPLATE_NAME,
+    templateLanguage,
+  });
+
   const {
     to,
     messageText,
@@ -58,6 +64,7 @@ export default async function handler(req, res) {
   const templatePayload = cleanLink
     ? {
         messaging_product: 'whatsapp',
+        recipient_type: 'individual',
         to: normalizedTo,
         type: 'template',
         template: {
