@@ -190,18 +190,20 @@ export default function Home() {
         )}
       </h1>
 
-      <div className="mt-6 flex flex-col items-center gap-3 sm:mt-8">
-        <VoiceButton
-          disabled={submitting}
-          onTranscript={(transcript) => {
-            const current = useDraftStore.getState().text;
-            const trimmedNow = current.trimEnd();
-            const sep = trimmedNow.length === 0 ? "" : " ";
-            useDraftStore.getState().setText(trimmedNow + sep + transcript);
-          }}
-          onError={(message) => setError(message)}
-        />
-        <p className="text-center text-[12px] leading-snug text-stone">
+      <div className="mt-7 flex flex-col items-center gap-3.5 sm:mt-8">
+        <div className="w-full max-w-[320px] [&_button]:min-h-[68px] [&_button]:w-full [&_button]:justify-center [&_button]:gap-3 [&_button]:rounded-full [&_button]:border-border/90 [&_button]:bg-warm-white/92 [&_button]:px-7 [&_button]:py-4 [&_button]:text-[16px] [&_button]:font-semibold [&_button]:text-text [&_button]:shadow-[0_18px_46px_-30px_rgba(20,20,20,0.48),0_2px_10px_-6px_rgba(20,20,20,0.18)] [&_button]:backdrop-blur-sm [&_svg]:h-[20px] [&_svg]:w-[20px] sm:w-auto sm:max-w-none sm:[&_button]:min-h-0 sm:[&_button]:w-auto sm:[&_button]:gap-1.5 sm:[&_button]:border-sage/30 sm:[&_button]:bg-white sm:[&_button]:px-2.5 sm:[&_button]:py-1 sm:[&_button]:text-xs sm:[&_button]:font-medium sm:[&_button]:shadow-sm sm:[&_svg]:h-[13px] sm:[&_svg]:w-[13px]">
+          <VoiceButton
+            disabled={submitting}
+            onTranscript={(transcript) => {
+              const current = useDraftStore.getState().text;
+              const trimmedNow = current.trimEnd();
+              const sep = trimmedNow.length === 0 ? "" : " ";
+              useDraftStore.getState().setText(trimmedNow + sep + transcript);
+            }}
+            onError={(message) => setError(message)}
+          />
+        </div>
+        <p className="text-center text-[13px] leading-snug text-text-soft sm:text-[12px] sm:text-stone">
           Speak once. Ra7etBal will turn it into a plan.
         </p>
       </div>
@@ -270,7 +272,7 @@ export default function Home() {
       {/* 6. Primary CTA — Clear My Head — in flow when keyboard closed. */}
       {!keyboardOpen && (
         <div
-          className="sticky bottom-0 z-20 -mx-4 mt-5 flex flex-col items-center gap-2 border-t border-border/70 bg-ivory/92 px-4 pt-3 shadow-[0_-18px_42px_-34px_rgba(20,20,20,0.55)] backdrop-blur-md sm:static sm:mx-0 sm:mt-8 sm:border-0 sm:bg-transparent sm:px-0 sm:pt-0 sm:shadow-none sm:backdrop-blur-0"
+          className="sticky bottom-0 z-20 -mx-4 mt-5 flex flex-col items-center gap-2 bg-gradient-to-t from-ivory via-ivory/95 to-ivory/78 px-4 pt-3 shadow-[0_-24px_54px_-44px_rgba(20,20,20,0.5)] backdrop-blur-md sm:static sm:mx-0 sm:mt-8 sm:bg-transparent sm:px-0 sm:pt-0 sm:shadow-none sm:backdrop-blur-0"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 12px)" }}
         >
           {clearMyHeadButton}
