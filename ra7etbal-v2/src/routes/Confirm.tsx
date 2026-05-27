@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AuthNotice from "../components/auth/AuthNotice";
 import Spinner from "../components/Spinner";
-import { openWhatsAppMessage } from "../lib/whatsapp";
 
 /**
  * Recipient-facing confirmation page.
@@ -33,6 +32,7 @@ export default function Confirm() {
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const confirmedRef = useRef(false);
+  const ownerNotificationRef = useRef(false);
 
   useEffect(() => {
     if (!taskId) {
@@ -102,6 +102,9 @@ export default function Confirm() {
           ? { ...prev, status: "done", confirmedAt: new Date().toISOString() }
           : prev,
       );
+      if (!data.already_done) {
+        await notifyOwnerAutomatically();
+      }
     } catch (err) {
       confirmedRef.current = false;
       setConfirmError(
@@ -114,12 +117,35 @@ export default function Confirm() {
     }
   }
 
-  function notifyOwner() {
-    if (!info?.ownerPhone) return;
-    openWhatsAppMessage({
-      content: `${info.assignedTo ?? "Someone"} marked this done:\n${info.description}`,
-      phone: info.ownerPhone,
-    });
+  async function notifyOwnerAutomatically() {
+    if (!taskId || !info || ownerNotificationRef.current) return;
+    ownerNotificationRef.current = true;
+    try {
+      const res = await fetch("/api/send-owner-confirmation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskId,
+          taskText: info.description,
+          personName: info.assignedTo ?? "Someone",
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          details?: string;
+        };
+        console.warn("Owner notification failed", {
+          taskId,
+          error: data.details || data.error || "Owner notification request failed.",
+        });
+      }
+    } catch (err) {
+      console.warn("Owner notification failed", {
+        taskId,
+        error: err instanceof Error ? err.message : "Owner notification request failed.",
+      });
+    }
   }
 
   return (
@@ -154,31 +180,8 @@ export default function Confirm() {
           {info.status === "done" ? (
             <div className="space-y-3">
               <AuthNotice kind="success">
-                Marked as done
-                {info.confirmedAt
-                  ? ` on ${new Date(info.confirmedAt).toLocaleString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}`
-                  : ""}
-                . Thanks!
+                Marked as done. The owner has been notified.
               </AuthNotice>
-
-              {info.ownerPhone ? (
-                <button
-                  type="button"
-                  onClick={notifyOwner}
-                  className="flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105"
-                >
-                  Notify owner on WhatsApp
-                </button>
-              ) : (
-                <p className="text-sm text-ink/60">
-                  Confirmed. Owner will see this in Ra7etBal.
-                </p>
-              )}
             </div>
           ) : (
             <>
