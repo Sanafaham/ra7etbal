@@ -31,6 +31,9 @@ export default function Confirm() {
 
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [ownerNotificationStatus, setOwnerNotificationStatus] = useState<
+    "idle" | "sending" | "sent" | "failed"
+  >("idle");
   const confirmedRef = useRef(false);
   const ownerNotificationRef = useRef(false);
 
@@ -103,7 +106,8 @@ export default function Confirm() {
           : prev,
       );
       if (!data.already_done) {
-        await notifyOwnerAutomatically();
+        const ownerNotified = await notifyOwnerAutomatically();
+        setOwnerNotificationStatus(ownerNotified ? "sent" : "failed");
       }
     } catch (err) {
       confirmedRef.current = false;
@@ -117,9 +121,10 @@ export default function Confirm() {
     }
   }
 
-  async function notifyOwnerAutomatically() {
-    if (!taskId || !info || ownerNotificationRef.current) return;
+  async function notifyOwnerAutomatically(): Promise<boolean> {
+    if (!taskId || !info || ownerNotificationRef.current) return false;
     ownerNotificationRef.current = true;
+    setOwnerNotificationStatus("sending");
     try {
       const res = await fetch("/api/send-owner-confirmation", {
         method: "POST",
@@ -130,21 +135,36 @@ export default function Confirm() {
           personName: info.assignedTo ?? "Someone",
         }),
       });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: boolean;
+        error?: string;
+        details?: string;
+        messageId?: string | null;
+        acceptedAt?: string;
+      };
+      console.log("Owner notification response", {
+        taskId,
+        ok: res.ok,
+        status: res.status,
+        success: data.success === true,
+        hasMessageId: Boolean(data.messageId),
+        acceptedAt: data.acceptedAt ?? null,
+        error: data.details || data.error || null,
+      });
       if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          details?: string;
-        };
         console.warn("Owner notification failed", {
           taskId,
           error: data.details || data.error || "Owner notification request failed.",
         });
+        return false;
       }
+      return data.success === true;
     } catch (err) {
       console.warn("Owner notification failed", {
         taskId,
         error: err instanceof Error ? err.message : "Owner notification request failed.",
       });
+      return false;
     }
   }
 
@@ -180,7 +200,13 @@ export default function Confirm() {
           {info.status === "done" ? (
             <div className="space-y-3">
               <AuthNotice kind="success">
-                Marked as done. The owner has been notified.
+                {ownerNotificationStatus === "failed"
+                  ? "Marked as done. Owner notification could not be sent."
+                  : ownerNotificationStatus === "sent"
+                    ? "Marked as done. The owner has been notified."
+                    : ownerNotificationStatus === "sending"
+                      ? "Marked as done. Notifying the owner…"
+                      : "Marked as done."}
               </AuthNotice>
             </div>
           ) : (
