@@ -27,6 +27,27 @@ export default function Messages() {
     if (peopleLoadedForUserId !== userId) void loadPeople(userId);
   }, [userId, peopleLoadedForUserId, loadPeople]);
 
+  useEffect(() => {
+    if (!userId) return;
+
+    const refresh = () => {
+      void reload();
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const interval = window.setInterval(refresh, 15000);
+
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.clearInterval(interval);
+    };
+  }, [userId, reload]);
+
   // Quick task lookup so each MessageCard can render Waiting / Confirmed.
   const taskById = useMemo(() => {
     const m = new Map<
