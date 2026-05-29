@@ -13,10 +13,26 @@ export function buildExtractionPrompt(text: string, people: Person[]): string {
     people.length > 0
       ? people.map((p) => `${p.name} (${p.role})`).join(", ")
       : "None added yet";
+  const now = new Date();
+  const timeZone =
+    typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : "local time";
+  const localNow = now.toLocaleString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
 
   return `You are Ra7etBal, an AI mental load processor. The user has offloaded their thoughts. Your job is to turn mental noise into the next right step.
 
 Known people in the user's life: ${peopleList}
+Current local date/time for interpreting reminders: ${localNow}
+Current timezone: ${timeZone}
 
 ================================================================
 RULE 0 (ABSOLUTE) — RELATIONSHIP-NOUN TARGETS
@@ -212,6 +228,8 @@ Example L. Input: "Remind me to tell Grace dinner is at 8."
     type: "reminder"
     assignedTo: "__me__"
     description: "Tell Grace dinner is at 8."
+    dueText: null
+    dueAt: null
     suggestedMessage: null
   Reasoning: the user explicitly said "Remind me to...", so this is the
   owner's personal reminder, not a message sent to Grace.
@@ -244,6 +262,56 @@ TYPES
 - parked: idea for later, not actionable yet.
 
 ================================================================
+REMINDER DUE TIMES
+================================================================
+
+For reminder items, extract the due timing whenever the user mentions:
+today, tomorrow, tonight, a weekday such as Friday, or a specific time.
+
+Return:
+  - dueText: the natural phrase the user gave ("Tomorrow", "Tonight",
+    "Friday", "Today at 5 PM").
+  - dueAt: an ISO 8601 timestamp with timezone offset, based on the current
+    local date/time above.
+
+Defaults when no specific time is given:
+  - today: today at 6:00 PM local time, unless that is already past; then use
+    one hour from now.
+  - tomorrow: tomorrow at 9:00 AM local time.
+  - tonight: today at 8:00 PM local time; if already past, tomorrow at 8:00 PM.
+  - weekday only: the next upcoming instance of that weekday at 9:00 AM.
+
+If no due timing is stated, set dueText and dueAt to null.
+
+Reminder examples:
+Input: "Remind me to call the dentist tomorrow."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "Call the dentist."
+    dueText: "Tomorrow"
+    dueAt: "<tomorrow at 9:00 AM local time as ISO 8601>"
+    suggestedMessage: null
+
+Input: "Remind me to pay the driver tonight."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "Pay the driver."
+    dueText: "Tonight"
+    dueAt: "<tonight at 8:00 PM local time as ISO 8601>"
+    suggestedMessage: null
+
+Input: "Remind me to call the school Friday at 2."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "Call the school."
+    dueText: "Friday at 2"
+    dueAt: "<next Friday at 2:00 PM local time as ISO 8601>"
+    suggestedMessage: null
+
+================================================================
 OUTPUT SHAPE
 ================================================================
 
@@ -257,6 +325,8 @@ Ra7etBal generates the review subtitle on the client.
       "type": "action|reminder|message|delegation|decision|followup|errand|parked",
       "description": "clear short description",
       "assignedTo": "person name, __me__, or null",
+      "dueText": "natural due phrase for reminders, or null",
+      "dueAt": "ISO 8601 timestamp for reminders, or null",
       "suggestedMessage": "short natural message if this involves another person, otherwise null",
       "needsPerson": false,
       "needsClarification": false,
