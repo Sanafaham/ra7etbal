@@ -85,12 +85,13 @@ export async function extractItems(
   }
 
   const result = parseResult(raw);
+  const extracted = applyPastReminderDueFallback(result.extracted, text);
   // Deterministic safety net for the role-precedence rule. The prompt asks
   // the model to promote message->delegation when the recipient's role is
   // operational for the topic; this catches the residual misclassifications.
   return {
     ...result,
-    extracted: applyRolePrecedence(result.extracted, people, text),
+    extracted: applyRolePrecedence(extracted, people, text),
   };
 }
 
@@ -197,4 +198,102 @@ function normalizeItem(value: unknown, index: number): ExtractedItem | null {
         ? v.clarificationQuestion.trim()
         : null,
   };
+}
+
+function applyPastReminderDueFallback(
+  items: ExtractedItem[],
+  sourceText: string,
+): ExtractedItem[] {
+  const missingDueReminders = items.filter(
+    (item) => item.type === "reminder" && !item.dueAt,
+  );
+  if (missingDueReminders.length === 0) return items;
+
+  const inferred = inferPastDue(sourceText);
+  if (!inferred) return items;
+
+  return items.map((item) => {
+    if (item.type !== "reminder" || item.dueAt) return item;
+    return {
+      ...item,
+      dueAt: inferred.dueAt,
+      dueText: item.dueText ?? inferred.dueText,
+      needsClarification:
+        item.clarificationQuestion === "Due date not specified."
+          ? false
+          : item.needsClarification,
+      clarificationQuestion:
+        item.clarificationQuestion === "Due date not specified."
+          ? null
+          : item.clarificationQuestion,
+    };
+  });
+}
+
+function inferPastDue(text: string): { dueText: string; dueAt: string } | null {
+  const yesterday = /\byesterday\b/i.exec(text);
+  if (yesterday) {
+    return {
+      dueText: "Yesterday",
+      dueAt: pastDateAtNine(1).toISOString(),
+    };
+  }
+
+  const daysAgo = /\b(\d{1,3})\s+days?\s+ago\b/i.exec(text);
+  if (daysAgo) {
+    const days = Number.parseInt(daysAgo[1], 10);
+    if (Number.isFinite(days) && days > 0) {
+      return {
+        dueText: daysAgo[0],
+        dueAt: pastDateAtNine(days).toISOString(),
+      };
+    }
+  }
+
+  const lastWeekday =
+    /\blast\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i.exec(
+      text,
+    );
+  if (lastWeekday) {
+    const weekday = weekdayIndex(lastWeekday[1]);
+    const date = previousWeekdayAtNine(weekday);
+    return {
+      dueText: `Last ${capitalize(lastWeekday[1])}`,
+      dueAt: date.toISOString(),
+    };
+  }
+
+  return null;
+}
+
+function pastDateAtNine(daysAgo: number): Date {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  date.setHours(9, 0, 0, 0);
+  return date;
+}
+
+function previousWeekdayAtNine(targetWeekday: number): Date {
+  const date = new Date();
+  const current = date.getDay();
+  const delta = ((current - targetWeekday + 7) % 7) || 7;
+  date.setDate(date.getDate() - delta);
+  date.setHours(9, 0, 0, 0);
+  return date;
+}
+
+function weekdayIndex(value: string): number {
+  return [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ].indexOf(value.toLowerCase());
+}
+
+function capitalize(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
