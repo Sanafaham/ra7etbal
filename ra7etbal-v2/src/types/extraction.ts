@@ -29,6 +29,8 @@ export interface ExtractedItem {
   type: ItemType;
   description: string;
   assignedTo: Assignment;
+  dueAt: string | null;
+  dueText: string | null;
   suggestedMessage: string | null;
   needsPerson: boolean;
   needsClarification: boolean;
