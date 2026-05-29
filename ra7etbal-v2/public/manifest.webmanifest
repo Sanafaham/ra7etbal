@@ -1,0 +1,31 @@
+{
+  "name": "Ra7etBal",
+  "short_name": "Ra7etBal",
+  "description": "Private mental load assistant for reminders, tasks, and follow-ups.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F7F3EA",
+  "theme_color": "#F7F3EA",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icons/ra7etbal-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/ra7etbal-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/ra7etbal-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
