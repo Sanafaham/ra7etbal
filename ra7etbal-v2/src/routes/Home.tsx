@@ -5,10 +5,12 @@ import AuthNotice from "../components/auth/AuthNotice";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
+import { getNeedsAttentionItems } from "../lib/attention";
 import { dailyInspiration } from "../lib/daily-inspiration";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
+import { useTasksStore } from "../stores/tasks";
 
 /**
  * Home — premium calm redesign.
@@ -42,6 +44,10 @@ export default function Home() {
     useShallow((s) => ({ loadFor: s.loadFor, items: s.items })),
   );
 
+  const { tasks, loadTasks } = useTasksStore(
+    useShallow((s) => ({ tasks: s.items, loadTasks: s.loadFor })),
+  );
+
   const runExtraction = useExtractionStore((s) => s.run);
 
   const today = useMemo(
@@ -62,6 +68,7 @@ export default function Home() {
   }, [user?.email]);
 
   const inspiration = useMemo(() => dailyInspiration(), []);
+  const attentionItems = useMemo(() => getNeedsAttentionItems(tasks).slice(0, 4), [tasks]);
 
   const charCount = text.length;
   const wordCount = useMemo(() => {
@@ -91,6 +98,11 @@ export default function Home() {
       vv.removeEventListener("scroll", compute);
     };
   }, []);
+
+  useEffect(() => {
+    if (!userId) return;
+    void loadTasks(userId, { force: true });
+  }, [userId, loadTasks]);
 
   const keyboardOpen = textareaFocused || viewportShrunk;
 
@@ -267,6 +279,53 @@ export default function Home() {
             </button>
           </AuthNotice>
         </div>
+      )}
+
+      {attentionItems.length > 0 && !keyboardOpen && (
+        <section className="mt-5 rounded-[24px] border border-border/80 bg-warm-white/82 p-4 shadow-[0_22px_60px_-52px_rgba(20,20,20,0.35)] sm:mt-7 sm:p-5">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2
+              className="text-[20px] leading-none text-text"
+              style={{ fontFamily: "var(--font-display)" }}
+            >
+              Needs Attention
+            </h2>
+            <span className="rounded-full border border-gold-soft/80 bg-gold-soft/35 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-text-soft">
+              {attentionItems.length}
+            </span>
+          </div>
+
+          <ul className="divide-y divide-border/65">
+            {attentionItems.map((item) => (
+              <li key={item.id} className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
+                <div className="min-w-0">
+                  <p className="truncate text-[15px] font-medium leading-snug text-text">
+                    {item.title}
+                  </p>
+                  <p
+                    className={
+                      "mt-1 text-[12px] leading-snug " +
+                      (item.state === "overdue" ? "text-danger" : "text-text-soft")
+                    }
+                  >
+                    {item.label}
+                  </p>
+                </div>
+                <span
+                  aria-hidden
+                  className={
+                    "mt-1 h-2 w-2 shrink-0 rounded-full " +
+                    (item.state === "overdue"
+                      ? "bg-danger"
+                      : item.state === "waiting_confirmation"
+                        ? "bg-gold"
+                        : "bg-sage-muted")
+                  }
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {/* 6. Primary CTA — Clear My Head — in flow when keyboard closed. */}
