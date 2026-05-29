@@ -117,6 +117,13 @@ export default function ItemCard({
         </p>
       )}
 
+      {item.type === "reminder" && (item.dueText || item.dueAt) && (
+        <p className="mt-2 text-xs text-amber-900">
+          <span className="font-medium uppercase tracking-wide text-[10px]">Due:</span>{" "}
+          {item.dueText ?? formatDue(item.dueAt)}
+        </p>
+      )}
+
       {showsAssignment && (
         <div className="mt-3 flex flex-col gap-1.5">
           <label className="text-[10px] font-medium uppercase tracking-wide text-ink/50">
@@ -145,4 +152,17 @@ export default function ItemCard({
       )}
     </article>
   );
+}
+
+function formatDue(value: string | null): string {
+  if (!value) return "Not set";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not set";
+  return date.toLocaleString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
