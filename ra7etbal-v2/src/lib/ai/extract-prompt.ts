@@ -266,7 +266,8 @@ REMINDER DUE TIMES
 ================================================================
 
 For reminder items, extract the due timing whenever the user mentions:
-today, tomorrow, tonight, a weekday such as Friday, or a specific time.
+today, tomorrow, tonight, yesterday, last Friday, 2 days ago, a weekday such
+as Friday, or a specific time.
 
 Return:
   - dueText: the natural phrase the user gave ("Tomorrow", "Tonight",
@@ -275,6 +276,9 @@ Return:
     local date/time above.
 
 Defaults when no specific time is given:
+  - yesterday: yesterday at 9:00 AM local time.
+  - N days ago: that date at 9:00 AM local time.
+  - last weekday: the previous instance of that weekday at 9:00 AM local time.
   - today: today at 6:00 PM local time, unless that is already past; then use
     one hour from now.
   - tomorrow: tomorrow at 9:00 AM local time.
@@ -282,6 +286,10 @@ Defaults when no specific time is given:
   - weekday only: the next upcoming instance of that weekday at 9:00 AM.
 
 If no due timing is stated, set dueText and dueAt to null.
+
+Past dates are valid due dates. Do NOT set clarificationQuestion to "Due date
+not specified" when the user said yesterday, last Friday, or N days ago. Those
+phrases mean the reminder is already overdue and must produce a past dueAt.
 
 Reminder examples:
 Input: "Remind me to call the dentist tomorrow."
@@ -309,6 +317,33 @@ Input: "Remind me to call the school Friday at 2."
     description: "Call the school."
     dueText: "Friday at 2"
     dueAt: "<next Friday at 2:00 PM local time as ISO 8601>"
+    suggestedMessage: null
+
+Input: "Pay the electricity bill yesterday."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "Pay the electricity bill."
+    dueText: "Yesterday"
+    dueAt: "<yesterday at 9:00 AM local time as ISO 8601>"
+    suggestedMessage: null
+
+Input: "Call the dentist last Friday."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "Call the dentist."
+    dueText: "Last Friday"
+    dueAt: "<previous Friday at 9:00 AM local time as ISO 8601>"
+    suggestedMessage: null
+
+Input: "Renew passport 2 days ago."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "Renew passport."
+    dueText: "2 days ago"
+    dueAt: "<2 days ago at 9:00 AM local time as ISO 8601>"
     suggestedMessage: null
 
 ================================================================
