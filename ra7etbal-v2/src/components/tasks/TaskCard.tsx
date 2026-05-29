@@ -1,5 +1,6 @@
 import { useState } from "react";
 import Spinner from "../Spinner";
+import { formatReminderDue, isReminderOverdue } from "../../lib/reminder-time";
 import { openWhatsAppMessage, sendWhatsAppTask } from "../../lib/whatsapp";
 import type { Task, TaskType } from "../../types/task";
 
@@ -152,7 +153,6 @@ export default function TaskCard({
             (reminderDue.overdue ? "text-rose-800" : "text-amber-900")
           }
         >
-          {reminderDue.overdue ? "Needs attention: " : "Due: "}
           {reminderDue.label}
         </p>
       )}
@@ -241,17 +241,10 @@ function getReminderDue(
   value: string | null,
   isDone: boolean,
 ): { label: string; overdue: boolean } | null {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
+  const label = formatReminderDue(value);
+  if (!label) return null;
   return {
-    label: date.toLocaleString(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    }),
-    overdue: !isDone && date.getTime() < Date.now(),
+    label,
+    overdue: !isDone && isReminderOverdue(value),
   };
 }
