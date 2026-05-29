@@ -35,6 +35,7 @@ export default function TaskCard({
   const isDone = task.status === "done";
   const isWaitingDelegation = task.type === "delegation" && !isDone;
   const hasConfirmLink = !!task.confirmation_url && isWaitingDelegation;
+  const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone) : null;
 
   async function toggle() {
     if (busy) return;
@@ -120,6 +121,11 @@ export default function TaskCard({
               Confirmed done
             </span>
           )}
+          {reminderDue?.overdue && (
+            <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800">
+              Overdue
+            </span>
+          )}
           <span>{assignedLabel === "Me" ? "Me" : `→ ${assignedLabel}`}</span>
         </div>
       </header>
@@ -136,6 +142,18 @@ export default function TaskCard({
       {message?.content && (
         <p className="mt-2 whitespace-pre-wrap rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
           “{message.content}”
+        </p>
+      )}
+
+      {reminderDue && (
+        <p
+          className={
+            "mt-2 text-xs font-medium " +
+            (reminderDue.overdue ? "text-rose-800" : "text-amber-900")
+          }
+        >
+          {reminderDue.overdue ? "Needs attention: " : "Due: "}
+          {reminderDue.label}
         </p>
       )}
 
@@ -217,4 +235,23 @@ export default function TaskCard({
       )}
     </article>
   );
+}
+
+function getReminderDue(
+  value: string | null,
+  isDone: boolean,
+): { label: string; overdue: boolean } | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return {
+    label: date.toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }),
+    overdue: !isDone && date.getTime() < Date.now(),
+  };
 }
