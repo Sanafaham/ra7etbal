@@ -159,10 +159,27 @@ function normalizeItem(value: unknown, index: number): ExtractedItem | null {
       assignedTo = trimmed;
     }
   }
+  if (type === "reminder" && assignedTo == null) {
+    assignedTo = "__me__";
+  }
 
   const suggestedMessage =
     typeof v.suggestedMessage === "string" && v.suggestedMessage.trim()
       ? v.suggestedMessage.trim()
+      : null;
+  const dueText =
+    typeof v.dueText === "string" && v.dueText.trim()
+      ? v.dueText.trim()
+      : null;
+  const dueAtRaw =
+    typeof v.dueAt === "string" && v.dueAt.trim()
+      ? v.dueAt.trim()
+      : typeof v.due_at === "string" && v.due_at.trim()
+        ? v.due_at.trim()
+        : null;
+  const dueAt =
+    dueAtRaw && !Number.isNaN(new Date(dueAtRaw).getTime())
+      ? dueAtRaw
       : null;
 
   return {
@@ -170,6 +187,8 @@ function normalizeItem(value: unknown, index: number): ExtractedItem | null {
     type,
     description,
     assignedTo,
+    dueAt,
+    dueText,
     suggestedMessage,
     needsPerson: v.needsPerson === true,
     needsClarification: v.needsClarification === true,
