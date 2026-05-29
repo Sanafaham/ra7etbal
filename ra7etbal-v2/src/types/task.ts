@@ -19,6 +19,8 @@ export interface Task {
   confirmation_url: string | null;
   /** Timestamp when status flipped to done. */
   confirmed_at: string | null;
+  /** Optional reminder/action due timestamp. */
+  due_at: string | null;
   /**
    * Non-null when the task has been moved out of the active workspace via
    * "Archive history". Archived rows are filtered out of Actions / Follow-ups
@@ -37,6 +39,7 @@ export interface TaskDraft {
   status: TaskStatus;
   needs_follow_up: boolean;
   confirmation_url: string | null;
+  due_at: string | null;
 }
 
-export type TaskPatch = Partial<Pick<Task, "description" | "status" | "assigned_to" | "confirmed_at" | "needs_follow_up">>;
+export type TaskPatch = Partial<Pick<Task, "description" | "status" | "assigned_to" | "confirmed_at" | "needs_follow_up" | "due_at">>;
