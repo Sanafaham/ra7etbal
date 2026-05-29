@@ -84,6 +84,7 @@ export async function savePending(
       status: "pending",
       needs_follow_up: needsFollowUp,
       confirmation_url: null,
+      due_at: item.dueAt,
     });
 
     // Defensive: if any column-level default or trigger flipped the row to
@@ -100,7 +101,7 @@ export async function savePending(
         .update({ status: "pending", confirmed_at: null })
         .eq("id", task.id)
         .select(
-          "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, archived_at, created_at",
+          "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at",
         )
         .single();
       if (error) throw error;
@@ -141,7 +142,7 @@ async function updateTaskUrl(id: string, url: string): Promise<Task> {
     .update({ confirmation_url: url })
     .eq("id", id)
     .select(
-      "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, created_at",
+      "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at",
     )
     .single();
   if (error) throw error;
