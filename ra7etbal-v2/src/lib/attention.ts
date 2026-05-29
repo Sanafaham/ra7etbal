@@ -1,4 +1,5 @@
 import type { Task } from "../types/task";
+import { formatReminderDue } from "./reminder-time";
 
 export type ReminderState = "upcoming" | "due_today" | "overdue" | "completed";
 
@@ -41,10 +42,7 @@ export function getNeedsAttentionItems(tasks: Task[], now = new Date()): Attenti
             id: task.id,
             kind: "reminder",
             title: task.description,
-            label:
-              reminderState === "overdue"
-                ? formatOverdueLabel(task.due_at, now)
-                : formatDueTodayLabel(task.due_at),
+            label: formatReminderDue(task.due_at, now) ?? "Due today",
             state: reminderState,
           },
         ];
@@ -66,36 +64,10 @@ export function getNeedsAttentionItems(tasks: Task[], now = new Date()): Attenti
     });
 }
 
-function isSameLocalDay(a: Date, b: Date): boolean {
+export function isSameLocalDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate()
   );
-}
-
-function formatDueTodayLabel(value: string | null): string {
-  if (!value) return "Due today";
-  const due = new Date(value);
-  if (Number.isNaN(due.getTime())) return "Due today";
-  return `Due today at ${due.toLocaleTimeString(undefined, {
-    hour: "numeric",
-    minute: "2-digit",
-  })}`;
-}
-
-function formatOverdueLabel(value: string | null, now: Date): string {
-  if (!value) return "Overdue";
-  const due = new Date(value);
-  if (Number.isNaN(due.getTime())) return "Overdue";
-
-  const dueStart = startOfLocalDay(due).getTime();
-  const nowStart = startOfLocalDay(now).getTime();
-  const days = Math.max(0, Math.floor((nowStart - dueStart) / 86_400_000));
-  if (days <= 0) return "Overdue today";
-  return `Overdue by ${days} ${days === 1 ? "day" : "days"}`;
-}
-
-function startOfLocalDay(date: Date): Date {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
