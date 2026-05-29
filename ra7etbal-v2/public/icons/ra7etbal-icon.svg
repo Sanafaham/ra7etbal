@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Ra7etBal</title>
+  <rect width="512" height="512" rx="116" fill="#F7F3EA"/>
+  <circle cx="256" cy="256" r="174" fill="#FFFDF8" stroke="#E4D7C4" stroke-width="12"/>
+  <path
+    d="M246 348c0-108 52-188 148-236 10 116-34 202-148 236Z"
+    fill="#526B43"
+  />
+  <path
+    d="M236 348c0-96-46-168-138-214-10 108 32 184 138 214Z"
+    fill="#6F8057"
+  />
+  <path
+    d="M242 358c-28 28-62 46-104 54"
+    fill="none"
+    stroke="#2A211B"
+    stroke-width="20"
+    stroke-linecap="round"
+  />
+</svg>
