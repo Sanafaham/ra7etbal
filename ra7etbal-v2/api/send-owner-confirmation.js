@@ -1,4 +1,5 @@
 const GRAPH_VERSION = 'v20.0';
+const TEMPLATE_NAME = 'ra7etbal_owner_task_confirmed';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -13,6 +14,7 @@ export default async function handler(req, res) {
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const ownerWhatsAppNumber = process.env.OWNER_WHATSAPP_NUMBER;
+  const templateLanguage = process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en';
   const phoneNumberIdLast4 = phoneNumberId ? String(phoneNumberId).slice(-4) : null;
   const ownerNumberLast4 = ownerWhatsAppNumber
     ? String(normalizePhone(ownerWhatsAppNumber)).slice(-4)
@@ -35,8 +37,9 @@ export default async function handler(req, res) {
   }
 
   const { taskText, personName, taskId } = req.body || {};
-  const body = buildMessageBody({ taskText, personName });
-  if (!body) {
+  const task = String(taskText || '').trim();
+  const person = String(personName || '').trim() || 'Someone';
+  if (!task) {
     console.error('OWNER_CONFIRMATION_FAILED', {
       reason: 'missing_task_text',
       taskId: taskId || null,
@@ -74,6 +77,8 @@ export default async function handler(req, res) {
       tokenConfigured: Boolean(accessToken),
       phoneNumberIdLast4,
       ownerNumberLast4: String(to).slice(-4),
+      templateName: TEMPLATE_NAME,
+      templateLanguage,
     });
 
     const response = await fetch(
@@ -88,10 +93,19 @@ export default async function handler(req, res) {
           messaging_product: 'whatsapp',
           recipient_type: 'individual',
           to,
-          type: 'text',
-          text: {
-            preview_url: false,
-            body,
+          type: 'template',
+          template: {
+            name: TEMPLATE_NAME,
+            language: { code: templateLanguage },
+            components: [
+              {
+                type: 'body',
+                parameters: [
+                  { type: 'text', text: person },
+                  { type: 'text', text: task },
+                ],
+              },
+            ],
           },
         }),
       },
@@ -110,6 +124,8 @@ export default async function handler(req, res) {
         metaError: data?.error || metaMessage,
         phoneNumberIdLast4,
         ownerNumberLast4: String(to).slice(-4),
+        templateName: TEMPLATE_NAME,
+        templateLanguage,
       });
       return res.status(response.status).json({
         success: false,
@@ -129,6 +145,8 @@ export default async function handler(req, res) {
       phoneNumberIdLast4,
       acceptedAt,
       taskId: taskId || null,
+      templateName: TEMPLATE_NAME,
+      templateLanguage,
     });
 
     return res.status(200).json({
@@ -138,6 +156,8 @@ export default async function handler(req, res) {
       acceptedAt,
       phoneNumberIdLast4,
       taskId: taskId || null,
+      templateName: TEMPLATE_NAME,
+      templateLanguage,
     });
   } catch (err) {
     console.error('OWNER_CONFIRMATION_FAILED', {
@@ -145,6 +165,8 @@ export default async function handler(req, res) {
       error: err instanceof Error ? err.message : 'Unexpected server error.',
       phoneNumberIdLast4,
       ownerNumberLast4: String(to).slice(-4),
+      templateName: TEMPLATE_NAME,
+      templateLanguage,
     });
     return res.status(500).json({
       success: false,
@@ -153,13 +175,6 @@ export default async function handler(req, res) {
       status: 500,
     });
   }
-}
-
-function buildMessageBody({ taskText, personName }) {
-  const task = String(taskText || '').trim();
-  if (!task) return '';
-  const person = String(personName || '').trim() || 'Someone';
-  return `${person} marked this done:\n${task}`;
 }
 
 function normalizePhone(phone) {
