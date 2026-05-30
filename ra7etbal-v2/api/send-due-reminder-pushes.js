@@ -7,12 +7,29 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
-  if (!isAuthorized(req)) {
+  const testMode = isTestMode(req);
+
+  if (!testMode && !isAuthorized(req)) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
 
   const config = getConfig();
+  const vapidKeysLoaded = hasVapidKeys();
   if (!config.ok) {
+    if (testMode) {
+      return res.status(500).json({
+        success: false,
+        testMode: true,
+        remindersFound: 0,
+        subscriptionsFound: 0,
+        vapidKeysLoaded,
+        webPushInitialized: false,
+        pushSuccessCount: 0,
+        pushFailureCount: 0,
+        errors: [`Missing config: ${config.missing.join(', ')}`],
+      });
+    }
+
     return res.status(500).json({
       success: false,
       error: 'Reminder push is not configured.',
@@ -20,17 +37,51 @@ export default async function handler(req, res) {
     });
   }
 
-  webpush.setVapidDetails(
-    config.values.vapidSubject,
-    config.values.vapidPublicKey,
-    config.values.vapidPrivateKey,
-  );
+  let webPushInitialized = false;
+  try {
+    webpush.setVapidDetails(
+      config.values.vapidSubject,
+      config.values.vapidPublicKey,
+      config.values.vapidPrivateKey,
+    );
+    webPushInitialized = true;
+  } catch (error) {
+    if (testMode) {
+      return res.status(500).json({
+        success: false,
+        testMode: true,
+        remindersFound: 0,
+        subscriptionsFound: 0,
+        vapidKeysLoaded,
+        webPushInitialized,
+        pushSuccessCount: 0,
+        pushFailureCount: 0,
+        errors: [getErrorMessage(error)],
+      });
+    }
+
+    throw error;
+  }
 
   const runStartedAt = new Date().toISOString();
 
   try {
     const tasks = await fetchDueReminderTasks(config.values, runStartedAt);
     if (tasks.length === 0) {
+      if (testMode) {
+        return res.status(200).json({
+          success: true,
+          testMode: true,
+          remindersFound: 0,
+          subscriptionsFound: 0,
+          vapidKeysLoaded,
+          webPushInitialized,
+          pushSuccessCount: 0,
+          pushFailureCount: 0,
+          errors: [],
+        });
+      }
+
       return res.status(200).json({
         success: true,
         checked: 0,
@@ -46,6 +97,7 @@ export default async function handler(req, res) {
     let skipped = 0;
     let failed = 0;
     let markedSent = 0;
+    const errors = [];
 
     for (const task of tasks) {
       const subscriptions = subscriptionsByUser.get(task.user_id) ?? [];
@@ -57,11 +109,28 @@ export default async function handler(req, res) {
       const result = await sendTaskReminder(task, subscriptions);
       sent += result.sent;
       failed += result.failed;
+      errors.push(...result.errors);
 
       if (result.sent > 0) {
         await markTaskPushSent(config.values, task.id, runStartedAt);
         markedSent += 1;
       }
+    }
+
+    if (testMode) {
+      return res.status(200).json({
+        success: true,
+        testMode: true,
+        remindersFound: tasks.length,
+        subscriptionsFound: countSubscriptions(subscriptionsByUser),
+        vapidKeysLoaded,
+        webPushInitialized,
+        pushSuccessCount: sent,
+        pushFailureCount: failed,
+        skipped,
+        markedSent,
+        errors,
+      });
     }
 
     return res.status(200).json({
@@ -73,11 +142,36 @@ export default async function handler(req, res) {
       markedSent,
     });
   } catch (error) {
+    if (testMode) {
+      return res.status(500).json({
+        success: false,
+        testMode: true,
+        remindersFound: 0,
+        subscriptionsFound: 0,
+        vapidKeysLoaded,
+        webPushInitialized,
+        pushSuccessCount: 0,
+        pushFailureCount: 0,
+        errors: [getErrorMessage(error)],
+      });
+    }
+
     return res.status(500).json({
       success: false,
       error: 'Could not send due reminder pushes.',
       details: error instanceof Error ? error.message : 'Unexpected server error.',
     });
+  }
+}
+
+function isTestMode(req) {
+  if (req.query?.test === '1') return true;
+
+  try {
+    const url = new URL(req.url, 'https://ra7etbal.local');
+    return url.searchParams.get('test') === '1';
+  } catch {
+    return false;
   }
 }
 
@@ -102,6 +196,14 @@ function getConfig() {
     .map(([key]) => key);
 
   return missing.length === 0 ? { ok: true, values } : { ok: false, missing };
+}
+
+function hasVapidKeys() {
+  return Boolean(
+    (process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY) &&
+      process.env.VAPID_PRIVATE_KEY &&
+      process.env.VAPID_SUBJECT,
+  );
 }
 
 async function fetchDueReminderTasks(config, nowIso) {
@@ -166,6 +268,7 @@ async function sendTaskReminder(task, subscriptions) {
 
   let sent = 0;
   let failed = 0;
+  const errors = [];
 
   for (const row of subscriptions) {
     try {
@@ -180,12 +283,13 @@ async function sendTaskReminder(task, subscriptions) {
         payload,
       );
       sent += 1;
-    } catch {
+    } catch (error) {
       failed += 1;
+      errors.push(getErrorMessage(error));
     }
   }
 
-  return { sent, failed };
+  return { sent, failed, errors };
 }
 
 async function markTaskPushSent(config, taskId, sentAt) {
@@ -219,4 +323,18 @@ function supabaseHeaders(config) {
 
 async function readJson(response) {
   return response.json().catch(() => null);
+}
+
+function countSubscriptions(subscriptionsByUser) {
+  let count = 0;
+
+  for (const subscriptions of subscriptionsByUser.values()) {
+    count += subscriptions.length;
+  }
+
+  return count;
+}
+
+function getErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
