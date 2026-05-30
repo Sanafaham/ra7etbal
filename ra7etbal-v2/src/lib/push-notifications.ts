@@ -23,11 +23,23 @@ interface PushSubscriptionRow {
   enabled: boolean;
 }
 
+type PushSupportFlags = ReturnType<typeof getPushSupportFlags>;
+
+interface PushDebugSnapshot {
+  finalStatus?: PushNotificationStatus;
+  errorName?: string;
+  errorMessage?: string;
+  permissionResult?: NotificationPermission | "unavailable";
+  supportFlags?: PushSupportFlags;
+}
+
 const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 const debugPrefix = "[Push Slice 2]";
+const debugSnapshot: PushDebugSnapshot = {};
 
 export function checkPushSupport(): PushSupportResult {
   const flags = getPushSupportFlags();
+  debugSnapshot.supportFlags = flags;
   debugLog("support flags", flags);
 
   if (
@@ -57,12 +69,12 @@ export async function enableReminderNotifications(userId: string): Promise<PushN
   debugLog("initial permission", getNotificationPermission());
 
   if (!support.supported || !vapidPublicKey) {
-    debugLog("final status", "unsupported");
+    noteFinalStatus("unsupported");
     return "unsupported";
   }
 
   if (Notification.permission === "denied") {
-    debugLog("final status", "denied");
+    noteFinalStatus("denied");
     return "denied";
   }
 
@@ -70,22 +82,25 @@ export async function enableReminderNotifications(userId: string): Promise<PushN
   try {
     if (Notification.permission === "granted") {
       permission = "granted";
+      debugSnapshot.permissionResult = permission;
     } else {
       debugLog("before requestPermission");
       permission = await Notification.requestPermission();
+      debugSnapshot.permissionResult = permission;
       debugLog("permission result", permission);
     }
   } catch (error) {
+    notePushDebugError(error);
     debugLog("permission thrown", errorSummary(error));
     throw error;
   }
 
   if (permission === "denied") {
-    debugLog("final status", "denied");
+    noteFinalStatus("denied");
     return "denied";
   }
   if (permission !== "granted") {
-    debugLog("final status", "error");
+    noteFinalStatus("error");
     return "error";
   }
 
@@ -96,8 +111,30 @@ export async function enableReminderNotifications(userId: string): Promise<PushN
     (await subscribeToPush(registration));
 
   await savePushSubscription(userId, subscription);
-  debugLog("final status", "enabled");
+  noteFinalStatus("enabled");
   return "enabled";
+}
+
+export function notePushDebugError(error: unknown): void {
+  const summary = errorSummary(error);
+  debugSnapshot.errorName = summary.name;
+  debugSnapshot.errorMessage = summary.message;
+}
+
+export function getPushDebugText(): string {
+  const flags = debugSnapshot.supportFlags;
+  const supportText = flags
+    ? `s:${bool(flags.isSecureContext)} n:${bool(flags.hasNotification)} sw:${bool(flags.hasServiceWorker)} p:${bool(flags.hasPushManager)}`
+    : "s:na";
+  const parts = [
+    `status:${debugSnapshot.finalStatus ?? "na"}`,
+    `perm:${debugSnapshot.permissionResult ?? "na"}`,
+    `err:${shorten(debugSnapshot.errorName ?? "none", 18)}`,
+    `msg:${shorten(debugSnapshot.errorMessage ?? "none", 36)}`,
+    supportText,
+  ];
+
+  return parts.join(" | ");
 }
 
 async function getOrRegisterServiceWorker(): Promise<ServiceWorkerRegistration> {
@@ -273,6 +310,11 @@ function supabaseErrorSummary(error: {
   };
 }
 
+function noteFinalStatus(status: PushNotificationStatus): void {
+  debugSnapshot.finalStatus = status;
+  debugLog("final status", status);
+}
+
 function debugLog(message: string, details?: unknown): void {
   if (details === undefined) {
     console.info(debugPrefix, message);
@@ -280,4 +322,12 @@ function debugLog(message: string, details?: unknown): void {
   }
 
   console.info(debugPrefix, message, details);
+}
+
+function bool(value: boolean): "1" | "0" {
+  return value ? "1" : "0";
+}
+
+function shorten(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
 }

@@ -9,6 +9,8 @@ import {
   checkPushSupport,
   enableReminderNotifications,
   getExistingPushSubscription,
+  getPushDebugText,
+  notePushDebugError,
   type PushNotificationStatus,
 } from "../../lib/push-notifications";
 import { useMessagesStore } from "../../stores/messages";
@@ -240,6 +242,7 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
     checkPushSupport().supported ? "idle" : "unsupported",
   );
   const [busy, setBusy] = useState(false);
+  const [debugText, setDebugText] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -283,11 +286,14 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
       const nextStatus = await enableReminderNotifications(userId);
       console.info("[Push Slice 2]", "final returned status", nextStatus);
       setStatus(nextStatus);
+      setDebugText(nextStatus === "error" ? getPushDebugText() : "");
     } catch (error) {
+      notePushDebugError(error);
       console.info("[Push Slice 2]", "enable handler error", {
         name: error instanceof Error ? error.name : typeof error,
         message: error instanceof Error ? error.message : String(error),
       });
+      setDebugText(getPushDebugText());
       setStatus("error");
     } finally {
       setBusy(false);
@@ -308,6 +314,11 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
       <span className="min-w-0">
         <span className="block text-base text-ink">Enable reminder notifications</span>
         <span className="block text-xs text-ink/55">{statusText}</span>
+        {status === "error" && debugText && (
+          <span className="block break-words text-[10px] leading-snug text-ink/45">
+            {debugText}
+          </span>
+        )}
       </span>
       <span
         aria-hidden
