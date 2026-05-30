@@ -280,8 +280,14 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
 
     setBusy(true);
     try {
-      setStatus(await enableReminderNotifications(userId));
-    } catch {
+      const nextStatus = await enableReminderNotifications(userId);
+      console.info("[Push Slice 2]", "final returned status", nextStatus);
+      setStatus(nextStatus);
+    } catch (error) {
+      console.info("[Push Slice 2]", "enable handler error", {
+        name: error instanceof Error ? error.name : typeof error,
+        message: error instanceof Error ? error.message : String(error),
+      });
       setStatus("error");
     } finally {
       setBusy(false);

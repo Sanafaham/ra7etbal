@@ -24,14 +24,18 @@ interface PushSubscriptionRow {
 }
 
 const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+const debugPrefix = "[Push Slice 2]";
 
 export function checkPushSupport(): PushSupportResult {
+  const flags = getPushSupportFlags();
+  debugLog("support flags", flags);
+
   if (
-    typeof window === "undefined" ||
-    !window.isSecureContext ||
-    !("Notification" in window) ||
-    !("serviceWorker" in navigator) ||
-    !("PushManager" in window)
+    !flags.hasWindow ||
+    !flags.isSecureContext ||
+    !flags.hasNotification ||
+    !flags.hasServiceWorker ||
+    !flags.hasPushManager
   ) {
     return { supported: false, reason: "unsupported" };
   }
@@ -49,38 +53,81 @@ export async function getExistingPushSubscription(): Promise<PushSubscription | 
 
 export async function enableReminderNotifications(userId: string): Promise<PushNotificationStatus> {
   const support = checkPushSupport();
-  if (!support.supported || !vapidPublicKey) return "unsupported";
+  debugLog("standalone state", getStandaloneState());
+  debugLog("initial permission", getNotificationPermission());
 
-  if (Notification.permission === "denied") return "denied";
+  if (!support.supported || !vapidPublicKey) {
+    debugLog("final status", "unsupported");
+    return "unsupported";
+  }
 
-  const permission =
-    Notification.permission === "granted"
-      ? "granted"
-      : await Notification.requestPermission();
+  if (Notification.permission === "denied") {
+    debugLog("final status", "denied");
+    return "denied";
+  }
 
-  if (permission === "denied") return "denied";
-  if (permission !== "granted") return "error";
+  let permission: NotificationPermission;
+  try {
+    if (Notification.permission === "granted") {
+      permission = "granted";
+    } else {
+      debugLog("before requestPermission");
+      permission = await Notification.requestPermission();
+      debugLog("permission result", permission);
+    }
+  } catch (error) {
+    debugLog("permission thrown", errorSummary(error));
+    throw error;
+  }
+
+  if (permission === "denied") {
+    debugLog("final status", "denied");
+    return "denied";
+  }
+  if (permission !== "granted") {
+    debugLog("final status", "error");
+    return "error";
+  }
 
   const registration = await getOrRegisterServiceWorker();
   const existingSubscription = await registration.pushManager.getSubscription();
   const subscription =
     existingSubscription ??
-    (await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToArrayBuffer(vapidPublicKey),
-    }));
+    (await subscribeToPush(registration));
 
   await savePushSubscription(userId, subscription);
+  debugLog("final status", "enabled");
   return "enabled";
 }
 
 async function getOrRegisterServiceWorker(): Promise<ServiceWorkerRegistration> {
   const existing = await navigator.serviceWorker.getRegistration();
-  if (existing?.active) return existing;
-  if (existing) return navigator.serviceWorker.ready;
+  if (existing?.active) {
+    debugLog("service worker registration", registrationSummary(existing));
+    return existing;
+  }
+  if (existing) {
+    const readyRegistration = await navigator.serviceWorker.ready;
+    debugLog("service worker registration", registrationSummary(readyRegistration));
+    return readyRegistration;
+  }
 
   await navigator.serviceWorker.register("/sw.js");
-  return navigator.serviceWorker.ready;
+  const readyRegistration = await navigator.serviceWorker.ready;
+  debugLog("service worker registration", registrationSummary(readyRegistration));
+  return readyRegistration;
+}
+
+async function subscribeToPush(
+  registration: ServiceWorkerRegistration,
+): Promise<PushSubscription> {
+  debugLog("before pushManager.subscribe");
+  const subscription = await registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToArrayBuffer(vapidPublicKey),
+  });
+  debugLog("subscribe success", { endpointExists: Boolean(subscription.endpoint) });
+  return subscription;
 }
 
 async function savePushSubscription(
@@ -89,6 +136,7 @@ async function savePushSubscription(
 ): Promise<void> {
   const key = subscription.getKey("p256dh");
   const auth = subscription.getKey("auth");
+  debugLog("key presence", { hasP256dh: Boolean(key), hasAuth: Boolean(auth) });
 
   if (!key || !auth) {
     throw new Error("Browser did not provide the full push subscription.");
@@ -107,6 +155,7 @@ async function savePushSubscription(
     enabled: true,
   };
 
+  debugLog("supabase save start", { endpointExists: Boolean(subscription.endpoint) });
   const lookup = await supabase
     .from("push_subscriptions")
     .select("id")
@@ -114,13 +163,22 @@ async function savePushSubscription(
     .eq("endpoint", subscription.endpoint)
     .maybeSingle();
 
-  if (lookup.error) throw lookup.error;
+  if (lookup.error) {
+    debugLog("supabase select error", supabaseErrorSummary(lookup.error));
+    throw lookup.error;
+  }
 
   const result = lookup.data
     ? await supabase.from("push_subscriptions").update(row).eq("id", lookup.data.id)
     : await supabase.from("push_subscriptions").insert(row);
 
-  if (result.error) throw result.error;
+  if (result.error) {
+    debugLog(
+      lookup.data ? "supabase update error" : "supabase insert error",
+      supabaseErrorSummary(result.error),
+    );
+    throw result.error;
+  }
 }
 
 function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
@@ -150,4 +208,76 @@ function arrayBufferToBase64Url(buffer: ArrayBuffer): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
+}
+
+function getPushSupportFlags() {
+  const hasWindow = typeof window !== "undefined";
+  const hasNavigator = typeof navigator !== "undefined";
+
+  return {
+    hasWindow,
+    isSecureContext: hasWindow ? window.isSecureContext : false,
+    hasNotification: hasWindow && "Notification" in window,
+    hasNavigator,
+    hasServiceWorker: hasNavigator && "serviceWorker" in navigator,
+    hasPushManager: hasWindow && "PushManager" in window,
+  };
+}
+
+function getStandaloneState() {
+  const standaloneNavigator = navigator as Navigator & { standalone?: boolean };
+
+  return {
+    navigatorStandalone: standaloneNavigator.standalone ?? null,
+    displayModeStandalone:
+      typeof window !== "undefined" && "matchMedia" in window
+        ? window.matchMedia("(display-mode: standalone)").matches
+        : null,
+  };
+}
+
+function getNotificationPermission(): NotificationPermission | "unavailable" {
+  return typeof window !== "undefined" && "Notification" in window
+    ? Notification.permission
+    : "unavailable";
+}
+
+function registrationSummary(registration: ServiceWorkerRegistration) {
+  return {
+    scope: registration.scope,
+    active: Boolean(registration.active),
+    waiting: Boolean(registration.waiting),
+    installing: Boolean(registration.installing),
+  };
+}
+
+function errorSummary(error: unknown) {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+
+  return { name: typeof error, message: String(error) };
+}
+
+function supabaseErrorSummary(error: {
+  code?: string;
+  message?: string;
+  details?: string;
+  hint?: string;
+}) {
+  return {
+    code: error.code,
+    message: error.message,
+    details: error.details,
+    hint: error.hint,
+  };
+}
+
+function debugLog(message: string, details?: unknown): void {
+  if (details === undefined) {
+    console.info(debugPrefix, message);
+    return;
+  }
+
+  console.info(debugPrefix, message, details);
 }
