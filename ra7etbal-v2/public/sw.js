@@ -8,19 +8,11 @@ self.addEventListener("activate", function (event) {
 });
 
 self.addEventListener("push", function (event) {
-  var payload = {};
-
-  if (event.data) {
-    try {
-      payload = event.data.json();
-    } catch (_error) {
-      payload = {};
-    }
-  }
-
   event.waitUntil(
-    self.registration.showNotification(payload.title || "Ra7etBal reminder", {
-      body: payload.body || "A reminder is due now."
+    self.registration.showNotification("Ra7etBal test", {
+      body: "Push reached the service worker.",
+      icon: "/icons/ra7etbal-icon-192.png",
+      badge: "/icons/ra7etbal-icon-180.png"
     })
   );
 });
