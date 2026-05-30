@@ -11,12 +11,6 @@
       ]
     }
   ],
-  "crons": [
-    {
-      "path": "/api/send-due-reminder-pushes",
-      "schedule": "*/5 * * * *"
-    }
-  ],
   "rewrites": [
     {
       "source": "/((?!api/|assets/|sw\\.js$|manifest\\.webmanifest$|icons/).*)",
