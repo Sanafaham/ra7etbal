@@ -5,6 +5,12 @@ import Spinner from "../Spinner";
 import Modal from "../ui/Modal";
 import { archiveCompleted } from "../../lib/archive";
 import { clearUserData } from "../../lib/cleanup";
+import {
+  checkPushSupport,
+  enableReminderNotifications,
+  getExistingPushSubscription,
+  type PushNotificationStatus,
+} from "../../lib/push-notifications";
 import { useMessagesStore } from "../../stores/messages";
 import { useTasksStore } from "../../stores/tasks";
 
@@ -145,6 +151,7 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
   return (
     <Modal open={open} onClose={close} title="Settings">
       <SettingsList
+        userId={userId}
         notice={notice?.kind === "success" ? notice.text : null}
         onClickViewHistory={() => {
           onClose();
@@ -166,11 +173,13 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
 // ---------------------------------------------------------------------------
 
 function SettingsList({
+  userId,
   notice,
   onClickViewHistory,
   onClickArchive,
   onClickClear,
 }: {
+  userId: string | null;
   notice: string | null;
   onClickViewHistory: () => void;
   onClickArchive: () => void;
@@ -187,6 +196,10 @@ function SettingsList({
 
       <Group label="Workspace">
         <ActionRow label="Clear history" onClick={onClickClear} />
+      </Group>
+
+      <Group label="Reminders">
+        <ReminderNotificationsRow userId={userId} />
       </Group>
     </div>
   );
@@ -218,6 +231,108 @@ function ActionRow({ label, onClick }: { label: string; onClick: () => void }) {
       </span>
     </button>
   );
+}
+
+// ---------------------------------------------------------------------------
+
+function ReminderNotificationsRow({ userId }: { userId: string | null }) {
+  const [status, setStatus] = useState<PushNotificationStatus>(() =>
+    checkPushSupport().supported ? "idle" : "unsupported",
+  );
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshStatus() {
+      if (!checkPushSupport().supported) {
+        setStatus("unsupported");
+        return;
+      }
+
+      if (Notification.permission === "denied") {
+        setStatus("denied");
+        return;
+      }
+
+      if (Notification.permission !== "granted") {
+        setStatus("idle");
+        return;
+      }
+
+      try {
+        const subscription = await getExistingPushSubscription();
+        if (!cancelled) setStatus(subscription ? "enabled" : "idle");
+      } catch {
+        if (!cancelled) setStatus("error");
+      }
+    }
+
+    void refreshStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleEnable() {
+    if (!userId || busy) return;
+
+    setBusy(true);
+    try {
+      setStatus(await enableReminderNotifications(userId));
+    } catch {
+      setStatus("error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const statusText = getReminderStatusText(status, busy);
+  const disabled = busy || status === "enabled" || status === "unsupported" || !userId;
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleEnable()}
+      disabled={disabled}
+      aria-busy={busy}
+      className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 disabled:cursor-default disabled:hover:bg-transparent last:border-b-0"
+    >
+      <span className="min-w-0">
+        <span className="block text-base text-ink">Enable reminder notifications</span>
+        <span className="block text-xs text-ink/55">{statusText}</span>
+      </span>
+      <span
+        aria-hidden
+        className={
+          "h-3 w-3 shrink-0 rounded-full " +
+          (status === "enabled"
+            ? "bg-sage"
+            : status === "denied" || status === "error"
+              ? "bg-gold"
+              : "bg-ink/20")
+        }
+      />
+    </button>
+  );
+}
+
+function getReminderStatusText(status: PushNotificationStatus, busy: boolean): string {
+  if (busy) return "Enabling...";
+
+  switch (status) {
+    case "enabled":
+      return "Enabled";
+    case "denied":
+      return "Permission denied";
+    case "unsupported":
+      return "Not supported on this device";
+    case "error":
+      return "Error";
+    case "idle":
+      return "Off";
+  }
 }
 
 // ---------------------------------------------------------------------------
