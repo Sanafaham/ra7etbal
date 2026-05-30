@@ -161,7 +161,7 @@ async function getOrRegisterServiceWorker(): Promise<ServiceWorkerRegistration> 
     return readyRegistration;
   }
 
-  await navigator.serviceWorker.register("/sw.js");
+  await navigator.serviceWorker.register("/sw.js", { scope: "/" });
   const readyRegistration = await navigator.serviceWorker.ready;
   debugLog("service worker registration", registrationSummary(readyRegistration));
   return readyRegistration;
