@@ -7,6 +7,20 @@ self.addEventListener("activate", function (event) {
   event.waitUntil(self.clients.claim());
 });
 
-self.addEventListener("push", function () {
-  /* Push sending is not implemented in Slice 2. */
+self.addEventListener("push", function (event) {
+  var payload = {};
+
+  if (event.data) {
+    try {
+      payload = event.data.json();
+    } catch (_error) {
+      payload = {};
+    }
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(payload.title || "Ra7etBal reminder", {
+      body: payload.body || "A reminder is due now."
+    })
+  );
 });
