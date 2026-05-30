@@ -31,6 +31,12 @@ interface PushDebugSnapshot {
   errorMessage?: string;
   permissionResult?: NotificationPermission | "unavailable";
   supportFlags?: PushSupportFlags;
+  serviceWorkerScope?: string;
+  serviceWorkerActive?: boolean;
+  hasRegistrationPushManager?: boolean;
+  vapidKeyLength?: number;
+  convertedKeyLength?: number;
+  subscribePhase?: "before" | "during" | "after";
 }
 
 const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
@@ -129,8 +135,14 @@ export function getPushDebugText(): string {
   const parts = [
     `status:${debugSnapshot.finalStatus ?? "na"}`,
     `perm:${debugSnapshot.permissionResult ?? "na"}`,
+    `phase:${debugSnapshot.subscribePhase ?? "na"}`,
     `err:${shorten(debugSnapshot.errorName ?? "none", 18)}`,
-    `msg:${shorten(debugSnapshot.errorMessage ?? "none", 36)}`,
+    `msg:${shorten(debugSnapshot.errorMessage ?? "none", 96)}`,
+    `scope:${shorten(debugSnapshot.serviceWorkerScope ?? "na", 40)}`,
+    `active:${debugSnapshot.serviceWorkerActive === undefined ? "na" : bool(debugSnapshot.serviceWorkerActive)}`,
+    `rpm:${debugSnapshot.hasRegistrationPushManager === undefined ? "na" : bool(debugSnapshot.hasRegistrationPushManager)}`,
+    `vlen:${debugSnapshot.vapidKeyLength ?? "na"}`,
+    `klen:${debugSnapshot.convertedKeyLength ?? "na"}`,
     supportText,
   ];
 
@@ -158,13 +170,40 @@ async function getOrRegisterServiceWorker(): Promise<ServiceWorkerRegistration> 
 async function subscribeToPush(
   registration: ServiceWorkerRegistration,
 ): Promise<PushSubscription> {
+  const registrationDebug = {
+    scope: registration.scope,
+    active: Boolean(registration.active),
+    waiting: Boolean(registration.waiting),
+    installing: Boolean(registration.installing),
+    hasPushManager: Boolean(registration.pushManager),
+  };
+  debugSnapshot.serviceWorkerScope = registrationDebug.scope;
+  debugSnapshot.serviceWorkerActive = registrationDebug.active;
+  debugSnapshot.hasRegistrationPushManager = registrationDebug.hasPushManager;
+  debugSnapshot.vapidKeyLength = vapidPublicKey.length;
+  debugSnapshot.subscribePhase = "before";
+  debugLog("subscribe registration state", registrationDebug);
+  debugLog("vapid public key length", debugSnapshot.vapidKeyLength);
+
+  const applicationServerKey = urlBase64ToArrayBuffer(vapidPublicKey);
+  debugSnapshot.convertedKeyLength = applicationServerKey.byteLength;
+  debugLog("converted applicationServerKey length", debugSnapshot.convertedKeyLength);
   debugLog("before pushManager.subscribe");
-  const subscription = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToArrayBuffer(vapidPublicKey),
-  });
-  debugLog("subscribe success", { endpointExists: Boolean(subscription.endpoint) });
-  return subscription;
+
+  try {
+    debugSnapshot.subscribePhase = "during";
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey,
+    });
+    debugSnapshot.subscribePhase = "after";
+    debugLog("subscribe success", { endpointExists: Boolean(subscription.endpoint) });
+    return subscription;
+  } catch (error) {
+    notePushDebugError(error);
+    debugLog("subscribe error", errorSummary(error));
+    throw error;
+  }
 }
 
 async function savePushSubscription(
