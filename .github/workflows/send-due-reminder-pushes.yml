@@ -1,0 +1,21 @@
+name: Send due reminder pushes
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  send-due-reminder-pushes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Call reminder push route
+        run: |
+          curl --fail --show-error --silent \
+            --request POST \
+            --header "Authorization: Bearer $CRON_SECRET" \
+            https://ra7etbal-v2.vercel.app/api/send-due-reminder-pushes
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
