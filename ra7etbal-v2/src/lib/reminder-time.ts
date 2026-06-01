@@ -29,6 +29,30 @@ export function formatReminderDue(value: string | null, now = new Date()): strin
   return `${formatDate(due)} at ${formatTime(due)}`;
 }
 
+export function formatReminderDueTime(value: string | null, now = new Date()): string | null {
+  if (!value) return null;
+  const due = new Date(value);
+  if (Number.isNaN(due.getTime())) return null;
+
+  if (isSameLocalDay(due, now)) {
+    return `Due: Today at ${formatTime(due)}`;
+  }
+
+  if (isTomorrow(due, now)) {
+    return `Due: Tomorrow at ${formatTime(due)}`;
+  }
+
+  if (isYesterday(due, now)) {
+    return `Due: Yesterday at ${formatTime(due)}`;
+  }
+
+  if (isWithinNextSixDays(due, now)) {
+    return `Due: ${formatWeekday(due)} at ${formatTime(due)}`;
+  }
+
+  return `Due: ${formatDate(due)} at ${formatTime(due)}`;
+}
+
 export function isReminderOverdue(value: string | null, now = new Date()): boolean {
   if (!value) return false;
   const due = new Date(value);
@@ -64,6 +88,12 @@ function isTomorrow(date: Date, now: Date): boolean {
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
   return isSameLocalDay(date, tomorrow);
+}
+
+function isYesterday(date: Date, now: Date): boolean {
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  return isSameLocalDay(date, yesterday);
 }
 
 function isWithinNextSixDays(date: Date, now: Date): boolean {

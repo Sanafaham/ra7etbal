@@ -1,6 +1,10 @@
 import { useState } from "react";
 import Spinner from "../Spinner";
-import { formatReminderDue, isReminderOverdue } from "../../lib/reminder-time";
+import {
+  formatReminderDue,
+  formatReminderDueTime,
+  isReminderOverdue,
+} from "../../lib/reminder-time";
 import { openWhatsAppMessage, sendWhatsAppTask } from "../../lib/whatsapp";
 import type { Task, TaskType } from "../../types/task";
 
@@ -9,6 +13,7 @@ interface Props {
   /** Linked message for delegations, if present. */
   message?: { content: string } | null;
   recipientPhone?: string | null;
+  now?: Date;
   onToggleDone: (task: Task) => Promise<unknown>;
   onDelete: (task: Task) => Promise<unknown>;
 }
@@ -27,6 +32,7 @@ export default function TaskCard({
   task,
   message,
   recipientPhone,
+  now,
   onToggleDone,
   onDelete,
 }: Props) {
@@ -36,7 +42,7 @@ export default function TaskCard({
   const isDone = task.status === "done";
   const isWaitingDelegation = task.type === "delegation" && !isDone;
   const hasConfirmLink = !!task.confirmation_url && isWaitingDelegation;
-  const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone) : null;
+  const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;
 
   async function toggle() {
     if (busy) return;
@@ -147,14 +153,14 @@ export default function TaskCard({
       )}
 
       {reminderDue && (
-        <p
-          className={
-            "mt-2 text-xs font-medium " +
-            (reminderDue.overdue ? "text-rose-800" : "text-amber-900")
-          }
-        >
-          {reminderDue.label}
-        </p>
+        <div className="mt-2 space-y-0.5 text-xs font-medium">
+          <p className={reminderDue.overdue ? "text-rose-800" : "text-amber-900"}>
+            {reminderDue.dueTime}
+          </p>
+          <p className={reminderDue.overdue ? "text-rose-800" : "text-amber-900"}>
+            {reminderDue.label}
+          </p>
+        </div>
       )}
 
       <footer className="mt-3 flex flex-wrap items-center gap-2">
@@ -240,11 +246,14 @@ export default function TaskCard({
 function getReminderDue(
   value: string | null,
   isDone: boolean,
-): { label: string; overdue: boolean } | null {
-  const label = formatReminderDue(value);
-  if (!label) return null;
+  now = new Date(),
+): { dueTime: string; label: string; overdue: boolean } | null {
+  const dueTime = formatReminderDueTime(value, now);
+  const label = formatReminderDue(value, now);
+  if (!dueTime || !label) return null;
   return {
+    dueTime,
     label,
-    overdue: !isDone && isReminderOverdue(value),
+    overdue: !isDone && isReminderOverdue(value, now),
   };
 }

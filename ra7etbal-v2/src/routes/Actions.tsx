@@ -5,6 +5,7 @@ import RefreshButton from "../components/RefreshButton";
 import Spinner from "../components/Spinner";
 import TaskCard from "../components/tasks/TaskCard";
 import { useTaskList } from "../hooks/useTaskList";
+import { isReminderOverdue } from "../lib/reminder-time";
 import { usePeopleStore } from "../stores/people";
 import { useTasksStore } from "../stores/tasks";
 import type { Task } from "../types/task";
@@ -15,6 +16,7 @@ export default function Actions() {
   const { userId, tasks, tasksStatus, tasksError, messages, reload } = useTaskList();
   const tasksStore = useTasksStore;
   const [filter, setFilter] = useState<Filter>("open");
+  const [now, setNow] = useState(() => new Date());
   const { people, loadedForUserId: peopleLoadedForUserId, loadPeople } =
     usePeopleStore(
       useShallow((s) => ({
@@ -29,6 +31,11 @@ export default function Actions() {
     if (peopleLoadedForUserId !== userId) void loadPeople(userId);
   }, [userId, peopleLoadedForUserId, loadPeople]);
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(intervalId);
+  }, []);
+
   // Map task_id -> linked message (the delegation send payload).
   const messageByTaskId = useMemo(() => {
     const m = new Map<string, { content: string }>();
@@ -41,8 +48,8 @@ export default function Actions() {
   const filtered = useMemo(() => {
     if (filter === "all") return tasks;
     if (filter === "done") return tasks.filter((t) => t.status === "done");
-    return tasks.filter((t) => t.status !== "done");
-  }, [tasks, filter]);
+    return sortOpenTasks(tasks.filter((t) => t.status !== "done"), now);
+  }, [tasks, filter, now]);
 
   const phoneByName = useMemo(() => {
     const m = new Map<string, string>();
@@ -135,6 +142,7 @@ export default function Actions() {
             <li key={t.id}>
               <TaskCard
                 task={t}
+                now={now}
                 message={messageByTaskId.get(t.id) ?? null}
                 recipientPhone={
                   t.assigned_to
@@ -150,4 +158,23 @@ export default function Actions() {
       )}
     </section>
   );
+}
+
+function sortOpenTasks(tasks: Task[], now: Date): Task[] {
+  return [...tasks].sort((a, b) => getOpenPriority(a, now) - getOpenPriority(b, now));
+}
+
+function getOpenPriority(task: Task, now: Date): number {
+  if (task.type === "reminder" && task.due_at) {
+    const due = new Date(task.due_at).getTime();
+    if (!Number.isNaN(due)) {
+      if (isReminderOverdue(task.due_at, now)) {
+        return due;
+      }
+
+      return 10_000_000_000_000 + due;
+    }
+  }
+
+  return 20_000_000_000_000 + new Date(task.created_at).getTime();
 }
