@@ -22,8 +22,8 @@ export default function Home() {
     useShallow((s) => ({ text: s.text, setText: s.setText })),
   );
 
-  const { loadFor: loadPeople, items: people } = usePeopleStore(
-    useShallow((s) => ({ loadFor: s.loadFor, items: s.items })),
+  const { loadFor: loadPeople } = usePeopleStore(
+  useShallow((s) => ({ loadFor: s.loadFor })),
   );
 
   const { tasks, loadTasks } = useTasksStore(
