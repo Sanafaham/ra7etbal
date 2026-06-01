@@ -9,11 +9,10 @@ import { useTasksStore } from "../stores/tasks";
  * Follow-ups, and Messages screens so they share the same fetch and the
  * same loading semantics.
  *
- * Sync policy: every mount triggers a force-refresh so the host always
- * sees the latest data after the recipient hits the public confirmation
- * link. The Refresh button uses the same path. In dev StrictMode this
- * may fire twice on the first mount — production behavior is one fetch
- * per visit, which is cheap.
+ * Sync policy: every mount triggers a force-refresh, and mounted screens
+ * refresh when the app regains focus/visibility plus a modest interval.
+ * This keeps delegated confirmation state fresh without requiring a manual
+ * refresh after the recipient taps a public confirmation link.
  */
 export function useTaskList(): {
   userId: string | null;
@@ -67,6 +66,30 @@ export function useTaskList(): {
     firedRef.current = userId;
     void loadTasks(userId, { force: true });
     void loadMessages(userId, { force: true });
+  }, [userId, loadTasks, loadMessages]);
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const refresh = () => {
+      void Promise.all([
+        loadTasks(userId, { force: true }),
+        loadMessages(userId, { force: true }),
+      ]);
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    const interval = window.setInterval(refresh, 15_000);
+
+    return () => {
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.clearInterval(interval);
+    };
   }, [userId, loadTasks, loadMessages]);
 
   async function reload(): Promise<void> {
