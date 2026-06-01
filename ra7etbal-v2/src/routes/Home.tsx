@@ -75,20 +75,41 @@ export default function Home() {
   );
 
   const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
+  const urgentCount = useMemo(
+    () =>
+      brief.needsYou.filter(
+        (task) =>
+          task.type === "reminder" &&
+          task.due_at &&
+          new Date(task.due_at) <= now,
+      ).length,
+    [brief.needsYou, now],
+  );
   const statusTone = useMemo(() => {
-    const urgent = brief.needsYou.some(
-      (task) => task.type === "reminder" && task.due_at && new Date(task.due_at) <= now,
-    );
-    if (urgent) return "urgent";
+    if (urgentCount > 0) return "urgent";
     if (brief.needsYou.length > 0) return "attention";
     return "clear";
-  }, [brief.needsYou, now]);
-  const supportingLines = useMemo(() => {
-    const lines = brief.summary.lines.filter(
-      (line) => line !== brief.summary.headline && line !== "You're clear for tonight.",
-    );
-    return lines.length > 0 ? lines.slice(0, 3) : ["Nothing urgent is overdue."];
-  }, [brief.summary.headline, brief.summary.lines]);
+  }, [brief.needsYou.length, urgentCount]);
+  const homeBriefCopy = useMemo(
+    () =>
+      buildHomeBriefCopy({
+        needsYouCount: brief.needsYou.length,
+        urgentCount,
+        waitingCount: brief.waiting.length,
+        doneCount: brief.done.length,
+        fallbackHeadline: brief.summary.headline,
+        fallbackLines: brief.summary.lines,
+      }),
+    [
+      brief.done.length,
+      brief.needsYou.length,
+      brief.summary.headline,
+      brief.summary.lines,
+      brief.waiting.length,
+      urgentCount,
+    ],
+  );
+  const supportingLines = homeBriefCopy.lines;
 
   const trimmed = text.trim();
   const canSubmit = !submitting && trimmed.length > 0 && !!userId;
@@ -182,7 +203,7 @@ export default function Home() {
           className="mx-auto mt-3 max-w-xl text-[50px] leading-[0.95] tracking-normal text-text sm:text-[72px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
-          {brief.summary.headline}
+          {homeBriefCopy.headline}
         </h1>
         <div className="mx-auto mt-4 max-w-md space-y-1.5 text-[15px] leading-snug text-text-soft sm:text-[16px]">
           {supportingLines.map((line) => (
@@ -309,4 +330,98 @@ export default function Home() {
       )}
     </section>
   );
+}
+
+function buildHomeBriefCopy({
+  needsYouCount,
+  urgentCount,
+  waitingCount,
+  doneCount,
+  fallbackHeadline,
+  fallbackLines,
+}: {
+  needsYouCount: number;
+  urgentCount: number;
+  waitingCount: number;
+  doneCount: number;
+  fallbackHeadline: string;
+  fallbackLines: string[];
+}): { headline: string; lines: string[] } {
+  if (urgentCount > 0) {
+    return {
+      headline:
+        urgentCount === 1
+          ? "One thing needs you now."
+          : `${formatHomeCount(urgentCount)} things need you now.`,
+      lines: buildActiveSupportLines({
+        needsYouCount,
+        waitingCount,
+        doneCount,
+        fallbackLines,
+      }),
+    };
+  }
+
+  if (needsYouCount > 0) {
+    return {
+      headline:
+        needsYouCount === 1
+          ? "One thing needs your attention."
+          : `${formatHomeCount(needsYouCount)} things need your attention.`,
+      lines: buildActiveSupportLines({
+        needsYouCount,
+        waitingCount,
+        doneCount,
+        fallbackLines,
+      }),
+    };
+  }
+
+  const clearLines = [
+    "Nothing urgent is overdue.",
+    waitingCount > 0
+      ? `${formatHomeCount(waitingCount)} ${waitingCount === 1 ? "thing is" : "things are"} waiting on someone else.`
+      : null,
+    doneCount > 0
+      ? `${formatHomeCount(doneCount)} ${doneCount === 1 ? "thing is" : "things are"} already handled.`
+      : null,
+  ].filter((line): line is string => Boolean(line));
+
+  return {
+    headline: fallbackHeadline,
+    lines: clearLines.length > 0 ? clearLines.slice(0, 3) : ["Nothing urgent is overdue."],
+  };
+}
+
+function buildActiveSupportLines({
+  needsYouCount,
+  waitingCount,
+  doneCount,
+  fallbackLines,
+}: {
+  needsYouCount: number;
+  waitingCount: number;
+  doneCount: number;
+  fallbackLines: string[];
+}): string[] {
+  const lines = [
+    waitingCount > 0
+      ? `${formatHomeCount(waitingCount)} ${waitingCount === 1 ? "thing is" : "things are"} waiting on someone else.`
+      : needsYouCount === 1
+        ? "Everything else is under control."
+        : "Everything else can wait.",
+    doneCount > 0
+      ? `${formatHomeCount(doneCount)} ${doneCount === 1 ? "thing is" : "things are"} already handled.`
+      : null,
+  ].filter((line): line is string => Boolean(line));
+
+  if (lines.length > 0) return lines.slice(0, 3);
+  return fallbackLines.length > 0 ? fallbackLines.slice(0, 2) : ["Everything else can wait."];
+}
+
+function formatHomeCount(count: number): string {
+  if (count === 1) return "One";
+  if (count === 2) return "Two";
+  if (count === 3) return "Three";
+  return String(count);
 }
