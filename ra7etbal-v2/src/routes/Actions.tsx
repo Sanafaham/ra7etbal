@@ -196,6 +196,8 @@ function BriefView({
 
   return (
     <div className="space-y-5">
+      <BriefSummary summary={brief.summary} />
+
       <div className="grid grid-cols-3 gap-2">
         <BriefCount label="Needs You" value={brief.needsYou.length} tone="rose" />
         <BriefCount label="Waiting" value={brief.waiting.length} tone="amber" />
@@ -239,6 +241,25 @@ function BriefView({
         onDelete={onDelete}
       />
     </div>
+  );
+}
+
+function BriefSummary({
+  summary,
+}: {
+  summary: ReturnType<typeof buildDailyBrief>["summary"];
+}) {
+  return (
+    <section className="rounded-2xl border border-sage/25 bg-white/80 px-4 py-4 shadow-sm">
+      <p className="text-base font-medium leading-snug text-ink">{summary.headline}</p>
+      {summary.lines.length > 0 && (
+        <div className="mt-2 space-y-1.5 text-sm leading-snug text-ink/65">
+          {summary.lines.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
