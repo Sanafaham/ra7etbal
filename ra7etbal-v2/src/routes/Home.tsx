@@ -260,7 +260,7 @@ export default function Home() {
           onChange={(e) => setText(e.target.value)}
           onFocus={() => setTextareaFocused(true)}
           onBlur={() => setTextareaFocused(false)}
-          placeholder="Say what you're carrying. Tasks, reminders, people to message, things to follow up on."
+          placeholder="What's on your mind?"
           autoComplete="off"
           spellCheck
           rows={4}
@@ -270,7 +270,7 @@ export default function Home() {
         />
 
         <p className="mt-3 border-t border-border/70 pt-3 text-center text-[13px] italic leading-snug text-text-soft">
-          Ra7etBal will organize it before anything is saved.
+          Nothing is sent without your review.
         </p>
       </section>
 
@@ -378,25 +378,20 @@ function buildHomeBriefCopy({
   }
 
   const clearLines = [
-    "Nothing urgent is overdue.",
     waitingCount > 0
       ? `${formatHomeCount(waitingCount)} ${waitingCount === 1 ? "thing is" : "things are"} waiting on someone else.`
-      : null,
-    doneCount > 0
-      ? `${formatHomeCount(doneCount)} ${doneCount === 1 ? "thing is" : "things are"} already handled.`
-      : null,
+      : "Everything is under control.",
   ].filter((line): line is string => Boolean(line));
 
   return {
     headline: fallbackHeadline,
-    lines: clearLines.length > 0 ? clearLines.slice(0, 3) : ["Nothing urgent is overdue."],
+    lines: clearLines,
   };
 }
 
 function buildActiveSupportLines({
   needsYouCount,
   waitingCount,
-  doneCount,
   fallbackLines,
 }: {
   needsYouCount: number;
@@ -404,19 +399,14 @@ function buildActiveSupportLines({
   doneCount: number;
   fallbackLines: string[];
 }): string[] {
-  const lines = [
-    waitingCount > 0
-      ? `${formatHomeCount(waitingCount)} ${waitingCount === 1 ? "thing is" : "things are"} waiting on someone else.`
-      : needsYouCount === 1
-        ? "Everything else is under control."
-        : "Everything else can wait.",
-    doneCount > 0
-      ? `${formatHomeCount(doneCount)} ${doneCount === 1 ? "thing is" : "things are"} already handled.`
-      : null,
-  ].filter((line): line is string => Boolean(line));
-
-  if (lines.length > 0) return lines.slice(0, 3);
-  return fallbackLines.length > 0 ? fallbackLines.slice(0, 2) : ["Everything else can wait."];
+  if (waitingCount > 0) {
+    return [
+      `${formatHomeCount(waitingCount)} ${waitingCount === 1 ? "thing is" : "things are"} waiting on someone else.`,
+    ];
+  }
+  if (needsYouCount === 1) return ["Everything else is under control."];
+  if (fallbackLines.length > 0) return fallbackLines.slice(0, 1);
+  return ["Everything else can wait."];
 }
 
 function formatHomeCount(count: number): string {
