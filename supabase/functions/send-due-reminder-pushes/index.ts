@@ -148,8 +148,14 @@ Deno.serve(async (request) => {
       errors.push(...result.errors);
 
       if (result.sent > 0) {
-        await markTaskPushSent(supabaseConfig.values, task.id, runStartedAt);
-        markedSent += 1;
+        const didMarkSent = await markTaskPushSent(supabaseConfig.values, task.id, runStartedAt);
+        if (didMarkSent) {
+          markedSent += 1;
+        } else {
+          skipped += 1;
+        }
+      } else {
+        skipped += 1;
       }
     }
 
@@ -303,7 +309,7 @@ async function sendTaskReminder(
 ) {
   const payload = JSON.stringify({
     title: "Ra7etBal reminder",
-    body: `${cleanReminderTitle(task.description)} is due now.\nDue: ${formatDueTime(task.due_at)}`,
+    body: `Reminder: ${cleanReminderTitle(task.description)}\nDue: ${formatDueTime(task.due_at)}`,
   });
 
   let sent = 0;
@@ -333,7 +339,14 @@ async function sendTaskReminder(
 }
 
 function cleanReminderTitle(value: string) {
-  return value.trim().replace(/[.!?؟،,;:]+$/u, "").trim();
+  const cleaned = value
+    .trim()
+    .replace(/^remind me to\s+/iu, "")
+    .replace(/^reminder:\s*/iu, "")
+    .replace(/[.!?؟،,;:]+$/u, "")
+    .trim();
+
+  return cleaned || "Reminder";
 }
 
 function formatDueTime(value: string) {
@@ -387,21 +400,24 @@ async function markTaskPushSent(config: SupabaseConfig, taskId: string, sentAt: 
   const url =
     `${config.supabaseUrl}/rest/v1/tasks` +
     `?id=eq.${encodeURIComponent(taskId)}` +
-    "&last_push_sent_at=is.null";
+    "&last_push_sent_at=is.null" +
+    "&select=id";
 
   const response = await fetch(url, {
     method: "PATCH",
     headers: {
       ...supabaseHeaders(config),
-      Prefer: "return=minimal",
+      Prefer: "return=representation",
     },
     body: JSON.stringify({ last_push_sent_at: sentAt }),
   });
+  const data = await readJson(response);
 
   if (!response.ok) {
-    const data = await readJson(response);
     throw new Error(getSupabaseErrorMessage(data, "Could not mark reminder push as sent."));
   }
+
+  return Array.isArray(data) && data.length > 0;
 }
 
 function supabaseHeaders(config: SupabaseConfig) {
