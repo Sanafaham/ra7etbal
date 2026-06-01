@@ -133,7 +133,7 @@ export default function Home() {
       onTouchStart={(e) => e.stopPropagation()}
       disabled={!canSubmit}
       aria-busy={submitting}
-      className="inline-flex min-h-[50px] flex-1 items-center justify-center gap-2 rounded-full border border-charcoal/90 bg-charcoal px-5 py-3 text-[15px] font-semibold tracking-[0.02em] text-ivory shadow-[0_18px_42px_-18px_rgba(20,20,20,0.5),0_3px_10px_-5px_rgba(20,20,20,0.2)] transition hover:bg-espresso active:translate-y-[1px] disabled:cursor-not-allowed disabled:border-gold-soft/70 disabled:bg-gold-soft/55 disabled:text-text-soft disabled:shadow-none"
+      className="inline-flex min-h-[52px] flex-1 items-center justify-center gap-2 rounded-full border border-charcoal bg-charcoal px-6 py-3.5 text-[15px] font-semibold tracking-[0.02em] text-ivory shadow-[0_22px_48px_-18px_rgba(20,20,20,0.6),0_4px_12px_-6px_rgba(20,20,20,0.24)] transition hover:bg-espresso active:translate-y-[1px] disabled:cursor-not-allowed disabled:border-gold-soft/70 disabled:bg-gold-soft/55 disabled:text-text-soft disabled:shadow-none sm:flex-none sm:min-w-[210px]"
     >
       {submitting && <Spinner size={16} />}
       <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
@@ -161,12 +161,12 @@ export default function Home() {
         </p>
       </header>
 
-      <section className="mt-6 rounded-[30px] border border-sage/25 bg-warm-white/95 px-5 py-6 text-center shadow-[0_34px_90px_-70px_rgba(20,20,20,0.55)] backdrop-blur-sm sm:mt-8 sm:px-9 sm:py-8">
-        <div className="flex items-center justify-center gap-2">
+      <section className="mt-6 rounded-[30px] border border-sage/25 bg-warm-white/95 px-5 py-5 text-center shadow-[0_34px_90px_-70px_rgba(20,20,20,0.55)] backdrop-blur-sm sm:mt-8 sm:px-9 sm:py-7">
+        <div className="inline-flex items-center justify-center gap-2 rounded-full border border-white/80 bg-white/65 px-3 py-1.5 shadow-[0_10px_28px_-22px_rgba(20,20,20,0.45)]">
           <span
             aria-hidden
             className={
-              "h-3.5 w-3.5 rounded-full shadow-[0_0_0_5px_rgba(255,255,255,0.75)] " +
+              "relative h-3.5 w-3.5 rounded-full shadow-[inset_0_0_0_1px_rgba(255,255,255,0.55),0_0_0_4px_rgba(255,255,255,0.75)] " +
               (statusTone === "urgent"
                 ? "bg-danger"
                 : statusTone === "attention"
@@ -179,23 +179,23 @@ export default function Home() {
           </p>
         </div>
         <h1
-          className="mx-auto mt-4 max-w-xl text-[50px] leading-[0.95] tracking-normal text-text sm:text-[72px]"
+          className="mx-auto mt-3 max-w-xl text-[50px] leading-[0.95] tracking-normal text-text sm:text-[72px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {brief.summary.headline}
         </h1>
-        <div className="mx-auto mt-5 max-w-md space-y-1.5 text-[15px] leading-snug text-text-soft sm:text-[16px]">
+        <div className="mx-auto mt-4 max-w-md space-y-1.5 text-[15px] leading-snug text-text-soft sm:text-[16px]">
           {supportingLines.map((line) => (
             <p key={line}>{line}</p>
           ))}
         </div>
 
-        <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+        <div className="mt-5 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
           {clearMyHeadButton}
           <button
             type="button"
             onClick={focusCapture}
-            className="inline-flex min-h-[50px] flex-1 items-center justify-center rounded-full border border-sage/35 bg-white/82 px-5 py-3 text-[15px] font-semibold text-text shadow-sm transition hover:bg-white sm:flex-none"
+            className="inline-flex min-h-[50px] flex-1 items-center justify-center rounded-full border border-sage/30 bg-white/70 px-5 py-3 text-[15px] font-semibold text-text-soft shadow-sm transition hover:bg-white hover:text-text sm:flex-none"
           >
             Ask Ra7etBal
           </button>
