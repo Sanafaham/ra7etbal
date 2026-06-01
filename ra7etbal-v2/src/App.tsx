@@ -127,7 +127,7 @@ function ChipNav() {
   const { status } = useAuth();
   if (status !== "signed_in") return null;
   return (
-    <nav className="mx-auto mt-4 flex max-w-3xl flex-wrap gap-2 px-5">
+    <nav className="mx-auto mt-2 flex max-w-3xl flex-wrap gap-2 px-5">
       {navItems.map((item) => (
         <NavLink
           key={item.to}
@@ -182,7 +182,7 @@ export default function App() {
 
       <ChipNav />
 
-      <main className="mx-auto mt-6 max-w-3xl px-5 pb-24">
+      <main className="mx-auto mt-3 max-w-3xl px-5 pb-24">
         {/* Owner confirmation banner — global. Self-gates by auth status
             and by pathname (hidden on /confirm). Rendering above Routes
             keeps it visible across Home / Actions / Follow-ups / Messages
