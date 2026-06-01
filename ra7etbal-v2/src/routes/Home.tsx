@@ -22,9 +22,7 @@ export default function Home() {
     useShallow((s) => ({ text: s.text, setText: s.setText })),
   );
 
-  const { loadFor: loadPeople } = usePeopleStore(
-  useShallow((s) => ({ loadFor: s.loadFor })),
-  );
+  const loadPeople = usePeopleStore((s) => s.loadFor);
 
   const { tasks, loadTasks } = useTasksStore(
     useShallow((s) => ({ tasks: s.items, loadTasks: s.loadFor })),
@@ -63,16 +61,6 @@ export default function Home() {
       vv.removeEventListener("scroll", compute);
     };
   }, []);
-
-  const today = useMemo(
-    () =>
-      new Intl.DateTimeFormat(undefined, {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      }).format(now),
-    [now],
-  );
 
   const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
   const urgentCount = useMemo(
@@ -166,22 +154,6 @@ export default function Home() {
       className="mx-auto max-w-2xl"
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
     >
-      <header className="flex flex-col items-center gap-1 pt-1 text-center">
-        <div className="flex items-center gap-2 text-text-soft">
-          <span aria-hidden className="text-base text-gold">✦</span>
-          <span
-            className="text-[11px] font-semibold uppercase tracking-[0.3em] text-text-soft"
-            style={{ fontFamily: "var(--font-sans)" }}
-          >
-            Ra7etBal
-          </span>
-          <span aria-hidden className="text-base text-gold">✦</span>
-        </div>
-        <p className="mt-1 text-[10px] uppercase tracking-[0.22em] text-text-muted">
-          {today}
-        </p>
-      </header>
-
       <section className="mt-3 rounded-[30px] border border-sage/25 bg-warm-white/95 px-5 py-4 text-center shadow-[0_34px_90px_-70px_rgba(20,20,20,0.55)] backdrop-blur-sm sm:mt-5 sm:px-9 sm:py-5">
         <div className="inline-flex items-center justify-center gap-2 rounded-full border border-white/80 bg-white/65 px-3 py-1.5 shadow-[0_10px_28px_-22px_rgba(20,20,20,0.45)]">
           <span
@@ -260,7 +232,7 @@ export default function Home() {
           onChange={(e) => setText(e.target.value)}
           onFocus={() => setTextareaFocused(true)}
           onBlur={() => setTextareaFocused(false)}
-          placeholder="What's on your mind?"
+          placeholder="Say what you're carrying. Tasks, reminders, people to message, things to follow up on."
           autoComplete="off"
           spellCheck
           rows={4}
@@ -270,7 +242,7 @@ export default function Home() {
         />
 
         <p className="mt-3 border-t border-border/70 pt-3 text-center text-[13px] italic leading-snug text-text-soft">
-          Nothing is sent without your review.
+          Ra7etBal will organize it before anything is saved.
         </p>
       </section>
 
@@ -362,20 +334,25 @@ function buildHomeBriefCopy({
   }
 
   const clearLines = [
+    "Nothing urgent is overdue.",
     waitingCount > 0
       ? `${formatHomeCount(waitingCount)} ${waitingCount === 1 ? "thing is" : "things are"} waiting on someone else.`
-      : "Everything is under control.",
+      : null,
+    doneCount > 0
+      ? `${formatHomeCount(doneCount)} ${doneCount === 1 ? "thing is" : "things are"} already handled.`
+      : null,
   ].filter((line): line is string => Boolean(line));
 
   return {
     headline: fallbackHeadline,
-    lines: clearLines,
+    lines: clearLines.length > 0 ? clearLines.slice(0, 3) : ["Nothing urgent is overdue."],
   };
 }
 
 function buildActiveSupportLines({
   needsYouCount,
   waitingCount,
+  doneCount,
   fallbackLines,
 }: {
   needsYouCount: number;
@@ -383,14 +360,19 @@ function buildActiveSupportLines({
   doneCount: number;
   fallbackLines: string[];
 }): string[] {
-  if (waitingCount > 0) {
-    return [
-      `${formatHomeCount(waitingCount)} ${waitingCount === 1 ? "thing is" : "things are"} waiting on someone else.`,
-    ];
-  }
-  if (needsYouCount === 1) return ["Everything else is under control."];
-  if (fallbackLines.length > 0) return fallbackLines.slice(0, 1);
-  return ["Everything else can wait."];
+  const lines = [
+    waitingCount > 0
+      ? `${formatHomeCount(waitingCount)} ${waitingCount === 1 ? "thing is" : "things are"} waiting on someone else.`
+      : needsYouCount === 1
+        ? "Everything else is under control."
+        : "Everything else can wait.",
+    doneCount > 0
+      ? `${formatHomeCount(doneCount)} ${doneCount === 1 ? "thing is" : "things are"} already handled.`
+      : null,
+  ].filter((line): line is string => Boolean(line));
+
+  if (lines.length > 0) return lines.slice(0, 3);
+  return fallbackLines.length > 0 ? fallbackLines.slice(0, 2) : ["Everything else can wait."];
 }
 
 function formatHomeCount(count: number): string {
