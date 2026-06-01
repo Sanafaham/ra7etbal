@@ -75,6 +75,14 @@ export default function Home() {
   );
 
   const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
+  const statusTone = useMemo(() => {
+    const urgent = brief.needsYou.some(
+      (task) => task.type === "reminder" && task.due_at && new Date(task.due_at) <= now,
+    );
+    if (urgent) return "urgent";
+    if (brief.needsYou.length > 0) return "attention";
+    return "clear";
+  }, [brief.needsYou, now]);
   const supportingLines = useMemo(() => {
     const lines = brief.summary.lines.filter(
       (line) => line !== brief.summary.headline && line !== "You're clear for tonight.",
@@ -153,23 +161,37 @@ export default function Home() {
         </p>
       </header>
 
-      <section className="mt-7 rounded-[30px] border border-sage/25 bg-warm-white/92 px-6 py-7 text-center shadow-[0_34px_90px_-68px_rgba(20,20,20,0.52)] backdrop-blur-sm sm:mt-9 sm:px-9 sm:py-10">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-text-muted">
-          Right now
-        </p>
+      <section className="mt-6 rounded-[30px] border border-sage/25 bg-warm-white/95 px-5 py-6 text-center shadow-[0_34px_90px_-70px_rgba(20,20,20,0.55)] backdrop-blur-sm sm:mt-8 sm:px-9 sm:py-8">
+        <div className="flex items-center justify-center gap-2">
+          <span
+            aria-hidden
+            className={
+              "h-3.5 w-3.5 rounded-full shadow-[0_0_0_5px_rgba(255,255,255,0.75)] " +
+              (statusTone === "urgent"
+                ? "bg-danger"
+                : statusTone === "attention"
+                  ? "bg-gold"
+                  : "bg-sage")
+            }
+          />
+          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-text-muted">
+            Right now
+          </p>
+        </div>
         <h1
-          className="mt-4 text-[38px] leading-[1.02] tracking-normal text-text sm:text-[54px]"
+          className="mx-auto mt-4 max-w-xl text-[50px] leading-[0.95] tracking-normal text-text sm:text-[72px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {brief.summary.headline}
         </h1>
-        <div className="mx-auto mt-5 max-w-md space-y-2 text-[15px] leading-relaxed text-text-soft sm:text-[16px]">
+        <div className="mx-auto mt-5 max-w-md space-y-1.5 text-[15px] leading-snug text-text-soft sm:text-[16px]">
           {supportingLines.map((line) => (
             <p key={line}>{line}</p>
           ))}
         </div>
 
-        <div className="mt-7 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+        <div className="mt-6 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+          {clearMyHeadButton}
           <button
             type="button"
             onClick={focusCapture}
@@ -177,7 +199,6 @@ export default function Home() {
           >
             Ask Ra7etBal
           </button>
-          {clearMyHeadButton}
         </div>
 
         <button
