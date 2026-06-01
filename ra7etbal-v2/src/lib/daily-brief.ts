@@ -58,7 +58,7 @@ function buildBriefSummary(
       ? `${formatCount(urgentCount, "thing")} ${urgentCount === 1 ? "needs" : "need"} your attention now.`
       : needsYou.length > 0
         ? `You have ${formatCount(needsYou.length, "thing")} that ${needsYou.length === 1 ? "needs" : "need"} attention today.`
-        : "Nothing urgent needs your attention right now.";
+        : `You're clear ${getClearTimeframe(now)}.`;
 
   const lines: string[] = [];
 
@@ -169,6 +169,13 @@ function getDateValue(value: string | null): number {
 
 function formatCount(count: number, singular: string): string {
   return `${count} ${count === 1 ? singular : `${singular}s`}`;
+}
+
+function getClearTimeframe(now: Date): string {
+  const hour = now.getHours();
+  if (hour >= 5 && hour < 12) return "this morning";
+  if (hour >= 12 && hour < 17) return "this afternoon";
+  return "tonight";
 }
 
 function isSameLocalDay(a: Date, b: Date): boolean {
