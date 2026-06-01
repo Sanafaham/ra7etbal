@@ -1,373 +1,268 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useShallow } from "zustand/react/shallow";
-import AuthNotice from "../components/auth/AuthNotice";
-import VoiceButton from "../components/home/VoiceButton";
-import Spinner from "../components/Spinner";
-import { useAuth } from "../hooks/useAuth";
-import { buildDailyBrief } from "../lib/daily-brief";
-import { useDraftStore } from "../stores/draft";
-import { useExtractionStore } from "../stores/extraction";
-import { usePeopleStore } from "../stores/people";
-import { useTasksStore } from "../stores/tasks";
+import { useEffect, useRef, useState } from "react";
+import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import Actions from "./routes/Actions";
+import Auth from "./routes/Auth";
+import Confirm from "./routes/Confirm";
+import Debug from "./routes/Debug";
+import FollowUps from "./routes/FollowUps";
+import History from "./routes/History";
+import Home from "./routes/Home";
+import Messages from "./routes/Messages";
+import People from "./routes/People";
+import Reset from "./routes/Reset";
+import Review from "./routes/Review";
+import ConfirmationNotices from "./components/home/ConfirmationNotices";
+import SettingsModal from "./components/settings/SettingsModal";
+import Spinner from "./components/Spinner";
+import { useAuth } from "./hooks/useAuth";
+import { signOut } from "./lib/session";
+import { useTasksStore } from "./stores/tasks";
 
-export default function Home() {
-  const { user } = useAuth();
-  const userId = user?.id ?? null;
-  const navigate = useNavigate();
-  const textareaId = useId();
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+/**
+ * Nav items shown when signed in. Auth/Reset/Confirm/Debug are reachable
+ * by URL but kept off the chip nav (Auth & Reset are state-driven, Confirm
+ * is recipient-facing via shared link, Debug is for verification only).
+ */
+const navItems: { to: string; label: string; end?: boolean }[] = [
+  { to: "/", label: "Home", end: true },
+  { to: "/actions", label: "Actions" },
+  { to: "/follow-ups", label: "Follow-ups" },
+  { to: "/messages", label: "Messages" },
+  { to: "/people", label: "People" },
+];
 
-  const { text, setText } = useDraftStore(
-    useShallow((s) => ({ text: s.text, setText: s.setText })),
-  );
-
-  const loadPeople = usePeopleStore((s) => s.loadFor);
-
-  const { tasks, loadTasks } = useTasksStore(
-    useShallow((s) => ({ tasks: s.items, loadTasks: s.loadFor })),
-  );
-
-  const runExtraction = useExtractionStore((s) => s.run);
-
-  const [now, setNow] = useState(() => new Date());
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [textareaFocused, setTextareaFocused] = useState(false);
-  const [viewportShrunk, setViewportShrunk] = useState(false);
-  const submittingRef = useRef(false);
-
-  useEffect(() => {
-    if (!userId) return;
-    void loadTasks(userId, { force: true });
-  }, [userId, loadTasks]);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => setNow(new Date()), 30_000);
-    return () => window.clearInterval(intervalId);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) return;
-    const vv = window.visualViewport;
-    function compute() {
-      setViewportShrunk(window.innerHeight - vv.height > 120);
-    }
-    compute();
-    vv.addEventListener("resize", compute);
-    vv.addEventListener("scroll", compute);
-    return () => {
-      vv.removeEventListener("resize", compute);
-      vv.removeEventListener("scroll", compute);
-    };
-  }, []);
-
-  const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
-  const urgentCount = useMemo(
-    () =>
-      brief.needsYou.filter(
-        (task) =>
-          task.type === "reminder" &&
-          task.due_at &&
-          new Date(task.due_at) <= now,
-      ).length,
-    [brief.needsYou, now],
-  );
-  const statusTone = useMemo(() => {
-    if (urgentCount > 0) return "urgent";
-    if (brief.needsYou.length > 0) return "attention";
-    return "clear";
-  }, [brief.needsYou.length, urgentCount]);
-  const homeBriefCopy = useMemo(
-    () =>
-      buildHomeBriefCopy({
-        needsYouCount: brief.needsYou.length,
-        urgentCount,
-        waitingCount: brief.waiting.length,
-        doneCount: brief.done.length,
-        fallbackHeadline: brief.summary.headline,
-        fallbackLines: brief.summary.lines,
-      }),
-    [
-      brief.done.length,
-      brief.needsYou.length,
-      brief.summary.headline,
-      brief.summary.lines,
-      brief.waiting.length,
-      urgentCount,
-    ],
-  );
-  const supportingLines = homeBriefCopy.lines;
-
-  const trimmed = text.trim();
-  const canSubmit = !submitting && trimmed.length > 0 && !!userId;
-  const keyboardOpen = textareaFocused || viewportShrunk;
-
-  async function handleNext() {
-    if (submittingRef.current) return;
-    if (!canSubmit || !userId) return;
-    submittingRef.current = true;
-    setSubmitting(true);
-    setError(null);
-
-    try {
-      await loadPeople(userId);
-      const peopleNow = usePeopleStore.getState().items;
-      await runExtraction(trimmed, peopleNow);
-      navigate("/review");
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Couldn't process that. Please try again.",
-      );
-    } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
-    }
-  }
-
-  function focusCapture() {
-    textareaRef.current?.focus();
-    textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }
-
-  function viewBriefDetails() {
-    navigate("/actions", { state: { initialFilter: "brief" } });
-  }
-
-  const clearMyHeadButton = (
-    <button
-      type="button"
-      onClick={handleNext}
-      onMouseDown={(e) => e.preventDefault()}
-      onTouchStart={(e) => e.stopPropagation()}
-      disabled={!canSubmit}
-      aria-busy={submitting}
-      className="inline-flex min-h-[52px] flex-1 items-center justify-center gap-2 rounded-full border border-charcoal bg-charcoal px-6 py-3.5 text-[15px] font-semibold tracking-[0.02em] text-ivory shadow-[0_22px_48px_-18px_rgba(20,20,20,0.6),0_4px_12px_-6px_rgba(20,20,20,0.24)] transition hover:bg-espresso active:translate-y-[1px] disabled:cursor-not-allowed disabled:border-gold-soft/70 disabled:bg-gold-soft/55 disabled:text-text-soft disabled:shadow-none sm:flex-none sm:min-w-[210px]"
-    >
-      {submitting && <Spinner size={16} />}
-      <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
-    </button>
-  );
-
+function LoadingPane() {
   return (
-    <section
-      className="mx-auto max-w-2xl"
-      style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
-    >
-      <section className="mt-3 rounded-[30px] border border-sage/25 bg-warm-white/95 px-5 py-4 text-center shadow-[0_34px_90px_-70px_rgba(20,20,20,0.55)] backdrop-blur-sm sm:mt-5 sm:px-9 sm:py-5">
-        <div className="inline-flex items-center justify-center gap-2 rounded-full border border-white/80 bg-white/65 px-3 py-1.5 shadow-[0_10px_28px_-22px_rgba(20,20,20,0.45)]">
-          <span
-            aria-hidden
-            className={
-              "relative h-3.5 w-3.5 rounded-full shadow-[inset_0_0_0_1px_rgba(255,255,255,0.55),0_0_0_4px_rgba(255,255,255,0.75)] " +
-              (statusTone === "urgent"
-                ? "bg-danger"
-                : statusTone === "attention"
-                  ? "bg-gold"
-                  : "bg-sage")
-            }
-          />
-          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-text-muted">
-            Right now
-          </p>
-        </div>
-        <h1
-          className="mx-auto mt-2 max-w-xl text-[44px] leading-[0.95] tracking-normal text-text sm:text-[64px]"
-          style={{ fontFamily: "var(--font-display)" }}
-        >
-          {homeBriefCopy.headline}
-        </h1>
-        <div className="mx-auto mt-2 max-w-md space-y-1 text-[14px] leading-snug text-text-soft sm:text-[15px]">
-          {supportingLines.map((line) => (
-            <p key={line}>{line}</p>
-          ))}
-        </div>
+    <div className="flex items-center justify-center py-12 text-ink/60">
+      <Spinner size={20} label="Loading" />
+    </div>
+  );
+}
 
-        <div className="mt-3.5 flex flex-col gap-2 sm:flex-row sm:justify-center">
-          {clearMyHeadButton}
-          <button
-            type="button"
-            onClick={focusCapture}
-            className="inline-flex min-h-[50px] flex-1 items-center justify-center rounded-full border border-sage/30 bg-white/70 px-5 py-3 text-[15px] font-semibold text-text-soft shadow-sm transition hover:bg-white hover:text-text sm:flex-none"
-          >
-            Ask Ra7etBal
-          </button>
-        </div>
+/**
+ * Route-level guard for /auth. Sends signed-in users home and recovery-mode
+ * users to /reset. While loading, render a spinner — INITIAL_SESSION resolves
+ * within a couple hundred ms.
+ */
+function AuthRoute() {
+  const { status } = useAuth();
+  if (status === "loading") return <LoadingPane />;
+  if (status === "signed_in") return <Navigate to="/" replace />;
+  if (status === "recovery") return <Navigate to="/reset" replace />;
+  return <Auth />;
+}
 
+/** Recovery-only route. The recovery flag is a Zustand state, not a URL hash. */
+function ResetRoute() {
+  const { status } = useAuth();
+  if (status === "loading") return <LoadingPane />;
+  if (status === "recovery") return <Reset />;
+  if (status === "signed_in") return <Navigate to="/" replace />;
+  return <Navigate to="/auth" replace />;
+}
+
+/** Wrap any route that needs an authenticated session. */
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { status } = useAuth();
+  if (status === "loading") return <LoadingPane />;
+  if (status === "signed_out") return <Navigate to="/auth" replace />;
+  if (status === "recovery") return <Navigate to="/reset" replace />;
+  return <>{children}</>;
+}
+
+function HeaderUserStrip() {
+  const { status, user } = useAuth();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  if (status !== "signed_in" || !user) return null;
+  return (
+    <>
+      <div className="ml-auto flex items-center gap-2 text-xs text-ink/70">
+        <span className="hidden sm:inline">{user.email}</span>
         <button
           type="button"
-          onClick={viewBriefDetails}
-          className="mt-2.5 text-[11px] font-medium text-text-muted underline-offset-4 hover:text-text-soft hover:underline"
+          onClick={() => setSettingsOpen(true)}
+          aria-label="Settings"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sage/40 bg-white text-ink shadow-sm transition hover:bg-cream"
         >
-          View Details
-        </button>
-      </section>
-
-      <section className="mt-3 rounded-[26px] border border-border/80 bg-card/82 p-4 shadow-[0_24px_70px_-60px_rgba(20,20,20,0.45)] backdrop-blur-sm sm:mt-4 sm:p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <label
-            htmlFor={textareaId}
-            className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone"
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
           >
-            Clear your head
-          </label>
-          <div className="[&_button]:rounded-full [&_button]:border-sage/30 [&_button]:bg-white [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-xs [&_button]:font-medium [&_button]:text-text [&_button]:shadow-sm [&_svg]:h-[13px] [&_svg]:w-[13px]">
-            <VoiceButton
-              disabled={submitting}
-              onTranscript={(transcript) => {
-                const current = useDraftStore.getState().text;
-                const trimmedNow = current.trimEnd();
-                const sep = trimmedNow.length === 0 ? "" : " ";
-                useDraftStore.getState().setText(trimmedNow + sep + transcript);
-              }}
-              onError={(message) => setError(message)}
+            <path
+              d="M19.14 12.94a7.49 7.49 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.51 7.51 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.14.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.65 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.49.39 1.04.7 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.51 7.51 0 0 0 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64Z"
+              stroke="currentColor"
+              strokeWidth="1.6"
+              strokeLinejoin="round"
             />
-          </div>
-        </div>
-
-        <textarea
-          id={textareaId}
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onFocus={() => setTextareaFocused(true)}
-          onBlur={() => setTextareaFocused(false)}
-          placeholder="What's on your mind?"
-          autoComplete="off"
-          spellCheck
-          rows={4}
-          disabled={submitting}
-          style={{ fieldSizing: "content", fontFamily: "var(--font-sans)" }}
-          className="block min-h-[104px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-muted focus:outline-none disabled:opacity-70"
-        />
-
-        <p className="mt-3 border-t border-border/70 pt-3 text-center text-[13px] italic leading-snug text-text-soft">
-          Nothing is sent without your review.
-        </p>
-      </section>
-
-      {error && (
-        <div className="mt-5">
-          <AuthNotice kind="error">
-            {error}{" "}
-            <button
-              type="button"
-              onClick={handleNext}
-              className="ml-1 underline"
-              disabled={submitting}
-            >
-              Try again
-            </button>
-          </AuthNotice>
-        </div>
-      )}
-
-      {keyboardOpen && (
-        <div
-          className="fixed z-50"
-          style={{
-            bottom: "calc(env(safe-area-inset-bottom) + 132px)",
-            right: "24px",
+            <circle cx="12" cy="12" r="2.6" stroke="currentColor" strokeWidth="1.6" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            void signOut();
           }}
+          className="rounded-full border border-sage/40 bg-white px-3 py-1 font-medium text-ink shadow-sm transition hover:bg-cream"
         >
-          <button
-            type="button"
-            onClick={handleNext}
-            onMouseDown={(e) => e.preventDefault()}
-            onTouchStart={(e) => e.stopPropagation()}
-            disabled={!canSubmit}
-            aria-busy={submitting}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-[15px] font-medium tracking-[0.02em] text-ivory shadow-[0_22px_55px_-28px_rgba(20,20,20,0.62),0_3px_8px_-4px_rgba(20,20,20,0.16)] transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft disabled:shadow-none"
-          >
-            {submitting && <Spinner size={16} />}
-            <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
-          </button>
-        </div>
-      )}
-    </section>
+          Sign out
+        </button>
+      </div>
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        userId={user.id}
+      />
+    </>
   );
 }
 
-function buildHomeBriefCopy({
-  needsYouCount,
-  urgentCount,
-  waitingCount,
-  doneCount,
-  fallbackHeadline,
-  fallbackLines,
-}: {
-  needsYouCount: number;
-  urgentCount: number;
-  waitingCount: number;
-  doneCount: number;
-  fallbackHeadline: string;
-  fallbackLines: string[];
-}): { headline: string; lines: string[] } {
-  if (urgentCount > 0) {
-    return {
-      headline:
-        urgentCount === 1
-          ? "One thing needs you now."
-          : `${formatHomeCount(urgentCount)} things need you now.`,
-      lines: buildActiveSupportLines({
-        needsYouCount,
-        waitingCount,
-        doneCount,
-        fallbackLines,
-      }),
-    };
-  }
-
-  if (needsYouCount > 0) {
-    return {
-      headline:
-        needsYouCount === 1
-          ? "One thing needs your attention."
-          : `${formatHomeCount(needsYouCount)} things need your attention.`,
-      lines: buildActiveSupportLines({
-        needsYouCount,
-        waitingCount,
-        doneCount,
-        fallbackLines,
-      }),
-    };
-  }
-
-  const clearLines = [
-    waitingCount > 0
-      ? `${formatHomeCount(waitingCount)} ${waitingCount === 1 ? "thing is" : "things are"} waiting on someone else.`
-      : "Everything is under control.",
-  ].filter((line): line is string => Boolean(line));
-
-  return {
-    headline: fallbackHeadline,
-    lines: clearLines,
-  };
+/**
+ * Nav is hidden on the recipient-facing confirmation page so the link feels
+ * like a single-purpose action surface, not the host's app.
+ */
+function ChipNav() {
+  const { status } = useAuth();
+  if (status !== "signed_in") return null;
+  return (
+    <nav className="mx-auto mt-2 flex max-w-3xl flex-wrap gap-2 px-5">
+      {navItems.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          className={({ isActive }) =>
+            [
+              "rounded-full border px-3 py-1 text-sm transition",
+              isActive
+                ? "border-sage bg-sage text-white"
+                : "border-sage/30 bg-white/60 text-ink hover:bg-white",
+            ].join(" ")
+          }
+        >
+          {item.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
 }
 
-function buildActiveSupportLines({
-  needsYouCount,
-  waitingCount,
-  fallbackLines,
-}: {
-  needsYouCount: number;
-  waitingCount: number;
-  doneCount: number;
-  fallbackLines: string[];
-}): string[] {
-  if (waitingCount > 0) {
-    return [
-      `${formatHomeCount(waitingCount)} ${waitingCount === 1 ? "thing is" : "things are"} waiting on someone else.`,
-    ];
-  }
-  if (needsYouCount === 1) return ["Everything else is under control."];
-  if (fallbackLines.length > 0) return fallbackLines.slice(0, 1);
-  return ["Everything else can wait."];
+/**
+ * App-level tasks force-load so the global ConfirmationNotices banner has
+ * fresh data the moment a signed-in user enters the app — regardless of
+ * which route they land on. Fires once per user per session; individual
+ * list screens (Actions / Follow-ups / Messages) still force-refresh on
+ * their own mounts via useTaskList, so this is just the floor.
+ */
+function useGlobalTasksRefresh() {
+  const { status, user } = useAuth();
+  const firedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (status !== "signed_in" || !user?.id) return;
+    if (firedRef.current === user.id) return;
+    firedRef.current = user.id;
+    void useTasksStore.getState().loadFor(user.id, { force: true });
+  }, [status, user?.id]);
 }
 
-function formatHomeCount(count: number): string {
-  if (count === 1) return "One";
-  if (count === 2) return "Two";
-  if (count === 3) return "Three";
-  return String(count);
+export default function App() {
+  useGlobalTasksRefresh();
+  return (
+    <div className="min-h-dvh bg-cream text-ink">
+      <header className="mx-auto flex max-w-3xl items-center gap-3 px-5 pt-6">
+        <span aria-hidden className="text-2xl">🌿</span>
+        <div className="flex flex-col leading-tight">
+          <span className="font-semibold">Ra7etBal · راحة بال</span>
+          <span className="text-xs text-ink/60">v2</span>
+        </div>
+        <HeaderUserStrip />
+      </header>
+
+      <ChipNav />
+
+      <main className="mx-auto mt-3 max-w-3xl px-5 pb-24">
+        {/* Owner confirmation banner — global. Self-gates by auth status
+            and by pathname (hidden on /confirm). Rendering above Routes
+            keeps it visible across Home / Actions / Follow-ups / Messages
+            / People / History. */}
+        <ConfirmationNotices />
+
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Home />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/auth" element={<AuthRoute />} />
+          <Route path="/reset" element={<ResetRoute />} />
+          <Route
+            path="/review"
+            element={
+              <ProtectedRoute>
+                <Review />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/actions"
+            element={
+              <ProtectedRoute>
+                <Actions />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/follow-ups"
+            element={
+              <ProtectedRoute>
+                <FollowUps />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/messages"
+            element={
+              <ProtectedRoute>
+                <Messages />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/people"
+            element={
+              <ProtectedRoute>
+                <People />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/history"
+            element={
+              <ProtectedRoute>
+                <History />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="/confirm" element={<Confirm />} />
+          <Route path="/debug" element={<Debug />} />
+          <Route
+            path="*"
+            element={
+              <section className="rounded-2xl border border-sage/30 bg-white/70 p-6">
+                <h2 className="text-xl font-semibold">Not found</h2>
+                <p className="mt-2 text-sm text-ink/70">
+                  This route does not exist yet.
+                </p>
+              </section>
+            }
+          />
+        </Routes>
+      </main>
+    </div>
+  );
 }
