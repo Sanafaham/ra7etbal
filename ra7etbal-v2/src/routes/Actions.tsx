@@ -5,12 +5,13 @@ import RefreshButton from "../components/RefreshButton";
 import Spinner from "../components/Spinner";
 import TaskCard from "../components/tasks/TaskCard";
 import { useTaskList } from "../hooks/useTaskList";
+import { buildDailyBrief } from "../lib/daily-brief";
 import { isReminderOverdue } from "../lib/reminder-time";
 import { usePeopleStore } from "../stores/people";
 import { useTasksStore } from "../stores/tasks";
 import type { Task } from "../types/task";
 
-type Filter = "open" | "done" | "all";
+type Filter = "brief" | "open" | "done" | "all";
 
 export default function Actions() {
   const { userId, tasks, tasksStatus, tasksError, messages, reload } = useTaskList();
@@ -46,10 +47,13 @@ export default function Actions() {
   }, [messages]);
 
   const filtered = useMemo(() => {
+    if (filter === "brief") return [];
     if (filter === "all") return tasks;
     if (filter === "done") return tasks.filter((t) => t.status === "done");
     return sortOpenTasks(tasks.filter((t) => t.status !== "done"), now);
   }, [tasks, filter, now]);
+
+  const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
 
   const phoneByName = useMemo(() => {
     const m = new Map<string, string>();
@@ -93,8 +97,8 @@ export default function Actions() {
         <RefreshButton onClick={reload} />
       </header>
 
-      <div role="tablist" aria-label="Filter" className="grid grid-cols-3 gap-1 rounded-full border border-sage/30 bg-cream/60 p-1">
-        {(["open", "done", "all"] as const).map((f) => (
+      <div role="tablist" aria-label="Filter" className="grid grid-cols-4 gap-1 rounded-full border border-sage/30 bg-cream/60 p-1">
+        {(["brief", "open", "done", "all"] as const).map((f) => (
           <button
             key={f}
             role="tab"
@@ -106,7 +110,7 @@ export default function Actions() {
               (filter === f ? "bg-sage text-white shadow-sm" : "text-ink/70 hover:text-ink")
             }
           >
-            {f === "open" ? "Open" : f === "done" ? "Done" : "All"}
+            {f === "brief" ? "Brief" : f === "open" ? "Open" : f === "done" ? "Done" : "All"}
           </button>
         ))}
       </div>
@@ -126,7 +130,18 @@ export default function Actions() {
         </div>
       )}
 
-      {!initialLoading && filtered.length === 0 && tasksStatus === "ready" && (
+      {!initialLoading && filter === "brief" && tasksStatus === "ready" && (
+        <BriefView
+          brief={brief}
+          now={now}
+          messageByTaskId={messageByTaskId}
+          phoneByName={phoneByName}
+          onToggleDone={handleToggleDone}
+          onDelete={handleDelete}
+        />
+      )}
+
+      {!initialLoading && filter !== "brief" && filtered.length === 0 && tasksStatus === "ready" && (
         <div className="rounded-2xl border border-dashed border-sage/40 bg-white/60 p-8 text-center text-sm text-ink/70">
           {filter === "done"
             ? "Nothing marked done yet."
@@ -136,7 +151,7 @@ export default function Actions() {
         </div>
       )}
 
-      {filtered.length > 0 && (
+      {filter !== "brief" && filtered.length > 0 && (
         <ul className="space-y-3">
           {filtered.map((t) => (
             <li key={t.id}>
@@ -151,6 +166,153 @@ export default function Actions() {
                 }
                 onToggleDone={handleToggleDone}
                 onDelete={handleDelete}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+interface BriefViewProps {
+  brief: ReturnType<typeof buildDailyBrief>;
+  now: Date;
+  messageByTaskId: Map<string, { content: string }>;
+  phoneByName: Map<string, string>;
+  onToggleDone: (task: Task) => Promise<unknown>;
+  onDelete: (task: Task) => Promise<unknown>;
+}
+
+function BriefView({
+  brief,
+  now,
+  messageByTaskId,
+  phoneByName,
+  onToggleDone,
+  onDelete,
+}: BriefViewProps) {
+  const total = brief.needsYou.length + brief.waiting.length + brief.done.length;
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-2">
+        <BriefCount label="Needs You" value={brief.needsYou.length} tone="rose" />
+        <BriefCount label="Waiting" value={brief.waiting.length} tone="amber" />
+        <BriefCount label="Done" value={brief.done.length} tone="sage" />
+      </div>
+
+      {total === 0 && (
+        <div className="rounded-2xl border border-dashed border-sage/40 bg-white/60 p-8 text-center text-sm text-ink/70">
+          Nothing needs your attention right now.
+        </div>
+      )}
+
+      <BriefSection
+        title="Needs You"
+        tasks={brief.needsYou}
+        empty="Nothing needs you right now."
+        now={now}
+        messageByTaskId={messageByTaskId}
+        phoneByName={phoneByName}
+        onToggleDone={onToggleDone}
+        onDelete={onDelete}
+      />
+      <BriefSection
+        title="Waiting"
+        tasks={brief.waiting}
+        empty="Nothing is waiting on someone else."
+        now={now}
+        messageByTaskId={messageByTaskId}
+        phoneByName={phoneByName}
+        onToggleDone={onToggleDone}
+        onDelete={onDelete}
+      />
+      <BriefSection
+        title="Done"
+        tasks={brief.done}
+        empty="Nothing completed today yet."
+        now={now}
+        messageByTaskId={messageByTaskId}
+        phoneByName={phoneByName}
+        onToggleDone={onToggleDone}
+        onDelete={onDelete}
+      />
+    </div>
+  );
+}
+
+function BriefCount({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "rose" | "amber" | "sage";
+}) {
+  const toneClass =
+    tone === "rose"
+      ? "border-rose-200 bg-rose-50 text-rose-900"
+      : tone === "amber"
+        ? "border-amber-200 bg-amber-50 text-amber-950"
+        : "border-sage/25 bg-sage/10 text-sage";
+
+  return (
+    <div className={"rounded-2xl border px-3 py-2 text-center " + toneClass}>
+      <p className="text-lg font-semibold leading-none">{value}</p>
+      <p className="mt-1 text-[11px] font-medium uppercase tracking-wide">{label}</p>
+    </div>
+  );
+}
+
+interface BriefSectionProps {
+  title: string;
+  tasks: Task[];
+  empty: string;
+  now: Date;
+  messageByTaskId: Map<string, { content: string }>;
+  phoneByName: Map<string, string>;
+  onToggleDone: (task: Task) => Promise<unknown>;
+  onDelete: (task: Task) => Promise<unknown>;
+}
+
+function BriefSection({
+  title,
+  tasks,
+  empty,
+  now,
+  messageByTaskId,
+  phoneByName,
+  onToggleDone,
+  onDelete,
+}: BriefSectionProps) {
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-ink/60">{title}</h2>
+        <span className="text-xs text-ink/45">{tasks.length}</span>
+      </div>
+
+      {tasks.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-sage/30 bg-white/50 px-4 py-5 text-sm text-ink/60">
+          {empty}
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {tasks.map((task) => (
+            <li key={task.id}>
+              <TaskCard
+                task={task}
+                now={now}
+                message={messageByTaskId.get(task.id) ?? null}
+                recipientPhone={
+                  task.assigned_to
+                    ? phoneByName.get(task.assigned_to.trim().toLowerCase()) ?? null
+                    : null
+                }
+                onToggleDone={onToggleDone}
+                onDelete={onDelete}
               />
             </li>
           ))}
