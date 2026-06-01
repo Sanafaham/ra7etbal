@@ -22,8 +22,8 @@ export default function Home() {
     useShallow((s) => ({ text: s.text, setText: s.setText })),
   );
 
-  const { loadFor: loadPeople } = usePeopleStore(
-  useShallow((s) => ({ loadFor: s.loadFor })),
+  const { loadFor: loadPeople, items: people } = usePeopleStore(
+    useShallow((s) => ({ loadFor: s.loadFor, items: s.items })),
   );
 
   const { tasks, loadTasks } = useTasksStore(
@@ -166,7 +166,7 @@ export default function Home() {
       className="mx-auto max-w-2xl"
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
     >
-      <header className="flex flex-col items-center gap-1 pt-2 text-center sm:pt-1">
+      <header className="flex flex-col items-center gap-1 pt-1 text-center">
         <div className="flex items-center gap-2 text-text-soft">
           <span aria-hidden className="text-base text-gold">✦</span>
           <span
@@ -182,7 +182,7 @@ export default function Home() {
         </p>
       </header>
 
-      <section className="mt-6 rounded-[30px] border border-sage/25 bg-warm-white/95 px-5 py-5 text-center shadow-[0_34px_90px_-70px_rgba(20,20,20,0.55)] backdrop-blur-sm sm:mt-8 sm:px-9 sm:py-7">
+      <section className="mt-3 rounded-[30px] border border-sage/25 bg-warm-white/95 px-5 py-4 text-center shadow-[0_34px_90px_-70px_rgba(20,20,20,0.55)] backdrop-blur-sm sm:mt-5 sm:px-9 sm:py-5">
         <div className="inline-flex items-center justify-center gap-2 rounded-full border border-white/80 bg-white/65 px-3 py-1.5 shadow-[0_10px_28px_-22px_rgba(20,20,20,0.45)]">
           <span
             aria-hidden
@@ -200,18 +200,18 @@ export default function Home() {
           </p>
         </div>
         <h1
-          className="mx-auto mt-3 max-w-xl text-[50px] leading-[0.95] tracking-normal text-text sm:text-[72px]"
+          className="mx-auto mt-2 max-w-xl text-[44px] leading-[0.95] tracking-normal text-text sm:text-[64px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {homeBriefCopy.headline}
         </h1>
-        <div className="mx-auto mt-4 max-w-md space-y-1.5 text-[15px] leading-snug text-text-soft sm:text-[16px]">
+        <div className="mx-auto mt-2 max-w-md space-y-1 text-[14px] leading-snug text-text-soft sm:text-[15px]">
           {supportingLines.map((line) => (
             <p key={line}>{line}</p>
           ))}
         </div>
 
-        <div className="mt-5 flex flex-col gap-2.5 sm:flex-row sm:justify-center">
+        <div className="mt-3.5 flex flex-col gap-2 sm:flex-row sm:justify-center">
           {clearMyHeadButton}
           <button
             type="button"
@@ -225,13 +225,13 @@ export default function Home() {
         <button
           type="button"
           onClick={viewBriefDetails}
-          className="mt-4 text-[13px] font-semibold text-text-soft underline-offset-4 hover:text-text hover:underline"
+          className="mt-2.5 text-[11px] font-medium text-text-muted underline-offset-4 hover:text-text-soft hover:underline"
         >
           View Details
         </button>
       </section>
 
-      <section className="mt-5 rounded-[26px] border border-border/80 bg-card/82 p-4 shadow-[0_24px_70px_-60px_rgba(20,20,20,0.45)] backdrop-blur-sm sm:mt-7 sm:p-5">
+      <section className="mt-3 rounded-[26px] border border-border/80 bg-card/82 p-4 shadow-[0_24px_70px_-60px_rgba(20,20,20,0.45)] backdrop-blur-sm sm:mt-4 sm:p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <label
             htmlFor={textareaId}
