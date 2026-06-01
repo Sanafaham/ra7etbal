@@ -198,7 +198,7 @@ function BriefView({
     <div className="space-y-5">
       <BriefSummary summary={brief.summary} />
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-1.5">
         <BriefCount label="Needs You" value={brief.needsYou.length} tone="rose" />
         <BriefCount label="Waiting" value={brief.waiting.length} tone="amber" />
         <BriefCount label="Done" value={brief.done.length} tone="sage" />
@@ -250,10 +250,10 @@ function BriefSummary({
   summary: ReturnType<typeof buildDailyBrief>["summary"];
 }) {
   return (
-    <section className="rounded-2xl border border-sage/25 bg-white/80 px-4 py-4 shadow-sm">
-      <p className="text-base font-medium leading-snug text-ink">{summary.headline}</p>
+    <section className="rounded-2xl border border-sage/30 bg-white/90 px-5 py-6 shadow-sm">
+      <p className="text-2xl font-semibold leading-tight text-ink">{summary.headline}</p>
       {summary.lines.length > 0 && (
-        <div className="mt-2 space-y-1.5 text-sm leading-snug text-ink/65">
+        <div className="mt-4 space-y-2 text-sm leading-relaxed text-ink/65">
           {summary.lines.map((line) => (
             <p key={line}>{line}</p>
           ))}
@@ -274,15 +274,15 @@ function BriefCount({
 }) {
   const toneClass =
     tone === "rose"
-      ? "border-rose-200 bg-rose-50 text-rose-900"
+      ? "border-rose-100 bg-white/45 text-rose-900/75"
       : tone === "amber"
-        ? "border-amber-200 bg-amber-50 text-amber-950"
-        : "border-sage/25 bg-sage/10 text-sage";
+        ? "border-amber-100 bg-white/45 text-amber-950/75"
+        : "border-sage/20 bg-white/45 text-sage/80";
 
   return (
-    <div className={"rounded-2xl border px-3 py-2 text-center " + toneClass}>
-      <p className="text-lg font-semibold leading-none">{value}</p>
-      <p className="mt-1 text-[11px] font-medium uppercase tracking-wide">{label}</p>
+    <div className={"rounded-xl border px-2.5 py-1.5 text-center " + toneClass}>
+      <p className="text-base font-semibold leading-none">{value}</p>
+      <p className="mt-1 text-[10px] font-medium uppercase tracking-wide">{label}</p>
     </div>
   );
 }
