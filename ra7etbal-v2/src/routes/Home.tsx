@@ -290,22 +290,6 @@ export default function Home() {
         </div>
       )}
 
-      {!keyboardOpen && (
-        <p className="mt-4 text-center text-[11px] tracking-wide text-text-muted">
-          Nothing is sent without review.
-          {people.length === 0 && (
-            <>
-              {" "}
-              ·{" "}
-              <a href="/people" className="underline-offset-2 hover:underline">
-                Add people
-              </a>{" "}
-              first if you want to delegate.
-            </>
-          )}
-        </p>
-      )}
-
       {keyboardOpen && (
         <div
           className="fixed z-50"
