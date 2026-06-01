@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import RefreshButton from "../components/RefreshButton";
@@ -14,9 +15,10 @@ import type { Task } from "../types/task";
 type Filter = "brief" | "open" | "done" | "all";
 
 export default function Actions() {
+  const location = useLocation();
   const { userId, tasks, tasksStatus, tasksError, messages, reload } = useTaskList();
   const tasksStore = useTasksStore;
-  const [filter, setFilter] = useState<Filter>("open");
+  const [filter, setFilter] = useState<Filter>(() => getInitialFilter(location.state));
   const [now, setNow] = useState(() => new Date());
   const { people, loadedForUserId: peopleLoadedForUserId, loadPeople } =
     usePeopleStore(
@@ -173,6 +175,19 @@ export default function Actions() {
       )}
     </section>
   );
+}
+
+function getInitialFilter(state: unknown): Filter {
+  if (
+    state &&
+    typeof state === "object" &&
+    "initialFilter" in state &&
+    state.initialFilter === "brief"
+  ) {
+    return "brief";
+  }
+
+  return "open";
 }
 
 interface BriefViewProps {
