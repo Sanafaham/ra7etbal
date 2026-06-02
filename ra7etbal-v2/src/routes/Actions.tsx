@@ -207,16 +207,25 @@ function BriefView({
   onToggleDone,
   onDelete,
 }: BriefViewProps) {
-  const total = brief.needsYou.length + brief.waiting.length + brief.done.length;
+  const total =
+    brief.needsAttention.length + brief.waitingOnOthers.length + brief.later.length;
 
   return (
     <div className="space-y-5">
       <BriefSummary summary={brief.summary} />
 
       <div className="grid grid-cols-3 gap-1.5">
-        <BriefCount label="Needs You" value={brief.needsYou.length} tone="rose" />
-        <BriefCount label="Waiting" value={brief.waiting.length} tone="amber" />
-        <BriefCount label="Done" value={brief.done.length} tone="sage" />
+        <BriefCount
+          label="Needs your attention"
+          value={brief.needsAttention.length}
+          tone="rose"
+        />
+        <BriefCount
+          label="Waiting on others"
+          value={brief.waitingOnOthers.length}
+          tone="amber"
+        />
+        <BriefCount label="Later" value={brief.later.length} tone="sage" />
       </div>
 
       {total === 0 && (
@@ -226,9 +235,9 @@ function BriefView({
       )}
 
       <BriefSection
-        title="Needs You"
-        tasks={brief.needsYou}
-        empty="Nothing needs you right now."
+        title="Needs your attention"
+        tasks={brief.needsAttention}
+        empty="Nothing needs your attention right now."
         now={now}
         messageByTaskId={messageByTaskId}
         phoneByName={phoneByName}
@@ -236,9 +245,9 @@ function BriefView({
         onDelete={onDelete}
       />
       <BriefSection
-        title="Waiting"
-        tasks={brief.waiting}
-        empty="Nothing is waiting on someone else."
+        title="Waiting on others"
+        tasks={brief.waitingOnOthers}
+        empty="Nothing is waiting on others."
         now={now}
         messageByTaskId={messageByTaskId}
         phoneByName={phoneByName}
@@ -246,9 +255,9 @@ function BriefView({
         onDelete={onDelete}
       />
       <BriefSection
-        title="Done"
-        tasks={brief.done}
-        empty="Nothing completed today yet."
+        title="Later"
+        tasks={brief.later}
+        empty="Nothing for later."
         now={now}
         messageByTaskId={messageByTaskId}
         phoneByName={phoneByName}

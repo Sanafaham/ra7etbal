@@ -2,8 +2,14 @@ import { isReminderOverdue } from "./reminder-time";
 import type { Task } from "../types/task";
 
 export interface DailyBrief {
+  needsAttention: Task[];
+  waitingOnOthers: Task[];
+  later: Task[];
+  /** Legacy alias for Home/Actions until those screens move to needsAttention. */
   needsYou: Task[];
+  /** Legacy alias for Home/Actions until those screens move to waitingOnOthers. */
   waiting: Task[];
+  /** Legacy bucket for Home/Actions until those screens move to later. */
   done: Task[];
   summary: DailyBriefSummary;
 }
@@ -19,14 +25,18 @@ export function buildDailyBrief(tasks: Task[], now = new Date()): DailyBrief {
     activeTasks.filter((task) => isWaitingTask(task)).map((task) => task.id),
   );
 
-  const needsYou = activeTasks
+  const needsAttention = activeTasks
     .filter((task) => task.status !== "done")
     .filter((task) => isNeedsYouTask(task, waitingIds, now))
     .sort((a, b) => getNeedsYouSortValue(a, now) - getNeedsYouSortValue(b, now));
 
-  const waiting = activeTasks
+  const waitingOnOthers = activeTasks
     .filter((task) => isWaitingTask(task))
     .sort((a, b) => getDateValue(b.created_at) - getDateValue(a.created_at));
+
+  const later = activeTasks
+    .filter((task) => isLaterTask(task, needsAttention, waitingOnOthers))
+    .sort((a, b) => getLaterSortValue(a) - getLaterSortValue(b));
 
   const done = activeTasks
     .filter((task) => task.status === "done")
@@ -34,51 +44,44 @@ export function buildDailyBrief(tasks: Task[], now = new Date()): DailyBrief {
     .sort((a, b) => getDoneSortValue(b) - getDoneSortValue(a));
 
   return {
-    needsYou,
-    waiting,
+    needsAttention,
+    waitingOnOthers,
+    later,
+    needsYou: needsAttention,
+    waiting: waitingOnOthers,
     done,
-    summary: buildBriefSummary(activeTasks, needsYou, waiting, done, now),
+    summary: buildBriefSummary(needsAttention, waitingOnOthers, later, now),
   };
 }
 
 function buildBriefSummary(
-  activeTasks: Task[],
-  needsYou: Task[],
-  waiting: Task[],
-  done: Task[],
+  needsAttention: Task[],
+  waitingOnOthers: Task[],
+  later: Task[],
   now: Date,
 ): DailyBriefSummary {
-  const urgentCount = needsYou.filter((task) => isUrgentTask(task, now)).length;
-  const notUrgentCount = activeTasks.filter((task) =>
-    isNotUrgentTask(task, needsYou, waiting, done),
-  ).length;
+  const urgentCount = needsAttention.filter((task) => isUrgentTask(task, now)).length;
 
   const headline =
     urgentCount > 0
       ? `${formatCount(urgentCount, "thing")} ${urgentCount === 1 ? "needs" : "need"} your attention now.`
-      : needsYou.length > 0
-        ? `You have ${formatCount(needsYou.length, "thing")} that ${needsYou.length === 1 ? "needs" : "need"} attention today.`
+      : needsAttention.length > 0
+        ? `You have ${formatCount(needsAttention.length, "thing")} that ${needsAttention.length === 1 ? "needs" : "need"} attention today.`
         : `You're clear ${getClearTimeframe(now)}.`;
 
   const lines: string[] = [];
 
-  if (waiting.length > 0) {
+  if (waitingOnOthers.length > 0) {
     lines.push(
-      `${formatCount(waiting.length, "thing")} ${waiting.length === 1 ? "is" : "are"} waiting on someone else. ${waiting.length === 1 ? "It is" : "They are"} not yours to chase right now.`,
+      `${formatCount(waitingOnOthers.length, "thing")} ${waitingOnOthers.length === 1 ? "is" : "are"} waiting on someone else. ${waitingOnOthers.length === 1 ? "It is" : "They are"} not yours to chase right now.`,
     );
   }
 
-  if (done.length > 0) {
-    lines.push(
-      `${formatCount(done.length, "thing")} ${done.length === 1 ? "is" : "are"} already handled. You can stop thinking about ${done.length === 1 ? "it" : "them"}.`,
-    );
+  if (later.length > 0) {
+    lines.push(`${formatCount(later.length, "thing")} can wait until later.`);
   }
 
-  if (notUrgentCount > 0) {
-    lines.push(`${formatCount(notUrgentCount, "thing")} ${notUrgentCount === 1 ? "is" : "are"} not urgent.`);
-  }
-
-  if (needsYou.length === 0 && waiting.length === 0 && notUrgentCount === 0) {
+  if (needsAttention.length === 0 && waitingOnOthers.length === 0 && later.length === 0) {
     lines.push("You're clear for tonight.");
   }
 
@@ -114,15 +117,13 @@ function isUrgentTask(task: Task, now: Date): boolean {
   return task.type === "reminder" && isReminderOverdue(task.due_at, now);
 }
 
-function isNotUrgentTask(
+function isLaterTask(
   task: Task,
-  needsYou: Task[],
-  waiting: Task[],
-  done: Task[],
+  needsAttention: Task[],
+  waitingOnOthers: Task[],
 ): boolean {
-  if (needsYou.some((item) => item.id === task.id)) return false;
-  if (waiting.some((item) => item.id === task.id)) return false;
-  if (done.some((item) => item.id === task.id)) return false;
+  if (needsAttention.some((item) => item.id === task.id)) return false;
+  if (waitingOnOthers.some((item) => item.id === task.id)) return false;
   if (task.status === "done" || task.status === "cancelled") return false;
   return true;
 }
@@ -159,6 +160,11 @@ function getNeedsYouSortValue(task: Task, now: Date): number {
 
 function getDoneSortValue(task: Task): number {
   return getDateValue(task.confirmed_at ?? task.created_at);
+}
+
+function getLaterSortValue(task: Task): number {
+  if (task.type === "reminder" && task.due_at) return getDateValue(task.due_at);
+  return 10_000_000_000_000 - getDateValue(task.created_at);
 }
 
 function getDateValue(value: string | null): number {
