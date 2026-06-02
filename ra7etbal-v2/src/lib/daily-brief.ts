@@ -61,15 +61,20 @@ function buildBriefSummary(
   later: Task[],
   now: Date,
 ): DailyBriefSummary {
-  const sentences: string[] = [];
+  // --- State headline always comes first so Home hero shows status, not task text ---
+  let stateHeadline: string;
+  if (needsAttention.length === 0) stateHeadline = "You're clear tonight.";
+  else if (needsAttention.length === 1) stateHeadline = "One thing needs your attention.";
+  else stateHeadline = "A few things need your attention.";
 
-  // --- Needs attention ---
-  if (needsAttention.length === 0) {
-    sentences.push("You're clear tonight.");
-  } else if (needsAttention.length === 1) {
-    sentences.push(buildAttentionSentence(needsAttention[0], now));
-  } else {
-    sentences.push("A few things need your attention.");
+  const sentences: string[] = [stateHeadline];
+
+  // --- Detail sentences ---
+  if (needsAttention.length === 1) {
+    // Push the specific item as a supporting line
+    const detail = buildAttentionSentence(needsAttention[0], now);
+    sentences.push(detail);
+  } else if (needsAttention.length >= 2) {
     // First two items become supporting lines in Home
     needsAttention.slice(0, 2).forEach((task) => {
       const desc = briefDesc(task.description);
@@ -138,14 +143,12 @@ function briefDesc(raw: string): string {
  */
 function cleanForWaiting(raw: string): string {
   const desc = briefDesc(raw);
-  return desc.replace(
+  const cleaned = desc.replace(
     /^(Confirm|Ask|Tell|Remind|Have|Message|Send|Check|Follow up on|Follow up|Get)\s+/i,
-    (_, verb) => {
-      // Lowercase the remainder so "Confirm Dinner" → "dinner"
-      const rest = desc.slice(verb.length);
-      return rest.charAt(0).toLowerCase() + rest.slice(1);
-    },
+    "",
   );
+  if (cleaned === desc) return desc;
+  return cleaned.charAt(0).toLowerCase() + cleaned.slice(1);
 }
 
 function capitalize(str: string): string {
