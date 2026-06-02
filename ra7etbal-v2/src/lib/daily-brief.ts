@@ -116,7 +116,7 @@ function buildAttentionSentence(task: Task, now: Date): string {
   const desc = briefDesc(task.description);
   if (!desc) return "One thing needs your attention.";
   if (task.type === "reminder" && task.due_at) {
-    if (isReminderOverdue(task.due_at, now)) return `${desc}. It's overdue.`;
+    if (isReminderOverdue(task.due_at, now)) return `Overdue: ${desc.charAt(0).toLowerCase()}${desc.slice(1)}.`;
     return `${desc} today.`;
   }
   return `${desc} needs your attention.`;
