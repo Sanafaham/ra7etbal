@@ -15,6 +15,7 @@ export interface DailyBrief {
 }
 
 export interface DailyBriefSummary {
+  paragraph: string;
   headline: string;
   lines: string[];
 }
@@ -50,7 +51,7 @@ export function buildDailyBrief(tasks: Task[], now = new Date()): DailyBrief {
     needsYou: needsAttention,
     waiting: waitingOnOthers,
     done,
-    summary: buildBriefSummary(needsAttention, waitingOnOthers, later, now),
+    summary: buildBriefSummary(needsAttention, waitingOnOthers, later, done),
   };
 }
 
@@ -58,34 +59,42 @@ function buildBriefSummary(
   needsAttention: Task[],
   waitingOnOthers: Task[],
   later: Task[],
-  now: Date,
+  alreadyHandled: Task[],
 ): DailyBriefSummary {
-  const urgentCount = needsAttention.filter((task) => isUrgentTask(task, now)).length;
+  const sentences: string[] = [];
 
-  const headline =
-    urgentCount > 0
-      ? `${formatCount(urgentCount, "thing")} ${urgentCount === 1 ? "needs" : "need"} your attention now.`
-      : needsAttention.length > 0
-        ? `You have ${formatCount(needsAttention.length, "thing")} that ${needsAttention.length === 1 ? "needs" : "need"} attention today.`
-        : `You're clear ${getClearTimeframe(now)}.`;
-
-  const lines: string[] = [];
+  if (needsAttention.length === 0) {
+    sentences.push("Nothing needs your attention right now.");
+  } else if (needsAttention.length === 1) {
+    sentences.push("One thing needs your attention today.");
+  } else {
+    sentences.push(`${formatBriefCount(needsAttention.length)} things need your attention.`);
+  }
 
   if (waitingOnOthers.length > 0) {
-    lines.push(
-      `${formatCount(waitingOnOthers.length, "thing")} ${waitingOnOthers.length === 1 ? "is" : "are"} waiting on someone else. ${waitingOnOthers.length === 1 ? "It is" : "They are"} not yours to chase right now.`,
+    sentences.push(
+      `${formatBriefCount(waitingOnOthers.length)} ${waitingOnOthers.length === 1 ? "item is" : "items are"} waiting on other people.`,
     );
   }
 
-  if (later.length > 0) {
-    lines.push(`${formatCount(later.length, "thing")} can wait until later.`);
+  if (alreadyHandled.length > 0) {
+    sentences.push(
+      `${formatBriefCount(alreadyHandled.length)} ${alreadyHandled.length === 1 ? "item is" : "items are"} already handled.`,
+    );
   }
 
-  if (needsAttention.length === 0 && waitingOnOthers.length === 0 && later.length === 0) {
-    lines.push("You're clear for tonight.");
+  if (needsAttention.length === 1 && waitingOnOthers.length === 0 && later.length === 0) {
+    sentences.push("Everything else is under control.");
+  } else if (later.length > 0 || waitingOnOthers.length > 0 || needsAttention.length > 1) {
+    sentences.push("Everything else can wait.");
+  } else if (needsAttention.length === 0 && alreadyHandled.length === 0) {
+    sentences.push("Everything else is under control.");
   }
 
-  return { headline, lines };
+  const paragraph = sentences.join(" ");
+  const [headline, ...lines] = sentences;
+
+  return { paragraph, headline, lines };
 }
 
 function isNeedsYouTask(task: Task, waitingIds: Set<string>, now: Date): boolean {
@@ -110,11 +119,6 @@ function isWaitingTask(task: Task): boolean {
 function isWaitingInterventionTask(task: Task): boolean {
   if (task.type !== "delegation" && task.type !== "followup") return false;
   return task.status === "cancelled";
-}
-
-function isUrgentTask(task: Task, now: Date): boolean {
-  if (task.status === "cancelled") return true;
-  return task.type === "reminder" && isReminderOverdue(task.due_at, now);
 }
 
 function isLaterTask(
@@ -173,15 +177,11 @@ function getDateValue(value: string | null): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
-function formatCount(count: number, singular: string): string {
-  return `${count} ${count === 1 ? singular : `${singular}s`}`;
-}
-
-function getClearTimeframe(now: Date): string {
-  const hour = now.getHours();
-  if (hour >= 5 && hour < 12) return "this morning";
-  if (hour >= 12 && hour < 17) return "this afternoon";
-  return "tonight";
+function formatBriefCount(count: number): string {
+  if (count === 1) return "One";
+  if (count === 2) return "Two";
+  if (count === 3) return "Three";
+  return String(count);
 }
 
 function isSameLocalDay(a: Date, b: Date): boolean {
