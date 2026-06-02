@@ -81,21 +81,9 @@ export default function Home() {
   const homeBriefCopy = useMemo(
     () =>
       buildHomeBriefCopy({
-        needsAttentionCount: brief.needsAttention.length,
-        urgentCount,
-        waitingOnOthersCount: brief.waitingOnOthers.length,
-        laterCount: brief.later.length,
-        fallbackHeadline: brief.summary.headline,
-        fallbackLines: brief.summary.lines,
+        paragraph: brief.summary.paragraph,
       }),
-    [
-      brief.later.length,
-      brief.needsAttention.length,
-      brief.summary.headline,
-      brief.summary.lines,
-      brief.waitingOnOthers.length,
-      urgentCount,
-    ],
+    [brief.summary.paragraph],
   );
   const supportingLines = homeBriefCopy.lines;
 
@@ -289,95 +277,16 @@ export default function Home() {
 }
 
 function buildHomeBriefCopy({
-  needsAttentionCount,
-  urgentCount,
-  waitingOnOthersCount,
-  laterCount,
-  fallbackHeadline,
-  fallbackLines,
+  paragraph,
 }: {
-  needsAttentionCount: number;
-  urgentCount: number;
-  waitingOnOthersCount: number;
-  laterCount: number;
-  fallbackHeadline: string;
-  fallbackLines: string[];
+  paragraph: string;
 }): { headline: string; lines: string[] } {
-  if (urgentCount > 0) {
-    return {
-      headline:
-        urgentCount === 1
-          ? "One thing needs you now."
-          : `${formatHomeCount(urgentCount)} things need you now.`,
-      lines: buildActiveSupportLines({
-        needsAttentionCount,
-        waitingOnOthersCount,
-        laterCount,
-        fallbackLines,
-      }),
-    };
-  }
-
-  if (needsAttentionCount > 0) {
-    return {
-      headline:
-        needsAttentionCount === 1
-          ? "One thing needs your attention."
-          : `${formatHomeCount(needsAttentionCount)} things need your attention.`,
-      lines: buildActiveSupportLines({
-        needsAttentionCount,
-        waitingOnOthersCount,
-        laterCount,
-        fallbackLines,
-      }),
-    };
-  }
-
-  const clearLines = [
-    "Nothing urgent is overdue.",
-    waitingOnOthersCount > 0
-      ? `${formatHomeCount(waitingOnOthersCount)} ${waitingOnOthersCount === 1 ? "thing is" : "things are"} waiting on others.`
-      : null,
-    laterCount > 0
-      ? `${formatHomeCount(laterCount)} ${laterCount === 1 ? "thing can" : "things can"} wait until later.`
-      : null,
-  ].filter((line): line is string => Boolean(line));
+  const sentences = paragraph.match(/[^.]+[.]/g)?.map((sentence) => sentence.trim()) ?? [
+    paragraph,
+  ];
 
   return {
-    headline: fallbackHeadline,
-    lines: clearLines.length > 0 ? clearLines.slice(0, 3) : ["Nothing urgent is overdue."],
+    headline: sentences[0] ?? paragraph,
+    lines: sentences.slice(1),
   };
-}
-
-function buildActiveSupportLines({
-  needsAttentionCount,
-  waitingOnOthersCount,
-  laterCount,
-  fallbackLines,
-}: {
-  needsAttentionCount: number;
-  waitingOnOthersCount: number;
-  laterCount: number;
-  fallbackLines: string[];
-}): string[] {
-  const lines = [
-    waitingOnOthersCount > 0
-      ? `${formatHomeCount(waitingOnOthersCount)} ${waitingOnOthersCount === 1 ? "thing is" : "things are"} waiting on others.`
-      : needsAttentionCount === 1
-        ? "Everything else is under control."
-        : "Everything else can wait.",
-    laterCount > 0
-      ? `${formatHomeCount(laterCount)} ${laterCount === 1 ? "thing can" : "things can"} wait until later.`
-      : null,
-  ].filter((line): line is string => Boolean(line));
-
-  if (lines.length > 0) return lines.slice(0, 3);
-  return fallbackLines.length > 0 ? fallbackLines.slice(0, 2) : ["Everything else can wait."];
-}
-
-function formatHomeCount(count: number): string {
-  if (count === 1) return "One";
-  if (count === 2) return "Two";
-  if (count === 3) return "Three";
-  return String(count);
 }
