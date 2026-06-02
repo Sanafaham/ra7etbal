@@ -104,7 +104,7 @@ function buildBriefSummary(
   // Only show when there are enough active items that the reassurance is meaningful (≥ 3 total).
   const totalActive = needsAttention.length + waitingOnOthers.length + later.length;
   if (totalActive >= 3) {
-    sentences.push("Everything else is under control.");
+    sentences.push("Everything else is on track.");
   }
 
   const paragraph = sentences.join(" ");
@@ -116,7 +116,7 @@ function buildAttentionSentence(task: Task, now: Date): string {
   const desc = briefDesc(task.description);
   if (!desc) return "One thing needs your attention.";
   if (task.type === "reminder" && task.due_at) {
-    if (isReminderOverdue(task.due_at, now)) return `Overdue: ${desc.charAt(0).toLowerCase()}${desc.slice(1)}.`;
+    if (isReminderOverdue(task.due_at, now)) return `${desc} is overdue.`;
     return `${desc} today.`;
   }
   return `${desc} needs your attention.`;
