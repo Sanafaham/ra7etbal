@@ -275,14 +275,7 @@ function BriefSummary({
 }) {
   return (
     <section className="rounded-2xl border border-sage/30 bg-white/90 px-5 py-6 shadow-sm">
-      <p className="text-2xl font-semibold leading-tight text-ink">{summary.headline}</p>
-      {summary.lines.length > 0 && (
-        <div className="mt-4 space-y-2 text-sm leading-relaxed text-ink/65">
-          {summary.lines.map((line) => (
-            <p key={line}>{line}</p>
-          ))}
-        </div>
-      )}
+      <p className="text-lg font-semibold leading-relaxed text-ink">{summary.paragraph}</p>
     </section>
   );
 }
