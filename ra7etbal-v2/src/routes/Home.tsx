@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
+import ElevenLabsAgentWidget from "../components/home/ElevenLabsAgentWidget";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
@@ -181,6 +182,7 @@ export default function Home() {
             Ask Ra7etBal
           </button>
         </div>
+        <ElevenLabsAgentWidget />
 
         <button
           type="button"
