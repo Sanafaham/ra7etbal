@@ -90,7 +90,7 @@ function buildBriefSummary(
       .map((t) => capitalize(t.assigned_to?.trim() ?? ""))
       .filter(Boolean);
     if (names.length === 2) {
-      sentences.push(`${names[0]} and ${names[1]} haven't confirmed yet.`);
+      sentences.push(`Waiting on ${names[0]} and ${names[1]}.`);
     } else {
       sentences.push("Two items are waiting on others.");
     }
@@ -101,9 +101,9 @@ function buildBriefSummary(
   }
 
   // --- Calm close ---
-  // Add when there is something to reassure about, but not when already clear with nothing pending.
-  const hasActiveItems = needsAttention.length > 0 || waitingOnOthers.length > 0 || later.length > 0;
-  if (needsAttention.length <= 1 && hasActiveItems) {
+  // Only show when there are enough active items that the reassurance is meaningful (≥ 3 total).
+  const totalActive = needsAttention.length + waitingOnOthers.length + later.length;
+  if (totalActive >= 3) {
     sentences.push("Everything else is under control.");
   }
 
@@ -116,7 +116,7 @@ function buildAttentionSentence(task: Task, now: Date): string {
   const desc = briefDesc(task.description);
   if (!desc) return "One thing needs your attention.";
   if (task.type === "reminder" && task.due_at) {
-    if (isReminderOverdue(task.due_at, now)) return `${desc} is overdue.`;
+    if (isReminderOverdue(task.due_at, now)) return `${desc}. It's overdue.`;
     return `${desc} today.`;
   }
   return `${desc} needs your attention.`;
@@ -125,8 +125,8 @@ function buildAttentionSentence(task: Task, now: Date): string {
 function buildWaitingSentence(task: Task): string {
   const name = capitalize(task.assigned_to?.trim() ?? "");
   const desc = cleanForWaiting(task.description);
-  if (name && desc) return `${name} hasn't confirmed ${desc} yet.`;
-  if (name) return `${name} hasn't confirmed yet.`;
+  if (name && desc) return `Waiting on ${name} to confirm ${desc}.`;
+  if (name) return `Waiting on ${name}.`;
   return "One item is waiting on someone.";
 }
 
