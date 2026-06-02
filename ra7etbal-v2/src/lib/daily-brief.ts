@@ -112,23 +112,40 @@ function buildAttentionSentence(task: Task, now: Date): string {
   if (!desc) return "One thing needs your attention.";
   if (task.type === "reminder" && task.due_at) {
     if (isReminderOverdue(task.due_at, now)) return `${desc} is overdue.`;
-    return `${desc} is due today.`;
+    return `${desc} today.`;
   }
   return `${desc} needs your attention.`;
 }
 
 function buildWaitingSentence(task: Task): string {
   const name = capitalize(task.assigned_to?.trim() ?? "");
-  const desc = briefDesc(task.description);
+  const desc = cleanForWaiting(task.description);
   if (name && desc) return `${name} hasn't confirmed ${desc} yet.`;
   if (name) return `${name} hasn't confirmed yet.`;
   return "One item is waiting on someone.";
 }
 
-/** Capitalize first letter, truncate to 45 chars. */
+/** Strip trailing punctuation, capitalize, truncate to 45 chars. */
 function briefDesc(raw: string): string {
-  const s = capitalize(raw.trim());
+  const s = capitalize(raw.trim().replace(/[.!?]+$/, "").trim());
   return s.length > 45 ? s.slice(0, 45).trimEnd() + "…" : s;
+}
+
+/**
+ * For waiting sentences: strip leading action verbs so
+ * "Confirm dinner" → "dinner" and the sentence reads naturally:
+ * "Grace hasn't confirmed dinner yet."
+ */
+function cleanForWaiting(raw: string): string {
+  const desc = briefDesc(raw);
+  return desc.replace(
+    /^(Confirm|Ask|Tell|Remind|Have|Message|Send|Check|Follow up on|Follow up|Get)\s+/i,
+    (_, verb) => {
+      // Lowercase the remainder so "Confirm Dinner" → "dinner"
+      const rest = desc.slice(verb.length);
+      return rest.charAt(0).toLowerCase() + rest.slice(1);
+    },
+  );
 }
 
 function capitalize(str: string): string {
