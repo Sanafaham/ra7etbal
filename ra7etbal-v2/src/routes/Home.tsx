@@ -2,7 +2,9 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
-import ElevenLabsAgentWidget from "../components/home/ElevenLabsAgentWidget";
+import ElevenLabsAgentWidget, {
+  type ElevenLabsBriefSnapshot,
+} from "../components/home/ElevenLabsAgentWidget";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
@@ -85,6 +87,10 @@ export default function Home() {
         paragraph: brief.summary.paragraph,
       }),
     [brief.summary.paragraph],
+  );
+  const elevenLabsBriefSnapshot = useMemo(
+    () => buildElevenLabsBriefSnapshot(brief),
+    [brief],
   );
   const supportingLines = homeBriefCopy.lines;
 
@@ -182,7 +188,7 @@ export default function Home() {
             Ask Ra7etBal
           </button>
         </div>
-        <ElevenLabsAgentWidget />
+        <ElevenLabsAgentWidget briefSnapshot={elevenLabsBriefSnapshot} />
 
         <button
           type="button"
@@ -291,4 +297,24 @@ function buildHomeBriefCopy({
     headline: sentences[0] ?? paragraph,
     lines: sentences.slice(1),
   };
+}
+
+function buildElevenLabsBriefSnapshot(
+  brief: ReturnType<typeof buildDailyBrief>,
+): ElevenLabsBriefSnapshot {
+  return {
+    summary: brief.summary.paragraph,
+    needs_attention_count: brief.needsAttention.length,
+    waiting_on_others_count: brief.waitingOnOthers.length,
+    later_count: brief.later.length,
+    needs_attention_items: brief.needsAttention.slice(0, 3).map(getBriefItemText),
+    waiting_items: brief.waitingOnOthers.slice(0, 3).map(getBriefItemText),
+    later_items: brief.later.slice(0, 3).map(getBriefItemText),
+  };
+}
+
+function getBriefItemText(
+  task: ReturnType<typeof buildDailyBrief>["needsAttention"][number],
+): string {
+  return task.description.trim();
 }
