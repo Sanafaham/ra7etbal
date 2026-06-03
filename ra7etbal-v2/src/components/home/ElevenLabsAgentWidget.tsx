@@ -14,6 +14,8 @@ type AgentMode = "listening" | "speaking";
 // Smart follow-up helpers
 // ---------------------------------------------------------------------------
 
+/** Same criteria as isWaitingTask() in daily-brief.ts — not imported to avoid
+ *  coupling the widget to brief logic. */
 function isOpenWaitingTask(task: {
   archived_at: string | null;
   status: string;
@@ -29,6 +31,8 @@ function isOpenWaitingTask(task: {
   return false;
 }
 
+/** Strip leading action verbs so the topic reads naturally in a sentence.
+ *  Mirrors cleanForWaiting() in daily-brief.ts. */
 function topicFromDescription(description: string): string {
   const trimmed = description.trim().replace(/[.!?]+$/, "").trim();
   const cleaned = trimmed.replace(
@@ -36,9 +40,11 @@ function topicFromDescription(description: string): string {
     "",
   );
   const result = cleaned === trimmed ? trimmed : cleaned;
+  // lower-case the first letter so it fits mid-sentence
   return result.charAt(0).toLowerCase() + result.slice(1);
 }
 
+/** Build the default follow-up message text from a task description. */
 function buildFollowUpText(description: string): string {
   const topic = topicFromDescription(description);
   return `Following up on ${topic}. Let me know when done.`;
@@ -62,15 +68,23 @@ export default function ElevenLabsAgentWidget({
     ReturnType<typeof Conversation.startSession>
   > | null>(null);
 
+  /** Per-person send cooldown: personName.toLowerCase() → timestamp of last send */
   const lastSentRef = useRef<Map<string, number>>(new Map());
 
+  // ------------------------------------------------------------------
+  // Client tool: send_followup
+  // ------------------------------------------------------------------
   const sendFollowup = useCallback(
     async ({
       name,
       message,
+      allowNewFollowup = false,
     }: {
       name: string;
       message?: string;
+      /** Set to true only after the user has explicitly confirmed they want to
+       *  send a new follow-up even though no matching open task was found. */
+      allowNewFollowup?: boolean;
     }): Promise<string> => {
       const normalizedName = name.trim();
       if (!normalizedName) {
@@ -113,15 +127,18 @@ export default function ElevenLabsAgentWidget({
       let messageText = message?.trim() ?? "";
       let topicLabel = messageText || "";
 
-      if (!messageText) {
-        const tasks = useTasksStore.getState().items;
-        const openTasks = tasks.filter(
-          (t) =>
-            isOpenWaitingTask(t) &&
-            (t.assigned_to ?? "").trim().toLowerCase() ===
-              normalizedName.toLowerCase(),
-        );
+      // Always compute open tasks — needed for both the no-message path and
+      // the stale-task guard on the explicit-message path.
+      const tasks = useTasksStore.getState().items;
+      const openTasks = tasks.filter(
+        (t) =>
+          isOpenWaitingTask(t) &&
+          (t.assigned_to ?? "").trim().toLowerCase() ===
+            normalizedName.toLowerCase(),
+      );
 
+      if (!messageText) {
+        // No message provided — derive from open tasks.
         if (openTasks.length === 0) {
           return `I could not find an open item for ${person.name}. Ask the user what to follow up about.`;
         }
@@ -134,14 +151,33 @@ export default function ElevenLabsAgentWidget({
           return `I found more than one open item for ${person.name}: ${topics}. Ask the user which one to follow up on.`;
         }
 
-        const task = openTasks[0];
-        messageText = buildFollowUpText(task.description);
-        topicLabel = topicFromDescription(task.description);
+        // Exactly one open task — use it
+        const singleTask = openTasks[0];
+        messageText = buildFollowUpText(singleTask.description);
+        topicLabel = topicFromDescription(singleTask.description);
       } else {
+        // Explicit message provided — guard against sending about a task that
+        // is no longer open (done, deleted, archived) unless the user confirmed.
         topicLabel = topicFromDescription(messageText);
+
+        if (!allowNewFollowup) {
+          const messageLower = messageText.toLowerCase();
+          const matchingOpen = openTasks.find((t) =>
+            t.description.toLowerCase().includes(messageLower) ||
+            messageLower.includes(topicFromDescription(t.description).toLowerCase()),
+          );
+
+          if (!matchingOpen) {
+            // No open task matches this topic — warn before sending.
+            if (openTasks.length === 0) {
+              return `I do not see any open items for ${person.name}. Ask the user if they still want to send a new follow-up.`;
+            }
+            return `I do not see "${topicLabel}" as an open item for ${person.name}. Ask the user if they still want to send a new follow-up.`;
+          }
+        }
       }
 
-      // 5. Verify auth user id
+      // 5. Verify auth user id (already fetched above; guard for unauthenticated edge case)
       const userId = authUserId;
       if (!userId) {
         return "You are not signed in. Please sign in and try again.";
@@ -169,7 +205,7 @@ export default function ElevenLabsAgentWidget({
       try {
         await updateTaskConfirmationUrl(task.id, confirmationUrl);
       } catch {
-        // Non-fatal
+        // Non-fatal — continue without URL patch; send will still work
       }
 
       // 8. Create message row (for tracking + Messages screen)
@@ -183,7 +219,7 @@ export default function ElevenLabsAgentWidget({
           confirmation_url: confirmationUrl,
         });
       } catch {
-        // Non-fatal
+        // Non-fatal — message row is for tracking; proceed to send
       }
 
       // 9. Send via WhatsApp Cloud API (throws on failure)
