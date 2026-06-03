@@ -25,9 +25,16 @@ export default function ElevenLabsAgentWidget({
   if (!agentId) return null;
 
   return (
-    <div className="mt-3 flex justify-center">
+    <div
+      className="fixed z-40"
+      style={{
+        bottom: "calc(env(safe-area-inset-bottom) + 112px)",
+        right: "16px",
+      }}
+    >
       {createElement("elevenlabs-convai", {
         "agent-id": agentId,
+        variant: "compact",
         "action-text": "Talk to Ra7etBal",
         "start-call-text": "Talk to Ra7etBal",
         "dynamic-variables": JSON.stringify({
