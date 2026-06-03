@@ -1,8 +1,58 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useRef, useState } from "react";
+import { createMessage } from "../../lib/messages";
+import { createTask, updateTaskConfirmationUrl } from "../../lib/tasks";
+import { sendWhatsAppTask } from "../../lib/whatsapp";
+import { useAuthStore } from "../../stores/auth";
+import { usePeopleStore } from "../../stores/people";
+import { useTasksStore } from "../../stores/tasks";
 
 type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
+
+// ---------------------------------------------------------------------------
+// Smart follow-up helpers
+// ---------------------------------------------------------------------------
+
+/** Same criteria as isWaitingTask() in daily-brief.ts — not imported to avoid
+ *  coupling the widget to brief logic. */
+function isOpenWaitingTask(task: {
+  archived_at: string | null;
+  status: string;
+  assigned_to: string | null;
+  needs_follow_up: boolean;
+  type: string;
+}): boolean {
+  if (task.archived_at !== null) return false;
+  if (task.status === "done" || task.status === "cancelled") return false;
+  if (task.needs_follow_up) return true;
+  if (task.type === "delegation" && task.assigned_to) return true;
+  if (task.type === "followup") return true;
+  return false;
+}
+
+/** Strip leading action verbs so the topic reads naturally in a sentence.
+ *  Mirrors cleanForWaiting() in daily-brief.ts. */
+function topicFromDescription(description: string): string {
+  const trimmed = description.trim().replace(/[.!?]+$/, "").trim();
+  const cleaned = trimmed.replace(
+    /^(Confirm|Ask|Tell|Remind|Have|Message|Send|Check|Follow up on|Follow up|Get)\s+/i,
+    "",
+  );
+  const result = cleaned === trimmed ? trimmed : cleaned;
+  // lower-case the first letter so it fits mid-sentence
+  return result.charAt(0).toLowerCase() + result.slice(1);
+}
+
+/** Build the default follow-up message text from a task description. */
+function buildFollowUpText(description: string): string {
+  const topic = topicFromDescription(description);
+  return `Following up on ${topic}. Let me know when done.`;
+}
+
+// ---------------------------------------------------------------------------
+// Main component
+// ---------------------------------------------------------------------------
 
 export default function ElevenLabsAgentWidget({
   briefStateText,
@@ -14,8 +64,152 @@ export default function ElevenLabsAgentWidget({
   const [status, setStatus] = useState<CallStatus>("idle");
   const [mode, setMode] = useState<AgentMode>("listening");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const conversationRef = useRef<Awaited<ReturnType<typeof Conversation.startSession>> | null>(null);
+  const conversationRef = useRef<Awaited<
+    ReturnType<typeof Conversation.startSession>
+  > | null>(null);
 
+  /** Per-person send cooldown: personName.toLowerCase() → timestamp of last send */
+  const lastSentRef = useRef<Map<string, number>>(new Map());
+
+  // ------------------------------------------------------------------
+  // Client tool: send_followup
+  // ------------------------------------------------------------------
+  const sendFollowup = useCallback(
+    async ({
+      name,
+      message,
+    }: {
+      name: string;
+      message?: string;
+    }): Promise<string> => {
+      const normalizedName = name.trim();
+      if (!normalizedName) {
+        return "I did not receive a person name. Ask the user who to follow up with.";
+      }
+
+      // 1. Resolve person from People store
+      const people = usePeopleStore.getState().items;
+      const person = people.find(
+        (p) => p.name.trim().toLowerCase() === normalizedName.toLowerCase(),
+      );
+      if (!person) {
+        return `I could not find "${normalizedName}" in your contacts. Ask the user to add them first.`;
+      }
+      if (!person.phone) {
+        return `${person.name} does not have a phone number saved. Ask the user to add one in People settings.`;
+      }
+
+      // 2. Duplicate guard (30-second cooldown per person)
+      const cooldownKey = normalizedName.toLowerCase();
+      const lastSent = lastSentRef.current.get(cooldownKey) ?? 0;
+      if (Date.now() - lastSent < 30_000) {
+        return `I already sent ${person.name} a follow-up just now. Wait a moment before sending again.`;
+      }
+
+      // 3. Resolve message — either explicit from agent or derived from tasks
+      let messageText = message?.trim() ?? "";
+      let topicLabel = messageText || "";
+
+      if (!messageText) {
+        // Find open/waiting tasks assigned to this person
+        const tasks = useTasksStore.getState().items;
+        const openTasks = tasks.filter(
+          (t) =>
+            isOpenWaitingTask(t) &&
+            (t.assigned_to ?? "").trim().toLowerCase() ===
+              normalizedName.toLowerCase(),
+        );
+
+        if (openTasks.length === 0) {
+          return `I could not find an open item for ${person.name}. Ask the user what to follow up about.`;
+        }
+
+        if (openTasks.length > 1) {
+          const topics = openTasks
+            .slice(0, 4)
+            .map((t) => topicFromDescription(t.description))
+            .join(", ");
+          return `I found more than one open item for ${person.name}: ${topics}. Ask the user which one to follow up on.`;
+        }
+
+        // Exactly one open task — use it
+        const task = openTasks[0];
+        messageText = buildFollowUpText(task.description);
+        topicLabel = topicFromDescription(task.description);
+      } else {
+        topicLabel = topicFromDescription(messageText);
+      }
+
+      // 4. Get current user id
+      const authState = useAuthStore.getState();
+      const userId = authState.user?.id;
+      if (!userId) {
+        return "You are not signed in. Please sign in and try again.";
+      }
+
+      // 5. Create follow-up task row
+      let task;
+      try {
+        task = await createTask({
+          user_id: userId,
+          description: messageText,
+          type: "followup",
+          assigned_to: person.name,
+          status: "pending",
+          needs_follow_up: true,
+          confirmation_url: null,
+          due_at: null,
+        });
+      } catch (err) {
+        return `Could not save the follow-up task. ${err instanceof Error ? err.message : "Please try again."}`;
+      }
+
+      // 6. Build and persist confirmation URL
+      const confirmationUrl = `${window.location.origin}/confirm?task=${task.id}`;
+      try {
+        await updateTaskConfirmationUrl(task.id, confirmationUrl);
+      } catch {
+        // Non-fatal — continue without URL patch; send will still work
+      }
+
+      // 7. Create message row (for tracking + Messages screen)
+      let messageRecord;
+      try {
+        messageRecord = await createMessage({
+          user_id: userId,
+          task_id: task.id,
+          recipient: person.name,
+          content: messageText,
+          confirmation_url: confirmationUrl,
+        });
+      } catch {
+        // Non-fatal — message row is for tracking; proceed to send
+      }
+
+      // 8. Send via WhatsApp Cloud API (throws on failure)
+      try {
+        await sendWhatsAppTask({
+          to: person.phone,
+          messageText,
+          confirmationLink: confirmationUrl,
+          messageRecordId: messageRecord?.id ?? null,
+          taskId: task.id,
+          recipientName: person.name,
+        });
+      } catch (err) {
+        return `Could not send the WhatsApp message to ${person.name}. ${err instanceof Error ? err.message : "Please try again."}`;
+      }
+
+      // 9. Record cooldown and return success
+      lastSentRef.current.set(cooldownKey, Date.now());
+      return `Sent follow-up to ${person.name} about ${topicLabel}.`;
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
+  // Call management
+  // ------------------------------------------------------------------
   const startCall = useCallback(async () => {
     if (!agentId || status !== "idle") return;
     setStatus("connecting");
@@ -26,6 +220,9 @@ export default function ElevenLabsAgentWidget({
         agentId,
         dynamicVariables: {
           ra7etbal_state: briefStateText,
+        },
+        clientTools: {
+          send_followup: sendFollowup,
         },
         onModeChange: ({ mode: m }) => {
           setMode(m === "speaking" ? "speaking" : "listening");
@@ -57,7 +254,7 @@ export default function ElevenLabsAgentWidget({
         setErrorMsg(null);
       }, 3000);
     }
-  }, [agentId, briefStateText, status]);
+  }, [agentId, briefStateText, sendFollowup, status]);
 
   const endCall = useCallback(() => {
     conversationRef.current?.endSession();
@@ -154,7 +351,10 @@ function MicIcon({ className }: { className?: string }) {
 
 function PulsingDot({ color }: { color: string }) {
   return (
-    <span className="relative flex h-2.5 w-2.5 items-center justify-center" aria-hidden>
+    <span
+      className="relative flex h-2.5 w-2.5 items-center justify-center"
+      aria-hidden
+    >
       <span
         className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${color}`}
       />
