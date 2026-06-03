@@ -54,6 +54,25 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {
   return data as Task;
 }
 
+/**
+ * Write the confirmation URL onto a task after it has been created.
+ * confirmation_url is intentionally excluded from TaskPatch (write-once at
+ * save time), so this narrow helper bypasses the typed patch.
+ */
+export async function updateTaskConfirmationUrl(
+  id: string,
+  url: string,
+): Promise<Task> {
+  const { data, error } = await supabase
+    .from("tasks")
+    .update({ confirmation_url: url })
+    .eq("id", id)
+    .select(COLUMNS)
+    .single();
+  if (error) throw friendly(error);
+  return data as Task;
+}
+
 export async function deleteTask(id: string): Promise<void> {
   const { error } = await supabase.from("tasks").delete().eq("id", id);
   if (error) throw friendly(error);
