@@ -14,8 +14,6 @@ type AgentMode = "listening" | "speaking";
 // Smart follow-up helpers
 // ---------------------------------------------------------------------------
 
-/** Same criteria as isWaitingTask() in daily-brief.ts — not imported to avoid
- *  coupling the widget to brief logic. */
 function isOpenWaitingTask(task: {
   archived_at: string | null;
   status: string;
@@ -31,8 +29,6 @@ function isOpenWaitingTask(task: {
   return false;
 }
 
-/** Strip leading action verbs so the topic reads naturally in a sentence.
- *  Mirrors cleanForWaiting() in daily-brief.ts. */
 function topicFromDescription(description: string): string {
   const trimmed = description.trim().replace(/[.!?]+$/, "").trim();
   const cleaned = trimmed.replace(
@@ -40,11 +36,9 @@ function topicFromDescription(description: string): string {
     "",
   );
   const result = cleaned === trimmed ? trimmed : cleaned;
-  // lower-case the first letter so it fits mid-sentence
   return result.charAt(0).toLowerCase() + result.slice(1);
 }
 
-/** Build the default follow-up message text from a task description. */
 function buildFollowUpText(description: string): string {
   const topic = topicFromDescription(description);
   return `Following up on ${topic}. Let me know when done.`;
@@ -68,12 +62,8 @@ export default function ElevenLabsAgentWidget({
     ReturnType<typeof Conversation.startSession>
   > | null>(null);
 
-  /** Per-person send cooldown: personName.toLowerCase() → timestamp of last send */
   const lastSentRef = useRef<Map<string, number>>(new Map());
 
-  // ------------------------------------------------------------------
-  // Client tool: send_followup
-  // ------------------------------------------------------------------
   const sendFollowup = useCallback(
     async ({
       name,
@@ -87,7 +77,20 @@ export default function ElevenLabsAgentWidget({
         return "I did not receive a person name. Ask the user who to follow up with.";
       }
 
-      // 1. Resolve person from People store
+      // 1. Ensure stores are loaded before lookups
+      const authUserId = useAuthStore.getState().user?.id;
+      if (authUserId) {
+        const peopleState = usePeopleStore.getState();
+        if (peopleState.status === "idle" || peopleState.items.length === 0) {
+          await usePeopleStore.getState().loadFor(authUserId);
+        }
+        const tasksState = useTasksStore.getState();
+        if (tasksState.status === "idle" || tasksState.items.length === 0) {
+          await useTasksStore.getState().loadFor(authUserId);
+        }
+      }
+
+      // 2. Resolve person from People store
       const people = usePeopleStore.getState().items;
       const person = people.find(
         (p) => p.name.trim().toLowerCase() === normalizedName.toLowerCase(),
@@ -99,19 +102,18 @@ export default function ElevenLabsAgentWidget({
         return `${person.name} does not have a phone number saved. Ask the user to add one in People settings.`;
       }
 
-      // 2. Duplicate guard (30-second cooldown per person)
+      // 3. Duplicate guard (30-second cooldown per person)
       const cooldownKey = normalizedName.toLowerCase();
       const lastSent = lastSentRef.current.get(cooldownKey) ?? 0;
       if (Date.now() - lastSent < 30_000) {
         return `I already sent ${person.name} a follow-up just now. Wait a moment before sending again.`;
       }
 
-      // 3. Resolve message — either explicit from agent or derived from tasks
+      // 4. Resolve message — either explicit from agent or derived from tasks
       let messageText = message?.trim() ?? "";
       let topicLabel = messageText || "";
 
       if (!messageText) {
-        // Find open/waiting tasks assigned to this person
         const tasks = useTasksStore.getState().items;
         const openTasks = tasks.filter(
           (t) =>
@@ -132,7 +134,6 @@ export default function ElevenLabsAgentWidget({
           return `I found more than one open item for ${person.name}: ${topics}. Ask the user which one to follow up on.`;
         }
 
-        // Exactly one open task — use it
         const task = openTasks[0];
         messageText = buildFollowUpText(task.description);
         topicLabel = topicFromDescription(task.description);
@@ -140,14 +141,13 @@ export default function ElevenLabsAgentWidget({
         topicLabel = topicFromDescription(messageText);
       }
 
-      // 4. Get current user id
-      const authState = useAuthStore.getState();
-      const userId = authState.user?.id;
+      // 5. Verify auth user id
+      const userId = authUserId;
       if (!userId) {
         return "You are not signed in. Please sign in and try again.";
       }
 
-      // 5. Create follow-up task row
+      // 6. Create follow-up task row
       let task;
       try {
         task = await createTask({
@@ -164,15 +164,15 @@ export default function ElevenLabsAgentWidget({
         return `Could not save the follow-up task. ${err instanceof Error ? err.message : "Please try again."}`;
       }
 
-      // 6. Build and persist confirmation URL
+      // 7. Build and persist confirmation URL
       const confirmationUrl = `${window.location.origin}/confirm?task=${task.id}`;
       try {
         await updateTaskConfirmationUrl(task.id, confirmationUrl);
       } catch {
-        // Non-fatal — continue without URL patch; send will still work
+        // Non-fatal
       }
 
-      // 7. Create message row (for tracking + Messages screen)
+      // 8. Create message row (for tracking + Messages screen)
       let messageRecord;
       try {
         messageRecord = await createMessage({
@@ -183,10 +183,10 @@ export default function ElevenLabsAgentWidget({
           confirmation_url: confirmationUrl,
         });
       } catch {
-        // Non-fatal — message row is for tracking; proceed to send
+        // Non-fatal
       }
 
-      // 8. Send via WhatsApp Cloud API (throws on failure)
+      // 9. Send via WhatsApp Cloud API (throws on failure)
       try {
         await sendWhatsAppTask({
           to: person.phone,
@@ -200,16 +200,13 @@ export default function ElevenLabsAgentWidget({
         return `Could not send the WhatsApp message to ${person.name}. ${err instanceof Error ? err.message : "Please try again."}`;
       }
 
-      // 9. Record cooldown and return success
+      // 10. Record cooldown and return success
       lastSentRef.current.set(cooldownKey, Date.now());
       return `Sent follow-up to ${person.name} about ${topicLabel}.`;
     },
     [],
   );
 
-  // ------------------------------------------------------------------
-  // Call management
-  // ------------------------------------------------------------------
   const startCall = useCallback(async () => {
     if (!agentId || status !== "idle") return;
     setStatus("connecting");
@@ -218,12 +215,8 @@ export default function ElevenLabsAgentWidget({
     try {
       const conv = await Conversation.startSession({
         agentId,
-        dynamicVariables: {
-          ra7etbal_state: briefStateText,
-        },
-        clientTools: {
-          send_followup: sendFollowup,
-        },
+        dynamicVariables: { ra7etbal_state: briefStateText },
+        clientTools: { send_followup: sendFollowup },
         onModeChange: ({ mode: m }) => {
           setMode(m === "speaking" ? "speaking" : "listening");
         },
@@ -236,23 +229,15 @@ export default function ElevenLabsAgentWidget({
           conversationRef.current = null;
           setStatus("error");
           setErrorMsg(msg);
-          setTimeout(() => {
-            setStatus("idle");
-            setErrorMsg(null);
-          }, 3000);
+          setTimeout(() => { setStatus("idle"); setErrorMsg(null); }, 3000);
         },
-        onConnect: () => {
-          setStatus("connected");
-        },
+        onConnect: () => { setStatus("connected"); },
       });
       conversationRef.current = conv;
     } catch (err) {
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Couldn't start call");
-      setTimeout(() => {
-        setStatus("idle");
-        setErrorMsg(null);
-      }, 3000);
+      setTimeout(() => { setStatus("idle"); setErrorMsg(null); }, 3000);
     }
   }, [agentId, briefStateText, sendFollowup, status]);
 
@@ -266,63 +251,32 @@ export default function ElevenLabsAgentWidget({
   if (!agentId) return null;
 
   return (
-    <div
-      className="fixed z-40"
-      style={{
-        bottom: "calc(env(safe-area-inset-bottom) + 148px)",
-        right: "20px",
-      }}
-    >
+    <div className="fixed z-40" style={{ bottom: "calc(env(safe-area-inset-bottom) + 148px)", right: "20px" }}>
       {status === "idle" && (
-        <button
-          type="button"
-          onClick={startCall}
-          aria-label="Talk to Ra7etBal"
-          className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:bg-white hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
-        >
+        <button type="button" onClick={startCall} aria-label="Talk to Ra7etBal"
+          className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:bg-white hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95">
           <MicIcon className="h-4 w-4 text-charcoal" />
-          <span className="text-[13px] font-semibold text-charcoal">
-            Talk to Ra7etBal
-          </span>
+          <span className="text-[13px] font-semibold text-charcoal">Talk to Ra7etBal</span>
         </button>
       )}
-
       {status === "connecting" && (
         <div className="flex items-center gap-2 rounded-full border border-charcoal/15 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.22)]">
           <PulsingDot color="bg-sage" />
-          <span className="text-[13px] font-medium text-text">
-            Connecting…
-          </span>
+          <span className="text-[13px] font-medium text-text">Connecting…</span>
         </div>
       )}
-
       {status === "connected" && (
-        <button
-          type="button"
-          onClick={endCall}
-          aria-label="End call"
-          className="flex items-center gap-2.5 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.28)] transition hover:bg-white active:scale-95"
-        >
-          {mode === "speaking" ? (
-            <PulsingDot color="bg-gold" />
-          ) : (
-            <PulsingDot color="bg-sage" />
-          )}
-          <span className="text-[13px] font-semibold text-charcoal">
-            {mode === "speaking" ? "Speaking…" : "Listening…"}
-          </span>
-          <span className="ml-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-text">
-            End
-          </span>
+        <button type="button" onClick={endCall} aria-label="End call"
+          className="flex items-center gap-2.5 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.28)] transition hover:bg-white active:scale-95">
+          {mode === "speaking" ? <PulsingDot color="bg-gold" /> : <PulsingDot color="bg-sage" />}
+          <span className="text-[13px] font-semibold text-charcoal">{mode === "speaking" ? "Speaking…" : "Listening…"}</span>
+          <span className="ml-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-text">End</span>
         </button>
       )}
-
       {status === "error" && (
         <div className="flex items-center gap-2 rounded-full border border-danger/20 bg-warm-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm">
           <span className="h-2 w-2 rounded-full bg-danger" />
-          <span className="max-w-[160px] truncate text-[12px] text-danger">
-            {errorMsg ?? "Error — tap to retry"}
-          </span>
+          <span className="max-w-[160px] truncate text-[12px] text-danger">{errorMsg ?? "Error — tap to retry"}</span>
         </div>
       )}
     </div>
@@ -331,16 +285,8 @@ export default function ElevenLabsAgentWidget({
 
 function MicIcon({ className }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.75}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden
-    >
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}
+      strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
       <rect x="9" y="2" width="6" height="12" rx="3" />
       <path d="M5 10a7 7 0 0 0 14 0" />
       <line x1="12" y1="19" x2="12" y2="22" />
@@ -351,13 +297,8 @@ function MicIcon({ className }: { className?: string }) {
 
 function PulsingDot({ color }: { color: string }) {
   return (
-    <span
-      className="relative flex h-2.5 w-2.5 items-center justify-center"
-      aria-hidden
-    >
-      <span
-        className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${color}`}
-      />
+    <span className="relative flex h-2.5 w-2.5 items-center justify-center" aria-hidden>
+      <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${color}`} />
       <span className={`relative inline-flex h-2 w-2 rounded-full ${color}`} />
     </span>
   );
