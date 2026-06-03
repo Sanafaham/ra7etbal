@@ -82,8 +82,6 @@ export default function ElevenLabsAgentWidget({
     }: {
       name: string;
       message?: string;
-      /** Set to true only after the user has explicitly confirmed they want to
-       *  send a new follow-up even though no matching open task was found. */
       allowNewFollowup?: boolean;
     }): Promise<string> => {
       const normalizedName = name.trim();
@@ -123,12 +121,10 @@ export default function ElevenLabsAgentWidget({
         return `I already sent ${person.name} a follow-up just now. Wait a moment before sending again.`;
       }
 
-      // 4. Resolve message — either explicit from agent or derived from tasks
+      // 4. Resolve message
       let messageText = message?.trim() ?? "";
       let topicLabel = messageText || "";
 
-      // Always compute open tasks — needed for both the no-message path and
-      // the stale-task guard on the explicit-message path.
       const tasks = useTasksStore.getState().items;
       const openTasks = tasks.filter(
         (t) =>
@@ -138,11 +134,9 @@ export default function ElevenLabsAgentWidget({
       );
 
       if (!messageText) {
-        // No message provided — derive from open tasks.
         if (openTasks.length === 0) {
           return `I could not find an open item for ${person.name}. Ask the user what to follow up about.`;
         }
-
         if (openTasks.length > 1) {
           const topics = openTasks
             .slice(0, 4)
@@ -150,25 +144,18 @@ export default function ElevenLabsAgentWidget({
             .join(", ");
           return `I found more than one open item for ${person.name}: ${topics}. Ask the user which one to follow up on.`;
         }
-
-        // Exactly one open task — use it
         const singleTask = openTasks[0];
         messageText = buildFollowUpText(singleTask.description);
         topicLabel = topicFromDescription(singleTask.description);
       } else {
-        // Explicit message provided — guard against sending about a task that
-        // is no longer open (done, deleted, archived) unless the user confirmed.
         topicLabel = topicFromDescription(messageText);
-
         if (!allowNewFollowup) {
           const messageLower = messageText.toLowerCase();
           const matchingOpen = openTasks.find((t) =>
             t.description.toLowerCase().includes(messageLower) ||
             messageLower.includes(topicFromDescription(t.description).toLowerCase()),
           );
-
           if (!matchingOpen) {
-            // No open task matches this topic — warn before sending.
             if (openTasks.length === 0) {
               return `I do not see any open items for ${person.name}. Ask the user if they still want to send a new follow-up.`;
             }
@@ -177,11 +164,8 @@ export default function ElevenLabsAgentWidget({
         }
       }
 
-      // 5. Verify auth user id (already fetched above; guard for unauthenticated edge case)
       const userId = authUserId;
-      if (!userId) {
-        return "You are not signed in. Please sign in and try again.";
-      }
+      if (!userId) return "You are not signed in. Please sign in and try again.";
 
       // 6. Create follow-up task row
       let task;
@@ -205,10 +189,10 @@ export default function ElevenLabsAgentWidget({
       try {
         await updateTaskConfirmationUrl(task.id, confirmationUrl);
       } catch {
-        // Non-fatal — continue without URL patch; send will still work
+        // Non-fatal
       }
 
-      // 8. Create message row (for tracking + Messages screen)
+      // 8. Create message row
       let messageRecord;
       try {
         messageRecord = await createMessage({
@@ -219,10 +203,10 @@ export default function ElevenLabsAgentWidget({
           confirmation_url: confirmationUrl,
         });
       } catch {
-        // Non-fatal — message row is for tracking; proceed to send
+        // Non-fatal
       }
 
-      // 9. Send via WhatsApp Cloud API (throws on failure)
+      // 9. Send via WhatsApp Cloud API
       try {
         await sendWhatsAppTask({
           to: person.phone,
@@ -236,9 +220,134 @@ export default function ElevenLabsAgentWidget({
         return `Could not send the WhatsApp message to ${person.name}. ${err instanceof Error ? err.message : "Please try again."}`;
       }
 
-      // 10. Record cooldown and return success
       lastSentRef.current.set(cooldownKey, Date.now());
       return `Sent follow-up to ${person.name} about ${topicLabel}.`;
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
+  // Client tool: send_delegation
+  // ------------------------------------------------------------------
+  const sendDelegation = useCallback(
+    async ({
+      name,
+      task,
+      message,
+    }: {
+      name: string;
+      task: string;
+      message?: string;
+    }): Promise<string> => {
+      const normalizedName = name.trim();
+      if (!normalizedName) {
+        return "I did not receive a person name. Ask the user who to delegate to.";
+      }
+
+      const taskText = task.trim();
+      if (!taskText || taskText.length < 4) {
+        return "The task description is too vague. Ask the user what exactly they should do.";
+      }
+
+      // 1. Ensure stores are loaded
+      const authUserId = useAuthStore.getState().user?.id;
+      if (authUserId) {
+        const peopleState = usePeopleStore.getState();
+        if (peopleState.status === "idle" || peopleState.items.length === 0) {
+          await usePeopleStore.getState().loadFor(authUserId);
+        }
+        const tasksState = useTasksStore.getState();
+        if (tasksState.status === "idle" || tasksState.items.length === 0) {
+          await useTasksStore.getState().loadFor(authUserId);
+        }
+      }
+
+      // 2. Resolve person
+      const people = usePeopleStore.getState().items;
+      const matches = people.filter(
+        (p) => p.name.trim().toLowerCase() === normalizedName.toLowerCase(),
+      );
+      if (matches.length === 0) {
+        return `I could not find "${normalizedName}" in your contacts. Ask the user to add them first.`;
+      }
+      if (matches.length > 1) {
+        return `I found more than one person named ${normalizedName}. Ask the user to clarify which one.`;
+      }
+      const person = matches[0];
+      if (!person.phone) {
+        return `${person.name} does not have a phone number saved. Ask the user to add one in People settings.`;
+      }
+
+      // 3. Cooldown
+      const cooldownKey = `delegation:${normalizedName.toLowerCase()}`;
+      const lastSent = lastSentRef.current.get(cooldownKey) ?? 0;
+      if (Date.now() - lastSent < 30_000) {
+        return `I already sent ${person.name} a delegation just now. Wait a moment before sending again.`;
+      }
+
+      // 4. Build message
+      const messageText = message?.trim()
+        ? message.trim()
+        : `Hi ${person.name}, could you please ${taskText}? Let me know when done.`;
+
+      const userId = authUserId;
+      if (!userId) return "You are not signed in. Please sign in and try again.";
+
+      // 6. Create delegation task row
+      let taskRow;
+      try {
+        taskRow = await createTask({
+          user_id: userId,
+          description: taskText,
+          type: "delegation",
+          assigned_to: person.name,
+          status: "pending",
+          needs_follow_up: true,
+          confirmation_url: null,
+          due_at: null,
+        });
+      } catch (err) {
+        return `Could not save the delegation task. ${err instanceof Error ? err.message : "Please try again."}`;
+      }
+
+      // 7. Confirmation URL
+      const confirmationUrl = `${window.location.origin}/confirm?task=${taskRow.id}`;
+      try {
+        await updateTaskConfirmationUrl(taskRow.id, confirmationUrl);
+      } catch {
+        // Non-fatal
+      }
+
+      // 8. Message row
+      let messageRecord;
+      try {
+        messageRecord = await createMessage({
+          user_id: userId,
+          task_id: taskRow.id,
+          recipient: person.name,
+          content: messageText,
+          confirmation_url: confirmationUrl,
+        });
+      } catch {
+        // Non-fatal
+      }
+
+      // 9. Send
+      try {
+        await sendWhatsAppTask({
+          to: person.phone,
+          messageText,
+          confirmationLink: confirmationUrl,
+          messageRecordId: messageRecord?.id ?? null,
+          taskId: taskRow.id,
+          recipientName: person.name,
+        });
+      } catch (err) {
+        return `Could not send the WhatsApp message to ${person.name}. ${err instanceof Error ? err.message : "Please try again."}`;
+      }
+
+      lastSentRef.current.set(cooldownKey, Date.now());
+      return `Sent delegation to ${person.name}: ${taskText}.`;
     },
     [],
   );
@@ -259,6 +368,7 @@ export default function ElevenLabsAgentWidget({
         },
         clientTools: {
           send_followup: sendFollowup,
+          send_delegation: sendDelegation,
         },
         onModeChange: ({ mode: m }) => {
           setMode(m === "speaking" ? "speaking" : "listening");
@@ -290,10 +400,10 @@ export default function ElevenLabsAgentWidget({
         setErrorMsg(null);
       }, 3000);
     }
-  }, [agentId, briefStateText, sendFollowup, status]);
+  }, [agentId, briefStateText, sendDelegation, sendFollowup, status]);
 
   // ------------------------------------------------------------------
-  // Session teardown — single shared function used by all exit paths
+  // Session teardown
   // ------------------------------------------------------------------
   const stopSession = useCallback(() => {
     if (conversationRef.current) {
@@ -307,29 +417,20 @@ export default function ElevenLabsAgentWidget({
   const endCall = stopSession;
 
   // ------------------------------------------------------------------
-  // Lifecycle cleanup — unmount, visibility, pagehide, beforeunload
+  // Lifecycle cleanup
   // ------------------------------------------------------------------
   useEffect(() => {
     function handleVisibilityChange() {
-      if (document.visibilityState === "hidden") {
-        stopSession();
-      }
+      if (document.visibilityState === "hidden") stopSession();
     }
-
-    function handlePageHide() {
-      stopSession();
-    }
-
-    function handleBeforeUnload() {
-      stopSession();
-    }
+    function handlePageHide() { stopSession(); }
+    function handleBeforeUnload() { stopSession(); }
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("pagehide", handlePageHide);
     window.addEventListener("beforeunload", handleBeforeUnload);
 
     return () => {
-      // Component unmount (navigation away, sign-out, PWA removal)
       stopSession();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pagehide", handlePageHide);
@@ -364,9 +465,7 @@ export default function ElevenLabsAgentWidget({
       {status === "connecting" && (
         <div className="flex items-center gap-2 rounded-full border border-charcoal/15 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.22)]">
           <PulsingDot color="bg-sage" />
-          <span className="text-[13px] font-medium text-text">
-            Connecting…
-          </span>
+          <span className="text-[13px] font-medium text-text">Connecting…</span>
         </div>
       )}
 
