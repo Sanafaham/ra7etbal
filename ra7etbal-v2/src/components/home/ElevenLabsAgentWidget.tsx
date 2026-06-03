@@ -81,19 +81,16 @@ export default function ElevenLabsAgentWidget({
           type="button"
           onClick={startCall}
           aria-label="Talk to Ra7etBal"
-          className="flex items-center gap-2 rounded-full border border-sage/30 bg-warm-white/95 px-4 py-2.5 shadow-[0_8px_24px_-8px_rgba(20,20,20,0.22)] backdrop-blur-sm transition hover:bg-white hover:shadow-[0_10px_28px_-8px_rgba(20,20,20,0.28)] active:scale-95"
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-charcoal/20 bg-warm-white shadow-[0_4px_16px_-4px_rgba(20,20,20,0.28)] transition hover:bg-white hover:shadow-[0_6px_20px_-4px_rgba(20,20,20,0.34)] active:scale-95"
         >
-          <MicIcon className="h-4 w-4 text-sage" />
-          <span className="text-[13px] font-semibold tracking-wide text-text">
-            Talk to Ra7etBal
-          </span>
+          <MicIcon className="h-5 w-5 text-charcoal" />
         </button>
       )}
 
       {status === "connecting" && (
-        <div className="flex items-center gap-2 rounded-full border border-sage/20 bg-warm-white/95 px-4 py-2.5 shadow-[0_8px_24px_-8px_rgba(20,20,20,0.18)] backdrop-blur-sm">
+        <div className="flex items-center gap-2 rounded-full border border-charcoal/15 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.22)]">
           <PulsingDot color="bg-sage" />
-          <span className="text-[13px] font-medium text-text-soft">
+          <span className="text-[13px] font-medium text-text">
             Connecting…
           </span>
         </div>
@@ -104,17 +101,17 @@ export default function ElevenLabsAgentWidget({
           type="button"
           onClick={endCall}
           aria-label="End call"
-          className="flex items-center gap-2.5 rounded-full border border-sage/25 bg-warm-white/97 px-4 py-2.5 shadow-[0_8px_28px_-8px_rgba(20,20,20,0.22)] backdrop-blur-sm transition hover:bg-white active:scale-95"
+          className="flex items-center gap-2.5 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.28)] transition hover:bg-white active:scale-95"
         >
           {mode === "speaking" ? (
             <PulsingDot color="bg-gold" />
           ) : (
             <PulsingDot color="bg-sage" />
           )}
-          <span className="text-[13px] font-medium text-text">
+          <span className="text-[13px] font-semibold text-charcoal">
             {mode === "speaking" ? "Speaking…" : "Listening…"}
           </span>
-          <span className="ml-0.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+          <span className="ml-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-text">
             End
           </span>
         </button>
