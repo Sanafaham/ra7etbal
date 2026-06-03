@@ -186,8 +186,6 @@ export default function Home() {
             Ask Ra7etBal
           </button>
         </div>
-        <ElevenLabsAgentWidget briefStateText={elevenLabsBriefStateText} />
-
         <button
           type="button"
           onClick={viewBriefDetails}
@@ -255,6 +253,8 @@ export default function Home() {
           </AuthNotice>
         </div>
       )}
+
+      <ElevenLabsAgentWidget briefStateText={elevenLabsBriefStateText} />
 
       {keyboardOpen && (
         <div
