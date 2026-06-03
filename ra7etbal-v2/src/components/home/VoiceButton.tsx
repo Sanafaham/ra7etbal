@@ -164,7 +164,7 @@ export default function VoiceButton({
       ? `Stop (${formatElapsed(elapsed)})`
       : mode === "processing"
         ? "Transcribing…"
-        : "Voice";
+        : "Dictate";
 
   const ariaLabel =
     mode === "recording"
