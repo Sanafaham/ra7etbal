@@ -85,7 +85,7 @@ export default function ElevenLabsAgentWidget({
         >
           <MicIcon className="h-4 w-4 text-sage" />
           <span className="text-[13px] font-semibold tracking-wide text-text">
-            Voice
+            Talk to Ra7etBal
           </span>
         </button>
       )}
