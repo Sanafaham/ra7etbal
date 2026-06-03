@@ -72,8 +72,8 @@ export default function ElevenLabsAgentWidget({
     <div
       className="fixed z-40"
       style={{
-        bottom: "calc(env(safe-area-inset-bottom) + 112px)",
-        right: "16px",
+        bottom: "calc(env(safe-area-inset-bottom) + 148px)",
+        right: "20px",
       }}
     >
       {status === "idle" && (
@@ -81,9 +81,12 @@ export default function ElevenLabsAgentWidget({
           type="button"
           onClick={startCall}
           aria-label="Talk to Ra7etBal"
-          className="flex h-11 w-11 items-center justify-center rounded-full border border-charcoal/20 bg-warm-white shadow-[0_4px_16px_-4px_rgba(20,20,20,0.28)] transition hover:bg-white hover:shadow-[0_6px_20px_-4px_rgba(20,20,20,0.34)] active:scale-95"
+          className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:bg-white hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
         >
-          <MicIcon className="h-5 w-5 text-charcoal" />
+          <MicIcon className="h-4 w-4 text-charcoal" />
+          <span className="text-[13px] font-semibold text-charcoal">
+            Talk to Ra7etBal
+          </span>
         </button>
       )}
 
