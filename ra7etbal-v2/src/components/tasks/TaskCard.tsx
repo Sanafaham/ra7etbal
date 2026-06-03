@@ -133,11 +133,12 @@ export default function TaskCard({
               Overdue
             </span>
           )}
-          {(task.type === "followup" || task.type === "delegation") && task.created_at && (}
-            <span className="text-[11px] text-ink/45">
-              {formatFollowUpSentTime(task.created_at)}
-            </span>
-          )}
+         {(task.type === "followup" || task.type === "delegation") &&
+  task.created_at && (
+    <span className="text-[11px] text-ink/45">
+      {formatFollowUpSentTime(task.created_at)}
+    </span>
+  )}
           <span>{assignedLabel === "Me" ? "Me" : `→ ${assignedLabel}`}</span>
         </div>
       </header>
