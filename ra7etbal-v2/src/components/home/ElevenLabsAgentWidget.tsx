@@ -1,5 +1,5 @@
 import { Conversation } from "@elevenlabs/react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createMessage } from "../../lib/messages";
 import { createTask, updateTaskConfirmationUrl } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
@@ -207,6 +207,9 @@ export default function ElevenLabsAgentWidget({
     [],
   );
 
+  // ------------------------------------------------------------------
+  // Call management
+  // ------------------------------------------------------------------
   const startCall = useCallback(async () => {
     if (!agentId || status !== "idle") return;
     setStatus("connecting");
@@ -215,8 +218,12 @@ export default function ElevenLabsAgentWidget({
     try {
       const conv = await Conversation.startSession({
         agentId,
-        dynamicVariables: { ra7etbal_state: briefStateText },
-        clientTools: { send_followup: sendFollowup },
+        dynamicVariables: {
+          ra7etbal_state: briefStateText,
+        },
+        clientTools: {
+          send_followup: sendFollowup,
+        },
         onModeChange: ({ mode: m }) => {
           setMode(m === "speaking" ? "speaking" : "listening");
         },
@@ -229,54 +236,131 @@ export default function ElevenLabsAgentWidget({
           conversationRef.current = null;
           setStatus("error");
           setErrorMsg(msg);
-          setTimeout(() => { setStatus("idle"); setErrorMsg(null); }, 3000);
+          setTimeout(() => {
+            setStatus("idle");
+            setErrorMsg(null);
+          }, 3000);
         },
-        onConnect: () => { setStatus("connected"); },
+        onConnect: () => {
+          setStatus("connected");
+        },
       });
       conversationRef.current = conv;
     } catch (err) {
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Couldn't start call");
-      setTimeout(() => { setStatus("idle"); setErrorMsg(null); }, 3000);
+      setTimeout(() => {
+        setStatus("idle");
+        setErrorMsg(null);
+      }, 3000);
     }
   }, [agentId, briefStateText, sendFollowup, status]);
 
-  const endCall = useCallback(() => {
-    conversationRef.current?.endSession();
-    conversationRef.current = null;
+  // ------------------------------------------------------------------
+  // Session teardown — single shared function used by all exit paths
+  // ------------------------------------------------------------------
+  const stopSession = useCallback(() => {
+    if (conversationRef.current) {
+      conversationRef.current.endSession();
+      conversationRef.current = null;
+    }
     setStatus("idle");
     setMode("listening");
   }, []);
 
+  const endCall = stopSession;
+
+  // ------------------------------------------------------------------
+  // Lifecycle cleanup — unmount, visibility, pagehide, beforeunload
+  // ------------------------------------------------------------------
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        stopSession();
+      }
+    }
+
+    function handlePageHide() {
+      stopSession();
+    }
+
+    function handleBeforeUnload() {
+      stopSession();
+    }
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      // Component unmount (navigation away, sign-out, PWA removal)
+      stopSession();
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [stopSession]);
+
   if (!agentId) return null;
 
   return (
-    <div className="fixed z-40" style={{ bottom: "calc(env(safe-area-inset-bottom) + 148px)", right: "20px" }}>
+    <div
+      className="fixed z-40"
+      style={{
+        bottom: "calc(env(safe-area-inset-bottom) + 148px)",
+        right: "20px",
+      }}
+    >
       {status === "idle" && (
-        <button type="button" onClick={startCall} aria-label="Talk to Ra7etBal"
-          className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:bg-white hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95">
+        <button
+          type="button"
+          onClick={startCall}
+          aria-label="Talk to Ra7etBal"
+          className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:bg-white hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
+        >
           <MicIcon className="h-4 w-4 text-charcoal" />
-          <span className="text-[13px] font-semibold text-charcoal">Talk to Ra7etBal</span>
+          <span className="text-[13px] font-semibold text-charcoal">
+            Talk to Ra7etBal
+          </span>
         </button>
       )}
+
       {status === "connecting" && (
         <div className="flex items-center gap-2 rounded-full border border-charcoal/15 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.22)]">
           <PulsingDot color="bg-sage" />
-          <span className="text-[13px] font-medium text-text">Connecting…</span>
+          <span className="text-[13px] font-medium text-text">
+            Connecting…
+          </span>
         </div>
       )}
+
       {status === "connected" && (
-        <button type="button" onClick={endCall} aria-label="End call"
-          className="flex items-center gap-2.5 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.28)] transition hover:bg-white active:scale-95">
-          {mode === "speaking" ? <PulsingDot color="bg-gold" /> : <PulsingDot color="bg-sage" />}
-          <span className="text-[13px] font-semibold text-charcoal">{mode === "speaking" ? "Speaking…" : "Listening…"}</span>
-          <span className="ml-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-text">End</span>
+        <button
+          type="button"
+          onClick={endCall}
+          aria-label="End call"
+          className="flex items-center gap-2.5 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.28)] transition hover:bg-white active:scale-95"
+        >
+          {mode === "speaking" ? (
+            <PulsingDot color="bg-gold" />
+          ) : (
+            <PulsingDot color="bg-sage" />
+          )}
+          <span className="text-[13px] font-semibold text-charcoal">
+            {mode === "speaking" ? "Speaking…" : "Listening…"}
+          </span>
+          <span className="ml-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-text">
+            End
+          </span>
         </button>
       )}
+
       {status === "error" && (
         <div className="flex items-center gap-2 rounded-full border border-danger/20 bg-warm-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm">
           <span className="h-2 w-2 rounded-full bg-danger" />
-          <span className="max-w-[160px] truncate text-[12px] text-danger">{errorMsg ?? "Error — tap to retry"}</span>
+          <span className="max-w-[160px] truncate text-[12px] text-danger">
+            {errorMsg ?? "Error — tap to retry"}
+          </span>
         </div>
       )}
     </div>
@@ -285,8 +369,16 @@ export default function ElevenLabsAgentWidget({
 
 function MicIcon({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75}
-      strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden>
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
       <rect x="9" y="2" width="6" height="12" rx="3" />
       <path d="M5 10a7 7 0 0 0 14 0" />
       <line x1="12" y1="19" x2="12" y2="22" />
@@ -297,8 +389,13 @@ function MicIcon({ className }: { className?: string }) {
 
 function PulsingDot({ color }: { color: string }) {
   return (
-    <span className="relative flex h-2.5 w-2.5 items-center justify-center" aria-hidden>
-      <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${color}`} />
+    <span
+      className="relative flex h-2.5 w-2.5 items-center justify-center"
+      aria-hidden
+    >
+      <span
+        className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${color}`}
+      />
       <span className={`relative inline-flex h-2 w-2 rounded-full ${color}`} />
     </span>
   );
