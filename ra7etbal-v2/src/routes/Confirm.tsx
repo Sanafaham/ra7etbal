@@ -203,7 +203,7 @@ export default function Confirm() {
                 {ownerNotificationStatus === "failed"
                   ? "Marked as done. Owner notification could not be sent."
                   : ownerNotificationStatus === "sent"
-                    ? "Marked as done. The owner has been notified."
+                    ? "Marked as done. Ra7etBal is updating the owner."
                     : ownerNotificationStatus === "sending"
                       ? "Marked as done. Notifying the owner…"
                       : "Marked as done."}
