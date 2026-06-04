@@ -49,6 +49,23 @@ export async function getExistingPushSubscription(): Promise<PushSubscription | 
   return registration.pushManager.getSubscription();
 }
 
+/** Returns true only if the browser has a push subscription AND it is saved
+ *  in Supabase for this specific userId. Used by Settings to show real status. */
+export async function isSubscriptionSavedForUser(userId: string): Promise<boolean> {
+  const browserSub = await getExistingPushSubscription();
+  if (!browserSub) return false;
+
+  const { data } = await supabase
+    .from("push_subscriptions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("endpoint", browserSub.endpoint)
+    .eq("enabled", true)
+    .maybeSingle();
+
+  return data !== null;
+}
+
 export async function enableReminderNotifications(userId: string): Promise<PushNotificationStatus> {
   const support = checkPushSupport();
 
@@ -78,6 +95,9 @@ export async function enableReminderNotifications(userId: string): Promise<PushN
     existingSubscription ??
     (await subscribeToPush(registration));
 
+  // Always save — this inserts if missing for this userId, updates if present.
+  // Covers the case where the browser subscription exists but was never saved
+  // for the current user_id (e.g. account switch, fresh install, DB wipe).
   await savePushSubscription(userId, subscription);
   return "enabled";
 }
