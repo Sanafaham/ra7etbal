@@ -8,7 +8,7 @@ import { clearUserData } from "../../lib/cleanup";
 import {
   checkPushSupport,
   enableReminderNotifications,
-  getExistingPushSubscription,
+  isSubscriptionSavedForUser,
   type PushNotificationStatus,
 } from "../../lib/push-notifications";
 import { useMessagesStore } from "../../stores/messages";
@@ -22,16 +22,6 @@ interface Props {
 
 type View = "list" | "confirm-clear" | "confirm-archive";
 
-/**
- * Settings modal — calm iOS-Settings-style with three views.
- *
- *   list           — grouped rows (History · View / Archive, Workspace · Clear)
- *   confirm-clear  — destructive clear-all-data confirmation
- *   confirm-archive — calm move-completed-to-history confirmation
- *
- * Navigation from "View history" closes the modal and routes to /history.
- * No keyboards, no text inputs anywhere — buttons only.
- */
 export default function SettingsModal({ open, onClose, userId }: Props) {
   const navigate = useNavigate();
   const [view, setView] = useState<View>("list");
@@ -268,9 +258,14 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
         return;
       }
 
+      if (!userId) {
+        setStatus("idle");
+        return;
+      }
+
       try {
-        const subscription = await getExistingPushSubscription();
-        if (!cancelled) setStatus(subscription ? "enabled" : "idle");
+        const saved = await isSubscriptionSavedForUser(userId);
+        if (!cancelled) setStatus(saved ? "enabled" : "idle");
       } catch {
         if (!cancelled) setStatus("error");
       }
@@ -281,7 +276,7 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [userId]);
 
   async function handleEnable() {
     if (!userId || busy) return;
