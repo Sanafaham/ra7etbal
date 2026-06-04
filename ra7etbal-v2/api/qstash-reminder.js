@@ -24,7 +24,13 @@ export default async function handler(req, res) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const qstashToken = process.env.QSTASH_TOKEN;
-  const appBaseUrl = process.env.APP_BASE_URL || 'https://ra7etbal-v2.vercel.app';
+  let appBaseUrl = (process.env.APP_BASE_URL || 'https://ra7etbal-v2.vercel.app').trim();
+  // Ensure the URL has a scheme — QStash rejects destinations without https://
+  if (appBaseUrl && !appBaseUrl.startsWith('http://') && !appBaseUrl.startsWith('https://')) {
+    appBaseUrl = `https://${appBaseUrl}`;
+  }
+  // Strip any trailing slash for clean URL construction
+  appBaseUrl = appBaseUrl.replace(/\/$/, '');
 
   const missingVars = [];
   if (!supabaseUrl) missingVars.push('SUPABASE_URL');
@@ -135,10 +141,12 @@ async function scheduleMessage(appBaseUrl, taskId, dueAt, qstashToken, requestId
   if (Number.isNaN(dueMs)) throw new Error(`Invalid dueAt value: ${dueAt}`);
 
   const notBeforeUnix = Math.floor(dueMs / 1000);
-  const destination = encodeURIComponent(`${appBaseUrl}/api/send-push-for-task`);
 
+  const callbackUrl = `${appBaseUrl}/api/send-push-for-task`;
+  console.log(`[qstash-reminder][${requestId}] callback URL = ${callbackUrl}`);
   console.log(`[qstash-reminder][${requestId}] publishing to QStash, notBefore=${notBeforeUnix} (${new Date(dueMs).toISOString()})`);
 
+  const destination = encodeURIComponent(callbackUrl);
   const response = await fetch(`${QSTASH_BASE}/publish/${destination}`, {
     method: 'POST',
     headers: {
