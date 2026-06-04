@@ -1,12 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "crons": [
-    {
-      "path": "/api/send-due-reminder-pushes",
-      "schedule": "* * * * *"
-    }
-  ],
   "headers": [
     {
       "source": "/sw.js",
