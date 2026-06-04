@@ -131,7 +131,9 @@ export async function savePending(
 
     // Schedule an exact-time QStash push job for reminder tasks with a due date.
     if (task.type === "reminder" && task.due_at) {
-      void scheduleReminderPush(task.id, task.due_at);
+      scheduleReminderPush(task.id, task.due_at).catch((err) =>
+        console.error("[save] QStash scheduleReminderPush failed for task", task.id, err),
+      );
     }
 
     tasks.push(task);

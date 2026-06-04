@@ -1,11 +1,9 @@
 /**
  * Browser-side helpers to schedule, cancel, and reschedule QStash reminder jobs.
  *
- * These call /api/qstash-reminder (Vercel serverless) so the QSTASH_TOKEN
- * never touches the browser.
- *
- * All functions are fire-and-log: errors are caught and logged rather than
- * thrown so that a QStash failure never blocks a task mutation from completing.
+ * All functions are fire-and-log: errors are caught and logged with console.error
+ * so that a QStash failure never blocks a task mutation from completing, but is
+ * always visible in the browser console.
  */
 
 import { supabase } from "./supabase";
@@ -22,39 +20,53 @@ async function callQStashApi(
 ): Promise<void> {
   const token = await getAccessToken();
   if (!token) {
-    console.warn("[qstash-reminder] No session token — skipping QStash call for", action, taskId);
+    console.error("[qstash-reminder] No session token — cannot call QStash API for", action, taskId);
     return;
   }
 
   const body: Record<string, string> = { action, taskId };
   if (dueAt) body.dueAt = dueAt;
 
-  const res = await fetch("/api/qstash-reminder", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
+  console.log(`[qstash-reminder] → POST /api/qstash-reminder action=${action} taskId=${taskId} dueAt=${dueAt ?? "n/a"}`);
+
+  let res: Response;
+  try {
+    res = await fetch("/api/qstash-reminder", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    console.error("[qstash-reminder] fetch failed (network error):", action, taskId, err);
+    return;
+  }
+
+  const data = await res.json().catch(() => null);
 
   if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    console.warn("[qstash-reminder] API error", action, taskId, res.status, data);
+    console.error(
+      `[qstash-reminder] API ERROR — action=${action} taskId=${taskId} status=${res.status}`,
+      data,
+    );
+    return;
   }
+
+  console.log(`[qstash-reminder] ✓ action=${action} taskId=${taskId} response=`, data);
 }
 
 /** Schedule a QStash push job at the reminder's exact due_at time. */
 export async function scheduleReminderPush(taskId: string, dueAt: string): Promise<void> {
   const dueMs = new Date(dueAt).getTime();
   if (Number.isNaN(dueMs)) {
-    console.warn("[qstash-reminder] Invalid dueAt — skipping schedule", dueAt);
+    console.error("[qstash-reminder] Invalid dueAt — cannot schedule:", dueAt);
     return;
   }
-  // Only schedule if due_at is in the future (or within a reasonable window).
-  // Past reminders are handled immediately by pg_cron safety net.
+  // Skip only if more than 1 minute in the past — pg_cron safety net will handle it
   if (dueMs < Date.now() - 60_000) {
-    console.warn("[qstash-reminder] dueAt is more than 1 minute in the past — skipping QStash schedule", dueAt);
+    console.warn("[qstash-reminder] dueAt >1 min in past — skipping QStash, pg_cron safety net covers it:", dueAt);
     return;
   }
   await callQStashApi("schedule", taskId, dueAt);
@@ -72,11 +84,11 @@ export async function cancelReminderPush(taskId: string): Promise<void> {
 export async function rescheduleReminderPush(taskId: string, newDueAt: string): Promise<void> {
   const dueMs = new Date(newDueAt).getTime();
   if (Number.isNaN(dueMs)) {
-    console.warn("[qstash-reminder] Invalid newDueAt — skipping reschedule", newDueAt);
+    console.error("[qstash-reminder] Invalid newDueAt — cannot reschedule:", newDueAt);
     return;
   }
   if (dueMs < Date.now() - 60_000) {
-    // New time is already in the past — cancel existing job, pg_cron picks it up
+    // New time already in the past — cancel existing job, pg_cron picks it up
     await callQStashApi("cancel", taskId);
     return;
   }
