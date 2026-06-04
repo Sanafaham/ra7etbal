@@ -1,5 +1,6 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { createMessage } from "../../lib/messages";
 import { createTask, updateTaskConfirmationUrl } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
@@ -353,6 +354,71 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Client tool: create_reminder
+  // ------------------------------------------------------------------
+  const createReminder = useCallback(
+    async ({
+      description,
+      due_at,
+    }: {
+      description: string;
+      due_at: string;
+    }): Promise<string> => {
+      const text = description?.trim();
+      if (!text) {
+        return "I did not receive a reminder description. Ask the user what they want to be reminded about.";
+      }
+
+      const dueMs = new Date(due_at).getTime();
+      if (!due_at || Number.isNaN(dueMs)) {
+        return "I did not receive a valid due time. Ask the user when they want to be reminded.";
+      }
+
+      const userId = useAuthStore.getState().user?.id;
+      if (!userId) return "You are not signed in. Please sign in and try again.";
+
+      // Create the task through the store — identical to the UI save path.
+      let task;
+      try {
+        task = await useTasksStore.getState().add({
+          user_id: userId,
+          description: text,
+          type: "reminder",
+          assigned_to: null,
+          status: "pending",
+          needs_follow_up: false,
+          confirmation_url: null,
+          due_at,
+        });
+      } catch (err) {
+        return `Could not save the reminder. ${err instanceof Error ? err.message : "Please try again."}`;
+      }
+
+      // Schedule QStash — identical to save.ts.
+      scheduleReminderPush(task.id, due_at).catch((err) =>
+        console.error("[create_reminder] QStash schedule failed", task.id, err),
+      );
+
+      // Human-readable confirmation for the agent to speak back.
+      const dueDate = new Date(due_at);
+      const timeStr = dueDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const isToday =
+        dueDate.toDateString() === new Date().toDateString();
+      const isTomorrow =
+        dueDate.toDateString() ===
+        new Date(Date.now() + 86_400_000).toDateString();
+      const dateLabel = isToday
+        ? "today"
+        : isTomorrow
+        ? "tomorrow"
+        : dueDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+
+      return `Reminder set: "${text}" — ${dateLabel} at ${timeStr}.`;
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
   // Call management
   // ------------------------------------------------------------------
   const startCall = useCallback(async () => {
@@ -365,10 +431,12 @@ export default function ElevenLabsAgentWidget({
         agentId,
         dynamicVariables: {
           ra7etbal_state: briefStateText,
+          current_time: new Date().toISOString(),
         },
         clientTools: {
           send_followup: sendFollowup,
           send_delegation: sendDelegation,
+          create_reminder: createReminder,
         },
         onModeChange: ({ mode: m }) => {
           setMode(m === "speaking" ? "speaking" : "listening");
@@ -400,7 +468,7 @@ export default function ElevenLabsAgentWidget({
         setErrorMsg(null);
       }, 3000);
     }
-  }, [agentId, briefStateText, sendDelegation, sendFollowup, status]);
+  }, [agentId, briefStateText, createReminder, sendDelegation, sendFollowup, status]);
 
   // ------------------------------------------------------------------
   // Session teardown
