@@ -48,6 +48,7 @@ export default async function handler(req, res) {
 
   // ── 2. Parse taskId ─────────────────────────────────────────────────────
   const taskId = req.body?.taskId;
+  console.log(`[send-push-for-task] invoked by QStash, taskId=${taskId}`);
   if (!taskId) {
     // Malformed message — return 200 so QStash doesn't retry indefinitely
     return res.status(200).json({ success: false, skipped: true, reason: 'Missing taskId.' });
@@ -71,15 +72,20 @@ export default async function handler(req, res) {
   const task = Array.isArray(tasks) ? tasks[0] : null;
 
   if (!task) {
+    console.log(`[send-push-for-task] taskId=${taskId} NOT FOUND — skipping`);
     return res.status(200).json({ success: false, skipped: true, reason: 'Task not found.' });
   }
+  console.log(`[send-push-for-task] task loaded — userId=${task.user_id} status=${task.status} archived=${!!task.archived_at} last_push_sent_at=${task.last_push_sent_at}`);
   if (task.status !== 'pending') {
+    console.log(`[send-push-for-task] skipping — status=${task.status}`);
     return res.status(200).json({ success: false, skipped: true, reason: `Task status is ${task.status}.` });
   }
   if (task.archived_at) {
+    console.log(`[send-push-for-task] skipping — task is archived`);
     return res.status(200).json({ success: false, skipped: true, reason: 'Task is archived.' });
   }
   if (task.last_push_sent_at) {
+    console.log(`[send-push-for-task] skipping — already sent at ${task.last_push_sent_at}`);
     return res.status(200).json({ success: false, skipped: true, reason: 'Push already sent.', sentAt: task.last_push_sent_at });
   }
 
@@ -93,7 +99,9 @@ export default async function handler(req, res) {
   );
   const subscriptions = await subsRes.json().catch(() => []);
 
+  console.log(`[send-push-for-task] userId=${task.user_id} subscriptions found=${Array.isArray(subscriptions) ? subscriptions.length : 0}`);
   if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
+    console.log(`[send-push-for-task] skipping — no enabled push subscriptions for userId=${task.user_id}`);
     return res.status(200).json({ success: false, skipped: true, reason: 'No enabled push subscriptions.' });
   }
 
@@ -124,15 +132,18 @@ export default async function handler(req, res) {
 
   for (const sub of subscriptions) {
     const endpointTail = sub.endpoint ? sub.endpoint.slice(-40) : '(missing)';
+    console.log(`[send-push-for-task] sending to sub=${sub.id} endpoint=...${endpointTail}`);
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
         payload,
       );
       sent += 1;
+      console.log(`[send-push-for-task] ✓ sent to sub=${sub.id}`);
       perSubscription.push({ id: sub.id, endpointTail, result: 'sent' });
     } catch (err) {
       failed += 1;
+      console.error(`[send-push-for-task] ✗ FAILED sub=${sub.id} statusCode=${err?.statusCode} message=${getErrorMessage(err)} body=${err?.body ?? null}`);
       perSubscription.push({
         id: sub.id,
         endpointTail,
@@ -149,8 +160,10 @@ export default async function handler(req, res) {
   let markedSent = false;
   let markError = null;
 
+  console.log(`[send-push-for-task] result: sent=${sent} failed=${failed} — ${sent > 0 ? 'writing last_push_sent_at' : 'no successful sends, skipping stamp'}`);
   if (sent > 0) {
     const sentAt = new Date().toISOString();
+    console.log(`[send-push-for-task] stamping last_push_sent_at=${sentAt} on taskId=${taskId}`);
     const patchRes = await fetch(
       `${supabaseUrl}/rest/v1/tasks` +
       `?id=eq.${encodeURIComponent(taskId)}` +
@@ -163,12 +176,15 @@ export default async function handler(req, res) {
     );
     if (patchRes.ok) {
       markedSent = true;
+      console.log(`[send-push-for-task] ✓ last_push_sent_at stamped OK`);
     } else {
       const patchData = await patchRes.json().catch(() => null);
       markError = patchData?.message || `PATCH failed (${patchRes.status})`;
+      console.error(`[send-push-for-task] ✗ last_push_sent_at stamp FAILED: ${markError}`);
     }
   }
 
+  console.log(`[send-push-for-task] done — success=${sent > 0} sent=${sent} failed=${failed} markedSent=${markedSent}`);
   return res.status(200).json({
     success: sent > 0,
     taskId,
