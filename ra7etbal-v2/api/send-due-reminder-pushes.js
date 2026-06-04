@@ -122,6 +122,17 @@ export default async function handler(req, res) {
       failed += result.failed;
       errors.push(...result.errors);
 
+      let markError = null;
+      if (result.sent > 0) {
+        try {
+          await markTaskPushSent(config.values, task.id, runStartedAt);
+          markedSent += 1;
+        } catch (err) {
+          markError = getErrorMessage(err);
+          errors.push(`markTaskPushSent failed for task ${task.id}: ${markError}`);
+        }
+      }
+
       debugTasks.push({
         id: task.id,
         description: task.description,
@@ -130,14 +141,16 @@ export default async function handler(req, res) {
         status: task.status,
         last_push_sent_at: task.last_push_sent_at ?? null,
         subscriptionsFound: subscriptions.length,
-        sendResult: { sent: result.sent, failed: result.failed, errors: result.errors },
+        sendResult: {
+          sent: result.sent,
+          failed: result.failed,
+          errors: result.errors,
+          perSubscription: result.perSubscription,
+        },
+        markedSent: result.sent > 0 && markError === null,
+        markError,
         reason: result.sent > 0 ? 'sent' : 'send_failed',
       });
-
-      if (result.sent > 0) {
-        await markTaskPushSent(config.values, task.id, runStartedAt);
-        markedSent += 1;
-      }
     }
 
     if (testMode) {
@@ -232,6 +245,10 @@ function hasVapidKeys() {
 }
 
 async function fetchDueReminderTasks(config, nowIso) {
+  // Safety net: only catch reminders that QStash missed (2+ minutes overdue and still unsent).
+  // On-time reminders are delivered by QStash within ~5 seconds of due_at.
+  const twoMinutesAgo = new Date(new Date(nowIso).getTime() - 2 * 60 * 1000).toISOString();
+
   const url =
     `${config.supabaseUrl}/rest/v1/tasks` +
     '?select=id,user_id,description,due_at,status,last_push_sent_at' +
@@ -239,7 +256,7 @@ async function fetchDueReminderTasks(config, nowIso) {
     '&status=eq.pending' +
     '&archived_at=is.null' +
     '&last_push_sent_at=is.null' +
-    `&due_at=lte.${encodeURIComponent(nowIso)}` +
+    `&due_at=lte.${encodeURIComponent(twoMinutesAgo)}` +
     '&order=due_at.asc' +
     `&limit=${MAX_TASKS_PER_RUN}`;
 
@@ -294,8 +311,10 @@ async function sendTaskReminder(task, subscriptions) {
   let sent = 0;
   let failed = 0;
   const errors = [];
+  const perSubscription = [];
 
   for (const row of subscriptions) {
+    const endpointShort = row.endpoint ? row.endpoint.slice(-40) : '(missing)';
     try {
       await webpush.sendNotification(
         {
@@ -308,13 +327,29 @@ async function sendTaskReminder(task, subscriptions) {
         payload,
       );
       sent += 1;
+      perSubscription.push({
+        subscriptionId: row.id,
+        endpointTail: endpointShort,
+        result: 'sent',
+      });
     } catch (error) {
       failed += 1;
-      errors.push(getErrorMessage(error));
+      const detail = {
+        subscriptionId: row.id,
+        endpointTail: endpointShort,
+        result: 'failed',
+        message: error instanceof Error ? error.message : String(error),
+        statusCode: error?.statusCode ?? null,
+        body: error?.body ?? null,
+      };
+      perSubscription.push(detail);
+      errors.push(
+        `sub=${row.id} status=${detail.statusCode} msg=${detail.message} body=${JSON.stringify(detail.body)}`,
+      );
     }
   }
 
-  return { sent, failed, errors };
+  return { sent, failed, errors, perSubscription };
 }
 
 async function markTaskPushSent(config, taskId, sentAt) {

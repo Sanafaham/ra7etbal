@@ -1,4 +1,5 @@
 import { createMessage } from "./messages";
+import { scheduleReminderPush } from "./qstash-reminder";
 import { supabase } from "./supabase";
 import { createTask } from "./tasks";
 import type { ExtractedItem } from "../types/extraction";
@@ -126,6 +127,11 @@ export async function savePending(
         });
         messages.push(msg);
       }
+    }
+
+    // Schedule an exact-time QStash push job for reminder tasks with a due date.
+    if (task.type === "reminder" && task.due_at) {
+      void scheduleReminderPush(task.id, task.due_at);
     }
 
     tasks.push(task);

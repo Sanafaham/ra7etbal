@@ -28,6 +28,8 @@ export interface Task {
    */
   archived_at: string | null;
   created_at: string;
+  /** QStash message ID stored when a reminder push is scheduled. Null when not scheduled or after delivery. */
+  qstash_message_id: string | null;
 }
 
 export interface TaskDraft {

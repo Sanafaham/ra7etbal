@@ -1,5 +1,10 @@
 import { create } from "zustand";
 import {
+  cancelReminderPush,
+  rescheduleReminderPush,
+  scheduleReminderPush,
+} from "../lib/qstash-reminder";
+import {
   createTask as apiCreate,
   deleteTask as apiDelete,
   listTasks as apiList,
@@ -79,6 +84,19 @@ export const useTasksStore = create<TasksState>((set, get) => ({
     try {
       const updated = await apiUpdate(id, patch);
       set((s) => ({ items: s.items.map((t) => (t.id === id ? updated : t)) }));
+      // If due_at changed on a reminder, reschedule the QStash job.
+      if (
+        updated.type === "reminder" &&
+        "due_at" in patch &&
+        patch.due_at !== prev.due_at &&
+        updated.status === "pending"
+      ) {
+        if (updated.due_at) {
+          void rescheduleReminderPush(id, updated.due_at);
+        } else {
+          void cancelReminderPush(id);
+        }
+      }
       return updated;
     } catch (err) {
       set((s) => ({ items: s.items.map((t) => (t.id === id ? prev : t)) }));
@@ -87,10 +105,15 @@ export const useTasksStore = create<TasksState>((set, get) => ({
   },
 
   async remove(id) {
+    const task = get().items.find((t) => t.id === id);
     const prev = get().items;
     set({ items: prev.filter((t) => t.id !== id) });
     try {
       await apiDelete(id);
+      // Cancel the QStash job so the push doesn't fire after deletion.
+      if (task?.type === "reminder" && task.due_at) {
+        void cancelReminderPush(id);
+      }
     } catch (err) {
       set({ items: prev });
       throw err;
@@ -98,17 +121,28 @@ export const useTasksStore = create<TasksState>((set, get) => ({
   },
 
   async markDone(id) {
-    return get().update(id, {
+    const task = get().items.find((t) => t.id === id);
+    const result = await get().update(id, {
       status: "done",
       confirmed_at: new Date().toISOString(),
     });
+    // Cancel the QStash job so no push fires for a completed reminder.
+    if (task?.type === "reminder" && task.due_at) {
+      void cancelReminderPush(id);
+    }
+    return result;
   },
 
   async markPending(id) {
-    return get().update(id, {
+    const result = await get().update(id, {
       status: "pending",
       confirmed_at: null,
     });
+    // Re-arm the QStash job if the reminder's due_at is still in the future.
+    if (result.type === "reminder" && result.due_at) {
+      void scheduleReminderPush(result.id, result.due_at);
+    }
+    return result;
   },
 
   upsert(row) {
