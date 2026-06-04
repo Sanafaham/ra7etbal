@@ -77,8 +77,6 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
     setBusy(true);
     try {
       const { tasksArchived, messagesArchived } = await archiveCompleted(userId);
-      // Reset the active-workspace stores so Actions/Follow-ups/Messages
-      // re-fetch (without the archived rows) on next visit.
       useTasksStore.getState().reset();
       useMessagesStore.getState().reset();
       setNotice({
@@ -165,6 +163,10 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
           setNotice(null);
           setView("confirm-clear");
         }}
+        onClickDebug={() => {
+          onClose();
+          navigate("/debug");
+        }}
       />
     </Modal>
   );
@@ -178,12 +180,14 @@ function SettingsList({
   onClickViewHistory,
   onClickArchive,
   onClickClear,
+  onClickDebug,
 }: {
   userId: string | null;
   notice: string | null;
   onClickViewHistory: () => void;
   onClickArchive: () => void;
   onClickClear: () => void;
+  onClickDebug: () => void;
 }) {
   return (
     <div className="space-y-5">
@@ -200,6 +204,10 @@ function SettingsList({
 
       <Group label="Reminders">
         <ReminderNotificationsRow userId={userId} />
+      </Group>
+
+      <Group label="Dev">
+        <ActionRow label="Debug" onClick={onClickDebug} />
       </Group>
     </div>
   );
