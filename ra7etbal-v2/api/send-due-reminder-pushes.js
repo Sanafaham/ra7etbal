@@ -98,11 +98,22 @@ export default async function handler(req, res) {
     let failed = 0;
     let markedSent = 0;
     const errors = [];
+    const debugTasks = [];
 
     for (const task of tasks) {
       const subscriptions = subscriptionsByUser.get(task.user_id) ?? [];
       if (subscriptions.length === 0) {
         skipped += 1;
+        debugTasks.push({
+          id: task.id,
+          description: task.description,
+          due_at: task.due_at,
+          user_id: task.user_id,
+          status: task.status,
+          last_push_sent_at: task.last_push_sent_at ?? null,
+          subscriptionsFound: 0,
+          reason: 'skipped: no enabled push subscriptions found for user_id',
+        });
         continue;
       }
 
@@ -110,6 +121,18 @@ export default async function handler(req, res) {
       sent += result.sent;
       failed += result.failed;
       errors.push(...result.errors);
+
+      debugTasks.push({
+        id: task.id,
+        description: task.description,
+        due_at: task.due_at,
+        user_id: task.user_id,
+        status: task.status,
+        last_push_sent_at: task.last_push_sent_at ?? null,
+        subscriptionsFound: subscriptions.length,
+        sendResult: { sent: result.sent, failed: result.failed, errors: result.errors },
+        reason: result.sent > 0 ? 'sent' : 'send_failed',
+      });
 
       if (result.sent > 0) {
         await markTaskPushSent(config.values, task.id, runStartedAt);
@@ -130,6 +153,7 @@ export default async function handler(req, res) {
         skipped,
         markedSent,
         errors,
+        debug: debugTasks,
       });
     }
 
@@ -140,6 +164,7 @@ export default async function handler(req, res) {
       skipped,
       failed,
       markedSent,
+      debug: debugTasks,
     });
   } catch (error) {
     if (testMode) {
@@ -209,7 +234,7 @@ function hasVapidKeys() {
 async function fetchDueReminderTasks(config, nowIso) {
   const url =
     `${config.supabaseUrl}/rest/v1/tasks` +
-    '?select=id,user_id,description,due_at' +
+    '?select=id,user_id,description,due_at,status,last_push_sent_at' +
     '&type=eq.reminder' +
     '&status=eq.pending' +
     '&archived_at=is.null' +
