@@ -7,6 +7,7 @@ import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import { buildDailyBrief } from "../lib/daily-brief";
+import { formatReminderDue } from "../lib/reminder-time";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
@@ -300,31 +301,68 @@ function buildHomeBriefCopy({
 function buildElevenLabsBriefStateText(
   brief: ReturnType<typeof buildDailyBrief>,
 ): string {
+  const now = new Date();
   const lines: string[] = [];
 
   lines.push(`Summary: ${brief.summary.paragraph}`);
 
-  if (brief.needsAttention.length > 0) {
-    const items = brief.needsAttention
-      .slice(0, 3)
+  // ── Reminders (all buckets, with due times) ────────────────────────────
+  // Collect every pending reminder the user has, regardless of which brief
+  // bucket it landed in. Include the humanized due time so the agent can
+  // answer "what time is my reminder to X?" accurately.
+  const allTasks = [
+    ...brief.needsAttention,
+    ...brief.later,
+    // waitingOnOthers are delegations/follow-ups — no reminders there
+  ];
+  const reminders = allTasks.filter(
+    (t) => t.type === "reminder" && t.status === "pending",
+  );
+  if (reminders.length > 0) {
+    const items = reminders.map((t) => {
+      const due = t.due_at ? formatReminderDue(t.due_at, now) : null;
+      return due
+        ? `"${t.description.trim()}" (${due})`
+        : `"${t.description.trim()}"`;
+    });
+    lines.push(`Reminders (${reminders.length}): ${items.join("; ")}.`);
+  } else {
+    lines.push("Reminders: none.");
+  }
+
+  // ── Non-reminder needs-attention items ────────────────────────────────
+  const nonReminderAttention = brief.needsAttention.filter(
+    (t) => t.type !== "reminder",
+  );
+  if (nonReminderAttention.length > 0) {
+    const items = nonReminderAttention
+      .slice(0, 5)
       .map((t) => t.description.trim())
-      .join(", ");
+      .join("; ");
     lines.push(`Needs attention: ${items}.`);
   }
 
+  // ── Waiting on others ─────────────────────────────────────────────────
   if (brief.waitingOnOthers.length > 0) {
     const items = brief.waitingOnOthers
-      .slice(0, 3)
-      .map((t) => t.description.trim())
-      .join(", ");
+      .slice(0, 5)
+      .map((t) => {
+        const name = t.assigned_to?.trim();
+        return name
+          ? `"${t.description.trim()}" (waiting on ${name})`
+          : `"${t.description.trim()}"`;
+      })
+      .join("; ");
     lines.push(`Waiting on others: ${items}.`);
   }
 
-  if (brief.later.length > 0) {
-    const items = brief.later
-      .slice(0, 3)
+  // ── Later (non-reminder) ──────────────────────────────────────────────
+  const nonReminderLater = brief.later.filter((t) => t.type !== "reminder");
+  if (nonReminderLater.length > 0) {
+    const items = nonReminderLater
+      .slice(0, 5)
       .map((t) => t.description.trim())
-      .join(", ");
+      .join("; ");
     lines.push(`Later: ${items}.`);
   }
 
