@@ -146,8 +146,9 @@ async function scheduleMessage(appBaseUrl, taskId, dueAt, qstashToken, requestId
   console.log(`[qstash-reminder][${requestId}] callback URL = ${callbackUrl}`);
   console.log(`[qstash-reminder][${requestId}] publishing to QStash, notBefore=${notBeforeUnix} (${new Date(dueMs).toISOString()})`);
 
-  const destination = encodeURIComponent(callbackUrl);
-  const response = await fetch(`${QSTASH_BASE}/publish/${destination}`, {
+  // QStash publish endpoint expects the destination URL as a raw absolute URL in the path.
+  // Do not encode it. Encoding turns "https://..." into "https%3A%2F%2F..." and QStash rejects it as missing a scheme.
+  const response = await fetch(`${QSTASH_BASE}/publish/${callbackUrl}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${qstashToken}`,
@@ -166,7 +167,11 @@ async function scheduleMessage(appBaseUrl, taskId, dueAt, qstashToken, requestId
     throw new Error(data?.error || `QStash schedule failed (${response.status})`);
   }
 
-  return data?.messageId ?? data?.message_id ?? null;
+  if (!data?.messageId && !data?.message_id) {
+    throw new Error(`QStash schedule succeeded but returned no message ID: ${JSON.stringify(data)}`);
+  }
+
+  return data.messageId ?? data.message_id;
 }
 
 async function cancelMessage(qstashMessageId, qstashToken, requestId) {
