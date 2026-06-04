@@ -156,14 +156,17 @@ export default async function handler(req, res) {
     }
   }
 
-  // ── 6. Stamp last_push_sent_at if at least one send succeeded ───────────
+  // ── 6. On success: stamp last_push_sent_at AND mark reminder done ───────
+  // Moving to done keeps a record in history without cluttering Actions.
+  // Guard &last_push_sent_at=is.null prevents a double-send from pg_cron
+  // safety net writing twice.
   let markedSent = false;
   let markError = null;
 
-  console.log(`[send-push-for-task] result: sent=${sent} failed=${failed} — ${sent > 0 ? 'writing last_push_sent_at' : 'no successful sends, skipping stamp'}`);
+  console.log(`[send-push-for-task] result: sent=${sent} failed=${failed} — ${sent > 0 ? 'writing last_push_sent_at + marking done' : 'no successful sends, skipping stamp'}`);
   if (sent > 0) {
     const sentAt = new Date().toISOString();
-    console.log(`[send-push-for-task] stamping last_push_sent_at=${sentAt} on taskId=${taskId}`);
+    console.log(`[send-push-for-task] stamping last_push_sent_at=${sentAt} and status=done on taskId=${taskId}`);
     const patchRes = await fetch(
       `${supabaseUrl}/rest/v1/tasks` +
       `?id=eq.${encodeURIComponent(taskId)}` +
@@ -171,16 +174,20 @@ export default async function handler(req, res) {
       {
         method: 'PATCH',
         headers: { ...supabaseHeaders(serviceRoleKey), Prefer: 'return=minimal' },
-        body: JSON.stringify({ last_push_sent_at: sentAt }),
+        body: JSON.stringify({
+          last_push_sent_at: sentAt,
+          status: 'done',
+          confirmed_at: sentAt,
+        }),
       },
     );
     if (patchRes.ok) {
       markedSent = true;
-      console.log(`[send-push-for-task] ✓ last_push_sent_at stamped OK`);
+      console.log(`[send-push-for-task] ✓ task marked done OK`);
     } else {
       const patchData = await patchRes.json().catch(() => null);
       markError = patchData?.message || `PATCH failed (${patchRes.status})`;
-      console.error(`[send-push-for-task] ✗ last_push_sent_at stamp FAILED: ${markError}`);
+      console.error(`[send-push-for-task] ✗ task done stamp FAILED: ${markError}`);
     }
   }
 

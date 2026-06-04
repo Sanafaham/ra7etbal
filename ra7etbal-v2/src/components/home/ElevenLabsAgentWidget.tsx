@@ -413,7 +413,9 @@ export default function ElevenLabsAgentWidget({
         ? "tomorrow"
         : dueDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
 
-      return `Reminder set: "${text}" — ${dateLabel} at ${timeStr}.`;
+      // Prefix with CREATED: so the agent system prompt can pattern-match
+      // success vs error without ambiguity.
+      return `CREATED: Reminder saved — "${text}" on ${dateLabel} at ${timeStr}.`;
     },
     [],
   );
