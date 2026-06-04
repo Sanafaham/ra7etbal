@@ -121,8 +121,8 @@ export default async function handler(req, res) {
   }
 
   const payload = JSON.stringify({
-    title: 'Ra7etBal reminder',
-    body: `${task.description} is due now.`,
+    title: 'Ra7etBal',
+    body: task.description,
   });
 
   let sent = 0;
