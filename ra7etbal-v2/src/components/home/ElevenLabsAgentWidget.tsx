@@ -1,5 +1,6 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { createMessage } from "../../lib/messages";
 import { createTask, updateTaskConfirmationUrl } from "../../lib/tasks";
@@ -359,19 +360,47 @@ export default function ElevenLabsAgentWidget({
   const createReminder = useCallback(
     async ({
       description,
+      time_text,
       due_at,
     }: {
       description: string;
-      due_at: string;
+      /** Raw time phrase from the user, e.g. "tomorrow at 5 PM", "in 30 minutes". */
+      time_text?: string;
+      /** ISO fallback — only used when time_text is absent. */
+      due_at?: string;
     }): Promise<string> => {
       const text = description?.trim();
       if (!text) {
         return "I did not receive a reminder description. Ask the user what they want to be reminded about.";
       }
 
-      const dueMs = new Date(due_at).getTime();
-      if (!due_at || Number.isNaN(dueMs)) {
-        return "I did not receive a valid due time. Ask the user when they want to be reminded.";
+      // ── Resolve due time ──────────────────────────────────────────────────
+      // Prefer parsing the raw phrase; fall back to agent-supplied ISO only when
+      // time_text is absent. This ensures "tomorrow at 5 PM" always resolves
+      // using the browser's local clock, not the agent's arithmetic.
+      let resolvedDueAt: string;
+
+      if (time_text?.trim()) {
+        const parsed = parseVoiceTime(time_text.trim());
+        if (parsed.error || !parsed.dueAt) {
+          console.error(
+            `[create_reminder] parseVoiceTime failed: raw="${time_text}" error="${parsed.error}"`,
+          );
+          return `I could not understand the time "${time_text}". Ask the user to repeat when they want to be reminded.`;
+        }
+        console.log(
+          `[create_reminder] time resolved: raw="${time_text}" parsedAs="${parsed.parsedAs}" dueAt=${parsed.dueAt} tz=${parsed.timezone}`,
+        );
+        resolvedDueAt = parsed.dueAt;
+      } else if (due_at) {
+        const dueMs = new Date(due_at).getTime();
+        if (Number.isNaN(dueMs)) {
+          return "I did not receive a valid due time. Ask the user when they want to be reminded.";
+        }
+        console.log(`[create_reminder] using agent-supplied due_at=${due_at} (no time_text)`);
+        resolvedDueAt = due_at;
+      } else {
+        return "I did not receive a time for the reminder. Ask the user when they want to be reminded.";
       }
 
       const userId = useAuthStore.getState().user?.id;
@@ -388,19 +417,19 @@ export default function ElevenLabsAgentWidget({
           status: "pending",
           needs_follow_up: false,
           confirmation_url: null,
-          due_at,
+          due_at: resolvedDueAt,
         });
       } catch (err) {
         return `Could not save the reminder. ${err instanceof Error ? err.message : "Please try again."}`;
       }
 
       // Schedule QStash — identical to save.ts.
-      scheduleReminderPush(task.id, due_at).catch((err) =>
+      scheduleReminderPush(task.id, resolvedDueAt).catch((err) =>
         console.error("[create_reminder] QStash schedule failed", task.id, err),
       );
 
       // Human-readable confirmation for the agent to speak back.
-      const dueDate = new Date(due_at);
+      const dueDate = new Date(resolvedDueAt);
       const timeStr = dueDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
       const isToday =
         dueDate.toDateString() === new Date().toDateString();
