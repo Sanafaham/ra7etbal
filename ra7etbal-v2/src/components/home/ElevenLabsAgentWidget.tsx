@@ -1,5 +1,6 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { createMessage } from "../../lib/messages";
@@ -74,6 +75,10 @@ export default function ElevenLabsAgentWidget({
 
   /** Per-person send cooldown: personName.toLowerCase() → timestamp of last send */
   const lastSentRef = useRef<Map<string, number>>(new Map());
+
+  /** Accumulates successful tool-call descriptions for this session.
+   *  Flushed to carson_memory on disconnect. */
+  const sessionActionsRef = useRef<string[]>([]);
 
   // ------------------------------------------------------------------
   // Client tool: send_followup
@@ -225,6 +230,7 @@ export default function ElevenLabsAgentWidget({
       }
 
       lastSentRef.current.set(cooldownKey, Date.now());
+      sessionActionsRef.current.push(`Sent follow-up to ${person.name} about ${topicLabel}`);
       return `Sent follow-up to ${person.name} about ${topicLabel}.`;
     },
     [],
@@ -351,6 +357,7 @@ export default function ElevenLabsAgentWidget({
       }
 
       lastSentRef.current.set(cooldownKey, Date.now());
+      sessionActionsRef.current.push(`Delegated to ${person.name}: ${taskText}`);
       return `Sent delegation to ${person.name}: ${taskText}.`;
     },
     [],
@@ -446,6 +453,7 @@ export default function ElevenLabsAgentWidget({
 
       // Prefix with CREATED: so the agent system prompt can pattern-match
       // success vs error without ambiguity.
+      sessionActionsRef.current.push(`Created reminder: ${text} (${dateLabel} at ${timeStr})`);
       return `CREATED: Reminder saved — "${text}" on ${dateLabel} at ${timeStr}.`;
     },
     [],
@@ -459,6 +467,18 @@ export default function ElevenLabsAgentWidget({
     setStatus("connecting");
     setErrorMsg(null);
 
+    // Reset session actions for this new session.
+    sessionActionsRef.current = [];
+
+    // Load the last 5 session summaries before opening the ElevenLabs
+    // connection. Failure is non-fatal — fall back to empty string.
+    let recentMemory = "No previous sessions.";
+    try {
+      recentMemory = await loadRecentMemory(5);
+    } catch {
+      // Non-fatal — Carson simply starts without prior memory.
+    }
+
     try {
       const conv = await Conversation.startSession({
         agentId,
@@ -466,6 +486,7 @@ export default function ElevenLabsAgentWidget({
           ra7etbal_state: briefStateText,
           current_time: new Date().toISOString(),
           user_name: displayName ?? "",
+          recent_memory: recentMemory,
         },
         clientTools: {
           send_followup: sendFollowup,
@@ -476,6 +497,15 @@ export default function ElevenLabsAgentWidget({
           setMode(m === "speaking" ? "speaking" : "listening");
         },
         onDisconnect: () => {
+          // Save a deterministic summary of what happened this session.
+          const actions = sessionActionsRef.current;
+          if (actions.length > 0) {
+            const summary = actions.join(". ") + ".";
+            saveSessionMemory(summary).catch(() => {
+              // Non-fatal — don't surface to user.
+            });
+          }
+          sessionActionsRef.current = [];
           conversationRef.current = null;
           setStatus("idle");
           setMode("listening");
