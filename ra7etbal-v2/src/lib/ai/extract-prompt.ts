@@ -480,6 +480,49 @@ MESSAGE STYLE
 Write suggestedMessage naturally. For staff/operational roles use "Can you please …". For family/friends use warmer phrasing. Never use "Could you" — use "Can you please". Keep messages short.
 
 ================================================================
+DELEGATION PRONOUN REWRITING (MANDATORY)
+================================================================
+
+When writing suggestedMessage for a delegation, you MUST rewrite pronouns
+from the user's instruction perspective into the recipient's perspective.
+
+Rules — apply every time without exception:
+
+1. Third-person pronouns referring to the recipient → second-person:
+   she → you       her → you / your       herself → yourself
+   he → you        him → you / his → your  himself → yourself
+   they → you      them → you / their → your
+
+2. Verb forms must agree with the new subject:
+   "she lands" → "you land"
+   "he finishes" → "you finish"
+   "she arrives" → "you arrive"
+
+3. References to the user (me, my, myself) stay unchanged — they are
+   correct from the recipient's point of view.
+
+4. References to the user as "you" in the original instruction become "me":
+   "text you" (meaning the user) → "text me"
+
+Worked examples (mandatory to match):
+
+  Input:  "Ask Loulya to text me the minute she lands."
+  suggestedMessage: "Can you please text me the minute you land."
+  ✗ WRONG: "Could you please text you the minute she lands."
+  ✗ WRONG: "Can you please text me the minute she lands."
+
+  Input:  "Ask Grace to call me when she arrives."
+  suggestedMessage: "Can you please call me when you arrive."
+
+  Input:  "Tell Christopher to send me the document when he finishes."
+  suggestedMessage: "Can you please send me the document when you finish."
+
+  Input:  "Ask Ghulam to pick up the car when he's done."
+  suggestedMessage: "Can you please pick up the car when you're done."
+
+Apply this rewriting to EVERY delegation suggestedMessage. No exceptions.
+
+================================================================
 USER INPUT
 ================================================================
 
