@@ -31,11 +31,7 @@ export default function Confirm() {
 
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
-  const [ownerNotificationStatus, setOwnerNotificationStatus] = useState<
-    "idle" | "sending" | "sent" | "failed"
-  >("idle");
   const confirmedRef = useRef(false);
-  const ownerNotificationRef = useRef(false);
 
   useEffect(() => {
     if (!taskId) {
@@ -100,15 +96,12 @@ export default function Confirm() {
         return;
       }
       // Either success or already_done — both mean the task is now done.
+      // The server sends a push notification to the owner automatically.
       setInfo((prev) =>
         prev
           ? { ...prev, status: "done", confirmedAt: new Date().toISOString() }
           : prev,
       );
-      if (!data.already_done) {
-        const ownerNotified = await notifyOwnerAutomatically();
-        setOwnerNotificationStatus(ownerNotified ? "sent" : "failed");
-      }
     } catch (err) {
       confirmedRef.current = false;
       setConfirmError(
@@ -118,53 +111,6 @@ export default function Confirm() {
       );
     } finally {
       setConfirming(false);
-    }
-  }
-
-  async function notifyOwnerAutomatically(): Promise<boolean> {
-    if (!taskId || !info || ownerNotificationRef.current) return false;
-    ownerNotificationRef.current = true;
-    setOwnerNotificationStatus("sending");
-    try {
-      const res = await fetch("/api/send-owner-confirmation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          taskId,
-          taskText: info.description,
-          personName: info.assignedTo ?? "Someone",
-        }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        success?: boolean;
-        error?: string;
-        details?: string;
-        messageId?: string | null;
-        acceptedAt?: string;
-      };
-      console.log("Owner notification response", {
-        taskId,
-        ok: res.ok,
-        status: res.status,
-        success: data.success === true,
-        hasMessageId: Boolean(data.messageId),
-        acceptedAt: data.acceptedAt ?? null,
-        error: data.details || data.error || null,
-      });
-      if (!res.ok) {
-        console.warn("Owner notification failed", {
-          taskId,
-          error: data.details || data.error || "Owner notification request failed.",
-        });
-        return false;
-      }
-      return data.success === true;
-    } catch (err) {
-      console.warn("Owner notification failed", {
-        taskId,
-        error: err instanceof Error ? err.message : "Owner notification request failed.",
-      });
-      return false;
     }
   }
 
@@ -199,15 +145,7 @@ export default function Confirm() {
 
           {info.status === "done" ? (
             <div className="space-y-3">
-              <AuthNotice kind="success">
-                {ownerNotificationStatus === "failed"
-                  ? "Marked as done. Owner notification could not be sent."
-                  : ownerNotificationStatus === "sent"
-                    ? "Marked as done. Ra7etBal is updating the owner."
-                    : ownerNotificationStatus === "sending"
-                      ? "Marked as done. Notifying the owner…"
-                      : "Marked as done."}
-              </AuthNotice>
+              <AuthNotice kind="success">Marked as done.</AuthNotice>
             </div>
           ) : (
             <>
