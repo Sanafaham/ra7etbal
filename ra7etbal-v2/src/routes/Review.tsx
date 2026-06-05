@@ -12,6 +12,7 @@ import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { useMessagesStore } from "../stores/messages";
 import { usePeopleStore } from "../stores/people";
+import { useProfileStore } from "../stores/profile";
 import { useTasksStore } from "../stores/tasks";
 
 /**
@@ -22,6 +23,8 @@ export default function Review() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const userId = user?.id ?? null;
+  // Used to rewrite owner pronouns in outgoing delegation messages at save time.
+  const displayName = useProfileStore((s) => s.displayName);
 
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -210,7 +213,7 @@ export default function Review() {
     setSaving(true);
     setSaveError(null);
     try {
-      const result = await savePending(items, userId);
+      const result = await savePending(items, userId, displayName);
       const sendableSavedMessages = result.messages.filter(
         (message) =>
           !!message.recipient.trim() &&

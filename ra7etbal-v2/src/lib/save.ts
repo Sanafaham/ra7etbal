@@ -7,6 +7,25 @@ import type { Message } from "../types/message";
 import type { Task } from "../types/task";
 
 /**
+ * Replace first-person owner pronouns in a delegation message so the
+ * recipient reads "call Sana" instead of "call me".
+ *
+ * The message is sent by Ra7etBal on the owner's behalf, so "me" would
+ * mean "Ra7etBal" to the recipient — which is wrong.
+ *
+ * Falls back to "the sender" when no ownerName is provided so the
+ * message still reads naturally.
+ */
+function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
+  const name = ownerName?.trim() || "the sender";
+  return text
+    .replace(/\bmy\b/gi, `${name}'s`)
+    .replace(/\bmyself\b/gi, name)
+    .replace(/\bme\b/gi, name)
+    .replace(/\bI\b/g, name); // capital I only — avoids altering "i" inside words
+}
+
+/**
  * Save the reviewed extraction to Supabase.
  *
  * Rules:
@@ -39,6 +58,7 @@ export interface SaveResult {
 export async function savePending(
   items: ExtractedItem[],
   userId: string,
+  ownerName?: string | null,
 ): Promise<SaveResult> {
   if (!userId) throw new Error("Not signed in.");
 
@@ -116,7 +136,12 @@ export async function savePending(
       task = await updateTaskUrl(task.id, confirmationUrl);
 
       // Pair message row for the host to copy and send.
-      const content = (item.suggestedMessage ?? "").trim();
+      // Rewrite any owner first-person pronouns ("me" → "Sana", etc.) so the
+      // recipient reads the message correctly — this is a code-side safety net
+      // in addition to the prompt-level instruction, because LLM output is not
+      // guaranteed and displayName may not have been loaded at extraction time.
+      const rawContent = (item.suggestedMessage ?? "").trim();
+      const content = rawContent ? rewriteOwnerPronouns(rawContent, ownerName) : rawContent;
       if (content && assignedTo) {
         const msg = await createMessage({
           user_id: userId,
