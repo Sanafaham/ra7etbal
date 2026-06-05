@@ -551,12 +551,12 @@ export default function ElevenLabsAgentWidget({
         <button
           type="button"
           onClick={startCall}
-          aria-label="Talk to Ra7etBal"
-          className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:bg-white hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
+          aria-label="Talk to Carson Mark II"
+          className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
         >
           <MicIcon className="h-4 w-4 text-charcoal" />
           <span className="text-[13px] font-semibold text-charcoal">
-            Talk to Ra7etBal
+            Talk to Carson Mark II
           </span>
         </button>
       )}
