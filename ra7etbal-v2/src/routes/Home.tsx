@@ -11,6 +11,7 @@ import { formatReminderDue } from "../lib/reminder-time";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
+import { useProfileStore } from "../stores/profile";
 import { useTasksStore } from "../stores/tasks";
 
 export default function Home() {
@@ -25,6 +26,10 @@ export default function Home() {
   );
 
   const loadPeople = usePeopleStore((s) => s.loadFor);
+
+  const { displayName, loadProfile } = useProfileStore(
+    useShallow((s) => ({ displayName: s.displayName, loadProfile: s.loadFor })),
+  );
 
   const { tasks, loadTasks } = useTasksStore(
     useShallow((s) => ({ tasks: s.items, loadTasks: s.loadFor })),
@@ -43,6 +48,11 @@ export default function Home() {
     if (!userId) return;
     void loadTasks(userId, { force: true });
   }, [userId, loadTasks]);
+
+  useEffect(() => {
+    if (!userId) return;
+    void loadProfile(userId);
+  }, [userId, loadProfile]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setNow(new Date()), 30_000);
@@ -255,7 +265,10 @@ export default function Home() {
         </div>
       )}
 
-      <ElevenLabsAgentWidget briefStateText={elevenLabsBriefStateText} />
+      <ElevenLabsAgentWidget
+        briefStateText={elevenLabsBriefStateText}
+        displayName={displayName}
+      />
 
       {keyboardOpen && (
         <div

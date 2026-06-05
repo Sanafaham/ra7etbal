@@ -58,8 +58,10 @@ function buildFollowUpText(description: string): string {
 
 export default function ElevenLabsAgentWidget({
   briefStateText,
+  displayName,
 }: {
   briefStateText: string;
+  displayName?: string | null;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
 
@@ -463,6 +465,7 @@ export default function ElevenLabsAgentWidget({
         dynamicVariables: {
           ra7etbal_state: briefStateText,
           current_time: new Date().toISOString(),
+          user_name: displayName ?? "",
         },
         clientTools: {
           send_followup: sendFollowup,
@@ -499,7 +502,7 @@ export default function ElevenLabsAgentWidget({
         setErrorMsg(null);
       }, 3000);
     }
-  }, [agentId, briefStateText, createReminder, sendDelegation, sendFollowup, status]);
+  }, [agentId, briefStateText, displayName, createReminder, sendDelegation, sendFollowup, status]);
 
   // ------------------------------------------------------------------
   // Session teardown
