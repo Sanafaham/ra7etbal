@@ -79,7 +79,6 @@ export default function Actions() {
   }
 
   async function handleDelete(task: Task) {
-    if (!window.confirm("Delete this task?")) return;
     try {
       await tasksStore.getState().remove(task.id);
     } catch (e) {

@@ -38,6 +38,7 @@ export default function TaskCard({
 }: Props) {
   const type = TYPE_META[task.type] ?? TYPE_META.action;
   const [busy, setBusy] = useState<"done" | "delete" | "send" | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [copied, setCopied] = useState(false);
   const isDone = task.status === "done";
   const isWaitingDelegation = task.type === "delegation" && !isDone;
@@ -54,8 +55,19 @@ export default function TaskCard({
     }
   }
 
-  async function remove() {
+  function armDelete() {
     if (busy) return;
+    if (confirmingDelete) {
+      // Second tap — execute immediately.
+      void executeDelete();
+      return;
+    }
+    setConfirmingDelete(true);
+    window.setTimeout(() => setConfirmingDelete(false), 3000);
+  }
+
+  async function executeDelete() {
+    setConfirmingDelete(false);
     setBusy("delete");
     try {
       await onDelete(task);
@@ -205,12 +217,17 @@ export default function TaskCard({
 
         <button
           type="button"
-          onClick={() => void remove()}
+          onClick={armDelete}
           disabled={!!busy}
-          className="ml-auto inline-flex items-center gap-2 rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
+          className={
+            "ml-auto inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 " +
+            (confirmingDelete
+              ? "border-rose-500 bg-rose-500 text-white"
+              : "border-rose-200 bg-white text-rose-700 hover:bg-rose-50")
+          }
         >
           {busy === "delete" && <Spinner size={12} />}
-          <span>Delete</span>
+          <span>{confirmingDelete ? "Tap to confirm" : "Delete"}</span>
         </button>
       </footer>
 

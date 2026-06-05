@@ -36,7 +36,6 @@ export default function FollowUps() {
     }
   }
   async function handleDelete(task: Task) {
-    if (!window.confirm("Delete this follow-up?")) return;
     try {
       await useTasksStore.getState().remove(task.id);
     } catch (e) {
