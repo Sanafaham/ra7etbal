@@ -8,22 +8,32 @@
  * phrase and this function resolves it correctly.
  *
  * Supported patterns:
- *   "in 30 minutes" / "in a minute"   → now + N min
- *   "in 2 hours"    / "in an hour"    → now + N hours
- *   "in 3 days"                        → now + N days (same time)
- *   "in 2 weeks"                       → now + N×7 days
- *   "tonight"                          → today 21:00
- *   "later today"                      → now + 3 hours
- *   "before bed"                       → today 22:00
- *   "tomorrow morning"                 → tomorrow 09:00
- *   "tomorrow afternoon"               → tomorrow 14:00
- *   "tomorrow evening"                 → tomorrow 19:00
- *   "tomorrow at 5 PM"                 → next calendar day 17:00 local
- *   "today at 3:30 PM"                 → today 15:30 local
- *   "at 6 PM" / "6 PM"                 → today 18:00 if future, else tomorrow
- *   "next week"                        → +7 days
- *   "next month"                       → +30 days
- *   "next Friday"                      → next occurrence of that weekday at 09:00
+ *   Relative (spoken numbers supported — "five" = 5):
+ *   "in 5 minutes" / "in five minutes" / "5 minutes" / "a minute"  → now + N min
+ *   "half an hour" / "in half an hour"                              → now + 30 min
+ *   "in 2 hours"   / "in two hours"    / "an hour"                 → now + N hours
+ *   "in 3 days"    / "in three days"   / "a day"                   → now + N days
+ *   "in 2 weeks"   / "in two weeks"    / "a week"                  → now + N×7 days
+ *   "in 2 months"  / "in two months"   / "a month"                 → now + N×30 days
+ *   "in 2 years"   / "in two years"    / "a year"                  → now + N×365 days
+ *
+ *   Named:
+ *   "tonight"           → today 21:00
+ *   "later today"       → now + 3 hours
+ *   "before bed"        → today 22:00
+ *   "tomorrow"          → tomorrow 09:00
+ *   "tomorrow morning"  → tomorrow 09:00
+ *   "tomorrow afternoon"→ tomorrow 14:00
+ *   "tomorrow evening"  → tomorrow 19:00
+ *   "next week"         → +7 days
+ *   "next month"        → +30 days
+ *   "next year"         → +365 days
+ *   "next Friday"       → next occurrence of that weekday at 09:00
+ *
+ *   Absolute:
+ *   "tomorrow at 5 PM"  → next calendar day 17:00 local
+ *   "today at 3:30 PM"  → today 15:30 local
+ *   "at 6 PM" / "6 PM"  → today 18:00 if future, else tomorrow
  */
 
 export interface VoiceTimeResult {
@@ -87,12 +97,17 @@ export function parseVoiceTime(
     "fifty five": 55, "fifty-five": 55,
   };
   // Replace longest matches first (compound before single words).
-  const normalised = raw.replace(
+  let normalised = raw.replace(
     /\btwenty[\s-](?:one|two|three|four|five|six|seven|eight|nine)\b|\bthirty[\s-]five\b|\bforty[\s-]five\b|\bfifty[\s-]five\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty)\b/g,
     (m) => String(WORD_NUMBERS[m] ?? m),
   );
+
+  // Normalise "half [an] hour" variants → "30 minutes" so relMatch picks them up.
+  // Covers: "half an hour", "half hour", "a half hour", "in half an hour", etc.
+  normalised = normalised.replace(/\b(?:a\s+)?half(?:\s+an?)?\s+hour\b/g, "30 minutes");
+
   if (normalised !== raw) {
-    console.log(`[parse-voice-time] normalised spoken numbers: "${raw}" → "${normalised}"`);
+    console.log(`[parse-voice-time] normalised: "${raw}" → "${normalised}"`);
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────
@@ -110,11 +125,11 @@ export function parseVoiceTime(
     return localDate(base.getFullYear(), base.getMonth(), base.getDate() + n, h, m);
   }
 
-  // ── 1. Relative: "in X / a / an  minutes|hours|days|weeks" ──────────────
-  // Accepts numeric ("in 5"), word-number "a"/"an" (treated as 1).
-  // `normalised` has already converted word-numbers → digits.
+  // ── 1. Relative: "[in] X / a / an  minutes|hours|days|weeks|months|years" ─
+  // "in" is optional so "one minute", "a minute", "5 minutes" all work.
+  // `normalised` has already converted word-numbers → digits and half-hour → 30 minutes.
   const relMatch = normalised.match(
-    /^in\s+(a\b|an\b|\d+(?:\.\d+)?)\s*(minute|minutes|min|hour|hours|hr|hrs|day|days|week|weeks)\b/,
+    /^(?:in\s+)?(a\b|an\b|\d+(?:\.\d+)?)\s*(minute|minutes|min|hour|hours|hr|hrs|day|days|week|weeks|month|months|year|years)\b/,
   );
   if (relMatch) {
     const raw_n = relMatch[1];
@@ -132,10 +147,16 @@ export function parseVoiceTime(
     } else if (unit.startsWith("day")) {
       dueAt = addDays(now, n).toISOString();
       parsedAs = `relative: now + ${n} day(s)`;
-    } else {
-      // weeks
+    } else if (unit.startsWith("week")) {
       dueAt = addDays(now, n * 7).toISOString();
       parsedAs = `relative: now + ${n} week(s)`;
+    } else if (unit.startsWith("month")) {
+      dueAt = addDays(now, n * 30).toISOString();
+      parsedAs = `relative: now + ${n} month(s)`;
+    } else {
+      // years
+      dueAt = addDays(now, n * 365).toISOString();
+      parsedAs = `relative: now + ${n} year(s)`;
     }
 
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
@@ -197,6 +218,12 @@ export function parseVoiceTime(
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
     return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
   }
+  if (/\bnext\s+year\b/.test(normalised)) {
+    const dueAt = addDays(now, 365).toISOString();
+    const parsedAs = "named: next year → now + 365 days";
+    console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
+    return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
+  }
 
   // ── 5. "next <weekday>" ──────────────────────────────────────────────────
   const WEEKDAYS: Record<string, number> = {
@@ -216,6 +243,14 @@ export function parseVoiceTime(
     const daysUntil = ((targetDay - todayDay + 7) % 7) || 7;
     const dueAt = addDays(now, daysUntil, 9, 0).toISOString();
     const parsedAs = `named: next ${nextDayMatch[1]} → +${daysUntil} days at 09:00`;
+    console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
+    return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
+  }
+
+  // ── 5b. Standalone "tomorrow" (no clock time) → tomorrow at 09:00 ─────────
+  if (/^\s*tomorrow\s*$/.test(normalised)) {
+    const dueAt = addDays(now, 1, 9, 0).toISOString();
+    const parsedAs = "named: tomorrow → tomorrow 09:00";
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
     return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
   }
