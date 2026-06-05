@@ -95,7 +95,12 @@ export function applyRolePrecedence(
         ...item,
         type: directRecipient.isActionRequest ? "delegation" : "message",
         assignedTo: directRecipient.name,
-        suggestedMessage: item.suggestedMessage ?? directRecipient.suggestedMessage,
+        // Prefer the deterministically-built message over the AI's version.
+        // The AI frequently mangles pronouns (e.g. "text you" instead of
+        // "text me") when rewriting the user's instruction for the recipient.
+        // The deterministic builder extracts the verb phrase directly from the
+        // raw source text, so it avoids that class of error entirely.
+        suggestedMessage: directRecipient.suggestedMessage ?? item.suggestedMessage,
         needsPerson: false,
       };
     }
@@ -171,11 +176,14 @@ function shouldCorrectDirectRecipient(
   directRecipient: DirectRecipientInstruction,
 ): boolean {
   if (item.assignedTo === directRecipient.name) {
+    // Also include delegation so we can replace the AI's broken suggestedMessage
+    // with the deterministically-built one (pronoun rewriting, etc.).
     return (
       (directRecipient.isActionRequest && item.type === "message") ||
       item.type === "reminder" ||
       item.type === "action" ||
-      item.type === "followup"
+      item.type === "followup" ||
+      item.type === "delegation"
     );
   }
 
@@ -193,10 +201,93 @@ function buildDirectRecipientMessage(
     .trim();
 
   if (!clean) return null;
+
+  // Rewrite third-person pronouns that refer to the recipient into
+  // second-person. The user writes from their own perspective ("she lands",
+  // "he finishes"); the message must address the recipient directly.
+  const rewritten = rewriteRecipientPronouns(clean);
+
   if (isActionRequest) {
-    return `Can you please ${lowercaseFirst(clean)}`;
+    return `Can you please ${lowercaseFirst(rewritten)}`;
   }
-  return `${recipientName}, ${lowercaseFirst(clean)}`;
+  return `${recipientName}, ${lowercaseFirst(rewritten)}`;
+}
+
+/**
+ * Convert third-person pronouns referring to the delegate into second-person.
+ * First-person references (me, my, myself) are intentionally left untouched —
+ * they correctly mean the owner from the recipient's point of view.
+ *
+ * e.g. "text me when she lands" → "text me when you land"
+ *      "send me the doc when he finishes" → "send me the doc when you finish"
+ */
+function rewriteRecipientPronouns(text: string): string {
+  let result = text;
+
+  // "she/he <verb-s/es>" → "you <infinitive>"
+  // Handle this before bare pronoun replacement so we can de-conjugate the verb.
+  result = result.replace(
+    /\b(she|he)\s+([a-zA-Z]+)\b/gi,
+    (_match, _pron, verb: string) => `you ${toInfinitive(verb)}`,
+  );
+
+  // Reflexives first (before her/him to avoid partial matches)
+  result = result
+    .replace(/\bherself\b/gi, "yourself")
+    .replace(/\bhimself\b/gi, "yourself")
+    .replace(/\bthemselves\b/gi, "yourselves");
+
+  // Possessive / object pronouns
+  result = result
+    .replace(/\bher\b/gi, "your")
+    .replace(/\bhim\b/gi, "you")
+    .replace(/\btheirs\b/gi, "yours")
+    .replace(/\btheir\b/gi, "your")
+    .replace(/\bthem\b/gi, "you");
+
+  // Subject pronouns (after object/possessive to avoid double-replacing)
+  result = result
+    .replace(/\bshe\b/gi, "you")
+    .replace(/\bhe\b/gi, "you")
+    .replace(/\bthey\b/gi, "you");
+
+  return result;
+}
+
+/**
+ * Convert a 3rd-person-singular verb form to its base (infinitive) form.
+ * Handles the most common regular patterns; irregular verbs fall through
+ * to the lookup table.
+ *
+ * Examples: "lands"→"land", "finishes"→"finish", "arrives"→"arrive",
+ *           "carries"→"carry", "has"→"have", "goes"→"go"
+ */
+const IRREGULAR_INFINITIVE: Record<string, string> = {
+  has: "have",
+  is: "be",
+  goes: "go",
+  does: "do",
+  says: "say",
+  was: "be",
+};
+
+function toInfinitive(verb: string): string {
+  const lower = verb.toLowerCase();
+  if (IRREGULAR_INFINITIVE[lower]) return IRREGULAR_INFINITIVE[lower];
+
+  // -ies → -y  (carries→carry, flies→fly)
+  if (lower.endsWith("ies") && lower.length > 4) {
+    return lower.slice(0, -3) + "y";
+  }
+  // consonant-cluster + -es  (finishes→finish, fixes→fix, watches→watch)
+  if (/(sh|ch|[xz])es$/.test(lower)) {
+    return lower.slice(0, -2);
+  }
+  // plain -s  (lands→land, calls→call, arrives→arrive, texts→text)
+  if (lower.endsWith("s") && lower.length > 2) {
+    return lower.slice(0, -1);
+  }
+  return lower;
 }
 
 function lowercaseFirst(value: string): string {
