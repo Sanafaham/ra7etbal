@@ -3,6 +3,7 @@ import { useDraftStore } from "./draft";
 import { useExtractionStore } from "./extraction";
 import { useMessagesStore } from "./messages";
 import { usePeopleStore } from "./people";
+import { useProfileStore } from "./profile";
 import { useTasksStore } from "./tasks";
 
 /**
@@ -27,6 +28,7 @@ if (globalThis.__ra7etbal_store_sync) {
 const unsub = useAuthStore.subscribe((s, prev) => {
   if (prev.status !== s.status && (s.status === "signed_out" || s.status === "recovery")) {
     usePeopleStore.getState().reset();
+    useProfileStore.getState().reset();
     useDraftStore.getState().clear();
     useExtractionStore.getState().clear();
     useTasksStore.getState().reset();

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AuthNotice from "../auth/AuthNotice";
 import Spinner from "../Spinner";
@@ -12,6 +12,7 @@ import {
   type PushNotificationStatus,
 } from "../../lib/push-notifications";
 import { useMessagesStore } from "../../stores/messages";
+import { useProfileStore } from "../../stores/profile";
 import { useTasksStore } from "../../stores/tasks";
 
 interface Props {
@@ -30,12 +31,17 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
     { kind: "success" | "error"; text: string } | null
   >(null);
 
+  const profileStore = useProfileStore();
+
   useEffect(() => {
     if (open) {
       setView("list");
       setNotice(null);
+      if (userId && profileStore.status === "idle") {
+        void profileStore.loadFor(userId);
+      }
     }
-  }, [open]);
+  }, [open, userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleClear() {
     if (!userId || busy) return;
@@ -141,6 +147,11 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
       <SettingsList
         userId={userId}
         notice={notice?.kind === "success" ? notice.text : null}
+        displayName={profileStore.displayName}
+        onSaveDisplayName={async (name) => {
+          if (!userId) return;
+          await profileStore.save(userId, name);
+        }}
         onClickViewHistory={() => {
           onClose();
           navigate("/history");
@@ -167,6 +178,8 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
 function SettingsList({
   userId,
   notice,
+  displayName,
+  onSaveDisplayName,
   onClickViewHistory,
   onClickArchive,
   onClickClear,
@@ -174,6 +187,8 @@ function SettingsList({
 }: {
   userId: string | null;
   notice: string | null;
+  displayName: string | null;
+  onSaveDisplayName: (name: string) => Promise<void>;
   onClickViewHistory: () => void;
   onClickArchive: () => void;
   onClickClear: () => void;
@@ -182,6 +197,10 @@ function SettingsList({
   return (
     <div className="space-y-5">
       {notice && <AuthNotice kind="success">{notice}</AuthNotice>}
+
+      <Group label="Account">
+        <DisplayNameRow displayName={displayName} onSave={onSaveDisplayName} />
+      </Group>
 
       <Group label="History">
         <ActionRow label="View history" onClick={onClickViewHistory} />
@@ -200,6 +219,111 @@ function SettingsList({
         <ActionRow label="Debug" onClick={onClickDebug} />
       </Group>
     </div>
+  );
+}
+
+function DisplayNameRow({
+  displayName,
+  onSave,
+}: {
+  displayName: string | null;
+  onSave: (name: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function startEdit() {
+    setValue(displayName ?? "");
+    setError(null);
+    setSaved(false);
+    setEditing(true);
+    window.setTimeout(() => inputRef.current?.focus(), 50);
+  }
+
+  function cancel() {
+    if (busy) return;
+    setEditing(false);
+    setError(null);
+  }
+
+  async function save() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await onSave(value);
+      setSaved(true);
+      setEditing(false);
+      window.setTimeout(() => setSaved(false), 2000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="border-b border-sage/10 px-4 py-3 last:border-b-0">
+        <p className="mb-1.5 text-xs text-ink/50">Your name</p>
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void save();
+            if (e.key === "Escape") cancel();
+          }}
+          disabled={busy}
+          placeholder="e.g. Sana"
+          maxLength={80}
+          className="mb-2 w-full rounded-xl border border-sage/30 bg-white px-3 py-2 text-base text-ink placeholder:text-ink/30 focus:outline-none focus:ring-2 focus:ring-sage/40 disabled:opacity-50"
+        />
+        {error && <p className="mb-2 text-xs text-rose-700">{error}</p>}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={busy}
+            className="inline-flex items-center gap-1.5 rounded-full bg-sage px-4 py-1.5 text-xs font-medium text-white transition hover:brightness-105 disabled:opacity-50"
+          >
+            {busy && <Spinner size={11} />}
+            <span>{busy ? "Saving…" : "Save"}</span>
+          </button>
+          <button
+            type="button"
+            onClick={cancel}
+            disabled={busy}
+            className="rounded-full border border-sage/30 bg-white px-4 py-1.5 text-xs font-medium text-ink transition hover:bg-cream disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={startEdit}
+      className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
+    >
+      <span className="min-w-0">
+        <span className="block text-base text-ink">Your name</span>
+        <span className="block text-xs text-ink/55">
+          {saved ? "Saved ✓" : (displayName ?? "Not set")}
+        </span>
+      </span>
+      <span aria-hidden className="text-ink/30">
+        ›
+      </span>
+    </button>
   );
 }
 
