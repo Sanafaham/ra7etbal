@@ -1,4 +1,8 @@
-const TEMPLATE_NAME = 'ra7etbal_task_assignment';
+// ra7etbal_task_v2 — body starts directly with {{1}} (the message), no
+// "You have a new task from Ra7etBal" header. Template must be approved in
+// Meta Business Manager before this takes effect.
+// Previous template: 'ra7etbal_task_assignment'
+const TEMPLATE_NAME = 'ra7etbal_task_v2';
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 
 export default async function handler(req, res) {

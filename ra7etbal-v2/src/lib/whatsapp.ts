@@ -17,7 +17,7 @@ export function buildDelegationMessage(payload: WhatsAppPayload): string {
   const content = payload.content.trim();
   const url = payload.confirmationUrl?.trim();
   if (!url) return content;
-  return `${content}\n\nTap Done when finished:\n${url}`;
+  return `${content}\n\nWhen done, tap here:\n${url}`;
 }
 
 export function buildWhatsAppUrl(payload: WhatsAppPayload): string | null {
