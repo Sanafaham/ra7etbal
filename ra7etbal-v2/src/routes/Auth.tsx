@@ -4,6 +4,7 @@ import AuthNotice from "../components/auth/AuthNotice";
 import PasswordField from "../components/auth/PasswordField";
 import Spinner from "../components/Spinner";
 import { mapAuthError, sendResetEmail, signInWithPassword, signUpWithPassword } from "../lib/auth";
+import { upsertProfile } from "../lib/profile";
 
 type Mode = "signin" | "signup";
 type Notice =
@@ -18,6 +19,7 @@ export default function Auth() {
   const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [sendingReset, setSendingReset] = useState(false);
 
@@ -43,17 +45,21 @@ export default function Auth() {
   const resetRef = useRef(false);
 
   const emailId = useId();
+  const nameId = useId();
 
   const trimmedEmail = email.trim();
+  const trimmedName = name.trim();
   const canSubmit =
     !submitting &&
     !sendingReset &&
     trimmedEmail.length > 0 &&
-    password.length > 0;
+    password.length > 0 &&
+    (mode === "signin" || trimmedName.length > 0);
 
   function switchMode(next: Mode) {
     if (next === mode) return;
     setMode(next);
+    setName("");
     setNotice(null);
   }
 
@@ -73,8 +79,15 @@ export default function Auth() {
         // the user to /. No navigate() call needed here.
       } else {
         await signUpWithPassword({ email: trimmedEmail, password });
-        // Email confirmation is OFF → session attaches immediately, same path
-        // as sign-in.
+        // Email confirmation is OFF → session attaches immediately.
+        // Save display name now that auth.getUser() will resolve correctly.
+        // Non-fatal: if the upsert fails the account still exists and the
+        // user can set their name in Settings.
+        if (trimmedName) {
+          await upsertProfile(trimmedName).catch((err) => {
+            console.warn("[Auth] upsertProfile after signup failed:", err);
+          });
+        }
       }
     } catch (err) {
       setNotice({ kind: "error", text: errorText(err, mode) });
@@ -125,7 +138,7 @@ export default function Auth() {
         <p className="text-sm text-ink/60">
           {mode === "signin"
             ? "Sign in to pick up where you left off."
-            : "Just an email and a password — no confirmation step."}
+            : "Your name, email, and a password — no confirmation step."}
         </p>
       </header>
 
@@ -155,6 +168,27 @@ export default function Auth() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+        {mode === "signup" && (
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor={nameId}
+              className="text-xs font-medium uppercase tracking-wide text-ink/60"
+            >
+              Your name
+            </label>
+            <input
+              id={nameId}
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="What should Carson call you?"
+              autoComplete="name"
+              disabled={submitting || sendingReset}
+              className="w-full rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+            />
+          </div>
+        )}
+
         <div className="flex flex-col gap-1.5">
           <label
             htmlFor={emailId}
