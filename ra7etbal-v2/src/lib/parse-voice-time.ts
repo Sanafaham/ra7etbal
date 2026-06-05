@@ -62,6 +62,39 @@ export function parseVoiceTime(
 
   const raw = (timeText ?? "").trim().toLowerCase();
 
+  // ── Spoken-number normalisation ──────────────────────────────────────────
+  // ElevenLabs STT transcribes spoken digits as words ("five" not "5").
+  // Replace word-numbers with digits before any pattern matching so that
+  // "in five minutes" is treated identically to "in 5 minutes".
+  const WORD_NUMBERS: Record<string, number> = {
+    one: 1, two: 2, three: 3, four: 4, five: 5,
+    six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15,
+    sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+    twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60,
+    // compound forms: "twenty five" / "twenty-five"
+    "twenty one": 21, "twenty-one": 21,
+    "twenty two": 22, "twenty-two": 22,
+    "twenty three": 23, "twenty-three": 23,
+    "twenty four": 24, "twenty-four": 24,
+    "twenty five": 25, "twenty-five": 25,
+    "twenty six": 26, "twenty-six": 26,
+    "twenty seven": 27, "twenty-seven": 27,
+    "twenty eight": 28, "twenty-eight": 28,
+    "twenty nine": 29, "twenty-nine": 29,
+    "thirty five": 35, "thirty-five": 35,
+    "forty five": 45, "forty-five": 45,
+    "fifty five": 55, "fifty-five": 55,
+  };
+  // Replace longest matches first (compound before single words).
+  const normalised = raw.replace(
+    /\btwenty[\s-](?:one|two|three|four|five|six|seven|eight|nine)\b|\bthirty[\s-]five\b|\bforty[\s-]five\b|\bfifty[\s-]five\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty)\b/g,
+    (m) => String(WORD_NUMBERS[m] ?? m),
+  );
+  if (normalised !== raw) {
+    console.log(`[parse-voice-time] normalised spoken numbers: "${raw}" → "${normalised}"`);
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────────
   function localDate(
     year: number,
@@ -79,7 +112,8 @@ export function parseVoiceTime(
 
   // ── 1. Relative: "in X / a / an  minutes|hours|days|weeks" ──────────────
   // Accepts numeric ("in 5"), word-number "a"/"an" (treated as 1).
-  const relMatch = raw.match(
+  // `normalised` has already converted word-numbers → digits.
+  const relMatch = normalised.match(
     /^in\s+(a\b|an\b|\d+(?:\.\d+)?)\s*(minute|minutes|min|hour|hours|hr|hrs|day|days|week|weeks)\b/,
   );
   if (relMatch) {
@@ -109,21 +143,21 @@ export function parseVoiceTime(
   }
 
   // ── 2. Named periods: tonight / later today / before bed ────────────────
-  if (/\btonight\b/.test(raw)) {
+  if (/\btonight\b/.test(normalised)) {
     const dueAt = localDate(now.getFullYear(), now.getMonth(), now.getDate(), 21, 0).toISOString();
     const parsedAs = "named: tonight → today 21:00";
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
     return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
   }
 
-  if (/\blater today\b/.test(raw)) {
+  if (/\blater today\b/.test(normalised)) {
     const dueAt = new Date(now.getTime() + 3 * 3_600_000).toISOString();
     const parsedAs = "named: later today → now + 3 hours";
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
     return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
   }
 
-  if (/\bbefore bed\b/.test(raw)) {
+  if (/\bbefore bed\b/.test(normalised)) {
     const dueAt = localDate(now.getFullYear(), now.getMonth(), now.getDate(), 22, 0).toISOString();
     const parsedAs = "named: before bed → today 22:00";
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
@@ -131,19 +165,19 @@ export function parseVoiceTime(
   }
 
   // ── 3. "tomorrow morning/afternoon/evening" ──────────────────────────────
-  if (/\btomorrow\s+morning\b/.test(raw)) {
+  if (/\btomorrow\s+morning\b/.test(normalised)) {
     const dueAt = addDays(now, 1, 9, 0).toISOString();
     const parsedAs = "named: tomorrow morning → tomorrow 09:00";
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
     return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
   }
-  if (/\btomorrow\s+afternoon\b/.test(raw)) {
+  if (/\btomorrow\s+afternoon\b/.test(normalised)) {
     const dueAt = addDays(now, 1, 14, 0).toISOString();
     const parsedAs = "named: tomorrow afternoon → tomorrow 14:00";
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
     return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
   }
-  if (/\btomorrow\s+evening\b/.test(raw)) {
+  if (/\btomorrow\s+evening\b/.test(normalised)) {
     const dueAt = addDays(now, 1, 19, 0).toISOString();
     const parsedAs = "named: tomorrow evening → tomorrow 19:00";
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
@@ -151,13 +185,13 @@ export function parseVoiceTime(
   }
 
   // ── 4. "next week" / "next month" ────────────────────────────────────────
-  if (/\bnext\s+week\b/.test(raw)) {
+  if (/\bnext\s+week\b/.test(normalised)) {
     const dueAt = addDays(now, 7).toISOString();
     const parsedAs = "named: next week → now + 7 days";
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
     return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
   }
-  if (/\bnext\s+month\b/.test(raw)) {
+  if (/\bnext\s+month\b/.test(normalised)) {
     const dueAt = addDays(now, 30).toISOString();
     const parsedAs = "named: next month → now + 30 days";
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
@@ -174,7 +208,7 @@ export function parseVoiceTime(
     friday: 5, fri: 5,
     saturday: 6, sat: 6,
   };
-  const nextDayMatch = raw.match(/\bnext\s+(sunday|sun|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat)\b/);
+  const nextDayMatch = normalised.match(/\bnext\s+(sunday|sun|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat)\b/);
   if (nextDayMatch) {
     const targetDay = WEEKDAYS[nextDayMatch[1]];
     const todayDay = now.getDay();
@@ -188,13 +222,13 @@ export function parseVoiceTime(
 
   // ── 6. Absolute: extract day word + clock time ────────────────────────────
   // Day word: "tomorrow" or "today" anywhere in the phrase.
-  const dayWordMatch = raw.match(/\b(tomorrow|today)\b/);
+  const dayWordMatch = normalised.match(/\b(tomorrow|today)\b/);
   const dayWord = dayWordMatch?.[1] ?? null;
 
   // Clock time: H or H:MM with mandatory AM/PM  →  "5 pm", "5:30 pm"
   //         or  H or H:MM without AM/PM          →  "17:00", "9" (ambiguous)
-  const timeWithAmPm = raw.match(/\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b/);
-  const timeWithout = raw.match(/\b([01]?\d|2[0-3])(?::([0-5]\d))?\b/);
+  const timeWithAmPm = normalised.match(/\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b/);
+  const timeWithout = normalised.match(/\b([01]?\d|2[0-3])(?::([0-5]\d))?\b/);
   const timeMatch = timeWithAmPm ?? timeWithout;
 
   if (timeMatch) {
