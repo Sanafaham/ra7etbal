@@ -137,22 +137,33 @@ export default async function handler(req, res) {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
         payload,
+        // urgency:high = APNs priority 10 (immediate delivery, not batched).
+        // TTL:60 = discard after 60 s if device unreachable (reminder is time-sensitive).
+        { urgency: 'high', TTL: 60 },
       );
       sent += 1;
       console.log(`[send-push-for-task] ✓ sent to sub=${sub.id}`);
       perSubscription.push({ id: sub.id, endpointTail, result: 'sent' });
     } catch (err) {
       failed += 1;
-      console.error(`[send-push-for-task] ✗ FAILED sub=${sub.id} statusCode=${err?.statusCode} message=${getErrorMessage(err)} body=${err?.body ?? null}`);
+      const statusCode = err?.statusCode ?? null;
+      console.error(`[send-push-for-task] ✗ FAILED sub=${sub.id} statusCode=${statusCode} message=${getErrorMessage(err)} body=${err?.body ?? null}`);
       perSubscription.push({
         id: sub.id,
         endpointTail,
         result: 'failed',
-        statusCode: err?.statusCode ?? null,
+        statusCode,
         message: getErrorMessage(err),
         body: err?.body ?? null,
       });
-      errors.push(`sub=${sub.id} status=${err?.statusCode} msg=${getErrorMessage(err)}`);
+      errors.push(`sub=${sub.id} status=${statusCode} msg=${getErrorMessage(err)}`);
+
+      // 410 Gone or 404 Not Found = subscription is permanently invalid.
+      // Remove it so future reminders aren't wasted on a dead endpoint.
+      if (statusCode === 410 || statusCode === 404) {
+        console.log(`[send-push-for-task] removing expired subscription sub=${sub.id} (${statusCode})`);
+        await removeExpiredSubscription(supabaseUrl, serviceRoleKey, sub.id);
+      }
     }
   }
 
@@ -202,6 +213,21 @@ export default async function handler(req, res) {
     errors,
     debug: perSubscription,
   });
+}
+
+async function removeExpiredSubscription(supabaseUrl, serviceRoleKey, subId) {
+  try {
+    await fetch(
+      `${supabaseUrl}/rest/v1/push_subscriptions?id=eq.${encodeURIComponent(subId)}`,
+      {
+        method: 'DELETE',
+        headers: supabaseHeaders(serviceRoleKey),
+      },
+    );
+    console.log(`[send-push-for-task] removed expired subscription sub=${subId}`);
+  } catch (err) {
+    console.error(`[send-push-for-task] failed to remove expired subscription sub=${subId}: ${getErrorMessage(err)}`);
+  }
 }
 
 function supabaseHeaders(serviceRoleKey) {

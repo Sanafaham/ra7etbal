@@ -117,7 +117,7 @@ export default async function handler(req, res) {
         continue;
       }
 
-      const result = await sendTaskReminder(task, subscriptions);
+      const result = await sendTaskReminder(task, subscriptions, config.values);
       sent += result.sent;
       failed += result.failed;
       errors.push(...result.errors);
@@ -302,7 +302,21 @@ async function fetchSubscriptionsByUser(config, tasks) {
   return subscriptionsByUser;
 }
 
-async function sendTaskReminder(task, subscriptions) {
+async function removeExpiredSubscription(config, subId) {
+  try {
+    await fetch(
+      `${config.supabaseUrl}/rest/v1/push_subscriptions?id=eq.${encodeURIComponent(subId)}`,
+      {
+        method: 'DELETE',
+        headers: supabaseHeaders(config),
+      },
+    );
+  } catch {
+    // best-effort — don't block reminder flow
+  }
+}
+
+async function sendTaskReminder(task, subscriptions, config) {
   const payload = JSON.stringify({
     title: 'Ra7etBal reminder',
     body: `${task.description} is due now.`,
@@ -325,6 +339,9 @@ async function sendTaskReminder(task, subscriptions) {
           },
         },
         payload,
+        // urgency:high = APNs priority 10 (immediate delivery, not batched).
+        // TTL:60 = discard after 60 s if device unreachable (reminder is time-sensitive).
+        { urgency: 'high', TTL: 60 },
       );
       sent += 1;
       perSubscription.push({
@@ -334,18 +351,24 @@ async function sendTaskReminder(task, subscriptions) {
       });
     } catch (error) {
       failed += 1;
+      const statusCode = error?.statusCode ?? null;
       const detail = {
         subscriptionId: row.id,
         endpointTail: endpointShort,
         result: 'failed',
         message: error instanceof Error ? error.message : String(error),
-        statusCode: error?.statusCode ?? null,
+        statusCode,
         body: error?.body ?? null,
       };
       perSubscription.push(detail);
       errors.push(
         `sub=${row.id} status=${detail.statusCode} msg=${detail.message} body=${JSON.stringify(detail.body)}`,
       );
+
+      // 410 Gone or 404 Not Found = permanently invalid subscription. Remove it.
+      if (statusCode === 410 || statusCode === 404) {
+        await removeExpiredSubscription(config, row.id);
+      }
     }
   }
 
