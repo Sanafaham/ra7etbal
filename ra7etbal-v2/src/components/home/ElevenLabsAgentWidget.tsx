@@ -530,6 +530,10 @@ export default function ElevenLabsAgentWidget({
           // Accumulate both sides of the conversation for end-of-session
           // summarisation. Only finalized messages arrive here.
           sessionTranscriptRef.current.push({ role, message });
+          // TODO(memory-debug): remove after confirming transcript capture works
+          console.log(
+            `[carson-memory] onMessage role=${role} turns=${sessionTranscriptRef.current.length} msg="${message.slice(0, 60)}"`,
+          );
         },
         onDisconnect: () => {
           // Capture refs before any async work so they can be reset immediately.

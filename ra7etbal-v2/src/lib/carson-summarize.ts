@@ -19,7 +19,9 @@ export interface TranscriptMessage {
 const NOTHING = "NOTHING_MEMORABLE";
 
 // Minimum user turns before we bother calling the LLM.
-const MIN_USER_TURNS = 3;
+// Set to 1 so even a single-exchange session (quick delegation / reminder)
+// is eligible for summarisation.
+const MIN_USER_TURNS = 1;
 
 /**
  * Summarise a conversation transcript into 3-5 short memory bullets.
