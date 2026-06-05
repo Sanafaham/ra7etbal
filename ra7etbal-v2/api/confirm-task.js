@@ -95,16 +95,20 @@ export default async function handler(req, res) {
     ).catch(() => { /* non-fatal */ });
 
     // ── 4. Send push notification to the owner ─────────────────────────────
-    // Fire-and-forget — push failure does NOT fail the confirmation.
-    sendOwnerPush({
-      supabaseUrl,
-      serviceKey,
-      userId: task.user_id,
-      description: task.description,
-      assignedTo: task.assigned_to,
-    }).catch((err) => {
+    // Awaited so Vercel does not terminate the function before the push
+    // network calls complete. Push failure is caught and logged — it must
+    // not block the confirmation response.
+    try {
+      await sendOwnerPush({
+        supabaseUrl,
+        serviceKey,
+        userId: task.user_id,
+        description: task.description,
+        assignedTo: task.assigned_to,
+      });
+    } catch (err) {
       console.error('[confirm-task] owner push failed (non-fatal):', err?.message || err);
-    });
+    }
 
     return res.status(200).json({ success: true, description: task.description });
   } catch (err) {
