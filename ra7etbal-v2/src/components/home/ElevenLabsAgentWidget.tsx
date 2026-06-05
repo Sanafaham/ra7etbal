@@ -1,6 +1,7 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
+import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { createMessage } from "../../lib/messages";
@@ -101,6 +102,10 @@ export default function ElevenLabsAgentWidget({
   /** Accumulates successful tool-call descriptions for this session.
    *  Flushed to carson_memory on disconnect. */
   const sessionActionsRef = useRef<string[]>([]);
+
+  /** Accumulates finalized transcript messages (both user and agent) for
+   *  this session. Summarised by Haiku at disconnect for conversational memory. */
+  const sessionTranscriptRef = useRef<TranscriptMessage[]>([]);
 
   // ------------------------------------------------------------------
   // Client tool: send_followup
@@ -491,8 +496,9 @@ export default function ElevenLabsAgentWidget({
     setStatus("connecting");
     setErrorMsg(null);
 
-    // Reset session actions for this new session.
+    // Reset session state for this new session.
     sessionActionsRef.current = [];
+    sessionTranscriptRef.current = [];
 
     // Load the last 5 session summaries before opening the ElevenLabs
     // connection. Failure is non-fatal — fall back to empty string.
@@ -520,19 +526,53 @@ export default function ElevenLabsAgentWidget({
         onModeChange: ({ mode: m }) => {
           setMode(m === "speaking" ? "speaking" : "listening");
         },
+        onMessage: ({ role, message }) => {
+          // Accumulate both sides of the conversation for end-of-session
+          // summarisation. Only finalized messages arrive here.
+          sessionTranscriptRef.current.push({ role, message });
+        },
         onDisconnect: () => {
-          // Save a deterministic summary of what happened this session.
-          const actions = sessionActionsRef.current;
-          if (actions.length > 0) {
-            const summary = actions.join(". ") + ".";
-            saveSessionMemory(summary).catch(() => {
-              // Non-fatal — don't surface to user.
-            });
-          }
+          // Capture refs before any async work so they can be reset immediately.
+          const actions = [...sessionActionsRef.current];
+          const transcript = [...sessionTranscriptRef.current];
           sessionActionsRef.current = [];
+          sessionTranscriptRef.current = [];
           conversationRef.current = null;
           setStatus("idle");
           setMode("listening");
+
+          // Build and save session memory asynchronously — non-blocking.
+          // The UI is already back to idle while this runs in the background.
+          (async () => {
+            // Try LLM summarisation of the conversational content.
+            let conversationSummary: string | null = null;
+            try {
+              conversationSummary = await summarizeConversation(transcript);
+            } catch {
+              // Non-fatal — fall back to tool actions only.
+            }
+
+            // Build the final memory string:
+            //   • If we have a conversation summary, lead with it.
+            //   • Append tool actions as a labeled section if any exist.
+            //   • Save nothing if both are empty.
+            const actionLog = actions.length > 0 ? actions.join(". ") + "." : null;
+
+            let memory: string | null = null;
+            if (conversationSummary && actionLog) {
+              memory = `${conversationSummary}\nActions: ${actionLog}`;
+            } else if (conversationSummary) {
+              memory = conversationSummary;
+            } else if (actionLog) {
+              memory = actionLog;
+            }
+
+            if (memory) {
+              saveSessionMemory(memory).catch(() => {
+                // Non-fatal — don't surface to user.
+              });
+            }
+          })();
         },
         onError: (msg) => {
           conversationRef.current = null;
