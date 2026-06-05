@@ -25,7 +25,9 @@ export default function Home() {
     useShallow((s) => ({ text: s.text, setText: s.setText })),
   );
 
-  const loadPeople = usePeopleStore((s) => s.loadFor);
+  const { people, loadPeople } = usePeopleStore(
+    useShallow((s) => ({ people: s.items, loadPeople: s.loadFor })),
+  );
 
   const { displayName, loadProfile } = useProfileStore(
     useShallow((s) => ({ displayName: s.displayName, loadProfile: s.loadFor })),
@@ -48,6 +50,11 @@ export default function Home() {
     if (!userId) return;
     void loadTasks(userId, { force: true });
   }, [userId, loadTasks]);
+
+  useEffect(() => {
+    if (!userId) return;
+    void loadPeople(userId);
+  }, [userId, loadPeople]);
 
   useEffect(() => {
     if (!userId) return;
@@ -98,8 +105,8 @@ export default function Home() {
     [brief.summary.paragraph],
   );
   const elevenLabsBriefStateText = useMemo(
-    () => buildElevenLabsBriefStateText(brief),
-    [brief],
+    () => buildElevenLabsBriefStateText(brief, { email: user?.email, people }),
+    [brief, user?.email, people],
   );
   const supportingLines = homeBriefCopy.lines;
 
@@ -313,9 +320,30 @@ function buildHomeBriefCopy({
 
 function buildElevenLabsBriefStateText(
   brief: ReturnType<typeof buildDailyBrief>,
+  extras: {
+    email?: string | null;
+    people?: Array<{ name: string; role: string }>;
+  } = {},
 ): string {
   const now = new Date();
   const lines: string[] = [];
+
+  // ── User identity ─────────────────────────────────────────────────────
+  if (extras.email) {
+    lines.push(`User email: ${extras.email}`);
+  }
+
+  // ── People (household contacts) ───────────────────────────────────────
+  // Lets Carson match "message the driver" or "follow up with Grace" to
+  // real names and roles without asking who they are.
+  if (extras.people && extras.people.length > 0) {
+    const items = extras.people
+      .map((p) => (p.role ? `${p.name} (${p.role})` : p.name))
+      .join(", ");
+    lines.push(`People: ${items}.`);
+  } else {
+    lines.push("People: none saved.");
+  }
 
   lines.push(`Summary: ${brief.summary.paragraph}`);
 
@@ -377,6 +405,17 @@ function buildElevenLabsBriefStateText(
       .map((t) => t.description.trim())
       .join("; ");
     lines.push(`Later: ${items}.`);
+  }
+
+  // ── Recently completed (today) ────────────────────────────────────────
+  // brief.done is already computed — no extra fetch needed.
+  // Shows Carson what the user has already handled today.
+  if (brief.done.length > 0) {
+    const items = brief.done
+      .slice(0, 3)
+      .map((t) => t.description.trim())
+      .join("; ");
+    lines.push(`Completed today: ${items}.`);
   }
 
   return lines.join("\n");
