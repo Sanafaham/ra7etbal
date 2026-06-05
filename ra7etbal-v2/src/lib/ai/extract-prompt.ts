@@ -8,7 +8,10 @@ import type { Person } from "../../types/person";
  * therefore stated BEFORE the type list, and reinforced with worked
  * examples for the exact failing cases.
  */
-export function buildExtractionPrompt(text: string, people: Person[]): string {
+export function buildExtractionPrompt(text: string, people: Person[], ownerName?: string): string {
+  // How to refer to the owner in outgoing delegated messages.
+  // Grace reads "call Sana" — not "call me" (which would mean call Ra7etBal).
+  const ownerRef = ownerName?.trim() || "the sender";
   const peopleList =
     people.length > 0
       ? people.map((p) => `${p.name} (${p.role})`).join(", ")
@@ -498,24 +501,35 @@ Rules — apply every time without exception:
    "he finishes" → "you finish"
    "she arrives" → "you arrive"
 
-3. References to the user (me, my, myself) stay unchanged — they are
-   correct from the recipient's point of view.
+3. References to the owner (me, my, myself, I) must be replaced with the
+   owner's name so the recipient knows who they are dealing with.
+   The message is sent by Ra7etBal on behalf of the owner — "call me"
+   would mean "call Ra7etBal", which is wrong.
 
-4. References to the user as "you" in the original instruction become "me":
-   "text you" (meaning the user) → "text me"
+   Owner's name for this session: ${ownerRef}
+
+   Substitution rules (apply every time):
+     me      → ${ownerRef}
+     my      → ${ownerRef}'s
+     myself  → ${ownerRef}
+     I       → ${ownerRef}  (capital I only — do not alter "i" inside words)
+
+4. References to the user as "you" in the original instruction become the
+   owner's name:
+   "text you" (meaning the owner) → "text ${ownerRef}"
 
 Worked examples (mandatory to match):
 
   Input:  "Ask Loulya to text me the minute she lands."
-  suggestedMessage: "Can you please text me the minute you land."
-  ✗ WRONG: "Could you please text you the minute she lands."
+  suggestedMessage: "Can you please text ${ownerRef} the minute you land."
   ✗ WRONG: "Can you please text me the minute she lands."
 
   Input:  "Ask Grace to call me when she arrives."
-  suggestedMessage: "Can you please call me when you arrive."
+  suggestedMessage: "Can you please call ${ownerRef} when you arrive."
+  ✗ WRONG: "Can you please call me when you arrive."
 
   Input:  "Tell Christopher to send me the document when he finishes."
-  suggestedMessage: "Can you please send me the document when you finish."
+  suggestedMessage: "Can you please send ${ownerRef} the document when you finish."
 
   Input:  "Ask Ghulam to pick up the car when he's done."
   suggestedMessage: "Can you please pick up the car when you're done."

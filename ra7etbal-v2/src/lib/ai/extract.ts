@@ -44,8 +44,9 @@ const VALID_TYPES = new Set<ItemType>([
 export async function extractItems(
   text: string,
   people: Person[],
+  ownerName?: string,
 ): Promise<ExtractionResult> {
-  const prompt = buildExtractionPrompt(text, people);
+  const prompt = buildExtractionPrompt(text, people, ownerName);
 
   let res: Response;
   try {

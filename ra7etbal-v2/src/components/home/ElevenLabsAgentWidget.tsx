@@ -14,6 +14,28 @@ type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
 
 // ---------------------------------------------------------------------------
+// Pronoun rewriter — delegated messages are sent on behalf of the owner.
+// "call me" from the owner's mouth becomes "call Sana" in the outgoing
+// message so the recipient knows who to contact.
+// ---------------------------------------------------------------------------
+
+/**
+ * Replace first-person owner pronouns with the owner's display name.
+ * Used for Carson-generated delegation messages before they are sent.
+ *
+ * Falls back to "the sender" when no name is available so the message
+ * remains natural: "Can you please call the sender when you arrive."
+ */
+function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
+  const name = ownerName?.trim() || "the sender";
+  return text
+    .replace(/\bmy\b/gi, `${name}'s`)
+    .replace(/\bmyself\b/gi, name)
+    .replace(/\bme\b/gi, name)
+    .replace(/\bI\b/g, name); // capital I only — avoids altering mid-word "i"
+}
+
+// ---------------------------------------------------------------------------
 // Smart follow-up helpers
 // ---------------------------------------------------------------------------
 
@@ -295,10 +317,12 @@ export default function ElevenLabsAgentWidget({
         return `I already sent ${person.name} a delegation just now. Wait a moment before sending again.`;
       }
 
-      // 4. Build message
-      const messageText = message?.trim()
+      // 4. Build message — rewrite any first-person owner pronouns ("me",
+      //    "my", "I") so the recipient reads "call Sana" not "call me".
+      const rawMessage = message?.trim()
         ? message.trim()
         : `Hi ${person.name}, could you please ${taskText}? Let me know when done.`;
+      const messageText = rewriteOwnerPronouns(rawMessage, displayName);
 
       const userId = authUserId;
       if (!userId) return "You are not signed in. Please sign in and try again.";

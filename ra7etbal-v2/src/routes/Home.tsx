@@ -124,7 +124,7 @@ export default function Home() {
     try {
       await loadPeople(userId);
       const peopleNow = usePeopleStore.getState().items;
-      await runExtraction(trimmed, peopleNow);
+      await runExtraction(trimmed, peopleNow, displayName ?? undefined);
       navigate("/review");
     } catch (err) {
       setError(

@@ -21,7 +21,7 @@ export interface ExtractionState {
   sourceText: string;
   error: string | null;
 
-  run: (text: string, people: Person[]) => Promise<void>;
+  run: (text: string, people: Person[], ownerName?: string) => Promise<void>;
   setAssignment: (itemId: string, assignedTo: Assignment) => void;
   setDescription: (itemId: string, description: string) => void;
   setSuggestedMessage: (itemId: string, suggestedMessage: string | null) => void;
@@ -35,10 +35,10 @@ export const useExtractionStore = create<ExtractionState>((set, get) => ({
   sourceText: "",
   error: null,
 
-  async run(text, people) {
+  async run(text, people, ownerName) {
     set({ status: "running", error: null });
     try {
-      const result = await extractItems(text, people);
+      const result = await extractItems(text, people, ownerName);
       set({
         status: "ready",
         items: result.extracted,
