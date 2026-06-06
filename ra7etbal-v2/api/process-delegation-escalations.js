@@ -3,14 +3,14 @@
  * GET  /api/process-delegation-escalations
  *
  * NOTE: Scheduling is handled by QStash (not Vercel cron) because
- * Vercel Hobby cron does not support frequent schedules (*/10 * * * *).
+ * Vercel Hobby cron does not support frequent schedules (every 10 minutes).
  *
  * To register the QStash schedule (run once after each new production deployment):
  *
  *   curl -X POST \
  *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal-v2.vercel.app%2Fapi%2Fprocess-delegation-escalations" \
  *     -H "Authorization: Bearer <QSTASH_TOKEN>" \
- *     -H "Upstash-Cron: */10 * * * *" \
+ *     -H "Upstash-Cron: every-10-min" \
  *     -H "Upstash-Forward-Authorization: Bearer <CRON_SECRET>" \
  *     -H "Upstash-Method: POST"
  *
