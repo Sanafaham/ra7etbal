@@ -1,8 +1,11 @@
-// trigger ra7etbal-v2 deployment (post-reconnect)
-
 /**
  * POST /api/process-delegation-escalations
- * GET  /api/process-delegation-escalations        (Vercel cron)
+ * GET  /api/process-delegation-escalations
+ *
+ * NOTE: Scheduling is handled by QStash (not Vercel cron) because
+ * Vercel Hobby cron does not support frequent schedules (*/10 * * * *).
+ * The QStash schedule is created once via /api/setup-escalation-schedule.
+ * QStash forwards Authorization: Bearer <CRON_SECRET> on every call.
  *
  * Polls for unconfirmed delegated tasks and fires two timed escalations:
  *

@@ -16,11 +16,5 @@
       "source": "/((?!api/|assets/|sw\\.js$|manifest\\.webmanifest$|icons/).*)",
       "destination": "/index.html"
     }
-  ],
-  "crons": [
-    {
-      "path": "/api/process-delegation-escalations",
-      "schedule": "*/10 * * * *"
-    }
   ]
 }
