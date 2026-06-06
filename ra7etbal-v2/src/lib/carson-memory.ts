@@ -26,19 +26,34 @@ import { supabase } from "./supabase";
  */
 export async function saveSessionMemory(summary: string): Promise<void> {
   const trimmed = summary.trim();
-  if (!trimmed) return;
+  console.log(
+    `[carson-memory] saveSessionMemory called — length=${trimmed.length} preview="${trimmed.slice(0, 80)}"`,
+  );
+  if (!trimmed) {
+    console.warn("[carson-memory] saveSessionMemory — empty summary, skipping");
+    return;
+  }
 
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
-  if (!user) return; // not signed in — silently skip
+  console.log(
+    `[carson-memory] auth check — user=${user?.id ?? "null"} authError=${authError?.message ?? "none"}`,
+  );
+  if (!user) {
+    console.warn("[carson-memory] saveSessionMemory — no auth user, skipping");
+    return; // not signed in — silently skip
+  }
 
   const { error } = await supabase
     .from("carson_memory")
     .insert({ user_id: user.id, summary: trimmed });
 
   if (error) {
-    console.error("[carson-memory] saveSessionMemory failed:", error.message);
+    console.error("[carson-memory] saveSessionMemory INSERT failed:", error.message, error.code);
+  } else {
+    console.log("[carson-memory] saveSessionMemory INSERT success ✓");
   }
 }
 

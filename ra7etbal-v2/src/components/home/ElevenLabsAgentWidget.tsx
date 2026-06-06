@@ -530,7 +530,7 @@ export default function ElevenLabsAgentWidget({
           // Accumulate both sides of the conversation for end-of-session
           // summarisation. Only finalized messages arrive here.
           sessionTranscriptRef.current.push({ role, message });
-          // TODO(memory-debug): remove after confirming transcript capture works
+          // DEBUG(memory-v3): remove after confirming transcript capture
           console.log(
             `[carson-memory] onMessage role=${role} turns=${sessionTranscriptRef.current.length} msg="${message.slice(0, 60)}"`,
           );
@@ -545,6 +545,11 @@ export default function ElevenLabsAgentWidget({
           setStatus("idle");
           setMode("listening");
 
+          // DEBUG(memory-v3): log transcript snapshot at disconnect
+          console.log(
+            `[carson-memory] onDisconnect — transcript.length=${transcript.length} actions.length=${actions.length}`,
+          );
+
           // Build and save session memory asynchronously — non-blocking.
           // The UI is already back to idle while this runs in the background.
           (async () => {
@@ -552,9 +557,14 @@ export default function ElevenLabsAgentWidget({
             let conversationSummary: string | null = null;
             try {
               conversationSummary = await summarizeConversation(transcript);
-            } catch {
+            } catch (err) {
               // Non-fatal — fall back to tool actions only.
+              console.error("[carson-memory] summarizeConversation threw:", err);
             }
+
+            console.log(
+              `[carson-memory] summarizeConversation result: ${conversationSummary ? `"${conversationSummary.slice(0, 80)}"` : "null"}`,
+            );
 
             // Build the final memory string:
             //   • If we have a conversation summary, lead with it.
@@ -571,9 +581,13 @@ export default function ElevenLabsAgentWidget({
               memory = actionLog;
             }
 
+            console.log(
+              `[carson-memory] final memory to save: ${memory ? `"${memory.slice(0, 80)}"` : "null (nothing to save)"}`,
+            );
+
             if (memory) {
-              saveSessionMemory(memory).catch(() => {
-                // Non-fatal — don't surface to user.
+              saveSessionMemory(memory).catch((err) => {
+                console.error("[carson-memory] saveSessionMemory rejected:", err);
               });
             }
           })();

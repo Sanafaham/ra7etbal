@@ -35,7 +35,16 @@ export async function summarizeConversation(
   transcript: TranscriptMessage[],
 ): Promise<string | null> {
   const userTurns = transcript.filter((m) => m.role === "user");
-  if (userTurns.length < MIN_USER_TURNS) return null;
+  console.log(
+    `[carson-summarize] start — total turns=${transcript.length} user turns=${userTurns.length} MIN_USER_TURNS=${MIN_USER_TURNS}`,
+  );
+
+  if (userTurns.length < MIN_USER_TURNS) {
+    console.log(
+      `[carson-summarize] skipped — not enough user turns (${userTurns.length} < ${MIN_USER_TURNS})`,
+    );
+    return null;
+  }
 
   const transcriptText = transcript
     .map((m) => `${m.role === "user" ? "User" : "Carson"}: ${m.message}`)
@@ -60,6 +69,8 @@ Rules:
 Transcript:
 ${transcriptText}`;
 
+  console.log("[carson-summarize] calling /api/anthropic …");
+
   let res: Response;
   try {
     res = await fetch("/api/anthropic", {
@@ -71,20 +82,37 @@ ${transcriptText}`;
         messages: [{ role: "user", content: prompt }],
       }),
     });
-  } catch {
+  } catch (err) {
+    console.error("[carson-summarize] /api/anthropic network error:", err);
     return null; // network failure — non-fatal
   }
 
-  if (!res.ok) return null;
+  console.log(`[carson-summarize] /api/anthropic response status=${res.status} ok=${res.ok}`);
+
+  if (!res.ok) {
+    // Log the error body so we can see exactly what the API rejected.
+    try {
+      const errBody = await res.text();
+      console.error(`[carson-summarize] /api/anthropic non-OK body: ${errBody}`);
+    } catch {
+      console.error("[carson-summarize] /api/anthropic non-OK, could not read body");
+    }
+    return null;
+  }
 
   let body: { content?: Array<{ type?: string; text?: string }> };
   try {
     body = await res.json();
-  } catch {
+  } catch (err) {
+    console.error("[carson-summarize] failed to parse /api/anthropic JSON:", err);
     return null;
   }
 
   const text = body?.content?.[0]?.text?.trim();
+  console.log(
+    `[carson-summarize] LLM result: text="${text?.slice(0, 80) ?? "(empty)"}" isNothing=${text === NOTHING}`,
+  );
+
   if (!text || text === NOTHING) return null;
 
   return text;
