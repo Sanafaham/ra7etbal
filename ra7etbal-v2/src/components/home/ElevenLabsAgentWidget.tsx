@@ -1,6 +1,7 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
+import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
@@ -516,11 +517,13 @@ export default function ElevenLabsAgentWidget({
       const conv = await Conversation.startSession({
         agentId,
         dynamicVariables: {
-          ra7etbal_state: briefStateText,
-          daily_brief: spokenBrief ?? "",
+          // Sanitize all speech-bound text so ElevenLabs never receives the
+          // Latin "Ra7etBal" string — it mispronounces it. Arabic is correct.
+          ra7etbal_state: sanitizeForCarsonSpeech(briefStateText),
+          daily_brief: sanitizeForCarsonSpeech(spokenBrief ?? ""),
           current_time: new Date().toISOString(),
           user_name: displayName ?? "",
-          recent_memory: recentMemory,
+          recent_memory: sanitizeForCarsonSpeech(recentMemory),
         },
         clientTools: {
           send_followup: sendFollowup,
