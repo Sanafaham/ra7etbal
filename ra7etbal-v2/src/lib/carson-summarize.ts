@@ -24,7 +24,7 @@ const NOTHING = "NOTHING_MEMORABLE";
 const MIN_USER_TURNS = 1;
 
 /**
- * Summarise a conversation transcript into 3-5 short memory bullets.
+ * Summarise a conversation transcript into 3–7 short memory bullets.
  *
  * Returns a non-empty string on success, or null when:
  * - the session was too short to bother
@@ -35,16 +35,7 @@ export async function summarizeConversation(
   transcript: TranscriptMessage[],
 ): Promise<string | null> {
   const userTurns = transcript.filter((m) => m.role === "user");
-  console.log(
-    `[carson-summarize] start — total turns=${transcript.length} user turns=${userTurns.length} MIN_USER_TURNS=${MIN_USER_TURNS}`,
-  );
-
-  if (userTurns.length < MIN_USER_TURNS) {
-    console.log(
-      `[carson-summarize] skipped — not enough user turns (${userTurns.length} < ${MIN_USER_TURNS})`,
-    );
-    return null;
-  }
+  if (userTurns.length < MIN_USER_TURNS) return null;
 
   const transcriptText = transcript
     .map((m) => `${m.role === "user" ? "User" : "Carson"}: ${m.message}`)
@@ -57,21 +48,27 @@ Extract 3–7 bullet points that Carson should remember about this user in futur
 
 ━━ ALWAYS CAPTURE ━━
 • Anything the user explicitly says to remember ("remember that…", "don't forget…").
-• Preferences, habits, and routines ("I usually…", "I always…", "I prefer…", "I don't like…", "I keep…").
+• Preferences, habits, and routines ("I usually…", "I always…", "I prefer…", "I don't like…", "I keep…", "next time…").
 • Work style, schedule patterns, recurring situations.
 • Household context: who lives there, relationships, responsibilities.
 • People: names, roles, what was delegated or discussed with them.
 • Decisions made and the reasoning behind them.
 • Open loops: things started but not finished, waiting on someone.
-• Corrections the user makes to Carson ("that's wrong", "I meant…", "next time say…").
-• Product feedback or feature requests the user mentions.
+• Corrections — ALL of the following types must be captured:
+    - Spelling corrections: e.g. "it's Ra7etBal, not Rahet Bal"
+    - Pronunciation corrections: e.g. "it's pronounced rah-het, not ray-het"
+    - Name corrections: e.g. "her name is Loulya, not Lula"
+    - Preference corrections: e.g. "I said short, not brief"
+    - Workflow corrections: e.g. "next time ask me before sending"
+    - Any time the user says "that's wrong", "I meant…", "actually it's…", "you got that wrong", "not X, Y"
+• Product feedback or feature requests.
 • Ideas the user floats, especially casual ones at night or in passing.
 
 ━━ NEVER CAPTURE ━━
 • Greetings, goodbyes, thank-yous.
 • Generic tool confirmations ("reminder set", "message sent").
 • Small talk with no lasting personal value.
-• One-off jokes, unless the user is correcting Carson or asking him to remember it.
+• One-off jokes, unless the user is correcting Carson or explicitly asking to remember it.
 • Speculation or emotional interpretations — factual only.
 
 ━━ FORMAT ━━
@@ -85,8 +82,6 @@ Extract 3–7 bullet points that Carson should remember about this user in futur
 Transcript:
 ${transcriptText}`;
 
-  console.log("[carson-summarize] calling /api/anthropic …");
-
   let res: Response;
   try {
     res = await fetch("/api/anthropic", {
@@ -98,37 +93,20 @@ ${transcriptText}`;
         messages: [{ role: "user", content: prompt }],
       }),
     });
-  } catch (err) {
-    console.error("[carson-summarize] /api/anthropic network error:", err);
+  } catch {
     return null; // network failure — non-fatal
   }
 
-  console.log(`[carson-summarize] /api/anthropic response status=${res.status} ok=${res.ok}`);
-
-  if (!res.ok) {
-    // Log the error body so we can see exactly what the API rejected.
-    try {
-      const errBody = await res.text();
-      console.error(`[carson-summarize] /api/anthropic non-OK body: ${errBody}`);
-    } catch {
-      console.error("[carson-summarize] /api/anthropic non-OK, could not read body");
-    }
-    return null;
-  }
+  if (!res.ok) return null;
 
   let body: { content?: Array<{ type?: string; text?: string }> };
   try {
     body = await res.json();
-  } catch (err) {
-    console.error("[carson-summarize] failed to parse /api/anthropic JSON:", err);
+  } catch {
     return null;
   }
 
   const text = body?.content?.[0]?.text?.trim();
-  console.log(
-    `[carson-summarize] LLM result: text="${text?.slice(0, 80) ?? "(empty)"}" isNothing=${text === NOTHING}`,
-  );
-
   if (!text || text === NOTHING) return null;
 
   return text;
