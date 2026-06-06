@@ -10,6 +10,7 @@ import { createTask, updateTaskConfirmationUrl } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { useAuthStore } from "../../stores/auth";
 import { usePeopleStore } from "../../stores/people";
+import { useProfileStore } from "../../stores/profile";
 import { useTasksStore } from "../../stores/tasks";
 
 type CallStatus = "idle" | "connecting" | "connected" | "error";
@@ -493,6 +494,25 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Client tool: save_city
+  // Carson calls this when the user tells it their city for the first time.
+  // Persists to profiles.weather_city so future sessions have weather.
+  // ------------------------------------------------------------------
+  const saveCity = useCallback(
+    async ({ city }: { city: string }): Promise<string> => {
+      const trimmed = city.trim();
+      if (!trimmed) return "I did not receive a city name. Please ask the user again.";
+      try {
+        await useProfileStore.getState().saveWeatherCity(trimmed);
+        return `Got it. I'll use ${trimmed} for weather from now on.`;
+      } catch {
+        return `I couldn't save the city. Please try again.`;
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
   // Call management
   // ------------------------------------------------------------------
   const startCall = useCallback(async () => {
@@ -513,6 +533,24 @@ export default function ElevenLabsAgentWidget({
       // Non-fatal — Carson simply starts without prior memory.
     }
 
+    // Fetch live weather for the user's saved city — non-fatal.
+    // If city is not set, current_weather is "" and Carson will ask.
+    let currentWeather = "";
+    const savedCity = useProfileStore.getState().weatherCity;
+    if (savedCity) {
+      try {
+        const wxRes = await fetch(`/api/weather?city=${encodeURIComponent(savedCity)}`);
+        if (wxRes.ok) {
+          const wxData = await wxRes.json().catch(() => null);
+          if (wxData?.ok && wxData.spoken) {
+            currentWeather = sanitizeForCarsonSpeech(wxData.spoken);
+          }
+        }
+      } catch {
+        // Non-fatal: Carson can continue without live weather.
+      }
+    }
+
     try {
       const conv = await Conversation.startSession({
         agentId,
@@ -524,11 +562,13 @@ export default function ElevenLabsAgentWidget({
           current_time: new Date().toISOString(),
           user_name: displayName ?? "",
           recent_memory: sanitizeForCarsonSpeech(recentMemory),
+          current_weather: currentWeather,
         },
         clientTools: {
           send_followup: sendFollowup,
           send_delegation: sendDelegation,
           create_reminder: createReminder,
+          save_city: saveCity,
         },
         onModeChange: ({ mode: m }) => {
           setMode(m === "speaking" ? "speaking" : "listening");
