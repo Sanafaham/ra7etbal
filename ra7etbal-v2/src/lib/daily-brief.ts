@@ -349,19 +349,10 @@ export function buildCarsonSpokenBrief(
   // ── 3. Completed Today ──────────────────────────────────────────────────
   const recentDone = brief.done.slice(0, 2);
   if (recentDone.length === 1) {
-    const t = recentDone[0];
-    const who = capitalize(t.assigned_to?.trim() ?? "");
-    const what = cleanSpokenDesc(t.description);
-    if (who && what) {
-      sentences.push(`${who} confirmed ${what}.`);
-    } else {
-      sentences.push(`"${spokenDesc(t.description)}" was completed.`);
-    }
+    sentences.push(buildDoneLineSingle(recentDone[0]));
   } else if (recentDone.length === 2) {
-    sentences.push(
-      `"${spokenDesc(recentDone[0].description)}" and ` +
-        `"${spokenDesc(recentDone[1].description)}" were completed.`,
-    );
+    sentences.push(buildDoneLineSingle(recentDone[0]));
+    sentences.push(buildDoneLineSingle(recentDone[1]));
   }
 
   // ── 4. Today's Reminders (due today, not overdue) ───────────────────────
@@ -401,6 +392,31 @@ export function buildCarsonSpokenBrief(
   }
 
   return sentences.join(" ");
+}
+
+/**
+ * Build one completed-item sentence.
+ *
+ * Delegated tasks (type "delegation" or "followup", or any task with an
+ * assignee other than the owner) credit the person who confirmed:
+ *   "Grace confirmed: Call Sana in one minute."
+ *
+ * Personal reminders credit the owner:
+ *   "You completed 'call the dentist'."
+ */
+function buildDoneLineSingle(t: Task): string {
+  const assignee = t.assigned_to?.trim() ?? "";
+  const isDelegated =
+    t.type === "delegation" ||
+    t.type === "followup" ||
+    (!!assignee && assignee.toLowerCase() !== "me");
+
+  if (isDelegated && assignee) {
+    const who = capitalize(assignee);
+    return `${who} confirmed: ${spokenDesc(t.description)}.`;
+  }
+
+  return `You completed "${spokenDesc(t.description)}".`;
 }
 
 /** Short display version of a task description for speech. Max 40 chars, no trailing punctuation. */
