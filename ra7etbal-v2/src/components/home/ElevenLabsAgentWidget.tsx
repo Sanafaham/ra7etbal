@@ -82,9 +82,12 @@ function buildFollowUpText(description: string): string {
 
 export default function ElevenLabsAgentWidget({
   briefStateText,
+  spokenBrief,
   displayName,
 }: {
   briefStateText: string;
+  /** Pre-built spoken daily brief paragraph injected as `daily_brief` dynamic variable. */
+  spokenBrief?: string;
   displayName?: string | null;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
@@ -514,6 +517,7 @@ export default function ElevenLabsAgentWidget({
         agentId,
         dynamicVariables: {
           ra7etbal_state: briefStateText,
+          daily_brief: spokenBrief ?? "",
           current_time: new Date().toISOString(),
           user_name: displayName ?? "",
           recent_memory: recentMemory,
@@ -596,7 +600,7 @@ export default function ElevenLabsAgentWidget({
         setErrorMsg(null);
       }, 3000);
     }
-  }, [agentId, briefStateText, displayName, createReminder, sendDelegation, sendFollowup, status]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, status]);
 
   // ------------------------------------------------------------------
   // Session teardown

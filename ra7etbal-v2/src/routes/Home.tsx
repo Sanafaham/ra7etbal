@@ -6,7 +6,7 @@ import ElevenLabsAgentWidget from "../components/home/ElevenLabsAgentWidget";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
-import { buildDailyBrief } from "../lib/daily-brief";
+import { buildDailyBrief, buildCarsonSpokenBrief } from "../lib/daily-brief";
 import { formatReminderDue } from "../lib/reminder-time";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
@@ -107,6 +107,10 @@ export default function Home() {
   const elevenLabsBriefStateText = useMemo(
     () => buildElevenLabsBriefStateText(brief, { email: user?.email, people }),
     [brief, user?.email, people],
+  );
+  const spokenBrief = useMemo(
+    () => buildCarsonSpokenBrief(brief, displayName, now),
+    [brief, displayName, now],
   );
   const supportingLines = homeBriefCopy.lines;
 
@@ -274,6 +278,7 @@ export default function Home() {
 
       <ElevenLabsAgentWidget
         briefStateText={elevenLabsBriefStateText}
+        spokenBrief={spokenBrief}
         displayName={displayName}
       />
 
