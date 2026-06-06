@@ -518,6 +518,11 @@ Rules — apply every time without exception:
    owner's name:
    "text you" (meaning the owner) → "text ${ownerRef}"
 
+   Note: "you" in the suggestedMessage refers to Grace (the recipient) when
+   it is the subject ("Can you please…"). It refers to the owner when it is
+   the object of an action verb directed back at the owner ("text you",
+   "call you", "send you"). Always replace the object form.
+
 Worked examples (mandatory to match):
 
   Input:  "Ask Loulya to text me the minute she lands."
@@ -533,6 +538,14 @@ Worked examples (mandatory to match):
 
   Input:  "Ask Ghulam to pick up the car when he's done."
   suggestedMessage: "Can you please pick up the car when you're done."
+
+  Input:  "Ask Grace to text you in one minute."  (you = owner)
+  suggestedMessage: "Can you please text ${ownerRef} in one minute."
+  ✗ WRONG: "Can you please text you in one minute."
+
+  Input:  "Ask Ghulam to call you when he arrives."  (you = owner)
+  suggestedMessage: "Can you please call ${ownerRef} when you arrive."
+  ✗ WRONG: "Can you please call you when you arrive."
 
 Apply this rewriting to EVERY delegation suggestedMessage. No exceptions.
 

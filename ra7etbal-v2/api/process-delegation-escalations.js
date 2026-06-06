@@ -191,7 +191,12 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
     return false;
   }
 
-  const messageText = `Following up: ${description}`;
+  // Resolve owner display name so pronouns read correctly for the recipient.
+  // description is stored from the owner's perspective ("text you in one minute"
+  // means "text the owner") — rewrite before sending as WhatsApp copy.
+  const ownerName = await resolveOwnerName(supabaseUrl, serviceKey, user_id);
+  const rewrittenDescription = rewriteDelegationPronouns(description, ownerName);
+  const messageText = `Following up: ${rewrittenDescription}`;
   const label = testMode ? '[testMode] ' : '';
   console.log(`[escalation] ${label}sending follow-up WhatsApp to ${assigned_to} for task ${taskId}`);
 
@@ -286,6 +291,39 @@ async function resolvePhone(supabaseUrl, serviceKey, userId, assignedTo) {
   );
   const rows = await res.json().catch(() => []);
   return Array.isArray(rows) && rows.length > 0 && rows[0].phone ? rows[0].phone : null;
+}
+
+async function resolveOwnerName(supabaseUrl, serviceKey, userId) {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/profiles` +
+      `?id=eq.${encodeURIComponent(userId)}` +
+      `&select=display_name` +
+      `&limit=1`,
+    { headers: supabaseHeaders(serviceKey) },
+  );
+  const rows = await res.json().catch(() => []);
+  const name = Array.isArray(rows) && rows.length > 0 ? rows[0].display_name : null;
+  return typeof name === 'string' && name.trim() ? name.trim() : 'the sender';
+}
+
+/**
+ * Rewrite owner-facing pronouns so the recipient reads the correct name.
+ * Used on task.description (stored from the owner's perspective).
+ *
+ * Safe to include "you" here because description is always owner-facing:
+ *   "text you in one minute" → "text Sana in one minute"
+ * Unlike suggestedMessage, description does NOT use "you" to address Grace.
+ */
+function rewriteDelegationPronouns(text, ownerName) {
+  const name = (typeof ownerName === 'string' && ownerName.trim()) ? ownerName.trim() : 'the sender';
+  return text
+    .replace(/\byou\b/gi, name)
+    .replace(/\byour\b/gi, `${name}'s`)
+    .replace(/\byourself\b/gi, name)
+    .replace(/\bmy\b/gi, `${name}'s`)
+    .replace(/\bmyself\b/gi, name)
+    .replace(/\bme\b/gi, name)
+    .replace(/\bI\b/g, name);
 }
 
 async function stampColumn(supabaseUrl, serviceKey, taskId, column, value) {
