@@ -53,18 +53,34 @@ export async function summarizeConversation(
   const prompt = `You are a memory assistant for a voice AI called Carson.
 
 Below is a transcript of a conversation between the user and Carson.
-Extract 3-5 bullet points of facts, preferences, context, or open items
-that Carson should remember about this user in future sessions.
+Extract 3–7 bullet points that Carson should remember about this user in future sessions.
 
-Rules:
-- Be specific and factual. No speculation.
-- Omit greetings, goodbyes, and tool confirmations (e.g. "reminder set").
-- Omit generic small talk with no personal dimension.
-- Focus on: names, preferences, corrections, household context, work context,
-  recurring concerns, decisions made, open loops, things user wants Carson to know.
-- Each bullet is one short sentence. Max 20 words per bullet.
-- Do NOT number the bullets. Start each with "• ".
-- If there is truly nothing memorable, return exactly: ${NOTHING}
+━━ ALWAYS CAPTURE ━━
+• Anything the user explicitly says to remember ("remember that…", "don't forget…").
+• Preferences, habits, and routines ("I usually…", "I always…", "I prefer…", "I don't like…", "I keep…").
+• Work style, schedule patterns, recurring situations.
+• Household context: who lives there, relationships, responsibilities.
+• People: names, roles, what was delegated or discussed with them.
+• Decisions made and the reasoning behind them.
+• Open loops: things started but not finished, waiting on someone.
+• Corrections the user makes to Carson ("that's wrong", "I meant…", "next time say…").
+• Product feedback or feature requests the user mentions.
+• Ideas the user floats, especially casual ones at night or in passing.
+
+━━ NEVER CAPTURE ━━
+• Greetings, goodbyes, thank-yous.
+• Generic tool confirmations ("reminder set", "message sent").
+• Small talk with no lasting personal value.
+• One-off jokes, unless the user is correcting Carson or asking him to remember it.
+• Speculation or emotional interpretations — factual only.
+
+━━ FORMAT ━━
+- Start each bullet with "• ".
+- Add a category label when it helps: Preference: / Habit: / Person: / Open loop: / Correction: / Product feedback: / Idea:
+- Each bullet is one sentence. Max 22 words.
+- 3–7 bullets total. No more.
+- Do NOT number the bullets.
+- If there is truly nothing worth keeping, return exactly: ${NOTHING}
 
 Transcript:
 ${transcriptText}`;
