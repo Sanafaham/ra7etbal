@@ -4,8 +4,18 @@
  *
  * NOTE: Scheduling is handled by QStash (not Vercel cron) because
  * Vercel Hobby cron does not support frequent schedules (*/10 * * * *).
- * The QStash schedule is created once via /api/setup-escalation-schedule.
- * QStash forwards Authorization: Bearer <CRON_SECRET> on every call.
+ *
+ * To register the QStash schedule (run once after each new production deployment):
+ *
+ *   curl -X POST \
+ *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal-v2.vercel.app%2Fapi%2Fprocess-delegation-escalations" \
+ *     -H "Authorization: Bearer <QSTASH_TOKEN>" \
+ *     -H "Upstash-Cron: */10 * * * *" \
+ *     -H "Upstash-Forward-Authorization: Bearer <CRON_SECRET>" \
+ *     -H "Upstash-Method: POST"
+ *
+ * QStash forwards Authorization: Bearer <CRON_SECRET> on every scheduled call
+ * so the existing CRON_SECRET auth below works unchanged.
  *
  * Polls for unconfirmed delegated tasks and fires two timed escalations:
  *
