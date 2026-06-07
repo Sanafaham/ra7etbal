@@ -6,7 +6,7 @@ import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { createMessage } from "../../lib/messages";
-import { createTask, updateTaskConfirmationUrl } from "../../lib/tasks";
+import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { useAuthStore } from "../../stores/auth";
 import { usePeopleStore } from "../../stores/people";
@@ -209,28 +209,25 @@ export default function ElevenLabsAgentWidget({
       if (!userId) return "You are not signed in. Please sign in and try again.";
 
       // 6. Create follow-up task row
+      // confirmation_url is derived from a pre-generated UUID so it is set
+      // atomically in the same INSERT — no second write required.
+      const taskId = crypto.randomUUID();
+      const confirmationUrl = `${window.location.origin}/confirm?task=${taskId}`;
       let task;
       try {
         task = await createTask({
+          id: taskId,
           user_id: userId,
           description: messageText,
           type: "followup",
           assigned_to: person.name,
           status: "pending",
           needs_follow_up: true,
-          confirmation_url: null,
+          confirmation_url: confirmationUrl,
           due_at: null,
         });
       } catch (err) {
         return `Could not save the follow-up task. ${err instanceof Error ? err.message : "Please try again."}`;
-      }
-
-      // 7. Build and persist confirmation URL
-      const confirmationUrl = `${window.location.origin}/confirm?task=${task.id}`;
-      try {
-        await updateTaskConfirmationUrl(task.id, confirmationUrl);
-      } catch {
-        // Non-fatal
       }
 
       // 8. Create message row
@@ -338,28 +335,25 @@ export default function ElevenLabsAgentWidget({
       if (!userId) return "You are not signed in. Please sign in and try again.";
 
       // 6. Create delegation task row
+      // confirmation_url is derived from a pre-generated UUID so it is set
+      // atomically in the same INSERT — no second write required.
+      const taskRowId = crypto.randomUUID();
+      const confirmationUrl = `${window.location.origin}/confirm?task=${taskRowId}`;
       let taskRow;
       try {
         taskRow = await createTask({
+          id: taskRowId,
           user_id: userId,
           description: taskText,
           type: "delegation",
           assigned_to: person.name,
           status: "pending",
           needs_follow_up: true,
-          confirmation_url: null,
+          confirmation_url: confirmationUrl,
           due_at: null,
         });
       } catch (err) {
         return `Could not save the delegation task. ${err instanceof Error ? err.message : "Please try again."}`;
-      }
-
-      // 7. Confirmation URL
-      const confirmationUrl = `${window.location.origin}/confirm?task=${taskRow.id}`;
-      try {
-        await updateTaskConfirmationUrl(taskRow.id, confirmationUrl);
-      } catch {
-        // Non-fatal
       }
 
       // 8. Message row

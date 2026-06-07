@@ -37,6 +37,12 @@ export interface Task {
 }
 
 export interface TaskDraft {
+  /**
+   * Optional client-supplied UUID. When provided, the row is inserted with
+   * this ID so the confirmation_url can be derived before the INSERT fires.
+   * When omitted, Supabase generates a UUID via the column default.
+   */
+  id?: string;
   /** Required — we set this explicitly instead of relying on a column default. */
   user_id: string;
   description: string;

@@ -17,6 +17,21 @@
  * QStash forwards Authorization: Bearer <CRON_SECRET> on every scheduled call
  * so the existing CRON_SECRET auth below works unchanged.
  *
+ * To verify the schedule exists:
+ *
+ *   curl -s https://qstash.upstash.io/v2/schedules \
+ *     -H "Authorization: Bearer $QSTASH_TOKEN" \
+ *     | grep process-delegation-escalations
+ *
+ * If no schedule is returned, register it:
+ *
+ *   curl -X POST \
+ *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal-v2.vercel.app%2Fapi%2Fprocess-delegation-escalations" \
+ *     -H "Authorization: Bearer $QSTASH_TOKEN" \
+ *     -H "Upstash-Cron: every-10-min" \
+ *     -H "Upstash-Forward-Authorization: Bearer $CRON_SECRET" \
+ *     -H "Upstash-Method: POST"
+ *
  * Polls for unconfirmed delegated tasks and fires two timed escalations:
  *
  *   30 min  → WhatsApp follow-up to the assigned person (one send max)
@@ -284,7 +299,7 @@ async function resolvePhone(supabaseUrl, serviceKey, userId, assignedTo) {
   const res = await fetch(
     `${supabaseUrl}/rest/v1/people` +
       `?user_id=eq.${encodeURIComponent(userId)}` +
-      `&name=eq.${encodeURIComponent(assignedTo)}` +
+      `&name=ilike.${encodeURIComponent(assignedTo)}` +
       `&select=phone` +
       `&limit=1`,
     { headers: supabaseHeaders(serviceKey) },
