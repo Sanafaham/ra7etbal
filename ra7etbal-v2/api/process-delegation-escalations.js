@@ -52,6 +52,7 @@
  */
 
 import webpush from 'web-push';
+import { Receiver } from '@upstash/qstash';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -83,10 +84,14 @@ export default async function handler(req, res) {
   // endpoint directly from a browser or curl without needing the secret.
   const testMode = isTestMode(req);
 
-  if (!testMode && !isAuthorized(req)) {
+  if (!testMode && !(await isAuthorized(req))) {
     console.log('[escalation] job rejected: unauthorized', {
       hasCronSecret: Boolean(process.env.CRON_SECRET),
       hasAuthorizationHeader: Boolean(req.headers.authorization || req.headers.Authorization),
+      hasQStashSignature: Boolean(req.headers['upstash-signature']),
+      hasQStashSigningKeys: Boolean(
+        process.env.QSTASH_CURRENT_SIGNING_KEY && process.env.QSTASH_NEXT_SIGNING_KEY,
+      ),
     });
     return res.status(401).json({ error: 'Unauthorized' });
   }
@@ -534,9 +539,28 @@ function isTestMode(req) {
   }
 }
 
-function isAuthorized(req) {
+async function isAuthorized(req) {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
   const auth = req.headers.authorization || req.headers.Authorization || '';
-  return auth === `Bearer ${secret}`;
+  if (secret && auth === `Bearer ${secret}`) return true;
+
+  const currentSigningKey = process.env.QSTASH_CURRENT_SIGNING_KEY;
+  const nextSigningKey = process.env.QSTASH_NEXT_SIGNING_KEY;
+  const signature = req.headers['upstash-signature'];
+  if (!currentSigningKey || !nextSigningKey || !signature) return false;
+
+  const receiver = new Receiver({ currentSigningKey, nextSigningKey });
+  const candidateBodies = [JSON.stringify(req.body ?? {}), ''];
+
+  for (const body of candidateBodies) {
+    try {
+      await receiver.verify({ signature, body });
+      return true;
+    } catch {
+      // Try the next body shape. Vercel may expose an empty QStash body as
+      // either undefined/{} or an empty string depending on parsing.
+    }
+  }
+
+  return false;
 }
