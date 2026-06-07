@@ -9,6 +9,7 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { useAuthStore } from "../../stores/auth";
+import type { Person } from "../../types/person";
 import { usePeopleStore } from "../../stores/people";
 import { useProfileStore } from "../../stores/profile";
 import { useTasksStore } from "../../stores/tasks";
@@ -36,6 +37,121 @@ function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
     .replace(/\bmyself\b/gi, name)
     .replace(/\bme\b/gi, name)
     .replace(/\bI\b/g, name); // capital I only — avoids altering mid-word "i"
+}
+
+
+interface SentDelegationRecord {
+  personName: string;
+  taskText: string;
+  messageText: string;
+}
+
+interface DelegationSendOptions {
+  userId: string;
+  person: Person;
+  taskText: string;
+  message?: string;
+  ownerName?: string | null;
+}
+
+interface DelegationSendResult {
+  taskId: string;
+  messageText: string;
+}
+
+async function createAndSendDelegation({
+  userId,
+  person,
+  taskText,
+  message,
+  ownerName,
+}: DelegationSendOptions): Promise<DelegationSendResult> {
+  const rawMessage = message?.trim()
+    ? message.trim()
+    : `Hi ${person.name}, could you please ${taskText}? Let me know when done.`;
+  const messageText = rewriteOwnerPronouns(rawMessage, ownerName);
+
+  const taskRowId = crypto.randomUUID();
+  const confirmationUrl = `${window.location.origin}/confirm?task=${taskRowId}`;
+
+  const taskRow = await createTask({
+    id: taskRowId,
+    user_id: userId,
+    description: taskText,
+    type: "delegation",
+    assigned_to: person.name,
+    status: "pending",
+    needs_follow_up: true,
+    confirmation_url: confirmationUrl,
+    due_at: null,
+  });
+
+  let messageRecord;
+  try {
+    messageRecord = await createMessage({
+      user_id: userId,
+      task_id: taskRow.id,
+      recipient: person.name,
+      content: messageText,
+      confirmation_url: confirmationUrl,
+    });
+  } catch {
+    // Non-fatal: the WhatsApp send can still proceed with task metadata.
+  }
+
+  await sendWhatsAppTask({
+    to: person.phone,
+    messageText,
+    confirmationLink: confirmationUrl,
+    messageRecordId: messageRecord?.id ?? null,
+    taskId: taskRow.id,
+    recipientName: person.name,
+  });
+
+  return { taskId: taskRow.id, messageText };
+}
+
+function normalizeDelegationKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function extractDinnerPreparationRequest(sourceText: string): { timeLabel: string; taskText: string; messageText: string } | null {
+  const match = /\bdinner\s+(?:is|starts|will be|begins)\s+(?:at\s+)?(?<time>(?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:am|pm|a\.m\.|p\.m\.)?)\b/i.exec(
+    sourceText,
+  );
+  const rawTime = match?.groups?.time?.trim();
+  if (!rawTime) return null;
+
+  const timeLabel = rawTime
+    .replace(/\s+/g, " ")
+    .replace(/\ba\.m\.\b/i, "AM")
+    .replace(/\bp\.m\.\b/i, "PM")
+    .replace(/\bam\b/i, "AM")
+    .replace(/\bpm\b/i, "PM")
+    .trim();
+
+  return {
+    timeLabel,
+    taskText: `Prepare dinner by ${timeLabel}.`,
+    messageText: `Can you please prepare dinner by ${timeLabel}?`,
+  };
+}
+
+function hasDinnerPreparationDelegation(records: SentDelegationRecord[]): boolean {
+  return records.some((record) => {
+    const haystack = `${record.taskText} ${record.messageText}`.toLowerCase();
+    return (
+      /\bdinner\b/.test(haystack) &&
+      /\b(prepare|prep|cook|make|ready|serve|have)\b/.test(haystack)
+    );
+  });
+}
+
+function findDinnerOwner(people: Person[]): Person | null {
+  return people.find((person) => /\b(cook|chef|kitchen)\b/i.test(person.role)) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,8 +217,12 @@ export default function ElevenLabsAgentWidget({
     ReturnType<typeof Conversation.startSession>
   > | null>(null);
 
-  /** Per-person send cooldown: personName.toLowerCase() → timestamp of last send */
+  /** Per-action cooldown: action/topic key → timestamp of last send */
   const lastSentRef = useRef<Map<string, number>>(new Map());
+
+  /** Successful delegation sends from this live voice session. Used for
+   *  deterministic Daily Brief safety nets and duplicate prevention. */
+  const sentDelegationsRef = useRef<SentDelegationRecord[]>([]);
 
   /** Accumulates successful tool-call descriptions for this session.
    *  Flushed to carson_memory on disconnect. */
@@ -111,6 +231,48 @@ export default function ElevenLabsAgentWidget({
   /** Accumulates finalized transcript messages (both user and agent) for
    *  this session. Summarised by Haiku at disconnect for conversational memory. */
   const sessionTranscriptRef = useRef<TranscriptMessage[]>([]);
+
+  const maybeSendImpliedDinnerDelegation = useCallback(
+    async (userId: string): Promise<void> => {
+      if (hasDinnerPreparationDelegation(sentDelegationsRef.current)) return;
+
+      const sourceText = sessionTranscriptRef.current
+        .filter((entry) => entry.role === "user")
+        .map((entry) => entry.message)
+        .join("\n");
+      const dinner = extractDinnerPreparationRequest(sourceText);
+      if (!dinner) return;
+
+      const peopleState = usePeopleStore.getState();
+      if (peopleState.status === "idle" || peopleState.items.length === 0) {
+        await usePeopleStore.getState().loadFor(userId);
+      }
+
+      const owner = findDinnerOwner(usePeopleStore.getState().items);
+      if (!owner?.phone) return;
+
+      if (hasDinnerPreparationDelegation(sentDelegationsRef.current)) return;
+
+      try {
+        const result = await createAndSendDelegation({
+          userId,
+          person: owner,
+          taskText: dinner.taskText,
+          message: dinner.messageText,
+          ownerName: displayName,
+        });
+        sentDelegationsRef.current.push({
+          personName: owner.name,
+          taskText: dinner.taskText,
+          messageText: result.messageText,
+        });
+        sessionActionsRef.current.push(`Delegated to ${owner.name}: ${dinner.taskText}`);
+      } catch (err) {
+        console.error("[send_delegation] implied dinner delegation failed", err);
+      }
+    },
+    [displayName],
+  );
 
   // ------------------------------------------------------------------
   // Client tool: send_followup
@@ -317,78 +479,45 @@ export default function ElevenLabsAgentWidget({
         return `${person.name} does not have a phone number saved. Ask the user to add one in People settings.`;
       }
 
-      // 3. Cooldown
-      const cooldownKey = `delegation:${normalizedName.toLowerCase()}`;
+      // 3. Cooldown. Key by person + task, not person alone, so a Daily Brief
+      // can legitimately send Christopher both dinner prep and kitchen check.
+      const delegationKey = normalizeDelegationKey(taskText);
+      const cooldownKey = `delegation:${normalizedName.toLowerCase()}:${delegationKey}`;
       const lastSent = lastSentRef.current.get(cooldownKey) ?? 0;
       if (Date.now() - lastSent < 30_000) {
-        return `I already sent ${person.name} a delegation just now. Wait a moment before sending again.`;
+        return `I already sent ${person.name} that delegation just now. Wait a moment before sending again.`;
       }
-
-      // 4. Build message — rewrite any first-person owner pronouns ("me",
-      //    "my", "I") so the recipient reads "call Sana" not "call me".
-      const rawMessage = message?.trim()
-        ? message.trim()
-        : `Hi ${person.name}, could you please ${taskText}? Let me know when done.`;
-      const messageText = rewriteOwnerPronouns(rawMessage, displayName);
 
       const userId = authUserId;
       if (!userId) return "You are not signed in. Please sign in and try again.";
 
-      // 6. Create delegation task row
-      // confirmation_url is derived from a pre-generated UUID so it is set
-      // atomically in the same INSERT — no second write required.
-      const taskRowId = crypto.randomUUID();
-      const confirmationUrl = `${window.location.origin}/confirm?task=${taskRowId}`;
-      let taskRow;
+      let result: DelegationSendResult;
       try {
-        taskRow = await createTask({
-          id: taskRowId,
-          user_id: userId,
-          description: taskText,
-          type: "delegation",
-          assigned_to: person.name,
-          status: "pending",
-          needs_follow_up: true,
-          confirmation_url: confirmationUrl,
-          due_at: null,
+        result = await createAndSendDelegation({
+          userId,
+          person,
+          taskText,
+          message,
+          ownerName: displayName,
         });
       } catch (err) {
-        return `Could not save the delegation task. ${err instanceof Error ? err.message : "Please try again."}`;
-      }
-
-      // 8. Message row
-      let messageRecord;
-      try {
-        messageRecord = await createMessage({
-          user_id: userId,
-          task_id: taskRow.id,
-          recipient: person.name,
-          content: messageText,
-          confirmation_url: confirmationUrl,
-        });
-      } catch {
-        // Non-fatal
-      }
-
-      // 9. Send
-      try {
-        await sendWhatsAppTask({
-          to: person.phone,
-          messageText,
-          confirmationLink: confirmationUrl,
-          messageRecordId: messageRecord?.id ?? null,
-          taskId: taskRow.id,
-          recipientName: person.name,
-        });
-      } catch (err) {
-        return `Could not send the WhatsApp message to ${person.name}. ${err instanceof Error ? err.message : "Please try again."}`;
+        const detail = err instanceof Error ? err.message : "Please try again.";
+        return `Could not send the delegation to ${person.name}. ${detail}`;
       }
 
       lastSentRef.current.set(cooldownKey, Date.now());
+      sentDelegationsRef.current.push({
+        personName: person.name,
+        taskText,
+        messageText: result.messageText,
+      });
       sessionActionsRef.current.push(`Delegated to ${person.name}: ${taskText}`);
+
+      await maybeSendImpliedDinnerDelegation(userId);
+
       return `Sent delegation to ${person.name}: ${taskText}.`;
     },
-    [],
+    [displayName, maybeSendImpliedDinnerDelegation],
   );
 
   // ------------------------------------------------------------------
@@ -517,6 +646,7 @@ export default function ElevenLabsAgentWidget({
     // Reset session state for this new session.
     sessionActionsRef.current = [];
     sessionTranscriptRef.current = [];
+    sentDelegationsRef.current = [];
 
     // Load the last 5 session summaries before opening the ElevenLabs
     // connection. Failure is non-fatal — fall back to empty string.
@@ -574,10 +704,8 @@ export default function ElevenLabsAgentWidget({
         },
         onDisconnect: () => {
           // Capture refs before any async work so they can be reset immediately.
-          const actions = [...sessionActionsRef.current];
+          const userId = useAuthStore.getState().user?.id ?? null;
           const transcript = [...sessionTranscriptRef.current];
-          sessionActionsRef.current = [];
-          sessionTranscriptRef.current = [];
           conversationRef.current = null;
           setStatus("idle");
           setMode("listening");
@@ -585,6 +713,15 @@ export default function ElevenLabsAgentWidget({
           // Build and save session memory asynchronously — non-blocking.
           // The UI is already back to idle while this runs in the background.
           (async () => {
+            if (userId) {
+              await maybeSendImpliedDinnerDelegation(userId);
+            }
+
+            const actions = [...sessionActionsRef.current];
+            sessionActionsRef.current = [];
+            sessionTranscriptRef.current = [];
+            sentDelegationsRef.current = [];
+
             // Try LLM summarisation of the conversational content.
             let conversationSummary: string | null = null;
             try {
@@ -637,7 +774,7 @@ export default function ElevenLabsAgentWidget({
         setErrorMsg(null);
       }, 3000);
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, status]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, maybeSendImpliedDinnerDelegation, status]);
 
   // ------------------------------------------------------------------
   // Session teardown
