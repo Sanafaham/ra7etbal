@@ -51,7 +51,7 @@ export async function saveSessionMemory(summary: string): Promise<void> {
  * Returns "No previous sessions." when the table is empty or on error so
  * the dynamic variable always has a safe value.
  */
-export async function loadRecentMemory(limit = 5): Promise<string> {
+export async function loadRecentMemory(limit = 20): Promise<string> {
   const { data, error } = await supabase
     .from("carson_memory")
     .select("created_at, summary")
@@ -63,18 +63,30 @@ export async function loadRecentMemory(limit = 5): Promise<string> {
     return "No previous sessions.";
   }
 
-  if (!data || data.length === 0) return "No previous sessions.";
+  if (!data || data.length === 0) {
+    if (import.meta.env.DEV) {
+      console.info("[carson-memory] loaded rows=0 textLength=0");
+    }
+    return "No previous sessions.";
+  }
 
-  return data
+  const memoryText = data
     .reverse() // oldest first so Carson reads chronologically
     .map((row) => {
       const date = new Date(row.created_at).toLocaleDateString(undefined, {
         month: "short",
         day: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
       });
-      return `[${date}] ${row.summary}`;
+      const summary = row.summary.trim().replace(/\n{3,}/g, "\n");
+      return `[${date}] ${summary}`;
     })
     .join("\n");
+
+  if (import.meta.env.DEV) {
+    console.info(
+      `[carson-memory] loaded rows=${data.length} textLength=${memoryText.length}`,
+    );
+  }
+
+  return memoryText;
 }

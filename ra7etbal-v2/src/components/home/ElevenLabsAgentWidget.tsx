@@ -652,7 +652,7 @@ export default function ElevenLabsAgentWidget({
     // connection. Failure is non-fatal — fall back to empty string.
     let recentMemory = "No previous sessions.";
     try {
-      recentMemory = await loadRecentMemory(5);
+      recentMemory = await loadRecentMemory(20);
     } catch {
       // Non-fatal — Carson simply starts without prior memory.
     }
