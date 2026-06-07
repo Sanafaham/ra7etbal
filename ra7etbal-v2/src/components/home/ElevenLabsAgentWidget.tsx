@@ -717,7 +717,6 @@ export default function ElevenLabsAgentWidget({
               await maybeSendImpliedDinnerDelegation(userId);
             }
 
-            const actions = [...sessionActionsRef.current];
             sessionActionsRef.current = [];
             sessionTranscriptRef.current = [];
             sentDelegationsRef.current = [];
@@ -730,23 +729,11 @@ export default function ElevenLabsAgentWidget({
               // Non-fatal — fall back to tool actions only.
             }
 
-            // Build the final memory string:
-            //   • If we have a conversation summary, lead with it.
-            //   • Append tool actions as a labeled section if any exist.
-            //   • Save nothing if both are empty.
-            const actionLog = actions.length > 0 ? actions.join(". ") + "." : null;
-
-            let memory: string | null = null;
-            if (conversationSummary && actionLog) {
-              memory = `${conversationSummary}\nActions: ${actionLog}`;
-            } else if (conversationSummary) {
-              memory = conversationSummary;
-            } else if (actionLog) {
-              memory = actionLog;
-            }
-
-            if (memory) {
-              saveSessionMemory(memory).catch(() => {
+            // Save only durable conversational memory. Tool action logs are
+            // one-time operational details; keeping them in carson_memory makes
+            // Carson misclassify temporary tasks as personal facts.
+            if (conversationSummary) {
+              saveSessionMemory(conversationSummary).catch(() => {
                 // Non-fatal — don't surface to user.
               });
             }

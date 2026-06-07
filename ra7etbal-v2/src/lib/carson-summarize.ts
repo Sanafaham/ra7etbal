@@ -44,16 +44,23 @@ export async function summarizeConversation(
   const prompt = `You are a memory assistant for a voice AI called Carson.
 
 Below is a transcript of a conversation between the user and Carson.
-Extract 3–7 bullet points that Carson should remember about this user in future sessions.
+Extract only durable memory Carson should remember about this user in future sessions.
 
-━━ ALWAYS CAPTURE ━━
-• Anything the user explicitly says to remember ("remember that…", "don't forget…").
+Before saving any fact, ask: "Is this likely to still be true in 30 days?"
+If yes, save it. If no, do not save it as long-term memory.
+
+You must separate three categories:
+1. Durable facts — stable identity, preferences, routines, relationships, product direction, corrections. SAVE these.
+2. Temporary operational context — today's plans, event times, household logistics. DO NOT SAVE these.
+3. Completed or one-time tasks — delegations, reminders, WhatsApp sends, confirmations. DO NOT SAVE these.
+
+━━ ALWAYS CAPTURE DURABLE MEMORY ━━
+• Anything the user explicitly says to remember, unless it is obviously a one-time task.
 • Preferences, habits, and routines ("I usually…", "I always…", "I prefer…", "I don't like…", "I keep…", "next time…").
 • Work style, schedule patterns, recurring situations.
-• Household context: who lives there, relationships, responsibilities.
-• People: names, roles, what was delegated or discussed with them.
-• Decisions made and the reasoning behind them.
-• Open loops: things started but not finished, waiting on someone.
+• Stable household context: who lives there, relationships, recurring responsibilities.
+• Stable people facts: names, roles, relationships, reliability patterns, recurring ownership.
+• Product direction, durable decisions, and the reasoning behind them.
 • Corrections — ALL of the following types must be captured:
     - Spelling corrections: e.g. "it's Ra7etBal, not Rahet Bal"
     - Pronunciation corrections: e.g. "it's pronounced rah-het, not ray-het"
@@ -62,22 +69,39 @@ Extract 3–7 bullet points that Carson should remember about this user in futur
     - Workflow corrections: e.g. "next time ask me before sending"
     - Any time the user says "that's wrong", "I meant…", "actually it's…", "you got that wrong", "not X, Y"
 • Product feedback or feature requests.
-• Ideas the user floats, especially casual ones at night or in passing.
+• Ideas the user floats, especially casual ones at night or in passing, if they may matter later.
 
-━━ NEVER CAPTURE ━━
+━━ NEVER CAPTURE AS LONG-TERM MEMORY ━━
 • Greetings, goodbyes, thank-yous.
-• Generic tool confirmations ("reminder set", "message sent").
+• Generic tool confirmations ("reminder set", "message sent", "delegated to X").
+• One-time event logistics: guests arriving, dinner time, cars to wash, flowers to replace, kitchen checks.
+• One-time family/household check-ins: "tell me when X gets home", "ask X to confirm".
+• Temporary open loops from today's brief unless the user says they are recurring or durable.
+• Completed or pending tasks, reminders, WhatsApp messages, confirmations, follow-ups, or escalations.
+• Do not infer identity or preference from one event.
+  Bad: "Sana likes hosting dinners" from one dinner plan.
+  Bad: "Guests arrive at 7 and dinner is at 9" as a user fact.
 • Small talk with no lasting personal value.
 • One-off jokes, unless the user is correcting Carson or explicitly asking to remember it.
 • Speculation or emotional interpretations — factual only.
 
+━━ EXAMPLES ━━
+User says: "Guests arrive at 7 PM. Dinner is at 9 PM."
+Return: ${NOTHING}
+
+User says: "I usually host dinner every Friday and Christopher handles the kitchen."
+Return: "• Routine: User usually hosts dinner every Friday and Christopher handles kitchen work."
+
+User says: "I prefer compact answers and I hate over-explaining."
+Return: "• Preference: User prefers compact answers and dislikes over-explaining."
+
 ━━ FORMAT ━━
 - Start each bullet with "• ".
-- Add a category label when it helps: Preference: / Habit: / Person: / Open loop: / Correction: / Product feedback: / Idea:
+- Add a category label when it helps: Preference: / Habit: / Routine: / Person: / Correction: / Product feedback: / Idea:
 - Each bullet is one sentence. Max 22 words.
-- 3–7 bullets total. No more.
+- 1–7 bullets total. No more.
 - Do NOT number the bullets.
-- If there is truly nothing worth keeping, return exactly: ${NOTHING}
+- If there is truly nothing durable worth keeping, return exactly: ${NOTHING}
 
 Transcript:
 ${transcriptText}`;
@@ -109,5 +133,33 @@ ${transcriptText}`;
   const text = body?.content?.[0]?.text?.trim();
   if (!text || text === NOTHING) return null;
 
-  return text;
+  return filterDurableMemoryText(text);
+}
+
+function filterDurableMemoryText(text: string): string | null {
+  const durableLines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => line !== NOTHING)
+    .filter((line) => !isLikelyTemporaryOperationalMemory(line));
+
+  return durableLines.length > 0 ? durableLines.join("\n") : null;
+}
+
+function isLikelyTemporaryOperationalMemory(line: string): boolean {
+  const lower = line.toLowerCase();
+
+  const hasDurableSignal =
+    /\b(prefers?|dislikes?|likes?|usually|always|routine|habit|recurring|every\s+(day|week|month|friday|saturday|sunday|monday|tuesday|wednesday|thursday)|lives?|building|wants?|correction|pronounced|spelled|chief of staff|product direction)\b/.test(
+      lower,
+    );
+  if (hasDurableSignal) return false;
+
+  const hasTemporarySignal =
+    /\b(today|tonight|tomorrow|yesterday|guests? arrive|dinner is|dinner at|arrive at|at \d{1,2}(:\d{2})?\s*(am|pm)|flowers?|cars?|kitchen|washing|replacing|check-in|gets? home|got home|delegated|sent|reminder|confirm|confirmation|follow-up|follow up|whatsapp|task)\b/.test(
+      lower,
+    );
+
+  return hasTemporarySignal;
 }
