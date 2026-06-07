@@ -6,6 +6,7 @@ import ItemCard from "../components/review/ItemCard";
 import Spinner from "../components/Spinner";
 import AuthNotice from "../components/auth/AuthNotice";
 import { useAuth } from "../hooks/useAuth";
+import { addImpliedOperationalResponsibilities } from "../lib/ai/role-precedence";
 import { savePending } from "../lib/save";
 import { sendWhatsAppTask } from "../lib/whatsapp";
 import { useDraftStore } from "../stores/draft";
@@ -213,7 +214,8 @@ export default function Review() {
     setSaving(true);
     setSaveError(null);
     try {
-      const result = await savePending(items, userId, displayName);
+      const itemsToSave = addImpliedOperationalResponsibilities(items, people, sourceText);
+      const result = await savePending(itemsToSave, userId, displayName);
       const sendableSavedMessages = result.messages.filter(
         (message) =>
           !!message.recipient.trim() &&

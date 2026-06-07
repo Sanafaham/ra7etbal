@@ -80,7 +80,7 @@ export function applyRolePrecedence(
     byName.set(p.name.toLowerCase(), p);
   }
 
-  return items.map((item) => {
+  const correctedItems: ExtractedItem[] = items.map((item): ExtractedItem => {
     const directRecipient = getDirectRecipientInstruction(sourceText, people);
     const itemHaystack = `${item.description} ${item.suggestedMessage ?? ""}`.toLowerCase();
     const isLikelyMatchingItem =
@@ -124,6 +124,75 @@ export function applyRolePrecedence(
 
     return item;
   });
+
+  return addImpliedOperationalResponsibilities(correctedItems, people, sourceText);
+}
+
+export function addImpliedOperationalResponsibilities(
+  items: ExtractedItem[],
+  people: Person[],
+  sourceText: string,
+): ExtractedItem[] {
+  const impliedDinner = extractDinnerPreparation(sourceText);
+  if (!impliedDinner) return items;
+  if (hasDinnerPreparation(items)) return items;
+
+  const owner = findOperationalOwner(people, /\b(cook|chef|kitchen)\b/i);
+  return [
+    ...items,
+    {
+      id: `implied_dinner_${stableIdPart(impliedDinner.timeLabel)}`,
+      type: "delegation",
+      description: `Prepare dinner by ${impliedDinner.timeLabel}.`,
+      assignedTo: owner?.name ?? "__me__",
+      dueAt: null,
+      dueText: null,
+      suggestedMessage: owner
+        ? `Can you please prepare dinner by ${impliedDinner.timeLabel}?`
+        : null,
+      needsPerson: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+    },
+  ];
+}
+
+function extractDinnerPreparation(sourceText: string): { timeLabel: string } | null {
+  const match = /\bdinner\s+(?:is|starts|will be|begins)\s+(?:at\s+)?(?<time>(?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:am|pm|a\.m\.|p\.m\.)?)\b/i.exec(
+    sourceText,
+  );
+  const rawTime = match?.groups?.time?.trim();
+  if (!rawTime) return null;
+
+  return { timeLabel: normalizeTimeLabel(rawTime) };
+}
+
+function hasDinnerPreparation(items: ExtractedItem[]): boolean {
+  return items.some((item) => {
+    const haystack = `${item.description} ${item.suggestedMessage ?? ""}`.toLowerCase();
+    return (
+      /\bdinner\b/.test(haystack) &&
+      /\b(prepare|prep|cook|make|ready|serve|have)\b/.test(haystack)
+    );
+  });
+}
+
+function findOperationalOwner(people: Person[], role: RegExp): Person | null {
+  return people.find((person) => role.test(person.role)) ?? null;
+}
+
+function normalizeTimeLabel(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/\ba\.m\.\b/i, "AM")
+    .replace(/\bp\.m\.\b/i, "PM")
+    .replace(/\bam\b/i, "AM")
+    .replace(/\bpm\b/i, "PM")
+    .trim();
+}
+
+function stableIdPart(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "task";
 }
 
 interface DirectRecipientInstruction {
