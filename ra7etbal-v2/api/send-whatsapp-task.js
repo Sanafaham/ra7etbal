@@ -1,5 +1,6 @@
-const TEMPLATE_NAME = 'ra7etbal_task_assignment';
+const TEMPLATE_NAME = 'ra7etbal_task_v2';
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
+const FALLBACK_OWNER_NAME = 'Rahet Bal';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -26,11 +27,13 @@ export default async function handler(req, res) {
     messageRecordId,
     taskId,
     recipientName,
+    ownerName,
   } = req.body || {};
 
   const normalizedTo = normalizeWhatsAppPhone(to);
   const cleanMessage = String(messageText || '').trim();
   const cleanLink = String(confirmationLink || '').trim();
+  const cleanOwnerName = String(ownerName || '').trim() || FALLBACK_OWNER_NAME;
   const phoneNumberIdLast4 = phoneNumberId ? phoneNumberId.slice(-4) : null;
 
   if (!accessToken || !phoneNumberId) {
@@ -82,8 +85,9 @@ export default async function handler(req, res) {
         {
           type: 'body',
           parameters: [
-            { type: 'text', text: cleanMessage },
-            { type: 'text', text: cleanLink },
+            { type: 'text', text: cleanOwnerName }, // {{1}} — owner display name
+            { type: 'text', text: cleanMessage },   // {{2}} — task text
+            { type: 'text', text: cleanLink },       // {{3}} — confirmation link
           ],
         },
       ],
@@ -98,6 +102,7 @@ export default async function handler(req, res) {
       taskId: taskId || null,
       messageRecordId: messageRecordId || null,
       recipientName: recipientName || null,
+      ownerName: cleanOwnerName,
       mode: 'template',
       templateName: TEMPLATE_NAME,
       templateLanguage,

@@ -106,6 +106,7 @@ async function createAndSendDelegation({
     messageRecordId: messageRecord?.id ?? null,
     taskId: taskRow.id,
     recipientName: person.name,
+    ownerName: ownerName ?? null,
   });
 
   return { taskId: taskRow.id, messageText };
@@ -415,6 +416,7 @@ export default function ElevenLabsAgentWidget({
           messageRecordId: messageRecord?.id ?? null,
           taskId: task.id,
           recipientName: person.name,
+          ownerName: displayName ?? null,
         });
       } catch (err) {
         return `Could not send the WhatsApp message to ${person.name}. ${err instanceof Error ? err.message : "Please try again."}`;

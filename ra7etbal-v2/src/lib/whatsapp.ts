@@ -11,6 +11,8 @@ export interface WhatsAppCloudTaskPayload {
   messageRecordId?: string | null;
   taskId?: string | null;
   recipientName?: string | null;
+  /** Owner display name — becomes {{1}} in ra7etbal_task_v2 template. Falls back to "Rahet Bal" on the server if omitted. */
+  ownerName?: string | null;
 }
 
 export function buildDelegationMessage(payload: WhatsAppPayload): string {
@@ -54,6 +56,7 @@ export async function sendWhatsAppTask(
       messageRecordId: payload.messageRecordId ?? null,
       taskId: payload.taskId ?? null,
       recipientName: payload.recipientName ?? null,
+      ownerName: payload.ownerName ?? null,
     }),
   });
 
