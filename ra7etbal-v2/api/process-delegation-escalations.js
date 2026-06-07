@@ -10,7 +10,7 @@
  *   curl -X POST \
  *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal-v2.vercel.app%2Fapi%2Fprocess-delegation-escalations" \
  *     -H "Authorization: Bearer <QSTASH_TOKEN>" \
- *     -H "Upstash-Cron: */10 * * * *" \
+ *     -H "Upstash-Cron: every 10 minutes" \
  *     -H "Upstash-Forward-Authorization: Bearer <CRON_SECRET>" \
  *     -H "Upstash-Method: POST"
  *
@@ -28,7 +28,7 @@
  *   curl -X POST \
  *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal-v2.vercel.app%2Fapi%2Fprocess-delegation-escalations" \
  *     -H "Authorization: Bearer $QSTASH_TOKEN" \
- *     -H "Upstash-Cron: */10 * * * *" \
+ *     -H "Upstash-Cron: every 10 minutes" \
  *     -H "Upstash-Forward-Authorization: Bearer $CRON_SECRET" \
  *     -H "Upstash-Method: POST"
  *
