@@ -1,4 +1,4 @@
-const TEMPLATE_NAME = 'ra7etbal_task_v2';
+const TEMPLATE_NAME = 'ra7etbal_task_assignment';
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
 
@@ -85,9 +85,8 @@ export default async function handler(req, res) {
         {
           type: 'body',
           parameters: [
-            { type: 'text', text: cleanOwnerName }, // {{1}} — owner display name
-            { type: 'text', text: cleanMessage },   // {{2}} — task text
-            { type: 'text', text: cleanLink },       // {{3}} — confirmation link
+            { type: 'text', text: cleanMessage },   // {{1}} — task text
+            { type: 'text', text: cleanLink },       // {{2}} — confirmation link
           ],
         },
       ],
