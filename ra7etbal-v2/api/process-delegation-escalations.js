@@ -10,7 +10,7 @@
  *   curl -X POST \
  *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal-v2.vercel.app%2Fapi%2Fprocess-delegation-escalations" \
  *     -H "Authorization: Bearer <QSTASH_TOKEN>" \
- *     -H "Upstash-Cron: every-10-min" \
+ *     -H "Upstash-Cron: */10 * * * *" \
  *     -H "Upstash-Forward-Authorization: Bearer <CRON_SECRET>" \
  *     -H "Upstash-Method: POST"
  *
@@ -28,14 +28,14 @@
  *   curl -X POST \
  *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal-v2.vercel.app%2Fapi%2Fprocess-delegation-escalations" \
  *     -H "Authorization: Bearer $QSTASH_TOKEN" \
- *     -H "Upstash-Cron: every-10-min" \
+ *     -H "Upstash-Cron: */10 * * * *" \
  *     -H "Upstash-Forward-Authorization: Bearer $CRON_SECRET" \
  *     -H "Upstash-Method: POST"
  *
  * Polls for unconfirmed delegated tasks and fires two timed escalations:
  *
- *   30 min  → WhatsApp follow-up to the assigned person (one send max)
- *   60 min  → Web-push notification to the owner       (one send max)
+ *   10 min  → WhatsApp follow-up to the assigned person (one send max)
+ *   20 min  → Web-push notification to the owner       (one send max)
  *
  * Guards: followup_sent_at / escalated_at columns on tasks table.
  * Once either column is stamped the action is never repeated, even if
@@ -43,8 +43,8 @@
  *
  * ── testMode ──────────────────────────────────────────────────────────────
  * Append ?testMode=true when calling manually to collapse the thresholds:
- *   follow-up threshold  : 1 minute  (production: 30 min)
- *   escalation threshold : 2 minutes (production: 60 min)
+ *   follow-up threshold  : 1 minute  (production: 10 min)
+ *   escalation threshold : 2 minutes (production: 20 min)
  *
  * testMode is detected from the query string only — the Vercel cron never
  * appends query params, so production is unaffected.
@@ -56,15 +56,25 @@ import webpush from 'web-push';
 const MAX_TASKS_PER_RUN = 50;
 
 // ── Production thresholds ────────────────────────────────────────────────────
-const PROD_FOLLOWUP_MS  = 30 * 60 * 1000; //  30 minutes
-const PROD_ESCALATE_MS  = 60 * 60 * 1000; //  60 minutes
+const PROD_FOLLOWUP_MS  = 10 * 60 * 1000; //  10 minutes
+const PROD_ESCALATE_MS  = 20 * 60 * 1000; //  20 minutes
 
 // ── testMode thresholds ──────────────────────────────────────────────────────
 const TEST_FOLLOWUP_MS  = 1 * 60 * 1000;  //   1 minute
 const TEST_ESCALATE_MS  = 2 * 60 * 1000;  //   2 minutes
 
 export default async function handler(req, res) {
+  const runStartedAt = new Date();
+  console.log('[escalation] job started', {
+    method: req.method,
+    url: req.url,
+    startedAt: runStartedAt.toISOString(),
+    userAgent: req.headers['user-agent'] || null,
+    hasAuthorizationHeader: Boolean(req.headers.authorization || req.headers.Authorization),
+  });
+
   if (req.method !== 'GET' && req.method !== 'POST') {
+    console.log('[escalation] job rejected: method not allowed', { method: req.method });
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
@@ -74,6 +84,10 @@ export default async function handler(req, res) {
   const testMode = isTestMode(req);
 
   if (!testMode && !isAuthorized(req)) {
+    console.log('[escalation] job rejected: unauthorized', {
+      hasCronSecret: Boolean(process.env.CRON_SECRET),
+      hasAuthorizationHeader: Boolean(req.headers.authorization || req.headers.Authorization),
+    });
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -101,13 +115,28 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: `Missing config: ${missing.join(', ')}` });
   }
 
+  console.log('[escalation] config ok', {
+    hasSupabaseUrl: Boolean(supabaseUrl),
+    hasServiceRoleKey: Boolean(serviceKey),
+    hasVapidPublic: Boolean(vapidPublic),
+    hasVapidPrivate: Boolean(vapidPrivate),
+    hasVapidSubject: Boolean(vapidSubject),
+    appBaseUrl,
+    testMode,
+  });
+
   webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
 
   const now = new Date();
   const followupThresholdMs = testMode ? TEST_FOLLOWUP_MS : PROD_FOLLOWUP_MS;
   const escalateThresholdMs = testMode ? TEST_ESCALATE_MS : PROD_ESCALATE_MS;
 
-  // Fetch tasks old enough to potentially need at least the follow-up.
+  // Fetch pending tasks old enough to potentially need at least the follow-up.
+  //
+  // Important: do NOT filter by type at the PostgREST level. Real delegated
+  // rows can be recognized by the operational signals used elsewhere in the
+  // app: assigned_to + needs_follow_up. Keeping the query wider lets this job
+  // log exactly why a row was skipped instead of silently missing it.
   const oldestRelevantCutoff = new Date(now.getTime() - followupThresholdMs).toISOString();
 
   const headers = supabaseHeaders(serviceKey);
@@ -115,9 +144,8 @@ export default async function handler(req, res) {
   // ── Fetch candidate tasks ──────────────────────────────────────────────────
   const tasksUrl =
     `${supabaseUrl}/rest/v1/tasks` +
-    `?select=id,user_id,description,type,assigned_to,status,confirmation_url,` +
+    `?select=id,user_id,description,type,assigned_to,status,needs_follow_up,confirmation_url,` +
     `created_at,followup_sent_at,escalated_at` +
-    `&type=in.(delegation,followup)` +
     `&status=eq.pending` +
     `&archived_at=is.null` +
     `&created_at=lte.${encodeURIComponent(oldestRelevantCutoff)}` +
@@ -128,25 +156,71 @@ export default async function handler(req, res) {
   const tasks = await tasksRes.json().catch(() => []);
 
   if (!tasksRes.ok) {
-    console.error('[escalation] failed to fetch tasks:', tasks?.message);
+    console.error('[escalation] failed to fetch tasks:', {
+      status: tasksRes.status,
+      message: tasks?.message,
+      details: tasks?.details,
+      hint: tasks?.hint,
+    });
     return res.status(500).json({ error: 'Could not fetch tasks.' });
   }
 
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    console.log('[escalation] no eligible tasks found');
+    console.log('[escalation] eligible tasks found=0', {
+      cutoff: oldestRelevantCutoff,
+      followupThresholdMs,
+      escalateThresholdMs,
+    });
+    console.log('[escalation] job completed', {
+      checked: 0,
+      followupsSent: 0,
+      escalationsSent: 0,
+      durationMs: Date.now() - runStartedAt.getTime(),
+    });
     return res.status(200).json({ checked: 0, followupsSent: 0, escalationsSent: 0 });
   }
 
-  console.log(`[escalation] ${tasks.length} candidate task(s) found (testMode=${testMode})`);
+  console.log('[escalation] eligible tasks found', {
+    candidates: tasks.length,
+    cutoff: oldestRelevantCutoff,
+    followupThresholdMs,
+    escalateThresholdMs,
+    testMode,
+  });
 
   const stats = { checked: tasks.length, followupsSent: 0, escalationsSent: 0, errors: [] };
 
   for (const task of tasks) {
     const ageMs = now.getTime() - new Date(task.created_at).getTime();
+    const skipReason = getDelegationSkipReason(task);
+    if (skipReason) {
+      console.log('[escalation] task skipped with reason', {
+        taskId: task.id,
+        reason: skipReason,
+        type: task.type,
+        assignedTo: task.assigned_to || null,
+        needsFollowUp: task.needs_follow_up === true,
+        status: task.status,
+        ageMs,
+        followupSentAt: task.followup_sent_at || null,
+        escalatedAt: task.escalated_at || null,
+      });
+      continue;
+    }
 
-    // ── Follow-up (30 min / 1 min in testMode) ────────────────────────────
+    console.log('[escalation] task eligible', {
+      taskId: task.id,
+      type: task.type,
+      assignedTo: task.assigned_to,
+      ageMs,
+      followupGuardAlreadySet: Boolean(task.followup_sent_at),
+      escalationGuardAlreadySet: Boolean(task.escalated_at),
+    });
+
+    // ── Follow-up (10 min / 1 min in testMode) ────────────────────────────
     const followupDue = ageMs >= followupThresholdMs && !task.followup_sent_at;
     if (followupDue) {
+      console.log('[escalation] follow-up attempted', { taskId: task.id, assignedTo: task.assigned_to });
       const sent = await sendFollowupWhatsApp({
         task,
         supabaseUrl,
@@ -161,11 +235,20 @@ export default async function handler(req, res) {
       } else {
         stats.errors.push(`followup failed for task ${task.id}`);
       }
+    } else {
+      console.log('[escalation] task skipped with reason', {
+        taskId: task.id,
+        reason: task.followup_sent_at ? 'follow-up guard already set' : 'follow-up threshold not reached',
+        ageMs,
+        thresholdMs: followupThresholdMs,
+        followupSentAt: task.followup_sent_at || null,
+      });
     }
 
-    // ── Escalation (60 min / 2 min in testMode) ───────────────────────────
+    // ── Escalation (20 min / 2 min in testMode) ───────────────────────────
     const escalateDue = ageMs >= escalateThresholdMs && !task.escalated_at;
     if (escalateDue) {
+      console.log('[escalation] escalation attempted', { taskId: task.id, assignedTo: task.assigned_to });
       const sent = await sendOwnerEscalationPush({
         task,
         supabaseUrl,
@@ -178,10 +261,21 @@ export default async function handler(req, res) {
       } else {
         stats.errors.push(`escalation push failed for task ${task.id}`);
       }
+    } else {
+      console.log('[escalation] task skipped with reason', {
+        taskId: task.id,
+        reason: task.escalated_at ? 'escalation guard already set' : 'escalation threshold not reached',
+        ageMs,
+        thresholdMs: escalateThresholdMs,
+        escalatedAt: task.escalated_at || null,
+      });
     }
   }
 
-  console.log('[escalation] run complete', stats);
+  console.log('[escalation] job completed', {
+    ...stats,
+    durationMs: Date.now() - runStartedAt.getTime(),
+  });
   return res.status(200).json(stats);
 }
 
@@ -213,7 +307,11 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
   const rewrittenDescription = rewriteDelegationPronouns(description, ownerName);
   const messageText = `Following up: ${rewrittenDescription}`;
   const label = testMode ? '[testMode] ' : '';
-  console.log(`[escalation] ${label}sending follow-up WhatsApp to ${assigned_to} for task ${taskId}`);
+  console.log(`[escalation] ${label}sending follow-up WhatsApp to ${assigned_to} for task ${taskId}`, {
+    route: `${appBaseUrl}/api/send-whatsapp-task`,
+    hasPhone: Boolean(personPhone),
+    hasConfirmationUrl: Boolean(confirmation_url),
+  });
 
   try {
     const res = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
@@ -229,10 +327,20 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      console.error(`[escalation] follow-up WhatsApp failed for task ${taskId}:`, data?.error);
+      console.error(`[escalation] follow-up WhatsApp failed for task ${taskId}:`, {
+        status: res.status,
+        error: data?.error,
+        details: data?.details,
+        errorMessage: data?.errorMessage,
+      });
       return false;
     }
-    console.log(`[escalation] follow-up WhatsApp sent for task ${taskId}`);
+    console.log(`[escalation] follow-up sent`, {
+      taskId,
+      assignedTo: assigned_to,
+      sendMode: data?.sendMode || data?.sendType || null,
+      messageId: data?.messageId || null,
+    });
     return true;
   } catch (err) {
     console.error(`[escalation] follow-up WhatsApp threw for task ${taskId}:`, err?.message);
@@ -255,18 +363,29 @@ async function sendOwnerEscalationPush({ task, supabaseUrl, serviceKey, testMode
   );
   const subscriptions = await subsRes.json().catch(() => []);
 
+  if (!subsRes.ok) {
+    console.error(`[escalation] task ${taskId}: failed to load owner push subscriptions`, {
+      status: subsRes.status,
+      message: subscriptions?.message,
+      details: subscriptions?.details,
+    });
+    return false;
+  }
+
   if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
     console.log(`[escalation] task ${taskId}: owner has no push subscriptions, skipping escalation`);
     return false;
   }
 
   const who = assigned_to ? `${assigned_to} hasn't confirmed` : 'Unconfirmed task';
-  const timeLabel = testMode ? '(test)' : '1 hour ago';
+  const timeLabel = testMode ? '(test)' : '20 minutes ago';
   const body = `${who}: ${description}. Sent ${timeLabel}.`;
   const payload = JSON.stringify({ title: 'Ra7etBal · Action needed', body });
 
   const label = testMode ? '[testMode] ' : '';
-  console.log(`[escalation] ${label}sending owner escalation push for task ${taskId}`);
+  console.log(`[escalation] ${label}sending owner escalation push for task ${taskId}`, {
+    subscriptionCount: subscriptions.length,
+  });
 
   let sent = false;
   for (const sub of subscriptions) {
@@ -276,7 +395,7 @@ async function sendOwnerEscalationPush({ task, supabaseUrl, serviceKey, testMode
         payload,
         { urgency: 'high', TTL: 300 },
       );
-      console.log(`[escalation] escalation push sent sub=${sub.id} task=${taskId}`);
+      console.log(`[escalation] escalation push sent`, { subId: sub.id, taskId });
       sent = true;
     } catch (err) {
       const status = err?.statusCode ?? null;
@@ -296,16 +415,34 @@ async function sendOwnerEscalationPush({ task, supabaseUrl, serviceKey, testMode
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function resolvePhone(supabaseUrl, serviceKey, userId, assignedTo) {
+  const target = normalizeName(assignedTo);
   const res = await fetch(
     `${supabaseUrl}/rest/v1/people` +
       `?user_id=eq.${encodeURIComponent(userId)}` +
-      `&name=ilike.${encodeURIComponent(assignedTo)}` +
-      `&select=phone` +
-      `&limit=1`,
+      `&select=name,phone`,
     { headers: supabaseHeaders(serviceKey) },
   );
   const rows = await res.json().catch(() => []);
-  return Array.isArray(rows) && rows.length > 0 && rows[0].phone ? rows[0].phone : null;
+  if (!res.ok) {
+    console.error('[escalation] people lookup failed', {
+      userId,
+      assignedTo,
+      status: res.status,
+      message: rows?.message,
+      details: rows?.details,
+    });
+    return null;
+  }
+  if (!Array.isArray(rows)) return null;
+
+  const exact = rows.find((row) => normalizeName(row.name) === target);
+  if (exact?.phone) return exact.phone;
+
+  const loose = rows.find((row) => {
+    const name = normalizeName(row.name);
+    return name && (name.includes(target) || target.includes(name));
+  });
+  return loose?.phone || null;
 }
 
 async function resolveOwnerName(supabaseUrl, serviceKey, userId) {
@@ -356,7 +493,27 @@ async function stampColumn(supabaseUrl, serviceKey, taskId, column, value) {
   if (!res.ok) {
     const body = await res.text().catch(() => '');
     console.error(`[escalation] stampColumn ${column} failed for task ${taskId}: ${res.status} ${body}`);
+  } else {
+    console.log('[escalation] guard stamped', { taskId, column, value });
   }
+}
+
+function getDelegationSkipReason(task) {
+  if (!task) return 'missing task';
+  if (task.status !== 'pending') return `status is ${task.status}`;
+  if (!task.assigned_to || !String(task.assigned_to).trim()) return 'no assigned person';
+
+  const isDelegatedType = task.type === 'delegation' || task.type === 'followup';
+  const isWaitingForAssignee = task.needs_follow_up === true || isDelegatedType;
+  if (!isWaitingForAssignee) {
+    return 'not a delegated/follow-up task';
+  }
+
+  return null;
+}
+
+function normalizeName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
 function supabaseHeaders(serviceKey) {
