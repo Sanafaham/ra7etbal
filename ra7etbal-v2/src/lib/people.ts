@@ -10,7 +10,7 @@ import type { Person, PersonDraft, PersonPatch } from "../types/person";
  * (`user_id default auth.uid()`) configured on the column.
  */
 
-const COLUMNS = "id, user_id, name, role, phone, created_at";
+const COLUMNS = "id, user_id, name, role, phone, notes, created_at";
 
 export async function listPeople(): Promise<Person[]> {
   const { data, error } = await supabase

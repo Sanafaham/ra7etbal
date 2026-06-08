@@ -30,11 +30,13 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
   const nameId = useId();
   const roleId = useId();
   const phoneId = useId();
+  const notesId = useId();
   const roleListId = useId();
 
   const [name, setName] = useState(initial?.name ?? "");
   const [role, setRole] = useState(initial?.role ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
 
   const [busy, setBusy] = useState<null | "save" | "delete">(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +59,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         name: trimmedName,
         role: trimmedRole,
         phone: phone.trim() ? phone.trim() : null,
+        notes: notes.trim() ? notes.trim() : null,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save. Please try again.");
@@ -136,6 +139,24 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
           disabled={!!busy}
           className="w-full rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
         />
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={notesId} className="text-xs font-medium uppercase tracking-wide text-ink/60">
+          Carson memory <span className="font-normal normal-case text-ink/40">(optional)</span>
+        </label>
+        <textarea
+          id={notesId}
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="e.g. Reliable and punctual; prefers clear instructions."
+          rows={3}
+          disabled={!!busy}
+          className="w-full resize-none rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+        />
+        <p className="text-xs leading-relaxed text-ink/45">
+          Durable context only: communication style, reliability, and follow-up preferences.
+        </p>
       </div>
 
       {error && <AuthNotice kind="error">{error}</AuthNotice>}

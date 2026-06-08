@@ -10,6 +10,7 @@ export interface Person {
   name: string;
   role: string;
   phone: string | null;
+  notes: string | null;
   created_at: string;
 }
 
@@ -18,6 +19,7 @@ export interface PersonDraft {
   name: string;
   role: string;
   phone: string | null;
+  notes: string | null;
 }
 
 /** Payload for update — only mutable fields. */

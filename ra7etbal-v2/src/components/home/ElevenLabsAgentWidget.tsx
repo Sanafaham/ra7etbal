@@ -119,6 +119,115 @@ function normalizeDelegationKey(value: string): string {
     .trim();
 }
 
+function normalizeMemoryText(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .replace(/\s+([.,!?;:])/g, "$1")
+    .trim();
+}
+
+function splitIntoSentences(value: string): string[] {
+  return value
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map(normalizeMemoryText)
+    .filter(Boolean);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isLikelyDurablePersonContext(sentence: string): boolean {
+  const lower = sentence.toLowerCase();
+  const durableSignals = [
+    "often",
+    "usually",
+    "always",
+    "tends to",
+    "needs",
+    "prefers",
+    "reliable",
+    "responsible",
+    "punctual",
+    "helpful",
+    "proactive",
+    "strong",
+    "protective",
+    "bodyguard",
+    "bossy",
+    "controlling",
+    "clear instructions",
+    "follow-up",
+    "follow up",
+  ];
+  const temporarySignals = [
+    "today",
+    "tonight",
+    "tomorrow",
+    "guests",
+    "dinner",
+    "flowers",
+    "cars",
+    "kitchen",
+    "gets home",
+    "arrive",
+    "arrives",
+    " at 7",
+    " at 9",
+  ];
+
+  return (
+    durableSignals.some((signal) => lower.includes(signal)) &&
+    !temporarySignals.some((signal) => lower.includes(signal))
+  );
+}
+
+function extractDurablePersonMemories(
+  transcript: TranscriptMessage[],
+  people: Person[],
+): Array<{ person: Person; memory: string }> {
+  const userText = transcript
+    .filter((entry) => entry.role === "user")
+    .map((entry) => entry.message)
+    .join("\n");
+  if (!userText.trim() || people.length === 0) return [];
+
+  const sentences = splitIntoSentences(userText);
+  const updates: Array<{ person: Person; memory: string }> = [];
+
+  for (const person of people) {
+    const name = person.name.trim();
+    if (!name) continue;
+    const namePattern = new RegExp(`\\b${escapeRegex(name)}\\b`, "i");
+    const matchingSentences = sentences.filter(
+      (sentence) =>
+        namePattern.test(sentence) && isLikelyDurablePersonContext(sentence),
+    );
+    if (matchingSentences.length === 0) continue;
+
+    const memory = matchingSentences
+      .map((sentence) =>
+        normalizeMemoryText(sentence.replace(namePattern, "").replace(/^[:,\-\s]+/, "")),
+      )
+      .filter(Boolean)
+      .join(" ");
+
+    if (memory) updates.push({ person, memory });
+  }
+
+  return updates;
+}
+
+function mergePersonNotes(existing: string | null | undefined, addition: string): string {
+  const existingText = normalizeMemoryText(existing ?? "");
+  const additionText = normalizeMemoryText(addition);
+  if (!existingText) return additionText;
+  if (existingText.toLowerCase().includes(additionText.toLowerCase())) {
+    return existingText;
+  }
+  return `${existingText}\n${additionText}`.slice(0, 1_000);
+}
+
 function extractDinnerPreparationRequest(sourceText: string): { timeLabel: string; taskText: string; messageText: string } | null {
   const match = /\bdinner\s+(?:is|starts|will be|begins)\s+(?:at\s+)?(?<time>(?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:am|pm|a\.m\.|p\.m\.)?)\b/i.exec(
     sourceText,
@@ -273,6 +382,32 @@ export default function ElevenLabsAgentWidget({
       }
     },
     [displayName],
+  );
+
+  const savePeopleMemoryFromTranscript = useCallback(
+    async (userId: string, transcript: TranscriptMessage[]): Promise<void> => {
+      const peopleState = usePeopleStore.getState();
+      if (peopleState.status === "idle" || peopleState.items.length === 0) {
+        await usePeopleStore.getState().loadFor(userId);
+      }
+
+      const updates = extractDurablePersonMemories(
+        transcript,
+        usePeopleStore.getState().items,
+      );
+      if (updates.length === 0) return;
+
+      for (const { person, memory } of updates) {
+        try {
+          await usePeopleStore.getState().update(person.id, {
+            notes: mergePersonNotes(person.notes, memory),
+          });
+        } catch (err) {
+          console.error("[people_memory] save failed", person.id, err);
+        }
+      }
+    },
+    [],
   );
 
   // ------------------------------------------------------------------
@@ -717,6 +852,7 @@ export default function ElevenLabsAgentWidget({
           (async () => {
             if (userId) {
               await maybeSendImpliedDinnerDelegation(userId);
+              await savePeopleMemoryFromTranscript(userId, transcript);
             }
 
             sessionActionsRef.current = [];
@@ -763,7 +899,7 @@ export default function ElevenLabsAgentWidget({
         setErrorMsg(null);
       }, 3000);
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, maybeSendImpliedDinnerDelegation, status]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, status]);
 
   // ------------------------------------------------------------------
   // Session teardown

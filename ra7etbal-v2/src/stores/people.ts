@@ -79,6 +79,7 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
       name: draft.name,
       role: draft.role,
       phone: draft.phone,
+      notes: draft.notes,
       created_at: new Date().toISOString(),
     };
     set((s) => ({ items: [...s.items, optimistic] }));

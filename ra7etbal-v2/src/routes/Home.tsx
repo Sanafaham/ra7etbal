@@ -327,7 +327,7 @@ function buildElevenLabsBriefStateText(
   brief: ReturnType<typeof buildDailyBrief>,
   extras: {
     email?: string | null;
-    people?: Array<{ name: string; role: string }>;
+    people?: Array<{ name: string; role: string; notes?: string | null }>;
   } = {},
 ): string {
   const now = new Date();
@@ -346,6 +346,16 @@ function buildElevenLabsBriefStateText(
       .map((p) => (p.role ? `${p.name} (${p.role})` : p.name))
       .join(", ");
     lines.push(`People: ${items}.`);
+
+    const peopleMemory = extras.people
+      .map((p) => {
+        const note = formatPersonMemoryForCarson(p.notes);
+        return note ? `${p.name}: ${note}` : null;
+      })
+      .filter(Boolean);
+    if (peopleMemory.length > 0) {
+      lines.push(`People context: ${peopleMemory.join("; ")}.`);
+    }
   } else {
     lines.push("People: none saved.");
   }
@@ -424,4 +434,16 @@ function buildElevenLabsBriefStateText(
   }
 
   return lines.join("\n");
+}
+
+function formatPersonMemoryForCarson(value?: string | null): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+
+  return trimmed
+    .replace(/\s+/g, " ")
+    .replace(/\bbossy\b/gi, "may over-control")
+    .replace(/\bcontrolling\b/gi, "may over-control")
+    .replace(/\blazy\b/gi, "may need firmer follow-up")
+    .slice(0, 180);
 }
