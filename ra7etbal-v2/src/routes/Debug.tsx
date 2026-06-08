@@ -1,7 +1,5 @@
 import { useState } from "react";
 import { useAuth } from "../hooks/useAuth";
-import { extractDurableFacts, type ExtractedCarsonFact } from "../lib/carson-fact-extract";
-import { upsertUserFacts } from "../lib/carson-facts";
 import { signOut } from "../lib/session";
 import { supabase } from "../lib/supabase";
 
@@ -22,22 +20,11 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 type TestPushState = "idle" | "sending" | "success" | "error";
-type MemoryTestState = "idle" | "running" | "success" | "error";
-
-interface MemoryTestResult {
-  extractedCount: number;
-  savedCount: number;
-  facts: ExtractedCarsonFact[];
-}
 
 export default function Debug() {
   const { status, user, lastEvent, eventCount } = useAuth();
   const [testPushState, setTestPushState] = useState<TestPushState>("idle");
   const [testPushResult, setTestPushResult] = useState<string | null>(null);
-  const [memoryText, setMemoryText] = useState("");
-  const [memoryTestState, setMemoryTestState] = useState<MemoryTestState>("idle");
-  const [memoryTestResult, setMemoryTestResult] = useState<MemoryTestResult | null>(null);
-  const [memoryTestError, setMemoryTestError] = useState<string | null>(null);
 
   async function handleTestPush() {
     setTestPushState("sending");
@@ -69,40 +56,6 @@ export default function Debug() {
     } catch (err) {
       setTestPushResult(err instanceof Error ? err.message : "Unexpected error.");
       setTestPushState("error");
-    }
-  }
-
-  async function handleMemoryTest() {
-    setMemoryTestState("running");
-    setMemoryTestResult(null);
-    setMemoryTestError(null);
-
-    const text = memoryText.trim();
-    if (!user?.id) {
-      setMemoryTestError("Not signed in.");
-      setMemoryTestState("error");
-      return;
-    }
-    if (!text) {
-      setMemoryTestError("Enter text to test.");
-      setMemoryTestState("error");
-      return;
-    }
-
-    try {
-      const facts = await extractDurableFacts([{ role: "user", message: text }]);
-      if (facts.length > 0) {
-        await upsertUserFacts(user.id, facts);
-      }
-      setMemoryTestResult({
-        extractedCount: facts.length,
-        savedCount: facts.length,
-        facts,
-      });
-      setMemoryTestState("success");
-    } catch (err) {
-      setMemoryTestError(err instanceof Error ? err.message : "Memory test failed.");
-      setMemoryTestState("error");
     }
   }
 
@@ -163,67 +116,6 @@ export default function Debug() {
         >
           {testPushResult}
         </p>
-      )}
-
-      {status === "signed_in" && (
-        <section className="space-y-3 rounded-xl border border-amber-300 bg-amber-50/70 p-4">
-          <div className="space-y-1">
-            <h3 className="text-base font-semibold text-ink">Carson Memory V3 Test</h3>
-            <p className="text-xs font-medium text-amber-900">
-              Temporary debug tool. Remove after testing.
-            </p>
-          </div>
-
-          <textarea
-            value={memoryText}
-            onChange={(event) => setMemoryText(event.target.value)}
-            rows={4}
-            className="w-full rounded-xl border border-sage/30 bg-white px-3 py-2 text-sm text-ink shadow-sm outline-none transition placeholder:text-ink/40 focus:border-sage"
-            placeholder="Type a durable preference or correction to test memory extraction."
-          />
-
-          <button
-            type="button"
-            onClick={() => { void handleMemoryTest(); }}
-            disabled={memoryTestState === "running" || memoryText.trim().length === 0}
-            className="rounded-full border border-sage/40 bg-sage px-4 py-2 text-sm font-medium text-white shadow-sm transition disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {memoryTestState === "running" ? "Testing..." : "Test memory extraction"}
-          </button>
-
-          {memoryTestError && (
-            <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm text-rose-900">
-              {memoryTestError}
-            </p>
-          )}
-
-          {memoryTestResult && (
-            <div className="space-y-2 rounded-xl border border-sage/20 bg-white px-4 py-3 text-sm text-ink">
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <Field
-                  label="Facts extracted"
-                  value={String(memoryTestResult.extractedCount)}
-                />
-                <Field label="Facts saved" value={String(memoryTestResult.savedCount)} />
-              </div>
-
-              {memoryTestResult.facts.length === 0 ? (
-                <p className="text-sm text-ink/70">No durable facts extracted.</p>
-              ) : (
-                <ul className="space-y-1">
-                  {memoryTestResult.facts.map((fact) => (
-                    <li
-                      key={`${fact.category}:${fact.key}`}
-                      className="font-mono text-xs text-ink/80"
-                    >
-                      {fact.category} / {fact.key} / {fact.confidence}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-        </section>
       )}
 
       <p className="text-xs text-ink/60">
