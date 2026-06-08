@@ -26,18 +26,7 @@ export default async function handler(req, res) {
   } = req.body || {};
 
   const normalizedTo = normalizeWhatsAppPhone(to);
-
-  // If a reference image is attached, generate a 1-hour signed URL and append
-  // it to the message text so the recipient sees it directly in WhatsApp.
-  // Failure is non-fatal — we still send the message without the image URL.
-  let baseMessage = String(messageText || '').trim();
-  if (imagePath && supabaseUrl && serviceKey) {
-    const imageSignedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
-    if (imageSignedUrl) {
-      baseMessage = `${baseMessage}\n\nReference photo:\n${imageSignedUrl}`;
-    }
-  }
-  const cleanMessage = baseMessage;
+  let cleanMessage = String(messageText || '').trim();
   const cleanLink = String(confirmationLink || '').trim();
   const cleanOwnerName = String(ownerName || '').trim() || FALLBACK_OWNER_NAME;
   const phoneNumberIdLast4 = phoneNumberId ? phoneNumberId.slice(-4) : null;
@@ -77,6 +66,39 @@ export default async function handler(req, res) {
       errorMessage: 'Confirmation link is missing.',
       details: 'WhatsApp task templates require a confirmation link.',
     });
+  }
+
+  // ── Reference image send ──────────────────────────────────────────────────
+  // If a Reference image is attached, send it as a WhatsApp image media message
+  // BEFORE the template so the recipient sees the actual photo inline — not a link.
+  // This is fire-and-continue: image failure is non-fatal.
+  // Fallback: if the image media send fails, append the signed URL to the task
+  // text so the link at least appears in the template body.
+  if (imagePath && supabaseUrl && serviceKey && normalizedTo) {
+    const imageSignedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
+    if (imageSignedUrl) {
+      const imagePayload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: normalizedTo,
+        type: 'image',
+        image: { link: imageSignedUrl },
+      };
+      try {
+        const imageResult = await sendMetaMessage({ url, accessToken, payload: imagePayload });
+        if (!imageResult.ok) {
+          console.warn('[send-whatsapp-task] Reference image send failed (non-fatal), using text fallback', {
+            status: imageResult.status,
+            metaError: imageResult.metaError,
+          });
+          // Fallback: include URL in the template body text
+          cleanMessage = `${cleanMessage}\n\nReference photo:\n${imageSignedUrl}`;
+        }
+      } catch (err) {
+        console.warn('[send-whatsapp-task] Reference image send threw (non-fatal), using text fallback', err?.message);
+        cleanMessage = `${cleanMessage}\n\nReference photo:\n${imageSignedUrl}`;
+      }
+    }
   }
 
   const templatePayload = {
