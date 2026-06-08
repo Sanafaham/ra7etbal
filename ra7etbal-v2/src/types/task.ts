@@ -34,6 +34,8 @@ export interface Task {
   followup_sent_at: string | null;
   /** Timestamp when the automatic 20-min owner escalation push was sent. Null = not yet sent. */
   escalated_at: string | null;
+  /** Supabase Storage path for an attached image. e.g. "task-images/{user_id}/{task_id}/photo.jpg". Null when no image. */
+  image_path: string | null;
 }
 
 export interface TaskDraft {
@@ -52,6 +54,8 @@ export interface TaskDraft {
   needs_follow_up: boolean;
   confirmation_url: string | null;
   due_at: string | null;
+  /** Supabase Storage path for an attached image. Set atomically at createTask. */
+  image_path?: string | null;
 }
 
 export type TaskPatch = Partial<Pick<Task, "description" | "status" | "assigned_to" | "confirmed_at" | "needs_follow_up" | "due_at">>;

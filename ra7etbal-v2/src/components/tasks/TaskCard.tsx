@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Spinner from "../Spinner";
+import { getSignedImageUrl } from "../../lib/image-upload";
 import {
   formatReminderDue,
   formatReminderDueTime,
@@ -40,6 +41,16 @@ export default function TaskCard({
   const [busy, setBusy] = useState<"done" | "delete" | "send" | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [signedImageUrl, setSignedImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!task.image_path) return;
+    let cancelled = false;
+    void getSignedImageUrl(task.image_path).then((url) => {
+      if (!cancelled) setSignedImageUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [task.image_path]);
   const isDone = task.status === "done";
   const isWaitingDelegation = task.type === "delegation" && !isDone;
   const hasConfirmLink = !!task.confirmation_url && isWaitingDelegation;
@@ -163,6 +174,14 @@ export default function TaskCard({
       >
         {task.description}
       </p>
+
+      {signedImageUrl && (
+        <img
+          src={signedImageUrl}
+          alt="Task attachment"
+          className="mt-3 max-h-48 w-full rounded-xl object-cover shadow-sm border border-sage/20"
+        />
+      )}
 
       {message?.content && (
         <p className="mt-2 whitespace-pre-wrap rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/75">

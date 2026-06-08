@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { getSignedImageUrl } from "../../lib/image-upload";
 import type { Task, TaskType } from "../../types/task";
 
 interface Props {
@@ -25,6 +27,16 @@ export default function HistoryCard({ task, message }: Props) {
   const isArchivedOnly = !isDone && !!task.archived_at;
   const stamp = task.confirmed_at ?? task.archived_at ?? task.created_at;
 
+  const [signedImageUrl, setSignedImageUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!task.image_path) return;
+    let cancelled = false;
+    void getSignedImageUrl(task.image_path).then((url) => {
+      if (!cancelled) setSignedImageUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [task.image_path]);
+
   return (
     <article className="rounded-2xl border border-sage/20 bg-white/80 p-4 shadow-sm">
       <header className="flex items-center justify-between gap-2 text-xs text-ink/55">
@@ -35,6 +47,14 @@ export default function HistoryCard({ task, message }: Props) {
       </header>
 
       <p className="mt-2 text-base leading-snug text-ink/85">{task.description}</p>
+
+      {signedImageUrl && (
+        <img
+          src={signedImageUrl}
+          alt="Task attachment"
+          className="mt-2 max-h-40 w-full rounded-xl object-cover shadow-sm border border-sage/20"
+        />
+      )}
 
       {message?.content && (
         <p className="mt-2 rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/70">

@@ -19,6 +19,7 @@ interface TaskInfo {
   status: "pending" | "done" | "cancelled" | string;
   confirmedAt: string | null;
   ownerPhone: string | null;
+  imageUrl: string | null;
 }
 
 export default function Confirm() {
@@ -57,6 +58,7 @@ export default function Confirm() {
           status: data.status ?? "pending",
           confirmedAt: data.confirmedAt ?? null,
           ownerPhone: data.ownerPhone ?? null,
+          imageUrl: data.imageUrl ?? null,
         });
         setLoadState("ready");
       } catch (err) {
@@ -140,6 +142,13 @@ export default function Confirm() {
             <p className="text-base leading-snug text-ink">{info.description}</p>
             {info.assignedTo && (
               <p className="text-sm text-ink/55">For: {info.assignedTo}</p>
+            )}
+            {info.imageUrl && (
+              <img
+                src={info.imageUrl}
+                alt="Task reference photo"
+                className="mt-2 max-h-56 w-full rounded-xl object-cover shadow-sm border border-sage/20"
+              />
             )}
           </div>
 

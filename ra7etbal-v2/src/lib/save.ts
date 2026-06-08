@@ -1,5 +1,6 @@
 import { createMessage } from "./messages";
 import { buildDelegationMessage } from "./delegation-message";
+import { resizeImage, uploadTaskImage } from "./image-upload";
 import { scheduleReminderPush } from "./qstash-reminder";
 import { supabase } from "./supabase";
 import { createTask } from "./tasks";
@@ -62,6 +63,7 @@ export async function savePending(
   userId: string,
   ownerName?: string | null,
   people: Person[] = [],
+  imageFiles?: Map<string, File>,
 ): Promise<SaveResult> {
   if (!userId) throw new Error("Not signed in.");
 
@@ -100,6 +102,86 @@ export async function savePending(
     const isDelegation = item.type === "delegation" && !!assignedTo;
     const needsFollowUp = isDelegation || item.type === "followup";
 
+    // If the user attached an image to this item, upload it now.
+    // Upload must succeed before createTask — we never store a path that
+    // points to a failed upload.
+    let imagePath: string | null = null;
+    const imageFile = imageFiles?.get(item.id) ?? null;
+    if (imageFile) {
+      // Pre-generate the taskId so the upload path matches the task row.
+      const pregenId = crypto.randomUUID();
+      const blob = await resizeImage(imageFile);
+      imagePath = await uploadTaskImage(userId, pregenId, blob);
+      // createTask will use this pre-generated id so paths stay in sync.
+      let task = await createTask({
+        id: pregenId,
+        user_id: userId,
+        description: item.description.trim(),
+        type: item.type,
+        assigned_to: assignedTo,
+        status: "pending",
+        needs_follow_up: needsFollowUp,
+        confirmation_url: null,
+        due_at: item.dueAt,
+        image_path: imagePath,
+      });
+
+      // Defensive status check
+      if (task.status !== "pending") {
+        console.warn(
+          "savePending: task came back with unexpected status; correcting to pending",
+          { id: task.id, returned: task.status },
+        );
+        const { data, error } = await supabase
+          .from("tasks")
+          .update({ status: "pending", confirmed_at: null })
+          .eq("id", task.id)
+          .select(
+            "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, image_path",
+          )
+          .single();
+        if (error) throw error;
+        task = data as Task;
+      }
+
+      if (isDelegation) {
+        const confirmationUrl = `${window.location.origin}/confirm?task=${task.id}`;
+        task = await updateTaskUrl(task.id, confirmationUrl);
+        const assignedPerson = people.find(
+          (person) => person.name.trim().toLowerCase() === assignedTo!.toLowerCase(),
+        );
+        const content = rewriteOwnerPronouns(
+          buildDelegationMessage({
+            personName: assignedTo!,
+            taskText: item.description,
+            personNotes: assignedPerson?.notes ?? null,
+            ownerName,
+          }),
+          ownerName,
+        );
+        if (content && assignedTo) {
+          const msg = await createMessage({
+            user_id: userId,
+            task_id: task.id,
+            recipient: assignedTo,
+            content,
+            confirmation_url: confirmationUrl,
+          });
+          messages.push(msg);
+        }
+      }
+
+      if (task.type === "reminder" && task.due_at) {
+        scheduleReminderPush(task.id, task.due_at).catch((err) =>
+          console.error("[save] QStash scheduleReminderPush failed for task", task.id, err),
+        );
+      }
+
+      tasks.push(task);
+      continue;
+    }
+
+    // No image — original path
     let task = await createTask({
       user_id: userId,
       description: item.description.trim(),

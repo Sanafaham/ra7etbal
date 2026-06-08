@@ -35,6 +35,8 @@ export interface ExtractedItem {
   needsPerson: boolean;
   needsClarification: boolean;
   clarificationQuestion: string | null;
+  /** In-memory only. File selected by user in Review. Never persisted to Supabase. */
+  imageFile?: File | null;
 }
 
 export interface ExtractionResult {

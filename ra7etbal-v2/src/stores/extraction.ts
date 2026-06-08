@@ -25,6 +25,7 @@ export interface ExtractionState {
   setAssignment: (itemId: string, assignedTo: Assignment) => void;
   setDescription: (itemId: string, description: string) => void;
   setSuggestedMessage: (itemId: string, suggestedMessage: string | null) => void;
+  setImageFile: (itemId: string, file: File | null) => void;
   clear: () => void;
 }
 
@@ -81,6 +82,14 @@ export const useExtractionStore = create<ExtractionState>((set, get) => ({
     set({
       items: get().items.map((it) =>
         it.id === itemId ? { ...it, suggestedMessage: next } : it,
+      ),
+    });
+  },
+
+  setImageFile(itemId, file) {
+    set({
+      items: get().items.map((it) =>
+        it.id === itemId ? { ...it, imageFile: file ?? null } : it,
       ),
     });
   },

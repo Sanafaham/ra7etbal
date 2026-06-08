@@ -38,6 +38,7 @@ export default function Review() {
     setAssignment,
     setDescription,
     setSuggestedMessage,
+    setImageFile,
   } = useExtractionStore(
     useShallow((s) => ({
       status: s.status,
@@ -46,6 +47,7 @@ export default function Review() {
       setAssignment: s.setAssignment,
       setDescription: s.setDescription,
       setSuggestedMessage: s.setSuggestedMessage,
+      setImageFile: s.setImageFile,
     })),
   );
 
@@ -164,6 +166,7 @@ export default function Review() {
                 onAssign={setAssignment}
                 onDescriptionChange={setDescription}
                 onMessageChange={setSuggestedMessage}
+                onImageChange={setImageFile}
               />
             </li>
           ))}
@@ -215,7 +218,12 @@ export default function Review() {
     setSaveError(null);
     try {
       const itemsToSave = addImpliedOperationalResponsibilities(items, people, sourceText);
-      const result = await savePending(itemsToSave, userId, displayName, people);
+      // Collect any per-item image files into a Map keyed by item id.
+      const imageFiles = new Map<string, File>();
+      for (const item of itemsToSave) {
+        if (item.imageFile) imageFiles.set(item.id, item.imageFile);
+      }
+      const result = await savePending(itemsToSave, userId, displayName, people, imageFiles.size > 0 ? imageFiles : undefined);
       const sendableSavedMessages = result.messages.filter(
         (message) =>
           !!message.recipient.trim() &&

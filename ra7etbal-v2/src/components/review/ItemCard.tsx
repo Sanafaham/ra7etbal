@@ -1,4 +1,4 @@
-import { useId, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import type { Assignment, ExtractedItem, ItemType } from "../../types/extraction";
 import type { Person } from "../../types/person";
 
@@ -8,6 +8,7 @@ interface Props {
   onAssign: (itemId: string, assignedTo: Assignment) => void;
   onDescriptionChange: (itemId: string, description: string) => void;
   onMessageChange: (itemId: string, suggestedMessage: string | null) => void;
+  onImageChange: (itemId: string, file: File | null) => void;
 }
 
 /** Visual treatment per type — colour cue + label. */
@@ -32,10 +33,26 @@ export default function ItemCard({
   onAssign,
   onDescriptionChange,
   onMessageChange,
+  onImageChange,
 }: Props) {
   const type = TYPE_META[item.type];
   const descId = useId();
   const msgId = useId();
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Local object URL for thumbnail preview — revoked on cleanup or file change.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!item.imageFile) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(item.imageFile);
+    setPreviewUrl(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [item.imageFile]);
 
   const currentValue =
     item.assignedTo === null ? "" : item.assignedTo === "__me__" ? "__me__" : item.assignedTo;
@@ -150,6 +167,47 @@ export default function ItemCard({
           </select>
         </div>
       )}
+
+      {/* Image attachment */}
+      <div className="mt-3 flex items-center gap-2">
+        {previewUrl ? (
+          <div className="relative inline-block">
+            <img
+              src={previewUrl}
+              alt="Attached"
+              className="h-20 w-20 rounded-xl object-cover shadow-sm border border-sage/20"
+            />
+            <button
+              type="button"
+              aria-label="Remove image"
+              onClick={() => onImageChange(item.id, null)}
+              className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold shadow"
+            >
+              ✕
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="inline-flex items-center gap-1.5 rounded-full border border-sage/30 bg-white/70 px-3 py-1.5 text-xs font-medium text-ink/60 shadow-sm transition hover:bg-white hover:text-ink"
+          >
+            <span aria-hidden>📎</span> Attach photo
+          </button>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="sr-only"
+          onChange={(e) => {
+            const file = e.target.files?.[0] ?? null;
+            onImageChange(item.id, file);
+            // Reset input so the same file can be re-selected after removal
+            e.target.value = "";
+          }}
+        />
+      </div>
     </article>
   );
 }
