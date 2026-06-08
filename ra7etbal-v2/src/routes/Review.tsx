@@ -213,6 +213,10 @@ export default function Review() {
           !!message.recipient.trim() &&
           !!message.content.trim(),
       );
+      // Build a lookup so we can pass the Reference image path for each task.
+      const taskImagePathById = new Map(
+        result.tasks.map((t) => [t.id, t.image_path ?? null]),
+      );
       let sendError: string | null = null;
 
       if (hasSendableMessages && sendableSavedMessages.length === 0) {
@@ -228,6 +232,7 @@ export default function Review() {
                 messageRecordId: message.id,
                 taskId: message.task_id,
                 recipientName: message.recipient,
+                imagePath: message.task_id ? (taskImagePathById.get(message.task_id) ?? null) : null,
               }),
             ),
           );

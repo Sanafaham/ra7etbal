@@ -108,6 +108,7 @@ export default function TaskCard({
         confirmationLink: hasConfirmLink ? task.confirmation_url : null,
         taskId: task.id,
         recipientName: task.assigned_to,
+        imagePath: task.image_path ?? null,
       });
       window.alert("Sent through Ra7etBal WhatsApp.");
       setCopied(true);

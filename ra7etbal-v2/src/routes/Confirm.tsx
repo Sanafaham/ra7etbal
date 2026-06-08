@@ -320,7 +320,6 @@ export default function Confirm() {
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
-                  capture="environment"
                   onChange={handleFileChange}
                   className="sr-only"
                   aria-label="Attach proof photo"

@@ -22,10 +22,22 @@ export default async function handler(req, res) {
     taskId,
     recipientName,
     ownerName,
+    imagePath,
   } = req.body || {};
 
   const normalizedTo = normalizeWhatsAppPhone(to);
-  const cleanMessage = String(messageText || '').trim();
+
+  // If a reference image is attached, generate a 1-hour signed URL and append
+  // it to the message text so the recipient sees it directly in WhatsApp.
+  // Failure is non-fatal — we still send the message without the image URL.
+  let baseMessage = String(messageText || '').trim();
+  if (imagePath && supabaseUrl && serviceKey) {
+    const imageSignedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
+    if (imageSignedUrl) {
+      baseMessage = `${baseMessage}\n\nReference photo:\n${imageSignedUrl}`;
+    }
+  }
+  const cleanMessage = baseMessage;
   const cleanLink = String(confirmationLink || '').trim();
   const cleanOwnerName = String(ownerName || '').trim() || FALLBACK_OWNER_NAME;
   const phoneNumberIdLast4 = phoneNumberId ? phoneNumberId.slice(-4) : null;
@@ -295,5 +307,43 @@ async function markMessageAccepted({
       status: response.status,
       body,
     });
+  }
+}
+
+/**
+ * Generate a 1-hour signed read URL for a Reference image so the recipient
+ * can view it as a clickable link in WhatsApp before acting on the task.
+ *
+ * Uses the service role key — safe for server-side use only.
+ * Returns null on any error so the WhatsApp send degrades gracefully
+ * (message still sent, just without the image URL).
+ */
+async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath }) {
+  if (!imagePath || !supabaseUrl || !serviceKey) return null;
+
+  const BUCKET = 'task-images';
+  const objectPath = imagePath.startsWith(`${BUCKET}/`)
+    ? imagePath.slice(`${BUCKET}/`.length)
+    : imagePath;
+
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/storage/v1/object/sign/${BUCKET}/${objectPath}`,
+      {
+        method: 'POST',
+        headers: {
+          'apikey': serviceKey,
+          'Authorization': `Bearer ${serviceKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ expiresIn: 3600 }),
+      }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (!data?.signedURL) return null;
+    return `${supabaseUrl}/storage/v1${data.signedURL}`;
+  } catch {
+    return null;
   }
 }

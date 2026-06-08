@@ -13,6 +13,12 @@ export interface WhatsAppCloudTaskPayload {
   recipientName?: string | null;
   /** Owner display name — becomes {{1}} in ra7etbal_task_v2 template. Falls back to "Rahet Bal" on the server if omitted. */
   ownerName?: string | null;
+  /**
+   * Supabase Storage path for a Reference image (e.g. "task-images/{userId}/{taskId}/photo.jpg").
+   * When present the server generates a signed URL and appends it to the message text
+   * so the recipient sees the reference image directly in WhatsApp before acting.
+   */
+  imagePath?: string | null;
 }
 
 export function buildDelegationMessage(payload: WhatsAppPayload): string {
@@ -57,6 +63,7 @@ export async function sendWhatsAppTask(
       taskId: payload.taskId ?? null,
       recipientName: payload.recipientName ?? null,
       ownerName: payload.ownerName ?? null,
+      imagePath: payload.imagePath ?? null,
     }),
   });
 
