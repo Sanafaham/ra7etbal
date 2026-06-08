@@ -214,9 +214,15 @@ export default function Review() {
           !!message.content.trim(),
       );
       // Build a lookup so we can pass the Reference image path for each task.
-      const taskImagePathById = new Map(
-        result.tasks.map((t) => [t.id, t.image_path ?? null]),
-      );
+      // Primary source: imagePathsByTaskId recorded at upload time (before DB
+      // round-trips). Fallback: task.image_path from the DB response in case
+      // a task was saved without going through the upload path.
+      const taskImagePathById = new Map<string, string | null>(result.imagePathsByTaskId);
+      for (const t of result.tasks) {
+        if (!taskImagePathById.has(t.id)) {
+          taskImagePathById.set(t.id, t.image_path ?? null);
+        }
+      }
       let sendError: string | null = null;
 
       if (hasSendableMessages && sendableSavedMessages.length === 0) {

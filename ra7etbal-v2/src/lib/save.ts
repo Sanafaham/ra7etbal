@@ -56,6 +56,13 @@ export interface SaveResult {
   messages: Message[];
   /** How many items were intentionally skipped (e.g. parked, message without recipient). */
   skipped: number;
+  /**
+   * Maps task.id → image_path for every task that had an image uploaded in
+   * this save. Populated at upload time (before DB round-trips) so callers
+   * such as Review.tsx can pass imagePath to sendWhatsAppTask without having
+   * to trust that DB responses propagate image_path correctly.
+   */
+  imagePathsByTaskId: Map<string, string | null>;
 }
 
 export async function savePending(
@@ -70,6 +77,7 @@ export async function savePending(
   const tasks: Task[] = [];
   const messages: Message[] = [];
   let skipped = 0;
+  const imagePathsByTaskId = new Map<string, string | null>();
 
   for (const item of items) {
     if (item.type === "parked") {
@@ -112,6 +120,9 @@ export async function savePending(
       const pregenId = crypto.randomUUID();
       const blob = await resizeImage(imageFile);
       imagePath = await uploadTaskImage(userId, pregenId, blob);
+      // Record at upload time — before any DB round-trip — so callers can
+      // reliably retrieve imagePath without depending on SELECT responses.
+      imagePathsByTaskId.set(pregenId, imagePath);
       // createTask will use this pre-generated id so paths stay in sync.
       let task = await createTask({
         id: pregenId,
@@ -259,7 +270,7 @@ export async function savePending(
     tasks.push(task);
   }
 
-  return { tasks, messages, skipped };
+  return { tasks, messages, skipped, imagePathsByTaskId };
 }
 
 async function updateTaskUrl(id: string, url: string): Promise<Task> {
