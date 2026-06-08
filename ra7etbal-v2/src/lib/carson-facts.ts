@@ -55,6 +55,7 @@ export async function upsertUserFacts(
   userId: string,
   facts: ExtractedCarsonFact[],
 ): Promise<void> {
+  console.info("[carson-facts:v3] upsert attempted facts", facts.length);
   const trimmedUserId = userId.trim();
   if (!trimmedUserId || facts.length === 0) return;
 
@@ -75,7 +76,11 @@ export async function upsertUserFacts(
 
   if (error) {
     console.error("[carson-facts] upsertUserFacts failed:", error.message);
+    console.error("[carson-facts:v3] upsert error", error.message);
+    return;
   }
+
+  console.info("[carson-facts:v3] upsert success", rows.length);
 }
 
 function formatFactLine({ category, key, value }: CarsonFactRow): string {
