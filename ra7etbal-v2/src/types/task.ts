@@ -30,9 +30,9 @@ export interface Task {
   created_at: string;
   /** QStash message ID stored when a reminder push is scheduled. Null when not scheduled or after delivery. */
   qstash_message_id: string | null;
-  /** Timestamp when the automatic 30-min WhatsApp follow-up was sent. Null = not yet sent. */
+  /** Timestamp when the automatic 10-min WhatsApp follow-up was sent. Null = not yet sent. */
   followup_sent_at: string | null;
-  /** Timestamp when the automatic 60-min owner escalation push was sent. Null = not yet sent. */
+  /** Timestamp when the automatic 20-min owner escalation push was sent. Null = not yet sent. */
   escalated_at: string | null;
 }
 
