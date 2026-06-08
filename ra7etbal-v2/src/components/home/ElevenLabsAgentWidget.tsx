@@ -1,5 +1,6 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { loadUserMemory } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-summarize";
@@ -798,8 +799,15 @@ export default function ElevenLabsAgentWidget({
     sessionTranscriptRef.current = [];
     sentDelegationsRef.current = [];
 
-    // Load the last 5 session summaries before opening the ElevenLabs
-    // connection. Failure is non-fatal — fall back to empty string.
+    // Load structured user memory and recent session summaries before opening
+    // the ElevenLabs connection. Failures are non-fatal.
+    let userMemory = "";
+    try {
+      userMemory = await loadUserMemory(50);
+    } catch {
+      // Non-fatal — Carson simply starts without structured memory.
+    }
+
     let recentMemory = "No previous sessions.";
     try {
       recentMemory = await loadRecentMemory(20);
@@ -825,13 +833,17 @@ export default function ElevenLabsAgentWidget({
       }
     }
 
+    const carsonStateText = userMemory
+      ? `${userMemory}\n\n${briefStateText}`
+      : briefStateText;
+
     try {
       const conv = await Conversation.startSession({
         agentId,
         dynamicVariables: {
           // Sanitize all speech-bound text so ElevenLabs never receives the
           // Latin "Ra7etBal" string — it mispronounces it. Arabic is correct.
-          ra7etbal_state: sanitizeForCarsonSpeech(briefStateText),
+          ra7etbal_state: sanitizeForCarsonSpeech(carsonStateText),
           daily_brief: sanitizeForCarsonSpeech(spokenBrief ?? ""),
           current_time: new Date().toISOString(),
           user_name: displayName ?? "",
