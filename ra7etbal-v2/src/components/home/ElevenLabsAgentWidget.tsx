@@ -1,6 +1,7 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { loadUserMemory } from "../../lib/carson-facts";
+import { extractDurableFacts } from "../../lib/carson-fact-extract";
+import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-summarize";
@@ -878,6 +879,15 @@ export default function ElevenLabsAgentWidget({
             if (userId) {
               await maybeSendImpliedDinnerDelegation(userId);
               await savePeopleMemoryFromTranscript(userId, transcript);
+              try {
+                const facts = await extractDurableFacts(transcript);
+                await upsertUserFacts(userId, facts);
+              } catch (err) {
+                console.error(
+                  "[carson-facts] voice fact extraction failed",
+                  err instanceof Error ? err.message : err,
+                );
+              }
             }
 
             sessionActionsRef.current = [];

@@ -8,6 +8,7 @@
  *   RLS: user sees only their own rows
  */
 
+import type { ExtractedCarsonFact } from "./carson-fact-extract";
 import { supabase } from "./supabase";
 
 interface CarsonFactRow {
@@ -42,6 +43,39 @@ export async function loadUserMemory(limit = 50): Promise<string> {
     .filter(Boolean);
 
   return lines.length > 0 ? `User memory:\n${lines.join("\n")}` : "";
+}
+
+/**
+ * Upsert validated durable facts for the signed-in user.
+ *
+ * Uses (user_id, category, key) as the conflict target so repeated facts update
+ * their canonical row and refresh last_seen_at instead of creating duplicates.
+ */
+export async function upsertUserFacts(
+  userId: string,
+  facts: ExtractedCarsonFact[],
+): Promise<void> {
+  const trimmedUserId = userId.trim();
+  if (!trimmedUserId || facts.length === 0) return;
+
+  const now = new Date().toISOString();
+  const rows = facts.map((fact) => ({
+    user_id: trimmedUserId,
+    category: fact.category,
+    key: fact.key,
+    value: fact.value,
+    confidence: fact.confidence,
+    source: "voice_session",
+    last_seen_at: now,
+  }));
+
+  const { error } = await supabase
+    .from("carson_facts")
+    .upsert(rows, { onConflict: "user_id,category,key" });
+
+  if (error) {
+    console.error("[carson-facts] upsertUserFacts failed:", error.message);
+  }
 }
 
 function formatFactLine({ category, key, value }: CarsonFactRow): string {
