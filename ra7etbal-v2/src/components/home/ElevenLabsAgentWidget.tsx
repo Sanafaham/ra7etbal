@@ -1,6 +1,5 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { sendCarsonDebug } from "../../lib/carson-debug";
 import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
@@ -885,35 +884,20 @@ export default function ElevenLabsAgentWidget({
               "[carson-facts:v3] transcript user turns",
               userTurnCount,
             );
-            sendCarsonDebug("write_start", {
-              userExists: Boolean(userId),
-              transcriptCount: transcript.length,
-              userTurnCount,
-            });
             if (userId) {
               await maybeSendImpliedDinnerDelegation(userId);
               await savePeopleMemoryFromTranscript(userId, transcript);
               try {
                 console.info("[carson-facts:v3] extract called");
-                sendCarsonDebug("extract_called", { extractCalled: true });
                 const facts = await extractDurableFacts(transcript);
                 console.info("[carson-facts:v3] extracted facts", facts.length);
-                sendCarsonDebug("extracted_facts", {
-                  validatedFactsCount: facts.length,
-                });
                 console.info("[carson-facts:v3] upsert called", facts.length);
-                sendCarsonDebug("upsert_called", {
-                  upsertAttemptedCount: facts.length,
-                });
                 await upsertUserFacts(userId, facts);
               } catch (err) {
                 console.error(
                   "[carson-facts] voice fact extraction failed",
                   err instanceof Error ? err.message : err,
                 );
-                sendCarsonDebug("write_error", {
-                  errorMessage: err instanceof Error ? err.message : "unknown_error",
-                });
               }
             }
 
