@@ -39,8 +39,6 @@ export async function extractDurableFacts(
     .map((entry) => entry.message.trim())
     .filter(Boolean);
 
-  console.info("[carson-facts:v3] extract userTurns", userTurns.length);
-
   if (userTurns.length === 0) return [];
 
   const prompt = `You are extracting durable structured memory for Carson, a voice AI.
@@ -90,7 +88,6 @@ ${userTurns.map((message) => `User: ${message}`).join("\n")}`;
 
   let res: Response;
   try {
-    console.info("[carson-facts:v3] extract api request started");
     res = await fetch("/api/anthropic", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -101,27 +98,22 @@ ${userTurns.map((message) => `User: ${message}`).join("\n")}`;
       }),
     });
   } catch {
-    console.error("[carson-facts:v3] extract api request failed");
     return [];
   }
 
-  console.info("[carson-facts:v3] extract api response", res.status);
   if (!res.ok) return [];
 
   let body: { content?: Array<{ type?: string; text?: string }> };
   try {
     body = await res.json();
   } catch {
-    console.error("[carson-facts:v3] extract api response json failed");
     return [];
   }
 
   const raw = body.content?.[0]?.text?.trim();
   if (!raw) return [];
 
-  const facts = validateFactPayload(raw);
-  console.info("[carson-facts:v3] extract validated facts", facts.length);
-  return facts;
+  return validateFactPayload(raw);
 }
 
 function validateFactPayload(raw: string): ExtractedCarsonFact[] {
@@ -129,10 +121,8 @@ function validateFactPayload(raw: string): ExtractedCarsonFact[] {
   try {
     parsed = JSON.parse(stripJsonFence(raw));
   } catch {
-    console.error("[carson-facts:v3] extract json parse failed");
     return [];
   }
-  console.info("[carson-facts:v3] extract json parse success");
 
   if (!parsed || typeof parsed !== "object") return [];
   const facts = (parsed as { facts?: unknown }).facts;

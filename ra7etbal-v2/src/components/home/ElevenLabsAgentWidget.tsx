@@ -876,22 +876,11 @@ export default function ElevenLabsAgentWidget({
           // Build and save session memory asynchronously — non-blocking.
           // The UI is already back to idle while this runs in the background.
           (async () => {
-            const userTurnCount = transcript.filter((entry) => entry.role === "user").length;
-            console.info("[carson-facts:v3] write start");
-            console.info("[carson-facts:v3] user exists", Boolean(userId));
-            console.info("[carson-facts:v3] transcript messages", transcript.length);
-            console.info(
-              "[carson-facts:v3] transcript user turns",
-              userTurnCount,
-            );
             if (userId) {
               await maybeSendImpliedDinnerDelegation(userId);
               await savePeopleMemoryFromTranscript(userId, transcript);
               try {
-                console.info("[carson-facts:v3] extract called");
                 const facts = await extractDurableFacts(transcript);
-                console.info("[carson-facts:v3] extracted facts", facts.length);
-                console.info("[carson-facts:v3] upsert called", facts.length);
                 await upsertUserFacts(userId, facts);
               } catch (err) {
                 console.error(

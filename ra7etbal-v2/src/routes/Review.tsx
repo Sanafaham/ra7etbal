@@ -71,22 +71,6 @@ export default function Review() {
   );
   const hasSendableMessages = sendableChecks.some((check) => check.isSendable);
 
-  useEffect(() => {
-    if (items.length === 0) return;
-    console.log(
-      "REVIEW_SENDABLE_CHECK",
-      sendableChecks.map((check) => ({
-        type: check.type,
-        kind: check.kind,
-        category: check.category,
-        assignedPerson: check.assignedPerson,
-        messageTextPresent: check.messageTextPresent,
-        isPersonalReminder: check.isPersonalReminder,
-        isSendable: check.isSendable,
-      })),
-    );
-  }, [items.length, sendableChecks]);
-
   const phoneByName = useMemo(() => {
     const m = new Map<string, string>();
     for (const person of people) {
