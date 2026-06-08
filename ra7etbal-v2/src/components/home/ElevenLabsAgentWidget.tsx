@@ -5,6 +5,7 @@ import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
+import { buildDelegationMessage } from "../../lib/delegation-message";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
@@ -66,9 +67,21 @@ async function createAndSendDelegation({
   message,
   ownerName,
 }: DelegationSendOptions): Promise<DelegationSendResult> {
-  const rawMessage = message?.trim()
-    ? message.trim()
-    : `Hi ${person.name}, could you please ${taskText}? Let me know when done.`;
+  const rawMessage = person.notes?.trim()
+    ? buildDelegationMessage({
+        personName: person.name,
+        taskText,
+        personNotes: person.notes,
+        ownerName,
+      })
+    : message?.trim()
+      ? message.trim()
+      : buildDelegationMessage({
+          personName: person.name,
+          taskText,
+          personNotes: person.notes,
+          ownerName,
+        });
   const messageText = rewriteOwnerPronouns(rawMessage, ownerName);
 
   const taskRowId = crypto.randomUUID();

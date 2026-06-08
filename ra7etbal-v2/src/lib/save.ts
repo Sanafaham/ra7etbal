@@ -1,9 +1,11 @@
 import { createMessage } from "./messages";
+import { buildDelegationMessage } from "./delegation-message";
 import { scheduleReminderPush } from "./qstash-reminder";
 import { supabase } from "./supabase";
 import { createTask } from "./tasks";
 import type { ExtractedItem } from "../types/extraction";
 import type { Message } from "../types/message";
+import type { Person } from "../types/person";
 import type { Task } from "../types/task";
 
 /**
@@ -59,6 +61,7 @@ export async function savePending(
   items: ExtractedItem[],
   userId: string,
   ownerName?: string | null,
+  people: Person[] = [],
 ): Promise<SaveResult> {
   if (!userId) throw new Error("Not signed in.");
 
@@ -140,8 +143,18 @@ export async function savePending(
       // recipient reads the message correctly — this is a code-side safety net
       // in addition to the prompt-level instruction, because LLM output is not
       // guaranteed and displayName may not have been loaded at extraction time.
-      const rawContent = (item.suggestedMessage ?? "").trim();
-      const content = rawContent ? rewriteOwnerPronouns(rawContent, ownerName) : rawContent;
+      const assignedPerson = people.find(
+        (person) => person.name.trim().toLowerCase() === assignedTo.toLowerCase(),
+      );
+      const content = rewriteOwnerPronouns(
+        buildDelegationMessage({
+          personName: assignedTo,
+          taskText: item.description,
+          personNotes: assignedPerson?.notes ?? null,
+          ownerName,
+        }),
+        ownerName,
+      );
       if (content && assignedTo) {
         const msg = await createMessage({
           user_id: userId,

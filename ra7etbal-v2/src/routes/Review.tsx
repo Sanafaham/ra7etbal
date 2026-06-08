@@ -215,7 +215,7 @@ export default function Review() {
     setSaveError(null);
     try {
       const itemsToSave = addImpliedOperationalResponsibilities(items, people, sourceText);
-      const result = await savePending(itemsToSave, userId, displayName);
+      const result = await savePending(itemsToSave, userId, displayName, people);
       const sendableSavedMessages = result.messages.filter(
         (message) =>
           !!message.recipient.trim() &&
