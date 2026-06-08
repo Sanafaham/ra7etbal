@@ -137,7 +137,7 @@ export async function savePending(
           .update({ status: "pending", confirmed_at: null })
           .eq("id", task.id)
           .select(
-            "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, image_path",
+            "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path",
           )
           .single();
         if (error) throw error;
@@ -207,7 +207,7 @@ export async function savePending(
         .update({ status: "pending", confirmed_at: null })
         .eq("id", task.id)
         .select(
-          "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at",
+          "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path",
         )
         .single();
       if (error) throw error;
@@ -265,12 +265,14 @@ export async function savePending(
 async function updateTaskUrl(id: string, url: string): Promise<Task> {
   // Tiny helper that bypasses the typed TaskPatch (which intentionally omits
   // confirmation_url to keep that column write-once at save time).
+  // Must select ALL task columns so callers (e.g. save → taskImagePathById)
+  // retain image_path and other fields after the update round-trip.
   const { data, error } = await supabase
     .from("tasks")
     .update({ confirmation_url: url })
     .eq("id", id)
     .select(
-      "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at",
+      "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path",
     )
     .single();
   if (error) throw error;

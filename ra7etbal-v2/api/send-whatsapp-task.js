@@ -70,13 +70,18 @@ export default async function handler(req, res) {
 
   // ── Reference image send ──────────────────────────────────────────────────
   // If a Reference image is attached, send it as a WhatsApp image media message
-  // BEFORE the template so the recipient sees the actual photo inline — not a link.
-  // This is fire-and-continue: image failure is non-fatal.
-  // Fallback: if the image media send fails, append the signed URL to the task
-  // text so the link at least appears in the template body.
+  // BEFORE the template so the recipient sees the actual photo inline, not a link.
+  // Fire-and-continue: image failure is non-fatal — template always sends.
+  // Fallback on failure: append signed URL to template body as a text link.
+  let imageSendStatus = 'skipped'; // skipped | sent | failed | no_signed_url
   if (imagePath && supabaseUrl && serviceKey && normalizedTo) {
     const imageSignedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
-    if (imageSignedUrl) {
+    if (!imageSignedUrl) {
+      imageSendStatus = 'no_signed_url';
+      console.warn('[send-whatsapp-task] could not generate signed URL for reference image', {
+        imagePathPresent: Boolean(imagePath),
+      });
+    } else {
       const imagePayload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -86,16 +91,25 @@ export default async function handler(req, res) {
       };
       try {
         const imageResult = await sendMetaMessage({ url, accessToken, payload: imagePayload });
-        if (!imageResult.ok) {
-          console.warn('[send-whatsapp-task] Reference image send failed (non-fatal), using text fallback', {
+        if (imageResult.ok) {
+          imageSendStatus = 'sent';
+        } else {
+          imageSendStatus = 'failed';
+          console.warn('[send-whatsapp-task] reference image media send failed (non-fatal), adding fallback link', {
             status: imageResult.status,
-            metaError: imageResult.metaError,
+            errorCode: imageResult.metaError?.code ?? null,
+            errorSubcode: imageResult.metaError?.error_subcode ?? null,
+            errorMessage: typeof imageResult.metaError?.message === 'string'
+              ? imageResult.metaError.message
+              : null,
           });
-          // Fallback: include URL in the template body text
           cleanMessage = `${cleanMessage}\n\nReference photo:\n${imageSignedUrl}`;
         }
       } catch (err) {
-        console.warn('[send-whatsapp-task] Reference image send threw (non-fatal), using text fallback', err?.message);
+        imageSendStatus = 'failed';
+        console.warn('[send-whatsapp-task] reference image media send threw (non-fatal), adding fallback link', {
+          message: err?.message ?? String(err),
+        });
         cleanMessage = `${cleanMessage}\n\nReference photo:\n${imageSignedUrl}`;
       }
     }
@@ -130,6 +144,8 @@ export default async function handler(req, res) {
       messageRecordId: messageRecordId || null,
       recipientName: recipientName || null,
       ownerName: cleanOwnerName,
+      referenceImagePathPresent: Boolean(imagePath),
+      imageSendStatus,
       mode: 'template',
       templateName: TEMPLATE_NAME,
       templateLanguage,
@@ -167,6 +183,7 @@ export default async function handler(req, res) {
       phoneNumberIdLast4,
       templateName: TEMPLATE_NAME,
       templateLanguage,
+      imageSendStatus,
     });
   } catch (err) {
     console.error('WhatsApp task send route failed', {
