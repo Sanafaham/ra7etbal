@@ -16,7 +16,7 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { taskId, confirmedBy } = req.body;
+  const { taskId, confirmedBy, proofImagePath } = req.body;
 
   if (!taskId) {
     return res.status(400).json({ error: 'Task ID is required' });
@@ -71,6 +71,7 @@ export default async function handler(req, res) {
           status: 'done',
           confirmed_at: now,
           confirmed_by: confirmedBy || null,
+          ...(proofImagePath ? { proof_image_path: proofImagePath } : {}),
         }),
       },
     );

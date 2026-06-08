@@ -28,6 +28,8 @@ export default function HistoryCard({ task, message }: Props) {
   const stamp = task.confirmed_at ?? task.archived_at ?? task.created_at;
 
   const [signedImageUrl, setSignedImageUrl] = useState<string | null>(null);
+  const [signedProofImageUrl, setSignedProofImageUrl] = useState<string | null>(null);
+
   useEffect(() => {
     if (!task.image_path) return;
     let cancelled = false;
@@ -36,6 +38,15 @@ export default function HistoryCard({ task, message }: Props) {
     });
     return () => { cancelled = true; };
   }, [task.image_path]);
+
+  useEffect(() => {
+    if (!task.proof_image_path) return;
+    let cancelled = false;
+    void getSignedImageUrl(task.proof_image_path).then((url) => {
+      if (!cancelled) setSignedProofImageUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [task.proof_image_path]);
 
   return (
     <article className="rounded-2xl border border-sage/20 bg-white/80 p-4 shadow-sm">
@@ -49,11 +60,29 @@ export default function HistoryCard({ task, message }: Props) {
       <p className="mt-2 text-base leading-snug text-ink/85">{task.description}</p>
 
       {signedImageUrl && (
-        <img
-          src={signedImageUrl}
-          alt="Task attachment"
-          className="mt-2 max-h-40 w-full rounded-xl object-cover shadow-sm border border-sage/20"
-        />
+        <div className="mt-2 space-y-1">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-ink/40">
+            Reference image
+          </p>
+          <img
+            src={signedImageUrl}
+            alt="Reference image attached by owner"
+            className="max-h-40 w-full rounded-xl border border-sage/20 object-cover shadow-sm"
+          />
+        </div>
+      )}
+
+      {signedProofImageUrl && (
+        <div className="mt-2 space-y-1">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/70">
+            Proof photo
+          </p>
+          <img
+            src={signedProofImageUrl}
+            alt="Proof photo from recipient"
+            className="max-h-40 w-full rounded-xl border border-emerald-200 object-cover shadow-sm"
+          />
+        </div>
       )}
 
       {message?.content && (

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import AuthNotice from "../components/auth/AuthNotice";
 import Spinner from "../components/Spinner";
+import { resizeImage } from "../lib/image-upload";
 
 /**
  * Recipient-facing confirmation page.
@@ -10,6 +11,12 @@ import Spinner from "../components/Spinner";
  * does NOT sign in — `/api/get-confirm-task` and `/api/confirm-task` use the
  * Supabase service role on the server to read/write a single task by id, so
  * no public RLS policy on the tasks table is required.
+ *
+ * Visual Verification V2:
+ * - Owner's Reference image is shown if attached (image_path).
+ * - Recipient can attach a Proof photo before marking done.
+ * - Proof photo is uploaded via a server-issued signed upload URL.
+ * - proof_image_path is saved atomically with the confirmation PATCH.
  */
 
 interface TaskInfo {
@@ -19,7 +26,14 @@ interface TaskInfo {
   status: "pending" | "done" | "cancelled" | string;
   confirmedAt: string | null;
   ownerPhone: string | null;
+  /** Signed URL for the owner's reference image. Null when none. */
   imageUrl: string | null;
+  /** Signed URL for an already-uploaded proof photo. Null until recipient uploads. */
+  proofImageUrl: string | null;
+  /** Signed upload URL for the recipient to PUT a proof photo. Null when already done. */
+  proofUploadUrl: string | null;
+  /** Storage path to save as proof_image_path after successful upload. */
+  proofUploadPath: string | null;
 }
 
 export default function Confirm() {
@@ -33,6 +47,21 @@ export default function Confirm() {
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const confirmedRef = useRef(false);
+
+  // Proof photo state
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
+  const [proofUploading, setProofUploading] = useState(false);
+  const [proofError, setProofError] = useState<string | null>(null);
+
+  // Revoke object URL on cleanup / file change
+  useEffect(() => {
+    if (!proofFile) return;
+    const url = URL.createObjectURL(proofFile);
+    setProofPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [proofFile]);
 
   useEffect(() => {
     if (!taskId) {
@@ -59,6 +88,9 @@ export default function Confirm() {
           confirmedAt: data.confirmedAt ?? null,
           ownerPhone: data.ownerPhone ?? null,
           imageUrl: data.imageUrl ?? null,
+          proofImageUrl: data.proofImageUrl ?? null,
+          proofUploadUrl: data.proofUploadUrl ?? null,
+          proofUploadPath: data.proofUploadPath ?? null,
         });
         setLoadState("ready");
       } catch (err) {
@@ -76,16 +108,64 @@ export default function Confirm() {
     };
   }, [taskId]);
 
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    setProofFile(file);
+    setProofError(null);
+    // Reset input value so the same file can be reselected after removal
+    e.target.value = "";
+  }
+
+  function removeProofPhoto() {
+    setProofFile(null);
+    setProofError(null);
+  }
+
   async function handleConfirm() {
-    if (!taskId || confirmedRef.current || confirming) return;
+    if (!taskId || confirmedRef.current || confirming || !info) return;
     confirmedRef.current = true;
     setConfirming(true);
     setConfirmError(null);
+
+    let savedProofPath: string | null = null;
+
+    // Upload proof photo first if one was selected
+    if (proofFile && info.proofUploadUrl && info.proofUploadPath) {
+      try {
+        setProofUploading(true);
+        const blob = await resizeImage(proofFile);
+        const uploadRes = await fetch(info.proofUploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "image/jpeg" },
+          body: blob,
+        });
+        if (!uploadRes.ok) {
+          throw new Error(`Upload failed (${uploadRes.status})`);
+        }
+        savedProofPath = info.proofUploadPath;
+      } catch (err) {
+        setProofUploading(false);
+        setProofError(
+          err instanceof Error
+            ? err.message
+            : "Could not upload proof photo. You can still mark done without it.",
+        );
+        confirmedRef.current = false;
+        setConfirming(false);
+        return;
+      } finally {
+        setProofUploading(false);
+      }
+    }
+
     try {
       const res = await fetch("/api/confirm-task", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskId }),
+        body: JSON.stringify({
+          taskId,
+          ...(savedProofPath ? { proofImagePath: savedProofPath } : {}),
+        }),
       });
       const data = (await res.json()) as {
         success?: boolean;
@@ -98,10 +178,15 @@ export default function Confirm() {
         return;
       }
       // Either success or already_done — both mean the task is now done.
-      // The server sends a push notification to the owner automatically.
       setInfo((prev) =>
         prev
-          ? { ...prev, status: "done", confirmedAt: new Date().toISOString() }
+          ? {
+              ...prev,
+              status: "done",
+              confirmedAt: new Date().toISOString(),
+              // Show local proof preview as the confirmed proof url
+              proofImageUrl: proofPreviewUrl ?? prev.proofImageUrl,
+            }
           : prev,
       );
     } catch (err) {
@@ -115,6 +200,8 @@ export default function Confirm() {
       setConfirming(false);
     }
   }
+
+  const isBusy = confirming || proofUploading;
 
   return (
     <section className="mx-auto max-w-md space-y-5 rounded-2xl border border-sage/30 bg-white/85 p-6 shadow-sm">
@@ -137,18 +224,41 @@ export default function Confirm() {
 
       {loadState === "ready" && info && (
         <>
-          <div className="space-y-2">
-            <p className="text-xs font-medium uppercase tracking-wide text-ink/50">Task</p>
-            <p className="text-base leading-snug text-ink">{info.description}</p>
-            {info.assignedTo && (
-              <p className="text-sm text-ink/55">For: {info.assignedTo}</p>
-            )}
+          <div className="space-y-3">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-ink/50">Task</p>
+              <p className="mt-1 text-base leading-snug text-ink">{info.description}</p>
+              {info.assignedTo && (
+                <p className="mt-0.5 text-sm text-ink/55">For: {info.assignedTo}</p>
+              )}
+            </div>
+
+            {/* Reference image — attached by the owner at task creation */}
             {info.imageUrl && (
-              <img
-                src={info.imageUrl}
-                alt="Task reference photo"
-                className="mt-2 max-h-56 w-full rounded-xl object-cover shadow-sm border border-sage/20"
-              />
+              <div className="space-y-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-ink/45">
+                  Reference image
+                </p>
+                <img
+                  src={info.imageUrl}
+                  alt="Reference image attached by owner"
+                  className="max-h-56 w-full rounded-xl border border-sage/20 object-cover shadow-sm"
+                />
+              </div>
+            )}
+
+            {/* Proof photo — uploaded by recipient, shown after confirmation */}
+            {info.status === "done" && info.proofImageUrl && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-ink/45">
+                  Proof photo
+                </p>
+                <img
+                  src={info.proofImageUrl}
+                  alt="Proof photo from recipient"
+                  className="max-h-56 w-full rounded-xl border border-emerald-200 object-cover shadow-sm"
+                />
+              </div>
             )}
           </div>
 
@@ -158,16 +268,88 @@ export default function Confirm() {
             </div>
           ) : (
             <>
+              {/* Proof photo section — shown before Mark done */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium uppercase tracking-wide text-ink/50">
+                  Proof photo
+                  <span className="ml-1 normal-case text-ink/35">(optional)</span>
+                </p>
+
+                {proofFile && proofPreviewUrl ? (
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <img
+                        src={proofPreviewUrl}
+                        alt="Proof photo preview"
+                        className="max-h-48 w-full rounded-xl border border-sage/25 object-cover shadow-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={removeProofPhoto}
+                        disabled={isBusy}
+                        aria-label="Remove proof photo"
+                        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-ink/60 text-white shadow transition hover:bg-ink/80 disabled:opacity-50"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                          <line x1="1" y1="1" x2="11" y2="11" />
+                          <line x1="11" y1="1" x2="1" y2="11" />
+                        </svg>
+                      </button>
+                    </div>
+                    <p className="text-xs text-ink/50">
+                      Photo ready. Tap Mark done to send.
+                    </p>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isBusy}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-sage/40 bg-cream/40 px-4 py-3 text-sm text-ink/60 transition hover:border-sage/60 hover:bg-cream/60 disabled:opacity-50"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <path d="M21 15l-5-5L5 21" />
+                    </svg>
+                    Attach proof photo
+                  </button>
+                )}
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleFileChange}
+                  className="sr-only"
+                  aria-label="Attach proof photo"
+                />
+
+                {proofError && (
+                  <p className="text-xs text-rose-700">{proofError}</p>
+                )}
+              </div>
+
               {confirmError && <AuthNotice kind="error">{confirmError}</AuthNotice>}
+
               <button
                 type="button"
-                onClick={handleConfirm}
-                disabled={confirming}
-                aria-busy={confirming}
+                onClick={() => void handleConfirm()}
+                disabled={isBusy}
+                aria-busy={isBusy}
                 className="flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {confirming && <Spinner size={16} />}
-                <span>{confirming ? "Confirming…" : "Mark done"}</span>
+                {isBusy && <Spinner size={16} />}
+                <span>
+                  {proofUploading
+                    ? "Uploading photo…"
+                    : confirming
+                      ? "Confirming…"
+                      : proofFile
+                        ? "Mark done with proof"
+                        : "Mark done"}
+                </span>
               </button>
             </>
           )}

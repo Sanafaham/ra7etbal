@@ -42,6 +42,7 @@ export default function TaskCard({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [copied, setCopied] = useState(false);
   const [signedImageUrl, setSignedImageUrl] = useState<string | null>(null);
+  const [signedProofImageUrl, setSignedProofImageUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (!task.image_path) return;
@@ -51,6 +52,15 @@ export default function TaskCard({
     });
     return () => { cancelled = true; };
   }, [task.image_path]);
+
+  useEffect(() => {
+    if (!task.proof_image_path) return;
+    let cancelled = false;
+    void getSignedImageUrl(task.proof_image_path).then((url) => {
+      if (!cancelled) setSignedProofImageUrl(url);
+    });
+    return () => { cancelled = true; };
+  }, [task.proof_image_path]);
   const isDone = task.status === "done";
   const isWaitingDelegation = task.type === "delegation" && !isDone;
   const hasConfirmLink = !!task.confirmation_url && isWaitingDelegation;
@@ -176,11 +186,29 @@ export default function TaskCard({
       </p>
 
       {signedImageUrl && (
-        <img
-          src={signedImageUrl}
-          alt="Task attachment"
-          className="mt-3 max-h-48 w-full rounded-xl object-cover shadow-sm border border-sage/20"
-        />
+        <div className="mt-3 space-y-1">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-ink/40">
+            Reference image
+          </p>
+          <img
+            src={signedImageUrl}
+            alt="Reference image attached by owner"
+            className="max-h-48 w-full rounded-xl border border-sage/20 object-cover shadow-sm"
+          />
+        </div>
+      )}
+
+      {signedProofImageUrl && (
+        <div className="mt-3 space-y-1">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/70">
+            Proof photo
+          </p>
+          <img
+            src={signedProofImageUrl}
+            alt="Proof photo from recipient"
+            className="max-h-48 w-full rounded-xl border border-emerald-200 object-cover shadow-sm"
+          />
+        </div>
       )}
 
       {message?.content && (

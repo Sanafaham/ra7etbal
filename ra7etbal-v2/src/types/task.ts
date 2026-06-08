@@ -36,6 +36,8 @@ export interface Task {
   escalated_at: string | null;
   /** Supabase Storage path for an attached image. e.g. "task-images/{user_id}/{task_id}/photo.jpg". Null when no image. */
   image_path: string | null;
+  /** Supabase Storage path for the recipient's proof photo. e.g. "task-images/{user_id}/{task_id}/proof.jpg". Null until recipient uploads. */
+  proof_image_path: string | null;
 }
 
 export interface TaskDraft {
@@ -56,6 +58,8 @@ export interface TaskDraft {
   due_at: string | null;
   /** Supabase Storage path for an attached image. Set atomically at createTask. */
   image_path?: string | null;
+  /** Supabase Storage path for the recipient's proof photo. Set by confirm-task. */
+  proof_image_path?: string | null;
 }
 
 export type TaskPatch = Partial<Pick<Task, "description" | "status" | "assigned_to" | "confirmed_at" | "needs_follow_up" | "due_at">>;
