@@ -9,6 +9,7 @@
  */
 
 import type { ExtractedCarsonFact } from "./carson-fact-extract";
+import { sendCarsonDebug } from "./carson-debug";
 import { supabase } from "./supabase";
 
 interface CarsonFactRow {
@@ -56,6 +57,9 @@ export async function upsertUserFacts(
   facts: ExtractedCarsonFact[],
 ): Promise<void> {
   console.info("[carson-facts:v3] upsert attempted facts", facts.length);
+  sendCarsonDebug("upsert_attempted", {
+    upsertAttemptedCount: facts.length,
+  });
   const trimmedUserId = userId.trim();
   if (!trimmedUserId || facts.length === 0) return;
 
@@ -77,10 +81,18 @@ export async function upsertUserFacts(
   if (error) {
     console.error("[carson-facts] upsertUserFacts failed:", error.message);
     console.error("[carson-facts:v3] upsert error", error.message);
+    sendCarsonDebug("upsert_error", {
+      upsertSuccess: false,
+      errorMessage: error.message,
+    });
     return;
   }
 
   console.info("[carson-facts:v3] upsert success", rows.length);
+  sendCarsonDebug("upsert_success", {
+    upsertAttemptedCount: rows.length,
+    upsertSuccess: true,
+  });
 }
 
 function formatFactLine({ category, key, value }: CarsonFactRow): string {
