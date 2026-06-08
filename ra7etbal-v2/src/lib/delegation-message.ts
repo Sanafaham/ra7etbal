@@ -11,20 +11,24 @@ interface DelegationMessageInput {
  *
  * verification — factual check, finding an item, confirming existence,
  *               taking a photo, reporting back. No choices involved.
- * decision     — involves selecting, choosing, planning, arranging, or
- *               coordinating something where judgment matters.
+ * decision     — involves selecting, choosing, planning, or coordinating
+ *               something where judgment or aesthetic taste matters.
  * execution    — doing a defined task that doesn't require choices
- *               (clean, pick up a specific known item, run an errand).
+ *               (clean, set the table, buy a specific known item, run an errand).
  */
 type TaskContext = "verification" | "decision" | "execution";
 
 /**
  * Classify the task so personality notes are only applied where relevant.
  * Verification is checked first — it overrides all other signals.
+ *
+ * Dinner is a decision signal only when the task is about supporting,
+ * planning, choosing, or suggesting for dinner — not when "dinner" is
+ * just a time reference in an execution task (e.g. "set the table for dinner",
+ * "buy ingredients for dinner").
  */
 function classifyTask(taskLower: string): TaskContext {
-  // Verification: primary action is checking, confirming, finding, or
-  // reporting on the existence / state of something.
+  // Verification: primary action is checking, finding, or reporting.
   if (
     /\bcheck\s+(if|whether|on|that)\b/.test(taskLower) ||
     /\bverify\b/.test(taskLower) ||
@@ -45,7 +49,10 @@ function classifyTask(taskLower: string): TaskContext {
     /\b(plan|coordinate|organize|arrange)\b/.test(taskLower) ||
     /\bflowers\b/.test(taskLower) ||
     /\b(decor|decorations?|menu)\b/.test(taskLower) ||
-    /\bdinner\b/.test(taskLower)
+    /\bsuggest\b/.test(taskLower) ||
+    // Dinner as a decision signal only when the task is about supporting or
+    // planning dinner — not when dinner is just a time reference.
+    /\bhelp\s+\w+.*\bdinner\b/.test(taskLower)
   ) {
     return "decision";
   }
@@ -68,38 +75,40 @@ export function buildDelegationMessage({
   const context = classifyTask(taskLower);
 
   // ── Over-control / bossy ──────────────────────────────────────────────────
-  // Decision-control language only makes sense when the task involves
-  // actual choices. For verification and execution tasks, skip it entirely.
+  // Decision-boundary language only makes sense when the task involves
+  // real choices. Verification and execution tasks get no control language.
   if (hasAny(notes, ["over-control", "over control", "controlling", "bossy", "take over", "takes over"])) {
     const collaborativeTask = lowerFirst(task);
 
     if (context === "verification") {
-      // Simple factual check — no decisions involved, no control language.
       return `Hi ${name}, could you ${collaborativeTask} and let ${owner} know what you find?`;
     }
 
     if (context === "decision") {
-      // Task involves choices or planning — apply the control boundary.
-      const decisionLine = taskLower.includes("dinner")
-        ? `Please help keep things on track while letting ${owner} handle the final decisions.`
-        : `Please check with ${owner} before making final selections.`;
-      return `Hi ${name}, could you ${collaborativeTask}? ${decisionLine}`;
+      // Flowers: visual choice → ask for a photo first.
+      if (/\bflowers\b/.test(taskLower)) {
+        return `Hi ${name}, could you ${collaborativeTask}? Please send ${owner} a photo before you choose.`;
+      }
+      // Supporting someone with dinner → keep it simple, don't override.
+      if (/\bhelp\s+\w+.*\bdinner\b/.test(taskLower)) {
+        return `Hi ${name}, could you ${collaborativeTask}? Please check with ${owner} before changing anything important.`;
+      }
+      // General choice task (menu, plan, organize, suggest, etc.).
+      return `Hi ${name}, could you ${collaborativeTask}? Please check with ${owner} before choosing.`;
     }
 
-    // Execution: no choices involved — just confirm completion.
+    // Execution: no choices — just confirm.
     return `Hi ${name}, could you ${collaborativeTask}? Confirm when done.`;
   }
 
   // ── Menu / misses details ─────────────────────────────────────────────────
-  // "Follow the details" / "follow the menu" language is irrelevant for a
-  // simple check — don't append it when the task is verification.
   if (hasAny(notes, ["menu", "miss details", "misses details", "clear menu", "dinner preparation"])) {
     if (context === "verification") {
       return `Hi ${name}, please ${lowerFirst(task)}. Let ${owner} know what you find.`;
     }
     const detailLine = taskLower.includes("dinner")
-      ? "Follow the menu closely and confirm when it is ready."
-      : "Follow the details closely and confirm when it is done.";
+      ? "Stick to the plan and let me know when it is ready."
+      : "Keep to the details and confirm when done.";
     return `Hi ${name}, please ${lowerFirst(task)}. ${detailLine}`;
   }
 
