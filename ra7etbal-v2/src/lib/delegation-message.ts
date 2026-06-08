@@ -45,8 +45,7 @@ function classifyTask(taskLower: string): TaskContext {
     /\b(plan|coordinate|organize|arrange)\b/.test(taskLower) ||
     /\bflowers\b/.test(taskLower) ||
     /\b(decor|decorations?|menu)\b/.test(taskLower) ||
-    /\bprepare\s+dinner\b/.test(taskLower) ||
-    /\bhelp\s+\w+\s+(with\s+)?dinner\b/.test(taskLower)
+    /\bdinner\b/.test(taskLower)
   ) {
     return "decision";
   }
