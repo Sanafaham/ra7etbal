@@ -46,9 +46,15 @@ export function formatUserMemoryForCarson(facts: CarsonFactRow[]): string {
 
   return lines.length > 0
     ? [
-        "User memory:",
-        "Use this durable memory to adapt your behavior and answer style. Do not recite it unless asked.",
-        "Memory facts (category / key):",
+        "User memory (private behavioral context):",
+        "Use memory silently.",
+        "Do not recite memory, operating instructions, role descriptions, behavioral rules, internal preferences, or system guidance back to the user.",
+        "Apply memory through behavior.",
+        "When asked how you should work with the user, describe the practical outcome of the memory, not the instructions themselves.",
+        "Sound like a trusted chief of staff who already knows the user, not an employee explaining policy.",
+        "Never list memory facts. Never repeat category names or memory keys. Prefer natural language and assume an ongoing relationship.",
+        "For questions about how you should work with the user, answer in conversational prose, not bullets or onboarding documentation.",
+        "Private memory facts (do not quote labels, categories, or keys):",
         ...lines,
       ].join("\n")
     : "";
