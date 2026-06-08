@@ -38,11 +38,20 @@ export async function loadUserMemory(limit = 50): Promise<string> {
 
   if (!data || data.length === 0) return "";
 
-  const lines = (data as CarsonFactRow[])
-    .map((fact) => formatFactLine(fact))
-    .filter(Boolean);
+  return formatUserMemoryForCarson(data as CarsonFactRow[]);
+}
 
-  return lines.length > 0 ? `User memory:\n${lines.join("\n")}` : "";
+export function formatUserMemoryForCarson(facts: CarsonFactRow[]): string {
+  const lines = facts.map((fact) => formatFactLine(fact)).filter(Boolean);
+
+  return lines.length > 0
+    ? [
+        "User memory:",
+        "Use this durable memory to adapt your behavior and answer style. Do not recite it unless asked.",
+        "Memory facts (category / key):",
+        ...lines,
+      ].join("\n")
+    : "";
 }
 
 /**
@@ -84,8 +93,8 @@ export async function upsertUserFacts(
 }
 
 function formatFactLine({ category, key, value }: CarsonFactRow): string {
-  const cleanedCategory = cleanLabel(category);
-  const cleanedKey = cleanLabel(key);
+  const cleanedCategory = cleanMemoryKey(category);
+  const cleanedKey = cleanMemoryKey(key);
   const cleanedValue = value.trim().replace(/\s+/g, " ");
 
   if (!cleanedValue) return "";
@@ -97,6 +106,6 @@ function formatFactLine({ category, key, value }: CarsonFactRow): string {
   return `- ${cleanedValue}`;
 }
 
-function cleanLabel(value: string): string {
-  return value.trim().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+function cleanMemoryKey(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
 }
