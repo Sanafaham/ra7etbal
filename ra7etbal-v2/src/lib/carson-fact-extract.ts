@@ -127,7 +127,7 @@ ${userTurns.map((message) => `User: ${message}`).join("\n")}`;
 function validateFactPayload(raw: string): ExtractedCarsonFact[] {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(stripJsonFence(raw));
   } catch {
     console.error("[carson-facts:v3] extract json parse failed");
     return [];
@@ -153,6 +153,12 @@ function validateFactPayload(raw: string): ExtractedCarsonFact[] {
   }
 
   return validated;
+}
+
+function stripJsonFence(value: string): string {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return match ? match[1].trim() : trimmed;
 }
 
 function validateFact(value: unknown): ExtractedCarsonFact | null {
