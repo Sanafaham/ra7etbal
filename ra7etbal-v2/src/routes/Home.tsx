@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import ElevenLabsAgentWidget from "../components/home/ElevenLabsAgentWidget";
+import TextCarsonPanel from "../components/home/TextCarsonPanel";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
@@ -216,6 +217,17 @@ export default function Home() {
           View Details
         </button>
       </section>
+
+      <TextCarsonPanel
+        context={{
+          displayName,
+          userEmail: user?.email ?? null,
+          briefStateText: elevenLabsBriefStateText,
+          dailyBrief: spokenBrief,
+          people,
+          tasks,
+        }}
+      />
 
       <section className="mt-3 rounded-[26px] border border-border/80 bg-card/82 p-4 shadow-[0_24px_70px_-60px_rgba(20,20,20,0.45)] backdrop-blur-sm sm:mt-4 sm:p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
