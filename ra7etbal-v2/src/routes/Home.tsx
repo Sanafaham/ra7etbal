@@ -7,7 +7,8 @@ import TextCarsonPanel from "../components/home/TextCarsonPanel";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
-import { buildDailyBrief, buildCarsonSpokenBrief } from "../lib/daily-brief";
+import { buildDailyBrief } from "../lib/daily-brief";
+import { buildMorningBriefSpoken } from "../lib/morning-brief";
 import { formatReminderDue } from "../lib/reminder-time";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
@@ -110,8 +111,8 @@ export default function Home() {
     [brief, user?.email, people],
   );
   const spokenBrief = useMemo(
-    () => buildCarsonSpokenBrief(brief, displayName, now),
-    [brief, displayName, now],
+    () => buildMorningBriefSpoken(tasks, people, displayName, now),
+    [tasks, people, displayName, now],
   );
   const supportingLines = homeBriefCopy.lines;
 
