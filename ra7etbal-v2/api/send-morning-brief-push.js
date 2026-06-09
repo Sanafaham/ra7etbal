@@ -1,8 +1,27 @@
 /**
  * POST /api/send-morning-brief-push
  *
- * Vercel cron target — fires daily at 05:00 UTC (Gulf morning).
+ * Scheduled via QStash (not Vercel cron — Hobby plan does not support cron jobs).
+ * Fires daily at 05:00 UTC (Gulf morning, GST+4 = 09:00 local).
  * Also callable manually with ?test=1 for debugging.
+ *
+ * To register the QStash schedule (run once after each new production deployment):
+ *
+ *   curl -X POST \
+ *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal-v2.vercel.app%2Fapi%2Fsend-morning-brief-push" \
+ *     -H "Authorization: Bearer <QSTASH_TOKEN>" \
+ *     -H "Upstash-Cron: 0 5 * * *" \
+ *     -H "Upstash-Forward-Authorization: Bearer <CRON_SECRET>" \
+ *     -H "Upstash-Method: POST"
+ *
+ * To verify the schedule exists:
+ *
+ *   curl -s https://qstash.upstash.io/v2/schedules \
+ *     -H "Authorization: Bearer $QSTASH_TOKEN" \
+ *     | grep send-morning-brief-push
+ *
+ * QStash forwards Authorization: Bearer <CRON_SECRET> on every scheduled call
+ * so the existing CRON_SECRET auth below works unchanged.
  *
  * Flow:
  *   1. Authorize via CRON_SECRET (or ?test=1 for dry-run)
