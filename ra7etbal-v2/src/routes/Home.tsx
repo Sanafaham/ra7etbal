@@ -197,6 +197,20 @@ export default function Home() {
             spokenBrief={spokenBrief}
             displayName={displayName}
             inline
+            onBeforeCallStart={async () => {
+              // Force a live Supabase fetch before Carson speaks so his
+              // status answers always reflect the current task/message state,
+              // not a potentially stale React render snapshot.
+              if (userId) {
+                await loadTasks(userId, { force: true });
+              }
+              const freshTasks = useTasksStore.getState().items;
+              const freshBrief = buildDailyBrief(freshTasks, new Date());
+              return buildElevenLabsBriefStateText(freshBrief, {
+                email: user?.email,
+                people,
+              });
+            }}
           />
         </div>
         <TextCarsonPanel

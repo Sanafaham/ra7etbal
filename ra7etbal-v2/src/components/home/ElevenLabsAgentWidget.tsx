@@ -328,6 +328,7 @@ export default function ElevenLabsAgentWidget({
   spokenBrief,
   displayName,
   inline = false,
+  onBeforeCallStart,
 }: {
   briefStateText: string;
   /** Pre-built spoken daily brief paragraph injected as `daily_brief` dynamic variable. */
@@ -335,6 +336,16 @@ export default function ElevenLabsAgentWidget({
   displayName?: string | null;
   /** When true, renders inline (no fixed positioning). Use inside the Carson section. */
   inline?: boolean;
+  /**
+   * Optional async callback invoked at the very start of startCall(), before
+   * the ElevenLabs session opens. Should force-refresh live task/message state
+   * from Supabase and return the freshly computed brief state text.
+   *
+   * If provided, the returned string is used instead of the `briefStateText`
+   * prop so Carson always receives live Supabase data — not React render-time
+   * snapshots that may be stale (e.g. a task confirmed after the last render).
+   */
+  onBeforeCallStart?: () => Promise<string>;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
 
@@ -837,9 +848,17 @@ export default function ElevenLabsAgentWidget({
       }
     }
 
-    const carsonStateText = userMemory
-      ? `${userMemory}\n\n${briefStateText}`
+    // Fetch live task/message state from Supabase before opening the session.
+    // `briefStateText` is a React render-time snapshot and may be stale if a
+    // task was confirmed (or changed) after the last store refresh. Awaiting
+    // `onBeforeCallStart` forces a Supabase reload and returns a fresh string.
+    const liveBriefStateText = onBeforeCallStart
+      ? await onBeforeCallStart()
       : briefStateText;
+
+    const carsonStateText = userMemory
+      ? `${userMemory}\n\n${liveBriefStateText}`
+      : liveBriefStateText;
 
     try {
       const conv = await Conversation.startSession({
@@ -937,7 +956,7 @@ export default function ElevenLabsAgentWidget({
         setErrorMsg(null);
       }, 3000);
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, status]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, onBeforeCallStart, status]);
 
   // ------------------------------------------------------------------
   // Session teardown
