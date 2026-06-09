@@ -100,12 +100,9 @@ export default function Home() {
     if (brief.needsAttention.length > 0) return "attention";
     return "clear";
   }, [brief.needsAttention.length, urgentCount]);
-  const homeBriefCopy = useMemo(
-    () =>
-      buildHomeBriefCopy({
-        paragraph: brief.summary.paragraph,
-      }),
-    [brief.summary.paragraph],
+  const statusSummary = useMemo(
+    () => buildStatusSummary(brief, now),
+    [brief, now],
   );
   const elevenLabsBriefStateText = useMemo(
     () => buildElevenLabsBriefStateText(brief, { email: user?.email, people }),
@@ -115,7 +112,7 @@ export default function Home() {
     () => buildMorningBriefSpoken(tasks, people, displayName, now),
     [tasks, people, displayName, now],
   );
-  const supportingLines = homeBriefCopy.lines;
+  const supportingLines = statusSummary.lines;
 
   const trimmed = text.trim();
   const canSubmit = !submitting && trimmed.length > 0 && !!userId;
@@ -147,20 +144,6 @@ export default function Home() {
     navigate("/actions", { state: { initialFilter: "brief" } });
   }
 
-  const clearMyHeadButton = (
-    <button
-      type="button"
-      onClick={handleNext}
-      onMouseDown={(e) => e.preventDefault()}
-      onTouchStart={(e) => e.stopPropagation()}
-      disabled={!canSubmit}
-      aria-busy={submitting}
-      className="inline-flex min-h-[52px] flex-1 items-center justify-center gap-2 rounded-full border border-charcoal bg-charcoal px-6 py-3.5 text-[15px] font-semibold tracking-[0.02em] text-ivory shadow-[0_22px_48px_-18px_rgba(20,20,20,0.6),0_4px_12px_-6px_rgba(20,20,20,0.24)] transition hover:bg-espresso active:translate-y-[1px] disabled:cursor-not-allowed disabled:border-gold-soft/70 disabled:bg-gold-soft/55 disabled:text-text-soft disabled:shadow-none sm:flex-none sm:min-w-[210px]"
-    >
-      {submitting && <Spinner size={16} />}
-      <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
-    </button>
-  );
 
   return (
     <section
@@ -188,7 +171,7 @@ export default function Home() {
           className="mx-auto mt-2 max-w-xl text-[44px] leading-[0.95] tracking-normal text-text sm:text-[64px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
-          {homeBriefCopy.headline}
+          {statusSummary.headline}
         </h1>
         <div className="mx-auto mt-2 max-w-md space-y-1 text-[14px] leading-snug text-text-soft sm:text-[15px]">
           {supportingLines.map((line) => (
@@ -244,11 +227,22 @@ export default function Home() {
           className="block min-h-[104px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-muted focus:outline-none disabled:opacity-70"
         />
 
-        <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/70 pt-3">
+        <div className="mt-3 space-y-2.5 border-t border-border/70 pt-3">
           <p className="text-[13px] italic leading-snug text-text-soft">
             Ra7etBal will organize it before anything is saved.
           </p>
-          {clearMyHeadButton}
+          <button
+            type="button"
+            onClick={handleNext}
+            onMouseDown={(e) => e.preventDefault()}
+            onTouchStart={(e) => e.stopPropagation()}
+            disabled={!canSubmit}
+            aria-busy={submitting}
+            className="inline-flex w-full min-h-[44px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
+          >
+            {submitting && <Spinner size={14} />}
+            <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
+          </button>
         </div>
 
         {error && (
@@ -270,8 +264,8 @@ export default function Home() {
 
       {/* ── Carson (text + voice, same Carson) ────────────────────────── */}
       <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-sm font-semibold text-text">Carson</h2>
+        <h2 className="mb-2 text-sm font-semibold text-text">Carson</h2>
+        <div className="mb-3">
           <ElevenLabsAgentWidget
             briefStateText={elevenLabsBriefStateText}
             spokenBrief={spokenBrief}
@@ -331,19 +325,58 @@ export default function Home() {
   );
 }
 
-function buildHomeBriefCopy({
-  paragraph,
-}: {
-  paragraph: string;
-}): { headline: string; lines: string[] } {
-  const sentences = paragraph.match(/[^.]+[.]/g)?.map((sentence) => sentence.trim()) ?? [
-    paragraph,
-  ];
+function buildStatusSummary(
+  brief: ReturnType<typeof buildDailyBrief>,
+  now: Date,
+): { headline: string; lines: string[] } {
+  const urgent = brief.needsAttention.filter(
+    (t) => t.type === "reminder" && t.due_at && new Date(t.due_at) <= now,
+  );
+  const attention = brief.needsAttention.filter(
+    (t) => !(t.type === "reminder" && t.due_at && new Date(t.due_at) <= now),
+  );
+  const waiting = brief.waitingOnOthers;
 
-  return {
-    headline: sentences[0] ?? paragraph,
-    lines: sentences.slice(1),
-  };
+  if (urgent.length === 0 && attention.length === 0 && waiting.length === 0) {
+    return { headline: "You're clear right now.", lines: [] };
+  }
+
+  let headline = "";
+  const lines: string[] = [];
+
+  if (urgent.length > 0) {
+    headline =
+      urgent.length === 1
+        ? "You have 1 overdue reminder."
+        : `You have ${urgent.length} overdue reminders.`;
+  } else if (attention.length > 0) {
+    headline =
+      attention.length === 1
+        ? "You have 1 item that needs attention."
+        : `You have ${attention.length} items that need attention.`;
+  } else {
+    headline =
+      waiting.length === 1
+        ? "You have 1 item waiting on others."
+        : `You have ${waiting.length} items waiting on others.`;
+  }
+
+  if (urgent.length > 0 && attention.length > 0) {
+    lines.push(
+      attention.length === 1
+        ? "1 other item also needs your attention."
+        : `${attention.length} other items also need your attention.`,
+    );
+  }
+  if ((urgent.length > 0 || attention.length > 0) && waiting.length > 0) {
+    lines.push(
+      waiting.length === 1
+        ? "1 item is waiting on others."
+        : `${waiting.length} items are waiting on others.`,
+    );
+  }
+
+  return { headline, lines };
 }
 
 function buildElevenLabsBriefStateText(
