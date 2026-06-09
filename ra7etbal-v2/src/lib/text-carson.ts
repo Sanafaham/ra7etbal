@@ -253,9 +253,12 @@ function formatTasks(tasks: Task[]): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Extracts delegation/message items from `input`, saves them via the
- * canonical savePending path, and sends WhatsApp messages — the same
- * pipeline as Review.tsx. Returns a short honest summary of what happened.
+ * Extracts ALL actionable items from `input`, saves them via the canonical
+ * savePending path, then sends WhatsApp for delegation/message items only —
+ * the same pipeline as Review.tsx. Returns a short honest summary.
+ *
+ * Reminders, actions, and other non-delegation items are saved even when the
+ * input also contains a delegation (multi-item inputs are fully handled).
  */
 export async function executeDelegationFromText(
   input: string,
@@ -265,15 +268,14 @@ export async function executeDelegationFromText(
 
   const result = await extractItems(input, context.people, context.displayName ?? undefined);
 
-  const actionItems = result.extracted.filter(
-    (item) => item.type === "delegation" || item.type === "message",
-  );
-  if (actionItems.length === 0) {
-    throw new Error("Couldn't identify who to send this to. Try rephrasing.");
+  const allItems = result.extracted;
+  if (allItems.length === 0) {
+    throw new Error("Couldn't understand that. Try rephrasing.");
   }
 
+  // Save every extracted item (reminders, delegations, actions, follow-ups…)
   const saved = await savePending(
-    actionItems,
+    allItems,
     context.userId,
     context.displayName ?? null,
     context.people,
@@ -285,6 +287,7 @@ export async function executeDelegationFromText(
     if (key && person.phone) phoneByName.set(key, person.phone);
   }
 
+  // Send WhatsApp only for delegation/message rows (same as Review.tsx)
   const sendableMessages = saved.messages.filter(
     (m) => !!m.recipient.trim() && !!m.content.trim(),
   );
@@ -309,20 +312,47 @@ export async function executeDelegationFromText(
   // Fire-and-forget store refresh so task list updates immediately.
   useTasksStore.getState().loadFor(context.userId, { force: true }).catch(() => {});
 
-  if (sendableMessages.length === 0 && saved.tasks.length > 0) {
-    const names = saved.tasks
+  // Build a summary that reflects every item that was saved.
+  const reminderCount = saved.tasks.filter((t) => t.type === "reminder").length;
+  const sentNames = sendableMessages.map((m) => m.recipient);
+  const unsentDelegations = saved.tasks.filter(
+    (t) =>
+      (t.type === "delegation" || t.type === "followup") &&
+      !sentNames.includes(t.assigned_to ?? ""),
+  );
+
+  const parts: string[] = [];
+
+  if (sentNames.length > 0) {
+    const names = sentNames.join(", ");
+    parts.push(`${names} ${sentNames.length === 1 ? "has been" : "have been"} messaged via WhatsApp`);
+  }
+  if (unsentDelegations.length > 0) {
+    const names = unsentDelegations
       .filter((t) => t.assigned_to)
       .map((t) => t.assigned_to)
       .join(", ");
-    return names
-      ? `Task created for ${names}. No phone number on file — they weren't messaged.`
-      : "Task created.";
+    parts.push(
+      names
+        ? `task created for ${names} (no phone on file — not messaged)`
+        : "task created",
+    );
   }
-  if (sendableMessages.length > 0) {
-    const names = sendableMessages.map((m) => m.recipient).join(", ");
-    return `Done — ${names} ${sendableMessages.length === 1 ? "has been" : "have been"} messaged via WhatsApp.`;
+  if (reminderCount > 0) {
+    parts.push(reminderCount === 1 ? "reminder set" : `${reminderCount} reminders set`);
   }
-  return "Saved.";
+  // Catch-all for action/decision/parked items not covered above
+  const otherCount =
+    saved.tasks.length - (sentNames.length + unsentDelegations.length + reminderCount);
+  if (otherCount > 0) {
+    parts.push(otherCount === 1 ? "1 item saved" : `${otherCount} items saved`);
+  }
+
+  if (parts.length === 0) return "Saved.";
+
+  // Capitalise first word and end with a period.
+  const summary = parts.join(", ");
+  return summary.charAt(0).toUpperCase() + summary.slice(1) + ".";
 }
 
 // ---------------------------------------------------------------------------
