@@ -3,6 +3,7 @@ import type { Task } from "../types/task";
 import { loadUserMemory } from "./carson-facts";
 import { loadRecentMemory } from "./carson-memory";
 import { listTasks } from "./tasks";
+import { saveInboxItem } from "./inbox";
 
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 500;
@@ -10,6 +11,8 @@ const MAX_TOKENS = 500;
 export interface TextCarsonContext {
   displayName?: string | null;
   userEmail?: string | null;
+  /** Supabase user ID — required for inbox saves. */
+  userId?: string | null;
   briefStateText: string;
   dailyBrief: string;
   people: Person[];
@@ -27,6 +30,24 @@ export async function askTextCarson(
 ): Promise<string> {
   const question = input.trim();
   if (!question) return "";
+
+  // ── Capture inbox detection ───────────────────────────────────────────────
+  // Phrases like "Don't let me forget X" or "Idea: X" are saved directly to
+  // inbox_items without going to the AI. Returns a short acknowledgment.
+  const captureContent = extractCaptureContent(question);
+  if (captureContent && context.userId) {
+    try {
+      await saveInboxItem({
+        user_id: context.userId,
+        content: captureContent,
+        source: "text_carson",
+      });
+    } catch {
+      // Save failed — fall through to normal AI response so the user isn't
+      // left with a blank reply. Carson will answer without saving.
+    }
+    return `Got it — saved to your inbox. I'll keep that for you.`;
+  }
 
   // Fetch fresh task state from Supabase so Carson always reflects the
   // latest confirmed/pending status — not the potentially-stale store.
@@ -213,4 +234,43 @@ function formatTasks(tasks: Task[]): string {
   }
 
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Capture inbox helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Capture triggers — phrases that signal the user wants to store a thought
+ * rather than ask a question. Returns the content to save, or null if the
+ * input is not a capture phrase.
+ *
+ * Each entry is [prefix, stripPrefix].
+ * - stripPrefix=true  → save everything after the prefix
+ * - stripPrefix=false → save the full input verbatim (phrase is already
+ *   self-contained, e.g. "Idea: go paperless")
+ */
+const CAPTURE_PATTERNS: Array<{ prefix: string; strip: boolean }> = [
+  { prefix: "don't let me forget", strip: true },
+  { prefix: "dont let me forget", strip: true },
+  { prefix: "do not let me forget", strip: true },
+  { prefix: "remember this:", strip: true },
+  { prefix: "remember this -", strip: true },
+  { prefix: "remember this", strip: true },
+  { prefix: "idea:", strip: true },
+  { prefix: "idea -", strip: true },
+  { prefix: "thought:", strip: true },
+  { prefix: "thought -", strip: true },
+];
+
+export function extractCaptureContent(input: string): string | null {
+  const lower = input.toLowerCase();
+  for (const { prefix, strip } of CAPTURE_PATTERNS) {
+    if (lower.startsWith(prefix)) {
+      if (!strip) return input.trim();
+      const rest = input.slice(prefix.length).replace(/^[\s:,\-]+/, "").trim();
+      return rest.length > 0 ? rest : input.trim();
+    }
+  }
+  return null;
 }

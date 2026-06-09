@@ -223,6 +223,7 @@ export default function Home() {
         context={{
           displayName,
           userEmail: user?.email ?? null,
+          userId: userId,
           briefStateText: elevenLabsBriefStateText,
           dailyBrief: spokenBrief,
           people,
