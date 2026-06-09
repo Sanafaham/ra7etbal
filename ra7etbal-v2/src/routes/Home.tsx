@@ -284,6 +284,13 @@ export default function Home() {
             tasks,
           }}
           hideHeading
+          onPrefill={(prefillText) => {
+            setText(prefillText);
+            setTimeout(() => {
+              textareaRef.current?.focus();
+              textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+            }, 50);
+          }}
         />
       </section>
 

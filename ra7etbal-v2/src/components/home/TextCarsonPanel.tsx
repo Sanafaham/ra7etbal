@@ -5,9 +5,12 @@ import { askTextCarson, type TextCarsonContext } from "../../lib/text-carson";
 interface Props {
   context: TextCarsonContext;
   hideHeading?: boolean;
+  /** Called when the user's input is a delegation/message request that must
+   *  be routed to Clear My Head. Receives the raw input text. */
+  onPrefill?: (text: string) => void;
 }
 
-export default function TextCarsonPanel({ context, hideHeading = false }: Props) {
+export default function TextCarsonPanel({ context, hideHeading = false, onPrefill }: Props) {
   const [input, setInput] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -18,6 +21,23 @@ export default function TextCarsonPanel({ context, hideHeading = false }: Props)
 
   async function handleAsk() {
     if (!canAsk) return;
+
+    // Intercept delegation / message requests before calling the AI.
+    // Text Carson has no action engine — it cannot send WhatsApp messages,
+    // delegate tasks, or create items. Routing to Clear My Head is the
+    // only honest response. This check runs client-side so there is no
+    // window in which the LLM can fabricate a false "done" reply.
+    if (looksLikeDelegationOrMessage(trimmed)) {
+      onPrefill?.(trimmed);
+      setAnswer(
+        onPrefill
+          ? "I've copied that to Clear My Head above. Tap 'Clear My Head' to review and send it properly."
+          : "I can't send that from here. Use Clear My Head — paste your request there and it will be prepared and sent correctly.",
+      );
+      setInput("");
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
@@ -82,5 +102,34 @@ export default function TextCarsonPanel({ context, hideHeading = false }: Props)
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * Returns true when the input is a delegation or message request that Text
+ * Carson cannot execute. These are routed to Clear My Head before any AI
+ * call so there is no chance of a false "done" response.
+ *
+ * Patterns matched:
+ *   "ask/tell/have/get [person] to [action]"  — but NOT "ask/tell me to"
+ *   "remind [person] to [action]"             — but NOT "remind me to"
+ *   "send/whatsapp/text [person]"             — but NOT "send me"
+ *   "message [person]" at start of input
+ *   "delegate ..."
+ */
+function looksLikeDelegationOrMessage(input: string): boolean {
+  return (
+    // "ask Grace to ...", "tell Grace to ...", "have Grace ...", "get Grace to ..."
+    // Negative lookahead excludes "me" so "ask me to ..." is not caught.
+    /\b(?:ask|tell|have|get)\s+(?!me\b)\w+\s+to\s+/i.test(input) ||
+    // "remind Grace to ..." — but not "remind me to ..."
+    /\bremind\s+(?!me\b)\w+\s+to\b/i.test(input) ||
+    // "send Grace a message", "whatsapp Grace", "text Grace"
+    // Excludes "send me" to avoid false-positive on "remind me" variants.
+    /\b(?:send|whatsapp|text)\s+(?!me\b)\w+/i.test(input) ||
+    // "message Grace about ..." — only when message is the first word
+    /^message\s+\w+/i.test(input) ||
+    // "delegate X to Grace"
+    /\bdelegate\s+/i.test(input)
   );
 }
