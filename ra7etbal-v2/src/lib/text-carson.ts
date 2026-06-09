@@ -2,6 +2,7 @@ import type { Person } from "../types/person";
 import type { Task } from "../types/task";
 import { loadUserMemory } from "./carson-facts";
 import { loadRecentMemory } from "./carson-memory";
+import { listTasks } from "./tasks";
 
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 500;
@@ -27,13 +28,17 @@ export async function askTextCarson(
   const question = input.trim();
   if (!question) return "";
 
-  const [userMemory, recentMemory] = await Promise.all([
+  // Fetch fresh task state from Supabase so Carson always reflects the
+  // latest confirmed/pending status — not the potentially-stale store.
+  const [userMemory, recentMemory, freshTasks] = await Promise.all([
     loadUserMemory(50).catch(() => ""),
     loadRecentMemory(20).catch(() => "No previous sessions."),
+    listTasks().catch(() => context.tasks),
   ]);
 
   const prompt = buildTextCarsonPrompt(question, {
     ...context,
+    tasks: freshTasks,
     userMemory,
     recentMemory,
   });
@@ -151,7 +156,11 @@ function formatTasks(tasks: Task[]): string {
     .map((task) => {
       const assigned = task.assigned_to ? `, assigned to ${task.assigned_to}` : "";
       const due = task.due_at ? `, due ${new Date(task.due_at).toISOString()}` : "";
-      return `- ${task.type}, ${task.status}${assigned}${due}: ${task.description.trim()}`;
+      const confirmed =
+        task.status === "done" && task.confirmed_at
+          ? `, confirmed done at ${new Date(task.confirmed_at).toISOString()}`
+          : "";
+      return `- ${task.type}, ${task.status}${assigned}${due}${confirmed}: ${task.description.trim()}`;
     })
     .join("\n");
 }
