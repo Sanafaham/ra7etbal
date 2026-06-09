@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import ElevenLabsAgentWidget from "../components/home/ElevenLabsAgentWidget";
+import InboxReviewPanel from "../components/home/InboxReviewPanel";
 import TextCarsonPanel from "../components/home/TextCarsonPanel";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
@@ -228,6 +229,17 @@ export default function Home() {
           dailyBrief: spokenBrief,
           people,
           tasks,
+        }}
+      />
+
+      <InboxReviewPanel
+        userId={userId}
+        onPrefill={(prefillText) => {
+          setText(prefillText);
+          setTimeout(() => {
+            textareaRef.current?.focus();
+            textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+          }, 50);
         }}
       />
 
