@@ -1,4 +1,3 @@
-const TEMPLATE_NAME = 'ra7etbal_task_assignment';
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
 
@@ -68,6 +67,11 @@ export default async function handler(req, res) {
     });
   }
 
+  // ── Template selection ────────────────────────────────────────────────────
+  // ra7etbal_task_v2: text-only tasks (Active)
+  // ra7etbal_task_assignment: tasks with a reference image attached (ra7etbal_task_image still In Review)
+  const templateName = imagePath ? 'ra7etbal_task_assignment' : 'ra7etbal_task_v2';
+
   // ── Reference image send ──────────────────────────────────────────────────
   // If a Reference image is attached, send it as a WhatsApp image media message
   // BEFORE the template so the recipient sees the actual photo inline, not a link.
@@ -121,7 +125,7 @@ export default async function handler(req, res) {
     to: normalizedTo,
     type: 'template',
     template: {
-      name: TEMPLATE_NAME,
+      name: templateName,
       language: { code: templateLanguage },
       components: [
         {
@@ -147,7 +151,7 @@ export default async function handler(req, res) {
       referenceImagePathPresent: Boolean(imagePath),
       imageSendStatus,
       mode: 'template',
-      templateName: TEMPLATE_NAME,
+      templateName: templateName,
       templateLanguage,
       payload: redactPayloadForLog(templatePayload),
     });
@@ -181,7 +185,7 @@ export default async function handler(req, res) {
       to: normalizedTo,
       acceptedAt: new Date().toISOString(),
       phoneNumberIdLast4,
-      templateName: TEMPLATE_NAME,
+      templateName: templateName,
       templateLanguage,
       imageSendStatus,
     });
