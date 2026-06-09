@@ -44,9 +44,13 @@ export default async function handler(req, res) {
   }
 
   // ── ?register=1 — one-shot QStash schedule registration ─────────────────
-  // Reads QSTASH_TOKEN and CRON_SECRET from process.env so no secrets are
-  // needed in the request. Safe to call repeatedly (QStash upserts).
+  // Requires Authorization: Bearer <CRON_SECRET> — same guard as the send path.
+  // Reads QSTASH_TOKEN from process.env so no additional secrets are needed.
+  // Safe to call repeatedly (QStash upserts on the same destination URL).
   if (isRegisterMode(req)) {
+    if (!isAuthorized(req)) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
     return handleRegister(res);
   }
 
