@@ -17,7 +17,7 @@
  *   ElevenLabsAgentWidget and TextCarsonPanel.
  */
 
-import { isReminderOverdue } from "./reminder-time";
+import { isReminderOverdue, formatReminderDue } from "./reminder-time";
 import type { Task } from "../types/task";
 import type { Person } from "../types/person";
 
@@ -231,18 +231,36 @@ export function buildMorningBriefSpoken(
   }
 
   // ── 1. Needs attention ───────────────────────────────────────────────────
-  if (brief.needsAttention.length === 1) {
-    const t = brief.needsAttention[0];
-    sentences.push(`"${spokenDesc(t.description)}" needs your attention today.`);
-  } else if (brief.needsAttention.length === 2) {
+  // Reminders are listed individually with their due time so Voice Carson
+  // can answer time questions accurately. Other items are grouped.
+  const remindersToday = brief.needsAttention.filter((t) => t.type === "reminder");
+  const otherAttention = brief.needsAttention.filter((t) => t.type !== "reminder");
+
+  if (remindersToday.length > 0) {
+    const items = remindersToday.map((t) => {
+      const timeSuffix = spokenTimeSuffix(t.due_at, now);
+      return timeSuffix
+        ? `${spokenDesc(t.description)} ${timeSuffix}`
+        : spokenDesc(t.description);
+    });
+    const list =
+      items.length === 1
+        ? items[0]
+        : items.length === 2
+          ? `${items[0]} and ${items[1]}`
+          : `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
     sentences.push(
-      `"${spokenDesc(brief.needsAttention[0].description)}" and "${spokenDesc(
-        brief.needsAttention[1].description,
-      )}" need your attention.`,
+      remindersToday.length === 1
+        ? `Your reminder: ${list}.`
+        : `You have ${spokenCount(remindersToday.length)} reminders today: ${list}.`,
     );
-  } else if (brief.needsAttention.length > 2) {
+  }
+
+  if (otherAttention.length === 1) {
+    sentences.push(`"${spokenDesc(otherAttention[0].description)}" also needs your attention.`);
+  } else if (otherAttention.length > 1) {
     sentences.push(
-      `${spokenCount(brief.needsAttention.length)} items need your attention today.`,
+      `${spokenCount(otherAttention.length)} other items also need your attention today.`,
     );
   }
 
@@ -384,6 +402,29 @@ function spokenCount(n: number): string {
     "six", "seven", "eight", "nine", "ten",
   ];
   return n < words.length ? words[n] : String(n);
+}
+
+/**
+ * Returns a spoken-friendly time suffix for a reminder, e.g. "at 9 AM",
+ * "in 5 minutes", "tomorrow at 10 AM". Returns "" when no time is available.
+ *
+ * Strips ":00" from on-the-hour times (9:00 AM → 9 AM) for natural speech.
+ * Strips the leading "Due today" prefix so it reads mid-sentence naturally.
+ */
+function spokenTimeSuffix(dueAt: string | null, now: Date): string {
+  if (!dueAt) return "";
+  const label = formatReminderDue(dueAt, now);
+  if (!label) return "";
+
+  let result = label;
+  // "Due today at 9:00 AM" → "at 9:00 AM"
+  result = result.replace(/^Due today\s+/, "");
+  // "Due in X minutes/hours" → "in X minutes/hours"
+  result = result.replace(/^Due\s+/, "");
+  // "9:00 AM" → "9 AM", "10:00 AM" → "10 AM" (on-the-hour only)
+  result = result.replace(/:00\s*(AM|PM)/gi, " $1");
+
+  return result.trim();
 }
 
 function buildCompletionSentence(t: Task): string {
