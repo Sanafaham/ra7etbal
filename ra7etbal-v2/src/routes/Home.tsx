@@ -15,6 +15,7 @@ import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
 import { useProfileStore } from "../stores/profile";
+import type { Task } from "../types/task";
 import { useTasksStore } from "../stores/tasks";
 
 export default function Home() {
@@ -105,8 +106,8 @@ export default function Home() {
     [brief, now],
   );
   const elevenLabsBriefStateText = useMemo(
-    () => buildElevenLabsBriefStateText(brief, { email: user?.email, people }),
-    [brief, user?.email, people],
+    () => buildElevenLabsBriefStateText(brief, { email: user?.email, people, tasks }),
+    [brief, user?.email, people, tasks],
   );
   const spokenBrief = useMemo(
     () => buildMorningBriefSpoken(tasks, people, displayName, now),
@@ -212,6 +213,7 @@ export default function Home() {
                 briefStateText: buildElevenLabsBriefStateText(freshBrief, {
                   email: user?.email,
                   people,
+                  tasks: freshTasks,
                 }),
                 spokenBrief: buildMorningBriefSpoken(
                   freshTasks,
@@ -415,6 +417,10 @@ function buildElevenLabsBriefStateText(
   extras: {
     email?: string | null;
     people?: Array<{ name: string; role: string; notes?: string | null }>;
+    /** Raw unarchived tasks — used to build a date-independent recent-completions
+     *  list that matches what Text Carson sees via formatTasks(). Without this,
+     *  Voice Carson misses confirmations from prior days. */
+    tasks?: Task[];
   } = {},
 ): string {
   const now = new Date();
@@ -509,15 +515,30 @@ function buildElevenLabsBriefStateText(
     lines.push(`Later: ${items}.`);
   }
 
-  // ── Recently completed (today) ────────────────────────────────────────
-  // brief.done is already computed — no extra fetch needed.
-  // Shows Carson what the user has already handled today.
-  if (brief.done.length > 0) {
-    const items = brief.done
-      .slice(0, 3)
-      .map((t) => t.description.trim())
-      .join("; ");
-    lines.push(`Completed today: ${items}.`);
+  // ── Recent completions ────────────────────────────────────────────────
+  // Use raw tasks (same logic as Text Carson's formatTasks) so Carson sees
+  // confirmations from prior days, not just today.
+  // Falls back to brief.done if tasks were not passed.
+  const recentDone = extras.tasks
+    ? extras.tasks
+        .filter((t) => t.archived_at == null && t.status === "done")
+        .sort(
+          (a, b) =>
+            new Date(b.confirmed_at ?? b.created_at).getTime() -
+            new Date(a.confirmed_at ?? a.created_at).getTime(),
+        )
+        .slice(0, 5)
+    : brief.done.slice(0, 5);
+
+  if (recentDone.length > 0) {
+    const items = recentDone.map((t) => {
+      const by = t.assigned_to?.trim() ? `, confirmed by ${t.assigned_to.trim()}` : "";
+      const when = t.confirmed_at
+        ? `, at ${new Date(t.confirmed_at).toLocaleString()}`
+        : "";
+      return `"${t.description.trim()}"${by}${when}`;
+    });
+    lines.push(`Recent completions: ${items.join("; ")}.`);
   }
 
   return lines.join("\n");

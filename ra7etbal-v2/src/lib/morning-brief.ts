@@ -182,57 +182,90 @@ export function buildMorningBriefSpoken(
     hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const sentences: string[] = [name ? `${greeting} ${name}.` : `${greeting}.`];
 
-  const totalAttention = brief.needsAttention.length + brief.overdueItems.length;
+  const hasUrgent = brief.overdueItems.length > 0;
+  const hasAttention = brief.needsAttention.length > 0;
+  const hasWaiting = brief.waitingOn.length > 0;
 
-  // ── Opening count ────────────────────────────────────────────────────────
-  if (totalAttention === 0 && brief.waitingOn.length === 0) {
+  // ── Lead with urgency: overdue first ────────────────────────────────────
+  if (hasUrgent) {
+    if (brief.overdueItems.length === 1) {
+      const t = brief.overdueItems[0];
+      if (t.type === "reminder") {
+        sentences.push(
+          `One thing needs your attention: your reminder about "${spokenDesc(t.description)}" is overdue.`,
+        );
+      } else {
+        const who = cap(t.assigned_to);
+        sentences.push(
+          who
+            ? `${who} was escalated on "${spokenDesc(t.description)}" and still hasn't confirmed.`
+            : "One escalated item is still unresolved.",
+        );
+      }
+    } else {
+      const reminderCount = brief.overdueItems.filter((t) => t.type === "reminder").length;
+      const delegCount = brief.overdueItems.length - reminderCount;
+      if (reminderCount > 0 && delegCount > 0) {
+        sentences.push(
+          `You have ${spokenCount(reminderCount)} overdue ${
+            reminderCount === 1 ? "reminder" : "reminders"
+          } and ${spokenCount(delegCount)} escalated ${
+            delegCount === 1 ? "item" : "items"
+          } that need resolution.`,
+        );
+      } else if (reminderCount > 0) {
+        sentences.push(`${spokenCount(reminderCount)} reminders are overdue.`);
+      } else {
+        sentences.push(`${spokenCount(delegCount)} escalated items are still unresolved.`);
+      }
+    }
+  } else if (!hasAttention && !hasWaiting) {
     sentences.push("Your slate is clear.");
-  } else if (totalAttention > 0) {
-    const n = spokenCount(totalAttention);
-    const noun = totalAttention === 1 ? "thing needs" : "things need";
-    sentences.push(`${n} ${noun} your attention today.`);
   }
 
-  // ── 3. Overdue items ─────────────────────────────────────────────────────
-  if (brief.overdueItems.length === 1) {
-    const t = brief.overdueItems[0];
-    if (t.type === "reminder") {
-      sentences.push(
-        `Your reminder about "${spokenDesc(t.description)}" is overdue.`,
-      );
+  // ── Waiting on others ────────────────────────────────────────────────────
+  if (brief.waitingOn.length === 1) {
+    const t = brief.waitingOn[0];
+    const who = cap(t.assigned_to);
+    const what = cleanDesc(t.description);
+    if (who && what) {
+      sentences.push(`You're waiting on ${who} to confirm ${what}.`);
+    } else if (who) {
+      sentences.push(`You're waiting on ${who}.`);
     } else {
-      const who = cap(t.assigned_to);
-      sentences.push(
-        who
-          ? `${who} was escalated on "${spokenDesc(t.description)}" and still hasn't confirmed.`
-          : "One escalated item is still unresolved.",
-      );
+      sentences.push("One item is waiting on confirmation.");
     }
-  } else if (brief.overdueItems.length > 1) {
-    const reminderCount = brief.overdueItems.filter(
-      (t) => t.type === "reminder",
-    ).length;
-    const delegCount = brief.overdueItems.length - reminderCount;
-    if (reminderCount > 0 && delegCount > 0) {
-      sentences.push(
-        `${spokenCount(reminderCount)} overdue ${
-          reminderCount === 1 ? "reminder" : "reminders"
-        } and ${spokenCount(delegCount)} escalated ${
-          delegCount === 1 ? "delegation" : "delegations"
-        } need resolution.`,
-      );
-    } else if (reminderCount > 0) {
-      sentences.push(`${spokenCount(reminderCount)} reminders are overdue.`);
+  } else if (brief.waitingOn.length === 2) {
+    const names = [
+      ...new Set(
+        brief.waitingOn
+          .map((t) => cap(t.assigned_to))
+          .filter((n): n is string => Boolean(n)),
+      ),
+    ];
+    if (names.length === 2) {
+      sentences.push(`You're waiting on ${names[0]} and ${names[1]}.`);
+    } else if (names.length === 1) {
+      sentences.push(`You're waiting on ${names[0]} for two things.`);
     } else {
-      sentences.push(
-        `${spokenCount(delegCount)} escalated items are still unresolved.`,
-      );
+      sentences.push("Two items are waiting on confirmation.");
+    }
+  } else if (brief.waitingOn.length > 2) {
+    const uniqueNames = [
+      ...new Set(
+        brief.waitingOn
+          .map((t) => cap(t.assigned_to))
+          .filter((n): n is string => Boolean(n)),
+      ),
+    ];
+    if (uniqueNames.length > 0 && uniqueNames.length <= 3) {
+      sentences.push(`You're waiting on ${uniqueNames.join(", ")}.`);
+    } else {
+      sentences.push(`You're waiting on ${spokenCount(brief.waitingOn.length)} people.`);
     }
   }
 
-  // ── 1. Needs attention ───────────────────────────────────────────────────
-  // Reminders are listed individually with their due time so Voice Carson
-  // can answer time questions accurately. Other items are grouped.
+  // ── Upcoming reminders with times ────────────────────────────────────────
   const remindersToday = brief.needsAttention.filter((t) => t.type === "reminder");
   const otherAttention = brief.needsAttention.filter((t) => t.type !== "reminder");
 
@@ -251,7 +284,7 @@ export function buildMorningBriefSpoken(
           : `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
     sentences.push(
       remindersToday.length === 1
-        ? `Your reminder: ${list}.`
+        ? `You have a reminder coming up: ${list}.`
         : `You have ${spokenCount(remindersToday.length)} reminders today: ${list}.`,
     );
   }
@@ -259,105 +292,60 @@ export function buildMorningBriefSpoken(
   if (otherAttention.length === 1) {
     sentences.push(`"${spokenDesc(otherAttention[0].description)}" also needs your attention.`);
   } else if (otherAttention.length > 1) {
-    sentences.push(
-      `${spokenCount(otherAttention.length)} other items also need your attention today.`,
-    );
+    sentences.push(`${spokenCount(otherAttention.length)} other items need your attention today.`);
   }
 
-  // ── 2. Waiting on others ─────────────────────────────────────────────────
-  if (brief.waitingOn.length === 1) {
-    const t = brief.waitingOn[0];
-    const who = cap(t.assigned_to);
-    const what = cleanDesc(t.description);
-    if (who && what) {
-      sentences.push(`Still waiting on ${who} to confirm ${what}.`);
-    } else if (who) {
-      sentences.push(`Still waiting on ${who}.`);
-    } else {
-      sentences.push("One item is waiting on confirmation.");
-    }
-  } else if (brief.waitingOn.length === 2) {
-    const names = [
-      ...new Set(
-        brief.waitingOn
-          .map((t) => cap(t.assigned_to))
-          .filter((n): n is string => Boolean(n)),
-      ),
-    ];
-    if (names.length === 2) {
-      sentences.push(`Waiting on ${names[0]} and ${names[1]}.`);
-    } else if (names.length === 1) {
-      sentences.push(`Waiting on ${names[0]} for two things.`);
-    } else {
-      sentences.push("Two items are waiting on others.");
-    }
-  } else if (brief.waitingOn.length > 2) {
-    sentences.push(
-      `You're waiting on ${spokenCount(brief.waitingOn.length)} people to confirm tasks.`,
-    );
-  }
-
-  // ── 5. Risks & bottlenecks ───────────────────────────────────────────────
+  // ── Risks & bottlenecks ──────────────────────────────────────────────────
   for (const risk of brief.risks.slice(0, 2)) {
     const who = cap(risk.task.assigned_to);
     if (risk.reason.includes("tasks waiting")) {
       sentences.push(
-        `${who ?? "Someone"} has multiple tasks waiting — that's a bottleneck worth addressing.`,
+        `${who ?? "Someone"} has multiple tasks waiting — that could become a bottleneck.`,
       );
     } else if (risk.reason.includes("days")) {
       const what = cleanDesc(risk.task.description);
       sentences.push(
         who && what
-          ? `${who} hasn't confirmed ${what} in several days — you may need to follow up directly.`
-          : "One task has been pending for several days with no update.",
+          ? `${who} hasn't confirmed ${what} in several days — you may want to follow up directly.`
+          : "One task has been pending for several days.",
       );
     } else {
       const what = cleanDesc(risk.task.description);
       sentences.push(
         who && what
-          ? `${who} hasn't confirmed ${what} — worth watching.`
+          ? `${who} hasn't confirmed ${what} — worth keeping an eye on.`
           : "One item has been waiting for over two days.",
       );
     }
   }
 
-  // ── 4. Recent completions ────────────────────────────────────────────────
+  // ── Recent completions ───────────────────────────────────────────────────
   const completions = brief.recentCompletions.slice(0, 3);
   if (completions.length === 1) {
     sentences.push(buildCompletionSentence(completions[0]));
   } else if (completions.length === 2) {
     const delegatedNames = completions
-      .filter(
-        (t) =>
-          t.assigned_to && t.assigned_to.toLowerCase() !== "me",
-      )
+      .filter((t) => t.assigned_to && t.assigned_to.toLowerCase() !== "me")
       .map((t) => cap(t.assigned_to));
     if (delegatedNames.length === 2) {
-      sentences.push(
-        `${delegatedNames[0]} and ${delegatedNames[1]} both confirmed their tasks.`,
-      );
+      sentences.push(`${delegatedNames[0]} and ${delegatedNames[1]} both confirmed their tasks.`);
     } else {
       sentences.push(buildCompletionSentence(completions[0]));
       sentences.push(buildCompletionSentence(completions[1]));
     }
   } else if (completions.length > 2) {
-    sentences.push(
-      `${spokenCount(completions.length)} tasks were completed in the last 24 hours.`,
-    );
+    sentences.push(`${spokenCount(completions.length)} tasks were confirmed in the last 24 hours.`);
   }
 
-  // ── Close ────────────────────────────────────────────────────────────────
-  const issueCount =
-    brief.needsAttention.length +
-    brief.overdueItems.length +
-    brief.risks.length;
+  // ── Reassurance close ────────────────────────────────────────────────────
+  const issueCount = brief.needsAttention.length + brief.overdueItems.length + brief.risks.length;
 
   if (issueCount === 0 && brief.waitingOn.length === 0 && completions.length === 0) {
     sentences.push("Everything is on track.");
   } else if (issueCount === 0 && brief.waitingOn.length > 0) {
-    sentences.push("Nothing needs your direct action right now.");
+    sentences.push("Other than that, you're in good shape.");
   } else if (brief.overdueItems.length === 0 && brief.risks.length === 0) {
-    sentences.push("Everything else is on track.");
+    sentences.push("Other than that, everything is on track.");
   }
 
   return sentences.join(" ");
