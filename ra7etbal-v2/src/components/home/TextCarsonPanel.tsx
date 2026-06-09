@@ -222,6 +222,13 @@ function looksLikeStatusSummary(text: string): boolean {
   if (/\btask created for \w+\b/.test(t)) return true;
   if (/\breminder set\b/.test(t)) return true;
 
+  // Routing / refusal messages — never worth saving
+  if (/\buse clear my head\b/.test(t)) return true;
+  if (/\bi can'?t (?:send|create|delegate|do) that from here\b/.test(t)) return true;
+  if (/\bpaste your request there\b/.test(t)) return true;
+  if (/\bgot it.{0,30}saved to your inbox\b/.test(t)) return true;
+  if (/\bcopied that to clear my head\b/.test(t)) return true;
+
   return false;
 }
 
@@ -230,8 +237,12 @@ function looksLikeDelegationOrMessage(input: string): boolean {
     // "ask Grace to ...", "tell Grace to ...", "have Grace ...", "get Grace to ..."
     // Negative lookahead excludes "me" so "ask me to ..." is not caught.
     /\b(?:ask|tell|have|get)\s+(?!me\b)\w+\s+to\s+/i.test(input) ||
+    // "remind me to X" / "remind me about X" — personal reminder request
+    /\bremind\s+me\s+(?:to|about)\b/i.test(input) ||
     // "remind Grace to ..." — but not "remind me to ..."
     /\bremind\s+(?!me\b)\w+\s+to\b/i.test(input) ||
+    // "set a reminder", "create a reminder", "add a reminder"
+    /\b(?:set|create|add)\s+(?:a\s+)?reminder\b/i.test(input) ||
     // "send Grace a message", "whatsapp Grace", "text Grace"
     // Excludes "send me" to avoid false-positive on "remind me" variants.
     /\b(?:send|whatsapp|text)\s+(?!me\b)\w+/i.test(input) ||
