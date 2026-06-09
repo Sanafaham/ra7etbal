@@ -265,11 +265,14 @@ const CAPTURE_PATTERNS: Array<{ prefix: string; strip: boolean }> = [
 ];
 
 export function extractCaptureContent(input: string): string | null {
-  const lower = input.toLowerCase();
+  // Normalize curly/smart apostrophes → straight apostrophe so iOS/macOS
+  // autocorrect ("Don't") matches patterns written with straight apostrophes.
+  const normalized = input.replace(/[‘’‚‛]/g, "'");
+  const lower = normalized.toLowerCase();
   for (const { prefix, strip } of CAPTURE_PATTERNS) {
     if (lower.startsWith(prefix)) {
       if (!strip) return input.trim();
-      const rest = input.slice(prefix.length).replace(/^[\s:,\-]+/, "").trim();
+      const rest = normalized.slice(prefix.length).replace(/^[\s:,\-]+/, "").trim();
       return rest.length > 0 ? rest : input.trim();
     }
   }
