@@ -5,6 +5,7 @@ import { loadRecentMemory } from "./carson-memory";
 import { listTasks } from "./tasks";
 import { saveInboxItem } from "./inbox";
 import { buildCarsonContext } from "./carson-context";
+import { CARSON_STATUS_POLICY } from "./carson-status-policy";
 import { extractItems } from "./ai/extract";
 import { savePending } from "./save";
 import { sendWhatsAppTask } from "./whatsapp";
@@ -144,10 +145,7 @@ WRONG: "You're clear tomorrow. Grace has your luggage ready and dinner handled f
 RIGHT: "You're clear tomorrow. No open tasks, overdue items, or bottlenecks."
 Only surface completed tasks when the user explicitly asks: "What was completed?", "What did Grace do?", "Show me recent completions", or similar history-specific questions.
 
-When answering operational questions ("what needs attention", "what can you do for me", "what's going on", "what's my status", any future-facing planning question):
-- Base your answer ONLY on tasks in the OPEN section of the task snapshot below.
-- If OPEN is empty, say clearly: "You're clear right now. No pending confirmations, overdue reminders, or active bottlenecks." Then stop.
-- For future-facing questions with no relevant open items, say: "You're clear [tomorrow/this week/etc.]. No open tasks, overdue items, or bottlenecks." Then stop.
+${CARSON_STATUS_POLICY}
 
 You can:
 - Answer questions about the user's current Ra7etBal state.
