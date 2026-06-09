@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Spinner from "../Spinner";
 import { askTextCarson, executeDelegationFromText, type TextCarsonContext } from "../../lib/text-carson";
+import { saveInboxItem } from "../../lib/inbox";
 
 interface Props {
   context: TextCarsonContext;
@@ -15,6 +16,9 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
   const [answer, setAnswer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"saved" | "error" | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const trimmed = input.trim();
   const canAsk = trimmed.length > 0 && !loading;
@@ -24,6 +28,8 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
 
     setLoading(true);
     setError(null);
+    setSaveStatus(null);
+    setSaveError(null);
     try {
       if (looksLikeDelegationOrMessage(trimmed)) {
         const response = await executeDelegationFromText(trimmed, context);
@@ -41,6 +47,31 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
       );
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSaveToInbox() {
+    if (!answer || saving) return;
+    if (!context.userId) {
+      setSaveStatus("error");
+      setSaveError("Not signed in.");
+      return;
+    }
+    setSaving(true);
+    setSaveStatus(null);
+    setSaveError(null);
+    try {
+      await saveInboxItem({
+        user_id: context.userId,
+        content: answer,
+        source: "text_carson_response",
+      });
+      setSaveStatus("saved");
+    } catch (err) {
+      setSaveStatus("error");
+      setSaveError(err instanceof Error ? err.message : "Couldn't save to inbox.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -88,8 +119,33 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
       )}
 
       {answer && (
-        <div className="mt-3 rounded-2xl border border-sage/15 bg-card/80 px-3 py-2.5 text-sm leading-relaxed text-text-soft whitespace-pre-wrap">
-          {answer}
+        <div className="mt-3 rounded-2xl border border-sage/15 bg-card/80 px-3 py-2.5">
+          <p className="text-sm leading-relaxed text-text-soft whitespace-pre-wrap">{answer}</p>
+          <div className="mt-2.5 flex items-center gap-2 border-t border-sage/10 pt-2">
+            <button
+              type="button"
+              onClick={() => { void handleSaveToInbox(); }}
+              disabled={saving || saveStatus === "saved"}
+              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/30 bg-white px-3 text-[12px] font-medium text-text shadow-sm transition hover:bg-cream disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving && <Spinner size={11} />}
+              <span>{saveStatus === "saved" ? "Saved ✓" : "Save to Inbox"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAnswer(null);
+                setSaveStatus(null);
+                setSaveError(null);
+              }}
+              className="inline-flex min-h-[32px] items-center rounded-full border border-sage/20 bg-transparent px-3 text-[12px] font-medium text-text-muted transition hover:bg-cream hover:text-text"
+            >
+              Clear
+            </button>
+            {saveStatus === "error" && saveError && (
+              <p className="ml-1 text-[11px] text-danger">{saveError}</p>
+            )}
+          </div>
         </div>
       )}
     </section>
