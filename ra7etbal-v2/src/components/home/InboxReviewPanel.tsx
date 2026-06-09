@@ -5,40 +5,42 @@
  * capture). Collapses entirely when the inbox is empty.
  *
  * Actions per item:
- *   Dismiss     — marks processed_at immediately, item disappears
- *   Keep        — collapses item for the session (local state only, no DB write)
- *   Remind me   — pre-fills Clear My Head with the content; item stays open
- *   Delegate    — pre-fills Clear My Head with the content; item stays open
- *   Task        — pre-fills Clear My Head with the content; item stays open
- *
- * Convert actions (Remind / Delegate / Task) do NOT mark processed_at.
- * The item remains visible until the user explicitly dismisses it, ensuring
- * no open loop is lost if the user taps convert but never completes the save.
+ *   Remind me   — creates a real reminder task immediately using existing
+ *                 infrastructure (createTask + scheduleReminderPush). Marks
+ *                 the inbox item processed ONLY after the save succeeds.
+ *   Delegate    — pre-fills Clear My Head; item stays unprocessed.
+ *   Task        — pre-fills Clear My Head; item stays unprocessed.
+ *   Keep        — collapses item for the session (local state only, no DB write).
+ *   Dismiss     — marks processed_at immediately, item disappears.
  */
 
 import { useEffect, useState } from "react";
 import type { InboxItem } from "../../types/inbox";
 import { listInboxItems, markInboxItemProcessed } from "../../lib/inbox";
+import { createTask } from "../../lib/tasks";
+import { scheduleReminderPush } from "../../lib/qstash-reminder";
+import { parseVoiceTime } from "../../lib/parse-voice-time";
 
 interface Props {
   userId: string | null;
-  /** Called when a convert button is tapped — pre-fills Clear My Head. */
+  /** Called when Delegate or Task is tapped — pre-fills Clear My Head. */
   onPrefill: (text: string) => void;
 }
 
 export default function InboxReviewPanel({ userId, onPrefill }: Props) {
   const [items, setItems] = useState<InboxItem[]>([]);
   const [kept, setKept] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState<Set<string>>(new Set());
   const [dismissing, setDismissing] = useState<Set<string>>(new Set());
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [successes, setSuccesses] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!userId) return;
     listInboxItems()
       .then(setItems)
-      .catch(() => {
-        /* silent — panel just won't show */
-      })
+      .catch(() => {/* panel stays hidden */})
       .finally(() => setLoaded(true));
   }, [userId]);
 
@@ -46,28 +48,81 @@ export default function InboxReviewPanel({ userId, onPrefill }: Props) {
 
   if (!loaded || visible.length === 0) return null;
 
-  async function handleDismiss(id: string) {
-    setDismissing((prev) => new Set(prev).add(id));
+  // ── Remind me ────────────────────────────────────────────────────────────
+  async function handleRemindMe(item: InboxItem) {
+    if (!userId) return;
+    clearMessages(item.id);
+    setSaving((prev) => new Set(prev).add(item.id));
+
     try {
-      await markInboxItemProcessed(id);
-      setItems((prev) => prev.filter((item) => item.id !== id));
-    } catch {
-      // Failed — remove the dismissing spinner but leave item visible
+      // Strip leading "to " so "to call Ahmed" → "call Ahmed".
+      const withoutTo = item.content.replace(/^to\s+/i, "");
+
+      // Extract due time and clean the description.
+      const { description, timeLabel, dueAt } = extractReminderParts(withoutTo);
+
+      const task = await createTask({
+        user_id: userId,
+        description,
+        type: "reminder",
+        assigned_to: null,
+        status: "pending",
+        needs_follow_up: false,
+        confirmation_url: null,
+        due_at: dueAt,
+      });
+
+      // Schedule QStash push notification — fire-and-log, never blocks save.
+      if (dueAt) {
+        void scheduleReminderPush(task.id, dueAt);
+      }
+
+      // Mark processed ONLY after reminder is saved.
+      await markInboxItemProcessed(item.id);
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+
+      const msg = timeLabel ? `Reminder set for ${timeLabel}.` : "Reminder saved.";
+      setSuccesses((prev) => ({ ...prev, [item.id]: msg }));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Couldn't create reminder. Please try again.";
+      setErrors((prev) => ({ ...prev, [item.id]: msg }));
     } finally {
-      setDismissing((prev) => {
+      setSaving((prev) => {
         const next = new Set(prev);
-        next.delete(id);
+        next.delete(item.id);
         return next;
       });
     }
   }
 
-  function handleKeep(id: string) {
-    setKept((prev) => new Set(prev).add(id));
+  // ── Dismiss ──────────────────────────────────────────────────────────────
+  async function handleDismiss(item: InboxItem) {
+    clearMessages(item.id);
+    setDismissing((prev) => new Set(prev).add(item.id));
+    try {
+      await markInboxItemProcessed(item.id);
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+    } catch {
+      // Leave item visible if dismiss fails.
+    } finally {
+      setDismissing((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+    }
   }
 
-  function handleConvert(content: string) {
-    onPrefill(content);
+  // ── Prefill (Delegate / Task) ─────────────────────────────────────────────
+  function handlePrefill(content: string) {
+    // Strip leading "to " to avoid "Remind me to to call Ahmed" style doubles.
+    const cleaned = content.replace(/^to\s+/i, "");
+    onPrefill(cleaned);
+  }
+
+  function clearMessages(id: string) {
+    setErrors((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    setSuccesses((prev) => { const n = { ...prev }; delete n[id]; return n; });
   }
 
   return (
@@ -86,36 +141,48 @@ export default function InboxReviewPanel({ userId, onPrefill }: Props) {
             key={item.id}
             className="rounded-2xl border border-sage/15 bg-card/60 px-3 py-2.5"
           >
-            <p className="mb-2 text-[14px] leading-snug text-text">{item.content}</p>
+            <p className="mb-1 text-[14px] leading-snug text-text">{item.content}</p>
             <p className="mb-2.5 text-[11px] text-text-muted">{timeAgo(item.created_at)}</p>
+
+            {errors[item.id] && (
+              <p className="mb-2 rounded-xl border border-danger/20 bg-danger/5 px-2.5 py-1.5 text-xs text-danger">
+                {errors[item.id]}
+              </p>
+            )}
+            {successes[item.id] && (
+              <p className="mb-2 rounded-xl border border-sage/20 bg-sage/10 px-2.5 py-1.5 text-xs text-text">
+                {successes[item.id]}
+              </p>
+            )}
+
             <div className="flex flex-wrap gap-1.5">
-              <ConvertButton
-                label="Remind me"
-                onClick={() => handleConvert(`Remind me to ${item.content}`)}
+              <ActionButton
+                label={saving.has(item.id) ? "Saving…" : "Remind me"}
+                disabled={saving.has(item.id)}
+                onClick={() => void handleRemindMe(item)}
+                variant="primary"
               />
-              <ConvertButton
+              <ActionButton
                 label="Delegate"
-                onClick={() => handleConvert(item.content)}
+                onClick={() => handlePrefill(item.content)}
+                variant="primary"
               />
-              <ConvertButton
+              <ActionButton
                 label="Task"
-                onClick={() => handleConvert(item.content)}
+                onClick={() => handlePrefill(item.content)}
+                variant="primary"
               />
-              <button
-                type="button"
-                onClick={() => handleKeep(item.id)}
-                className="rounded-full border border-sage/20 bg-transparent px-2.5 py-1 text-xs font-medium text-text-soft transition hover:bg-sage/10"
-              >
-                Keep
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDismiss(item.id)}
+              <ActionButton
+                label="Keep"
+                onClick={() => setKept((prev) => new Set(prev).add(item.id))}
+                variant="ghost"
+              />
+              <ActionButton
+                label={dismissing.has(item.id) ? "…" : "Dismiss"}
                 disabled={dismissing.has(item.id)}
-                className="rounded-full border border-danger/20 bg-transparent px-2.5 py-1 text-xs font-medium text-danger/70 transition hover:bg-danger/5 disabled:opacity-50"
-              >
-                {dismissing.has(item.id) ? "…" : "Dismiss"}
-              </button>
+                onClick={() => void handleDismiss(item)}
+                variant="danger"
+              />
             </div>
           </li>
         ))}
@@ -124,16 +191,103 @@ export default function InboxReviewPanel({ userId, onPrefill }: Props) {
   );
 }
 
-function ConvertButton({ label, onClick }: { label: string; onClick: () => void }) {
+// ── Sub-components ───────────────────────────────────────────────────────────
+
+function ActionButton({
+  label,
+  onClick,
+  disabled = false,
+  variant,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  variant: "primary" | "ghost" | "danger";
+}) {
+  const base = "rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-50";
+  const styles = {
+    primary: "border border-charcoal/15 bg-charcoal/90 text-ivory hover:bg-espresso",
+    ghost: "border border-sage/20 bg-transparent text-text-soft hover:bg-sage/10",
+    danger: "border border-danger/20 bg-transparent text-danger/70 hover:bg-danger/5",
+  };
   return (
     <button
       type="button"
       onClick={onClick}
-      className="rounded-full border border-charcoal/15 bg-charcoal/90 px-2.5 py-1 text-xs font-medium text-ivory transition hover:bg-espresso"
+      disabled={disabled}
+      className={`${base} ${styles[variant]}`}
     >
       {label}
     </button>
   );
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Extract reminder description and due time from an inbox content string.
+ * Strips the time phrase from the description text.
+ *
+ * "call Ahmed tomorrow morning"
+ *   → { description: "call Ahmed", timeLabel: "tomorrow morning", dueAt: "<ISO>" }
+ */
+function extractReminderParts(text: string): {
+  description: string;
+  timeLabel: string | null;
+  dueAt: string | null;
+} {
+  // Try to parse a time from the text — parseVoiceTime uses regex with \b so
+  // it will find "tomorrow morning" inside "call Ahmed tomorrow morning".
+  const result = parseVoiceTime(text);
+  const dueAt = result.dueAt || null;
+
+  if (!dueAt) {
+    return { description: text.trim(), timeLabel: null, dueAt: null };
+  }
+
+  // Strip the matched time phrase from the description.
+  // Apply patterns in specificity order (longer matches first).
+  const { cleaned, label } = stripTimePhrase(text);
+  return {
+    description: cleaned || text.trim(),
+    timeLabel: label,
+    dueAt,
+  };
+}
+
+type PhraseEntry = { re: RegExp; label: string | null };
+
+const TIME_PHRASE_PATTERNS: PhraseEntry[] = [
+  { re: /\btomorrow\s+morning\b/i,   label: "tomorrow morning" },
+  { re: /\btomorrow\s+afternoon\b/i, label: "tomorrow afternoon" },
+  { re: /\btomorrow\s+evening\b/i,   label: "tomorrow evening" },
+  { re: /\bnext\s+week\b/i,          label: "next week" },
+  { re: /\bnext\s+month\b/i,         label: "next month" },
+  { re: /\bnext\s+year\b/i,          label: "next year" },
+  { re: /\bnext\s+(?:sunday|sun|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat)\b/i, label: null },
+  { re: /\blater\s+today\b/i,        label: "later today" },
+  { re: /\bbefore\s+bed\b/i,         label: "before bed" },
+  { re: /\btonight\b/i,              label: "tonight" },
+  { re: /\btomorrow\b/i,             label: "tomorrow" },
+  { re: /\bin\s+\d+\s+(?:minutes?|hours?|days?|weeks?|months?|years?)\b/i, label: null },
+  { re: /\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i, label: null },
+  { re: /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i, label: null },
+];
+
+function stripTimePhrase(text: string): { cleaned: string; label: string | null } {
+  for (const { re, label } of TIME_PHRASE_PATTERNS) {
+    const match = text.match(re);
+    if (match) {
+      const matchedText = match[0];
+      const cleaned = text
+        .replace(re, "")
+        .replace(/\s+/g, " ")
+        .replace(/[,\s]+$/, "")
+        .trim();
+      return { cleaned: cleaned || text.trim(), label: label ?? matchedText.toLowerCase() };
+    }
+  }
+  return { cleaned: text.trim(), label: null };
 }
 
 function timeAgo(isoString: string): string {
