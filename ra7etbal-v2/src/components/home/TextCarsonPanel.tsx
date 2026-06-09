@@ -36,8 +36,7 @@ export default function TextCarsonPanel({ context }: Props) {
     <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-text">Ask Carson</h2>
-          <p className="text-xs text-text-soft">Read-only. For saving tasks, use Clear My Head.</p>
+          <h2 className="text-sm font-semibold text-text">Carson</h2>
         </div>
       </div>
 
@@ -53,7 +52,7 @@ export default function TextCarsonPanel({ context }: Props) {
             }
           }}
           disabled={loading}
-          placeholder="Ask what needs attention, what can wait, or what to do next."
+          placeholder="Ask what needs attention, save an idea, or create a reminder."
           className="min-h-[44px] flex-1 rounded-full border border-sage/25 bg-white px-4 text-[14px] text-text outline-none transition placeholder:text-muted focus:border-sage disabled:opacity-70"
         />
         <button
@@ -64,7 +63,7 @@ export default function TextCarsonPanel({ context }: Props) {
           className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
         >
           {loading && <Spinner size={14} />}
-          <span>{loading ? "Asking..." : "Ask Carson"}</span>
+          <span>{loading ? "Thinking..." : "Send"}</span>
         </button>
       </div>
 

@@ -143,11 +143,6 @@ export default function Home() {
     }
   }
 
-  function focusCapture() {
-    textareaRef.current?.focus();
-    textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-  }
-
   function viewBriefDetails() {
     navigate("/actions", { state: { initialFilter: "brief" } });
   }
@@ -203,13 +198,6 @@ export default function Home() {
 
         <div className="mt-3.5 flex flex-col gap-2 sm:flex-row sm:justify-center">
           {clearMyHeadButton}
-          <button
-            type="button"
-            onClick={focusCapture}
-            className="inline-flex min-h-[50px] flex-1 items-center justify-center rounded-full border border-sage/30 bg-white/70 px-5 py-3 text-[15px] font-semibold text-text-soft shadow-sm transition hover:bg-white hover:text-text sm:flex-none"
-          >
-            Ask Ra7etBal
-          </button>
         </div>
         <button
           type="button"
@@ -249,7 +237,7 @@ export default function Home() {
             htmlFor={textareaId}
             className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone"
           >
-            Clear your head
+            Clear My Head
           </label>
           <div className="[&_button]:rounded-full [&_button]:border-sage/30 [&_button]:bg-white [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-xs [&_button]:font-medium [&_button]:text-text [&_button]:shadow-sm [&_svg]:h-[13px] [&_svg]:w-[13px]">
             <VoiceButton
