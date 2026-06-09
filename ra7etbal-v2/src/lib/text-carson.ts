@@ -4,6 +4,7 @@ import { loadUserMemory } from "./carson-facts";
 import { loadRecentMemory } from "./carson-memory";
 import { listTasks } from "./tasks";
 import { saveInboxItem } from "./inbox";
+import { formatReminderDue } from "./reminder-time";
 import { extractItems } from "./ai/extract";
 import { savePending } from "./save";
 import { sendWhatsAppTask } from "./whatsapp";
@@ -223,13 +224,18 @@ function formatTasks(tasks: Task[]): string {
 
   const lines: string[] = [];
 
+  const now = new Date();
+
   if (open.length === 0) {
     lines.push("OPEN: none");
   } else {
     lines.push("OPEN:");
     for (const task of open.slice(0, 15)) {
       const assigned = task.assigned_to ? `, assigned to ${task.assigned_to}` : "";
-      const due = task.due_at ? `, due ${new Date(task.due_at).toISOString()}` : "";
+      // Use the same locale-aware formatter as Actions/TaskCard so times match
+      // what the user sees in the UI (browser local time, not UTC).
+      const dueLabel = task.due_at ? formatReminderDue(task.due_at, now) : null;
+      const due = dueLabel ? `, due ${dueLabel}` : "";
       lines.push(`- ${task.type}, ${task.status}${assigned}${due}: ${task.description.trim()}`);
     }
   }
@@ -239,7 +245,7 @@ function formatTasks(tasks: Task[]): string {
     for (const task of done) {
       const assigned = task.assigned_to ? `, by ${task.assigned_to}` : "";
       const when = task.confirmed_at
-        ? `, confirmed ${new Date(task.confirmed_at).toISOString()}`
+        ? `, confirmed ${new Date(task.confirmed_at).toLocaleString()}`
         : "";
       lines.push(`- ${task.description.trim()}${assigned}${when}`);
     }
