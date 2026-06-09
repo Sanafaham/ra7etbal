@@ -223,9 +223,15 @@ export default function TaskCard({
           <p className={reminderDue.overdue ? "text-rose-800" : "text-amber-900"}>
             {reminderDue.dueTime}
           </p>
-          <p className={reminderDue.overdue ? "text-rose-800" : "text-amber-900"}>
-            {reminderDue.label}
-          </p>
+          {/* Only show label when it adds relative countdown/overdue info not
+              already expressed by dueTime (e.g. "Due in 5 minutes", "Overdue by
+              2 hours"). For absolute future times the label duplicates dueTime. */}
+          {(reminderDue.label.startsWith("Due in") ||
+            reminderDue.label.startsWith("Overdue")) && (
+            <p className={reminderDue.overdue ? "text-rose-800" : "text-amber-900"}>
+              {reminderDue.label}
+            </p>
+          )}
         </div>
       )}
 
