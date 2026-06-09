@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Spinner from "../Spinner";
-import { askTextCarson, type TextCarsonContext } from "../../lib/text-carson";
+import { askTextCarson, executeDelegationFromText, type TextCarsonContext } from "../../lib/text-carson";
 
 interface Props {
   context: TextCarsonContext;
@@ -10,7 +10,7 @@ interface Props {
   onPrefill?: (text: string) => void;
 }
 
-export default function TextCarsonPanel({ context, hideHeading = false, onPrefill }: Props) {
+export default function TextCarsonPanel({ context, hideHeading = false, onPrefill: _onPrefill }: Props) {
   const [input, setInput] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -22,25 +22,16 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
   async function handleAsk() {
     if (!canAsk) return;
 
-    // Intercept delegation / message requests before calling the AI.
-    // Text Carson has no action engine — it cannot send WhatsApp messages,
-    // delegate tasks, or create items. Routing to Clear My Head is the
-    // only honest response. This check runs client-side so there is no
-    // window in which the LLM can fabricate a false "done" reply.
-    if (looksLikeDelegationOrMessage(trimmed)) {
-      onPrefill?.(trimmed);
-      setAnswer(
-        onPrefill
-          ? "I've copied that to Clear My Head above. Tap 'Clear My Head' to review and send it properly."
-          : "I can't send that from here. Use Clear My Head — paste your request there and it will be prepared and sent correctly.",
-      );
-      setInput("");
-      return;
-    }
-
     setLoading(true);
     setError(null);
     try {
+      if (looksLikeDelegationOrMessage(trimmed)) {
+        const response = await executeDelegationFromText(trimmed, context);
+        setAnswer(response);
+        setInput("");
+        return;
+      }
+
       const response = await askTextCarson(trimmed, context);
       setAnswer(response);
       setInput("");

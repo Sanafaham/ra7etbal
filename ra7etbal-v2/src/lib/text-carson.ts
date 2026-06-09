@@ -4,6 +4,10 @@ import { loadUserMemory } from "./carson-facts";
 import { loadRecentMemory } from "./carson-memory";
 import { listTasks } from "./tasks";
 import { saveInboxItem } from "./inbox";
+import { extractItems } from "./ai/extract";
+import { savePending } from "./save";
+import { sendWhatsAppTask } from "./whatsapp";
+import { useTasksStore } from "../stores/tasks";
 
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 500;
@@ -242,6 +246,83 @@ function formatTasks(tasks: Task[]): string {
   }
 
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Delegation execution
+// ---------------------------------------------------------------------------
+
+/**
+ * Extracts delegation/message items from `input`, saves them via the
+ * canonical savePending path, and sends WhatsApp messages — the same
+ * pipeline as Review.tsx. Returns a short honest summary of what happened.
+ */
+export async function executeDelegationFromText(
+  input: string,
+  context: TextCarsonContext,
+): Promise<string> {
+  if (!context.userId) throw new Error("Not signed in.");
+
+  const result = await extractItems(input, context.people, context.displayName ?? undefined);
+
+  const actionItems = result.extracted.filter(
+    (item) => item.type === "delegation" || item.type === "message",
+  );
+  if (actionItems.length === 0) {
+    throw new Error("Couldn't identify who to send this to. Try rephrasing.");
+  }
+
+  const saved = await savePending(
+    actionItems,
+    context.userId,
+    context.displayName ?? null,
+    context.people,
+  );
+
+  const phoneByName = new Map<string, string>();
+  for (const person of context.people) {
+    const key = person.name.trim().toLowerCase();
+    if (key && person.phone) phoneByName.set(key, person.phone);
+  }
+
+  const sendableMessages = saved.messages.filter(
+    (m) => !!m.recipient.trim() && !!m.content.trim(),
+  );
+
+  if (sendableMessages.length > 0) {
+    await Promise.all(
+      sendableMessages.map((message) =>
+        sendWhatsAppTask({
+          to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
+          messageText: message.content,
+          confirmationLink: message.confirmation_url ?? null,
+          messageRecordId: message.id,
+          taskId: message.task_id,
+          recipientName: message.recipient,
+          ownerName: context.displayName ?? null,
+          imagePath: null,
+        }),
+      ),
+    );
+  }
+
+  // Fire-and-forget store refresh so task list updates immediately.
+  useTasksStore.getState().loadFor(context.userId, { force: true }).catch(() => {});
+
+  if (sendableMessages.length === 0 && saved.tasks.length > 0) {
+    const names = saved.tasks
+      .filter((t) => t.assigned_to)
+      .map((t) => t.assigned_to)
+      .join(", ");
+    return names
+      ? `Task created for ${names}. No phone number on file — they weren't messaged.`
+      : "Task created.";
+  }
+  if (sendableMessages.length > 0) {
+    const names = sendableMessages.map((m) => m.recipient).join(", ");
+    return `Done — ${names} ${sendableMessages.length === 1 ? "has been" : "have been"} messaged via WhatsApp.`;
+  }
+  return "Saved.";
 }
 
 // ---------------------------------------------------------------------------
