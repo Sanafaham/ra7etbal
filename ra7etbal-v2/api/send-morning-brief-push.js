@@ -319,11 +319,12 @@ async function handleRegister(res) {
 
   const TARGET_URL = 'https://ra7etbal-v2.vercel.app/api/send-morning-brief-push';
   const CRON_EXPR = '0 5 * * *';
-  const encoded = encodeURIComponent(TARGET_URL);
 
+  // QStash expects the destination URL raw (not percent-encoded) in the path.
+  // Encoding turns https:// into https%3A%2F%2F which QStash rejects as missing scheme.
   let resp;
   try {
-    resp = await fetch(`https://qstash.upstash.io/v2/schedules/${encoded}`, {
+    resp = await fetch(`https://qstash.upstash.io/v2/schedules/${TARGET_URL}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${qstashToken}`,
