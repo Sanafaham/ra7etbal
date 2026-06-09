@@ -11,6 +11,12 @@
       ]
     }
   ],
+  "crons": [
+    {
+      "path": "/api/send-morning-brief-push",
+      "schedule": "0 5 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/((?!api/|assets/|sw\\.js$|manifest\\.webmanifest$|icons/).*)",
