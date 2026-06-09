@@ -88,8 +88,29 @@ export async function savePending(
     if (item.type === "message") {
       const recipient =
         item.assignedTo && item.assignedTo !== "__me__" ? item.assignedTo : null;
-      const content = (item.suggestedMessage ?? item.description).trim();
-      if (!recipient || !content) {
+      if (!recipient) {
+        skipped += 1;
+        continue;
+      }
+      // For known people (in the People list), always rebuild from
+      // buildDelegationMessage so the final stored content is deterministic
+      // and never relies on AI-generated text. For unknown recipients
+      // (needsPerson: true / person not found), fall back to AI text.
+      const assignedPersonMsg = people.find(
+        (person) => person.name.trim().toLowerCase() === recipient.toLowerCase(),
+      );
+      const content = assignedPersonMsg
+        ? rewriteOwnerPronouns(
+            buildDelegationMessage({
+              personName: recipient,
+              taskText: item.description,
+              personNotes: assignedPersonMsg.notes ?? null,
+              ownerName,
+            }),
+            ownerName,
+          )
+        : (item.suggestedMessage ?? item.description).trim();
+      if (!content) {
         skipped += 1;
         continue;
       }
