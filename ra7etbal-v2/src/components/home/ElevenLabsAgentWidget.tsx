@@ -339,13 +339,14 @@ export default function ElevenLabsAgentWidget({
   /**
    * Optional async callback invoked at the very start of startCall(), before
    * the ElevenLabs session opens. Should force-refresh live task/message state
-   * from Supabase and return the freshly computed brief state text.
+   * from Supabase and return freshly computed context strings.
    *
-   * If provided, the returned string is used instead of the `briefStateText`
-   * prop so Carson always receives live Supabase data — not React render-time
-   * snapshots that may be stale (e.g. a task confirmed after the last render).
+   * Returns BOTH dynamic variables so the stale React snapshot is bypassed for
+   * every variable Carson reads — not just ra7etbal_state. Without this,
+   * daily_brief (spokenBrief) would still contain stale waiting-on data even
+   * after a task is confirmed in Supabase.
    */
-  onBeforeCallStart?: () => Promise<string>;
+  onBeforeCallStart?: () => Promise<{ briefStateText: string; spokenBrief: string }>;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
 
@@ -849,12 +850,13 @@ export default function ElevenLabsAgentWidget({
     }
 
     // Fetch live task/message state from Supabase before opening the session.
-    // `briefStateText` is a React render-time snapshot and may be stale if a
-    // task was confirmed (or changed) after the last store refresh. Awaiting
-    // `onBeforeCallStart` forces a Supabase reload and returns a fresh string.
-    const liveBriefStateText = onBeforeCallStart
-      ? await onBeforeCallStart()
-      : briefStateText;
+    // Both `briefStateText` and `spokenBrief` are React render-time snapshots
+    // and may be stale if a task was confirmed after the last store refresh.
+    // `onBeforeCallStart` forces a full Supabase reload and returns fresh
+    // strings for ALL dynamic variables — ra7etbal_state AND daily_brief.
+    const freshVars = onBeforeCallStart ? await onBeforeCallStart() : null;
+    const liveBriefStateText = freshVars?.briefStateText ?? briefStateText;
+    const liveSpokenBrief = freshVars?.spokenBrief ?? (spokenBrief ?? "");
 
     const carsonStateText = userMemory
       ? `${userMemory}\n\n${liveBriefStateText}`
@@ -867,7 +869,7 @@ export default function ElevenLabsAgentWidget({
           // Sanitize all speech-bound text so ElevenLabs never receives the
           // Latin "Ra7etBal" string — it mispronounces it. Arabic is correct.
           ra7etbal_state: sanitizeForCarsonSpeech(carsonStateText),
-          daily_brief: sanitizeForCarsonSpeech(spokenBrief ?? ""),
+          daily_brief: sanitizeForCarsonSpeech(liveSpokenBrief),
           current_time: new Date().toISOString(),
           user_name: displayName ?? "",
           recent_memory: sanitizeForCarsonSpeech(recentMemory),

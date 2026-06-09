@@ -198,18 +198,28 @@ export default function Home() {
             displayName={displayName}
             inline
             onBeforeCallStart={async () => {
-              // Force a live Supabase fetch before Carson speaks so his
-              // status answers always reflect the current task/message state,
-              // not a potentially stale React render snapshot.
+              // Force a live Supabase fetch before Carson speaks so ALL
+              // dynamic variables reflect the current task/message state.
+              // Both ra7etbal_state and daily_brief are rebuilt from the
+              // fresh store — never from the React render-time snapshot.
               if (userId) {
                 await loadTasks(userId, { force: true });
               }
               const freshTasks = useTasksStore.getState().items;
-              const freshBrief = buildDailyBrief(freshTasks, new Date());
-              return buildElevenLabsBriefStateText(freshBrief, {
-                email: user?.email,
-                people,
-              });
+              const freshNow = new Date();
+              const freshBrief = buildDailyBrief(freshTasks, freshNow);
+              return {
+                briefStateText: buildElevenLabsBriefStateText(freshBrief, {
+                  email: user?.email,
+                  people,
+                }),
+                spokenBrief: buildMorningBriefSpoken(
+                  freshTasks,
+                  people,
+                  displayName,
+                  freshNow,
+                ),
+              };
             }}
           />
         </div>
