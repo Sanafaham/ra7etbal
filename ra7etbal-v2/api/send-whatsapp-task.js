@@ -130,10 +130,16 @@ export default async function handler(req, res) {
       components: [
         {
           type: 'body',
-          parameters: [
-            { type: 'text', text: cleanMessage },   // {{1}} — task text
-            { type: 'text', text: cleanLink },       // {{2}} — confirmation link
-          ],
+          parameters: templateName === 'ra7etbal_task_v2'
+            ? [
+                { type: 'text', text: cleanOwnerName }, // {{1}} — owner name
+                { type: 'text', text: cleanMessage },   // {{2}} — task text
+                { type: 'text', text: cleanLink },      // {{3}} — confirmation link
+              ]
+            : [
+                { type: 'text', text: cleanMessage },   // {{1}} — task text
+                { type: 'text', text: cleanLink },      // {{2}} — confirmation link
+              ],
         },
       ],
     },
