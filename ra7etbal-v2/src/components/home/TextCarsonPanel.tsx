@@ -4,9 +4,10 @@ import { askTextCarson, type TextCarsonContext } from "../../lib/text-carson";
 
 interface Props {
   context: TextCarsonContext;
+  hideHeading?: boolean;
 }
 
-export default function TextCarsonPanel({ context }: Props) {
+export default function TextCarsonPanel({ context, hideHeading = false }: Props) {
   const [input, setInput] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -34,11 +35,13 @@ export default function TextCarsonPanel({ context }: Props) {
 
   return (
     <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-text">Carson</h2>
+      {!hideHeading && (
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-text">Carson</h2>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="flex flex-col gap-2 sm:flex-row">
         <input

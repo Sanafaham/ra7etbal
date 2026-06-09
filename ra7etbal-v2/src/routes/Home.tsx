@@ -196,9 +196,6 @@ export default function Home() {
           ))}
         </div>
 
-        <div className="mt-3.5 flex flex-col gap-2 sm:flex-row sm:justify-center">
-          {clearMyHeadButton}
-        </div>
         <button
           type="button"
           onClick={viewBriefDetails}
@@ -208,29 +205,7 @@ export default function Home() {
         </button>
       </section>
 
-      <TextCarsonPanel
-        context={{
-          displayName,
-          userEmail: user?.email ?? null,
-          userId: userId,
-          briefStateText: elevenLabsBriefStateText,
-          dailyBrief: spokenBrief,
-          people,
-          tasks,
-        }}
-      />
-
-      <InboxReviewPanel
-        userId={userId}
-        onPrefill={(prefillText) => {
-          setText(prefillText);
-          setTimeout(() => {
-            textareaRef.current?.focus();
-            textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-          }, 50);
-        }}
-      />
-
+      {/* ── Clear My Head ─────────────────────────────────────────────── */}
       <section className="mt-3 rounded-[26px] border border-border/80 bg-card/82 p-4 shadow-[0_24px_70px_-60px_rgba(20,20,20,0.45)] backdrop-blur-sm sm:mt-4 sm:p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <label
@@ -269,31 +244,65 @@ export default function Home() {
           className="block min-h-[104px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-muted focus:outline-none disabled:opacity-70"
         />
 
-        <p className="mt-3 border-t border-border/70 pt-3 text-center text-[13px] italic leading-snug text-text-soft">
-          Ra7etBal will organize it before anything is saved.
-        </p>
+        <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/70 pt-3">
+          <p className="text-[13px] italic leading-snug text-text-soft">
+            Ra7etBal will organize it before anything is saved.
+          </p>
+          {clearMyHeadButton}
+        </div>
+
+        {error && (
+          <div className="mt-3">
+            <AuthNotice kind="error">
+              {error}{" "}
+              <button
+                type="button"
+                onClick={handleNext}
+                className="ml-1 underline"
+                disabled={submitting}
+              >
+                Try again
+              </button>
+            </AuthNotice>
+          </div>
+        )}
       </section>
 
-      {error && (
-        <div className="mt-5">
-          <AuthNotice kind="error">
-            {error}{" "}
-            <button
-              type="button"
-              onClick={handleNext}
-              className="ml-1 underline"
-              disabled={submitting}
-            >
-              Try again
-            </button>
-          </AuthNotice>
+      {/* ── Carson (text + voice, same Carson) ────────────────────────── */}
+      <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-sm font-semibold text-text">Carson</h2>
+          <ElevenLabsAgentWidget
+            briefStateText={elevenLabsBriefStateText}
+            spokenBrief={spokenBrief}
+            displayName={displayName}
+            inline
+          />
         </div>
-      )}
+        <TextCarsonPanel
+          context={{
+            displayName,
+            userEmail: user?.email ?? null,
+            userId: userId,
+            briefStateText: elevenLabsBriefStateText,
+            dailyBrief: spokenBrief,
+            people,
+            tasks,
+          }}
+          hideHeading
+        />
+      </section>
 
-      <ElevenLabsAgentWidget
-        briefStateText={elevenLabsBriefStateText}
-        spokenBrief={spokenBrief}
-        displayName={displayName}
+      {/* ── Inbox ─────────────────────────────────────────────────────── */}
+      <InboxReviewPanel
+        userId={userId}
+        onPrefill={(prefillText) => {
+          setText(prefillText);
+          setTimeout(() => {
+            textareaRef.current?.focus();
+            textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+          }, 50);
+        }}
       />
 
       {keyboardOpen && (

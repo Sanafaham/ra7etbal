@@ -327,11 +327,14 @@ export default function ElevenLabsAgentWidget({
   briefStateText,
   spokenBrief,
   displayName,
+  inline = false,
 }: {
   briefStateText: string;
   /** Pre-built spoken daily brief paragraph injected as `daily_brief` dynamic variable. */
   spokenBrief?: string;
   displayName?: string | null;
+  /** When true, renders inline (no fixed positioning). Use inside the Carson section. */
+  inline?: boolean;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
 
@@ -976,11 +979,12 @@ export default function ElevenLabsAgentWidget({
 
   return (
     <div
-      className="fixed z-40"
-      style={{
-        bottom: "calc(env(safe-area-inset-bottom) + 172px)",
-        right: "20px",
-      }}
+      className={inline ? "" : "fixed z-40"}
+      style={
+        inline
+          ? undefined
+          : { bottom: "calc(env(safe-area-inset-bottom) + 172px)", right: "20px" }
+      }
     >
       {status === "idle" && (
         <button
