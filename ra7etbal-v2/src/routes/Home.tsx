@@ -188,6 +188,50 @@ export default function Home() {
         </button>
       </section>
 
+      {/* ── Carson (text + voice, same Carson) ────────────────────────── */}
+      <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
+        <h2 className="mb-2 text-sm font-semibold text-text">Carson</h2>
+        <div className="mb-3">
+          <ElevenLabsAgentWidget
+            briefStateText={elevenLabsBriefStateText}
+            spokenBrief={spokenBrief}
+            displayName={displayName}
+            inline
+          />
+        </div>
+        <TextCarsonPanel
+          context={{
+            displayName,
+            userEmail: user?.email ?? null,
+            userId: userId,
+            briefStateText: elevenLabsBriefStateText,
+            dailyBrief: spokenBrief,
+            people,
+            tasks,
+          }}
+          hideHeading
+          onPrefill={(prefillText) => {
+            setText(prefillText);
+            setTimeout(() => {
+              textareaRef.current?.focus();
+              textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+            }, 50);
+          }}
+        />
+      </section>
+
+      {/* ── Inbox ─────────────────────────────────────────────────────── */}
+      <InboxReviewPanel
+        userId={userId}
+        onPrefill={(prefillText) => {
+          setText(prefillText);
+          setTimeout(() => {
+            textareaRef.current?.focus();
+            textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+          }, 50);
+        }}
+      />
+
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
       <section className="mt-3 rounded-[26px] border border-border/80 bg-card/82 p-4 shadow-[0_24px_70px_-60px_rgba(20,20,20,0.45)] backdrop-blur-sm sm:mt-4 sm:p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -261,50 +305,6 @@ export default function Home() {
           </div>
         )}
       </section>
-
-      {/* ── Carson (text + voice, same Carson) ────────────────────────── */}
-      <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
-        <h2 className="mb-2 text-sm font-semibold text-text">Carson</h2>
-        <div className="mb-3">
-          <ElevenLabsAgentWidget
-            briefStateText={elevenLabsBriefStateText}
-            spokenBrief={spokenBrief}
-            displayName={displayName}
-            inline
-          />
-        </div>
-        <TextCarsonPanel
-          context={{
-            displayName,
-            userEmail: user?.email ?? null,
-            userId: userId,
-            briefStateText: elevenLabsBriefStateText,
-            dailyBrief: spokenBrief,
-            people,
-            tasks,
-          }}
-          hideHeading
-          onPrefill={(prefillText) => {
-            setText(prefillText);
-            setTimeout(() => {
-              textareaRef.current?.focus();
-              textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-            }, 50);
-          }}
-        />
-      </section>
-
-      {/* ── Inbox ─────────────────────────────────────────────────────── */}
-      <InboxReviewPanel
-        userId={userId}
-        onPrefill={(prefillText) => {
-          setText(prefillText);
-          setTimeout(() => {
-            textareaRef.current?.focus();
-            textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-          }, 50);
-        }}
-      />
 
       {keyboardOpen && (
         <div
