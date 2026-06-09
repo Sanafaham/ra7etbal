@@ -122,15 +122,19 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
         <div className="mt-3 rounded-2xl border border-sage/15 bg-card/80 px-3 py-2.5">
           <p className="text-sm leading-relaxed text-text-soft whitespace-pre-wrap">{answer}</p>
           <div className="mt-2.5 flex items-center gap-2 border-t border-sage/10 pt-2">
-            <button
-              type="button"
-              onClick={() => { void handleSaveToInbox(); }}
-              disabled={saving || saveStatus === "saved"}
-              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/30 bg-white px-3 text-[12px] font-medium text-text shadow-sm transition hover:bg-cream disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {saving && <Spinner size={11} />}
-              <span>{saveStatus === "saved" ? "Saved ✓" : "Save to Inbox"}</span>
-            </button>
+            {looksLikeStatusSummary(answer) ? (
+              <span className="text-[11px] text-text-muted">Already tracked in Ra7etBal.</span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { void handleSaveToInbox(); }}
+                disabled={saving || saveStatus === "saved"}
+                className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/30 bg-white px-3 text-[12px] font-medium text-text shadow-sm transition hover:bg-cream disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {saving && <Spinner size={11} />}
+                <span>{saveStatus === "saved" ? "Saved ✓" : "Save to Inbox"}</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -164,6 +168,63 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
  *   "message [person]" at start of input
  *   "delegate ..."
  */
+/**
+ * Returns true when a Carson response is a status/tracking summary that
+ * duplicates information already stored in Ra7etBal (tasks, reminders,
+ * delegations, waiting-on, daily brief). These should not be saved to Inbox
+ * because they are read-outs of data that already exists.
+ *
+ * Returns false for plans, advice, ideas, notes, brainstorms, and any
+ * content the user might genuinely want to capture.
+ *
+ * Conservative: false negatives (allowing a borderline save) are preferable
+ * to false positives (blocking a legitimate save).
+ */
+function looksLikeStatusSummary(text: string): boolean {
+  const t = text.toLowerCase();
+
+  // Reminder/task lists — "you have X reminder(s)", "X reminders today"
+  if (/\byou (?:have|had) \d+ reminder/.test(t)) return true;
+  if (/\b\d+ reminder/.test(t) && /\btoday\b|\boverdue\b|\bdue\b/.test(t)) return true;
+  if (/\byour reminder[s:]/.test(t)) return true;
+  if (/\byour reminder about\b/.test(t)) return true;
+
+  // Status / clear-state sentences
+  if (/\byou'?re clear\b/.test(t)) return true;
+  if (/\bno (?:open )?tasks?\b.*\bno (?:open )?reminders?\b/.test(t)) return true;
+  if (/\bnothing (?:is |to )?pending\b/.test(t)) return true;
+  if (/\bno pending\b/.test(t)) return true;
+  if (/\beverything is on track\b/.test(t)) return true;
+  if (/\bnothing needs your (?:direct )?action\b/.test(t)) return true;
+  if (/\bno open tasks?,? overdue items?,? or (?:active )?bottlenecks?\b/.test(t)) return true;
+
+  // "Needs attention" summaries
+  if (/\bneeds? (?:your )?attention\b/.test(t) && /\btoday\b|\bright now\b/.test(t)) return true;
+  if (/\b\d+ items? (?:that )?need(?:s)? (?:your )?attention\b/.test(t)) return true;
+
+  // Waiting-on / delegation status
+  if (/\b(?:still )?waiting on \w+/.test(t)) return true;
+  if (/\bwaiting on \d+ people\b/.test(t)) return true;
+  if (/\b\d+ items? (?:is |are )?waiting on others\b/.test(t)) return true;
+  if (/\bpending confirmation\b/.test(t)) return true;
+  if (/\bhasn'?t confirmed\b/.test(t)) return true;
+
+  // Morning/daily brief openings
+  if (/^good (?:morning|afternoon|evening)\b/.test(t)) return true;
+
+  // Explicit task/action list descriptors
+  if (/\bopen tasks?\b.*\boverdue\b/.test(t)) return true;
+  if (/\bno open tasks?\b/.test(t)) return true;
+
+  // Follow-up / message status
+  if (/\bsent (?:a )?follow.?up to \w+\b/.test(t)) return true;
+  if (/\bhas been messaged via whatsapp\b/.test(t)) return true;
+  if (/\btask created for \w+\b/.test(t)) return true;
+  if (/\breminder set\b/.test(t)) return true;
+
+  return false;
+}
+
 function looksLikeDelegationOrMessage(input: string): boolean {
   return (
     // "ask Grace to ...", "tell Grace to ...", "have Grace ...", "get Grace to ..."
