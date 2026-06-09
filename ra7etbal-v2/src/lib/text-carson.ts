@@ -4,7 +4,7 @@ import { loadUserMemory } from "./carson-facts";
 import { loadRecentMemory } from "./carson-memory";
 import { listTasks } from "./tasks";
 import { saveInboxItem } from "./inbox";
-import { formatReminderDue } from "./reminder-time";
+import { buildCarsonContext } from "./carson-context";
 import { extractItems } from "./ai/extract";
 import { savePending } from "./save";
 import { sendWhatsAppTask } from "./whatsapp";
@@ -18,7 +18,7 @@ export interface TextCarsonContext {
   userEmail?: string | null;
   /** Supabase user ID — required for inbox saves. */
   userId?: string | null;
-  briefStateText: string;
+  /** Spoken prose brief (used as Daily Brief section in the prompt). */
   dailyBrief: string;
   people: Person[];
   tasks: Task[];
@@ -68,6 +68,7 @@ export async function askTextCarson(
     tasks: freshTasks,
     userMemory,
     recentMemory,
+    now: new Date(),
   });
 
   let res: Response;
@@ -105,7 +106,7 @@ export async function askTextCarson(
 
 function buildTextCarsonPrompt(
   question: string,
-  context: TextCarsonContext & { userMemory: string; recentMemory: string },
+  context: TextCarsonContext & { userMemory: string; recentMemory: string; now: Date },
 ): string {
   return `You are Carson, the user's calm personal Chief of Staff inside Ra7etBal.
 
@@ -181,14 +182,13 @@ ${context.recentMemory || "No previous sessions."}
 Daily brief:
 ${context.dailyBrief || "No daily brief available."}
 
-Current Ra7etBal state:
-${context.briefStateText || "No current state available."}
-
-People snapshot:
-${formatPeople(context.people)}
-
-Task snapshot:
-${formatTasks(context.tasks)}
+Current state (people, open tasks, recent completions):
+${buildCarsonContext({
+  tasks: context.tasks,
+  people: context.people,
+  email: context.userEmail,
+  now: context.now,
+})}
 
 User asks:
 ${question}
@@ -196,64 +196,6 @@ ${question}
 Reply compactly, calmly, and directly.`;
 }
 
-function formatPeople(people: Person[]): string {
-  if (people.length === 0) return "None saved.";
-  return people
-    .slice(0, 12)
-    .map((person) => {
-      const role = person.role.trim() ? ` (${person.role.trim()})` : "";
-      const notes = person.notes?.trim()
-        ? ` - ${person.notes.trim().replace(/\s+/g, " ").slice(0, 120)}`
-        : "";
-      return `- ${person.name.trim()}${role}${notes}`;
-    })
-    .join("\n");
-}
-
-function formatTasks(tasks: Task[]): string {
-  const unarchived = tasks.filter((task) => task.archived_at == null);
-
-  const open = unarchived.filter((task) => task.status !== "done");
-  const done = unarchived
-    .filter((task) => task.status === "done")
-    .sort(
-      (a, b) =>
-        new Date(b.confirmed_at ?? b.created_at).getTime() -
-        new Date(a.confirmed_at ?? a.created_at).getTime(),
-    )
-    .slice(0, 5); // only the 5 most recent completions for context
-
-  const lines: string[] = [];
-
-  const now = new Date();
-
-  if (open.length === 0) {
-    lines.push("OPEN: none");
-  } else {
-    lines.push("OPEN:");
-    for (const task of open.slice(0, 15)) {
-      const assigned = task.assigned_to ? `, assigned to ${task.assigned_to}` : "";
-      // Use the same locale-aware formatter as Actions/TaskCard so times match
-      // what the user sees in the UI (browser local time, not UTC).
-      const dueLabel = task.due_at ? formatReminderDue(task.due_at, now) : null;
-      const due = dueLabel ? `, due ${dueLabel}` : "";
-      lines.push(`- ${task.type}, ${task.status}${assigned}${due}: ${task.description.trim()}`);
-    }
-  }
-
-  if (done.length > 0) {
-    lines.push("COMPLETED (recent, treat as history only):");
-    for (const task of done) {
-      const assigned = task.assigned_to ? `, by ${task.assigned_to}` : "";
-      const when = task.confirmed_at
-        ? `, confirmed ${new Date(task.confirmed_at).toLocaleString()}`
-        : "";
-      lines.push(`- ${task.description.trim()}${assigned}${when}`);
-    }
-  }
-
-  return lines.join("\n");
-}
 
 // ---------------------------------------------------------------------------
 // Delegation execution

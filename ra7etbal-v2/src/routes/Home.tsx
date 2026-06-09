@@ -10,12 +10,11 @@ import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import { buildDailyBrief } from "../lib/daily-brief";
 import { buildMorningBriefSpoken } from "../lib/morning-brief";
-import { formatReminderDue } from "../lib/reminder-time";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
 import { useProfileStore } from "../stores/profile";
-import type { Task } from "../types/task";
+import { buildCarsonContext } from "../lib/carson-context";
 import { useTasksStore } from "../stores/tasks";
 
 export default function Home() {
@@ -106,8 +105,8 @@ export default function Home() {
     [brief, now],
   );
   const elevenLabsBriefStateText = useMemo(
-    () => buildElevenLabsBriefStateText(brief, { email: user?.email, people, tasks }),
-    [brief, user?.email, people, tasks],
+    () => buildCarsonContext({ tasks, people, email: user?.email, now }),
+    [tasks, people, user?.email, now],
   );
   const spokenBrief = useMemo(
     () => buildMorningBriefSpoken(tasks, people, displayName, now),
@@ -208,12 +207,12 @@ export default function Home() {
               }
               const freshTasks = useTasksStore.getState().items;
               const freshNow = new Date();
-              const freshBrief = buildDailyBrief(freshTasks, freshNow);
               return {
-                briefStateText: buildElevenLabsBriefStateText(freshBrief, {
-                  email: user?.email,
-                  people,
+                briefStateText: buildCarsonContext({
                   tasks: freshTasks,
+                  people,
+                  email: user?.email,
+                  now: freshNow,
                 }),
                 spokenBrief: buildMorningBriefSpoken(
                   freshTasks,
@@ -230,7 +229,6 @@ export default function Home() {
             displayName,
             userEmail: user?.email ?? null,
             userId: userId,
-            briefStateText: elevenLabsBriefStateText,
             dailyBrief: spokenBrief,
             people,
             tasks,
@@ -412,146 +410,3 @@ function buildStatusSummary(
   return { headline, lines };
 }
 
-function buildElevenLabsBriefStateText(
-  brief: ReturnType<typeof buildDailyBrief>,
-  extras: {
-    email?: string | null;
-    people?: Array<{ name: string; role: string; notes?: string | null }>;
-    /** Raw unarchived tasks — used to build a date-independent recent-completions
-     *  list that matches what Text Carson sees via formatTasks(). Without this,
-     *  Voice Carson misses confirmations from prior days. */
-    tasks?: Task[];
-  } = {},
-): string {
-  const now = new Date();
-  const lines: string[] = [];
-
-  // ── User identity ─────────────────────────────────────────────────────
-  if (extras.email) {
-    lines.push(`User email: ${extras.email}`);
-  }
-
-  // ── People (household contacts) ───────────────────────────────────────
-  // Lets Carson match "message the driver" or "follow up with Grace" to
-  // real names and roles without asking who they are.
-  if (extras.people && extras.people.length > 0) {
-    const items = extras.people
-      .map((p) => (p.role ? `${p.name} (${p.role})` : p.name))
-      .join(", ");
-    lines.push(`People: ${items}.`);
-
-    const peopleMemory = extras.people
-      .map((p) => {
-        const note = formatPersonMemoryForCarson(p.notes);
-        return note ? `${p.name}: ${note}` : null;
-      })
-      .filter(Boolean);
-    if (peopleMemory.length > 0) {
-      lines.push(`People context: ${peopleMemory.join("; ")}.`);
-    }
-  } else {
-    lines.push("People: none saved.");
-  }
-
-  lines.push(`Summary: ${brief.summary.paragraph}`);
-
-  // ── Reminders (all buckets, with due times) ────────────────────────────
-  // Collect every pending reminder the user has, regardless of which brief
-  // bucket it landed in. Include the humanized due time so the agent can
-  // answer "what time is my reminder to X?" accurately.
-  const allTasks = [
-    ...brief.needsAttention,
-    ...brief.later,
-    // waitingOnOthers are delegations/follow-ups — no reminders there
-  ];
-  const reminders = allTasks.filter(
-    (t) => t.type === "reminder" && t.status === "pending",
-  );
-  if (reminders.length > 0) {
-    const items = reminders.map((t) => {
-      const due = t.due_at ? formatReminderDue(t.due_at, now) : null;
-      return due
-        ? `"${t.description.trim()}" (${due})`
-        : `"${t.description.trim()}"`;
-    });
-    lines.push(`Reminders (${reminders.length}): ${items.join("; ")}.`);
-  } else {
-    lines.push("Reminders: none.");
-  }
-
-  // ── Non-reminder needs-attention items ────────────────────────────────
-  const nonReminderAttention = brief.needsAttention.filter(
-    (t) => t.type !== "reminder",
-  );
-  if (nonReminderAttention.length > 0) {
-    const items = nonReminderAttention
-      .slice(0, 5)
-      .map((t) => t.description.trim())
-      .join("; ");
-    lines.push(`Needs attention: ${items}.`);
-  }
-
-  // ── Waiting on others ─────────────────────────────────────────────────
-  if (brief.waitingOnOthers.length > 0) {
-    const items = brief.waitingOnOthers
-      .slice(0, 5)
-      .map((t) => {
-        const name = t.assigned_to?.trim();
-        return name
-          ? `"${t.description.trim()}" (waiting on ${name})`
-          : `"${t.description.trim()}"`;
-      })
-      .join("; ");
-    lines.push(`Waiting on others: ${items}.`);
-  }
-
-  // ── Later (non-reminder) ──────────────────────────────────────────────
-  const nonReminderLater = brief.later.filter((t) => t.type !== "reminder");
-  if (nonReminderLater.length > 0) {
-    const items = nonReminderLater
-      .slice(0, 5)
-      .map((t) => t.description.trim())
-      .join("; ");
-    lines.push(`Later: ${items}.`);
-  }
-
-  // ── Recent completions ────────────────────────────────────────────────
-  // Use raw tasks (same logic as Text Carson's formatTasks) so Carson sees
-  // confirmations from prior days, not just today.
-  // Falls back to brief.done if tasks were not passed.
-  const recentDone = extras.tasks
-    ? extras.tasks
-        .filter((t) => t.archived_at == null && t.status === "done")
-        .sort(
-          (a, b) =>
-            new Date(b.confirmed_at ?? b.created_at).getTime() -
-            new Date(a.confirmed_at ?? a.created_at).getTime(),
-        )
-        .slice(0, 5)
-    : brief.done.slice(0, 5);
-
-  if (recentDone.length > 0) {
-    const items = recentDone.map((t) => {
-      const by = t.assigned_to?.trim() ? `, confirmed by ${t.assigned_to.trim()}` : "";
-      const when = t.confirmed_at
-        ? `, at ${new Date(t.confirmed_at).toLocaleString()}`
-        : "";
-      return `"${t.description.trim()}"${by}${when}`;
-    });
-    lines.push(`Recent completions: ${items.join("; ")}.`);
-  }
-
-  return lines.join("\n");
-}
-
-function formatPersonMemoryForCarson(value?: string | null): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) return null;
-
-  return trimmed
-    .replace(/\s+/g, " ")
-    .replace(/\bbossy\b/gi, "may over-control")
-    .replace(/\bcontrolling\b/gi, "may over-control")
-    .replace(/\blazy\b/gi, "may need firmer follow-up")
-    .slice(0, 180);
-}
