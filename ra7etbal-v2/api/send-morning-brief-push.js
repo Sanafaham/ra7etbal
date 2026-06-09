@@ -43,6 +43,13 @@ export default async function handler(req, res) {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
 
+  // ── ?register=1 — one-shot QStash schedule registration ─────────────────
+  // Reads QSTASH_TOKEN and CRON_SECRET from process.env so no secrets are
+  // needed in the request. Safe to call repeatedly (QStash upserts).
+  if (isRegisterMode(req)) {
+    return handleRegister(res);
+  }
+
   const testMode = isTestMode(req);
   if (!testMode && !isAuthorized(req)) {
     return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -288,6 +295,56 @@ function supabaseHeaders(serviceRoleKey) {
     Authorization: `Bearer ${serviceRoleKey}`,
     'Content-Type': 'application/json',
   };
+}
+
+// ---------------------------------------------------------------------------
+// ?register=1 — one-shot QStash schedule registration
+// ---------------------------------------------------------------------------
+
+function isRegisterMode(req) {
+  if (req.query?.register === '1') return true;
+  try {
+    return new URL(req.url, 'https://ra7etbal.local').searchParams.get('register') === '1';
+  } catch {
+    return false;
+  }
+}
+
+async function handleRegister(res) {
+  const qstashToken = process.env.QSTASH_TOKEN;
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (!qstashToken) return res.status(500).json({ error: 'QSTASH_TOKEN not set' });
+  if (!cronSecret) return res.status(500).json({ error: 'CRON_SECRET not set' });
+
+  const TARGET_URL = 'https://ra7etbal-v2.vercel.app/api/send-morning-brief-push';
+  const CRON_EXPR = '0 5 * * *';
+  const encoded = encodeURIComponent(TARGET_URL);
+
+  let resp;
+  try {
+    resp = await fetch(`https://qstash.upstash.io/v2/schedules/${encoded}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${qstashToken}`,
+        'Upstash-Cron': CRON_EXPR,
+        'Upstash-Forward-Authorization': `Bearer ${cronSecret}`,
+        'Upstash-Method': 'POST',
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ error: `QStash network error: ${errMsg(err)}` });
+  }
+
+  const body = await resp.json().catch(() => ({}));
+  return res.status(resp.status).json({
+    qstashStatus: resp.status,
+    scheduleId: body.scheduleId ?? body.schedule_id ?? null,
+    targetUrl: TARGET_URL,
+    method: 'POST',
+    cron: CRON_EXPR,
+    raw: body,
+  });
 }
 
 function isTestMode(req) {
