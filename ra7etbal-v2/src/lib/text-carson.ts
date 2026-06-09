@@ -93,6 +93,13 @@ Ra7etBal capabilities (these exist and work — never deny them):
 - Carson memory: Carson remembers facts and preferences across sessions.
 - Morning Brief: Carson delivers a daily Chief-of-Staff briefing covering attention items, waiting tasks, overdue items, recent completions, and risks.
 
+When answering operational questions ("what needs attention", "what can you do for me", "what's going on", "what's my status"):
+- Base your answer ONLY on tasks in the OPEN section of the task snapshot below.
+- If there are no open tasks, say clearly: "You're clear right now. No pending confirmations, overdue reminders, or active bottlenecks."
+- Completed tasks are historical context. Do not describe them as current work, current situations, or active outcomes.
+- Do not say things like "dinner's done" or "flowers are in" as if they describe the current state — those are past completions, not open work.
+- Only mention completed tasks if the user specifically asks about recent completions or history.
+
 You can:
 - Answer questions about the user's current Ra7etBal state.
 - Accurately describe what Ra7etBal supports and how it works.
@@ -159,19 +166,41 @@ function formatPeople(people: Person[]): string {
 }
 
 function formatTasks(tasks: Task[]): string {
-  const active = tasks.filter((task) => task.archived_at == null);
-  if (active.length === 0) return "No active tasks.";
+  const unarchived = tasks.filter((task) => task.archived_at == null);
 
-  return active
-    .slice(0, 20)
-    .map((task) => {
+  const open = unarchived.filter((task) => task.status !== "done");
+  const done = unarchived
+    .filter((task) => task.status === "done")
+    .sort(
+      (a, b) =>
+        new Date(b.confirmed_at ?? b.created_at).getTime() -
+        new Date(a.confirmed_at ?? a.created_at).getTime(),
+    )
+    .slice(0, 5); // only the 5 most recent completions for context
+
+  const lines: string[] = [];
+
+  if (open.length === 0) {
+    lines.push("OPEN: none");
+  } else {
+    lines.push("OPEN:");
+    for (const task of open.slice(0, 15)) {
       const assigned = task.assigned_to ? `, assigned to ${task.assigned_to}` : "";
       const due = task.due_at ? `, due ${new Date(task.due_at).toISOString()}` : "";
-      const confirmed =
-        task.status === "done" && task.confirmed_at
-          ? `, confirmed done at ${new Date(task.confirmed_at).toISOString()}`
-          : "";
-      return `- ${task.type}, ${task.status}${assigned}${due}${confirmed}: ${task.description.trim()}`;
-    })
-    .join("\n");
+      lines.push(`- ${task.type}, ${task.status}${assigned}${due}: ${task.description.trim()}`);
+    }
+  }
+
+  if (done.length > 0) {
+    lines.push("COMPLETED (recent, treat as history only):");
+    for (const task of done) {
+      const assigned = task.assigned_to ? `, by ${task.assigned_to}` : "";
+      const when = task.confirmed_at
+        ? `, confirmed ${new Date(task.confirmed_at).toISOString()}`
+        : "";
+      lines.push(`- ${task.description.trim()}${assigned}${when}`);
+    }
+  }
+
+  return lines.join("\n");
 }
