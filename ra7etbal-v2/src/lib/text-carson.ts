@@ -42,11 +42,12 @@ export async function askTextCarson(
         content: captureContent,
         source: "text_carson",
       });
-    } catch {
-      // Save failed — fall through to normal AI response so the user isn't
-      // left with a blank reply. Carson will answer without saving.
+      return `Got it — saved to your inbox. I'll keep that for you.`;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[text-carson] inbox save failed:", msg);
+      throw new Error(`Couldn't save to inbox: ${msg}`);
     }
-    return `Got it — saved to your inbox. I'll keep that for you.`;
   }
 
   // Fetch fresh task state from Supabase so Carson always reflects the
