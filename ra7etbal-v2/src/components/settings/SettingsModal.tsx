@@ -605,7 +605,7 @@ function getReminderStatusText(status: PushNotificationStatus, busy: boolean): s
 /**
  * Shows Google Calendar connection status and a connect/reconnect button.
  * Checks profiles.google_calendar_connected_at to determine current state.
- * Connect action redirects to /api/google-calendar-auth (server-side OAuth flow).
+ * Connect action redirects to /api/google-calendar (server-side OAuth flow).
  */
 function GoogleCalendarRow({ userId }: { userId: string | null }) {
   const [connected, setConnected] = useState<boolean | null>(null); // null = loading
@@ -630,7 +630,7 @@ function GoogleCalendarRow({ userId }: { userId: string | null }) {
   function handleConnect() {
     if (!userId) return;
     // Full page redirect — OAuth flow requires browser navigation.
-    window.location.href = `/api/google-calendar-auth?userId=${encodeURIComponent(userId)}`;
+    window.location.href = `/api/google-calendar?userId=${encodeURIComponent(userId)}`;
   }
 
   const statusText =

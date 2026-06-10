@@ -3,7 +3,7 @@
  *
  * Client-side helper for Google Calendar events.
  *
- * Calls /api/google-calendar-events with the user's Supabase JWT.
+ * Calls /api/google-calendar with the user's Supabase JWT.
  * Never receives the refresh token — only shaped event data.
  */
 
@@ -42,7 +42,7 @@ export async function fetchCalendarEvents(
     const jwt = sessionData?.session?.access_token;
     if (!jwt) return { connected: false, events: [] };
 
-    const res = await fetch(`/api/google-calendar-events?range=${range}`, {
+    const res = await fetch(`/api/google-calendar?range=${range}`, {
       headers: { Authorization: `Bearer ${jwt}` },
     });
 
