@@ -8,7 +8,7 @@
  *
  *   2. OAuth callback    GET ?code=<code>&state=<uid>
  *      Exchanges code for tokens, stores refresh_token in profiles via
- *      Supabase REST API, redirects to /settings?calendar=connected|error.
+ *      Supabase REST API, redirects to /?calendar=connected|error.
  *
  *   3. Fetch events      GET ?range=today|tomorrow|this_week|next_week
  *      Requires Authorization: Bearer <supabase-jwt> header.
@@ -62,13 +62,13 @@ export default async function handler(req, res) {
 
       if (!tokenRes.ok) {
         console.error("Google token exchange failed:", await tokenRes.text());
-        return res.redirect(302, `${redirectBase}/settings?calendar=error`);
+        return res.redirect(302, `${redirectBase}/?calendar=error`);
       }
 
       const tokens = await tokenRes.json();
       if (!tokens.refresh_token) {
         console.error("No refresh_token in Google response");
-        return res.redirect(302, `${redirectBase}/settings?calendar=error`);
+        return res.redirect(302, `${redirectBase}/?calendar=error`);
       }
 
       // Store refresh_token in profiles via Supabase REST API
@@ -94,10 +94,10 @@ export default async function handler(req, res) {
 
       if (!patchRes.ok) {
         console.error("Supabase PATCH failed:", await patchRes.text());
-        return res.redirect(302, `${redirectBase}/settings?calendar=error`);
+        return res.redirect(302, `${redirectBase}/?calendar=error`);
       }
 
-      return res.redirect(302, `${redirectBase}/settings?calendar=connected`);
+      return res.redirect(302, `${redirectBase}/?calendar=connected`);
     }
 
     // ── Route 3: Fetch events (JWT-authenticated) ─────────────────────────
