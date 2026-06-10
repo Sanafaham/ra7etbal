@@ -613,11 +613,13 @@ function GoogleCalendarRow({ userId }: { userId: string | null }) {
   useEffect(() => {
     if (!userId) { setConnected(false); return; }
     let cancelled = false;
-    supabase
-      .from("profiles")
-      .select("google_calendar_connected_at")
-      .eq("id", userId)
-      .maybeSingle()
+    Promise.resolve(
+      supabase
+        .from("profiles")
+        .select("google_calendar_connected_at")
+        .eq("id", userId)
+        .maybeSingle(),
+    )
       .then(({ data }) => {
         if (!cancelled) setConnected(!!data?.google_calendar_connected_at);
       })
