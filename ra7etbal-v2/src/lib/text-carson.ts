@@ -191,7 +191,7 @@ ${buildCarsonContext({
 User asks:
 ${question}
 
-Reply compactly, calmly, and directly.`;
+Answer as a trusted chief of staff who already knows the situation. Lead with the most important thing. Include times when known. Keep it under 5 sentences.`;
 }
 
 
