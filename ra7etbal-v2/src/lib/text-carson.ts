@@ -234,26 +234,51 @@ export async function executeDelegationFromText(
     if (key && person.phone) phoneByName.set(key, person.phone);
   }
 
-  // Send WhatsApp only for delegation/message rows (same as Review.tsx)
+  // Send WhatsApp only for delegation/message rows (same as Review.tsx).
+  // Use allSettled so a failed send for one recipient does not abort the
+  // others — all sends are attempted independently. The summary below
+  // accurately reflects which recipients were actually messaged vs which
+  // failed, so Voice Carson cannot claim success for an unsent message.
   const sendableMessages = saved.messages.filter(
     (m) => !!m.recipient.trim() && !!m.content.trim(),
   );
 
-  if (sendableMessages.length > 0) {
-    await Promise.all(
-      sendableMessages.map((message) =>
-        sendWhatsAppTask({
-          to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
-          messageText: message.content,
-          confirmationLink: message.confirmation_url ?? null,
-          messageRecordId: message.id,
-          taskId: message.task_id,
-          recipientName: message.recipient,
-          ownerName: context.displayName ?? null,
-          imagePath: null,
-        }),
-      ),
-    );
+  const sendResults =
+    sendableMessages.length > 0
+      ? await Promise.allSettled(
+          sendableMessages.map((message) =>
+            sendWhatsAppTask({
+              to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
+              messageText: message.content,
+              confirmationLink: message.confirmation_url ?? null,
+              messageRecordId: message.id,
+              taskId: message.task_id,
+              recipientName: message.recipient,
+              ownerName: context.displayName ?? null,
+              imagePath: null,
+            }),
+          ),
+        )
+      : [];
+
+  // Split into succeeded vs failed sends for honest summary reporting.
+  const sentNames: string[] = [];
+  const failedSends: Array<{ recipient: string; reason: string }> = [];
+  for (let i = 0; i < sendableMessages.length; i++) {
+    const result = sendResults[i];
+    if (result.status === "fulfilled") {
+      sentNames.push(sendableMessages[i].recipient);
+    } else {
+      const reason =
+        result.reason instanceof Error
+          ? result.reason.message
+          : "send failed";
+      failedSends.push({ recipient: sendableMessages[i].recipient, reason });
+      console.error(
+        `[executeDelegationFromText] WhatsApp send failed for ${sendableMessages[i].recipient}:`,
+        result.reason,
+      );
+    }
   }
 
   // Fire-and-forget store refresh so task list updates immediately.
@@ -261,7 +286,6 @@ export async function executeDelegationFromText(
 
   // Build a summary that reflects every item that was saved.
   const reminderCount = saved.tasks.filter((t) => t.type === "reminder").length;
-  const sentNames = sendableMessages.map((m) => m.recipient);
   const unsentDelegations = saved.tasks.filter(
     (t) =>
       (t.type === "delegation" || t.type === "followup") &&
@@ -273,6 +297,13 @@ export async function executeDelegationFromText(
   if (sentNames.length > 0) {
     const names = sentNames.join(", ");
     parts.push(`${names} ${sentNames.length === 1 ? "has been" : "have been"} messaged via WhatsApp`);
+  }
+  // Explicit failure report so Voice Carson must acknowledge send failures
+  // rather than silently claiming success for all recipients.
+  if (failedSends.length > 0) {
+    for (const { recipient, reason } of failedSends) {
+      parts.push(`${recipient} was NOT messaged — ${reason}`);
+    }
   }
   if (unsentDelegations.length > 0) {
     const names = unsentDelegations
@@ -290,7 +321,8 @@ export async function executeDelegationFromText(
   }
   // Catch-all for action/decision/parked items not covered above
   const otherCount =
-    saved.tasks.length - (sentNames.length + unsentDelegations.length + reminderCount);
+    saved.tasks.length -
+    (sentNames.length + failedSends.length + unsentDelegations.length + reminderCount);
   if (otherCount > 0) {
     parts.push(otherCount === 1 ? "1 item saved" : `${otherCount} items saved`);
   }
