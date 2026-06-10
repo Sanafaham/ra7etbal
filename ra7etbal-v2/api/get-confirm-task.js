@@ -182,11 +182,24 @@ async function createSignedUploadUrl({ supabaseUrl, serviceKey, userId, taskId }
         body: JSON.stringify({ expiresIn: 3600 }),
       }
     );
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      console.warn('[get-confirm-task] createSignedUploadUrl: Supabase returned non-ok', {
+        status: response.status,
+        body: errText.slice(0, 200),
+      });
+      return null;
+    }
     const data = await response.json();
-    // Supabase returns { signedURL: "/object/upload/sign/...", token: "..." }
-    if (!data?.signedURL) return null;
-    const uploadUrl = `${supabaseUrl}/storage/v1${data.signedURL}`;
+    // Supabase upload-sign endpoint returns { url, token } — NOT { signedURL }
+    // (read-sign endpoint uses signedURL; upload-sign uses url — different shapes)
+    if (!data?.url) {
+      console.warn('[get-confirm-task] createSignedUploadUrl: no url in response', {
+        keys: data ? Object.keys(data) : null,
+      });
+      return null;
+    }
+    const uploadUrl = `${supabaseUrl}/storage/v1${data.url}`;
     return { uploadUrl, storagePath };
   } catch {
     return null;

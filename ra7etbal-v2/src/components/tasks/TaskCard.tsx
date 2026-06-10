@@ -200,24 +200,7 @@ export default function TaskCard({
       )}
 
       {signedProofImageUrl && (
-        <div className="mt-3 space-y-1">
-          <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/70">
-            Proof photo
-          </p>
-          <a
-            href={signedProofImageUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label="Open proof photo full size"
-            className="block"
-          >
-            <img
-              src={signedProofImageUrl}
-              alt="Proof photo from recipient"
-              className="max-h-48 w-full rounded-xl border border-emerald-200 object-cover shadow-sm transition hover:opacity-90"
-            />
-          </a>
-        </div>
+        <ProofPhotoThumbnail url={signedProofImageUrl} />
       )}
 
       {message?.content && (
@@ -339,6 +322,67 @@ function formatFollowUpSentTime(createdAt: string): string {
       hour: "numeric",
       minute: "2-digit",
     }).format(date)
+  );
+}
+
+/**
+ * Proof photo thumbnail with tap-to-fullscreen lightbox.
+ * Renders a green-labelled thumbnail; tapping opens a full-screen overlay
+ * with the image and a close button. Closes on overlay click or × button.
+ */
+function ProofPhotoThumbnail({ url }: { url: string }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <>
+      <div className="mt-3 space-y-1">
+        <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/70">
+          Proof photo
+        </p>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="View proof photo full screen"
+          className="block w-full overflow-hidden rounded-xl border border-emerald-200 shadow-sm transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400"
+        >
+          <img
+            src={url}
+            alt="Proof photo from recipient"
+            className="max-h-48 w-full object-cover"
+          />
+        </button>
+      </div>
+
+      {open && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Proof photo"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setOpen(false)}
+        >
+          {/* Close button */}
+          <button
+            type="button"
+            aria-label="Close proof photo"
+            onClick={(e) => { e.stopPropagation(); setOpen(false); }}
+            className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full bg-white/15 text-white transition hover:bg-white/25"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+
+          {/* Image — stopPropagation so clicking the image itself doesn't close */}
+          <img
+            src={url}
+            alt="Proof photo full size"
+            className="max-h-[90dvh] max-w-full rounded-xl object-contain shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      )}
+    </>
   );
 }
 
