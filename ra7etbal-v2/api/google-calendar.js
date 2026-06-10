@@ -43,8 +43,8 @@ export default async function handler(req, res) {
     // ── Route 2: OAuth callback ───────────────────────────────────────────
     if (code && state) {
       const uid = state;
-      const redirectBase = process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
+      const redirectBase = process.env.VERCEL_PROJECT_PRODUCTION_URL
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
         : "http://localhost:5173";
 
       // Exchange code for tokens
