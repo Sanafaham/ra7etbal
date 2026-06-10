@@ -918,7 +918,15 @@ export default function ElevenLabsAgentWidget({
   // ------------------------------------------------------------------
   const executeInstruction = useCallback(
     async ({ instruction }: { instruction: string }): Promise<string> => {
-      const rawInstruction = instruction?.trim();
+      // Prefer the exact user transcript from sessionTranscriptRef over the
+      // agent-provided instruction parameter. The ElevenLabs agent may rephrase
+      // the user's spoken words before passing them here — dropping personal notes,
+      // altering names, or collapsing compound requests into a single sentence.
+      // The last user message in sessionTranscriptRef is the verbatim transcript.
+      const lastUserMessage = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((m) => m.role === "user")?.message?.trim();
+      const rawInstruction = (lastUserMessage || instruction?.trim() || "").trim();
       if (!rawInstruction) {
         return "I did not receive an instruction. Ask the user what they want to do.";
       }
