@@ -55,7 +55,62 @@ interface DelegationSendOptions {
   person: Person;
   taskText: string;
   message?: string;
+  /** Personal/emotional/status note to inject into the message body, e.g.
+   *  "Sana says she misses you." — never tracked as a separate task. */
+  personalNote?: string | null;
   ownerName?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Personal-note helpers (mirrors save.ts — kept inline to avoid circular import)
+// ---------------------------------------------------------------------------
+
+/**
+ * Inject a personal note before the closing sentence of a delegation message.
+ * "Hi Grace, could you call Sana? Confirm when done."
+ * → "Hi Grace, could you call Sana? Sana says she misses you. Confirm when done."
+ */
+function injectPersonalNote(message: string, note: string | null | undefined): string {
+  if (!note?.trim()) return message;
+  const n = note.trim();
+  const match = /^([\s\S]*[.?!])\s+([^.?!\s][^.?!]*[.?!]?\s*)$/.exec(message);
+  if (match) {
+    return `${match[1]} ${n} ${match[2].trim()}`.trimEnd();
+  }
+  return `${message} ${n}`;
+}
+
+/**
+ * Best-effort extraction of a personal note from an agent-supplied message.
+ *
+ * When the ElevenLabs agent calls send_delegation with a `message` that
+ * includes both the action request and a personal note, this extracts
+ * the note sentences so they can be injected via injectPersonalNote.
+ *
+ * Skips:
+ *  - Opening greeting lines ("Hi Grace, ...")
+ *  - The action request sentence (contains the task text)
+ *  - Standard closing lines ("Confirm when done", "Let X know when done")
+ */
+function extractNoteFromAgentMessage(
+  agentMessage: string | undefined,
+  taskText: string,
+): string | null {
+  if (!agentMessage?.trim()) return null;
+  const taskCore = taskText.toLowerCase().replace(/[.!?]+$/, "").trim().slice(0, 30);
+  const sentences = agentMessage
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const noteSentences = sentences.filter((s) => {
+    const lower = s.toLowerCase();
+    if (/^hi\s+\w+/i.test(s)) return false;
+    if (/\b(confirm when done|confirm when finished|let \w+ know when done|let me know when done)\b/i.test(lower)) return false;
+    if (taskCore && lower.includes(taskCore)) return false;
+    if (/^(can you|could you|please\b)/i.test(s)) return false;
+    return true;
+  });
+  return noteSentences.join(" ").trim() || null;
 }
 
 interface DelegationSendResult {
@@ -68,24 +123,39 @@ async function createAndSendDelegation({
   person,
   taskText,
   message,
+  personalNote,
   ownerName,
 }: DelegationSendOptions): Promise<DelegationSendResult> {
-  const rawMessage = person.notes?.trim()
-    ? buildDelegationMessage({
+  // Always build the base message with buildDelegationMessage so personality
+  // notes (bossy, reliable, etc.) are applied consistently — never skip this
+  // step for known people even when the agent provides its own message text.
+  //
+  // Personal/informational notes are injected AFTER the base message is built,
+  // so they appear before the closing confirmation sentence:
+  //   "Hi Grace, could you call Sana? [Sana says she misses you.] Confirm when done."
+  //
+  // Note resolution order:
+  //   1. personalNote param (explicit — from updated dashboard prompt or execute_instruction)
+  //   2. extracted from agent-provided message (best-effort, current dashboard compat)
+  //   3. null — no note injected
+  const resolvedNote =
+    personalNote?.trim() ||
+    extractNoteFromAgentMessage(message, taskText) ||
+    null;
+
+  const rawMessage = injectPersonalNote(
+    rewriteOwnerPronouns(
+      buildDelegationMessage({
         personName: person.name,
         taskText,
-        personNotes: person.notes,
+        personNotes: person.notes ?? null,
         ownerName,
-      })
-    : message?.trim()
-      ? message.trim()
-      : buildDelegationMessage({
-          personName: person.name,
-          taskText,
-          personNotes: person.notes,
-          ownerName,
-        });
-  const messageText = rewriteOwnerPronouns(rawMessage, ownerName);
+      }),
+      ownerName,
+    ),
+    resolvedNote,
+  );
+  const messageText = rawMessage;
 
   const taskRowId = crypto.randomUUID();
   const confirmationUrl = `${window.location.origin}/confirm?task=${taskRowId}`;
@@ -603,10 +673,17 @@ export default function ElevenLabsAgentWidget({
       name,
       task,
       message,
+      note,
     }: {
       name: string;
       task: string;
       message?: string;
+      /** Optional explicit personal/informational note — injected into the
+       *  WhatsApp message body but not tracked as a separate task.
+       *  Dashboard prompt should pass this when it detects phrases like
+       *  "tell her I miss her", "and say thank you", "I'm on my way", etc.
+       *  When absent, note is extracted from `message` as best-effort. */
+      note?: string;
     }): Promise<string> => {
       const normalizedName = name.trim();
       if (!normalizedName) {
@@ -666,6 +743,7 @@ export default function ElevenLabsAgentWidget({
           person,
           taskText,
           message,
+          personalNote: note ?? null,
           ownerName: displayName,
         });
       } catch (err) {
