@@ -68,9 +68,15 @@ export default async function handler(req, res) {
   }
 
   // ── Template selection ────────────────────────────────────────────────────
-  // ra7etbal_task_v2: text-only tasks (Active)
-  // ra7etbal_task_assignment: tasks with a reference image attached (ra7etbal_task_image still In Review)
-  const templateName = imagePath ? 'ra7etbal_task_assignment' : 'ra7etbal_task_v2';
+  // ra7etbal_task_v3:       text-only tasks — PRIMARY (Active, Meta-approved June 2026)
+  // ra7etbal_task_v2:       text-only tasks — FALLBACK if v3 is rejected by Meta
+  // ra7etbal_task_assignment: image tasks (unchanged)
+  //
+  // For text tasks, send with v3 first. If Meta returns a template error,
+  // automatically retry once with the ra7etbal_task_assignment fallback so the
+  // message always gets through while v3 propagates across Meta's infra.
+  const primaryTemplateName = imagePath ? 'ra7etbal_task_assignment' : 'ra7etbal_task_v3';
+  const fallbackTemplateName = imagePath ? null : 'ra7etbal_task_assignment';
 
   // ── Reference image send ──────────────────────────────────────────────────
   // If a Reference image is attached, send it as a WhatsApp image media message
@@ -119,33 +125,44 @@ export default async function handler(req, res) {
     }
   }
 
-  const templatePayload = {
-    messaging_product: 'whatsapp',
-    recipient_type: 'individual',
-    to: normalizedTo,
-    type: 'template',
-    template: {
-      name: templateName,
-      language: { code: templateLanguage },
-      components: [
-        {
-          type: 'body',
-          parameters: templateName === 'ra7etbal_task_v2'
-            ? [
-                { type: 'text', text: cleanOwnerName }, // {{1}} — owner name
-                { type: 'text', text: cleanMessage },   // {{2}} — task text
-                { type: 'text', text: cleanLink },      // {{3}} — confirmation link
-              ]
-            : [
-                { type: 'text', text: cleanMessage },   // {{1}} — task text
-                { type: 'text', text: cleanLink },      // {{2}} — confirmation link
-              ],
-        },
-      ],
-    },
-  };
+  /**
+   * Build the template payload for a given template name.
+   * ra7etbal_task_v3 / ra7etbal_task_v2: 3 params — {{1}} owner, {{2}} message, {{3}} link
+   * ra7etbal_task_assignment:             2 params — {{1}} message, {{2}} link
+   */
+  function buildTemplatePayload(tplName) {
+    const is3Param = tplName === 'ra7etbal_task_v3' || tplName === 'ra7etbal_task_v2';
+    return {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: normalizedTo,
+      type: 'template',
+      template: {
+        name: tplName,
+        language: { code: templateLanguage },
+        components: [
+          {
+            type: 'body',
+            parameters: is3Param
+              ? [
+                  { type: 'text', text: cleanOwnerName }, // {{1}} — owner name
+                  { type: 'text', text: cleanMessage },   // {{2}} — task text
+                  { type: 'text', text: cleanLink },      // {{3}} — confirmation link
+                ]
+              : [
+                  { type: 'text', text: cleanMessage },   // {{1}} — task text
+                  { type: 'text', text: cleanLink },      // {{2}} — confirmation link
+                ],
+          },
+        ],
+      },
+    };
+  }
 
   try {
+    // ── Primary send ─────────────────────────────────────────────────────────
+    const primaryPayload = buildTemplatePayload(primaryTemplateName);
+
     console.log('WhatsApp template send attempt', {
       phoneNumberIdLast4,
       to: normalizedTo,
@@ -157,21 +174,50 @@ export default async function handler(req, res) {
       referenceImagePathPresent: Boolean(imagePath),
       imageSendStatus,
       mode: 'template',
-      templateName: templateName,
+      templateName: primaryTemplateName,
       templateLanguage,
-      payload: redactPayloadForLog(templatePayload),
+      payload: redactPayloadForLog(primaryPayload),
     });
 
-    const templateResult = await sendMetaMessage({
-      url,
-      accessToken,
-      payload: templatePayload,
-    });
+    let templateResult = await sendMetaMessage({ url, accessToken, payload: primaryPayload });
+    let usedTemplateName = primaryTemplateName;
+
+    // ── Fallback send (text tasks only) ──────────────────────────────────────
+    // If Meta rejects the primary template (e.g. v3 not yet active on this
+    // phone number ID), retry once with ra7etbal_task_assignment so the message
+    // still reaches the recipient.
+    if (!templateResult.ok && fallbackTemplateName) {
+      const metaCode = templateResult.metaError?.code;
+      const isTemplateError =
+        metaCode === 132001 || // template not found
+        metaCode === 132000 || // template does not exist
+        metaCode === 100;      // generic parameter / template issue
+
+      if (isTemplateError || templateResult.status === 400) {
+        console.warn('WhatsApp primary template failed — retrying with fallback', {
+          primaryTemplate: primaryTemplateName,
+          fallbackTemplate: fallbackTemplateName,
+          metaCode,
+          status: templateResult.status,
+        });
+
+        const fallbackPayload = buildTemplatePayload(fallbackTemplateName);
+        templateResult = await sendMetaMessage({ url, accessToken, payload: fallbackPayload });
+        usedTemplateName = fallbackTemplateName;
+
+        console.log('WhatsApp fallback template send attempt', {
+          templateName: fallbackTemplateName,
+          ok: templateResult.ok,
+          status: templateResult.status,
+        });
+      }
+    }
 
     if (!templateResult.ok) {
       console.error('WhatsApp template send failed', {
         status: templateResult.status,
         metaError: templateResult.metaError,
+        usedTemplateName,
       });
       return sendFailure(res, templateResult);
     }
@@ -191,7 +237,7 @@ export default async function handler(req, res) {
       to: normalizedTo,
       acceptedAt: new Date().toISOString(),
       phoneNumberIdLast4,
-      templateName: templateName,
+      templateName: usedTemplateName,
       templateLanguage,
       imageSendStatus,
     });
