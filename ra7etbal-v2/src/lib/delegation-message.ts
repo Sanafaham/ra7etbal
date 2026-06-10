@@ -130,7 +130,19 @@ export function buildDelegationMessage({
   if (context === "verification") {
     return `Hi ${name}, could you ${lowerFirst(task)} and let ${owner} know what you find?`;
   }
-  // Use lowerFirst so "call Sana" stays lowercase after "could you please".
+
+  // Safety net: if urgency words reached the description (instead of going to
+  // personalNote via extraction), surface them naturally in the request.
+  // This handles the case where the extraction model embedded urgency in the
+  // task text rather than routing it through personalNote.
+  const urgencyInTask = /\b(urgent(ly)?|asap|as soon as possible|right away|immediately)\b/i.test(taskLower);
+  if (urgencyInTask) {
+    // Strip the urgency adverb from the task so we can control placement.
+    const cleanedTask = task.replace(/\b(urgent(ly)?|asap|as soon as possible|right away|immediately)\b/gi, "").replace(/\s{2,}/g, " ").trim().replace(/[,]+$/, "").trim();
+    return `Hi ${name}, could you ${lowerFirst(cleanedTask)} as soon as possible? ${owner} would appreciate it.`;
+  }
+
+  // Use lowerFirst so "call Sana" stays lowercase after "could you".
   return `Hi ${name}, could you ${lowerFirst(task)}? Let ${owner} know when done.`;
 }
 

@@ -63,6 +63,16 @@ export function normalizePersonalNote(
     return sentence(text);
   }
 
+  // Urgency phrases are task modifiers, not personal communications.
+  // Normalize to a canonical impersonal form so composeMergedMessage can
+  // embed urgency into the request ("as soon as possible") rather than
+  // producing the awkward "Sana says it's urgent."
+  const URGENCY_PATTERN =
+    /^(it('s| is)\s+urgent|urgent(ly)?|asap|a\.s\.a\.p\.?|as soon as possible|right away|immediately)\b/i;
+  if (URGENCY_PATTERN.test(text)) {
+    return "This is urgent.";
+  }
+
   // Bare expression — attach "[Owner] says [expression]."
   const lower = lcFirst(text);
   return sentence(`${owner} says ${lower}`);

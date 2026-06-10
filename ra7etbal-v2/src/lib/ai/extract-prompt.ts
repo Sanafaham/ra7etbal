@@ -284,15 +284,27 @@ Example Q. Input: "Ask Grace to wait for me, I am on my way."
   Reasoning: "I am on my way" is a status clause, not a separate task.
   It goes into personalNote — never its own item.
 
+Example R. Input: "Tell Nasira to clean the kitchen and tell her it's urgent."
+  Output (ONE item only):
+    type: "delegation"
+    assignedTo: "Nasira"
+    description: "Clean the kitchen."
+    personalNote: "This is urgent."
+    suggestedMessage: "Could you clean the kitchen as soon as possible? ${ownerRef} would appreciate it."
+  Reasoning: "it's urgent" is a task modifier. It goes into personalNote as an
+  urgency signal — NEVER embedded in the description as "Clean the kitchen urgently."
+  The description stays clean; the urgency is in personalNote only.
+
 ================================================================
 RULE 2 — PERSONAL NOTE INSIDE A DELEGATION (anti-split rule)
 ================================================================
 
 When a single sentence asks ONE person to perform an action AND also
-includes a personal note, emotional statement, status clause, or
-informational addendum directed at that SAME person
+includes a personal note, emotional statement, status clause, urgency
+signal, or informational addendum directed at that SAME person
 ("tell her I love her", "tell him thank you", "I am on my way",
-"let her know I appreciate it", "and say I'm grateful"),
+"let her know I appreciate it", "and say I'm grateful",
+"tell her it's urgent", "tell him ASAP", "it's urgent"),
 produce ONE item:
 
   - type: delegation (driven by the actionable request)
