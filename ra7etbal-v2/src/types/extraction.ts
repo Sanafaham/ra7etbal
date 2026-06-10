@@ -32,6 +32,22 @@ export interface ExtractedItem {
   dueAt: string | null;
   dueText: string | null;
   suggestedMessage: string | null;
+  /**
+   * Optional personal or informational note to be included in the WhatsApp
+   * message body but NOT tracked as a separate task.
+   *
+   * Set by the extraction prompt when the user appended an emotional note or
+   * status clause to an actionable delegation:
+   *   "Ask Grace to call me and tell her I miss her."
+   *   → personalNote: "Sana says she misses you."
+   *   "Ask Grace to wait for me, I am on my way."
+   *   → personalNote: "Sana is on her way."
+   *
+   * Injected into the final WhatsApp message by save.ts, after
+   * buildDelegationMessage produces the formatted action sentence and before
+   * the closing confirmation line.
+   */
+  personalNote: string | null;
   needsPerson: boolean;
   needsClarification: boolean;
   clarificationQuestion: string | null;

@@ -153,6 +153,7 @@ export function addImpliedOperationalResponsibilities(
       needsPerson: false,
       needsClarification: false,
       clarificationQuestion: null,
+      personalNote: null,
     },
   ];
 }

@@ -169,6 +169,10 @@ function normalizeItem(value: unknown, index: number): ExtractedItem | null {
     typeof v.suggestedMessage === "string" && v.suggestedMessage.trim()
       ? v.suggestedMessage.trim()
       : null;
+  const personalNote =
+    typeof v.personalNote === "string" && v.personalNote.trim()
+      ? v.personalNote.trim()
+      : null;
   const dueText =
     typeof v.dueText === "string" && v.dueText.trim()
       ? v.dueText.trim()
@@ -192,6 +196,7 @@ function normalizeItem(value: unknown, index: number): ExtractedItem | null {
     dueAt,
     dueText,
     suggestedMessage,
+    personalNote,
     needsPerson: v.needsPerson === true,
     needsClarification: v.needsClarification === true,
     clarificationQuestion:

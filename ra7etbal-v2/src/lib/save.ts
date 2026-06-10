@@ -19,6 +19,29 @@ import type { Task } from "../types/task";
  * Falls back to "the sender" when no ownerName is provided so the
  * message still reads naturally.
  */
+/**
+ * Inject a personal/informational note into a formatted delegation message,
+ * positioned before the closing confirmation sentence.
+ *
+ * buildDelegationMessage produces: "[greeting+action]. [closing]."
+ * This helper inserts the note so the result reads:
+ *   "[greeting+action]. [note] [closing]."
+ *
+ * Handles both ". " and "? " sentence boundaries. Falls back to appending
+ * the note at the end if no boundary is found.
+ */
+function injectPersonalNote(message: string, note: string | null | undefined): string {
+  if (!note?.trim()) return message;
+  const n = note.trim();
+  // Split at last sentence boundary: find last ". " or "? " that has text after it.
+  const match = /^([\s\S]*[.?!])\s+([^.?!\s][^.?!]*[.?!]?\s*)$/.exec(message);
+  if (match) {
+    return `${match[1]} ${n} ${match[2].trim()}`.trimEnd();
+  }
+  // Single-sentence or no match — append at end.
+  return `${message} ${n}`;
+}
+
 function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
   const name = ownerName?.trim() || "the sender";
   return text
@@ -182,14 +205,17 @@ export async function savePending(
         const assignedPerson = people.find(
           (person) => person.name.trim().toLowerCase() === assignedTo!.toLowerCase(),
         );
-        const content = rewriteOwnerPronouns(
-          buildDelegationMessage({
-            personName: assignedTo!,
-            taskText: item.description,
-            personNotes: assignedPerson?.notes ?? null,
+        const content = injectPersonalNote(
+          rewriteOwnerPronouns(
+            buildDelegationMessage({
+              personName: assignedTo!,
+              taskText: item.description,
+              personNotes: assignedPerson?.notes ?? null,
+              ownerName,
+            }),
             ownerName,
-          }),
-          ownerName,
+          ),
+          item.personalNote,
         );
         if (content && assignedTo) {
           const msg = await createMessage({
@@ -257,17 +283,22 @@ export async function savePending(
       // recipient reads the message correctly — this is a code-side safety net
       // in addition to the prompt-level instruction, because LLM output is not
       // guaranteed and displayName may not have been loaded at extraction time.
+      // injectPersonalNote appends any personal/emotional/status note from the
+      // extraction before the closing confirmation sentence so it is never dropped.
       const assignedPerson = people.find(
         (person) => person.name.trim().toLowerCase() === assignedTo.toLowerCase(),
       );
-      const content = rewriteOwnerPronouns(
-        buildDelegationMessage({
-          personName: assignedTo,
-          taskText: item.description,
-          personNotes: assignedPerson?.notes ?? null,
+      const content = injectPersonalNote(
+        rewriteOwnerPronouns(
+          buildDelegationMessage({
+            personName: assignedTo,
+            taskText: item.description,
+            personNotes: assignedPerson?.notes ?? null,
+            ownerName,
+          }),
           ownerName,
-        }),
-        ownerName,
+        ),
+        item.personalNote,
       );
       if (content && assignedTo) {
         const msg = await createMessage({

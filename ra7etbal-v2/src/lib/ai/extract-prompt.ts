@@ -256,43 +256,61 @@ Example O. Input: "Ask Loulya to call me and tell her I love her."
     type: "delegation"
     assignedTo: "Loulya"
     description: "Call ${ownerRef}."
-    suggestedMessage: "Can you please call ${ownerRef}? Also, ${ownerRef} says she loves you."
+    personalNote: "${ownerRef} says she loves you."
+    suggestedMessage: "Can you please call ${ownerRef}? ${ownerRef} says she loves you."
   ✗ FORBIDDEN (do not produce):
     item 1: type "delegation", description "Call now." / "Call ${ownerRef}."
     item 2: type "message", description "Tell Loulya I love her." / "I love you."
   Reasoning: one person, one compound sentence. The action (call) creates the
-  delegation. The personal note is folded into suggestedMessage — not its own item.
+  delegation. The personal note goes into personalNote and suggestedMessage.
+  It is NEVER its own item.
 
 Example P. Input: "Ask Grace to bring flowers and tell her thank you."
   Output (ONE item only):
     type: "delegation"
     assignedTo: "Grace"
     description: "Bring flowers."
-    suggestedMessage: "Can you please bring flowers? Also, ${ownerRef} says thank you."
+    personalNote: "${ownerRef} says thank you."
+    suggestedMessage: "Can you please bring flowers? ${ownerRef} says thank you."
   ✗ FORBIDDEN: two items (delegation + message).
+
+Example Q. Input: "Ask Grace to wait for me, I am on my way."
+  Output (ONE item only):
+    type: "delegation"
+    assignedTo: "Grace"
+    description: "Wait for ${ownerRef}."
+    personalNote: "${ownerRef} is on her way."
+    suggestedMessage: "Could you wait for ${ownerRef}? ${ownerRef} is on her way."
+  Reasoning: "I am on my way" is a status clause, not a separate task.
+  It goes into personalNote — never its own item.
 
 ================================================================
 RULE 2 — PERSONAL NOTE INSIDE A DELEGATION (anti-split rule)
 ================================================================
 
 When a single sentence asks ONE person to perform an action AND also
-includes a personal note, emotional statement, or informational addendum
-directed at that SAME person ("tell her I love her", "tell him thank you",
-"let her know I appreciate it", "and say I'm grateful"), produce ONE item:
+includes a personal note, emotional statement, status clause, or
+informational addendum directed at that SAME person
+("tell her I love her", "tell him thank you", "I am on my way",
+"let her know I appreciate it", "and say I'm grateful"),
+produce ONE item:
 
   - type: delegation (driven by the actionable request)
-  - description: the actionable task only
-  - suggestedMessage: action request + personal note appended naturally
+  - description: the actionable task only — no note text here
+  - personalNote: the note, rewritten to second person (see pronoun rules)
+  - suggestedMessage: action request + personalNote combined
 
 Pattern: "Ask/Tell [Person] to [ACTION] and tell her/him [NOTE]"
+OR:      "Ask [Person] to [ACTION], [STATUS CLAUSE]"
 → ONE delegation item. The note is NEVER its own item.
 
-The note goes into suggestedMessage as a second sentence:
-  "Can you please [action]? Also, [ownerRef] says [note in second person]."
+personalNote pronoun rules (owner → recipient perspective):
+  "tell her I love her"  → "${ownerRef} says she loves you"
+  "tell him thank you"   → "${ownerRef} says thank you"
+  "I am on my way"       → "${ownerRef} is on her way"  (or "his way" as appropriate)
+  "I appreciate it"      → "${ownerRef} appreciates it"
 
-Pronoun rules still apply to the note portion:
-  "tell her I love her" → "[ownerRef] says she loves you"
-  "tell him thank you"  → "[ownerRef] says thank you"
+Always set personalNote to null when no note is present.
 
 ================================================================
 RULE 3 — INFORMATIONAL MESSAGE, NO CONFIRMATION LOOP
@@ -430,6 +448,7 @@ Ra7etBal generates the review subtitle on the client.
       "dueText": "natural due phrase for reminders, or null",
       "dueAt": "ISO 8601 timestamp for reminders, or null",
       "suggestedMessage": "short natural message if this involves another person, otherwise null",
+      "personalNote": "personal/emotional/status note to include in message body but NOT as a separate task — see RULE 2. null when no note is present.",
       "needsPerson": false,
       "needsClarification": false,
       "clarificationQuestion": "SHORT NOTE (3-6 words) naming a missing practical detail, or null. NEVER a full question. See examples below."
