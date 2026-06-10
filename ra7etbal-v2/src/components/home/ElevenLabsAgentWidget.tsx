@@ -9,6 +9,7 @@ import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
+import { injectPersonalNote, normalizePersonalNote } from "../../lib/personal-note";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
@@ -59,25 +60,6 @@ interface DelegationSendOptions {
    *  "Sana says she misses you." — never tracked as a separate task. */
   personalNote?: string | null;
   ownerName?: string | null;
-}
-
-// ---------------------------------------------------------------------------
-// Personal-note helpers (mirrors save.ts — kept inline to avoid circular import)
-// ---------------------------------------------------------------------------
-
-/**
- * Inject a personal note before the closing sentence of a delegation message.
- * "Hi Grace, could you call Sana? Confirm when done."
- * → "Hi Grace, could you call Sana? Sana says she misses you. Confirm when done."
- */
-function injectPersonalNote(message: string, note: string | null | undefined): string {
-  if (!note?.trim()) return message;
-  const n = note.trim();
-  const match = /^([\s\S]*[.?!])\s+([^.?!\s][^.?!]*[.?!]?\s*)$/.exec(message);
-  if (match) {
-    return `${match[1]} ${n} ${match[2].trim()}`.trimEnd();
-  }
-  return `${message} ${n}`;
 }
 
 /**
@@ -138,12 +120,18 @@ async function createAndSendDelegation({
   //   1. personalNote param (explicit — from updated dashboard prompt or execute_instruction)
   //   2. extracted from agent-provided message (best-effort, current dashboard compat)
   //   3. null — no note injected
-  const resolvedNote =
+  const rawNote =
     personalNote?.trim() ||
     extractNoteFromAgentMessage(message, taskText) ||
     null;
+  // Normalize the raw note into natural recipient-facing language before
+  // injection — ensures bare expressions like "Thank you" become
+  // "Sana says thank you." and avoids dropping or mangling the note.
+  const resolvedNote = rawNote
+    ? normalizePersonalNote(rawNote, ownerName)
+    : null;
 
-  const rawMessage = injectPersonalNote(
+  const messageText = injectPersonalNote(
     rewriteOwnerPronouns(
       buildDelegationMessage({
         personName: person.name,
@@ -155,7 +143,6 @@ async function createAndSendDelegation({
     ),
     resolvedNote,
   );
-  const messageText = rawMessage;
 
   const taskRowId = crypto.randomUUID();
   const confirmationUrl = `${window.location.origin}/confirm?task=${taskRowId}`;

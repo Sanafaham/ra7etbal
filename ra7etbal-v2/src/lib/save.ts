@@ -1,5 +1,6 @@
 import { createMessage } from "./messages";
 import { buildDelegationMessage } from "./delegation-message";
+import { injectPersonalNote, normalizePersonalNote } from "./personal-note";
 import { resizeImage, uploadTaskImage } from "./image-upload";
 import { scheduleReminderPush } from "./qstash-reminder";
 import { supabase } from "./supabase";
@@ -19,29 +20,6 @@ import type { Task } from "../types/task";
  * Falls back to "the sender" when no ownerName is provided so the
  * message still reads naturally.
  */
-/**
- * Inject a personal/informational note into a formatted delegation message,
- * positioned before the closing confirmation sentence.
- *
- * buildDelegationMessage produces: "[greeting+action]. [closing]."
- * This helper inserts the note so the result reads:
- *   "[greeting+action]. [note] [closing]."
- *
- * Handles both ". " and "? " sentence boundaries. Falls back to appending
- * the note at the end if no boundary is found.
- */
-function injectPersonalNote(message: string, note: string | null | undefined): string {
-  if (!note?.trim()) return message;
-  const n = note.trim();
-  // Split at last sentence boundary: find last ". " or "? " that has text after it.
-  const match = /^([\s\S]*[.?!])\s+([^.?!\s][^.?!]*[.?!]?\s*)$/.exec(message);
-  if (match) {
-    return `${match[1]} ${n} ${match[2].trim()}`.trimEnd();
-  }
-  // Single-sentence or no match — append at end.
-  return `${message} ${n}`;
-}
-
 function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
   const name = ownerName?.trim() || "the sender";
   return text
@@ -215,7 +193,7 @@ export async function savePending(
             }),
             ownerName,
           ),
-          item.personalNote,
+          normalizePersonalNote(item.personalNote ?? "", ownerName),
         );
         if (content && assignedTo) {
           const msg = await createMessage({
@@ -298,7 +276,7 @@ export async function savePending(
           }),
           ownerName,
         ),
-        item.personalNote,
+        normalizePersonalNote(item.personalNote ?? "", ownerName),
       );
       if (content && assignedTo) {
         const msg = await createMessage({
