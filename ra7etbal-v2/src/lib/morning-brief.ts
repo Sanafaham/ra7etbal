@@ -20,6 +20,8 @@
 import { isReminderOverdue, formatReminderDue } from "./reminder-time";
 import type { Task } from "../types/task";
 import type { Person } from "../types/person";
+import type { CalendarEvent } from "./calendar";
+import { formatEventTime } from "./calendar";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -174,6 +176,7 @@ export function buildMorningBriefSpoken(
   people: Person[],
   displayName?: string | null,
   now = new Date(),
+  calendarEvents?: CalendarEvent[],
 ): string {
   const brief = buildMorningBrief(tasks, people, now);
   const name = displayName?.trim() || null;
@@ -335,6 +338,23 @@ export function buildMorningBriefSpoken(
     }
   } else if (completions.length > 2) {
     sentences.push(`${spokenCount(completions.length)} tasks were confirmed in the last 24 hours.`);
+  }
+
+  // ── Calendar events ───────────────────────────────────────────────────────
+  const calEvents = calendarEvents ?? [];
+  const todayEvents = calEvents.slice(0, 3); // cap at 3 to keep brief concise
+  if (todayEvents.length === 1) {
+    const ev = todayEvents[0];
+    const timeStr = formatEventTime(ev, now);
+    sentences.push(`On your calendar: ${ev.title} ${timeStr}.`);
+  } else if (todayEvents.length === 2) {
+    sentences.push(
+      `On your calendar today: ${todayEvents[0].title} and ${todayEvents[1].title}.`,
+    );
+  } else if (todayEvents.length >= 3) {
+    sentences.push(
+      `You have ${spokenCount(todayEvents.length)} events on your calendar today.`,
+    );
   }
 
   // ── Reassurance close ────────────────────────────────────────────────────

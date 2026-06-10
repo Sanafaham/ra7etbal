@@ -19,13 +19,17 @@
 
 import type { Person } from "../types/person";
 import type { Task } from "../types/task";
+import type { CalendarEvent } from "./calendar";
 import { formatReminderDue } from "./reminder-time";
+import { formatEventTime } from "./calendar";
 
 export interface CarsonContextInput {
   tasks: Task[];
   people: Person[];
   email?: string | null;
   now?: Date;
+  /** Upcoming calendar events from Google Calendar (optional). */
+  calendarEvents?: CalendarEvent[];
 }
 
 /**
@@ -60,6 +64,17 @@ export function buildCarsonContext(input: CarsonContextInput): string {
     lines.push(`People: ${items.join("; ")}`);
   } else {
     lines.push("People: none saved.");
+  }
+
+  // ── Calendar ──────────────────────────────────────────────────────────────
+  const calEvents = input.calendarEvents ?? [];
+  if (calEvents.length > 0) {
+    lines.push("UPCOMING CALENDAR:");
+    for (const ev of calEvents.slice(0, 10)) {
+      const timeLabel = formatEventTime(ev, now);
+      const loc = ev.location ? ` (${ev.location})` : "";
+      lines.push(`- ${timeLabel}: ${ev.title}${loc}`);
+    }
   }
 
   const unarchived = tasks.filter((t) => t.archived_at == null);

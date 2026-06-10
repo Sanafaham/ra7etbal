@@ -16,6 +16,7 @@ import { usePeopleStore } from "../stores/people";
 import { useProfileStore } from "../stores/profile";
 import { buildCarsonContext } from "../lib/carson-context";
 import { useTasksStore } from "../stores/tasks";
+import { fetchCalendarEvents, type CalendarEvent } from "../lib/calendar";
 
 export default function Home() {
   const { user } = useAuth();
@@ -48,6 +49,7 @@ export default function Home() {
   const [textareaFocused, setTextareaFocused] = useState(false);
   const [viewportShrunk, setViewportShrunk] = useState(false);
   const submittingRef = useRef(false);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
   useEffect(() => {
     if (!userId) return;
@@ -63,6 +65,14 @@ export default function Home() {
     if (!userId) return;
     void loadProfile(userId);
   }, [userId, loadProfile]);
+
+  // Load today's calendar events on mount (fire-and-load — never blocks render).
+  useEffect(() => {
+    if (!userId) return;
+    fetchCalendarEvents("today").then((result) => {
+      if (result.connected) setCalendarEvents(result.events);
+    }).catch(() => {});
+  }, [userId]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setNow(new Date()), 30_000);
@@ -105,12 +115,12 @@ export default function Home() {
     [brief, now],
   );
   const elevenLabsBriefStateText = useMemo(
-    () => buildCarsonContext({ tasks, people, email: user?.email, now }),
-    [tasks, people, user?.email, now],
+    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents }),
+    [tasks, people, user?.email, now, calendarEvents],
   );
   const spokenBrief = useMemo(
-    () => buildMorningBriefSpoken(tasks, people, displayName, now),
-    [tasks, people, displayName, now],
+    () => buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents),
+    [tasks, people, displayName, now, calendarEvents],
   );
   const supportingLines = statusSummary.lines;
 
@@ -213,12 +223,14 @@ export default function Home() {
                   people,
                   email: user?.email,
                   now: freshNow,
+                  calendarEvents,
                 }),
                 spokenBrief: buildMorningBriefSpoken(
                   freshTasks,
                   people,
                   displayName,
                   freshNow,
+                  calendarEvents,
                 ),
               };
             }}

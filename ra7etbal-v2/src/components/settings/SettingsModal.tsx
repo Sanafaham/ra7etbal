@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import AuthNotice from "../auth/AuthNotice";
 import Spinner from "../Spinner";
 import Modal from "../ui/Modal";
 import { archiveCompleted } from "../../lib/archive";
 import { clearUserData } from "../../lib/cleanup";
+import { supabase } from "../../lib/supabase";
 import {
   checkPushSupport,
   enableReminderNotifications,
@@ -25,6 +26,7 @@ type View = "list" | "confirm-clear" | "confirm-archive";
 
 export default function SettingsModal({ open, onClose, userId }: Props) {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [view, setView] = useState<View>("list");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<
@@ -33,10 +35,25 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
 
   const profileStore = useProfileStore();
 
+  // Detect Google Calendar OAuth callback result via URL params.
+  useEffect(() => {
+    const calParam = searchParams.get("calendar");
+    if (!calParam) return;
+    // Strip the param from URL without triggering a navigation
+    const next = new URLSearchParams(searchParams);
+    next.delete("calendar");
+    setSearchParams(next, { replace: true });
+
+    if (calParam === "connected") {
+      setNotice({ kind: "success", text: "Google Calendar connected." });
+    } else if (calParam === "error") {
+      setNotice({ kind: "error", text: "Couldn't connect Google Calendar. Please try again." });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     if (open) {
       setView("list");
-      setNotice(null);
       if (userId && profileStore.status === "idle") {
         void profileStore.loadFor(userId);
       }
@@ -218,6 +235,10 @@ function SettingsList({
 
       <Group label="Workspace">
         <ActionRow label="Clear history" onClick={onClickClear} />
+      </Group>
+
+      <Group label="Integrations">
+        <GoogleCalendarRow userId={userId} />
       </Group>
 
       <Group label="Reminders">
@@ -575,6 +596,65 @@ function getReminderStatusText(status: PushNotificationStatus, busy: boolean): s
     case "idle":
       return "Off";
   }
+}
+
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Shows Google Calendar connection status and a connect/reconnect button.
+ * Checks profiles.google_calendar_connected_at to determine current state.
+ * Connect action redirects to /api/google-calendar-auth (server-side OAuth flow).
+ */
+function GoogleCalendarRow({ userId }: { userId: string | null }) {
+  const [connected, setConnected] = useState<boolean | null>(null); // null = loading
+
+  useEffect(() => {
+    if (!userId) { setConnected(false); return; }
+    let cancelled = false;
+    supabase
+      .from("profiles")
+      .select("google_calendar_connected_at")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setConnected(!!data?.google_calendar_connected_at);
+      })
+      .catch(() => { if (!cancelled) setConnected(false); });
+    return () => { cancelled = true; };
+  }, [userId]);
+
+  function handleConnect() {
+    if (!userId) return;
+    // Full page redirect — OAuth flow requires browser navigation.
+    window.location.href = `/api/google-calendar-auth?userId=${encodeURIComponent(userId)}`;
+  }
+
+  const statusText =
+    connected === null
+      ? "Checking…"
+      : connected
+        ? "Connected — tap to reconnect"
+        : "Not connected";
+
+  const dotColor =
+    connected === null ? "bg-ink/20" : connected ? "bg-sage" : "bg-ink/20";
+
+  return (
+    <button
+      type="button"
+      onClick={handleConnect}
+      disabled={!userId || connected === null}
+      className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 disabled:cursor-default disabled:hover:bg-transparent last:border-b-0"
+    >
+      <span className="min-w-0">
+        <span className="block text-base text-ink">Google Calendar</span>
+        <span className="block text-xs text-ink/55">{statusText}</span>
+      </span>
+      <span aria-hidden className={`h-3 w-3 shrink-0 rounded-full ${dotColor}`} />
+    </button>
+  );
 }
 
 // ---------------------------------------------------------------------------
