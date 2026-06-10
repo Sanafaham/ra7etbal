@@ -8,22 +8,15 @@
  * Authentication: Supabase JWT in Authorization header (Bearer token).
  * The refresh_token is NEVER returned to the client.
  *
+ * Uses raw fetch against Supabase REST/Auth APIs (no @supabase/supabase-js import)
+ * to keep function bundle size small — consistent with all other api/*.js files.
+ *
  * Response shape:
  *   { connected: true, events: [{ id, title, start, end, location?, allDay }] }
  *   { connected: false }          — no token stored
  *   { connected: false, revoked: true } — Google returned 401 (token revoked)
  *   { error: "..." }              — unexpected server error
  */
-
-import { createClient } from "@supabase/supabase-js";
-
-function adminClient() {
-  return createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
-    { auth: { persistSession: false } },
-  );
-}
 
 /** Exchange a refresh token for a fresh access token. */
 async function getAccessToken(refreshToken) {
@@ -53,7 +46,6 @@ async function getAccessToken(refreshToken) {
 /** Compute [timeMin, timeMax] for the requested range (ISO strings). */
 function getTimeRange(range) {
   const now = new Date();
-  // Start of today local (use UTC midnight approximation — Google handles TZ)
   const todayStart = new Date(now);
   todayStart.setHours(0, 0, 0, 0);
 
@@ -66,7 +58,6 @@ function getTimeRange(range) {
       return [start.toISOString(), end.toISOString()];
     }
     case "this_week": {
-      // Next 7 days from now
       const end = new Date(now);
       end.setDate(end.getDate() + 7);
       return [now.toISOString(), end.toISOString()];
@@ -92,6 +83,13 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl || !serviceKey) {
+    return res.status(500).json({ error: "Server misconfigured" });
+  }
+
   // ── 1. Authenticate Supabase user via JWT ───────────────────────────────
   const authHeader = req.headers.authorization ?? "";
   const jwt = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
@@ -99,39 +97,69 @@ export default async function handler(req, res) {
     return res.status(401).json({ error: "Unauthorized" });
   }
 
-  const supabase = adminClient();
-  const { data: userData, error: userError } = await supabase.auth.getUser(jwt);
-  if (userError || !userData?.user) {
+  // Verify JWT via Supabase Auth REST API
+  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: {
+      "apikey": serviceKey,
+      "Authorization": `Bearer ${jwt}`,
+    },
+  });
+
+  if (!userRes.ok) {
     return res.status(401).json({ error: "Unauthorized" });
   }
-  const userId = userData.user.id;
+
+  const userData = await userRes.json().catch(() => null);
+  const userId = userData?.id;
+  if (!userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
 
   // ── 2. Load refresh token from profiles ─────────────────────────────────
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("google_refresh_token")
-    .eq("id", userId)
-    .maybeSingle();
+  const profileRes = await fetch(
+    `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=google_refresh_token`,
+    {
+      headers: {
+        "apikey": serviceKey,
+        "Authorization": `Bearer ${serviceKey}`,
+      },
+    },
+  );
 
-  if (profileError) {
-    console.error("[google-calendar-events] Profile load error:", profileError.message);
+  if (!profileRes.ok) {
+    console.error("[google-calendar-events] Profile load error:", profileRes.status);
     return res.status(500).json({ error: "Server error" });
   }
 
-  if (!profile?.google_refresh_token) {
+  const profiles = await profileRes.json().catch(() => []);
+  const refreshToken = profiles?.[0]?.google_refresh_token;
+
+  if (!refreshToken) {
     return res.status(200).json({ connected: false });
   }
 
   // ── 3. Exchange refresh token for access token ───────────────────────────
-  const tokenResult = await getAccessToken(profile.google_refresh_token);
+  const tokenResult = await getAccessToken(refreshToken);
 
   if (!tokenResult.ok) {
     if (tokenResult.revoked) {
       // Clear stale token so UI shows disconnected state
-      await supabase
-        .from("profiles")
-        .update({ google_refresh_token: null, google_calendar_connected_at: null })
-        .eq("id", userId);
+      await fetch(
+        `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "apikey": serviceKey,
+            "Authorization": `Bearer ${serviceKey}`,
+            "Prefer": "return=minimal",
+          },
+          body: JSON.stringify({
+            google_refresh_token: null,
+            google_calendar_connected_at: null,
+          }),
+        },
+      ).catch(() => {});
       return res.status(200).json({ connected: false, revoked: true });
     }
     return res.status(500).json({ error: "Could not authenticate with Google" });
@@ -154,11 +182,23 @@ export default async function handler(req, res) {
   });
 
   if (calRes.status === 401) {
-    // Access token unexpectedly rejected — clear stored token
-    await supabase
-      .from("profiles")
-      .update({ google_refresh_token: null, google_calendar_connected_at: null })
-      .eq("id", userId);
+    // Clear stored token on auth error
+    await fetch(
+      `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`,
+      {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": serviceKey,
+          "Authorization": `Bearer ${serviceKey}`,
+          "Prefer": "return=minimal",
+        },
+        body: JSON.stringify({
+          google_refresh_token: null,
+          google_calendar_connected_at: null,
+        }),
+      },
+    ).catch(() => {});
     return res.status(200).json({ connected: false, revoked: true });
   }
 
@@ -179,7 +219,7 @@ export default async function handler(req, res) {
       start: item.start?.dateTime ?? item.start?.date ?? null,
       end: item.end?.dateTime ?? item.end?.date ?? null,
       location: item.location ?? null,
-      allDay: !item.start?.dateTime, // date-only entries are all-day
+      allDay: !item.start?.dateTime,
     }));
 
   return res.status(200).json({ connected: true, events });
