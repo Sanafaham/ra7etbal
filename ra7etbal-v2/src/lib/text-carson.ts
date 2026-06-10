@@ -1,7 +1,7 @@
 import type { Person } from "../types/person";
 import type { Task } from "../types/task";
-import { loadUserMemory } from "./carson-facts";
-import { loadRecentMemory } from "./carson-memory";
+import { loadUserMemory, upsertUserFacts } from "./carson-facts";
+import { loadRecentMemory, saveSessionMemory } from "./carson-memory";
 import { listTasks } from "./tasks";
 import { saveInboxItem } from "./inbox";
 import { buildCarsonContext } from "./carson-context";
@@ -10,6 +10,8 @@ import { extractItems } from "./ai/extract";
 import { savePending } from "./save";
 import { sendWhatsAppTask } from "./whatsapp";
 import { useTasksStore } from "../stores/tasks";
+import { summarizeConversation } from "./carson-summarize";
+import { extractDurableFacts } from "./carson-fact-extract";
 
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 500;
@@ -349,6 +351,18 @@ export async function executeDelegationFromText(
   }
 
   if (parts.length === 0) return "Saved.";
+
+  // ── Fire-and-forget memory writes ────────────────────────────────────────
+  // Mirror what Voice Carson does post-session: summarise the user's instruction
+  // and extract any durable facts (preferences, people notes, routines).
+  // Best-effort only — never blocks the UI response.
+  const memoryTranscript = [{ role: "user" as const, message: input }];
+  summarizeConversation(memoryTranscript)
+    .then((sessionSummary) => { if (sessionSummary) return saveSessionMemory(sessionSummary); })
+    .catch(() => {});
+  extractDurableFacts(memoryTranscript)
+    .then((facts) => { if (facts.length > 0) return upsertUserFacts(context.userId!, facts); })
+    .catch(() => {});
 
   // Capitalise first word and end with a period.
   const summary = parts.join(", ");

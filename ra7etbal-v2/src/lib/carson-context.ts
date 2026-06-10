@@ -53,7 +53,7 @@ export function buildCarsonContext(input: CarsonContextInput): string {
     const items = people.slice(0, 12).map((p) => {
       const role = p.role?.trim() ? ` (${p.role.trim()})` : "";
       const notes = p.notes?.trim()
-        ? ` — ${p.notes.trim().replace(/\s+/g, " ").slice(0, 120)}`
+        ? ` — ${p.notes.trim().replace(/\s+/g, " ").slice(0, 300)}`
         : "";
       return `${p.name.trim()}${role}${notes}`;
     });
