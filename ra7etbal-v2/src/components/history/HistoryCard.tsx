@@ -77,11 +77,19 @@ export default function HistoryCard({ task, message }: Props) {
           <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/70">
             Proof photo
           </p>
-          <img
-            src={signedProofImageUrl}
-            alt="Proof photo from recipient"
-            className="max-h-40 w-full rounded-xl border border-emerald-200 object-cover shadow-sm"
-          />
+          <a
+            href={signedProofImageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open proof photo full size"
+            className="block"
+          >
+            <img
+              src={signedProofImageUrl}
+              alt="Proof photo from recipient"
+              className="max-h-40 w-full rounded-xl border border-emerald-200 object-cover shadow-sm transition hover:opacity-90"
+            />
+          </a>
         </div>
       )}
 
