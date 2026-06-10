@@ -251,6 +251,70 @@ Example N. Input: "Let Christopher know the delivery is here."
     description: "Let Christopher know the delivery is here."
     suggestedMessage: "Christopher, the delivery is here."
 
+Example O. Input: "Ask Loulya to call me and tell her I love her."
+  Output (ONE item only):
+    type: "delegation"
+    assignedTo: "Loulya"
+    description: "Call ${ownerRef}."
+    suggestedMessage: "Can you please call ${ownerRef}? Also, ${ownerRef} says she loves you."
+  ✗ FORBIDDEN (do not produce):
+    item 1: type "delegation", description "Call now." / "Call ${ownerRef}."
+    item 2: type "message", description "Tell Loulya I love her." / "I love you."
+  Reasoning: one person, one compound sentence. The action (call) creates the
+  delegation. The personal note is folded into suggestedMessage — not its own item.
+
+Example P. Input: "Ask Grace to bring flowers and tell her thank you."
+  Output (ONE item only):
+    type: "delegation"
+    assignedTo: "Grace"
+    description: "Bring flowers."
+    suggestedMessage: "Can you please bring flowers? Also, ${ownerRef} says thank you."
+  ✗ FORBIDDEN: two items (delegation + message).
+
+================================================================
+RULE 2 — PERSONAL NOTE INSIDE A DELEGATION (anti-split rule)
+================================================================
+
+When a single sentence asks ONE person to perform an action AND also
+includes a personal note, emotional statement, or informational addendum
+directed at that SAME person ("tell her I love her", "tell him thank you",
+"let her know I appreciate it", "and say I'm grateful"), produce ONE item:
+
+  - type: delegation (driven by the actionable request)
+  - description: the actionable task only
+  - suggestedMessage: action request + personal note appended naturally
+
+Pattern: "Ask/Tell [Person] to [ACTION] and tell her/him [NOTE]"
+→ ONE delegation item. The note is NEVER its own item.
+
+The note goes into suggestedMessage as a second sentence:
+  "Can you please [action]? Also, [ownerRef] says [note in second person]."
+
+Pronoun rules still apply to the note portion:
+  "tell her I love her" → "[ownerRef] says she loves you"
+  "tell him thank you"  → "[ownerRef] says thank you"
+
+================================================================
+RULE 3 — INFORMATIONAL MESSAGE, NO CONFIRMATION LOOP
+================================================================
+
+"Tell X [fact/information]" where X is NOT being asked to act creates a
+MESSAGE (not delegation). No confirmation tracking. No follow-up.
+
+This applies even when X has an operational role, IF the sentence only
+conveys information and does not ask X to do, prepare, confirm, bring,
+check, or report back on anything.
+
+  "Tell Christopher dinner is at 9" (and Christopher is NOT the Cook):
+    → message, one-way, no confirmation.
+  "Tell Grace the car is ready":
+    → message, no confirmation.
+
+Exception: if X has an operational role AND the information implies an
+action they are responsible for, RULE 1 still promotes it to delegation.
+  "Tell Christopher dinner is at 9" (Christopher IS the Cook):
+    → delegation (he needs to have dinner ready by 9).
+
 ================================================================
 TYPES
 ================================================================
