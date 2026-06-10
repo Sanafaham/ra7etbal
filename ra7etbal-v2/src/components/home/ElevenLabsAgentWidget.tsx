@@ -8,7 +8,6 @@ import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { buildDelegationMessage } from "../../lib/delegation-message";
-import { CARSON_STATUS_POLICY } from "../../lib/carson-status-policy";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
@@ -866,16 +865,6 @@ export default function ElevenLabsAgentWidget({
     try {
       const conv = await Conversation.startSession({
         agentId,
-        overrides: {
-          agent: {
-            prompt: {
-              // Inject shared status-answer policy so Voice Carson follows the
-              // same answer structure as Text Carson for status questions.
-              // This appends to (or replaces) the ElevenLabs dashboard prompt.
-              prompt: CARSON_STATUS_POLICY,
-            },
-          },
-        },
         dynamicVariables: {
           // Sanitize all speech-bound text so ElevenLabs never receives the
           // Latin "Ra7etBal" string — it mispronounces it. Arabic is correct.
