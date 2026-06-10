@@ -12,6 +12,7 @@ import { sendWhatsAppTask } from "./whatsapp";
 import { useTasksStore } from "../stores/tasks";
 import { summarizeConversation } from "./carson-summarize";
 import { extractDurableFacts } from "./carson-fact-extract";
+import { updatePeopleInsightsFromTasks } from "./people-behavior";
 
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 500;
@@ -363,6 +364,9 @@ export async function executeDelegationFromText(
   extractDurableFacts(memoryTranscript)
     .then((facts) => { if (facts.length > 0) return upsertUserFacts(context.userId!, facts); })
     .catch(() => {});
+  // Behavioral insight: update people.notes for anyone mentioned in the input
+  // based on their observed task-completion history. Requires ≥3 completed tasks.
+  updatePeopleInsightsFromTasks(input, context.people, context.tasks).catch(() => {});
 
   // Capitalise first word and end with a period.
   const summary = parts.join(", ");

@@ -10,6 +10,7 @@ import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
+import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/people-behavior";
 import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "../../lib/personal-note";
 import { composeMergedMessage } from "../../lib/ai/compose-message";
 import { createMessage } from "../../lib/messages";
@@ -340,15 +341,7 @@ function extractDurablePersonMemories(
   return updates;
 }
 
-function mergePersonNotes(existing: string | null | undefined, addition: string): string {
-  const existingText = normalizeMemoryText(existing ?? "");
-  const additionText = normalizeMemoryText(addition);
-  if (!existingText) return additionText;
-  if (existingText.toLowerCase().includes(additionText.toLowerCase())) {
-    return existingText;
-  }
-  return `${existingText}\n${additionText}`.slice(0, 1_000);
-}
+// mergePersonNotes is imported from ../../lib/people-behavior
 
 function extractDinnerPreparationRequest(sourceText: string): { timeLabel: string; taskText: string; messageText: string } | null {
   const match = /\bdinner\s+(?:is|starts|will be|begins)\s+(?:at\s+)?(?<time>(?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:am|pm|a\.m\.|p\.m\.)?)\b/i.exec(
@@ -1177,6 +1170,12 @@ export default function ElevenLabsAgentWidget({
             if (userId) {
               await maybeSendImpliedDinnerDelegation(userId);
               await savePeopleMemoryFromTranscript(userId, transcript);
+              // Behavioral insight: update people.notes based on task history.
+              // Uses the full transcript as the "input text" for name detection.
+              const transcriptText = transcript.map((m) => m.message).join(" ");
+              const peopleNow = usePeopleStore.getState().items;
+              const tasksNow = useTasksStore.getState().items;
+              updatePeopleInsightsFromTasks(transcriptText, peopleNow, tasksNow).catch(() => {});
               try {
                 const facts = await extractDurableFacts(transcript);
                 await upsertUserFacts(userId, facts);
