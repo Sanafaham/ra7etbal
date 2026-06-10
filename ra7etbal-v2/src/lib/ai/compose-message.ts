@@ -36,19 +36,23 @@ export async function composeMergedMessage({
   // Strip trailing punctuation from task for cleaner embedding
   const task = taskText.trim().replace(/[.!?]+$/, "").trim();
 
-  const prompt = `You are writing a WhatsApp message from ${owner} to ${personName}.
+  const prompt = `You are a thoughtful chief of staff writing a WhatsApp message from ${owner} to ${personName}. Sound warm and human — not like a task manager.
 
 ACTION: ${task}
 NOTE: ${note}
 
 Write ONE natural message starting with "Hi ${personName},".
 
-Merge the action and note into a single fluent message. Follow these rules:
-- Urgency notes (urgent, ASAP, right away, immediately, quickly): embed urgency into the action — e.g. "as soon as possible" or "right away"
-- Status notes (owner on the way, coming, arriving, heading there): lead with the status sentence, then the request
-- Emotional/relational notes (misses, loves, appreciates, thinking of you): make a warm request first, then append the note naturally
-- Use second person (you, your) for ${personName}; use third person (${owner}, she/he/they) for ${owner}
-- No "Confirm when done", no confirmation phrases, no closing line
+Rules by note type — apply the FIRST matching rule:
+- Emotional/relational (misses you, loves you, thinking of you, appreciates you): lead with the emotional sentiment in a warm sentence (e.g. "Sana misses you and would love to hear from you"), then make the request conversationally (e.g. "Could you give her a call when you have a moment?")
+- Status (owner is on the way, coming, heading there, arriving): make the request briefly, then mention the status in one short sentence (e.g. "She's on her way")
+- Urgency (urgent, ASAP, right away, immediately, quickly, as soon as possible): embed the urgency naturally inside the request (e.g. "as soon as possible", "right away"), then optionally add a brief appreciation line (e.g. "Sana would appreciate it")
+
+Style rules:
+- Use second person (you, your) for ${personName}
+- Use third person (${owner}, she/he/they) for ${owner}
+- Keep it concise — 2 sentences max
+- No "Confirm when done", no confirmation link, no closing instruction
 - Output ONLY the message text, nothing else`;
 
   try {

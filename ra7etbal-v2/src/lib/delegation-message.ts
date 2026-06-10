@@ -71,7 +71,6 @@ export function buildDelegationMessage({
   const task = cleanTaskText(taskText);
   const notes = (personNotes ?? "").toLowerCase();
   const taskLower = task.toLowerCase();
-  const taskSentence = sentenceCase(task);
   const context = classifyTask(taskLower);
 
   // ── Over-control / bossy ──────────────────────────────────────────────────
@@ -131,7 +130,8 @@ export function buildDelegationMessage({
   if (context === "verification") {
     return `Hi ${name}, could you ${lowerFirst(task)} and let ${owner} know what you find?`;
   }
-  return `Hi ${name}, could you please ${taskSentence}? Let ${owner} know when done.`;
+  // Use lowerFirst so "call Sana" stays lowercase after "could you please".
+  return `Hi ${name}, could you ${lowerFirst(task)}? Let ${owner} know when done.`;
 }
 
 function hasAny(value: string, needles: string[]): boolean {
@@ -144,8 +144,4 @@ function cleanTaskText(value: string): string {
 
 function lowerFirst(value: string): string {
   return value ? value.charAt(0).toLowerCase() + value.slice(1) : value;
-}
-
-function sentenceCase(value: string): string {
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
