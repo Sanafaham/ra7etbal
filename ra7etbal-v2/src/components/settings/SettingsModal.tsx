@@ -644,18 +644,28 @@ function GoogleCalendarRow({ userId }: { userId: string | null }) {
     connected === null ? "bg-ink/20" : connected ? "bg-sage" : "bg-ink/20";
 
   return (
-    <button
-      type="button"
-      onClick={handleConnect}
-      disabled={!userId || connected === null}
-      className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 disabled:cursor-default disabled:hover:bg-transparent last:border-b-0"
-    >
-      <span className="min-w-0">
-        <span className="block text-base text-ink">Google Calendar</span>
-        <span className="block text-xs text-ink/55">{statusText}</span>
-      </span>
-      <span aria-hidden className={`h-3 w-3 shrink-0 rounded-full ${dotColor}`} />
-    </button>
+    <div className="border-b border-sage/10 px-4 py-3 last:border-b-0">
+      <button
+        type="button"
+        onClick={handleConnect}
+        disabled={!userId || connected === null}
+        className="flex w-full items-center justify-between gap-3 text-left transition disabled:cursor-default"
+      >
+        <span className="min-w-0">
+          <span className="flex items-center gap-1.5">
+            <span className="block text-base text-ink">Google Calendar</span>
+            <span className="rounded-full bg-gold-soft/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+              Beta
+            </span>
+          </span>
+          <span className="block text-xs text-ink/55">{statusText}</span>
+        </span>
+        <span aria-hidden className={`h-3 w-3 shrink-0 rounded-full ${dotColor}`} />
+      </button>
+      <p className="mt-1 text-[11px] leading-snug text-ink/40">
+        Available to approved test accounts while we finish Google verification.
+      </p>
+    </div>
   );
 }
 
