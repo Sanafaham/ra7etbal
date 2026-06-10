@@ -9,7 +9,7 @@ import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
-import { injectPersonalNote, normalizePersonalNote } from "../../lib/personal-note";
+import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "../../lib/personal-note";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
@@ -132,14 +132,16 @@ async function createAndSendDelegation({
     : null;
 
   const messageText = injectPersonalNote(
-    rewriteOwnerPronouns(
-      buildDelegationMessage({
-        personName: person.name,
-        taskText,
-        personNotes: person.notes ?? null,
+    stripClosingLine(
+      rewriteOwnerPronouns(
+        buildDelegationMessage({
+          personName: person.name,
+          taskText,
+          personNotes: person.notes ?? null,
+          ownerName,
+        }),
         ownerName,
-      }),
-      ownerName,
+      ),
     ),
     resolvedNote,
   );

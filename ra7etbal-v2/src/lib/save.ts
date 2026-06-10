@@ -1,6 +1,6 @@
 import { createMessage } from "./messages";
 import { buildDelegationMessage } from "./delegation-message";
-import { injectPersonalNote, normalizePersonalNote } from "./personal-note";
+import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "./personal-note";
 import { resizeImage, uploadTaskImage } from "./image-upload";
 import { scheduleReminderPush } from "./qstash-reminder";
 import { supabase } from "./supabase";
@@ -184,14 +184,16 @@ export async function savePending(
           (person) => person.name.trim().toLowerCase() === assignedTo!.toLowerCase(),
         );
         const content = injectPersonalNote(
-          rewriteOwnerPronouns(
-            buildDelegationMessage({
-              personName: assignedTo!,
-              taskText: item.description,
-              personNotes: assignedPerson?.notes ?? null,
+          stripClosingLine(
+            rewriteOwnerPronouns(
+              buildDelegationMessage({
+                personName: assignedTo!,
+                taskText: item.description,
+                personNotes: assignedPerson?.notes ?? null,
+                ownerName,
+              }),
               ownerName,
-            }),
-            ownerName,
+            ),
           ),
           normalizePersonalNote(item.personalNote ?? "", ownerName),
         );
@@ -267,14 +269,16 @@ export async function savePending(
         (person) => person.name.trim().toLowerCase() === assignedTo.toLowerCase(),
       );
       const content = injectPersonalNote(
-        rewriteOwnerPronouns(
-          buildDelegationMessage({
-            personName: assignedTo,
-            taskText: item.description,
-            personNotes: assignedPerson?.notes ?? null,
+        stripClosingLine(
+          rewriteOwnerPronouns(
+            buildDelegationMessage({
+              personName: assignedTo,
+              taskText: item.description,
+              personNotes: assignedPerson?.notes ?? null,
+              ownerName,
+            }),
             ownerName,
-          }),
-          ownerName,
+          ),
         ),
         normalizePersonalNote(item.personalNote ?? "", ownerName),
       );

@@ -69,36 +69,71 @@ export function normalizePersonalNote(
 }
 
 /**
- * Inject a personal note before the closing sentence of a delegation message.
+ * Closing-sentence patterns produced by buildDelegationMessage.
  *
- * buildDelegationMessage produces: "[greeting+action sentence]. [closing sentence]."
+ * These are stripped from the message body before sending because the
+ * WhatsApp template already appends "When done, tap here: [link]".
+ * Keeping both makes the message repetitive.
+ */
+const CLOSING_PATTERNS: RegExp[] = [
+  /Confirm when (?:done|finished)\./i,
+  /Let \w[\w\s]* know when (?:done|finished)\./i,
+  /Let \w[\w\s]* know what you find\./i,
+  /let me know when it is ready\./i,
+  /Stick to the plan[^.]*\./i,
+  /Keep to the details[^.]*\./i,
+  /Please send \w[\w\s]* a photo before you choose\./i,
+  /Please check with \w[\w\s]*before[^.]*\./i,
+];
+
+/**
+ * Remove the closing confirmation/instruction sentence from a delegation
+ * message body.
  *
- * Result: "[greeting+action sentence]. [note] [closing sentence]."
+ * buildDelegationMessage always ends with a sentence like:
+ *   "Confirm when done."
+ *   "Let Sana know when done."
+ *   "Please check with Sana before choosing."
  *
- * Examples:
- *   "Hi Grace, could you call Sana? Confirm when done."
- *   + "She misses you."
- *   → "Hi Grace, could you call Sana? She misses you. Confirm when done."
+ * The WhatsApp template already appends the confirmation link, so these
+ * sentences are redundant and should be stripped from the body.
  *
- *   "Hi Grace, could you wait for Sana? Let Sana know when done."
- *   + "Sana is on her way."
- *   → "Hi Grace, could you wait for Sana? Sana is on her way. Let Sana know when done."
+ * Only the LAST sentence is inspected — the greeting and action request
+ * are never modified.
+ */
+export function stripClosingLine(message: string): string {
+  const trimmed = message.trim();
+  // Find last sentence boundary (". " or "? ")
+  const lastDot = trimmed.lastIndexOf(". ");
+  const lastQ = trimmed.lastIndexOf("? ");
+  const boundary = Math.max(lastDot, lastQ);
+  if (boundary === -1) return trimmed; // single sentence — nothing to strip
+
+  const lastSentence = trimmed.slice(boundary + 2).trim();
+  if (CLOSING_PATTERNS.some((p) => p.test(lastSentence))) {
+    // Strip the closing sentence; keep everything before the boundary punctuation
+    return trimmed.slice(0, boundary + 1).trim();
+  }
+  return trimmed;
+}
+
+/**
+ * Inject a personal note at the end of a delegation message body.
  *
- * Falls back to appending the note at the end for single-sentence messages.
+ * Call after stripClosingLine so there is no leftover confirmation sentence:
+ *
+ *   buildDelegationMessage(...)                → "Hi Grace, could you call Sana? Confirm when done."
+ *   → stripClosingLine(...)                    → "Hi Grace, could you call Sana?"
+ *   → injectPersonalNote(..., "She misses you.") → "Hi Grace, could you call Sana? She misses you."
+ *
+ * If note is null/empty the stripped message is returned unchanged.
  */
 export function injectPersonalNote(
   message: string,
   note: string | null | undefined,
 ): string {
   if (!note?.trim()) return message;
-  const n = note.trim();
-  // Split at last sentence boundary: find last ". " or "? " that has text after it.
-  const match = /^([\s\S]*[.?!])\s+([^.?!\s][^.?!]*[.?!]?\s*)$/.exec(message);
-  if (match) {
-    return `${match[1]} ${n} ${match[2].trim()}`.trimEnd();
-  }
-  // Single-sentence or no match — append at end.
-  return `${message} ${n}`;
+  return `${message.trimEnd()} ${note.trim()}`;
 }
 
 // ---------------------------------------------------------------------------
