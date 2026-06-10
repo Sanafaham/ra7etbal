@@ -8,6 +8,7 @@ import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { buildDelegationMessage } from "../../lib/delegation-message";
+import { executeDelegationFromText } from "../../lib/text-carson";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
@@ -803,6 +804,73 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Shared delegation/message pipeline
+  //
+  // execute_instruction is the PREFERRED tool for Voice Carson delegation
+  // and messaging. It routes through the same extraction pipeline as Text
+  // Carson (extractItems → savePending → sendWhatsAppTask), so both
+  // channels produce identical output for the same raw instruction.
+  //
+  // Architecture:
+  //   spoken instruction
+  //   → execute_instruction(instruction)
+  //   → executeDelegationFromText (shared with Text Carson)
+  //   → extractItems (Claude Sonnet, full classify rules, anti-split rules)
+  //   → savePending  (tasks + messages → Supabase)
+  //   → sendWhatsAppTask (one send per message row)
+  //
+  // send_delegation is kept as a fallback for simple pre-classified
+  // cases that the ElevenLabs dashboard prompt may still emit. For any
+  // compound instruction ("ask X to … and tell her …"), Voice Carson's
+  // dashboard prompt must call execute_instruction with the raw user
+  // quote so the classification is handled by the shared Claude pipeline.
+  // ------------------------------------------------------------------
+  const executeInstruction = useCallback(
+    async ({ instruction }: { instruction: string }): Promise<string> => {
+      const rawInstruction = instruction?.trim();
+      if (!rawInstruction) {
+        return "I did not receive an instruction. Ask the user what they want to do.";
+      }
+
+      const authUserId = useAuthStore.getState().user?.id;
+      if (!authUserId) return "You are not signed in. Please sign in and try again.";
+
+      // Ensure stores are fresh before extraction so person data is current.
+      const peopleState = usePeopleStore.getState();
+      if (peopleState.status === "idle" || peopleState.items.length === 0) {
+        await usePeopleStore.getState().loadFor(authUserId);
+      }
+      const tasksState = useTasksStore.getState();
+      if (tasksState.status === "idle" || tasksState.items.length === 0) {
+        await useTasksStore.getState().loadFor(authUserId);
+      }
+
+      const people = usePeopleStore.getState().items;
+      const tasks = useTasksStore.getState().items;
+      const userEmail = useAuthStore.getState().user?.email ?? null;
+
+      try {
+        const summary = await executeDelegationFromText(rawInstruction, {
+          displayName,
+          userEmail,
+          userId: authUserId,
+          dailyBrief: "",
+          people,
+          tasks,
+        });
+        sessionActionsRef.current.push(`Executed: ${rawInstruction}`);
+        // Refresh task store so Voice Carson context reflects the new task.
+        useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+        return summary;
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : "Please try again.";
+        return `Could not process that. ${detail}`;
+      }
+    },
+    [displayName],
+  );
+
+  // ------------------------------------------------------------------
   // Call management
   // ------------------------------------------------------------------
   const startCall = useCallback(async () => {
@@ -883,6 +951,15 @@ export default function ElevenLabsAgentWidget({
           current_weather: currentWeather,
         },
         clientTools: {
+          // ── Preferred path for delegation/messaging ──────────────────────
+          // execute_instruction takes the raw spoken instruction and routes it
+          // through the same shared pipeline as Text Carson. Use this for all
+          // compound instructions, personal notes, and ambiguous cases.
+          execute_instruction: executeInstruction,
+          // ── Legacy/simple fallbacks ──────────────────────────────────────
+          // send_delegation and send_followup are kept for backward compat with
+          // existing ElevenLabs dashboard prompts that call them directly.
+          // For new dashboard prompt versions, prefer execute_instruction.
           send_followup: sendFollowup,
           send_delegation: sendDelegation,
           create_reminder: createReminder,
@@ -960,7 +1037,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Couldn't connect. Tap to retry.");
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, onBeforeCallStart, status]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, onBeforeCallStart, status]);
 
   // ------------------------------------------------------------------
   // Session teardown
