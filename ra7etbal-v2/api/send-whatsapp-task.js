@@ -162,17 +162,18 @@ export default async function handler(req, res) {
    *
    * ra7etbal_task_image:
    *   header: image (via Meta media_id)
-   *   body:   {{1}} owner, {{2}} message, {{3}} link  (3 params — same as v3)
+   *   body:   {{1}} message, {{2}} link  (2 params — NOT 3; image header replaces owner context)
    *
    * ra7etbal_task_assignment:
    *   body: {{1}} message, {{2}} link  (2 params)
    */
   function buildTemplatePayload(tplName, mediaId = null) {
     const isImageTemplate = tplName === 'ra7etbal_task_image';
+    // ra7etbal_task_image uses 2 body params (message + link); the image header
+    // provides visual context so no owner-name param is needed in the body.
     const is3Param =
       tplName === 'ra7etbal_task_v3' ||
-      tplName === 'ra7etbal_task_v2' ||
-      isImageTemplate;
+      tplName === 'ra7etbal_task_v2';
 
     const components = [];
 
