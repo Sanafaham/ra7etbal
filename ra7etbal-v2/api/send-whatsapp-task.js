@@ -68,30 +68,59 @@ export default async function handler(req, res) {
   }
 
   // ── Template selection ────────────────────────────────────────────────────
-  // ra7etbal_task_v3:       text-only tasks — PRIMARY (Active, Meta-approved June 2026)
-  // ra7etbal_task_v2:       text-only tasks — FALLBACK if v3 is rejected by Meta
-  // ra7etbal_task_assignment: image tasks (unchanged)
+  // Text tasks (no imagePath):
+  //   PRIMARY:  ra7etbal_task_v3       (3 params: owner, message, link)
+  //   FALLBACK: ra7etbal_task_assignment (2 params: message, link)
   //
-  // For text tasks, send with v3 first. If Meta returns a template error,
-  // automatically retry once with the ra7etbal_task_assignment fallback so the
-  // message always gets through while v3 propagates across Meta's infra.
-  const primaryTemplateName = imagePath ? 'ra7etbal_task_assignment' : 'ra7etbal_task_v3';
-  const fallbackTemplateName = imagePath ? null : 'ra7etbal_task_assignment';
+  // Image tasks (imagePath present):
+  //   PRIMARY:  ra7etbal_task_image    (image header + 3 body params: owner, message, link)
+  //   FALLBACK: ra7etbal_task_assignment + separate image media message (legacy behavior)
+  const primaryTemplateName = imagePath ? 'ra7etbal_task_image' : 'ra7etbal_task_v3';
+  const fallbackTemplateName = 'ra7etbal_task_assignment';
 
-  // ── Reference image send ──────────────────────────────────────────────────
-  // If a Reference image is attached, send it as a WhatsApp image media message
-  // BEFORE the template so the recipient sees the actual photo inline, not a link.
-  // Fire-and-continue: image failure is non-fatal — template always sends.
-  // Fallback on failure: append signed URL to template body as a text link.
-  let imageSendStatus = 'skipped'; // skipped | sent | failed | no_signed_url
-  if (imagePath && supabaseUrl && serviceKey && normalizedTo) {
-    const imageSignedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
+  // ── Image upload for ra7etbal_task_image ──────────────────────────────────
+  // For image tasks, attempt to upload the image to Meta and use it in the
+  // image-header template. If upload fails, fall through to legacy behavior
+  // (separate image media message + ra7etbal_task_assignment).
+  let metaMediaId = null;     // set if Meta upload succeeds
+  let imageSignedUrl = null;  // set if signed URL generation succeeds
+  let imageSendStatus = 'skipped'; // skipped | uploaded | sent | failed | no_signed_url
+
+  if (imagePath) {
+    imageSignedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
     if (!imageSignedUrl) {
       imageSendStatus = 'no_signed_url';
-      console.warn('[send-whatsapp-task] could not generate signed URL for reference image', {
+      console.warn('[send-whatsapp-task] could not generate signed URL for image', {
         imagePathPresent: Boolean(imagePath),
       });
     } else {
+      // Try uploading to Meta for the image-header template
+      try {
+        metaMediaId = await uploadImageToMeta({ accessToken, phoneNumberId, imageUrl: imageSignedUrl });
+        if (metaMediaId) {
+          imageSendStatus = 'uploaded';
+          console.log('[send-whatsapp-task] image uploaded to Meta', { metaMediaId });
+        } else {
+          console.warn('[send-whatsapp-task] Meta image upload returned no media_id — will use legacy fallback');
+        }
+      } catch (err) {
+        console.warn('[send-whatsapp-task] Meta image upload threw — will use legacy fallback', {
+          message: err?.message ?? String(err),
+        });
+      }
+    }
+  }
+
+  // If image upload failed, revert to legacy path:
+  // send as separate media message + ra7etbal_task_assignment
+  const useImageTemplate = imagePath && metaMediaId !== null;
+  const effectivePrimaryTemplate = useImageTemplate ? primaryTemplateName : (imagePath ? 'ra7etbal_task_assignment' : primaryTemplateName);
+
+  // ── Legacy: separate image media message ─────────────────────────────────
+  // Used when imagePath is set but Meta upload failed (graceful degradation).
+  // Send image as a separate media message BEFORE the template.
+  if (imagePath && !metaMediaId) {
+    if (imageSignedUrl) {
       const imagePayload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -105,7 +134,7 @@ export default async function handler(req, res) {
           imageSendStatus = 'sent';
         } else {
           imageSendStatus = 'failed';
-          console.warn('[send-whatsapp-task] reference image media send failed (non-fatal), adding fallback link', {
+          console.warn('[send-whatsapp-task] legacy image send failed (non-fatal), adding fallback link', {
             status: imageResult.status,
             errorCode: imageResult.metaError?.code ?? null,
             errorSubcode: imageResult.metaError?.error_subcode ?? null,
@@ -117,7 +146,7 @@ export default async function handler(req, res) {
         }
       } catch (err) {
         imageSendStatus = 'failed';
-        console.warn('[send-whatsapp-task] reference image media send threw (non-fatal), adding fallback link', {
+        console.warn('[send-whatsapp-task] legacy image send threw (non-fatal), adding fallback link', {
           message: err?.message ?? String(err),
         });
         cleanMessage = `${cleanMessage}\n\nReference photo:\n${imageSignedUrl}`;
@@ -127,11 +156,49 @@ export default async function handler(req, res) {
 
   /**
    * Build the template payload for a given template name.
-   * ra7etbal_task_v3 / ra7etbal_task_v2: 3 params — {{1}} owner, {{2}} message, {{3}} link
-   * ra7etbal_task_assignment:             2 params — {{1}} message, {{2}} link
+   *
+   * ra7etbal_task_v3 / ra7etbal_task_v2:
+   *   body: {{1}} owner, {{2}} message, {{3}} link  (3 params)
+   *
+   * ra7etbal_task_image:
+   *   header: image (via Meta media_id)
+   *   body:   {{1}} owner, {{2}} message, {{3}} link  (3 params — same as v3)
+   *
+   * ra7etbal_task_assignment:
+   *   body: {{1}} message, {{2}} link  (2 params)
    */
-  function buildTemplatePayload(tplName) {
-    const is3Param = tplName === 'ra7etbal_task_v3' || tplName === 'ra7etbal_task_v2';
+  function buildTemplatePayload(tplName, mediaId = null) {
+    const isImageTemplate = tplName === 'ra7etbal_task_image';
+    const is3Param =
+      tplName === 'ra7etbal_task_v3' ||
+      tplName === 'ra7etbal_task_v2' ||
+      isImageTemplate;
+
+    const components = [];
+
+    // Header component — only for ra7etbal_task_image when we have a media_id
+    if (isImageTemplate && mediaId) {
+      components.push({
+        type: 'header',
+        parameters: [{ type: 'image', image: { id: mediaId } }],
+      });
+    }
+
+    // Body component
+    components.push({
+      type: 'body',
+      parameters: is3Param
+        ? [
+            { type: 'text', text: cleanOwnerName }, // {{1}} — owner name
+            { type: 'text', text: cleanMessage },   // {{2}} — task text
+            { type: 'text', text: cleanLink },      // {{3}} — confirmation link
+          ]
+        : [
+            { type: 'text', text: cleanMessage },   // {{1}} — task text
+            { type: 'text', text: cleanLink },      // {{2}} — confirmation link
+          ],
+    });
+
     return {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -140,28 +207,14 @@ export default async function handler(req, res) {
       template: {
         name: tplName,
         language: { code: templateLanguage },
-        components: [
-          {
-            type: 'body',
-            parameters: is3Param
-              ? [
-                  { type: 'text', text: cleanOwnerName }, // {{1}} — owner name
-                  { type: 'text', text: cleanMessage },   // {{2}} — task text
-                  { type: 'text', text: cleanLink },      // {{3}} — confirmation link
-                ]
-              : [
-                  { type: 'text', text: cleanMessage },   // {{1}} — task text
-                  { type: 'text', text: cleanLink },      // {{2}} — confirmation link
-                ],
-          },
-        ],
+        components,
       },
     };
   }
 
   try {
     // ── Primary send ─────────────────────────────────────────────────────────
-    const primaryPayload = buildTemplatePayload(primaryTemplateName);
+    const primaryPayload = buildTemplatePayload(effectivePrimaryTemplate, metaMediaId);
 
     console.log('WhatsApp template send attempt', {
       phoneNumberIdLast4,
@@ -171,22 +224,23 @@ export default async function handler(req, res) {
       messageRecordId: messageRecordId || null,
       recipientName: recipientName || null,
       ownerName: cleanOwnerName,
-      referenceImagePathPresent: Boolean(imagePath),
+      imagePathPresent: Boolean(imagePath),
+      metaMediaId: metaMediaId || null,
       imageSendStatus,
       mode: 'template',
-      templateName: primaryTemplateName,
+      templateName: effectivePrimaryTemplate,
       templateLanguage,
       payload: redactPayloadForLog(primaryPayload),
     });
 
     let templateResult = await sendMetaMessage({ url, accessToken, payload: primaryPayload });
-    let usedTemplateName = primaryTemplateName;
+    let usedTemplateName = effectivePrimaryTemplate;
 
-    // ── Fallback send (text tasks only) ──────────────────────────────────────
-    // If Meta rejects the primary template (e.g. v3 not yet active on this
-    // phone number ID), retry once with ra7etbal_task_assignment so the message
-    // still reaches the recipient.
-    if (!templateResult.ok && fallbackTemplateName) {
+    // ── Fallback send ─────────────────────────────────────────────────────────
+    // If Meta rejects the primary template, retry once with ra7etbal_task_assignment.
+    // For image tasks where the image template failed but we already sent a
+    // separate media message (legacy path), ra7etbal_task_assignment still works.
+    if (!templateResult.ok) {
       const metaCode = templateResult.metaError?.code;
       const isTemplateError =
         metaCode === 132001 || // template not found
@@ -195,7 +249,7 @@ export default async function handler(req, res) {
 
       if (isTemplateError || templateResult.status === 400) {
         console.warn('WhatsApp primary template failed — retrying with fallback', {
-          primaryTemplate: primaryTemplateName,
+          primaryTemplate: effectivePrimaryTemplate,
           fallbackTemplate: fallbackTemplateName,
           metaCode,
           status: templateResult.status,
@@ -413,6 +467,69 @@ async function markMessageAccepted({
  * Returns null on any error so the WhatsApp send degrades gracefully
  * (message still sent, just without the image URL).
  */
+/**
+ * Upload an image to the Meta media endpoint for use in image-header templates.
+ *
+ * Steps:
+ *   1. Download image from the signed Supabase URL.
+ *   2. POST as multipart/form-data to /{phoneNumberId}/media.
+ *   3. Return the Meta media_id string, or null on any failure.
+ *
+ * The media_id is passed into the template header component so Meta serves
+ * the image directly — no separate image message needed.
+ */
+async function uploadImageToMeta({ accessToken, phoneNumberId, imageUrl }) {
+  if (!accessToken || !phoneNumberId || !imageUrl) return null;
+
+  try {
+    // Download image from Supabase signed URL
+    const imageResponse = await fetch(imageUrl);
+    if (!imageResponse.ok) {
+      console.warn('[send-whatsapp-task] uploadImageToMeta: image download failed', {
+        status: imageResponse.status,
+      });
+      return null;
+    }
+
+    const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
+    const imageBuffer = await imageResponse.arrayBuffer();
+
+    // Build multipart form — Meta requires messaging_product, type, and file
+    const formData = new FormData();
+    formData.append('messaging_product', 'whatsapp');
+    formData.append('type', contentType);
+    formData.append(
+      'file',
+      new Blob([imageBuffer], { type: contentType }),
+      'task-image.jpg',
+    );
+
+    const uploadUrl = `https://graph.facebook.com/v20.0/${phoneNumberId}/media`;
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}` },
+      body: formData,
+    });
+
+    if (!uploadResponse.ok) {
+      const errText = await uploadResponse.text().catch(() => '');
+      console.warn('[send-whatsapp-task] uploadImageToMeta: Meta upload failed', {
+        status: uploadResponse.status,
+        body: errText.slice(0, 300),
+      });
+      return null;
+    }
+
+    const data = await uploadResponse.json();
+    return data?.id || null;
+  } catch (err) {
+    console.warn('[send-whatsapp-task] uploadImageToMeta threw', {
+      message: err?.message ?? String(err),
+    });
+    return null;
+  }
+}
+
 async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath }) {
   if (!imagePath || !supabaseUrl || !serviceKey) return null;
 
