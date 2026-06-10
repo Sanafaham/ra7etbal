@@ -72,7 +72,7 @@ export default function Confirm() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/get-confirm-task?taskId=${encodeURIComponent(taskId)}`);
+        const res = await fetch(`/api/task-confirm?taskId=${encodeURIComponent(taskId)}`);
         const data = (await res.json()) as Partial<TaskInfo> & { error?: string };
         if (cancelled) return;
         if (!res.ok || !data.id) {
@@ -159,7 +159,7 @@ export default function Confirm() {
     }
 
     try {
-      const res = await fetch("/api/confirm-task", {
+      const res = await fetch("/api/task-confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
