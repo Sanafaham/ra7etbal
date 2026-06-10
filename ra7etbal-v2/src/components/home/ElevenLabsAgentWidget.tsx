@@ -863,6 +863,13 @@ export default function ElevenLabsAgentWidget({
       : liveBriefStateText;
 
     try {
+      // ── ElevenLabs connection safety rule ────────────────────────────────
+      // Do NOT pass agent.prompt.prompt (or any prompt overrides) here.
+      // Experimental overrides can break the ElevenLabs session handshake and
+      // silently prevent Voice Carson from connecting.
+      // Voice prompt changes belong in the ElevenLabs dashboard only,
+      // unless SDK support for a specific field has been verified in staging.
+      // ─────────────────────────────────────────────────────────────────────
       const conv = await Conversation.startSession({
         agentId,
         dynamicVariables: {
@@ -937,13 +944,10 @@ export default function ElevenLabsAgentWidget({
           })();
         },
         onError: (msg) => {
+          // Keep error visible — user must tap to retry. No silent auto-dismiss.
           conversationRef.current = null;
           setStatus("error");
-          setErrorMsg(msg);
-          setTimeout(() => {
-            setStatus("idle");
-            setErrorMsg(null);
-          }, 3000);
+          setErrorMsg(msg || "Connection lost. Tap to retry.");
         },
         onConnect: () => {
           setStatus("connected");
@@ -951,12 +955,10 @@ export default function ElevenLabsAgentWidget({
       });
       conversationRef.current = conv;
     } catch (err) {
+      // Show the real error message so the user knows what went wrong.
+      // Do not auto-dismiss — the error persists until the user taps to retry.
       setStatus("error");
-      setErrorMsg(err instanceof Error ? err.message : "Couldn't start call");
-      setTimeout(() => {
-        setStatus("idle");
-        setErrorMsg(null);
-      }, 3000);
+      setErrorMsg(err instanceof Error ? err.message : "Couldn't connect. Tap to retry.");
     }
   }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, onBeforeCallStart, status]);
 
@@ -1050,12 +1052,17 @@ export default function ElevenLabsAgentWidget({
       )}
 
       {status === "error" && (
-        <div className="flex items-center gap-2 rounded-full border border-danger/20 bg-warm-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm">
-          <span className="h-2 w-2 rounded-full bg-danger" />
-          <span className="max-w-[160px] truncate text-[12px] text-danger">
-            {errorMsg ?? "Error — tap to retry"}
+        <button
+          type="button"
+          onClick={() => { setStatus("idle"); setErrorMsg(null); }}
+          aria-label="Connection failed — tap to retry"
+          className="flex items-center gap-2 rounded-full border border-danger/30 bg-warm-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm transition hover:bg-white active:scale-95"
+        >
+          <span className="h-2 w-2 flex-shrink-0 rounded-full bg-danger" />
+          <span className="max-w-[180px] truncate text-[12px] font-medium text-danger">
+            {errorMsg ?? "Couldn't connect — tap to retry"}
           </span>
-        </div>
+        </button>
       )}
     </div>
   );
