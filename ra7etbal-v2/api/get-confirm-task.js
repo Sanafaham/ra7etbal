@@ -191,15 +191,19 @@ async function createSignedUploadUrl({ supabaseUrl, serviceKey, userId, taskId }
       return null;
     }
     const data = await response.json();
-    // Supabase upload-sign endpoint returns { url, token } — NOT { signedURL }
-    // (read-sign endpoint uses signedURL; upload-sign uses url — different shapes)
-    if (!data?.url) {
-      console.warn('[get-confirm-task] createSignedUploadUrl: no url in response', {
+    // Supabase upload-sign endpoint returns { url: "<jwt-token>" } — the value is
+    // a raw JWT token, NOT a URL path. The JS client constructs the upload URL as:
+    //   {supabaseUrl}/storage/v1/upload/sign/{bucket}/{path}?token={data.url}
+    // (read-sign endpoint uses signedURL which IS a path, different shape entirely)
+    const token = data?.url;
+    if (!token) {
+      console.warn('[get-confirm-task] createSignedUploadUrl: no token in response', {
         keys: data ? Object.keys(data) : null,
+        data: JSON.stringify(data).slice(0, 200),
       });
       return null;
     }
-    const uploadUrl = `${supabaseUrl}/storage/v1${data.url}`;
+    const uploadUrl = `${supabaseUrl}/storage/v1/upload/sign/${BUCKET}/${objectPath}?token=${encodeURIComponent(token)}`;
     return { uploadUrl, storagePath };
   } catch {
     return null;
