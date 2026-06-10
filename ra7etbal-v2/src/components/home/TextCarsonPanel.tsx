@@ -311,8 +311,11 @@ function looksLikeDelegationOrMessage(input: string): boolean {
     // "ask Grace to ...", "tell Grace to ...", "have Grace ...", "get Grace to ..."
     // Negative lookahead excludes "me" so "ask me to ..." is not caught.
     /\b(?:ask|tell|have|get)\s+(?!me\b)\w+\s+to\s+/i.test(input) ||
-    // "remind me to X" / "remind me about X" — personal reminder request
-    /\bremind\s+me\s+(?:to|about)\b/i.test(input) ||
+    // "remind me ..." — any personal reminder request regardless of phrasing.
+    // The narrow /remind\s+me\s+(?:to|about)/ missed time-prefixed phrases:
+    //   "remind me in 5 minutes to X", "remind me at 6pm to X", etc.
+    // Broadening to /remind\s+me\b/ catches all of them.
+    /\bremind\s+me\b/i.test(input) ||
     // "remind Grace to ..." — but not "remind me to ..."
     /\bremind\s+(?!me\b)\w+\s+to\b/i.test(input) ||
     // "set a reminder", "create a reminder", "add a reminder"
