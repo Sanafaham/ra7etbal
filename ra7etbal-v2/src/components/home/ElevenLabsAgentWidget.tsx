@@ -10,6 +10,7 @@ import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "../../lib/personal-note";
+import { composeMergedMessage } from "../../lib/ai/compose-message";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
@@ -125,14 +126,38 @@ async function createAndSendDelegation({
     extractNoteFromAgentMessage(message, taskText) ||
     null;
   // Normalize the raw note into natural recipient-facing language before
-  // injection — ensures bare expressions like "Thank you" become
+  // composition — ensures bare expressions like "Thank you" become
   // "Sana says thank you." and avoids dropping or mangling the note.
   const resolvedNote = rawNote
     ? normalizePersonalNote(rawNote, ownerName)
     : null;
 
-  const messageText = injectPersonalNote(
-    stripClosingLine(
+  // When a note is present, use LLM composition to produce one natural
+  // sentence. Falls back to the append path if composition fails.
+  let messageText: string;
+  if (resolvedNote) {
+    const merged = await composeMergedMessage({
+      personName: person.name,
+      taskText,
+      personalNote: resolvedNote,
+      ownerName,
+    });
+    messageText = merged ?? injectPersonalNote(
+      stripClosingLine(
+        rewriteOwnerPronouns(
+          buildDelegationMessage({
+            personName: person.name,
+            taskText,
+            personNotes: person.notes ?? null,
+            ownerName,
+          }),
+          ownerName,
+        ),
+      ),
+      resolvedNote,
+    );
+  } else {
+    messageText = stripClosingLine(
       rewriteOwnerPronouns(
         buildDelegationMessage({
           personName: person.name,
@@ -142,9 +167,8 @@ async function createAndSendDelegation({
         }),
         ownerName,
       ),
-    ),
-    resolvedNote,
-  );
+    );
+  }
 
   const taskRowId = crypto.randomUUID();
   const confirmationUrl = `${window.location.origin}/confirm?task=${taskRowId}`;

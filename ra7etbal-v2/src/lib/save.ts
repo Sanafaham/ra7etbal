@@ -1,6 +1,7 @@
 import { createMessage } from "./messages";
 import { buildDelegationMessage } from "./delegation-message";
 import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "./personal-note";
+import { composeMergedMessage } from "./ai/compose-message";
 import { resizeImage, uploadTaskImage } from "./image-upload";
 import { scheduleReminderPush } from "./qstash-reminder";
 import { supabase } from "./supabase";
@@ -51,6 +52,52 @@ function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
  * Returns the created rows so the caller can push them straight into the
  * tasks/messages stores without an extra refetch.
  */
+
+/**
+ * Build the final delegation message content for one item.
+ *
+ * When a personalNote is present, delegates to composeMergedMessage so the
+ * task and note are woven into a single natural sentence (e.g. "urgency" →
+ * action gets "as soon as possible"; "on the way" → note leads the message).
+ * Falls back to the append path if composition fails or no note is present.
+ */
+async function buildMessageContent({
+  personName,
+  taskText,
+  personalNote,
+  personNotes,
+  ownerName,
+}: {
+  personName: string;
+  taskText: string;
+  personalNote: string | null | undefined;
+  personNotes: string | null | undefined;
+  ownerName?: string | null;
+}): Promise<string> {
+  const normalizedNote = normalizePersonalNote(personalNote ?? "", ownerName);
+
+  // Try LLM composition when a note is present — produces one fluent sentence.
+  if (normalizedNote) {
+    const merged = await composeMergedMessage({
+      personName,
+      taskText,
+      personalNote: normalizedNote,
+      ownerName,
+    });
+    if (merged) return merged;
+  }
+
+  // Fallback: deterministic builder + append.
+  return injectPersonalNote(
+    stripClosingLine(
+      rewriteOwnerPronouns(
+        buildDelegationMessage({ personName, taskText, personNotes, ownerName }),
+        ownerName,
+      ),
+    ),
+    normalizedNote,
+  );
+}
 
 export interface SaveResult {
   tasks: Task[];
@@ -183,20 +230,13 @@ export async function savePending(
         const assignedPerson = people.find(
           (person) => person.name.trim().toLowerCase() === assignedTo!.toLowerCase(),
         );
-        const content = injectPersonalNote(
-          stripClosingLine(
-            rewriteOwnerPronouns(
-              buildDelegationMessage({
-                personName: assignedTo!,
-                taskText: item.description,
-                personNotes: assignedPerson?.notes ?? null,
-                ownerName,
-              }),
-              ownerName,
-            ),
-          ),
-          normalizePersonalNote(item.personalNote ?? "", ownerName),
-        );
+        const content = await buildMessageContent({
+          personName: assignedTo!,
+          taskText: item.description,
+          personalNote: item.personalNote,
+          personNotes: assignedPerson?.notes ?? null,
+          ownerName,
+        });
         if (content && assignedTo) {
           const msg = await createMessage({
             user_id: userId,
@@ -262,26 +302,16 @@ export async function savePending(
       // Rewrite any owner first-person pronouns ("me" → "Sana", etc.) so the
       // recipient reads the message correctly — this is a code-side safety net
       // in addition to the prompt-level instruction, because LLM output is not
-      // guaranteed and displayName may not have been loaded at extraction time.
-      // injectPersonalNote appends any personal/emotional/status note from the
-      // extraction before the closing confirmation sentence so it is never dropped.
       const assignedPerson = people.find(
         (person) => person.name.trim().toLowerCase() === assignedTo.toLowerCase(),
       );
-      const content = injectPersonalNote(
-        stripClosingLine(
-          rewriteOwnerPronouns(
-            buildDelegationMessage({
-              personName: assignedTo,
-              taskText: item.description,
-              personNotes: assignedPerson?.notes ?? null,
-              ownerName,
-            }),
-            ownerName,
-          ),
-        ),
-        normalizePersonalNote(item.personalNote ?? "", ownerName),
-      );
+      const content = await buildMessageContent({
+        personName: assignedTo,
+        taskText: item.description,
+        personalNote: item.personalNote,
+        personNotes: assignedPerson?.notes ?? null,
+        ownerName,
+      });
       if (content && assignedTo) {
         const msg = await createMessage({
           user_id: userId,
