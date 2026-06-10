@@ -1,6 +1,6 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { resizeImage } from "../../lib/image-upload";
+import { resizeImage, uploadTaskImage } from "../../lib/image-upload";
 import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
@@ -62,6 +62,12 @@ interface DelegationSendOptions {
    *  "Sana says she misses you." — never tracked as a separate task. */
   personalNote?: string | null;
   ownerName?: string | null;
+  /**
+   * Optional image to attach to the delegation.
+   * Uploaded before createTask so image_path is set atomically.
+   * When non-null, send-whatsapp-task uses ra7etbal_task_image automatically.
+   */
+  imageFile?: File | null;
 }
 
 /**
@@ -109,6 +115,7 @@ async function createAndSendDelegation({
   message,
   personalNote,
   ownerName,
+  imageFile,
 }: DelegationSendOptions): Promise<DelegationSendResult> {
   // Always build the base message with buildDelegationMessage so personality
   // notes (bossy, reliable, etc.) are applied consistently — never skip this
@@ -174,6 +181,19 @@ async function createAndSendDelegation({
   const taskRowId = crypto.randomUUID();
   const confirmationUrl = `${window.location.origin}/confirm?task=${taskRowId}`;
 
+  // Upload image before createTask so image_path is set atomically on insert.
+  // Non-fatal: if upload fails, delegation still sends without image.
+  let imagePath: string | null = null;
+  if (imageFile) {
+    try {
+      const blob = await resizeImage(imageFile);
+      imagePath = await uploadTaskImage(userId, taskRowId, blob);
+    } catch (err) {
+      console.error("[send_delegation] image upload failed, sending without image:", err);
+      imagePath = null;
+    }
+  }
+
   const taskRow = await createTask({
     id: taskRowId,
     user_id: userId,
@@ -184,6 +204,7 @@ async function createAndSendDelegation({
     needs_follow_up: true,
     confirmation_url: confirmationUrl,
     due_at: null,
+    image_path: imagePath,
   });
 
   let messageRecord;
@@ -207,6 +228,7 @@ async function createAndSendDelegation({
     taskId: taskRow.id,
     recipientName: person.name,
     ownerName: ownerName ?? null,
+    imagePath,
   });
 
   return { taskId: taskRow.id, messageText };
@@ -788,6 +810,9 @@ export default function ElevenLabsAgentWidget({
       const userId = authUserId;
       if (!userId) return "You are not signed in. Please sign in and try again.";
 
+      // Snapshot pending image before any await — same pattern as executeInstruction.
+      const delegationImageFile = pendingImageRef.current;
+
       let result: DelegationSendResult;
       try {
         result = await createAndSendDelegation({
@@ -797,11 +822,15 @@ export default function ElevenLabsAgentWidget({
           message,
           personalNote: note ?? null,
           ownerName: displayName,
+          imageFile: delegationImageFile,
         });
       } catch (err) {
         const detail = err instanceof Error ? err.message : "Please try again.";
         return `Could not send the delegation to ${person.name}. ${detail}`;
       }
+
+      // Clear pending image after successful send — covers the send_delegation path.
+      if (delegationImageFile) clearPendingImage();
 
       lastSentRef.current.set(cooldownKey, Date.now());
       sentDelegationsRef.current.push({
@@ -815,7 +844,7 @@ export default function ElevenLabsAgentWidget({
 
       return `Sent delegation to ${person.name}: ${taskText}.`;
     },
-    [displayName, maybeSendImpliedDinnerDelegation],
+    [displayName, maybeSendImpliedDinnerDelegation, clearPendingImage],
   );
 
   // ------------------------------------------------------------------
