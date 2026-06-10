@@ -1,5 +1,6 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { resizeImage } from "../../lib/image-upload";
 import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
@@ -440,6 +441,44 @@ export default function ElevenLabsAgentWidget({
   const conversationRef = useRef<Awaited<
     ReturnType<typeof Conversation.startSession>
   > | null>(null);
+
+  // Pending image for the next voice delegation.
+  // Stored in a ref (not state) to avoid triggering re-renders and to ensure
+  // executeInstruction always reads the latest value without stale closure issues.
+  const pendingImageRef = useRef<File | null>(null);
+  // Preview URL is state so the thumbnail re-renders correctly.
+  const [pendingImagePreviewUrl, setPendingImagePreviewUrl] = useState<string | null>(null);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Revoke the object URL when the preview is cleared.
+  const clearPendingImage = useCallback(() => {
+    setPendingImagePreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    pendingImageRef.current = null;
+  }, []);
+
+  function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    e.target.value = ""; // allow reselecting same file
+    if (!file) return;
+    // Revoke previous preview if any
+    setPendingImagePreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    pendingImageRef.current = file;
+    setPendingImagePreviewUrl(URL.createObjectURL(file));
+  }
+
+  // Cleanup preview URL on unmount
+  useEffect(() => {
+    return () => {
+      if (pendingImagePreviewUrl) URL.revokeObjectURL(pendingImagePreviewUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** Per-action cooldown: action/topic key → timestamp of last send */
   const lastSentRef = useRef<Map<string, number>>(new Map());
@@ -948,7 +987,23 @@ export default function ElevenLabsAgentWidget({
       const tasks = useTasksStore.getState().items;
       const userEmail = useAuthStore.getState().user?.email ?? null;
 
+      // Snapshot the pending image now — before any await — so it isn't
+      // cleared by another interaction while we wait for extraction/upload.
+      const imageFile = pendingImageRef.current;
+
       try {
+        // Validate the image synchronously before starting the voice pipeline.
+        // resizeImage throws for files > 15 MB; catch here so the error
+        // surfaces as a spoken response rather than a silent crash.
+        if (imageFile) {
+          try {
+            await resizeImage(imageFile); // dry-run validation only
+          } catch (imgErr) {
+            const reason = imgErr instanceof Error ? imgErr.message : "Image too large.";
+            return `Could not attach the image: ${reason}`;
+          }
+        }
+
         const summary = await executeDelegationFromText(rawInstruction, {
           displayName,
           userEmail,
@@ -956,7 +1011,14 @@ export default function ElevenLabsAgentWidget({
           dailyBrief: "",
           people,
           tasks,
+          // Pass the pending image so savePending uploads it and sets image_path.
+          // ra7etbal_task_image template fires automatically when imagePath is set.
+          imageFile: imageFile ?? null,
         });
+
+        // Clear pending image after a successful delegation send.
+        if (imageFile) clearPendingImage();
+
         sessionActionsRef.current.push(`Executed: ${rawInstruction}`);
         // Refresh task store so Voice Carson context reflects the new task.
         useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
@@ -966,7 +1028,7 @@ export default function ElevenLabsAgentWidget({
         return `Could not process that. ${detail}`;
       }
     },
-    [displayName],
+    [displayName, clearPendingImage],
   );
 
   // ------------------------------------------------------------------
@@ -1186,17 +1248,74 @@ export default function ElevenLabsAgentWidget({
       }
     >
       {status === "idle" && (
-        <button
-          type="button"
-          onClick={startCall}
-          aria-label="Talk to Carson"
-          className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
-        >
-          <MicIcon className="h-4 w-4 text-charcoal" />
-          <span className="text-[13px] font-semibold text-charcoal">
-            Talk to Carson
-          </span>
-        </button>
+        <div className="flex flex-col items-end gap-1.5">
+          {/* Pending image thumbnail — shown when a photo is queued */}
+          {pendingImagePreviewUrl && (
+            <div className="flex items-center gap-2 rounded-2xl border border-sage/25 bg-white/90 px-2.5 py-1.5 shadow-sm">
+              <div className="relative">
+                <img
+                  src={pendingImagePreviewUrl}
+                  alt="Attached image"
+                  className="h-9 w-9 rounded-lg border border-sage/20 object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={clearPendingImage}
+                  aria-label="Remove attached image"
+                  className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink"
+                >
+                  <svg width="6" height="6" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                    <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
+                  </svg>
+                </button>
+              </div>
+              <span className="text-[11px] text-ink/55">Photo ready</span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            {/* Image attach button */}
+            <button
+              type="button"
+              onClick={() => imageFileInputRef.current?.click()}
+              aria-label="Attach image for delegation"
+              title="Attach image"
+              className={
+                "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 " +
+                (pendingImagePreviewUrl
+                  ? "border-sage/40 bg-sage/10 text-sage"
+                  : "border-charcoal/15 bg-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
+              }
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+            </button>
+            <input
+              ref={imageFileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageFileChange}
+              className="sr-only"
+              aria-label="Attach image"
+            />
+
+            {/* Talk to Carson button */}
+            <button
+              type="button"
+              onClick={startCall}
+              aria-label="Talk to Carson"
+              className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
+            >
+              <MicIcon className="h-4 w-4 text-charcoal" />
+              <span className="text-[13px] font-semibold text-charcoal">
+                Talk to Carson
+              </span>
+            </button>
+          </div>
+        </div>
       )}
 
       {status === "connecting" && (
