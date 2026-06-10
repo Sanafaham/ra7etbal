@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Spinner from "../Spinner";
 import { askTextCarson, executeDelegationFromText, type TextCarsonContext } from "../../lib/text-carson";
 import { saveInboxItem } from "../../lib/inbox";
@@ -20,6 +20,19 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
   const [saveStatus, setSaveStatus] = useState<"saved" | "error" | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // Image attachment state
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Keep preview URL in sync with selected file; revoke on cleanup.
+  useEffect(() => {
+    if (!imageFile) { setImagePreviewUrl(null); return; }
+    const url = URL.createObjectURL(imageFile);
+    setImagePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imageFile]);
+
   const trimmed = input.trim();
   const canAsk = trimmed.length > 0 && !loading;
 
@@ -32,9 +45,13 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
     setSaveError(null);
     try {
       if (looksLikeDelegationOrMessage(trimmed)) {
-        const response = await executeDelegationFromText(trimmed, context);
+        const response = await executeDelegationFromText(trimmed, {
+          ...context,
+          imageFile: imageFile ?? null,
+        });
         setAnswer(response);
         setInput("");
+        setImageFile(null); // clear image after successful delegation send
         return;
       }
 
@@ -85,7 +102,64 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
         </div>
       )}
 
+      {/* Image preview — shown when a photo is attached */}
+      {imagePreviewUrl && (
+        <div className="mb-2 flex items-center gap-2">
+          <div className="relative inline-block">
+            <img
+              src={imagePreviewUrl}
+              alt="Attached image"
+              className="h-14 w-14 rounded-xl border border-sage/25 object-cover shadow-sm"
+            />
+            <button
+              type="button"
+              onClick={() => setImageFile(null)}
+              disabled={loading}
+              aria-label="Remove attached image"
+              className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink disabled:opacity-50"
+            >
+              <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
+              </svg>
+            </button>
+          </div>
+          <p className="text-[11px] text-ink/50">Photo attached</p>
+        </div>
+      )}
+
       <div className="flex flex-col gap-2 sm:flex-row">
+        {/* Image attach button */}
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={loading}
+          aria-label="Attach image"
+          title="Attach image"
+          className={
+            "inline-flex min-h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full border transition disabled:opacity-50 " +
+            (imageFile
+              ? "border-sage/50 bg-sage/10 text-sage"
+              : "border-sage/25 bg-white text-ink/40 hover:border-sage/40 hover:text-ink/60")
+          }
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <path d="M21 15l-5-5L5 21" />
+          </svg>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => {
+            const file = e.target.files?.[0] ?? null;
+            setImageFile(file);
+            e.target.value = ""; // allow reselecting the same file
+          }}
+          className="sr-only"
+          aria-label="Attach image"
+        />
         <input
           type="text"
           value={input}

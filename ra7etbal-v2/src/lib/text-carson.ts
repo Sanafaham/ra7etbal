@@ -23,6 +23,12 @@ export interface TextCarsonContext {
   dailyBrief: string;
   people: Person[];
   tasks: Task[];
+  /**
+   * Optional image to attach to the first delegation item.
+   * V1: one image per instruction, applied to the first delegation/message only.
+   * Carson does not analyse the image — attach-and-send only.
+   */
+  imageFile?: File | null;
 }
 
 interface AnthropicResponse {
@@ -220,12 +226,23 @@ export async function executeDelegationFromText(
     throw new Error("Couldn't understand that. Try rephrasing.");
   }
 
+  // If the user attached an image, assign it to the first delegation/message
+  // item only. V1: one image per instruction. Carson never analyses the image.
+  const imageFiles = new Map<string, File>();
+  if (context.imageFile) {
+    const firstDelegation = allItems.find(
+      (i) => i.type === "delegation" || i.type === "message",
+    );
+    if (firstDelegation) imageFiles.set(firstDelegation.id, context.imageFile);
+  }
+
   // Save every extracted item (reminders, delegations, actions, follow-ups…)
   const saved = await savePending(
     allItems,
     context.userId,
     context.displayName ?? null,
     context.people,
+    imageFiles.size > 0 ? imageFiles : undefined,
   );
 
   const phoneByName = new Map<string, string>();
@@ -255,7 +272,11 @@ export async function executeDelegationFromText(
               taskId: message.task_id,
               recipientName: message.recipient,
               ownerName: context.displayName ?? null,
-              imagePath: null,
+              // Pass imagePath from the upload result so ra7etbal_task_image
+              // fires automatically when the task had an attached image.
+              imagePath: message.task_id
+                ? (saved.imagePathsByTaskId.get(message.task_id) ?? null)
+                : null,
             }),
           ),
         )
