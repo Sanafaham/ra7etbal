@@ -4,6 +4,7 @@ import { resizeImage, uploadTaskImage } from "../../lib/image-upload";
 import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
+import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
@@ -1082,6 +1083,13 @@ export default function ElevenLabsAgentWidget({
       // Non-fatal — Carson simply starts without prior memory.
     }
 
+    let persistentInstructions = "";
+    try {
+      persistentInstructions = await loadPersistentMemory();
+    } catch {
+      // Non-fatal — Carson starts without persistent instructions.
+    }
+
     // Fetch live weather for the user's saved city — non-fatal.
     // If city is not set, current_weather is "" and Carson will ask.
     let currentWeather = "";
@@ -1132,6 +1140,7 @@ export default function ElevenLabsAgentWidget({
           user_name: displayName ?? "",
           recent_memory: sanitizeForCarsonSpeech(recentMemory),
           current_weather: currentWeather,
+          persistent_instructions: sanitizeForCarsonSpeech(persistentInstructions),
         },
         clientTools: {
           // ── Preferred path for delegation/messaging ──────────────────────
@@ -1147,6 +1156,20 @@ export default function ElevenLabsAgentWidget({
           send_delegation: sendDelegation,
           create_reminder: createReminder,
           save_city: saveCity,
+          save_instruction: async ({
+            instruction,
+            category,
+          }: {
+            instruction: string;
+            category?: string;
+          }) => {
+            try {
+              await savePersistentInstruction(category ?? "general", instruction);
+              return "Got it. I'll remember that from now on.";
+            } catch {
+              return "I couldn't save that instruction right now. Please try again.";
+            }
+          },
         },
         onModeChange: ({ mode: m }) => {
           setMode(m === "speaking" ? "speaking" : "listening");
