@@ -73,6 +73,11 @@ export interface TextCarsonContext {
    * Carson does not analyse the image — attach-and-send only.
    */
   imageFile?: File | null;
+  /**
+   * Optional visual context to include in outgoing delegation messages when
+   * the caller has already described attached photos.
+   */
+  imageDescription?: string | null;
 }
 
 interface AnthropicResponse {
@@ -316,7 +321,7 @@ export async function executeDelegationFromText(
           sendableMessages.map((message) =>
             sendWhatsAppTask({
               to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
-              messageText: message.content,
+              messageText: withImageContext(message.content, context.imageDescription),
               confirmationLink: message.confirmation_url ?? null,
               messageRecordId: message.id,
               taskId: message.task_id,
@@ -418,6 +423,12 @@ export async function executeDelegationFromText(
   // Capitalise first word and end with a period.
   const summary = parts.join(", ");
   return summary.charAt(0).toUpperCase() + summary.slice(1) + ".";
+}
+
+function withImageContext(message: string, imageDescription?: string | null): string {
+  const context = imageDescription?.trim();
+  if (!context) return message;
+  return `${message}\n\nAttached photo context:\n${context}`;
 }
 
 // ---------------------------------------------------------------------------

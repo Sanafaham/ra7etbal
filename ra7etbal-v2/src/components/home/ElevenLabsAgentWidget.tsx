@@ -28,6 +28,15 @@ import { useTasksStore } from "../../stores/tasks";
 type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
 
+interface PendingPhoto {
+  id: string;
+  file: File;
+  previewUrl: string;
+  name: string;
+}
+
+const MAX_ATTACHED_PHOTOS = 5;
+
 // ---------------------------------------------------------------------------
 // Image analysis — converts an attached File to a 1-sentence Claude description.
 // Called at execute_instruction time so Carson receives image context in the
@@ -95,6 +104,21 @@ async function describeImageForCarson(file: File): Promise<string | null> {
   }
 }
 
+async function describePhotosForCarson(photos: PendingPhoto[]): Promise<string | null> {
+  if (photos.length === 0) return null;
+
+  const descriptions = await Promise.all(
+    photos.map(async (photo, index) => {
+      const description = await describeImageForCarson(photo.file).catch(() => null);
+      if (!description) return null;
+      return `Photo ${index + 1}${photo.name ? ` (${photo.name})` : ""}: ${description}`;
+    }),
+  );
+
+  const lines = descriptions.filter(Boolean);
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
 // ---------------------------------------------------------------------------
 // Pronoun rewriter — delegated messages are sent on behalf of the owner.
 // "call me" from the owner's mouth becomes "call Sana" in the outgoing
@@ -139,6 +163,13 @@ interface DelegationSendOptions {
    * When non-null, send-whatsapp-task uses ra7etbal_task_image automatically.
    */
   imageFile?: File | null;
+  /**
+   * Combined description of all attached photos. WhatsApp currently sends the
+   * first image only, so multiple-photo delegations include this context in
+   * the message body.
+   */
+  photoContext?: string | null;
+  attachedPhotoCount?: number;
 }
 
 /**
@@ -187,6 +218,8 @@ async function createAndSendDelegation({
   personalNote,
   ownerName,
   imageFile,
+  photoContext,
+  attachedPhotoCount = 0,
 }: DelegationSendOptions): Promise<DelegationSendResult> {
   // Always build the base message with buildDelegationMessage so personality
   // notes (bossy, reliable, etc.) are applied consistently — never skip this
@@ -247,6 +280,10 @@ async function createAndSendDelegation({
         ownerName,
       ),
     );
+  }
+
+  if (photoContext?.trim() && attachedPhotoCount > 1) {
+    messageText = `${messageText}\n\nAttached photo context:\n${photoContext.trim()}`;
   }
 
   const taskRowId = crypto.randomUUID();
@@ -533,57 +570,75 @@ export default function ElevenLabsAgentWidget({
     ReturnType<typeof Conversation.startSession>
   > | null>(null);
 
-  // Pending image for the next voice delegation.
+  // Pending photos for the next voice delegation.
   // Stored in a ref (not state) to avoid triggering re-renders and to ensure
   // executeInstruction always reads the latest value without stale closure issues.
-  const pendingImageRef = useRef<File | null>(null);
-  // Preview URL is state so the thumbnail re-renders correctly.
-  const [pendingImagePreviewUrl, setPendingImagePreviewUrl] = useState<string | null>(null);
+  const pendingPhotosRef = useRef<PendingPhoto[]>([]);
+  // Preview metadata is state so thumbnails re-render correctly.
+  const [pendingPhotoPreviews, setPendingPhotoPreviews] = useState<PendingPhoto[]>([]);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Session-scoped image snapshot.
+  // Session-scoped photo snapshot.
   // On iOS Safari, a File from <input type="file"> can become inaccessible
   // once the input element unmounts. Snapshotted at startCall time, before
   // setStatus("connecting") changes state.
-  const sessionImageRef = useRef<File | null>(null);
+  const sessionPhotosRef = useRef<PendingPhoto[]>([]);
 
-  // Pre-computed image description for the active session.
+  // Pre-computed photo descriptions for the active session.
   // Generated during startCall setup (parallel to memory loads) and injected
   // into Carson immediately after the session connects — before the user speaks.
-  // This ensures Carson has image context from the very first word, not only
+  // This ensures Carson has photo context from the very first word, not only
   // when execute_instruction fires (which can be after Carson has already responded).
-  const sessionImageDescriptionRef = useRef<string | null>(null);
+  const sessionPhotoContextRef = useRef<string | null>(null);
 
-  // Revoke the object URL when the preview is cleared.
-  const clearPendingImage = useCallback(() => {
-    setPendingImagePreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-    pendingImageRef.current = null;
-    sessionImageRef.current = null;
-    sessionImageDescriptionRef.current = null;
+  const syncPendingPhotoState = useCallback((next: PendingPhoto[]) => {
+    pendingPhotosRef.current = next;
+    setPendingPhotoPreviews(next);
+  }, []);
+
+  // Revoke object URLs when previews are cleared.
+  const clearPendingImages = useCallback(() => {
+    for (const photo of pendingPhotosRef.current) {
+      URL.revokeObjectURL(photo.previewUrl);
+    }
+    pendingPhotosRef.current = [];
+    sessionPhotosRef.current = [];
+    sessionPhotoContextRef.current = null;
+    setPendingPhotoPreviews([]);
   }, []);
 
   function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    e.target.value = ""; // allow reselecting same file
-    if (!file) return;
-    // Revoke previous preview if any
-    setPendingImagePreviewUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-    pendingImageRef.current = file;
-    setPendingImagePreviewUrl(URL.createObjectURL(file));
+    const selected = Array.from(e.target.files ?? []).slice(0, MAX_ATTACHED_PHOTOS);
+    e.target.value = ""; // allow reselecting same files
+    if (selected.length === 0) return;
+
+    const remainingSlots = MAX_ATTACHED_PHOTOS - pendingPhotosRef.current.length;
+    if (remainingSlots <= 0) return;
+
+    const nextPhotos = selected.slice(0, remainingSlots).map((file) => ({
+      id: crypto.randomUUID(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+      name: file.name,
+    }));
+
+    syncPendingPhotoState([...pendingPhotosRef.current, ...nextPhotos]);
+  }
+
+  function removePendingPhoto(id: string) {
+    if (status !== "idle") return;
+    const removed = pendingPhotosRef.current.find((photo) => photo.id === id);
+    if (removed) URL.revokeObjectURL(removed.previewUrl);
+    syncPendingPhotoState(pendingPhotosRef.current.filter((photo) => photo.id !== id));
   }
 
   // Cleanup preview URL on unmount
   useEffect(() => {
     return () => {
-      if (pendingImagePreviewUrl) URL.revokeObjectURL(pendingImagePreviewUrl);
+      for (const photo of pendingPhotosRef.current) {
+        URL.revokeObjectURL(photo.previewUrl);
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /** Per-action cooldown: action/topic key → timestamp of last send */
@@ -894,8 +949,12 @@ export default function ElevenLabsAgentWidget({
       const userId = authUserId;
       if (!userId) return "You are not signed in. Please sign in and try again.";
 
-      // Snapshot pending image — prefer live ref, fall back to session snapshot.
-      const delegationImageFile = pendingImageRef.current ?? sessionImageRef.current;
+      // Snapshot pending photos — prefer live ref, fall back to session snapshot.
+      const delegationPhotos =
+        pendingPhotosRef.current.length > 0
+          ? pendingPhotosRef.current
+          : sessionPhotosRef.current;
+      const delegationImageFile = delegationPhotos[0]?.file ?? null;
 
       let result: DelegationSendResult;
       try {
@@ -907,14 +966,16 @@ export default function ElevenLabsAgentWidget({
           personalNote: note ?? null,
           ownerName: displayName,
           imageFile: delegationImageFile,
+          photoContext: sessionPhotoContextRef.current,
+          attachedPhotoCount: delegationPhotos.length,
         });
       } catch (err) {
         const detail = err instanceof Error ? err.message : "Please try again.";
         return `Could not send the delegation to ${person.name}. ${detail}`;
       }
 
-      // Clear pending image after successful send — covers the send_delegation path.
-      if (delegationImageFile) clearPendingImage();
+      // Clear pending photos after successful send — covers the send_delegation path.
+      if (delegationPhotos.length > 0) clearPendingImages();
 
       lastSentRef.current.set(cooldownKey, Date.now());
       sentDelegationsRef.current.push({
@@ -928,7 +989,7 @@ export default function ElevenLabsAgentWidget({
 
       return `Sent delegation to ${person.name}: ${taskText}.`;
     },
-    [displayName, maybeSendImpliedDinnerDelegation, clearPendingImage],
+    [displayName, maybeSendImpliedDinnerDelegation, clearPendingImages],
   );
 
   // ------------------------------------------------------------------
@@ -1129,32 +1190,37 @@ export default function ElevenLabsAgentWidget({
       const tasks = useTasksStore.getState().items;
       const userEmail = useAuthStore.getState().user?.email ?? null;
 
-      // Snapshot the pending image — prefer live ref, fall back to the session
+      // Snapshot the pending photos — prefer live ref, fall back to the session
       // snapshot captured at startCall time (before the idle UI unmounted the
       // file input, which can invalidate File objects on iOS Safari).
-      const imageFile = pendingImageRef.current ?? sessionImageRef.current;
+      const imagePhotos =
+        pendingPhotosRef.current.length > 0
+          ? pendingPhotosRef.current
+          : sessionPhotosRef.current;
+      const firstImageFile = imagePhotos[0]?.file ?? null;
+      const photoContext = sessionPhotoContextRef.current;
 
       try {
-        // Validate the image synchronously before starting the voice pipeline.
+        // Validate the first image synchronously before starting the voice pipeline.
+        // WhatsApp V1 sends only the first image; all photos still reach Carson
+        // as descriptions.
         // resizeImage throws for files > 15 MB; catch here so the error
         // surfaces as a spoken response rather than a silent crash.
-        if (imageFile) {
+        if (firstImageFile) {
           try {
-            await resizeImage(imageFile); // dry-run validation only
+            await resizeImage(firstImageFile); // dry-run validation only
           } catch (imgErr) {
             const reason = imgErr instanceof Error ? imgErr.message : "Image too large.";
             return `Could not attach the image: ${reason}`;
           }
         }
 
-        // Describe the attached image via Claude vision and inject into the live
-      // ElevenLabs conversation so Carson has context when it processes the
-      // Belt-and-suspenders: if the session-start injection somehow missed
-      // (e.g. description resolved after sendContextualUpdate was called),
-      // re-inject using the pre-computed description. No new API call.
-        if (imageFile && sessionImageDescriptionRef.current) {
+        // Belt-and-suspenders: if the session-start injection somehow missed
+        // (e.g. description resolved after sendContextualUpdate was called),
+        // re-inject using the pre-computed descriptions. No new API call.
+        if (imagePhotos.length > 0 && photoContext) {
           conversationRef.current?.sendContextualUpdate(
-            `Reminder — the user has an attached photo: ${sessionImageDescriptionRef.current}`,
+            `Reminder — the user has attached photos:\n${photoContext}`,
           );
         }
 
@@ -1165,25 +1231,27 @@ export default function ElevenLabsAgentWidget({
           dailyBrief: "",
           people,
           tasks,
-          // Pass the pending image so savePending uploads it and sets image_path.
+          // Pass the first pending image so savePending uploads it and sets image_path.
           // ra7etbal_task_image template fires automatically when imagePath is set.
-          imageFile: imageFile ?? null,
+          // Multiple photos are represented through imageDescription context.
+          imageFile: firstImageFile,
+          imageDescription: imagePhotos.length > 1 ? photoContext : null,
         });
 
-        // Capture image description before clearPendingImage wipes it.
-        const imgDesc = sessionImageDescriptionRef.current;
+        // Capture photo descriptions before clearPendingImages wipes them.
+        const capturedPhotoContext = sessionPhotoContextRef.current;
 
-        // Clear pending image after a successful delegation send.
-        if (imageFile) clearPendingImage();
+        // Clear pending photos after a successful delegation send.
+        if (imagePhotos.length > 0) clearPendingImages();
 
         sessionActionsRef.current.push(`Executed: ${rawInstruction}`);
         // Refresh task store so Voice Carson context reflects the new task.
         useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
 
-        // When an image was attached, prepend the description to the return
+        // When photos were attached, prepend the descriptions to the return
         // string so Carson speaks from it instead of saying he cannot see photos.
-        if (imgDesc) {
-          return `Based on the attached photo (${imgDesc}): ${summary}`;
+        if (capturedPhotoContext) {
+          return `Based on the attached photos (${capturedPhotoContext}): ${summary}`;
         }
         return summary;
       } catch (err) {
@@ -1191,7 +1259,7 @@ export default function ElevenLabsAgentWidget({
         return `Could not process that. ${detail}`;
       }
     },
-    [displayName, clearPendingImage],
+    [displayName, clearPendingImages],
   );
 
   // ------------------------------------------------------------------
@@ -1200,19 +1268,19 @@ export default function ElevenLabsAgentWidget({
   const startCall = useCallback(async () => {
     if (!agentId || status !== "idle") return;
 
-    // Snapshot the pending image NOW — before setStatus("connecting") causes any
+    // Snapshot pending photos NOW — before setStatus("connecting") causes any
     // potential DOM changes. On iOS Safari, a File from <input type="file"> can
     // become inaccessible if its source input unmounts.
-    sessionImageRef.current = pendingImageRef.current;
-    sessionImageDescriptionRef.current = null;
+    sessionPhotosRef.current = [...pendingPhotosRef.current];
+    sessionPhotoContextRef.current = null;
 
-    // If an image is attached, kick off description generation immediately —
+    // If photos are attached, kick off description generation immediately —
     // in parallel with memory/weather loads below. We await the result just
-    // before opening the ElevenLabs session so the description is ready to
+    // before opening the ElevenLabs session so the descriptions are ready to
     // inject the moment Carson connects, before the user speaks a word.
-    const imageDescriptionPromise: Promise<string | null> =
-      sessionImageRef.current
-        ? describeImageForCarson(sessionImageRef.current).catch(() => null)
+    const photoContextPromise: Promise<string | null> =
+      sessionPhotosRef.current.length > 0
+        ? describePhotosForCarson(sessionPhotosRef.current).catch(() => null)
         : Promise.resolve(null);
 
     setStatus("connecting");
@@ -1269,19 +1337,19 @@ export default function ElevenLabsAgentWidget({
     const liveBriefStateText = freshVars?.briefStateText ?? briefStateText;
     const liveSpokenBrief = freshVars?.spokenBrief ?? (spokenBrief ?? "");
 
-    // Await the image description now — it has been running concurrently with
+    // Await the photo descriptions now — they have been running concurrently with
     // the memory/weather loads above, so in most cases it is already resolved.
-    sessionImageDescriptionRef.current = await imageDescriptionPromise;
+    sessionPhotoContextRef.current = await photoContextPromise;
 
-    // Build state text. If an image is attached and described, append its
+    // Build state text. If photos are attached and described, append their
     // context here so Carson's LLM receives it at the system-variable level —
     // not just as a contextual update. This prevents the dashboard-prompt
-    // fallback ("I can't see photos") from overriding the known image context.
+    // fallback ("I can't see photos") from overriding the known photo context.
     const baseStateText = userMemory
       ? `${userMemory}\n\n${liveBriefStateText}`
       : liveBriefStateText;
-    const carsonStateText = sessionImageDescriptionRef.current
-      ? `${baseStateText}\n\nAttached photo context (use this for the conversation): ${sessionImageDescriptionRef.current}`
+    const carsonStateText = sessionPhotoContextRef.current
+      ? `${baseStateText}\n\nAttached photos context (use this for the conversation):\n${sessionPhotoContextRef.current}`
       : baseStateText;
 
     try {
@@ -1348,10 +1416,11 @@ export default function ElevenLabsAgentWidget({
           const userId = useAuthStore.getState().user?.id ?? null;
           const transcript = [...sessionTranscriptRef.current];
           conversationRef.current = null;
-          sessionImageRef.current = null;
-          sessionImageDescriptionRef.current = null;
+          sessionPhotosRef.current = [];
+          sessionPhotoContextRef.current = null;
           setStatus("idle");
           setMode("listening");
+          clearPendingImages();
 
           // Build and save session memory asynchronously — non-blocking.
           // The UI is already back to idle while this runs in the background.
@@ -1410,12 +1479,12 @@ export default function ElevenLabsAgentWidget({
       });
       conversationRef.current = conv;
 
-      // Inject image description immediately after session opens — before the
-      // user speaks. This is the critical path: Carson must know about the image
+      // Inject photo descriptions immediately after session opens — before the
+      // user speaks. This is the critical path: Carson must know about the photos
       // from the first word, not only when execute_instruction fires later.
-      if (sessionImageDescriptionRef.current) {
+      if (sessionPhotoContextRef.current) {
         conv.sendContextualUpdate(
-          `The user has attached a photo. Here is a description of it: ${sessionImageDescriptionRef.current} — keep this in mind for the entire conversation.`,
+          `The user has attached photos. Here are descriptions:\n${sessionPhotoContextRef.current}\nKeep this in mind for the entire conversation.`,
         );
       }
     } catch (err) {
@@ -1424,7 +1493,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Couldn't connect. Tap to retry.");
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, onBeforeCallStart, status]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, clearPendingImages, onBeforeCallStart, status]);
 
   // ------------------------------------------------------------------
   // Session teardown
@@ -1434,9 +1503,10 @@ export default function ElevenLabsAgentWidget({
       conversationRef.current.endSession();
       conversationRef.current = null;
     }
+    clearPendingImages();
     setStatus("idle");
     setMode("listening");
-  }, []);
+  }, [clearPendingImages]);
 
   const endCall = stopSession;
 
@@ -1482,41 +1552,47 @@ export default function ElevenLabsAgentWidget({
         ref={imageFileInputRef}
         type="file"
         accept="image/*"
+        multiple
         onChange={handleImageFileChange}
         className="sr-only"
-        aria-label="Attach image"
+        aria-label="Attach photos"
       />
 
       {/*
-       * Image thumbnail — rendered whenever a photo is queued, regardless of
+       * Photo thumbnails — rendered whenever photos are queued, regardless of
        * call status. This keeps the preview visible to the user during the
        * voice session and, critically, prevents the File object from being
        * garbage-collected by iOS when the idle section unmounts.
        */}
-      {pendingImagePreviewUrl && (
-        <div className="mb-1.5 flex items-center gap-2 rounded-2xl border border-sage/25 bg-white/90 px-2.5 py-1.5 shadow-sm">
-          <div className="relative">
-            <img
-              src={pendingImagePreviewUrl}
-              alt="Attached image"
-              className="h-9 w-9 rounded-lg border border-sage/20 object-cover"
-            />
-            {/* Only allow manual removal when not mid-session */}
-            {status === "idle" && (
-              <button
-                type="button"
-                onClick={clearPendingImage}
-                aria-label="Remove attached image"
-                className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink"
-              >
-                <svg width="6" height="6" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
-                  <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
-                </svg>
-              </button>
-            )}
+      {pendingPhotoPreviews.length > 0 && (
+        <div className="mb-1.5 rounded-2xl border border-sage/25 bg-white/90 px-2.5 py-2 shadow-sm">
+          <div className="flex items-center gap-1.5">
+            {pendingPhotoPreviews.map((photo, index) => (
+              <div key={photo.id} className="relative">
+                <img
+                  src={photo.previewUrl}
+                  alt={`Attached photo ${index + 1}`}
+                  className="h-9 w-9 rounded-lg border border-sage/20 object-cover"
+                />
+                {status === "idle" && (
+                  <button
+                    type="button"
+                    onClick={() => removePendingPhoto(photo.id)}
+                    aria-label={`Remove attached photo ${index + 1}`}
+                    className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink"
+                  >
+                    <svg width="6" height="6" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                      <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
-          <span className="text-[11px] text-ink/55">
-            {status === "idle" ? "Photo ready" : "Photo attached"}
+          <span className="mt-1 block text-[11px] text-ink/55">
+            {pendingPhotoPreviews.length === 1
+              ? (status === "idle" ? "Photo ready" : "Photo attached")
+              : `${pendingPhotoPreviews.length} photos ${status === "idle" ? "ready" : "attached"}`}
           </span>
         </div>
       )}
@@ -1527,11 +1603,12 @@ export default function ElevenLabsAgentWidget({
           <button
             type="button"
             onClick={() => imageFileInputRef.current?.click()}
-            aria-label="Attach image for delegation"
-            title="Attach image"
+            aria-label="Attach photos for Carson"
+            title="Attach photos"
+            disabled={pendingPhotoPreviews.length >= MAX_ATTACHED_PHOTOS}
             className={
-              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 " +
-              (pendingImagePreviewUrl
+              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
+              (pendingPhotoPreviews.length > 0
                 ? "border-sage/40 bg-sage/10 text-sage"
                 : "border-charcoal/15 bg-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
             }
