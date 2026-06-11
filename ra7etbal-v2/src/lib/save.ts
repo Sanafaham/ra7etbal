@@ -4,6 +4,7 @@ import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "./p
 import { composeMergedMessage } from "./ai/compose-message";
 import { resizeImage, uploadTaskImage } from "./image-upload";
 import { scheduleReminderPush } from "./qstash-reminder";
+import { scheduleEscalationMessages } from "./qstash-escalation";
 import { supabase } from "./supabase";
 import { createTask } from "./tasks";
 import type { ExtractedItem } from "../types/extraction";
@@ -255,6 +256,12 @@ export async function savePending(
         );
       }
 
+      if (task.type === "delegation" && task.created_at) {
+        scheduleEscalationMessages(task.id, task.created_at).catch((err) =>
+          console.error("[save] QStash scheduleEscalationMessages failed for task", task.id, err),
+        );
+      }
+
       tasks.push(task);
       continue;
     }
@@ -328,6 +335,13 @@ export async function savePending(
     if (task.type === "reminder" && task.due_at) {
       scheduleReminderPush(task.id, task.due_at).catch((err) =>
         console.error("[save] QStash scheduleReminderPush failed for task", task.id, err),
+      );
+    }
+
+    // Schedule exact-time follow-up (+10 min) and escalation (+20 min) for delegation tasks.
+    if (task.type === "delegation" && task.created_at) {
+      scheduleEscalationMessages(task.id, task.created_at).catch((err) =>
+        console.error("[save] QStash scheduleEscalationMessages failed for task", task.id, err),
       );
     }
 

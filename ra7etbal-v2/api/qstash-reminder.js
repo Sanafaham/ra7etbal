@@ -11,7 +11,16 @@
  */
 
 const QSTASH_BASE = 'https://qstash.upstash.io/v2';
+const FOLLOWUP_DELAY_MS   = 10 * 60 * 1000; // 10 min
+const ESCALATION_DELAY_MS = 20 * 60 * 1000; // 20 min
 
+/**
+ * Unified QStash scheduling endpoint.
+ *
+ * Actions:
+ *   schedule / cancel / reschedule  — reminder push jobs (existing)
+ *   schedule-escalation             — follow-up + escalation jobs for delegation tasks (new)
+ */
 export default async function handler(req, res) {
   const requestId = Math.random().toString(36).slice(2, 8);
   console.log(`[qstash-reminder][${requestId}] ${req.method} received`);
@@ -24,6 +33,7 @@ export default async function handler(req, res) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const qstashToken = process.env.QSTASH_TOKEN;
+  const cronSecret = process.env.CRON_SECRET;
   let appBaseUrl = (process.env.APP_BASE_URL || 'https://ra7etbal-v2.vercel.app').trim();
   // Ensure the URL has a scheme — QStash rejects destinations without https://
   if (appBaseUrl && !appBaseUrl.startsWith('http://') && !appBaseUrl.startsWith('https://')) {
@@ -72,9 +82,9 @@ export default async function handler(req, res) {
 
   // ── 3. Parse and validate body ──────────────────────────────────────────────
   const body = req.body ?? {};
-  const { action, taskId, dueAt } = body;
+  const { action, taskId, dueAt, sentAt } = body;
 
-  console.log(`[qstash-reminder][${requestId}] action=${action} taskId=${taskId} dueAt=${dueAt}`);
+  console.log(`[qstash-reminder][${requestId}] action=${action} taskId=${taskId} dueAt=${dueAt} sentAt=${sentAt}`);
 
   if (!action || !taskId) {
     return res.status(400).json({ success: false, error: 'action and taskId are required.' });
@@ -82,10 +92,13 @@ export default async function handler(req, res) {
   if ((action === 'schedule' || action === 'reschedule') && !dueAt) {
     return res.status(400).json({ success: false, error: 'dueAt is required for schedule/reschedule.' });
   }
+  if (action === 'schedule-escalation' && !sentAt) {
+    return res.status(400).json({ success: false, error: 'sentAt is required for schedule-escalation.' });
+  }
 
   // ── 4. Verify task ownership ────────────────────────────────────────────────
   const taskRes = await fetch(
-    `${supabaseUrl}/rest/v1/tasks?select=id,user_id,qstash_message_id&id=eq.${encodeURIComponent(taskId)}&limit=1`,
+    `${supabaseUrl}/rest/v1/tasks?select=id,user_id,type,status,qstash_message_id&id=eq.${encodeURIComponent(taskId)}&limit=1`,
     { headers: supabaseHeaders(serviceRoleKey) },
   );
   const tasks = await taskRes.json().catch(() => null);
@@ -124,6 +137,49 @@ export default async function handler(req, res) {
       await saveMessageId(supabaseUrl, serviceRoleKey, taskId, messageId, requestId);
       console.log(`[qstash-reminder][${requestId}] rescheduled OK messageId=${messageId}`);
       return res.status(200).json({ success: true, action: 'rescheduled', messageId });
+    }
+
+    if (action === 'schedule-escalation') {
+      if (task.type !== 'delegation') {
+        console.warn(`[qstash-reminder][${requestId}] schedule-escalation called on non-delegation task type=${task.type}`);
+        return res.status(400).json({ success: false, error: 'Only delegation tasks use escalation scheduling.' });
+      }
+      if (task.status === 'done' || task.status === 'cancelled') {
+        console.log(`[qstash-reminder][${requestId}] task already ${task.status} — skipping escalation`);
+        return res.status(200).json({ success: true, skipped: true, reason: `task_${task.status}` });
+      }
+      if (!cronSecret) {
+        console.warn(`[qstash-reminder][${requestId}] CRON_SECRET not set — escalation scheduling will fail auth at target`);
+      }
+      const sentMs = new Date(sentAt).getTime();
+      if (Number.isNaN(sentMs)) {
+        return res.status(400).json({ success: false, error: `Invalid sentAt: ${sentAt}` });
+      }
+      const targetUrl       = `${appBaseUrl}/api/process-delegation-escalations`;
+      const followupUnix    = Math.floor((sentMs + FOLLOWUP_DELAY_MS)  / 1000);
+      const escalationUnix  = Math.floor((sentMs + ESCALATION_DELAY_MS) / 1000);
+
+      console.log(`[qstash-reminder][${requestId}] scheduling followup  at unix=${followupUnix}  (${new Date(followupUnix * 1000).toISOString()})`);
+      console.log(`[qstash-reminder][${requestId}] scheduling escalation at unix=${escalationUnix} (${new Date(escalationUnix * 1000).toISOString()})`);
+
+      const [fuResult, esResult] = await Promise.allSettled([
+        publishEscalationMessage({ targetUrl, qstashToken, cronSecret, dedupId: `followup-${taskId}`,   notBefore: followupUnix,   payload: { taskId }, requestId, label: 'followup' }),
+        publishEscalationMessage({ targetUrl, qstashToken, cronSecret, dedupId: `escalation-${taskId}`, notBefore: escalationUnix, payload: { taskId }, requestId, label: 'escalation' }),
+      ]);
+
+      const fuOk = fuResult.status === 'fulfilled';
+      const esOk = esResult.status === 'fulfilled';
+      if (!fuOk) console.error(`[qstash-reminder][${requestId}] followup publish failed:`,   fuResult.reason?.message);
+      if (!esOk) console.error(`[qstash-reminder][${requestId}] escalation publish failed:`, esResult.reason?.message);
+
+      if (!fuOk && !esOk) {
+        return res.status(500).json({ success: false, error: 'Both escalation publishes failed. Cron safety net will cover.' });
+      }
+      return res.status(200).json({
+        success: true,
+        followup:   fuOk ? { messageId: fuResult.value, notBefore: followupUnix   } : { error: fuResult.reason?.message },
+        escalation: esOk ? { messageId: esResult.value, notBefore: escalationUnix } : { error: esResult.reason?.message },
+      });
     }
 
     return res.status(400).json({ success: false, error: `Unknown action: ${action}` });
@@ -213,6 +269,32 @@ async function saveMessageId(supabaseUrl, serviceRoleKey, taskId, messageId, req
 
 async function clearMessageId(supabaseUrl, serviceRoleKey, taskId, requestId) {
   await saveMessageId(supabaseUrl, serviceRoleKey, taskId, null, requestId);
+}
+
+async function publishEscalationMessage({ targetUrl, qstashToken, cronSecret, dedupId, notBefore, payload, requestId, label }) {
+  const response = await fetch(`${QSTASH_BASE}/publish/${targetUrl}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${qstashToken}`,
+      'Content-Type': 'application/json',
+      'Upstash-Not-Before': String(notBefore),
+      'Upstash-Deduplication-Id': dedupId,
+      'Upstash-Retries': '3',
+      'Upstash-Forward-Authorization': `Bearer ${cronSecret}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => null);
+  console.log(`[qstash-reminder][${requestId}] ${label} publish status=${response.status} body=${JSON.stringify(data)}`);
+
+  if (!response.ok) {
+    throw new Error(data?.error || `QStash publish failed (${response.status})`);
+  }
+  if (!data?.messageId && !data?.message_id) {
+    throw new Error(`QStash publish succeeded but returned no messageId: ${JSON.stringify(data)}`);
+  }
+  return data.messageId ?? data.message_id;
 }
 
 function supabaseHeaders(serviceRoleKey) {
