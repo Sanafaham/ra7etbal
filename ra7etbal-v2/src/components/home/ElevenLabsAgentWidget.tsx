@@ -5,6 +5,7 @@ import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
+import { saveCarsonNote } from "../../lib/carson-notes";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
@@ -1039,6 +1040,35 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Client tool: save_note
+  // Explicit user notes and ideas. Not reminders, tasks, delegations, or
+  // durable behavior rules.
+  // ------------------------------------------------------------------
+  const saveNote = useCallback(
+    async ({
+      note,
+      category,
+    }: {
+      note: string;
+      category?: string;
+    }): Promise<string> => {
+      const trimmed = note?.trim();
+      if (!trimmed) {
+        return "I did not receive a note. Ask the user what they want saved.";
+      }
+
+      try {
+        await saveCarsonNote(trimmed, category ?? "general");
+        sessionActionsRef.current.push(`Saved note: ${trimmed}`);
+        return "Saved.";
+      } catch {
+        return "I couldn't save that note right now. Please try again.";
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
   // Shared delegation/message pipeline
   //
   // execute_instruction is the PREFERRED tool for Voice Carson delegation
@@ -1282,6 +1312,7 @@ export default function ElevenLabsAgentWidget({
           send_delegation: sendDelegation,
           create_reminder: createReminder,
           save_city: saveCity,
+          save_note: saveNote,
           save_instruction: async ({
             instruction,
             category,
@@ -1386,7 +1417,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Couldn't connect. Tap to retry.");
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, onBeforeCallStart, status]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, onBeforeCallStart, status]);
 
   // ------------------------------------------------------------------
   // Session teardown

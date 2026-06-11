@@ -30,6 +30,11 @@ export interface CarsonContextInput {
   now?: Date;
   /** Upcoming calendar events from Google Calendar (optional). */
   calendarEvents?: CalendarEvent[];
+  /**
+   * Pre-formatted notes block from formatNotesForContext().
+   * Pass empty string or omit when notes aren't loaded yet.
+   */
+  notesBlock?: string;
 }
 
 /**
@@ -116,6 +121,9 @@ export function buildCarsonContext(input: CarsonContextInput): string {
       lines.push(`- ${t.description.trim()}${by}${when}`);
     }
   }
+
+  // ── Saved notes ───────────────────────────────────────────────────────────
+  if (input.notesBlock) lines.push(input.notesBlock);
 
   return lines.join("\n");
 }

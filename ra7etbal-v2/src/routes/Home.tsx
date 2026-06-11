@@ -16,6 +16,7 @@ import { useProfileStore } from "../stores/profile";
 import { buildCarsonContext } from "../lib/carson-context";
 import { useTasksStore } from "../stores/tasks";
 import { fetchCalendarEvents, type CalendarEvent } from "../lib/calendar";
+import { formatNotesForContext, loadRecentNotes } from "../lib/carson-notes";
 
 export default function Home() {
   const { user } = useAuth();
@@ -49,6 +50,7 @@ export default function Home() {
   const [viewportShrunk, setViewportShrunk] = useState(false);
   const submittingRef = useRef(false);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [notesBlock, setNotesBlock] = useState("");
 
   useEffect(() => {
     if (!userId) return;
@@ -64,6 +66,16 @@ export default function Home() {
     if (!userId) return;
     void loadProfile(userId);
   }, [userId, loadProfile]);
+
+  useEffect(() => {
+    if (!userId) {
+      setNotesBlock("");
+      return;
+    }
+    loadRecentNotes(20)
+      .then((notes) => setNotesBlock(formatNotesForContext(notes)))
+      .catch(() => setNotesBlock(""));
+  }, [userId]);
 
   // Load today's calendar events on mount (fire-and-load — never blocks render).
   useEffect(() => {
@@ -114,8 +126,8 @@ export default function Home() {
     [brief, now],
   );
   const elevenLabsBriefStateText = useMemo(
-    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents }),
-    [tasks, people, user?.email, now, calendarEvents],
+    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock }),
+    [tasks, people, user?.email, now, calendarEvents, notesBlock],
   );
   const spokenBrief = useMemo(
     () => buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents),
@@ -216,6 +228,10 @@ export default function Home() {
             }
             const freshTasks = useTasksStore.getState().items;
             const freshNow = new Date();
+            const freshNotesBlock = userId
+              ? formatNotesForContext(await loadRecentNotes(20))
+              : "";
+            setNotesBlock(freshNotesBlock);
             return {
               briefStateText: buildCarsonContext({
                 tasks: freshTasks,
@@ -223,6 +239,7 @@ export default function Home() {
                 email: user?.email,
                 now: freshNow,
                 calendarEvents,
+                notesBlock: freshNotesBlock,
               }),
               spokenBrief: buildMorningBriefSpoken(
                 freshTasks,
@@ -402,4 +419,3 @@ function buildStatusSummary(
 
   return { headline, lines };
 }
-
