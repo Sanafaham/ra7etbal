@@ -519,6 +519,15 @@ export default function ElevenLabsAgentWidget({
   const [pendingImagePreviewUrl, setPendingImagePreviewUrl] = useState<string | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
 
+  // Session-scoped image snapshot.
+  // On iOS Safari, a File from <input type="file"> can become inaccessible
+  // once the input element unmounts. When startCall fires, setStatus("connecting")
+  // causes the idle section (which contains the file input) to unmount before
+  // execute_instruction ever runs. We snapshot the File here at session-start
+  // time — before the status change — so it survives the DOM tear-down.
+  // Cleared only after a successful delegation send or on session disconnect.
+  const sessionImageRef = useRef<File | null>(null);
+
   // Revoke the object URL when the preview is cleared.
   const clearPendingImage = useCallback(() => {
     setPendingImagePreviewUrl((prev) => {
@@ -526,6 +535,7 @@ export default function ElevenLabsAgentWidget({
       return null;
     });
     pendingImageRef.current = null;
+    sessionImageRef.current = null;
   }, []);
 
   function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -857,8 +867,8 @@ export default function ElevenLabsAgentWidget({
       const userId = authUserId;
       if (!userId) return "You are not signed in. Please sign in and try again.";
 
-      // Snapshot pending image before any await — same pattern as executeInstruction.
-      const delegationImageFile = pendingImageRef.current;
+      // Snapshot pending image — prefer live ref, fall back to session snapshot.
+      const delegationImageFile = pendingImageRef.current ?? sessionImageRef.current;
 
       let result: DelegationSendResult;
       try {
@@ -1063,9 +1073,10 @@ export default function ElevenLabsAgentWidget({
       const tasks = useTasksStore.getState().items;
       const userEmail = useAuthStore.getState().user?.email ?? null;
 
-      // Snapshot the pending image now — before any await — so it isn't
-      // cleared by another interaction while we wait for extraction/upload.
-      const imageFile = pendingImageRef.current;
+      // Snapshot the pending image — prefer live ref, fall back to the session
+      // snapshot captured at startCall time (before the idle UI unmounted the
+      // file input, which can invalidate File objects on iOS Safari).
+      const imageFile = pendingImageRef.current ?? sessionImageRef.current;
 
       try {
         // Validate the image synchronously before starting the voice pipeline.
@@ -1128,6 +1139,14 @@ export default function ElevenLabsAgentWidget({
   // ------------------------------------------------------------------
   const startCall = useCallback(async () => {
     if (!agentId || status !== "idle") return;
+
+    // Snapshot the pending image NOW — before setStatus("connecting") causes the
+    // idle section (containing the file input) to unmount. On iOS Safari, a File
+    // from <input type="file"> can become inaccessible once its input element is
+    // removed from the DOM. Capturing it here ensures execute_instruction always
+    // receives the File even after the idle UI tears down.
+    sessionImageRef.current = pendingImageRef.current;
+
     setStatus("connecting");
     setErrorMsg(null);
 
@@ -1253,6 +1272,7 @@ export default function ElevenLabsAgentWidget({
           const userId = useAuthStore.getState().user?.id ?? null;
           const transcript = [...sessionTranscriptRef.current];
           conversationRef.current = null;
+          sessionImageRef.current = null; // clear session image snapshot
           setStatus("idle");
           setMode("listening");
 
