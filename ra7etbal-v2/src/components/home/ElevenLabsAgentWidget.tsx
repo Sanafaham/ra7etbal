@@ -10,6 +10,7 @@ import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
+import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/people-behavior";
@@ -300,6 +301,12 @@ async function createAndSendDelegation({
     ownerName: ownerName ?? null,
     imagePath,
   });
+
+  if (taskRow.created_at) {
+    scheduleEscalationMessages(taskRow.id, taskRow.created_at).catch((err) =>
+      console.error("[send_delegation] QStash scheduleEscalationMessages failed for task", taskRow.id, err),
+    );
+  }
 
   return { taskId: taskRow.id, messageText };
 }
