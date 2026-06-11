@@ -1133,12 +1133,21 @@ export default function ElevenLabsAgentWidget({
           imageFile: imageFile ?? null,
         });
 
+        // Capture image description before clearPendingImage wipes it.
+        const imgDesc = sessionImageDescriptionRef.current;
+
         // Clear pending image after a successful delegation send.
         if (imageFile) clearPendingImage();
 
         sessionActionsRef.current.push(`Executed: ${rawInstruction}`);
         // Refresh task store so Voice Carson context reflects the new task.
         useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+
+        // When an image was attached, prepend the description to the return
+        // string so Carson speaks from it instead of saying he cannot see photos.
+        if (imgDesc) {
+          return `Based on the attached photo (${imgDesc}): ${summary}`;
+        }
         return summary;
       } catch (err) {
         const detail = err instanceof Error ? err.message : "Please try again.";
@@ -1227,9 +1236,16 @@ export default function ElevenLabsAgentWidget({
     // the memory/weather loads above, so in most cases it is already resolved.
     sessionImageDescriptionRef.current = await imageDescriptionPromise;
 
-    const carsonStateText = userMemory
+    // Build state text. If an image is attached and described, append its
+    // context here so Carson's LLM receives it at the system-variable level —
+    // not just as a contextual update. This prevents the dashboard-prompt
+    // fallback ("I can't see photos") from overriding the known image context.
+    const baseStateText = userMemory
       ? `${userMemory}\n\n${liveBriefStateText}`
       : liveBriefStateText;
+    const carsonStateText = sessionImageDescriptionRef.current
+      ? `${baseStateText}\n\nAttached photo context (use this for the conversation): ${sessionImageDescriptionRef.current}`
+      : baseStateText;
 
     try {
       // ── ElevenLabs connection safety rule ────────────────────────────────
