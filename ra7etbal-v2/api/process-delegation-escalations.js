@@ -262,10 +262,14 @@ export default async function handler(req, res) {
       });
       if (sent) {
         stats.escalationsSent += 1;
-        await stampColumn(supabaseUrl, serviceKey, task.id, 'escalated_at', now.toISOString());
       } else {
         stats.errors.push(`escalation push failed for task ${task.id}`);
+        console.warn('[escalation] push failed — stamping escalated_at to prevent indefinite retry', { taskId: task.id });
       }
+      // Stamp regardless of push outcome. Escalation is a one-shot event at the
+      // 20-min mark. Leaving escalated_at null on failure causes every subsequent
+      // cron run to retry, producing unpredictable delayed notifications.
+      await stampColumn(supabaseUrl, serviceKey, task.id, 'escalated_at', now.toISOString());
     } else {
       console.log('[escalation] task skipped with reason', {
         taskId: task.id,
