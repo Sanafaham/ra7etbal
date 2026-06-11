@@ -4,7 +4,6 @@ import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import ElevenLabsAgentWidget from "../components/home/ElevenLabsAgentWidget";
 import InboxReviewPanel from "../components/home/InboxReviewPanel";
-import TextCarsonPanel from "../components/home/TextCarsonPanel";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
@@ -202,7 +201,7 @@ export default function Home() {
       <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-text">Carson</h2>
-          <span className="text-[11px] text-text-muted">Talk or type. Carson will organize it.</span>
+          <span className="text-[11px] text-text-muted">Your Chief of Staff.</span>
         </div>
         <ElevenLabsAgentWidget
           briefStateText={elevenLabsBriefStateText}
@@ -235,24 +234,7 @@ export default function Home() {
             };
           }}
         />
-        <TextCarsonPanel
-          context={{
-            displayName,
-            userEmail: user?.email ?? null,
-            userId: userId,
-            dailyBrief: spokenBrief,
-            people,
-            tasks,
-          }}
-          embedded
-          onPrefill={(prefillText) => {
-            setText(prefillText);
-            setTimeout(() => {
-              textareaRef.current?.focus();
-              textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-            }, 50);
-          }}
-        />
+
       </section>
 
       {/* ── Inbox ─────────────────────────────────────────────────────── */}
