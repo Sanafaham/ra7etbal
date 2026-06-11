@@ -15,15 +15,24 @@ create table if not exists public.carson_notes (
 -- RLS: authenticated users can only access their own notes.
 alter table public.carson_notes enable row level security;
 
+drop policy if exists "Users can select their own Carson notes"
+  on public.carson_notes;
+
 create policy "Users can select their own Carson notes"
   on public.carson_notes for select
   to authenticated
   using (auth.uid() = user_id);
 
+drop policy if exists "Users can insert their own Carson notes"
+  on public.carson_notes;
+
 create policy "Users can insert their own Carson notes"
   on public.carson_notes for insert
   to authenticated
   with check (auth.uid() = user_id);
+
+drop policy if exists "Users can delete their own Carson notes"
+  on public.carson_notes;
 
 create policy "Users can delete their own Carson notes"
   on public.carson_notes for delete
@@ -45,6 +54,9 @@ begin
   return new;
 end;
 $$;
+
+drop trigger if exists set_carson_notes_updated_at
+  on public.carson_notes;
 
 create trigger set_carson_notes_updated_at
 before update on public.carson_notes
