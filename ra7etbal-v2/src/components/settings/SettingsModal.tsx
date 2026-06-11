@@ -8,8 +8,10 @@ import { clearUserData } from "../../lib/cleanup";
 import { supabase } from "../../lib/supabase";
 import {
   checkPushSupport,
+  disableReminderNotifications,
   enableReminderNotifications,
   isSubscriptionSavedForUser,
+  refreshPushSubscription,
   type PushNotificationStatus,
 } from "../../lib/push-notifications";
 import { useMessagesStore } from "../../stores/messages";
@@ -497,11 +499,12 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
     checkPushSupport().supported ? "idle" : "unsupported",
   );
   const [busy, setBusy] = useState(false);
+  const [busyKind, setBusyKind] = useState<"enabling" | "refreshing" | "disabling">("enabling");
 
   useEffect(() => {
     let cancelled = false;
 
-    async function refreshStatus() {
+    async function loadStatus() {
       if (!checkPushSupport().supported) {
         setStatus("unsupported");
         return;
@@ -530,7 +533,7 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
       }
     }
 
-    void refreshStatus();
+    void loadStatus();
 
     return () => {
       cancelled = true;
@@ -539,7 +542,7 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
 
   async function handleEnable() {
     if (!userId || busy) return;
-
+    setBusyKind("enabling");
     setBusy(true);
     try {
       const nextStatus = await enableReminderNotifications(userId);
@@ -551,50 +554,113 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
     }
   }
 
-  const statusText = getReminderStatusText(status, busy);
-  const disabled = busy || status === "enabled" || status === "unsupported" || !userId;
+  async function handleRefresh() {
+    if (!userId || busy) return;
+    setBusyKind("refreshing");
+    setBusy(true);
+    try {
+      const nextStatus = await refreshPushSubscription(userId);
+      setStatus(nextStatus);
+    } catch {
+      setStatus("error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleDisable() {
+    if (!userId || busy) return;
+    setBusyKind("disabling");
+    setBusy(true);
+    try {
+      const nextStatus = await disableReminderNotifications(userId);
+      setStatus(nextStatus);
+    } catch {
+      setStatus("error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const isEnabled = status === "enabled";
+  const isUnsupported = status === "unsupported";
+
+  const statusText = getReminderStatusText(status, busy, busyKind);
+  // Only truly non-actionable states are unsupported and no-user.
+  const disabledMain = busy || isUnsupported || !userId;
 
   return (
-    <button
-      type="button"
-      onClick={() => void handleEnable()}
-      disabled={disabled}
-      aria-busy={busy}
-      className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 disabled:cursor-default disabled:hover:bg-transparent last:border-b-0"
-    >
-      <span className="min-w-0">
-        <span className="block text-base text-ink">Enable reminder notifications</span>
-        <span className="block text-xs text-ink/55">{statusText}</span>
-      </span>
-      <span
-        aria-hidden
-        className={
-          "h-3 w-3 shrink-0 rounded-full " +
-          (status === "enabled"
-            ? "bg-sage"
-            : status === "denied" || status === "error"
-              ? "bg-gold"
-              : "bg-ink/20")
-        }
-      />
-    </button>
+    <div className="border-b border-sage/10 last:border-b-0">
+      {/* Main row */}
+      <button
+        type="button"
+        onClick={() => void (isEnabled ? handleRefresh() : handleEnable())}
+        disabled={disabledMain}
+        aria-busy={busy}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-cream/60 disabled:cursor-default disabled:hover:bg-transparent"
+      >
+        <span className="min-w-0">
+          <span className="block text-base text-ink">Reminder notifications</span>
+          <span className="block text-xs text-ink/55">{statusText}</span>
+        </span>
+        <span
+          aria-hidden
+          className={
+            "h-3 w-3 shrink-0 rounded-full " +
+            (isEnabled
+              ? "bg-sage"
+              : status === "denied" || status === "error"
+                ? "bg-gold"
+                : "bg-ink/20")
+          }
+        />
+      </button>
+
+      {/* Disable link — only shown when enabled and not busy */}
+      {isEnabled && !busy && (
+        <div className="px-4 pb-2.5">
+          <button
+            type="button"
+            onClick={() => void handleDisable()}
+            className="text-[11px] text-ink/40 underline underline-offset-2 transition hover:text-ink/70"
+          >
+            Disable notifications
+          </button>
+        </div>
+      )}
+
+      {/* iOS Settings hint when permission is denied */}
+      {status === "denied" && (
+        <p className="px-4 pb-2.5 text-[11px] leading-snug text-ink/40">
+          Open iOS Settings → Safari (or Ra7etBal app) → Notifications, then enable and return here to subscribe.
+        </p>
+      )}
+    </div>
   );
 }
 
-function getReminderStatusText(status: PushNotificationStatus, busy: boolean): string {
-  if (busy) return "Enabling...";
+function getReminderStatusText(
+  status: PushNotificationStatus,
+  busy: boolean,
+  busyKind: "enabling" | "refreshing" | "disabling",
+): string {
+  if (busy) {
+    if (busyKind === "refreshing") return "Refreshing subscription…";
+    if (busyKind === "disabling") return "Disabling…";
+    return "Enabling…";
+  }
 
   switch (status) {
     case "enabled":
-      return "Enabled";
+      return "Enabled — tap to refresh subscription";
     case "denied":
-      return "Permission denied";
+      return "Permission denied — see below";
     case "unsupported":
       return "Not supported on this device";
     case "error":
-      return "Error";
+      return "Something went wrong — tap to retry";
     case "idle":
-      return "Off";
+      return "Off — tap to enable";
   }
 }
 

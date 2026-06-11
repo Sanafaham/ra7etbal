@@ -102,6 +102,53 @@ export async function enableReminderNotifications(userId: string): Promise<PushN
   return "enabled";
 }
 
+/**
+ * Force-refresh the push subscription: unsubscribe the existing browser token,
+ * request a brand-new one from APNs/FCM, and upsert it in push_subscriptions.
+ * This is the fix for stale Apple Web Push endpoints that silently drop messages.
+ * updated_at is refreshed via the upsert so cron staleness checks work correctly.
+ */
+export async function refreshPushSubscription(userId: string): Promise<PushNotificationStatus> {
+  const support = checkPushSupport();
+  if (!support.supported || !vapidPublicKey) return "unsupported";
+  if (Notification.permission !== "granted") return "idle";
+
+  const registration = await getOrRegisterServiceWorker();
+
+  // Unsubscribe existing token so Apple/Google issues a fresh one.
+  const existing = await registration.pushManager.getSubscription();
+  if (existing) await existing.unsubscribe();
+
+  const newSub = await subscribeToPush(registration);
+  await savePushSubscription(userId, newSub);
+  return "enabled";
+}
+
+/**
+ * Disable push notifications: mark the current subscription disabled in DB
+ * and unsubscribe the browser-side token. Returns "idle" on success.
+ */
+export async function disableReminderNotifications(userId: string): Promise<PushNotificationStatus> {
+  const support = checkPushSupport();
+  if (!support.supported) return "idle";
+
+  const registration = await getOrRegisterServiceWorker();
+  const existing = await registration.pushManager.getSubscription();
+
+  if (existing) {
+    // Mark disabled in DB before unsubscribing so the row persists for auditing.
+    await supabase
+      .from("push_subscriptions")
+      .update({ enabled: false })
+      .eq("user_id", userId)
+      .eq("endpoint", existing.endpoint);
+
+    await existing.unsubscribe();
+  }
+
+  return "idle";
+}
+
 async function getOrRegisterServiceWorker(): Promise<ServiceWorkerRegistration> {
   const existing = await navigator.serviceWorker.getRegistration();
   if (existing?.active) return existing;
