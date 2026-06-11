@@ -6,12 +6,18 @@ import { saveInboxItem } from "../../lib/inbox";
 interface Props {
   context: TextCarsonContext;
   hideHeading?: boolean;
+  /**
+   * When true, renders without the outer card wrapper (section + border + bg).
+   * Use when embedding inside another card, e.g. the unified Carson card.
+   * Implies hideHeading.
+   */
+  embedded?: boolean;
   /** Called when the user's input is a delegation/message request that must
    *  be routed to Clear My Head. Receives the raw input text. */
   onPrefill?: (text: string) => void;
 }
 
-export default function TextCarsonPanel({ context, hideHeading = false, onPrefill: _onPrefill }: Props) {
+export default function TextCarsonPanel({ context, hideHeading = false, embedded = false, onPrefill: _onPrefill }: Props) {
   const [input, setInput] = useState("");
   const [answer, setAnswer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,9 +98,11 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
     }
   }
 
-  return (
-    <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
-      {!hideHeading && (
+  const showHeading = !hideHeading && !embedded;
+
+  const content = (
+    <>
+      {showHeading && (
         <div className="mb-2 flex items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-semibold text-text">Carson</h2>
@@ -171,7 +179,7 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
             }
           }}
           disabled={loading}
-          placeholder="Ask what needs attention, save an idea, or create a reminder."
+          placeholder="Type what you want Carson to handle…"
           className="min-h-[44px] flex-1 rounded-full border border-sage/25 bg-white px-4 text-[14px] text-text outline-none transition placeholder:text-muted focus:border-sage disabled:opacity-70"
         />
         <button
@@ -226,6 +234,16 @@ export default function TextCarsonPanel({ context, hideHeading = false, onPrefil
           </div>
         </div>
       )}
+    </>
+  );
+
+  if (embedded) {
+    return <div className="mt-3 border-t border-sage/15 pt-3">{content}</div>;
+  }
+
+  return (
+    <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
+      {content}
     </section>
   );
 }

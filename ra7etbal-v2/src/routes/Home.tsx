@@ -198,44 +198,43 @@ export default function Home() {
         </button>
       </section>
 
-      {/* ── Carson (text + voice, same Carson) ────────────────────────── */}
+      {/* ── Carson ────────────────────────────────────────────────────── */}
       <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
-        <h2 className="mb-2 text-sm font-semibold text-text">Carson</h2>
-        <div className="mb-3">
-          <ElevenLabsAgentWidget
-            briefStateText={elevenLabsBriefStateText}
-            spokenBrief={spokenBrief}
-            displayName={displayName}
-            inline
-            onBeforeCallStart={async () => {
-              // Force a live Supabase fetch before Carson speaks so ALL
-              // dynamic variables reflect the current task/message state.
-              // Both ra7etbal_state and daily_brief are rebuilt from the
-              // fresh store — never from the React render-time snapshot.
-              if (userId) {
-                await loadTasks(userId, { force: true });
-              }
-              const freshTasks = useTasksStore.getState().items;
-              const freshNow = new Date();
-              return {
-                briefStateText: buildCarsonContext({
-                  tasks: freshTasks,
-                  people,
-                  email: user?.email,
-                  now: freshNow,
-                  calendarEvents,
-                }),
-                spokenBrief: buildMorningBriefSpoken(
-                  freshTasks,
-                  people,
-                  displayName,
-                  freshNow,
-                  calendarEvents,
-                ),
-              };
-            }}
-          />
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-text">Carson</h2>
+          <span className="text-[11px] text-text-muted">Talk or type. Carson will organize it.</span>
         </div>
+        <ElevenLabsAgentWidget
+          briefStateText={elevenLabsBriefStateText}
+          spokenBrief={spokenBrief}
+          displayName={displayName}
+          inline
+          onBeforeCallStart={async () => {
+            // Force a live Supabase fetch before Carson speaks so ALL
+            // dynamic variables reflect the current task/message state.
+            if (userId) {
+              await loadTasks(userId, { force: true });
+            }
+            const freshTasks = useTasksStore.getState().items;
+            const freshNow = new Date();
+            return {
+              briefStateText: buildCarsonContext({
+                tasks: freshTasks,
+                people,
+                email: user?.email,
+                now: freshNow,
+                calendarEvents,
+              }),
+              spokenBrief: buildMorningBriefSpoken(
+                freshTasks,
+                people,
+                displayName,
+                freshNow,
+                calendarEvents,
+              ),
+            };
+          }}
+        />
         <TextCarsonPanel
           context={{
             displayName,
@@ -245,7 +244,7 @@ export default function Home() {
             people,
             tasks,
           }}
-          hideHeading
+          embedded
           onPrefill={(prefillText) => {
             setText(prefillText);
             setTimeout(() => {
