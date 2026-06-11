@@ -27,6 +27,59 @@ type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
 
 // ---------------------------------------------------------------------------
+// Image analysis — converts an attached File to a 1-sentence Claude description.
+// Called at execute_instruction time so Carson receives image context in the
+// same turn as the spoken instruction.
+// Returns null on any failure so callers can fall back gracefully.
+// ---------------------------------------------------------------------------
+async function describeImageForCarson(file: File): Promise<string | null> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const base64 = btoa(
+      new Uint8Array(arrayBuffer).reduce((acc, byte) => acc + String.fromCharCode(byte), ""),
+    );
+    const mediaType = (file.type || "image/jpeg") as
+      | "image/jpeg"
+      | "image/png"
+      | "image/gif"
+      | "image/webp";
+
+    const payload = {
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 120,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: mediaType, data: base64 },
+            },
+            {
+              type: "text",
+              text: "Describe this image in one sentence, focusing on the main subject and any actionable details relevant to a task delegation. Be concise.",
+            },
+          ],
+        },
+      ],
+    };
+
+    const res = await fetch("/api/anthropic", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) return null;
+    const data = await res.json();
+    const description: string | undefined = data?.content?.[0]?.text?.trim();
+    return description || null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Pronoun rewriter — delegated messages are sent on behalf of the owner.
 // "call me" from the owner's mouth becomes "call Sana" in the outgoing
 // message so the recipient knows who to contact.
@@ -1024,6 +1077,22 @@ export default function ElevenLabsAgentWidget({
           } catch (imgErr) {
             const reason = imgErr instanceof Error ? imgErr.message : "Image too large.";
             return `Could not attach the image: ${reason}`;
+          }
+        }
+
+        // Describe the attached image via Claude vision and inject into the live
+      // ElevenLabs conversation so Carson has context when it processes the
+      // instruction. Non-fatal — falls back to current behavior on failure.
+        if (imageFile) {
+          try {
+            const description = await describeImageForCarson(imageFile);
+            if (description) {
+              conversationRef.current?.sendContextualUpdate(
+                `The user has attached an image. Description: ${description}`,
+              );
+            }
+          } catch {
+            // Non-fatal: proceed without image context.
           }
         }
 
