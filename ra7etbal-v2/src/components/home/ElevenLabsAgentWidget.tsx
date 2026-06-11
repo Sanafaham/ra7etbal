@@ -282,10 +282,6 @@ async function createAndSendDelegation({
     );
   }
 
-  if (photoContext?.trim() && attachedPhotoCount > 1) {
-    messageText = `${messageText}\n\nAttached photo context:\n${photoContext.trim()}`;
-  }
-
   const taskRowId = crypto.randomUUID();
   const confirmationUrl = `${window.location.origin}/confirm?task=${taskRowId}`;
 
