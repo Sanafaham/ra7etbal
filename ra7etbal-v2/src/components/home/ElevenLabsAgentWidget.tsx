@@ -596,16 +596,21 @@ export default function ElevenLabsAgentWidget({
     setPendingPhotoPreviews(next);
   }, []);
 
-  // Revoke object URLs when previews are cleared.
-  const clearPendingImages = useCallback(() => {
+  const clearPendingPhotoPreviews = useCallback(() => {
     for (const photo of pendingPhotosRef.current) {
       URL.revokeObjectURL(photo.previewUrl);
     }
     pendingPhotosRef.current = [];
-    sessionPhotosRef.current = [];
-    sessionPhotoContextRef.current = null;
     setPendingPhotoPreviews([]);
   }, []);
+
+  // Revoke object URLs and clear both queued photos and active session snapshots.
+  // Use after a successful send or manual removal, when the photo is truly done.
+  const clearPendingImages = useCallback(() => {
+    clearPendingPhotoPreviews();
+    sessionPhotosRef.current = [];
+    sessionPhotoContextRef.current = null;
+  }, [clearPendingPhotoPreviews]);
 
   function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const selected = Array.from(e.target.files ?? []).slice(0, MAX_ATTACHED_PHOTOS);
@@ -1235,7 +1240,7 @@ export default function ElevenLabsAgentWidget({
           // ra7etbal_task_image template fires automatically when imagePath is set.
           // Multiple photos are represented through imageDescription context.
           imageFile: firstImageFile,
-          imageDescription: imagePhotos.length > 1 ? photoContext : null,
+          imageDescription: photoContext,
         });
 
         // Capture photo descriptions before clearPendingImages wipes them.
@@ -1416,11 +1421,9 @@ export default function ElevenLabsAgentWidget({
           const userId = useAuthStore.getState().user?.id ?? null;
           const transcript = [...sessionTranscriptRef.current];
           conversationRef.current = null;
-          sessionPhotosRef.current = [];
-          sessionPhotoContextRef.current = null;
           setStatus("idle");
           setMode("listening");
-          clearPendingImages();
+          clearPendingPhotoPreviews();
 
           // Build and save session memory asynchronously — non-blocking.
           // The UI is already back to idle while this runs in the background.
@@ -1493,7 +1496,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Couldn't connect. Tap to retry.");
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, clearPendingImages, onBeforeCallStart, status]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, clearPendingPhotoPreviews, onBeforeCallStart, status]);
 
   // ------------------------------------------------------------------
   // Session teardown
@@ -1503,10 +1506,10 @@ export default function ElevenLabsAgentWidget({
       conversationRef.current.endSession();
       conversationRef.current = null;
     }
-    clearPendingImages();
+    clearPendingPhotoPreviews();
     setStatus("idle");
     setMode("listening");
-  }, [clearPendingImages]);
+  }, [clearPendingPhotoPreviews]);
 
   const endCall = stopSession;
 
