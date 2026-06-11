@@ -1387,74 +1387,88 @@ export default function ElevenLabsAgentWidget({
           : { bottom: "calc(env(safe-area-inset-bottom) + 172px)", right: "20px" }
       }
     >
-      {status === "idle" && (
-        <div className="flex flex-col items-end gap-1.5">
-          {/* Pending image thumbnail — shown when a photo is queued */}
-          {pendingImagePreviewUrl && (
-            <div className="flex items-center gap-2 rounded-2xl border border-sage/25 bg-white/90 px-2.5 py-1.5 shadow-sm">
-              <div className="relative">
-                <img
-                  src={pendingImagePreviewUrl}
-                  alt="Attached image"
-                  className="h-9 w-9 rounded-lg border border-sage/20 object-cover"
-                />
-                <button
-                  type="button"
-                  onClick={clearPendingImage}
-                  aria-label="Remove attached image"
-                  className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink"
-                >
-                  <svg width="6" height="6" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
-                    <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
-                  </svg>
-                </button>
-              </div>
-              <span className="text-[11px] text-ink/55">Photo ready</span>
-            </div>
-          )}
+      {/*
+       * File input is ALWAYS mounted so iOS Safari never invalidates the File
+       * object by removing the input from the DOM. It is visually hidden at all
+       * times; the attach button below triggers it programmatically.
+       */}
+      <input
+        ref={imageFileInputRef}
+        type="file"
+        accept="image/*"
+        onChange={handleImageFileChange}
+        className="sr-only"
+        aria-label="Attach image"
+      />
 
-          <div className="flex items-center gap-2">
-            {/* Image attach button */}
-            <button
-              type="button"
-              onClick={() => imageFileInputRef.current?.click()}
-              aria-label="Attach image for delegation"
-              title="Attach image"
-              className={
-                "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 " +
-                (pendingImagePreviewUrl
-                  ? "border-sage/40 bg-sage/10 text-sage"
-                  : "border-charcoal/15 bg-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
-              }
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <path d="M21 15l-5-5L5 21" />
-              </svg>
-            </button>
-            <input
-              ref={imageFileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleImageFileChange}
-              className="sr-only"
-              aria-label="Attach image"
+      {/*
+       * Image thumbnail — rendered whenever a photo is queued, regardless of
+       * call status. This keeps the preview visible to the user during the
+       * voice session and, critically, prevents the File object from being
+       * garbage-collected by iOS when the idle section unmounts.
+       */}
+      {pendingImagePreviewUrl && (
+        <div className="mb-1.5 flex items-center gap-2 rounded-2xl border border-sage/25 bg-white/90 px-2.5 py-1.5 shadow-sm">
+          <div className="relative">
+            <img
+              src={pendingImagePreviewUrl}
+              alt="Attached image"
+              className="h-9 w-9 rounded-lg border border-sage/20 object-cover"
             />
-
-            {/* Talk to Carson button */}
-            <button
-              type="button"
-              onClick={startCall}
-              aria-label="Talk to Carson"
-              className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
-            >
-              <MicIcon className="h-4 w-4 text-charcoal" />
-              <span className="text-[13px] font-semibold text-charcoal">
-                Talk to Carson
-              </span>
-            </button>
+            {/* Only allow manual removal when not mid-session */}
+            {status === "idle" && (
+              <button
+                type="button"
+                onClick={clearPendingImage}
+                aria-label="Remove attached image"
+                className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink"
+              >
+                <svg width="6" height="6" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                  <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
+                </svg>
+              </button>
+            )}
           </div>
+          <span className="text-[11px] text-ink/55">
+            {status === "idle" ? "Photo ready" : "Photo attached"}
+          </span>
+        </div>
+      )}
+
+      {status === "idle" && (
+        <div className="flex items-center gap-2">
+          {/* Image attach button */}
+          <button
+            type="button"
+            onClick={() => imageFileInputRef.current?.click()}
+            aria-label="Attach image for delegation"
+            title="Attach image"
+            className={
+              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 " +
+              (pendingImagePreviewUrl
+                ? "border-sage/40 bg-sage/10 text-sage"
+                : "border-charcoal/15 bg-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
+            }
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="M21 15l-5-5L5 21" />
+            </svg>
+          </button>
+
+          {/* Talk to Carson button */}
+          <button
+            type="button"
+            onClick={startCall}
+            aria-label="Talk to Carson"
+            className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
+          >
+            <MicIcon className="h-4 w-4 text-charcoal" />
+            <span className="text-[13px] font-semibold text-charcoal">
+              Talk to Carson
+            </span>
+          </button>
         </div>
       )}
 
