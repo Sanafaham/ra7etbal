@@ -19,18 +19,20 @@ import { supabase } from "./supabase";
 export async function saveCarsonNote(
   note: string,
   category = "general",
+  source = "voice",
 ): Promise<void> {
   const trimmed = note.trim();
   if (!trimmed) return;
 
   const trimmedCategory = category.trim() || "general";
+  const trimmedSource = source.trim() || "voice";
 
   const { error } = await supabase
     .from("carson_notes")
     .insert({
       note: trimmed,
       category: trimmedCategory,
-      source: "voice",
+      source: trimmedSource,
     });
 
   if (error) {
@@ -65,6 +67,25 @@ export async function loadRecentNotes(limit = 20): Promise<CarsonNote[]> {
   }
 
   return (data ?? []) as CarsonNote[];
+}
+
+/**
+ * Delete a single note for the signed-in user.
+ * RLS guarantees users can only delete their own rows.
+ */
+export async function deleteCarsonNote(id: string): Promise<void> {
+  const trimmed = id.trim();
+  if (!trimmed) return;
+
+  const { error } = await supabase
+    .from("carson_notes")
+    .delete()
+    .eq("id", trimmed);
+
+  if (error) {
+    console.error("[carson-notes] deleteCarsonNote failed:", error.message);
+    throw error;
+  }
 }
 
 /**

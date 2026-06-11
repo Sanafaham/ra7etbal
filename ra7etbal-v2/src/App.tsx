@@ -8,6 +8,7 @@ import FollowUps from "./routes/FollowUps";
 import History from "./routes/History";
 import Home from "./routes/Home";
 import Messages from "./routes/Messages";
+import Notes from "./routes/Notes";
 import People from "./routes/People";
 import Reset from "./routes/Reset";
 import Review from "./routes/Review";
@@ -28,6 +29,7 @@ const navItems: { to: string; label: string; end?: boolean }[] = [
   { to: "/actions", label: "Actions" },
   { to: "/follow-ups", label: "Follow-ups" },
   { to: "/messages", label: "Messages" },
+  { to: "/notes", label: "Notes" },
   { to: "/people", label: "People" },
 ];
 
@@ -229,6 +231,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <Messages />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/notes"
+            element={
+              <ProtectedRoute>
+                <Notes />
               </ProtectedRoute>
             }
           />
