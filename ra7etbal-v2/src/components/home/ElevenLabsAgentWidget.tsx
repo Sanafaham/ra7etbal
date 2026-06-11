@@ -33,8 +33,14 @@ type AgentMode = "listening" | "speaking";
 // Returns null on any failure so callers can fall back gracefully.
 // ---------------------------------------------------------------------------
 async function describeImageForCarson(file: File): Promise<string | null> {
+  console.log("[img-diag] describeImageForCarson called — file:", file?.name, file?.size, file?.type);
   try {
     const arrayBuffer = await file.arrayBuffer();
+    console.log("[img-diag] arrayBuffer size:", arrayBuffer.byteLength);
+    if (arrayBuffer.byteLength === 0) {
+      console.warn("[img-diag] arrayBuffer is empty — File object may have been invalidated by iOS");
+      return null;
+    }
     const base64 = btoa(
       new Uint8Array(arrayBuffer).reduce((acc, byte) => acc + String.fromCharCode(byte), ""),
     );
@@ -64,17 +70,25 @@ async function describeImageForCarson(file: File): Promise<string | null> {
       ],
     };
 
+    console.log("[img-diag] POSTing to /api/anthropic for vision description");
     const res = await fetch("/api/anthropic", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
 
-    if (!res.ok) return null;
+    console.log("[img-diag] /api/anthropic response status:", res.status);
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "(unreadable)");
+      console.warn("[img-diag] /api/anthropic error body:", errText);
+      return null;
+    }
     const data = await res.json();
     const description: string | undefined = data?.content?.[0]?.text?.trim();
+    console.log("[img-diag] vision description:", description ?? "(null/empty)");
     return description || null;
-  } catch {
+  } catch (err) {
+    console.error("[img-diag] describeImageForCarson threw:", err);
     return null;
   }
 }
@@ -521,12 +535,16 @@ export default function ElevenLabsAgentWidget({
 
   // Session-scoped image snapshot.
   // On iOS Safari, a File from <input type="file"> can become inaccessible
-  // once the input element unmounts. When startCall fires, setStatus("connecting")
-  // causes the idle section (which contains the file input) to unmount before
-  // execute_instruction ever runs. We snapshot the File here at session-start
-  // time — before the status change — so it survives the DOM tear-down.
-  // Cleared only after a successful delegation send or on session disconnect.
+  // once the input element unmounts. Snapshotted at startCall time, before
+  // setStatus("connecting") changes state.
   const sessionImageRef = useRef<File | null>(null);
+
+  // Pre-computed image description for the active session.
+  // Generated during startCall setup (parallel to memory loads) and injected
+  // into Carson immediately after the session connects — before the user speaks.
+  // This ensures Carson has image context from the very first word, not only
+  // when execute_instruction fires (which can be after Carson has already responded).
+  const sessionImageDescriptionRef = useRef<string | null>(null);
 
   // Revoke the object URL when the preview is cleared.
   const clearPendingImage = useCallback(() => {
@@ -536,6 +554,7 @@ export default function ElevenLabsAgentWidget({
     });
     pendingImageRef.current = null;
     sessionImageRef.current = null;
+    sessionImageDescriptionRef.current = null;
   }, []);
 
   function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1093,18 +1112,13 @@ export default function ElevenLabsAgentWidget({
 
         // Describe the attached image via Claude vision and inject into the live
       // ElevenLabs conversation so Carson has context when it processes the
-      // instruction. Non-fatal — falls back to current behavior on failure.
-        if (imageFile) {
-          try {
-            const description = await describeImageForCarson(imageFile);
-            if (description) {
-              conversationRef.current?.sendContextualUpdate(
-                `The user has attached an image. Description: ${description}`,
-              );
-            }
-          } catch {
-            // Non-fatal: proceed without image context.
-          }
+      // Belt-and-suspenders: if the session-start injection somehow missed
+      // (e.g. description resolved after sendContextualUpdate was called),
+      // re-inject using the pre-computed description. No new API call.
+        if (imageFile && sessionImageDescriptionRef.current) {
+          conversationRef.current?.sendContextualUpdate(
+            `Reminder — the user has an attached photo: ${sessionImageDescriptionRef.current}`,
+          );
         }
 
         const summary = await executeDelegationFromText(rawInstruction, {
@@ -1140,12 +1154,20 @@ export default function ElevenLabsAgentWidget({
   const startCall = useCallback(async () => {
     if (!agentId || status !== "idle") return;
 
-    // Snapshot the pending image NOW — before setStatus("connecting") causes the
-    // idle section (containing the file input) to unmount. On iOS Safari, a File
-    // from <input type="file"> can become inaccessible once its input element is
-    // removed from the DOM. Capturing it here ensures execute_instruction always
-    // receives the File even after the idle UI tears down.
+    // Snapshot the pending image NOW — before setStatus("connecting") causes any
+    // potential DOM changes. On iOS Safari, a File from <input type="file"> can
+    // become inaccessible if its source input unmounts.
     sessionImageRef.current = pendingImageRef.current;
+    sessionImageDescriptionRef.current = null;
+
+    // If an image is attached, kick off description generation immediately —
+    // in parallel with memory/weather loads below. We await the result just
+    // before opening the ElevenLabs session so the description is ready to
+    // inject the moment Carson connects, before the user speaks a word.
+    const imageDescriptionPromise: Promise<string | null> =
+      sessionImageRef.current
+        ? describeImageForCarson(sessionImageRef.current).catch(() => null)
+        : Promise.resolve(null);
 
     setStatus("connecting");
     setErrorMsg(null);
@@ -1197,13 +1219,13 @@ export default function ElevenLabsAgentWidget({
     }
 
     // Fetch live task/message state from Supabase before opening the session.
-    // Both `briefStateText` and `spokenBrief` are React render-time snapshots
-    // and may be stale if a task was confirmed after the last store refresh.
-    // `onBeforeCallStart` forces a full Supabase reload and returns fresh
-    // strings for ALL dynamic variables — ra7etbal_state AND daily_brief.
     const freshVars = onBeforeCallStart ? await onBeforeCallStart() : null;
     const liveBriefStateText = freshVars?.briefStateText ?? briefStateText;
     const liveSpokenBrief = freshVars?.spokenBrief ?? (spokenBrief ?? "");
+
+    // Await the image description now — it has been running concurrently with
+    // the memory/weather loads above, so in most cases it is already resolved.
+    sessionImageDescriptionRef.current = await imageDescriptionPromise;
 
     const carsonStateText = userMemory
       ? `${userMemory}\n\n${liveBriefStateText}`
@@ -1272,7 +1294,8 @@ export default function ElevenLabsAgentWidget({
           const userId = useAuthStore.getState().user?.id ?? null;
           const transcript = [...sessionTranscriptRef.current];
           conversationRef.current = null;
-          sessionImageRef.current = null; // clear session image snapshot
+          sessionImageRef.current = null;
+          sessionImageDescriptionRef.current = null;
           setStatus("idle");
           setMode("listening");
 
@@ -1332,6 +1355,15 @@ export default function ElevenLabsAgentWidget({
         },
       });
       conversationRef.current = conv;
+
+      // Inject image description immediately after session opens — before the
+      // user speaks. This is the critical path: Carson must know about the image
+      // from the first word, not only when execute_instruction fires later.
+      if (sessionImageDescriptionRef.current) {
+        conv.sendContextualUpdate(
+          `The user has attached a photo. Here is a description of it: ${sessionImageDescriptionRef.current} — keep this in mind for the entire conversation.`,
+        );
+      }
     } catch (err) {
       // Show the real error message so the user knows what went wrong.
       // Do not auto-dismiss — the error persists until the user taps to retry.
