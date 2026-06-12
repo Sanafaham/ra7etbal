@@ -61,7 +61,7 @@ export default function TextCarsonPanel({ context, hideHeading = false, embedded
         return;
       }
 
-      const response = await askTextCarson(trimmed, context);
+      const response = await askTextCarson(trimmed, { ...context, imageFile: imageFile ?? null });
       setAnswer(response);
       setInput("");
     } catch (err) {
