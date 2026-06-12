@@ -1389,6 +1389,23 @@ export default function ElevenLabsAgentWidget({
     const liveBriefStateText = freshVars?.briefStateText ?? briefStateText;
     const liveSpokenBrief = freshVars?.spokenBrief ?? (spokenBrief ?? "");
 
+    // Compute opening_line — proactive brief on first session of the day,
+    // short status line on subsequent sessions.
+    // Uses localStorage key "carson_brief_date" (YYYY-MM-DD) to track.
+    const todayStr = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    })();
+    const isFirstSessionToday = localStorage.getItem("carson_brief_date") !== todayStr;
+    if (isFirstSessionToday) {
+      localStorage.setItem("carson_brief_date", todayStr);
+    }
+    const openingLine = isFirstSessionToday
+      ? liveSpokenBrief
+        ? sanitizeForCarsonSpeech(`${liveSpokenBrief} What would you like to work on?`)
+        : "Good morning. You're all set. What would you like to work on?"
+      : "Back. What do you need?";
+
     // Await the photo descriptions now — they have been running concurrently with
     // the memory/weather loads above, so in most cases it is already resolved.
     sessionPhotoContextRef.current = await photoContextPromise;
@@ -1419,6 +1436,7 @@ export default function ElevenLabsAgentWidget({
           // Latin "Ra7etBal" string — it mispronounces it. Arabic is correct.
           ra7etbal_state: sanitizeForCarsonSpeech(carsonStateText),
           daily_brief: sanitizeForCarsonSpeech(liveSpokenBrief),
+          opening_line: openingLine,
           current_time: new Date().toISOString(),
           user_name: displayName ?? "",
           recent_memory: sanitizeForCarsonSpeech(recentMemory),
