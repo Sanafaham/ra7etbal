@@ -1139,11 +1139,12 @@ export default function ElevenLabsAgentWidget({
   ];
 
   const getCalendarEvents = useCallback(
-    async ({ range }: { range: string }): Promise<string> => {
-      const safeRange: CalendarRange = (validCalendarRanges as string[]).includes(range)
-        ? (range as CalendarRange)
-        : "today";
+    async (params: any): Promise<string> => {
       try {
+        const range = params?.range ?? "";
+        const safeRange: CalendarRange = (validCalendarRanges as string[]).includes(range)
+          ? (range as CalendarRange)
+          : "today";
         const result = await fetchCalendarEvents(safeRange);
         if (!result.connected) return "Calendar is not connected.";
         if (result.events.length === 0) return "No events found for that period.";
