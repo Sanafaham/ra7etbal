@@ -142,6 +142,10 @@ export default async function handler(req, res) {
       const refreshToken = profiles?.[0]?.google_refresh_token;
 
       if (!refreshToken) {
+        res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+        res.setHeader("Surrogate-Control", "no-store");
         return res.status(200).json({ connected: false, events: [] });
       }
 
@@ -177,6 +181,10 @@ export default async function handler(req, res) {
               }),
             },
           );
+          res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+          res.setHeader("Pragma", "no-cache");
+          res.setHeader("Expires", "0");
+          res.setHeader("Surrogate-Control", "no-store");
           return res.status(200).json({ connected: false, revoked: true, events: [] });
         }
         console.error("Google refresh failed:", errText);
@@ -262,6 +270,10 @@ export default async function handler(req, res) {
         };
       });
 
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      res.setHeader("Surrogate-Control", "no-store");
       return res.status(200).json({ connected: true, events });
     }
 

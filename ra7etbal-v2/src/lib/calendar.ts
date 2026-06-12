@@ -52,6 +52,7 @@ export async function fetchCalendarEvents(
 
     const res = await fetch(`/api/google-calendar?range=${range}`, {
       headers: { Authorization: `Bearer ${jwt}` },
+      cache: "no-store",
     });
 
     if (!res.ok) return { connected: false, events: [] };
