@@ -66,6 +66,10 @@ export default function Home() {
     return () => URL.revokeObjectURL(url);
   }, [draftImageFile]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  // 30-day planning cache — prefetched before each Voice Carson session.
+  // Passed to ElevenLabsAgentWidget so get_calendar_events can filter in memory
+  // without a live network call (eliminates ElevenLabs tool timeout).
+  const [planningCalendarEvents, setPlanningCalendarEvents] = useState<CalendarEvent[]>([]);
   const [notesBlock, setNotesBlock] = useState("");
 
   useEffect(() => {
@@ -272,6 +276,7 @@ export default function Home() {
           briefStateText={elevenLabsBriefStateText}
           spokenBrief={spokenBrief}
           displayName={displayName}
+          planningCalendarEvents={planningCalendarEvents}
           inline
           onBeforeCallStart={async () => {
             // Force a live Supabase fetch before Carson speaks so ALL
@@ -281,6 +286,7 @@ export default function Home() {
             }
             let freshCalendarEvents = calendarEvents;
             try {
+              // Fetch today's events for daily_brief / ra7etbal_state (today-only).
               const calResult = await fetchCalendarEvents("today");
               if (calResult.connected) {
                 freshCalendarEvents = calResult.events;
@@ -288,6 +294,17 @@ export default function Home() {
               }
             } catch {
               // keep existing calendarEvents fallback
+            }
+            try {
+              // Fetch 30-day planning cache so get_calendar_events can answer
+              // range questions (tomorrow / next_week / next_10_days / etc.)
+              // instantly from memory during the Voice Carson session.
+              const planResult = await fetchCalendarEvents("next_30_days");
+              if (planResult.connected) {
+                setPlanningCalendarEvents(planResult.events);
+              }
+            } catch {
+              // keep existing planningCalendarEvents fallback (empty or stale)
             }
             const freshTasks = useTasksStore.getState().items;
             const freshNow = new Date();

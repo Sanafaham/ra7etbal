@@ -130,6 +130,81 @@ export function classifyCalendarEvent(
 }
 
 /**
+ * Filters a list of CalendarEvents to those whose start date falls within the
+ * given range, computed relative to `now` in the user's local timezone.
+ *
+ * All-day events (start is a date-only string like "2026-06-13") are parsed
+ * as local midnight to avoid UTC-offset date-shift bugs.
+ */
+export function filterCalendarEventsByRange(
+  events: CalendarEvent[],
+  range: CalendarRange,
+  now = new Date(),
+): CalendarEvent[] {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  let rangeStart: Date;
+  let rangeEnd: Date;
+
+  switch (range) {
+    case "today":
+      rangeStart = today;
+      rangeEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+      break;
+    case "tomorrow":
+      rangeStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+      rangeEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2);
+      break;
+    case "this_week": {
+      const dow = now.getDay();
+      rangeStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - dow);
+      rangeEnd = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate() + 7);
+      break;
+    }
+    case "next_week": {
+      const dow = now.getDay();
+      rangeStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - dow + 7);
+      rangeEnd = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate() + 7);
+      break;
+    }
+    case "next_7_days":
+      rangeStart = today;
+      rangeEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7);
+      break;
+    case "next_10_days":
+      rangeStart = today;
+      rangeEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 10);
+      break;
+    case "next_14_days":
+      rangeStart = today;
+      rangeEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 14);
+      break;
+    case "next_30_days":
+    default:
+      rangeStart = today;
+      rangeEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30);
+      break;
+  }
+
+  return events.filter((ev) => {
+    if (!ev.start) return false;
+    let eventDate: Date;
+    if (ev.allDay) {
+      // Date-only strings ("2026-06-13") — parse as local midnight to avoid
+      // UTC offset shifting the date by one day in non-UTC timezones.
+      const parts = ev.start.split("-").map(Number);
+      if (parts.length < 3) return false;
+      eventDate = new Date(parts[0], parts[1] - 1, parts[2]);
+    } else {
+      const parsed = new Date(ev.start);
+      if (Number.isNaN(parsed.getTime())) return false;
+      eventDate = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+    }
+    return eventDate >= rangeStart && eventDate < rangeEnd;
+  });
+}
+
+/**
  * Formats an event end time as a short human-readable label, e.g. "8:30 PM".
  * Returns "" for all-day events or when end is unavailable.
  */

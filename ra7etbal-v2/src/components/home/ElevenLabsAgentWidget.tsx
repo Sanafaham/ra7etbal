@@ -6,8 +6,8 @@ import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
 import { saveCarsonNote } from "../../lib/carson-notes";
-import { fetchCalendarEvents } from "../../lib/calendar";
-import type { CalendarRange } from "../../lib/calendar";
+import { filterCalendarEventsByRange } from "../../lib/calendar";
+import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, isSummaryWorthSaving, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
@@ -528,6 +528,7 @@ export default function ElevenLabsAgentWidget({
   briefStateText,
   spokenBrief,
   displayName,
+  planningCalendarEvents = [],
   inline = false,
   onBeforeCallStart,
 }: {
@@ -535,6 +536,11 @@ export default function ElevenLabsAgentWidget({
   /** Pre-built spoken daily brief paragraph injected as `daily_brief` dynamic variable. */
   spokenBrief?: string;
   displayName?: string | null;
+  /**
+   * 30-day calendar planning cache prefetched by Home before each session.
+   * Powers get_calendar_events in-memory filtering — no live network call needed.
+   */
+  planningCalendarEvents?: CalendarEvent[];
   /** When true, renders inline (no fixed positioning). Use inside the Carson section. */
   inline?: boolean;
   /**
@@ -648,6 +654,12 @@ export default function ElevenLabsAgentWidget({
   /** Accumulates finalized transcript messages (both user and agent) for
    *  this session. Summarised by Haiku at disconnect for conversational memory. */
   const sessionTranscriptRef = useRef<TranscriptMessage[]>([]);
+
+  // Tracks latest planning calendar cache for stable useCallback closure.
+  const planningCalendarEventsRef = useRef<CalendarEvent[]>(planningCalendarEvents);
+  useEffect(() => {
+    planningCalendarEventsRef.current = planningCalendarEvents;
+  }, [planningCalendarEvents]);
 
   const maybeSendImpliedDinnerDelegation = useCallback(
     async (userId: string): Promise<void> => {
@@ -1145,10 +1157,11 @@ export default function ElevenLabsAgentWidget({
         const safeRange: CalendarRange = (validCalendarRanges as string[]).includes(range)
           ? (range as CalendarRange)
           : "today";
-        const result = await fetchCalendarEvents(safeRange);
-        if (!result.connected) return "Calendar is not connected.";
-        if (result.events.length === 0) return "No events found for that period.";
-        return result.events
+        const cached = planningCalendarEventsRef.current;
+        if (!cached || cached.length === 0) return "Calendar range data is not loaded yet.";
+        const filtered = filterCalendarEventsByRange(cached, safeRange);
+        if (filtered.length === 0) return "No events found for that period.";
+        return filtered
           .map((ev) => {
             const start = ev.start ? new Date(ev.start) : null;
             const end = ev.end ? new Date(ev.end) : null;
