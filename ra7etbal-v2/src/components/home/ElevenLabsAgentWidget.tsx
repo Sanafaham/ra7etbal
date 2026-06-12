@@ -6,6 +6,8 @@ import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
 import { saveCarsonNote } from "../../lib/carson-notes";
+import { fetchCalendarEvents } from "../../lib/calendar";
+import type { CalendarRange } from "../../lib/calendar";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, isSummaryWorthSaving, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
@@ -1126,6 +1128,53 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Client tool: get_calendar_events
+  // On-demand calendar access for wider ranges (today, tomorrow, this_week,
+  // next_week, next_7_days, next_10_days, next_14_days, next_30_days).
+  // Returns a plain-text event list Carson can read aloud.
+  // ------------------------------------------------------------------
+  const validCalendarRanges: CalendarRange[] = [
+    "today", "tomorrow", "this_week", "next_week",
+    "next_7_days", "next_10_days", "next_14_days", "next_30_days",
+  ];
+
+  const getCalendarEvents = useCallback(
+    async ({ range }: { range: string }): Promise<string> => {
+      const safeRange: CalendarRange = (validCalendarRanges as string[]).includes(range)
+        ? (range as CalendarRange)
+        : "today";
+      try {
+        const result = await fetchCalendarEvents(safeRange);
+        if (!result.connected) return "Calendar is not connected.";
+        if (result.events.length === 0) return "No events found for that period.";
+        return result.events
+          .map((ev) => {
+            const start = ev.start ? new Date(ev.start) : null;
+            const end = ev.end ? new Date(ev.end) : null;
+            const dateStr = start
+              ? start.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })
+              : "";
+            const timeStr = ev.allDay
+              ? "All day"
+              : start
+                ? start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                : "";
+            const endStr =
+              !ev.allDay && end
+                ? `–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+                : "";
+            const locStr = ev.location ? ` (${ev.location})` : "";
+            return `${dateStr} ${timeStr}${endStr}: ${ev.title}${locStr}`;
+          })
+          .join("\n");
+      } catch {
+        return "I couldn't fetch calendar events right now.";
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
   // Shared delegation/message pipeline
   //
   // execute_instruction is the PREFERRED tool for Voice Carson delegation
@@ -1377,6 +1426,7 @@ export default function ElevenLabsAgentWidget({
           create_reminder: createReminder,
           save_city: saveCity,
           save_note: saveNote,
+          get_calendar_events: getCalendarEvents,
           save_instruction: async ({
             instruction,
             category,

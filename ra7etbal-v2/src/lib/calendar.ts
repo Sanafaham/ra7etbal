@@ -9,7 +9,15 @@
 
 import { supabase } from "./supabase";
 
-export type CalendarRange = "today" | "tomorrow" | "this_week" | "next_week";
+export type CalendarRange =
+  | "today"
+  | "tomorrow"
+  | "this_week"
+  | "next_week"
+  | "next_7_days"
+  | "next_10_days"
+  | "next_14_days"
+  | "next_30_days";
 
 export interface CalendarEvent {
   id: string;

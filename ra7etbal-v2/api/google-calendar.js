@@ -206,11 +206,27 @@ export default async function handler(req, res) {
         const startOfNext = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek + 7);
         timeMin = startOfNext.toISOString();
         timeMax = new Date(startOfNext.getFullYear(), startOfNext.getMonth(), startOfNext.getDate() + 7).toISOString();
+      } else if (calRange === "next_7_days") {
+        timeMin = now.toISOString();
+        timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7).toISOString();
+      } else if (calRange === "next_10_days") {
+        timeMin = now.toISOString();
+        timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 10).toISOString();
+      } else if (calRange === "next_14_days") {
+        timeMin = now.toISOString();
+        timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14).toISOString();
+      } else if (calRange === "next_30_days") {
+        timeMin = now.toISOString();
+        timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 30).toISOString();
       } else {
         // Default to today
         timeMin = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
         timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).toISOString();
       }
+
+      // Wide ranges use higher maxResults to capture more events
+      const isWideRange = ["next_7_days", "next_10_days", "next_14_days", "next_30_days",
+                           "this_week", "next_week"].includes(calRange);
 
       // Fetch events from Google Calendar
       const eventsParams = new URLSearchParams({
@@ -218,7 +234,7 @@ export default async function handler(req, res) {
         timeMax,
         singleEvents: "true",
         orderBy: "startTime",
-        maxResults: "20",
+        maxResults: isWideRange ? "50" : "20",
       });
 
       const eventsRes = await fetch(
