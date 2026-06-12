@@ -25,6 +25,7 @@ export default function Home() {
   const navigate = useNavigate();
   const textareaId = useId();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const carsonSectionRef = useRef<HTMLElement | null>(null);
 
   const { text, setText } = useDraftStore(
     useShallow((s) => ({ text: s.text, setText: s.setText })),
@@ -262,7 +263,7 @@ export default function Home() {
       </section>
 
       {/* ── Carson ────────────────────────────────────────────────────── */}
-      <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
+      <section ref={carsonSectionRef} className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
         <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-text">Carson</h2>
           <span className="text-[11px] text-text-muted">Your Chief of Staff.</span>
@@ -461,6 +462,16 @@ export default function Home() {
             <p className="mt-1.5 text-[12px] text-text-muted">
               Use the <strong className="font-medium text-text">Talk to Carson</strong> button above for questions.
             </p>
+            <button
+              type="button"
+              onClick={() => {
+                setRedirectMessage(null);
+                carsonSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              className="mt-3 w-full rounded-xl bg-sage px-4 py-2 text-[13px] font-medium text-white"
+            >
+              Talk to Carson
+            </button>
           </div>
         )}
       </section>
