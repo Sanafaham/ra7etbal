@@ -17,7 +17,7 @@ import { updatePeopleInsightsFromTasks } from "./people-behavior";
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 500;
 
-async function describeImageForTextCarson(file: File): Promise<string | null> {
+export async function describeImageForTextCarson(file: File): Promise<string | null> {
   try {
     const arrayBuffer = await file.arrayBuffer();
     if (arrayBuffer.byteLength === 0) return null;

@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { describeImageForTextCarson } from "../lib/text-carson";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
@@ -49,6 +50,19 @@ export default function Home() {
   const [textareaFocused, setTextareaFocused] = useState(false);
   const [viewportShrunk, setViewportShrunk] = useState(false);
   const submittingRef = useRef(false);
+
+  // Photo attachment for Clear My Head — described before extraction so the
+  // AI sees the image context when generating tasks.
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
+  const [draftImageFile, setDraftImageFile] = useState<File | null>(null);
+  const [draftImagePreviewUrl, setDraftImagePreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!draftImageFile) { setDraftImagePreviewUrl(null); return; }
+    const url = URL.createObjectURL(draftImageFile);
+    setDraftImagePreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [draftImageFile]);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [notesBlock, setNotesBlock] = useState("");
 
@@ -149,7 +163,34 @@ export default function Home() {
     try {
       await loadPeople(userId);
       const peopleNow = usePeopleStore.getState().items;
-      await runExtraction(trimmed, peopleNow, displayName ?? undefined);
+
+      // If a photo is attached, describe it and inject the description into the
+      // extraction text so the AI understands the image context during task
+      // generation. Failure is silent — extraction still runs on text alone.
+      let extractionText = trimmed;
+      const imageForExtraction = draftImageFile;
+      if (imageForExtraction) {
+        const description = await describeImageForTextCarson(imageForExtraction).catch(() => null);
+        if (description) {
+          extractionText = `${trimmed}\n\nAttached image:\n${description}`;
+        }
+      }
+
+      await runExtraction(extractionText, peopleNow, displayName ?? undefined);
+
+      // Auto-attach the image to the first delegation item so Review shows it
+      // pre-loaded and savePending uploads it without the user having to re-attach.
+      if (imageForExtraction) {
+        const extractedItems = useExtractionStore.getState().items;
+        const firstDelegation = extractedItems.find(
+          (i) => i.type === "delegation" || i.type === "message",
+        );
+        if (firstDelegation) {
+          useExtractionStore.getState().setImageFile(firstDelegation.id, imageForExtraction);
+        }
+      }
+
+      setDraftImageFile(null);
       navigate("/review");
     } catch (err) {
       setError(
@@ -305,22 +346,86 @@ export default function Home() {
           className="block min-h-[104px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-muted focus:outline-none disabled:opacity-70"
         />
 
+        {/*
+          * File input is always mounted outside any conditional block so iOS
+          * Safari never invalidates the File object reference on re-render.
+          */}
+        <input
+          ref={imageFileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={(e) => {
+            const file = e.target.files?.[0] ?? null;
+            setDraftImageFile(file);
+            e.target.value = "";
+          }}
+          className="sr-only"
+          aria-label="Attach photo to extraction"
+        />
+
+        {draftImagePreviewUrl && (
+          <div className="mt-2.5 flex items-center gap-2.5">
+            <div className="relative inline-block shrink-0">
+              <img
+                src={draftImagePreviewUrl}
+                alt="Attached photo"
+                className="h-12 w-12 rounded-xl border border-sage/25 object-cover shadow-sm"
+              />
+              <button
+                type="button"
+                onClick={() => setDraftImageFile(null)}
+                disabled={submitting}
+                aria-label="Remove attached photo"
+                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink disabled:opacity-50"
+              >
+                <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                  <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-[11px] leading-snug text-ink/50">
+              Photo ready — Carson will describe it before organizing.
+            </p>
+          </div>
+        )}
+
         <div className="mt-3 space-y-2.5 border-t border-border/70 pt-3">
           <p className="text-[13px] italic leading-snug text-text-soft">
             Ra7etBal will organize it before anything is saved.
           </p>
-          <button
-            type="button"
-            onClick={handleNext}
-            onMouseDown={(e) => e.preventDefault()}
-            onTouchStart={(e) => e.stopPropagation()}
-            disabled={!canSubmit}
-            aria-busy={submitting}
-            className="inline-flex w-full min-h-[44px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
-          >
-            {submitting && <Spinner size={14} />}
-            <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => imageFileInputRef.current?.click()}
+              disabled={submitting}
+              aria-label="Attach photo"
+              title="Attach photo"
+              className={
+                "flex h-10 w-10 shrink-0 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
+                (draftImageFile
+                  ? "border-sage/40 bg-sage/10 text-sage"
+                  : "border-sage/25 bg-white text-ink/40 hover:border-sage/40 hover:text-ink/60")
+              }
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="M21 15l-5-5L5 21" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={handleNext}
+              onMouseDown={(e) => e.preventDefault()}
+              onTouchStart={(e) => e.stopPropagation()}
+              disabled={!canSubmit}
+              aria-busy={submitting}
+              className="inline-flex flex-1 min-h-[44px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
+            >
+              {submitting && <Spinner size={14} />}
+              <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
+            </button>
+          </div>
         </div>
 
         {error && (
