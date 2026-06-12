@@ -21,7 +21,7 @@ import type { Person } from "../types/person";
 import type { Task } from "../types/task";
 import type { CalendarEvent } from "./calendar";
 import { formatReminderDue } from "./reminder-time";
-import { formatEventTime } from "./calendar";
+import { classifyCalendarEvent, formatEventTime, formatEventEndTime } from "./calendar";
 
 export interface CarsonContextInput {
   tasks: Task[];
@@ -74,11 +74,25 @@ export function buildCarsonContext(input: CarsonContextInput): string {
   // ── Calendar ──────────────────────────────────────────────────────────────
   const calEvents = input.calendarEvents ?? [];
   if (calEvents.length > 0) {
-    lines.push("UPCOMING CALENDAR:");
+    lines.push("CALENDAR:");
     for (const ev of calEvents.slice(0, 10)) {
-      const timeLabel = formatEventTime(ev, now);
+      const status = classifyCalendarEvent(ev, now);
       const loc = ev.location ? ` (${ev.location})` : "";
-      lines.push(`- ${timeLabel}: ${ev.title}${loc}`);
+      if (status === "in_progress") {
+        const endStr = formatEventEndTime(ev);
+        const startStr = ev.start
+          ? new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          : "";
+        const range = startStr && endStr ? `, ${startStr}–${endStr}` : "";
+        lines.push(`- In progress: ${ev.title}${range}${loc}`);
+      } else if (status === "past") {
+        const endStr = formatEventEndTime(ev);
+        const endLabel = endStr ? `, ended ${endStr}` : "";
+        lines.push(`- Past: ${ev.title}${endLabel}${loc}`);
+      } else {
+        const timeLabel = formatEventTime(ev, now);
+        lines.push(`- Upcoming: ${timeLabel}: ${ev.title}${loc}`);
+      }
     }
   }
 

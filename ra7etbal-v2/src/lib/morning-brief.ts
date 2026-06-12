@@ -21,7 +21,7 @@ import { isReminderOverdue, formatReminderDue } from "./reminder-time";
 import type { Task } from "../types/task";
 import type { Person } from "../types/person";
 import type { CalendarEvent } from "./calendar";
-import { formatEventTime } from "./calendar";
+import { classifyCalendarEvent, formatEventEndTime } from "./calendar";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -342,19 +342,49 @@ export function buildMorningBriefSpoken(
 
   // ── Calendar events ───────────────────────────────────────────────────────
   const calEvents = calendarEvents ?? [];
-  const todayEvents = calEvents.slice(0, 3); // cap at 3 to keep brief concise
-  if (todayEvents.length === 1) {
-    const ev = todayEvents[0];
-    const timeStr = formatEventTime(ev, now);
-    sentences.push(`On your calendar: ${ev.title} ${timeStr}.`);
-  } else if (todayEvents.length === 2) {
-    sentences.push(
-      `On your calendar today: ${todayEvents[0].title} and ${todayEvents[1].title}.`,
-    );
-  } else if (todayEvents.length >= 3) {
-    sentences.push(
-      `You have ${spokenCount(todayEvents.length)} events on your calendar today.`,
-    );
+  const upcomingEvents = calEvents.filter(
+    (ev) => classifyCalendarEvent(ev, now) === "upcoming",
+  );
+  const inProgressEvents = calEvents.filter(
+    (ev) => classifyCalendarEvent(ev, now) === "in_progress",
+  );
+  // Past events: only include in brief if nothing else is going on (gives user a
+  // "what happened today" summary). Cap at 1 to avoid noise.
+  const pastEvents = calEvents.filter(
+    (ev) => classifyCalendarEvent(ev, now) === "past",
+  );
+
+  const hasActiveCalendar = inProgressEvents.length > 0 || upcomingEvents.length > 0;
+
+  // In-progress events first
+  for (const ev of inProgressEvents.slice(0, 1)) {
+    const endStr = formatEventEndTime(ev);
+    const untilClause = endStr ? `, until ${endStr}` : "";
+    sentences.push(`You're currently in ${ev.title}${untilClause}.`);
+  }
+
+  // Upcoming events (cap at 2)
+  const upcomingCap = upcomingEvents.slice(0, 2);
+  if (upcomingCap.length === 1) {
+    const ev = upcomingCap[0];
+    const timeStr = ev.allDay
+      ? "later today"
+      : ev.start
+        ? `at ${new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+        : "later today";
+    sentences.push(`You have ${ev.title} ${timeStr}.`);
+  } else if (upcomingCap.length === 2) {
+    const t1 = upcomingCap[0].title;
+    const t2 = upcomingCap[1].title;
+    sentences.push(`Coming up today: ${t1} and ${t2}.`);
+  } else if (upcomingEvents.length > 2) {
+    sentences.push(`You have ${spokenCount(upcomingEvents.length)} events coming up today.`);
+  }
+
+  // Past events: only mention if nothing active/upcoming on calendar
+  if (!hasActiveCalendar && pastEvents.length > 0) {
+    const ev = pastEvents[pastEvents.length - 1]; // most recent past
+    sentences.push(`Your last calendar event was ${ev.title}.`);
   }
 
   // ── Reassurance close ────────────────────────────────────────────────────

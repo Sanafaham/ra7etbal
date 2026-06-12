@@ -90,3 +90,43 @@ function isSameLocalDay(a: Date, b: Date): boolean {
     a.getDate() === b.getDate()
   );
 }
+
+export type CalendarEventStatus = "upcoming" | "in_progress" | "past";
+
+/**
+ * Classifies a CalendarEvent relative to the given time.
+ *
+ * - all-day events are never "past" during the same calendar day.
+ * - If end is missing, end is assumed to be start + 1 hour.
+ * - "in_progress" means started but not yet ended.
+ */
+export function classifyCalendarEvent(
+  event: CalendarEvent,
+  now = new Date(),
+): CalendarEventStatus {
+  // All-day events are always "upcoming" for the day — never "in_progress".
+  // Saying "You're currently in [event]" sounds unnatural for all-day events.
+  if (event.allDay || !event.start) return "upcoming";
+
+  const start = new Date(event.start);
+  if (Number.isNaN(start.getTime())) return "upcoming";
+
+  const end = event.end
+    ? new Date(event.end)
+    : new Date(start.getTime() + 60 * 60 * 1000); // fallback: start + 1 h
+
+  if (now >= end) return "past";
+  if (now >= start) return "in_progress";
+  return "upcoming";
+}
+
+/**
+ * Formats an event end time as a short human-readable label, e.g. "8:30 PM".
+ * Returns "" for all-day events or when end is unavailable.
+ */
+export function formatEventEndTime(event: CalendarEvent): string {
+  if (event.allDay || !event.end) return "";
+  const end = new Date(event.end);
+  if (Number.isNaN(end.getTime())) return "";
+  return end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
