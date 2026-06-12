@@ -61,7 +61,9 @@ export default async function handler(req, res) {
       });
 
       if (!tokenRes.ok) {
-        console.error("Google token exchange failed:", await tokenRes.text());
+        const errBody = await tokenRes.text();
+        console.error("[google-oauth] status:", tokenRes.status);
+        console.error("[google-oauth] body:", errBody);
         return res.redirect(302, `${redirectBase}/?calendar=error`);
       }
 
