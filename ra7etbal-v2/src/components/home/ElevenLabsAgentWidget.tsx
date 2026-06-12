@@ -7,7 +7,7 @@ import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
 import { saveCarsonNote } from "../../lib/carson-notes";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
-import { summarizeConversation, type TranscriptMessage } from "../../lib/carson-summarize";
+import { summarizeConversation, isSummaryWorthSaving, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
@@ -1444,10 +1444,12 @@ export default function ElevenLabsAgentWidget({
               // Non-fatal — fall back to tool actions only.
             }
 
-            // Save only durable conversational memory. Tool action logs are
-            // one-time operational details; keeping them in carson_memory makes
-            // Carson misclassify temporary tasks as personal facts.
-            if (conversationSummary) {
+            // Save only durable conversational memory — and only when the
+            // summary meets the quality threshold (≥2 bullets, or a single
+            // Correction/preference bullet). Thin housekeeping rows would
+            // otherwise become the [Most recent session] label and displace
+            // meaningful memory from previous sessions.
+            if (conversationSummary && isSummaryWorthSaving(conversationSummary)) {
               saveSessionMemory(conversationSummary).catch(() => {
                 // Non-fatal — don't surface to user.
               });

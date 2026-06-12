@@ -19,9 +19,48 @@ export interface TranscriptMessage {
 const NOTHING = "NOTHING_MEMORABLE";
 
 // Minimum user turns before we bother calling the LLM.
-// Set to 1 so even a single-exchange session (quick delegation / reminder)
-// is eligible for summarisation.
-const MIN_USER_TURNS = 1;
+// 2 turns required — a single user utterance rarely produces durable memory
+// worth saving and risks polluting the [Most recent session] label with a
+// thin housekeeping row.
+const MIN_USER_TURNS = 2;
+
+/**
+ * Returns true when a summary is worth persisting to carson_memory.
+ *
+ * A summary passes if it has:
+ *  - 2 or more bullet lines, OR
+ *  - at least 1 bullet that is a Correction or explicit user preference/instruction
+ *    (these are always durable even from short sessions)
+ *
+ * This prevents thin technical or housekeeping summaries from becoming
+ * the [Most recent session] row and displacing meaningful memory.
+ */
+export function isSummaryWorthSaving(summary: string): boolean {
+  const bullets = summary
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("•"));
+
+  if (bullets.length >= 2) return true;
+
+  // Single bullet is acceptable only when it captures durable user training.
+  const durableSingleBullet = bullets.some((b) => {
+    const lower = b.toLowerCase();
+    return (
+      lower.includes("correction:") ||
+      lower.includes("preference:") ||
+      lower.includes("habit:") ||
+      lower.includes("routine:") ||
+      lower.includes("always") ||
+      lower.includes("never") ||
+      lower.includes("from now on") ||
+      lower.includes("pronounced") ||
+      lower.includes("spelled")
+    );
+  });
+
+  return durableSingleBullet;
+}
 
 /**
  * Summarise a conversation transcript into 3–7 short memory bullets.
