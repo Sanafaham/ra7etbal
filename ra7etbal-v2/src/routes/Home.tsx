@@ -279,6 +279,16 @@ export default function Home() {
             if (userId) {
               await loadTasks(userId, { force: true });
             }
+            let freshCalendarEvents = calendarEvents;
+            try {
+              const calResult = await fetchCalendarEvents("today");
+              if (calResult.connected) {
+                freshCalendarEvents = calResult.events;
+                setCalendarEvents(calResult.events);
+              }
+            } catch {
+              // keep existing calendarEvents fallback
+            }
             const freshTasks = useTasksStore.getState().items;
             const freshNow = new Date();
             const freshNotesBlock = userId
@@ -291,7 +301,7 @@ export default function Home() {
                 people,
                 email: user?.email,
                 now: freshNow,
-                calendarEvents,
+                calendarEvents: freshCalendarEvents,
                 notesBlock: freshNotesBlock,
               }),
               spokenBrief: buildMorningBriefSpoken(
@@ -299,7 +309,7 @@ export default function Home() {
                 people,
                 displayName,
                 freshNow,
-                calendarEvents,
+                freshCalendarEvents,
               ),
             };
           }}
