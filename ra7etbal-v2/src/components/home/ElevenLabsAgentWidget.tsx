@@ -163,13 +163,6 @@ interface DelegationSendOptions {
    * When non-null, send-whatsapp-task uses ra7etbal_task_image automatically.
    */
   imageFile?: File | null;
-  /**
-   * Combined description of all attached photos. WhatsApp currently sends the
-   * first image only, so multiple-photo delegations include this context in
-   * the message body.
-   */
-  photoContext?: string | null;
-  attachedPhotoCount?: number;
 }
 
 /**
@@ -218,8 +211,6 @@ async function createAndSendDelegation({
   personalNote,
   ownerName,
   imageFile,
-  photoContext,
-  attachedPhotoCount = 0,
 }: DelegationSendOptions): Promise<DelegationSendResult> {
   // Always build the base message with buildDelegationMessage so personality
   // notes (bossy, reliable, etc.) are applied consistently — never skip this
@@ -967,8 +958,6 @@ export default function ElevenLabsAgentWidget({
           personalNote: note ?? null,
           ownerName: displayName,
           imageFile: delegationImageFile,
-          photoContext: sessionPhotoContextRef.current,
-          attachedPhotoCount: delegationPhotos.length,
         });
       } catch (err) {
         const detail = err instanceof Error ? err.message : "Please try again.";
