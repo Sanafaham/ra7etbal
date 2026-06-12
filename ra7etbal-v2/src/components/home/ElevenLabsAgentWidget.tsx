@@ -1400,11 +1400,22 @@ export default function ElevenLabsAgentWidget({
     if (isFirstSessionToday) {
       localStorage.setItem("carson_brief_date", todayStr);
     }
-    const openingLine = isFirstSessionToday
-      ? liveSpokenBrief
-        ? sanitizeForCarsonSpeech(`${liveSpokenBrief} What would you like to work on?`)
-        : "Good morning. You're all set. What would you like to work on?"
-      : "Back. What do you need?";
+    const openingLine = (() => {
+      if (!isFirstSessionToday) return "I'm here. What are we looking at?";
+      const hour = new Date().getHours();
+      const greeting =
+        hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+      const name = displayName?.trim();
+      const greeterPrefix = name ? `${greeting}, ${name}.` : `${greeting}.`;
+      const briefBody = liveSpokenBrief
+        ? sanitizeForCarsonSpeech(liveSpokenBrief)
+        : "You're all set.";
+      // Strip any greeting already prepended by buildMorningBriefSpoken so we
+      // don't say "Good morning" twice. The spoken brief always starts with a
+      // greeting sentence ending in "." — remove it if present.
+      const briefWithoutGreeting = briefBody.replace(/^(Good morning|Good afternoon|Good evening)[^.]*\.\s*/i, "");
+      return `${greeterPrefix} ${briefWithoutGreeting} Anything you want me to handle first?`;
+    })();
 
     // Await the photo descriptions now — they have been running concurrently with
     // the memory/weather loads above, so in most cases it is already resolved.
