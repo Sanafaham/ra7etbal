@@ -35,7 +35,6 @@ interface PendingPhoto {
   name: string;
 }
 
-const MAX_ATTACHED_PHOTOS = 5;
 
 // ---------------------------------------------------------------------------
 // Image analysis — converts an attached File to a 1-sentence Claude description.
@@ -600,21 +599,21 @@ export default function ElevenLabsAgentWidget({
   }, [clearPendingPhotoPreviews]);
 
   function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const selected = Array.from(e.target.files ?? []).slice(0, MAX_ATTACHED_PHOTOS);
-    e.target.value = ""; // allow reselecting same files
-    if (selected.length === 0) return;
+    const file = Array.from(e.target.files ?? [])[0];
+    e.target.value = ""; // allow reselecting same file
+    if (!file) return;
 
-    const remainingSlots = MAX_ATTACHED_PHOTOS - pendingPhotosRef.current.length;
-    if (remainingSlots <= 0) return;
+    // Revoke previous preview URL before replacing
+    for (const photo of pendingPhotosRef.current) {
+      URL.revokeObjectURL(photo.previewUrl);
+    }
 
-    const nextPhotos = selected.slice(0, remainingSlots).map((file) => ({
+    syncPendingPhotoState([{
       id: crypto.randomUUID(),
       file,
       previewUrl: URL.createObjectURL(file),
       name: file.name,
-    }));
-
-    syncPendingPhotoState([...pendingPhotosRef.current, ...nextPhotos]);
+    }]);
   }
 
   function removePendingPhoto(id: string) {
@@ -1540,7 +1539,6 @@ export default function ElevenLabsAgentWidget({
         ref={imageFileInputRef}
         type="file"
         accept="image/*"
-        multiple
         onChange={handleImageFileChange}
         className="sr-only"
         aria-label="Attach photos"
@@ -1578,9 +1576,7 @@ export default function ElevenLabsAgentWidget({
             ))}
           </div>
           <span className="mt-1 block text-[11px] text-ink/55">
-            {pendingPhotoPreviews.length === 1
-              ? (status === "idle" ? "Photo ready" : "Photo attached")
-              : `${pendingPhotoPreviews.length} photos ${status === "idle" ? "ready" : "attached"}`}
+            {status === "idle" ? "Photo ready" : "Photo attached"}
           </span>
         </div>
       )}
@@ -1593,7 +1589,7 @@ export default function ElevenLabsAgentWidget({
             onClick={() => imageFileInputRef.current?.click()}
             aria-label="Attach photos for Carson"
             title="Attach photos"
-            disabled={pendingPhotoPreviews.length >= MAX_ATTACHED_PHOTOS}
+            disabled={pendingPhotoPreviews.length >= 1}
             className={
               "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
               (pendingPhotoPreviews.length > 0
