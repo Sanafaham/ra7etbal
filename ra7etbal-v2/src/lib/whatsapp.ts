@@ -11,7 +11,7 @@ export interface WhatsAppCloudTaskPayload {
   messageRecordId?: string | null;
   taskId?: string | null;
   recipientName?: string | null;
-  /** Owner display name — becomes {{1}} in ra7etbal_task_v2 template. Falls back to "Rahet Bal" on the server if omitted. */
+  /** Owner display name — becomes {{1}} in ra7etbal_task_v3 (and ra7etbal_task_image header replaces this). Falls back to "Rahet Bal" on the server if omitted. */
   ownerName?: string | null;
   /**
    * Supabase Storage path for a Reference image (e.g. "task-images/{userId}/{taskId}/photo.jpg").

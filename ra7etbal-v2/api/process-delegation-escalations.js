@@ -309,9 +309,10 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
     return false;
   }
 
-  // Resolve owner display name so pronouns read correctly for the recipient.
-  // description is stored from the owner's perspective ("text you in one minute"
-  // means "text the owner") — rewrite before sending as WhatsApp copy.
+  // Resolve owner display name for two purposes:
+  //   1. Rewrite pronouns in the description ("you" → owner's name) for the recipient.
+  //   2. Pass as ownerName to send-whatsapp-task so the task template {{1}} shows
+  //      the real owner name instead of the "Rahet Bal" server fallback.
   const ownerName = await resolveOwnerName(supabaseUrl, serviceKey, user_id);
   const rewrittenDescription = rewriteDelegationPronouns(description, ownerName);
   const messageText = `Following up: ${rewrittenDescription}`;
@@ -320,6 +321,7 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
     route: `${appBaseUrl}/api/send-whatsapp-task`,
     hasPhone: Boolean(personPhone),
     hasConfirmationUrl: Boolean(confirmation_url),
+    ownerName,
   });
 
   try {
@@ -332,6 +334,7 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
         confirmationLink: confirmation_url,
         taskId,
         recipientName: assigned_to,
+        ownerName,
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -347,7 +350,9 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
     console.log(`[escalation] follow-up sent`, {
       taskId,
       assignedTo: assigned_to,
+      ownerName,
       sendMode: data?.sendMode || data?.sendType || null,
+      templateName: data?.templateName || null,
       messageId: data?.messageId || null,
     });
     return true;

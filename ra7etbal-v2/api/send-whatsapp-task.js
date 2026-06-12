@@ -116,6 +116,16 @@ export default async function handler(req, res) {
   const useImageTemplate = imagePath && metaMediaId !== null;
   const effectivePrimaryTemplate = useImageTemplate ? primaryTemplateName : (imagePath ? 'ra7etbal_task_assignment' : primaryTemplateName);
 
+  console.log('[send-whatsapp-task] template selected', {
+    templateType: imagePath ? 'image' : 'text',
+    primaryTemplate: primaryTemplateName,
+    effectivePrimaryTemplate,
+    fallbackTemplate: fallbackTemplateName,
+    useImageTemplate,
+    imageSendStatus,
+    ownerName: cleanOwnerName,
+  });
+
   // ── Legacy: separate image media message ─────────────────────────────────
   // Used when imagePath is set but Meta upload failed (graceful degradation).
   // Send image as a separate media message BEFORE the template.
@@ -157,23 +167,21 @@ export default async function handler(req, res) {
   /**
    * Build the template payload for a given template name.
    *
-   * ra7etbal_task_v3 / ra7etbal_task_v2:
+   * ra7etbal_task_v3 (PRIMARY — text tasks):
    *   body: {{1}} owner, {{2}} message, {{3}} link  (3 params)
    *
-   * ra7etbal_task_image:
+   * ra7etbal_task_image (PRIMARY — image tasks):
    *   header: image (via Meta media_id)
-   *   body:   {{1}} message, {{2}} link  (2 params — NOT 3; image header replaces owner context)
+   *   body:   {{1}} message, {{2}} link  (2 params — image header replaces owner context)
    *
-   * ra7etbal_task_assignment:
+   * ra7etbal_task_assignment (FALLBACK):
    *   body: {{1}} message, {{2}} link  (2 params)
    */
   function buildTemplatePayload(tplName, mediaId = null) {
     const isImageTemplate = tplName === 'ra7etbal_task_image';
-    // ra7etbal_task_image uses 2 body params (message + link); the image header
-    // provides visual context so no owner-name param is needed in the body.
-    const is3Param =
-      tplName === 'ra7etbal_task_v3' ||
-      tplName === 'ra7etbal_task_v2';
+    // Only ra7etbal_task_v3 uses 3 body params (owner + message + link).
+    // ra7etbal_task_image and ra7etbal_task_assignment use 2 body params.
+    const is3Param = tplName === 'ra7etbal_task_v3';
 
     const components = [];
 
@@ -217,7 +225,7 @@ export default async function handler(req, res) {
     // ── Primary send ─────────────────────────────────────────────────────────
     const primaryPayload = buildTemplatePayload(effectivePrimaryTemplate, metaMediaId);
 
-    console.log('WhatsApp template send attempt', {
+    console.log('[send-whatsapp-task] primary send attempt', {
       phoneNumberIdLast4,
       to: normalizedTo,
       tokenConfigured: Boolean(accessToken),
@@ -228,8 +236,9 @@ export default async function handler(req, res) {
       imagePathPresent: Boolean(imagePath),
       metaMediaId: metaMediaId || null,
       imageSendStatus,
-      mode: 'template',
       templateName: effectivePrimaryTemplate,
+      templateType: imagePath ? 'image' : 'text',
+      isFallback: false,
       templateLanguage,
       payload: redactPayloadForLog(primaryPayload),
     });
@@ -260,8 +269,10 @@ export default async function handler(req, res) {
         templateResult = await sendMetaMessage({ url, accessToken, payload: fallbackPayload });
         usedTemplateName = fallbackTemplateName;
 
-        console.log('WhatsApp fallback template send attempt', {
+        console.log('[send-whatsapp-task] fallback send attempt', {
           templateName: fallbackTemplateName,
+          isFallback: true,
+          ownerName: cleanOwnerName,
           ok: templateResult.ok,
           status: templateResult.status,
         });
@@ -269,13 +280,22 @@ export default async function handler(req, res) {
     }
 
     if (!templateResult.ok) {
-      console.error('WhatsApp template send failed', {
+      console.error('[send-whatsapp-task] template send failed', {
         status: templateResult.status,
         metaError: templateResult.metaError,
         usedTemplateName,
+        isFallback: usedTemplateName === fallbackTemplateName,
       });
       return sendFailure(res, templateResult);
     }
+
+    console.log('[send-whatsapp-task] send accepted', {
+      templateName: usedTemplateName,
+      isFallback: usedTemplateName === fallbackTemplateName,
+      templateType: imagePath ? 'image' : 'text',
+      ownerName: cleanOwnerName,
+      messageId: templateResult.messageId,
+    });
 
     await markMessageAccepted({
       supabaseUrl,
