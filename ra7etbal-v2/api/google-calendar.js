@@ -258,12 +258,8 @@ export default async function handler(req, res) {
       }
 
       const data = await eventsRes.json();
-      // TEMP DEBUG — remove after diagnosis
-      console.log("[cal-debug] range:", calRange);
-      console.log("[cal-debug] timeMin:", timeMin, "timeMax:", timeMax);
-      console.log("[cal-debug] raw item count:", data.items?.length ?? 0);
-      console.log("[cal-debug] raw titles:", (data.items ?? []).slice(0, 5).map(i => i.summary ?? "(No title)"));
-      const events = (data.items ?? []).map((item) => {
+      const rawItems = data.items ?? [];
+      const events = rawItems.map((item) => {
         const allDay = Boolean(item.start?.date && !item.start?.dateTime);
         return {
           id: item.id,
@@ -274,6 +270,18 @@ export default async function handler(req, res) {
           allDay,
         };
       });
+      // TEMP DEBUG — remove after diagnosis
+      console.log("[cal-debug-json]", JSON.stringify({
+        range: calRange,
+        timeMin,
+        timeMax,
+        maxResults: isWideRange ? "50" : "20",
+        rawCount: rawItems.length,
+        mappedCount: events.length,
+        titles: rawItems.slice(0, 5).map(i => i.summary ?? "(No title)"),
+        starts: rawItems.slice(0, 5).map(i => i.start?.dateTime ?? i.start?.date ?? null),
+        ends: rawItems.slice(0, 5).map(i => i.end?.dateTime ?? i.end?.date ?? null),
+      }));
 
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       res.setHeader("Pragma", "no-cache");
