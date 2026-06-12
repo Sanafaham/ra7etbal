@@ -47,6 +47,7 @@ export default function Home() {
   const [now, setNow] = useState(() => new Date());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [redirectMessage, setRedirectMessage] = useState<string | null>(null);
   const [textareaFocused, setTextareaFocused] = useState(false);
   const [viewportShrunk, setViewportShrunk] = useState(false);
   const submittingRef = useRef(false);
@@ -161,6 +162,16 @@ export default function Home() {
     setError(null);
 
     try {
+      // Intercept question-style inputs before running extraction.
+      // These belong to Carson, not to the capture/organize pipeline.
+      if (looksLikeQuestion(trimmed)) {
+        setRedirectMessage(
+          "Carson can answer questions about your notes, memory, priorities, and open items. Clear My Head is for capturing tasks, reminders, notes, and messages.",
+        );
+        return;
+      }
+
+      setRedirectMessage(null);
       await loadPeople(userId);
       const peopleNow = usePeopleStore.getState().items;
 
@@ -334,7 +345,7 @@ export default function Home() {
           id={textareaId}
           ref={textareaRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => { setText(e.target.value); setRedirectMessage(null); }}
           onFocus={() => setTextareaFocused(true)}
           onBlur={() => setTextareaFocused(false)}
           placeholder="Say what you're carrying. Tasks, reminders, people to message, things to follow up on."
@@ -443,6 +454,15 @@ export default function Home() {
             </AuthNotice>
           </div>
         )}
+
+        {redirectMessage && (
+          <div className="mt-3 rounded-2xl border border-sage/25 bg-sage/5 px-3.5 py-3">
+            <p className="text-[13px] leading-snug text-text-soft">{redirectMessage}</p>
+            <p className="mt-1.5 text-[12px] text-text-muted">
+              Use the <strong className="font-medium text-text">Talk to Carson</strong> button above for questions.
+            </p>
+          </div>
+        )}
       </section>
 
       {keyboardOpen && (
@@ -469,6 +489,38 @@ export default function Home() {
       )}
     </section>
   );
+}
+
+/**
+ * Returns true when the input is requesting information from Carson rather
+ * than asking Ra7etBal to capture, organize, or act on something.
+ *
+ * Conservative: false negatives (letting a borderline question through to
+ * extraction) are fine — the extractor will park it and no harm is done.
+ * False positives (blocking a real task input) are the problem to avoid.
+ *
+ * Exclusions:
+ *   - "Ask [person] if/whether..." — delegation, caught by extraction
+ *   - "Remind me to..." — reminder, caught by extraction
+ *   - "Tell [person] to..." — delegation
+ */
+function looksLikeQuestion(input: string): boolean {
+  const lower = input.trim().toLowerCase();
+
+  // Starts with an interrogative word
+  if (/^(?:what|who|when|where|which|why|how)\b/.test(lower)) return true;
+
+  // "Tell me about/what/how..." — but NOT "Tell Grace/Ghulam to..."
+  // The "tell me" check is safe because delegations start "tell [name]" not "tell me"
+  if (/^tell me\b/.test(lower)) return true;
+
+  // "Show me..."
+  if (/^show me\b/.test(lower)) return true;
+
+  // "Can you / do you / could you / would you..."
+  if (/^(?:can you|do you|could you|would you)\b/.test(lower)) return true;
+
+  return false;
 }
 
 function buildStatusSummary(
