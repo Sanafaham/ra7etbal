@@ -238,6 +238,7 @@ export default function Review() {
                 messageRecordId: message.id,
                 taskId: message.task_id,
                 recipientName: message.recipient,
+                ownerName: displayName ?? null,
                 imagePath: message.task_id ? (taskImagePathById.get(message.task_id) ?? null) : null,
               }),
             ),
