@@ -258,6 +258,11 @@ export default async function handler(req, res) {
       }
 
       const data = await eventsRes.json();
+      // TEMP DEBUG — remove after diagnosis
+      console.log("[cal-debug] range:", calRange);
+      console.log("[cal-debug] timeMin:", timeMin, "timeMax:", timeMax);
+      console.log("[cal-debug] raw item count:", data.items?.length ?? 0);
+      console.log("[cal-debug] raw titles:", (data.items ?? []).slice(0, 5).map(i => i.summary ?? "(No title)"));
       const events = (data.items ?? []).map((item) => {
         const allDay = Boolean(item.start?.date && !item.start?.dateTime);
         return {
