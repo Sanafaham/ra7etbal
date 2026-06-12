@@ -189,7 +189,51 @@ export function buildMorningBriefSpoken(
   const hasAttention = brief.needsAttention.length > 0;
   const hasWaiting = brief.waitingOn.length > 0;
 
-  // ── Lead with urgency: overdue first ────────────────────────────────────
+  // ── 1. Calendar / fixed agenda (always first) ─────────────────────────────
+  const calEvents = calendarEvents ?? [];
+  const upcomingEvents = calEvents.filter(
+    (ev) => classifyCalendarEvent(ev, now) === "upcoming",
+  );
+  const inProgressEvents = calEvents.filter(
+    (ev) => classifyCalendarEvent(ev, now) === "in_progress",
+  );
+  const pastEvents = calEvents.filter(
+    (ev) => classifyCalendarEvent(ev, now) === "past",
+  );
+  const hasActiveCalendar = inProgressEvents.length > 0 || upcomingEvents.length > 0;
+
+  // In-progress events
+  for (const ev of inProgressEvents.slice(0, 1)) {
+    const endStr = formatEventEndTime(ev);
+    const untilClause = endStr ? `, until ${endStr}` : "";
+    sentences.push(`You're currently in ${ev.title}${untilClause}.`);
+  }
+
+  // Upcoming events (cap at 2)
+  const upcomingCap = upcomingEvents.slice(0, 2);
+  if (upcomingCap.length === 1) {
+    const ev = upcomingCap[0];
+    const timeStr = ev.allDay
+      ? "later today"
+      : ev.start
+        ? `at ${new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+        : "later today";
+    sentences.push(`You have ${ev.title} ${timeStr}.`);
+  } else if (upcomingCap.length === 2) {
+    const t1 = upcomingCap[0].title;
+    const t2 = upcomingCap[1].title;
+    sentences.push(`Coming up today: ${t1} and ${t2}.`);
+  } else if (upcomingEvents.length > 2) {
+    sentences.push(`You have ${spokenCount(upcomingEvents.length)} events coming up today.`);
+  }
+
+  // Past events: only mention if nothing active/upcoming on calendar
+  if (!hasActiveCalendar && pastEvents.length > 0) {
+    const ev = pastEvents[pastEvents.length - 1];
+    sentences.push(`Your last calendar event was ${ev.title}.`);
+  }
+
+  // ── 2. What needs attention: overdue first ───────────────────────────────
   if (hasUrgent) {
     if (brief.overdueItems.length === 1) {
       const t = brief.overdueItems[0];
@@ -226,7 +270,7 @@ export function buildMorningBriefSpoken(
     sentences.push("Your slate is clear.");
   }
 
-  // ── Waiting on others ────────────────────────────────────────────────────
+  // ── 3. Waiting on others ─────────────────────────────────────────────────
   if (brief.waitingOn.length === 1) {
     const t = brief.waitingOn[0];
     const who = cap(t.assigned_to);
@@ -268,7 +312,7 @@ export function buildMorningBriefSpoken(
     }
   }
 
-  // ── Upcoming reminders with times ────────────────────────────────────────
+  // ── 4. Reminders ─────────────────────────────────────────────────────────
   const remindersToday = brief.needsAttention.filter((t) => t.type === "reminder");
   const otherAttention = brief.needsAttention.filter((t) => t.type !== "reminder");
 
@@ -298,7 +342,7 @@ export function buildMorningBriefSpoken(
     sentences.push(`${spokenCount(otherAttention.length)} other items need your attention today.`);
   }
 
-  // ── Risks & bottlenecks ──────────────────────────────────────────────────
+  // ── 5. Risks & bottlenecks ───────────────────────────────────────────────
   for (const risk of brief.risks.slice(0, 2)) {
     const who = cap(risk.task.assigned_to);
     if (risk.reason.includes("tasks waiting")) {
@@ -322,7 +366,7 @@ export function buildMorningBriefSpoken(
     }
   }
 
-  // ── Recent completions ───────────────────────────────────────────────────
+  // ── 6. Recent completions ─────────────────────────────────────────────────
   const completions = brief.recentCompletions.slice(0, 3);
   if (completions.length === 1) {
     sentences.push(buildCompletionSentence(completions[0]));
@@ -340,54 +384,7 @@ export function buildMorningBriefSpoken(
     sentences.push(`${spokenCount(completions.length)} tasks were confirmed in the last 24 hours.`);
   }
 
-  // ── Calendar events ───────────────────────────────────────────────────────
-  const calEvents = calendarEvents ?? [];
-  const upcomingEvents = calEvents.filter(
-    (ev) => classifyCalendarEvent(ev, now) === "upcoming",
-  );
-  const inProgressEvents = calEvents.filter(
-    (ev) => classifyCalendarEvent(ev, now) === "in_progress",
-  );
-  // Past events: only include in brief if nothing else is going on (gives user a
-  // "what happened today" summary). Cap at 1 to avoid noise.
-  const pastEvents = calEvents.filter(
-    (ev) => classifyCalendarEvent(ev, now) === "past",
-  );
-
-  const hasActiveCalendar = inProgressEvents.length > 0 || upcomingEvents.length > 0;
-
-  // In-progress events first
-  for (const ev of inProgressEvents.slice(0, 1)) {
-    const endStr = formatEventEndTime(ev);
-    const untilClause = endStr ? `, until ${endStr}` : "";
-    sentences.push(`You're currently in ${ev.title}${untilClause}.`);
-  }
-
-  // Upcoming events (cap at 2)
-  const upcomingCap = upcomingEvents.slice(0, 2);
-  if (upcomingCap.length === 1) {
-    const ev = upcomingCap[0];
-    const timeStr = ev.allDay
-      ? "later today"
-      : ev.start
-        ? `at ${new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-        : "later today";
-    sentences.push(`You have ${ev.title} ${timeStr}.`);
-  } else if (upcomingCap.length === 2) {
-    const t1 = upcomingCap[0].title;
-    const t2 = upcomingCap[1].title;
-    sentences.push(`Coming up today: ${t1} and ${t2}.`);
-  } else if (upcomingEvents.length > 2) {
-    sentences.push(`You have ${spokenCount(upcomingEvents.length)} events coming up today.`);
-  }
-
-  // Past events: only mention if nothing active/upcoming on calendar
-  if (!hasActiveCalendar && pastEvents.length > 0) {
-    const ev = pastEvents[pastEvents.length - 1]; // most recent past
-    sentences.push(`Your last calendar event was ${ev.title}.`);
-  }
-
-  // ── Reassurance close ────────────────────────────────────────────────────
+  // ── Reassurance close ─────────────────────────────────────────────────────
   const issueCount = brief.needsAttention.length + brief.overdueItems.length + brief.risks.length;
 
   if (issueCount === 0 && brief.waitingOn.length === 0 && completions.length === 0) {
