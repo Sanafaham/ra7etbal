@@ -207,16 +207,16 @@ export default async function handler(req, res) {
         timeMin = startOfNext.toISOString();
         timeMax = new Date(startOfNext.getFullYear(), startOfNext.getMonth(), startOfNext.getDate() + 7).toISOString();
       } else if (calRange === "next_7_days") {
-        timeMin = now.toISOString();
+        timeMin = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
         timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 7).toISOString();
       } else if (calRange === "next_10_days") {
-        timeMin = now.toISOString();
+        timeMin = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
         timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 10).toISOString();
       } else if (calRange === "next_14_days") {
-        timeMin = now.toISOString();
+        timeMin = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
         timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14).toISOString();
       } else if (calRange === "next_30_days") {
-        timeMin = now.toISOString();
+        timeMin = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
         timeMax = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 30).toISOString();
       } else {
         // Default to today
