@@ -70,17 +70,21 @@ export async function loadRecentMemory(limit = 20): Promise<string> {
     return "No previous sessions.";
   }
 
-  const memoryText = data
-    .reverse() // oldest first so Carson reads chronologically
-    .map((row) => {
-      const date = new Date(row.created_at).toLocaleDateString(undefined, {
-        month: "short",
-        day: "numeric",
-      });
-      const summary = row.summary.trim().replace(/\n{3,}/g, "\n");
-      return `[${date}] ${summary}`;
-    })
-    .join("\n");
+  // data arrives newest-first from the query; keep that order so we can label
+  // the first row (index 0) as "Most recent session" before reversing.
+  const labeled = data.map((row, idx) => {
+    const date = new Date(row.created_at).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+    const summary = row.summary.trim().replace(/\n{3,}/g, "\n");
+    const label = idx === 0 ? `[Most recent session — ${date}]` : `[Earlier session — ${date}]`;
+    return `${label}\n${summary}`;
+  });
+
+  // Reverse so Carson reads chronologically (oldest first), but the label
+  // "Most recent session" still clearly identifies the latest entry at the end.
+  const memoryText = labeled.reverse().join("\n\n");
 
   if (import.meta.env.DEV) {
     console.info(
