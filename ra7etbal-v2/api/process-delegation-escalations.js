@@ -581,7 +581,12 @@ async function setupRoutinesSchedule(res, { appBaseUrl }) {
     return res.status(500).json({ error: 'CRON_SECRET not configured' });
   }
 
-  const targetUrl = `${appBaseUrl}/api/process-delegation-escalations`;
+  // Normalize: if appBaseUrl is missing the scheme (e.g. env var set to bare domain)
+  // force https:// so QStash accepts the destination URL.
+  const normalizedBase = appBaseUrl.startsWith('http')
+    ? appBaseUrl
+    : `https://${appBaseUrl}`;
+  const targetUrl = `${normalizedBase}/api/process-delegation-escalations`;
   const encodedUrl = encodeURIComponent(targetUrl);
 
   console.log('[routines-setup] registering QStash schedule', { targetUrl, appBaseUrl });
