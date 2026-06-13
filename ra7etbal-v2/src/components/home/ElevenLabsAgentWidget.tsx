@@ -1198,6 +1198,14 @@ export default function ElevenLabsAgentWidget({
   const createCalendarEvent = useCallback(
     async (params: any): Promise<string> => {
       try {
+        // Debug: log tool invocation with param keys and title length only (no content)
+        console.log("[calendar-create-debug] tool called paramKeys=%s titleLen=%d dateVal=%s timeVal=%s",
+          Object.keys(params ?? {}).join(","),
+          String(params?.title ?? "").length,
+          params?.date ?? "none",
+          params?.time ?? "none",
+        );
+
         const title: string = (params?.title ?? "").trim();
         const date: string  = (params?.date  ?? "").trim();
         const time: string  = (params?.time  ?? "").trim();
@@ -1207,6 +1215,8 @@ export default function ElevenLabsAgentWidget({
         const description: string = (params?.description ?? "").trim();
 
         if (!title || !date || !time) {
+          console.log("[calendar-create-debug] client validation failed missing fields title=%s date=%s time=%s",
+            Boolean(title), Boolean(date), Boolean(time));
           return "I need the event title, date, and time before I can add it to your calendar.";
         }
 
@@ -1236,6 +1246,8 @@ export default function ElevenLabsAgentWidget({
         });
 
         const data = await res.json().catch(() => null);
+        console.log("[calendar-create-debug] server response httpStatus=%d ok=%s code=%s",
+          res.status, data?.ok ?? "null", data?.code ?? "none");
         if (!data) return "Something went wrong. Please try again.";
 
         if (!data.ok) {

@@ -291,6 +291,8 @@ export default async function handler(req, res) {
 
     // ── Route 4: Create event (POST, JWT-authenticated) ───────────────────
     if (req.method === "POST" && authHeader.startsWith("Bearer ")) {
+      console.log("[calendar-create-debug] POST branch entered");
+
       const jwt = authHeader.slice(7);
       const supabaseUrl = process.env.SUPABASE_URL;
       const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -300,17 +302,36 @@ export default async function handler(req, res) {
       const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
         headers: { apikey: anonKey, Authorization: `Bearer ${jwt}` },
       });
-      if (!userRes.ok) return res.status(401).json({ ok: false, error: "Unauthorized" });
+      if (!userRes.ok) {
+        console.log("[calendar-create-debug] JWT verification failed status=%d", userRes.status);
+        return res.status(401).json({ ok: false, error: "Unauthorized" });
+      }
       const { id: uid } = await userRes.json();
+      console.log("[calendar-create-debug] userId=%s", uid ? uid.slice(0, 8) : "none");
 
-      // Parse body
-      const { title, date, time, duration_minutes, description } = req.body ?? {};
+      // Parse body — log raw type for diagnosis if body is missing/wrong
+      const rawBody = req.body;
+      console.log("[calendar-create-debug] req.body type=%s keys=%s",
+        typeof rawBody,
+        rawBody && typeof rawBody === "object" ? Object.keys(rawBody).join(",") : "n/a",
+      );
+      const { title, date, time, duration_minutes, description } = rawBody ?? {};
+      const hasTitle = Boolean(title);
+      const hasDate  = Boolean(date);
+      const hasTime  = Boolean(time);
+      console.log("[calendar-create-debug] fields title=%s date=%s time=%s", hasTitle, hasDate, hasTime);
+
       if (!title || !date || !time) {
+        console.log("[calendar-create-debug] returning code=missing_fields");
         return res.status(400).json({ ok: false, code: "missing_fields", error: "title, date, and time are required." });
       }
 
       // Validate date (YYYY-MM-DD) and time (HH:MM)
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+      const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(date);
+      const timeValid = /^\d{2}:\d{2}$/.test(time);
+      console.log("[calendar-create-debug] dateValid=%s timeValid=%s date=%s time=%s", dateValid, timeValid, date, time);
+      if (!dateValid || !timeValid) {
+        console.log("[calendar-create-debug] returning code=invalid_format");
         return res.status(400).json({ ok: false, code: "invalid_format", error: "date must be YYYY-MM-DD, time must be HH:MM." });
       }
 
@@ -319,10 +340,15 @@ export default async function handler(req, res) {
         `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}&select=google_refresh_token`,
         { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
       );
-      if (!profileRes.ok) return res.status(500).json({ ok: false, error: "Failed to load profile" });
+      if (!profileRes.ok) {
+        console.log("[calendar-create-debug] profile fetch failed status=%d", profileRes.status);
+        return res.status(500).json({ ok: false, error: "Failed to load profile" });
+      }
       const profiles = await profileRes.json();
       const refreshToken = profiles?.[0]?.google_refresh_token;
+      console.log("[calendar-create-debug] refreshToken present=%s", Boolean(refreshToken));
       if (!refreshToken) {
+        console.log("[calendar-create-debug] returning code=reconnect_required (no token in db)");
         return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar is not connected." });
       }
 
@@ -337,9 +363,11 @@ export default async function handler(req, res) {
           grant_type: "refresh_token",
         }),
       });
+      console.log("[calendar-create-debug] token refresh status=%d", accessRes.status);
       if (!accessRes.ok) {
         const errText = await accessRes.text();
         if (accessRes.status === 400 || accessRes.status === 401) {
+          console.log("[calendar-create-debug] token revoked/expired, clearing db. returning code=reconnect_required");
           // Clear revoked token
           await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}`, {
             method: "PATCH",
@@ -353,7 +381,7 @@ export default async function handler(req, res) {
           });
           return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
         }
-        console.error("[google-calendar] token refresh failed:", errText);
+        console.error("[calendar-create-debug] token refresh unexpected failure status=%d body=%s", accessRes.status, errText);
         return res.status(502).json({ ok: false, error: "Google token refresh failed" });
       }
       const { access_token } = await accessRes.json();
@@ -382,6 +410,9 @@ export default async function handler(req, res) {
         end:   { dateTime: toRFC3339(endDt) },
       };
 
+      console.log("[calendar-create-debug] attempting Google insert start=%s end=%s durationMins=%d",
+        eventBody.start.dateTime, eventBody.end.dateTime, durationMins);
+
       // Insert event via Google Calendar API
       const insertRes = await fetch(
         "https://www.googleapis.com/calendar/v3/calendars/primary/events",
@@ -395,21 +426,25 @@ export default async function handler(req, res) {
         },
       );
 
+      console.log("[calendar-create-debug] Google insert status=%d", insertRes.status);
+
       if (!insertRes.ok) {
         const errBody = await insertRes.text();
         // 403 = insufficient scope — user authorized under read-only, must reconnect
         if (insertRes.status === 403) {
+          console.log("[calendar-create-debug] Google 403 scope insufficient. returning code=reconnect_required");
           return res.status(200).json({
             ok: false,
             code: "reconnect_required",
             error: "Google Calendar needs to be reconnected in Settings to allow event creation.",
           });
         }
-        console.error("[google-calendar] event insert failed:", errBody);
+        console.error("[calendar-create-debug] Google insert failed status=%d body=%s", insertRes.status, errBody);
         return res.status(502).json({ ok: false, error: "Failed to create calendar event" });
       }
 
       const created = await insertRes.json();
+      console.log("[calendar-create-debug] returning code=success eventId=%s", created.id ?? "unknown");
       return res.status(200).json({
         ok: true,
         id: created.id,
