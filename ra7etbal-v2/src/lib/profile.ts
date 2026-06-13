@@ -3,6 +3,7 @@ import { supabase } from "./supabase";
 export interface Profile {
   display_name: string | null;
   weather_city: string | null;
+  morning_brief_timezone: string | null;
 }
 
 /**
@@ -12,13 +13,48 @@ export interface Profile {
 export async function getProfile(): Promise<Profile> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("display_name, weather_city")
+    .select("display_name, weather_city, morning_brief_timezone")
     .maybeSingle();
   if (error) throw friendly(error);
   return {
     display_name: data?.display_name ?? null,
     weather_city: data?.weather_city ?? null,
+    morning_brief_timezone: data?.morning_brief_timezone ?? null,
   };
+}
+
+/**
+ * Detect the browser's IANA timezone and save it to profiles if not already set.
+ * Falls back to "Europe/Istanbul" when the browser API is unavailable.
+ * Safe to call on every login — only writes if the column is still the default
+ * or null, preventing accidental overwrites of a user-chosen timezone.
+ */
+export async function syncTimezoneToProfile(existingTimezone: string | null): Promise<void> {
+  const detected = (() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Istanbul";
+    } catch {
+      return "Europe/Istanbul";
+    }
+  })();
+
+  // Do not overwrite if a non-default timezone is already stored.
+  const isDefaultOrEmpty = !existingTimezone || existingTimezone === "Europe/Istanbul";
+  if (!isDefaultOrEmpty) return;
+
+  // Also skip if detected value is the same as what's already stored.
+  if (detected === existingTimezone) return;
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return;
+
+  await supabase.from("profiles").upsert(
+    { id: user.id, morning_brief_timezone: detected, updated_at: new Date().toISOString() },
+    { onConflict: "id" },
+  );
+  // Non-fatal — failure here does not affect the rest of the app.
 }
 
 /**

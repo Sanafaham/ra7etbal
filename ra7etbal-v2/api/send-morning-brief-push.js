@@ -2,7 +2,10 @@
  * POST /api/send-morning-brief-push
  *
  * Scheduled via QStash (not Vercel cron — Hobby plan does not support cron jobs).
- * Fires daily at 05:00 UTC (Gulf morning, GST+4 = 09:00 local).
+ * Fires every 15 minutes (*/15 * * * *).
+ * Each run checks per-user local time and sends only when it matches their
+ * preferred morning_brief_time window. Duplicate sends are prevented by
+ * last_morning_brief_sent_at on profiles.
  * Also callable manually with ?test=1 for debugging.
  *
  * To register the QStash schedule (run once after each new production deployment):
@@ -99,11 +102,51 @@ export default async function handler(req, res) {
   let usersProcessed = 0;
   let totalSent = 0;
   let totalFailed = 0;
+  let totalSkipped = 0;
+
+  const now = new Date();
 
   for (const [userId, subs] of byUser.entries()) {
     const shortId = userId.slice(0, 8);
 
-    // ── 2. Fetch user's tasks ──────────────────────────────────────────────
+    // ── 2. Fetch user's profile (brief prefs + last sent) ─────────────────
+    const profileRes = await fetchSupabase(
+      config,
+      `/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=morning_brief_enabled,morning_brief_timezone,morning_brief_time,last_morning_brief_sent_at`,
+    );
+    const profiles = profileRes.ok ? await profileRes.json().catch(() => []) : [];
+    const profile = profiles?.[0] ?? {};
+
+    const briefEnabled = profile.morning_brief_enabled !== false; // default true
+    const timezone = profile.morning_brief_timezone || 'Europe/Istanbul';
+    const briefTime = profile.morning_brief_time || '08:00'; // HH:MM
+    const lastSentAt = profile.last_morning_brief_sent_at ?? null;
+
+    // ── Skip if morning brief is disabled for this user ───────────────────
+    if (!briefEnabled) {
+      totalSkipped += 1;
+      continue;
+    }
+
+    // ── Check if already sent today in the user's local timezone ──────────
+    if (lastSentAt) {
+      const lastSentLocalDate = toLocalDateString(new Date(lastSentAt), timezone);
+      const todayLocalDate = toLocalDateString(now, timezone);
+      if (lastSentLocalDate === todayLocalDate) {
+        totalSkipped += 1;
+        continue; // Already sent today — skip.
+      }
+    }
+
+    // ── Check if current local time is inside the 15-minute brief window ──
+    // Window: [briefTime, briefTime + 15 minutes)
+    const userLocalHHMM = toLocalHHMM(now, timezone);
+    if (!isInWindow(userLocalHHMM, briefTime)) {
+      totalSkipped += 1;
+      continue;
+    }
+
+    // ── 3. Fetch user's tasks ──────────────────────────────────────────────
     const tasksRes = await fetchSupabase(
       config,
       `/rest/v1/tasks?select=id,description,type,status,assigned_to,due_at,needs_follow_up,escalated_at,confirmed_at,created_at,archived_at&user_id=eq.${encodeURIComponent(userId)}&archived_at=is.null&order=created_at.desc&limit=60`,
@@ -114,34 +157,40 @@ export default async function handler(req, res) {
     }
     const tasks = await tasksRes.json().catch(() => []);
 
-    // ── 3. Build brief headline ────────────────────────────────────────────
+    // ── 4. Build brief headline ────────────────────────────────────────────
     const headline = buildBriefHeadline(tasks);
 
     if (testMode) {
-      // In test mode: return first user's headline without sending
+      // In test mode: return first user's data without sending
       return res.status(200).json({
         testMode: true,
         usersFound: byUser.size,
         sampleUserId: shortId,
+        timezone,
+        briefTime,
+        userLocalHHMM,
+        inWindow: true,
         headline,
         taskCounts: summariseCounts(tasks),
       });
     }
 
-    // ── 4. Send push to all of this user's subscriptions ──────────────────
+    // ── 5. Send push to all of this user's subscriptions ──────────────────
     const payload = JSON.stringify({
       title: 'Ra7etBal — Morning Brief',
       body: headline,
     });
 
+    let sentAtLeastOne = false;
     for (const sub of subs) {
       try {
         await webpush.sendNotification(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           payload,
-          { urgency: 'normal', TTL: 3600 }, // 1-hour TTL — morning brief is not time-critical to the second
+          { urgency: 'normal', TTL: 3600 },
         );
         totalSent += 1;
+        sentAtLeastOne = true;
       } catch (err) {
         totalFailed += 1;
         const statusCode = err?.statusCode ?? null;
@@ -152,6 +201,18 @@ export default async function handler(req, res) {
       }
     }
 
+    // ── 6. Mark brief as sent today (prevents duplicate sends) ───────────
+    if (sentAtLeastOne) {
+      await fetchSupabase(
+        config,
+        `/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ last_morning_brief_sent_at: now.toISOString() }),
+        },
+      );
+    }
+
     usersProcessed += 1;
   }
 
@@ -160,6 +221,7 @@ export default async function handler(req, res) {
     usersProcessed,
     totalSent,
     totalFailed,
+    totalSkipped,
   });
 }
 
@@ -287,10 +349,78 @@ async function removeExpiredSub(config, subId, shortUserId) {
   }
 }
 
-function fetchSupabase(config, path) {
+function fetchSupabase(config, path, opts = {}) {
   return fetch(`${config.values.supabaseUrl}${path}`, {
-    headers: supabaseHeaders(config.values.serviceRoleKey),
+    method: opts.method ?? 'GET',
+    headers: {
+      ...supabaseHeaders(config.values.serviceRoleKey),
+      ...(opts.body ? { 'Content-Type': 'application/json', Prefer: 'return=minimal' } : {}),
+    },
+    ...(opts.body ? { body: opts.body } : {}),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Timezone helpers (native Intl — no external dependency)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the local date string "YYYY-MM-DD" for a given Date in a timezone.
+ * e.g. toLocalDateString(new Date(), "America/New_York") → "2026-06-13"
+ */
+function toLocalDateString(date, timezone) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const y = parts.find(p => p.type === 'year')?.value ?? '';
+    const m = parts.find(p => p.type === 'month')?.value ?? '';
+    const d = parts.find(p => p.type === 'day')?.value ?? '';
+    return `${y}-${m}-${d}`;
+  } catch {
+    // Fallback: UTC date
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+/**
+ * Returns the local time as "HH:MM" for a given Date in a timezone.
+ * e.g. toLocalHHMM(new Date(), "America/Chicago") → "07:45"
+ */
+function toLocalHHMM(date, timezone) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(date);
+    const h = parts.find(p => p.type === 'hour')?.value ?? '00';
+    const m = parts.find(p => p.type === 'minute')?.value ?? '00';
+    return `${h}:${m}`;
+  } catch {
+    return '00:00';
+  }
+}
+
+/**
+ * Returns true if currentHHMM falls within the 15-minute window
+ * starting at targetHHMM.
+ *
+ * e.g. isInWindow("08:07", "08:00") → true
+ *      isInWindow("08:15", "08:00") → false
+ */
+function isInWindow(currentHHMM, targetHHMM) {
+  const toMinutes = hhmm => {
+    const [h, m] = hhmm.split(':').map(Number);
+    return h * 60 + (m || 0);
+  };
+  const current = toMinutes(currentHHMM);
+  const target = toMinutes(targetHHMM);
+  return current >= target && current < target + 15;
 }
 
 function supabaseHeaders(serviceRoleKey) {

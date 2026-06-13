@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getProfile, upsertProfile, upsertWeatherCity } from "../lib/profile";
+import { getProfile, upsertProfile, upsertWeatherCity, syncTimezoneToProfile } from "../lib/profile";
 
 export type ProfileStatus = "idle" | "loading" | "ready" | "error";
 
@@ -42,6 +42,8 @@ export const useProfileStore = create<ProfileState>((set, get) => ({
         weatherCity: profile.weather_city,
         loadedForUserId: userId,
       });
+      // Sync browser timezone to profiles — non-fatal, fire and forget.
+      syncTimezoneToProfile(profile.morning_brief_timezone).catch(() => {});
     } catch (err) {
       set({
         status: "error",
