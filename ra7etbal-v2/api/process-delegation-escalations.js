@@ -137,6 +137,9 @@ export default async function handler(req, res) {
   if (requestBody.action === 'run-routines') {
     return runRoutines(req, res, { supabaseUrl, serviceKey, appBaseUrl });
   }
+  if (requestBody.action === 'setup-routines-schedule') {
+    return setupRoutinesSchedule(res, { appBaseUrl });
+  }
 
   const now = new Date();
   const followupThresholdMs = testMode ? TEST_FOLLOWUP_MS : PROD_FOLLOWUP_MS;
@@ -551,6 +554,79 @@ function isTestMode(req) {
     return url.searchParams.get('testMode') === 'true';
   } catch {
     return false;
+  }
+}
+
+// ── QStash schedule setup ─────────────────────────────────────────────────────
+
+/**
+ * Self-registers an hourly QStash cron schedule that POSTs
+ * { action: "run-routines" } to this same endpoint.
+ * Called once via: POST /api/process-delegation-escalations?testMode=true
+ *                  body: { "action": "setup-routines-schedule" }
+ *
+ * Idempotent — QStash deduplicates by schedule ID. Re-running overwrites
+ * the existing schedule with the same settings (safe to call again).
+ */
+async function setupRoutinesSchedule(res, { appBaseUrl }) {
+  const qstashToken = process.env.QSTASH_TOKEN;
+  const cronSecret  = process.env.CRON_SECRET;
+
+  if (!qstashToken) {
+    console.error('[routines-setup] QSTASH_TOKEN not set');
+    return res.status(500).json({ error: 'QSTASH_TOKEN not configured' });
+  }
+  if (!cronSecret) {
+    console.error('[routines-setup] CRON_SECRET not set');
+    return res.status(500).json({ error: 'CRON_SECRET not configured' });
+  }
+
+  const targetUrl = `${appBaseUrl}/api/process-delegation-escalations`;
+  const encodedUrl = encodeURIComponent(targetUrl);
+
+  console.log('[routines-setup] registering QStash schedule', { targetUrl, appBaseUrl });
+
+  try {
+    const schedRes = await fetch(
+      `https://qstash.upstash.io/v2/schedules/${encodedUrl}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${qstashToken}`,
+          'Content-Type': 'application/json',
+          'Upstash-Cron': '0 * * * *',                    // top of every hour
+          'Upstash-Forward-Authorization': `Bearer ${cronSecret}`,
+          'Upstash-Method': 'POST',
+          'Upstash-Deduplication-Id': 'routines-hourly',  // stable ID — idempotent
+        },
+        body: JSON.stringify({ action: 'run-routines' }),
+      },
+    );
+
+    const data = await schedRes.json().catch(() => ({}));
+
+    if (!schedRes.ok) {
+      console.error('[routines-setup] QStash registration failed', {
+        status: schedRes.status,
+        error: data?.error,
+      });
+      return res.status(500).json({ error: 'QStash registration failed', details: data });
+    }
+
+    console.log('[routines-setup] QStash schedule registered', {
+      scheduleId: data?.scheduleId || data?.schedule_id || null,
+      cron: '0 * * * *',
+      targetUrl,
+    });
+    return res.status(200).json({
+      ok: true,
+      scheduleId: data?.scheduleId || data?.schedule_id || null,
+      cron: '0 * * * *',
+      targetUrl,
+    });
+  } catch (err) {
+    console.error('[routines-setup] fetch threw:', err?.message);
+    return res.status(500).json({ error: err?.message });
   }
 }
 
