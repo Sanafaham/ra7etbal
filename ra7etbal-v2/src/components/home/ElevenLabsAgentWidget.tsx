@@ -1234,6 +1234,43 @@ export default function ElevenLabsAgentWidget({
           return "I couldn't parse the time. Please say the time clearly and try again.";
         }
 
+        // ── Conflict detection ──────────────────────────────────────────────
+        // Runs before the POST so no Google API call is made on a conflict.
+        // Skipped when the user has explicitly approved adding despite a clash.
+        const forceCreate = Boolean(params?.override_conflict);
+
+        if (!forceCreate) {
+          const propStart = new Date(`${date}T${time}:00`).getTime();
+          const propEnd   = propStart + durationMinutes * 60_000;
+
+          if (!Number.isNaN(propStart)) {
+            const conflicts = planningCalendarEventsRef.current.filter((ev) => {
+              if (ev.allDay || !ev.start) return false;
+              const evStart = new Date(ev.start).getTime();
+              if (Number.isNaN(evStart)) return false;
+              const evEnd = ev.end
+                ? new Date(ev.end).getTime()
+                : evStart + 60 * 60_000; // treat no-end as 60-min block
+              if (Number.isNaN(evEnd)) return false;
+              // Exclusive boundary overlap — back-to-back events are not conflicts
+              return propStart < evEnd && propEnd > evStart;
+            });
+
+            if (conflicts.length > 0) {
+              const names = conflicts
+                .map((ev) => {
+                  const t = ev.start
+                    ? new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                    : "";
+                  return `${ev.title}${t ? ` at ${t}` : ""}`;
+                })
+                .join(", ");
+              return `Conflict found: ${names} is already on the calendar at that time. Ask ${displayName ?? "the user"} if they still want to add this. If yes, call create_calendar_event again with override_conflict: true.`;
+            }
+          }
+        }
+        // ── End conflict detection ──────────────────────────────────────────
+
         const { data: sessionData } = await supabase.auth.getSession();
         const jwt = sessionData?.session?.access_token;
         if (!jwt) return "You're not signed in. Please sign in and try again.";
