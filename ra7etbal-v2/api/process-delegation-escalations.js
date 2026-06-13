@@ -581,15 +581,12 @@ async function setupRoutinesSchedule(res, { appBaseUrl }) {
     return res.status(500).json({ error: 'CRON_SECRET not configured' });
   }
 
-  // Normalize: if appBaseUrl is missing the scheme (e.g. env var set to bare domain)
-  // force https:// so QStash accepts the destination URL.
-  const normalizedBase = appBaseUrl.startsWith('http')
-    ? appBaseUrl
-    : `https://${appBaseUrl}`;
-  const targetUrl = `${normalizedBase}/api/process-delegation-escalations`;
+  // Hardcode production URL — avoids any env-var scheme issues.
+  // APP_BASE_URL is a fallback for local dev; production always hits ra7etbal-v2.vercel.app.
+  const targetUrl = 'https://ra7etbal-v2.vercel.app/api/process-delegation-escalations';
   const encodedUrl = encodeURIComponent(targetUrl);
 
-  console.log('[routines-setup] registering QStash schedule', { targetUrl, appBaseUrl });
+  console.log('[routines-setup] registering QStash schedule', { targetUrl });
 
   try {
     const schedRes = await fetch(
@@ -598,11 +595,10 @@ async function setupRoutinesSchedule(res, { appBaseUrl }) {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${qstashToken}`,
-          'Content-Type': 'application/json',
-          'Upstash-Cron': '0 * * * *',                    // top of every hour
+          'Upstash-Cron': '0 * * * *',          // top of every hour
           'Upstash-Forward-Authorization': `Bearer ${cronSecret}`,
           'Upstash-Method': 'POST',
-          'Upstash-Deduplication-Id': 'routines-hourly',  // stable ID — idempotent
+          'Upstash-Content-Type': 'application/json',
         },
         body: JSON.stringify({ action: 'run-routines' }),
       },
