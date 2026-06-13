@@ -1778,12 +1778,8 @@ export default function ElevenLabsAgentWidget({
 
   return (
     <div
-      className={inline ? "" : "fixed z-40"}
-      style={
-        inline
-          ? undefined
-          : { top: "calc(env(safe-area-inset-top) + 240px)", right: "20px", bottom: "auto" }
-      }
+      className={inline ? "" : "fixed z-40 top-28 right-4"}
+      style={undefined}
     >
       {/*
        * File input is ALWAYS mounted so iOS Safari never invalidates the File
