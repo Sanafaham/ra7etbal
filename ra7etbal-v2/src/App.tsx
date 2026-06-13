@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { useShallow } from "zustand/react/shallow";
 import Actions from "./routes/Actions";
 import Auth from "./routes/Auth";
 import Confirm from "./routes/Confirm";
@@ -14,10 +15,17 @@ import Reset from "./routes/Reset";
 import Routines from "./routes/Routines";
 import Review from "./routes/Review";
 import ConfirmationNotices from "./components/home/ConfirmationNotices";
+import ElevenLabsAgentWidget from "./components/home/ElevenLabsAgentWidget";
 import SettingsModal from "./components/settings/SettingsModal";
 import Spinner from "./components/Spinner";
 import { useAuth } from "./hooks/useAuth";
+import { buildCarsonContext } from "./lib/carson-context";
+import { fetchCalendarEvents, type CalendarEvent } from "./lib/calendar";
+import { formatNotesForContext, loadRecentNotes } from "./lib/carson-notes";
+import { buildMorningBriefSpoken } from "./lib/morning-brief";
 import { signOut } from "./lib/session";
+import { usePeopleStore } from "./stores/people";
+import { useProfileStore } from "./stores/profile";
 import { useTasksStore } from "./stores/tasks";
 
 /**
@@ -171,6 +179,139 @@ function useGlobalTasksRefresh() {
   }, [status, user?.id]);
 }
 
+/**
+ * Persistent floating Carson widget — mounted once when the user is signed in
+ * and stays alive across all route navigations. Owns the calendar event cache,
+ * notes context, and spoken brief so Home no longer needs to hold them.
+ *
+ * Renders null until signed_in so it never runs effects for unauthenticated
+ * visitors. Uses inline={false} (default) for the fixed-position floating UI.
+ */
+function PersistentCarsonWidget() {
+  const { status, user } = useAuth();
+  const userId = user?.id ?? null;
+
+  const { tasks, loadTasks } = useTasksStore(
+    useShallow((s) => ({ tasks: s.items, loadTasks: s.loadFor })),
+  );
+  const { people } = usePeopleStore(
+    useShallow((s) => ({ people: s.items })),
+  );
+  const { displayName } = useProfileStore(
+    useShallow((s) => ({ displayName: s.displayName })),
+  );
+
+  // Calendar events for today's brief (next_7_days covers today + tomorrow).
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  // 30-day planning cache — prefetched in onBeforeCallStart so
+  // get_calendar_events can filter in memory without a live network call.
+  const [planningCalendarEvents, setPlanningCalendarEvents] = useState<CalendarEvent[]>([]);
+  // Recent notes block for Carson's ra7etbal_state context variable.
+  const [notesBlock, setNotesBlock] = useState("");
+  const [now, setNow] = useState(() => new Date());
+
+  // Clock — same 30-second cadence as it was in Home.
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  // Prefetch calendar events (7-day window) on sign-in.
+  useEffect(() => {
+    if (!userId) return;
+    fetchCalendarEvents("next_7_days")
+      .then((result) => { if (result.connected) setCalendarEvents(result.events); })
+      .catch(() => {});
+  }, [userId]);
+
+  // Prefetch recent notes on sign-in.
+  useEffect(() => {
+    if (!userId) { setNotesBlock(""); return; }
+    loadRecentNotes(20)
+      .then((notes) => setNotesBlock(formatNotesForContext(notes)))
+      .catch(() => setNotesBlock(""));
+  }, [userId]);
+
+  // Context strings passed to the widget as reactive props.
+  // Kept fresh by the memos; onBeforeCallStart overrides with live data at session start.
+  const elevenLabsBriefStateText = useMemo(
+    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock }),
+    [tasks, people, user?.email, now, calendarEvents, notesBlock],
+  );
+  const spokenBrief = useMemo(
+    () => buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents),
+    [tasks, people, displayName, now, calendarEvents],
+  );
+
+  // Callback fired at the very start of each voice session.
+  // Force-refreshes all live data so Carson always starts with the current state.
+  const handleBeforeCallStart = useCallback(async () => {
+    if (userId) {
+      await loadTasks(userId, { force: true });
+    }
+
+    let freshCalendarEvents = calendarEvents;
+    try {
+      // Refresh 7-day window for the spoken brief + ra7etbal_state.
+      const calResult = await fetchCalendarEvents("next_7_days");
+      if (calResult.connected) {
+        freshCalendarEvents = calResult.events;
+        setCalendarEvents(calResult.events);
+      }
+    } catch {
+      // keep existing calendarEvents as fallback
+    }
+
+    try {
+      // Refresh 30-day planning cache for get_calendar_events in-memory filtering.
+      const planResult = await fetchCalendarEvents("next_30_days");
+      if (planResult.connected) {
+        setPlanningCalendarEvents(planResult.events);
+      }
+    } catch {
+      // keep existing planningCalendarEvents as fallback
+    }
+
+    const freshTasks = useTasksStore.getState().items;
+    const freshNow = new Date();
+    const freshNotesBlock = userId
+      ? formatNotesForContext(await loadRecentNotes(20))
+      : "";
+    setNotesBlock(freshNotesBlock);
+
+    return {
+      briefStateText: buildCarsonContext({
+        tasks: freshTasks,
+        people,
+        email: user?.email,
+        now: freshNow,
+        calendarEvents: freshCalendarEvents,
+        notesBlock: freshNotesBlock,
+      }),
+      spokenBrief: buildMorningBriefSpoken(
+        freshTasks,
+        people,
+        displayName,
+        freshNow,
+        freshCalendarEvents,
+      ),
+    };
+  }, [userId, loadTasks, calendarEvents, people, user?.email, displayName]);
+
+  // Only render when the user is fully authenticated.
+  if (status !== "signed_in" || !userId) return null;
+
+  return (
+    <ElevenLabsAgentWidget
+      briefStateText={elevenLabsBriefStateText}
+      spokenBrief={spokenBrief}
+      displayName={displayName}
+      planningCalendarEvents={planningCalendarEvents}
+      onBeforeCallStart={handleBeforeCallStart}
+    />
+  );
+}
+
 export default function App() {
   useGlobalTasksRefresh();
   return (
@@ -185,6 +326,11 @@ export default function App() {
       </header>
 
       <ChipNav />
+
+      {/* Persistent floating Carson widget — stays mounted across all route
+          navigations so voice sessions survive tab switches. Renders null
+          when signed out; fixed-position when signed in. */}
+      <PersistentCarsonWidget />
 
       <main className="mx-auto mt-3 max-w-3xl px-5 pb-24">
         {/* Owner confirmation banner — global. Self-gates by auth status

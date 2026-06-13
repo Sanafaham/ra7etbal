@@ -3,21 +3,16 @@ import { describeImageForTextCarson } from "../lib/text-carson";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
-import ElevenLabsAgentWidget from "../components/home/ElevenLabsAgentWidget";
 import InboxReviewPanel from "../components/home/InboxReviewPanel";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import { buildDailyBrief } from "../lib/daily-brief";
-import { buildMorningBriefSpoken } from "../lib/morning-brief";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
 import { useProfileStore } from "../stores/profile";
-import { buildCarsonContext } from "../lib/carson-context";
 import { useTasksStore } from "../stores/tasks";
-import { fetchCalendarEvents, type CalendarEvent } from "../lib/calendar";
-import { formatNotesForContext, loadRecentNotes } from "../lib/carson-notes";
 
 export default function Home() {
   const { user } = useAuth();
@@ -25,14 +20,13 @@ export default function Home() {
   const navigate = useNavigate();
   const textareaId = useId();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const carsonSectionRef = useRef<HTMLElement | null>(null);
 
   const { text, setText } = useDraftStore(
     useShallow((s) => ({ text: s.text, setText: s.setText })),
   );
 
-  const { people, loadPeople } = usePeopleStore(
-    useShallow((s) => ({ people: s.items, loadPeople: s.loadFor })),
+  const { loadPeople } = usePeopleStore(
+    useShallow((s) => ({ loadPeople: s.loadFor })),
   );
 
   const { displayName, loadProfile } = useProfileStore(
@@ -65,12 +59,6 @@ export default function Home() {
     setDraftImagePreviewUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [draftImageFile]);
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
-  // 30-day planning cache — prefetched before each Voice Carson session.
-  // Passed to ElevenLabsAgentWidget so get_calendar_events can filter in memory
-  // without a live network call (eliminates ElevenLabs tool timeout).
-  const [planningCalendarEvents, setPlanningCalendarEvents] = useState<CalendarEvent[]>([]);
-  const [notesBlock, setNotesBlock] = useState("");
 
   useEffect(() => {
     if (!userId) return;
@@ -86,25 +74,6 @@ export default function Home() {
     if (!userId) return;
     void loadProfile(userId);
   }, [userId, loadProfile]);
-
-  useEffect(() => {
-    if (!userId) {
-      setNotesBlock("");
-      return;
-    }
-    loadRecentNotes(20)
-      .then((notes) => setNotesBlock(formatNotesForContext(notes)))
-      .catch(() => setNotesBlock(""));
-  }, [userId]);
-
-  // Load upcoming calendar events on mount (fire-and-load — never blocks render).
-  // next_7_days covers today + tomorrow so the opening brief is date-aware.
-  useEffect(() => {
-    if (!userId) return;
-    fetchCalendarEvents("next_7_days").then((result) => {
-      if (result.connected) setCalendarEvents(result.events);
-    }).catch(() => {});
-  }, [userId]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setNow(new Date()), 30_000);
@@ -145,14 +114,6 @@ export default function Home() {
   const statusSummary = useMemo(
     () => buildStatusSummary(brief, now),
     [brief, now],
-  );
-  const elevenLabsBriefStateText = useMemo(
-    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock }),
-    [tasks, people, user?.email, now, calendarEvents, notesBlock],
-  );
-  const spokenBrief = useMemo(
-    () => buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents),
-    [tasks, people, displayName, now, calendarEvents],
   );
   const supportingLines = statusSummary.lines;
 
@@ -265,75 +226,6 @@ export default function Home() {
         >
           View Details
         </button>
-      </section>
-
-      {/* ── Carson ────────────────────────────────────────────────────── */}
-      <section ref={carsonSectionRef} className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-text">Carson</h2>
-          <span className="text-[11px] text-text-muted">Your Chief of Staff.</span>
-        </div>
-        <ElevenLabsAgentWidget
-          briefStateText={elevenLabsBriefStateText}
-          spokenBrief={spokenBrief}
-          displayName={displayName}
-          planningCalendarEvents={planningCalendarEvents}
-          inline
-          onBeforeCallStart={async () => {
-            // Force a live Supabase fetch before Carson speaks so ALL
-            // dynamic variables reflect the current task/message state.
-            if (userId) {
-              await loadTasks(userId, { force: true });
-            }
-            let freshCalendarEvents = calendarEvents;
-            try {
-              // Fetch next_7_days so daily_brief / ra7etbal_state and the spoken
-              // brief are date-aware (today + tomorrow visible to Carson).
-              const calResult = await fetchCalendarEvents("next_7_days");
-              if (calResult.connected) {
-                freshCalendarEvents = calResult.events;
-                setCalendarEvents(calResult.events);
-              }
-            } catch {
-              // keep existing calendarEvents fallback
-            }
-            try {
-              // Fetch 30-day planning cache so get_calendar_events can answer
-              // range questions (tomorrow / next_week / next_10_days / etc.)
-              // instantly from memory during the Voice Carson session.
-              const planResult = await fetchCalendarEvents("next_30_days");
-              if (planResult.connected) {
-                setPlanningCalendarEvents(planResult.events);
-              }
-            } catch {
-              // keep existing planningCalendarEvents fallback (empty or stale)
-            }
-            const freshTasks = useTasksStore.getState().items;
-            const freshNow = new Date();
-            const freshNotesBlock = userId
-              ? formatNotesForContext(await loadRecentNotes(20))
-              : "";
-            setNotesBlock(freshNotesBlock);
-            return {
-              briefStateText: buildCarsonContext({
-                tasks: freshTasks,
-                people,
-                email: user?.email,
-                now: freshNow,
-                calendarEvents: freshCalendarEvents,
-                notesBlock: freshNotesBlock,
-              }),
-              spokenBrief: buildMorningBriefSpoken(
-                freshTasks,
-                people,
-                displayName,
-                freshNow,
-                freshCalendarEvents,
-              ),
-            };
-          }}
-        />
-
       </section>
 
       {/* ── Inbox ─────────────────────────────────────────────────────── */}
@@ -489,17 +381,14 @@ export default function Home() {
           <div className="mt-3 rounded-2xl border border-sage/25 bg-sage/5 px-3.5 py-3">
             <p className="text-[13px] leading-snug text-text-soft">{redirectMessage}</p>
             <p className="mt-1.5 text-[12px] text-text-muted">
-              Use the <strong className="font-medium text-text">Talk to Carson</strong> button above for questions.
+              Use the <strong className="font-medium text-text">Carson</strong> button at the bottom-right of the screen for questions.
             </p>
             <button
               type="button"
-              onClick={() => {
-                setRedirectMessage(null);
-                carsonSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-              }}
+              onClick={() => setRedirectMessage(null)}
               className="mt-3 w-full rounded-xl bg-sage px-4 py-2 text-[13px] font-medium text-white"
             >
-              Talk to Carson
+              Got it
             </button>
           </div>
         )}
