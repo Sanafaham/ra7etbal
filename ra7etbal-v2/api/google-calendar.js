@@ -335,9 +335,9 @@ export default async function handler(req, res) {
         return res.status(400).json({ ok: false, code: "invalid_format", error: "date must be YYYY-MM-DD, time must be HH:MM." });
       }
 
-      // Load refresh_token from profiles
+      // Load refresh_token + timezone from profiles
       const profileRes = await fetch(
-        `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}&select=google_refresh_token`,
+        `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}&select=google_refresh_token,morning_brief_timezone`,
         { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
       );
       if (!profileRes.ok) {
@@ -346,6 +346,7 @@ export default async function handler(req, res) {
       }
       const profiles = await profileRes.json();
       const refreshToken = profiles?.[0]?.google_refresh_token;
+      const userTimezone = profiles?.[0]?.morning_brief_timezone || "Europe/Istanbul";
       console.log("[calendar-create-debug] refreshToken present=%s", Boolean(refreshToken));
       if (!refreshToken) {
         console.log("[calendar-create-debug] returning code=reconnect_required (no token in db)");
@@ -386,32 +387,50 @@ export default async function handler(req, res) {
       }
       const { access_token } = await accessRes.json();
 
-      // Build event start/end datetimes
+      // Build event start/end datetimes.
+      // Do NOT use JS Date arithmetic to compute times — Vercel runs in UTC,
+      // so getTimezoneOffset() === 0 and any wall-clock time becomes UTC,
+      // causing a +N hour shift for users in non-UTC zones.
+      //
+      // Instead: pass the user's local date/time string directly to Google
+      // Calendar along with the IANA timeZone field. Google interprets the
+      // dateTime as wall-clock time in that timezone — no offset math needed.
       const durationMins = Number(duration_minutes) > 0 ? Number(duration_minutes) : 60;
-      const [year, month, day] = date.split("-").map(Number);
-      const [hour, minute] = time.split(":").map(Number);
-      // Use local date construction so time is interpreted in user's wall clock
-      const startDt = new Date(year, month - 1, day, hour, minute, 0);
-      const endDt = new Date(startDt.getTime() + durationMins * 60 * 1000);
-
-      // Format as RFC3339 with local offset
       const pad = (n) => String(n).padStart(2, "0");
-      const tzOffset = -startDt.getTimezoneOffset();
-      const sign = tzOffset >= 0 ? "+" : "-";
-      const absOffset = Math.abs(tzOffset);
-      const offsetStr = `${sign}${pad(Math.floor(absOffset / 60))}:${pad(absOffset % 60)}`;
-      const toRFC3339 = (d) =>
-        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00${offsetStr}`;
+
+      // Parse hour/minute to compute end time by adding durationMins
+      const [startHour, startMinute] = time.split(":").map(Number);
+      const totalStartMins = startHour * 60 + startMinute;
+      const totalEndMins   = totalStartMins + durationMins;
+      const endHour   = Math.floor(totalEndMins / 60) % 24;
+      const endMinute = totalEndMins % 60;
+      // Handle date rollover if end crosses midnight
+      const [year, month, day] = date.split("-").map(Number);
+      const endDateRollover = totalEndMins >= 1440; // 24*60
+      const endDate = endDateRollover
+        ? (() => {
+            const d = new Date(Date.UTC(year, month - 1, day + 1));
+            return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+          })()
+        : date;
+
+      // Wall-clock dateTime strings — no UTC offset appended.
+      // timeZone field tells Google how to interpret them.
+      const startDateTime = `${date}T${pad(startHour)}:${pad(startMinute)}:00`;
+      const endDateTime   = `${endDate}T${pad(endHour)}:${pad(endMinute)}:00`;
+
+      console.log("[calendar-create-debug] timezone=%s startDateTime=%s endDateTime=%s durationMins=%d",
+        userTimezone, startDateTime, endDateTime, durationMins);
 
       const eventBody = {
         summary: title.trim(),
         ...(description ? { description: description.trim() } : {}),
-        start: { dateTime: toRFC3339(startDt) },
-        end:   { dateTime: toRFC3339(endDt) },
+        start: { dateTime: startDateTime, timeZone: userTimezone },
+        end:   { dateTime: endDateTime,   timeZone: userTimezone },
       };
 
-      console.log("[calendar-create-debug] attempting Google insert start=%s end=%s durationMins=%d",
-        eventBody.start.dateTime, eventBody.end.dateTime, durationMins);
+      console.log("[calendar-create-debug] attempting Google insert start=%s end=%s tz=%s durationMins=%d",
+        startDateTime, endDateTime, userTimezone, durationMins);
 
       // Insert event via Google Calendar API
       const insertRes = await fetch(
