@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { createPortal } from "react-dom";
+import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import Actions from "./routes/Actions";
 import Auth from "./routes/Auth";
@@ -190,6 +191,8 @@ function useGlobalTasksRefresh() {
 function PersistentCarsonWidget() {
   const { status, user } = useAuth();
   const userId = user?.id ?? null;
+  const { pathname } = useLocation();
+  const isHome = pathname === "/";
 
   const { tasks, loadTasks } = useTasksStore(
     useShallow((s) => ({ tasks: s.items, loadTasks: s.loadFor })),
@@ -209,6 +212,14 @@ function PersistentCarsonWidget() {
   // Recent notes block for Carson's ra7etbal_state context variable.
   const [notesBlock, setNotesBlock] = useState("");
   const [now, setNow] = useState(() => new Date());
+
+  // On Home, the widget is portaled into #carson-home-slot (inside Home.tsx).
+  // That slot mounts after Routes renders, so we resolve it in an effect.
+  const [homeSlot, setHomeSlot] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!isHome) { setHomeSlot(null); return; }
+    setHomeSlot(document.getElementById("carson-home-slot"));
+  }, [isHome]);
 
   // Clock — same 30-second cadence as it was in Home.
   useEffect(() => {
@@ -301,8 +312,9 @@ function PersistentCarsonWidget() {
   // Only render when the user is fully authenticated.
   if (status !== "signed_in" || !userId) return null;
 
-  return (
+  const widget = (
     <ElevenLabsAgentWidget
+      inline={isHome}
       briefStateText={elevenLabsBriefStateText}
       spokenBrief={spokenBrief}
       displayName={displayName}
@@ -310,6 +322,15 @@ function PersistentCarsonWidget() {
       onBeforeCallStart={handleBeforeCallStart}
     />
   );
+
+  // On Home: portal into the in-page slot so the button sits inline
+  // (no fixed overlay, no Safari viewport jank). Session stays alive
+  // because the React component instance is never unmounted — only its
+  // DOM insertion point changes.
+  // On other routes: render directly as a fixed floating button.
+  if (isHome && homeSlot) return createPortal(widget, homeSlot);
+  if (isHome) return null; // slot not mounted yet — one-frame blank, imperceptible
+  return widget;
 }
 
 export default function App() {

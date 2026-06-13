@@ -240,6 +240,12 @@ export default function Home() {
         }}
       />
 
+      {/* ── Carson in-page slot ─────────────────────────────────────── */}
+      {/* PersistentCarsonWidget portals here when pathname === "/" so the
+          voice session stays mounted globally while the visual button sits
+          inline (no fixed overlay, no Safari viewport jank). */}
+      <div id="carson-home-slot" className="mt-3" />
+
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
       <section className="mt-3 rounded-[26px] border border-border/80 bg-card/82 p-4 shadow-[0_24px_70px_-60px_rgba(20,20,20,0.45)] backdrop-blur-sm sm:mt-4 sm:p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
