@@ -11,6 +11,7 @@ import Messages from "./routes/Messages";
 import Notes from "./routes/Notes";
 import People from "./routes/People";
 import Reset from "./routes/Reset";
+import Routines from "./routes/Routines";
 import Review from "./routes/Review";
 import ConfirmationNotices from "./components/home/ConfirmationNotices";
 import SettingsModal from "./components/settings/SettingsModal";
@@ -31,6 +32,7 @@ const navItems: { to: string; label: string; end?: boolean }[] = [
   { to: "/messages", label: "Messages" },
   { to: "/notes", label: "Notes" },
   { to: "/people", label: "People" },
+  { to: "/routines", label: "Routines" },
 ];
 
 function LoadingPane() {
@@ -255,6 +257,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <History />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/routines"
+            element={
+              <ProtectedRoute>
+                <Routines />
               </ProtectedRoute>
             }
           />
