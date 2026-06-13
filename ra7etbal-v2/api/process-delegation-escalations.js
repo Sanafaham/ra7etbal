@@ -132,6 +132,12 @@ export default async function handler(req, res) {
 
   webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
 
+  // ── Action dispatch ────────────────────────────────────────────────────────
+  const requestBody = (typeof req.body === 'object' && req.body !== null) ? req.body : {};
+  if (requestBody.action === 'run-routines') {
+    return runRoutines(req, res, { supabaseUrl, serviceKey, appBaseUrl });
+  }
+
   const now = new Date();
   const followupThresholdMs = testMode ? TEST_FOLLOWUP_MS : PROD_FOLLOWUP_MS;
   const escalateThresholdMs = testMode ? TEST_ESCALATE_MS : PROD_ESCALATE_MS;
@@ -547,6 +553,421 @@ function isTestMode(req) {
     return false;
   }
 }
+
+// ── Routines runner ───────────────────────────────────────────────────────────
+
+/**
+ * Handle { action: "run-routines" } dispatched from the main handler.
+ * Queries all enabled routines, checks which are due, and executes them.
+ * Each routine is wrapped in try/catch — one failure never stops the batch.
+ */
+async function runRoutines(_req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
+  const startedAt = new Date();
+  console.log('[routines] job started', { startedAt: startedAt.toISOString() });
+
+  const now = new Date();
+  const stats = { checked: 0, executed: 0, skipped: 0, failed: 0 };
+
+  // 1. Fetch all enabled routines.
+  const routinesRes = await fetch(
+    `${supabaseUrl}/rest/v1/routines` +
+      `?enabled=eq.true` +
+      `&select=id,user_id,name,type,schedule,schedule_day,schedule_time,timezone,payload,last_run_at`,
+    { headers: supabaseHeaders(serviceKey) },
+  );
+  const routines = await routinesRes.json().catch(() => []);
+
+  if (!routinesRes.ok) {
+    console.error('[routines] failed to fetch routines:', routines?.message);
+    return res.status(500).json({ error: 'Could not fetch routines.' });
+  }
+
+  if (!Array.isArray(routines) || routines.length === 0) {
+    console.log('[routines] no enabled routines');
+    return res.status(200).json(stats);
+  }
+
+  stats.checked = routines.length;
+  console.log('[routines] enabled routines found', { count: routines.length });
+
+  // 2. Process each routine independently.
+  for (const routine of routines) {
+    try {
+      if (!isRoutineDue(routine, now)) {
+        console.log('[routines] skipped (not due)', { routineId: routine.id, name: routine.name });
+        stats.skipped++;
+        continue;
+      }
+
+      console.log('[routines] executing', {
+        routineId: routine.id,
+        name: routine.name,
+        type: routine.type,
+        schedule: routine.schedule,
+      });
+
+      let executed = false;
+
+      if (routine.type === 'reminder') {
+        executed = await executeReminderRoutine({ routine, supabaseUrl, serviceKey });
+
+      } else if (routine.type === 'delegation') {
+        const result = await executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appBaseUrl });
+        if (result === 'missing_person') {
+          // Person is gone — disable routine so it stops firing.
+          await disableRoutine(supabaseUrl, serviceKey, routine.id);
+          console.warn('[routines] routine disabled (missing person)', { routineId: routine.id });
+          stats.skipped++;
+          continue;
+        }
+        executed = result === true;
+      }
+
+      if (executed) {
+        await stampRoutineLastRun(supabaseUrl, serviceKey, routine.id, now.toISOString());
+        stats.executed++;
+        console.log('[routines] executed ok', { routineId: routine.id });
+      } else {
+        stats.failed++;
+        console.warn('[routines] execution returned false', { routineId: routine.id });
+      }
+
+    } catch (err) {
+      console.error('[routines] uncaught error for routine', {
+        routineId: routine.id,
+        error: err?.message,
+      });
+      stats.failed++;
+    }
+  }
+
+  console.log('[routines] job completed', {
+    ...stats,
+    durationMs: Date.now() - startedAt.getTime(),
+  });
+  return res.status(200).json(stats);
+}
+
+/**
+ * Determine if a routine should fire on this cron tick.
+ *
+ * A routine is due when ALL of these hold in its local timezone:
+ *   1. It is the correct day-of-week (weekly only).
+ *   2. The scheduled clock time has passed (nowMinutes >= schedMinutes).
+ *   3. No more than 59 minutes have elapsed past the schedule time, so a
+ *      missed tick from a previous hour is not re-fired.
+ *   4. It has not already run during today's schedule window (last_run_at is
+ *      before today's schedule_time in the same local timezone).
+ */
+function isRoutineDue(routine, now) {
+  const tz = routine.timezone || 'UTC';
+  try {
+    const local = getLocalParts(now, tz);
+    const [schedHour, schedMinute] = routine.schedule_time.split(':').map(Number);
+
+    // Weekly: must be the correct weekday.
+    if (routine.schedule === 'weekly' && routine.schedule_day !== local.dayOfWeek) return false;
+
+    const nowMinutes  = local.hour * 60 + local.minute;
+    const schedMinutes = schedHour  * 60 + schedMinute;
+
+    if (nowMinutes < schedMinutes)       return false; // not yet today
+    if (nowMinutes - schedMinutes > 59)  return false; // past the 1-hour window
+
+    // Already ran during today's window?
+    if (routine.last_run_at) {
+      const lastLocal = getLocalParts(new Date(routine.last_run_at), tz);
+      const sameDay   =
+        lastLocal.year  === local.year  &&
+        lastLocal.month === local.month &&
+        lastLocal.day   === local.day;
+      const lastMinutes = lastLocal.hour * 60 + lastLocal.minute;
+      if (sameDay && lastMinutes >= schedMinutes) return false;
+    }
+
+    return true;
+  } catch (err) {
+    console.warn('[routines] isRoutineDue error', { routineId: routine.id, error: err?.message });
+    return false;
+  }
+}
+
+/**
+ * Decompose a Date into local calendar/clock parts for a given IANA timezone.
+ * Uses Intl.DateTimeFormat — reliable in Node.js 18+.
+ */
+function getLocalParts(date, timezone) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year:    'numeric',
+    month:   '2-digit',
+    day:     '2-digit',
+    hour:    '2-digit',
+    minute:  '2-digit',
+    hour12:  false,
+    weekday: 'short',
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(date).map((p) => [p.type, p.value]));
+  const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return {
+    year:      parseInt(parts.year,   10),
+    month:     parseInt(parts.month,  10),
+    day:       parseInt(parts.day,    10),
+    // "24" can appear for midnight in some V8 builds — normalise with % 24.
+    hour:      parseInt(parts.hour,   10) % 24,
+    minute:    parseInt(parts.minute, 10),
+    dayOfWeek: WEEKDAYS.indexOf(parts.weekday),
+  };
+}
+
+/**
+ * Execute a reminder routine:
+ *   1. Create an action task for the owner.
+ *   2. Send a web-push notification to the owner.
+ */
+async function executeReminderRoutine({ routine, supabaseUrl, serviceKey }) {
+  const { user_id, payload, name } = routine;
+  const title = (typeof payload?.title === 'string' && payload.title.trim()) ? payload.title.trim() : name;
+
+  const taskId = await createTask(supabaseUrl, serviceKey, {
+    user_id,
+    type: 'action',
+    description: title,
+    status: 'pending',
+    needs_follow_up: false,
+  });
+
+  if (!taskId) {
+    console.error('[routines] reminder: createTask failed', { routineId: routine.id });
+    return false;
+  }
+
+  console.log('[routines] reminder task created', { taskId, routineId: routine.id });
+
+  // Push is best-effort — task creation already counts as success.
+  const pushed = await sendOwnerPush({
+    userId: user_id,
+    title: 'Ra7etBal · Reminder',
+    body: title,
+    supabaseUrl,
+    serviceKey,
+  });
+  if (!pushed) {
+    console.warn('[routines] reminder push not delivered (no subscriptions?)', { routineId: routine.id });
+  }
+
+  return true;
+}
+
+/**
+ * Execute a delegation routine:
+ *   1. Resolve person by UUID.
+ *   2. Create a delegation task (needs_follow_up=true).
+ *   3. Set confirmation_url on the task.
+ *   4. Send WhatsApp message.
+ *   5. The existing escalation cron handles follow-up automatically.
+ *
+ * Returns true on success, 'missing_person' if person cannot be resolved,
+ * or false on other failures.
+ */
+async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appBaseUrl }) {
+  const { user_id, payload } = routine;
+  const { person_id, message } = payload || {};
+
+  if (!person_id || !message) {
+    console.error('[routines] delegation: missing person_id or message in payload', { routineId: routine.id });
+    return false;
+  }
+
+  // Resolve person by ID (scoped to user).
+  const person = await resolvePersonById(supabaseUrl, serviceKey, user_id, person_id);
+  if (!person) {
+    console.warn('[routines] delegation: person not found', { routineId: routine.id, person_id });
+    return 'missing_person';
+  }
+  if (!person.phone) {
+    console.warn('[routines] delegation: person has no phone', { routineId: routine.id, person_id });
+    return 'missing_person';
+  }
+
+  const ownerName = await resolveOwnerName(supabaseUrl, serviceKey, user_id);
+
+  // Create the delegation task.
+  const taskId = await createTask(supabaseUrl, serviceKey, {
+    user_id,
+    type: 'delegation',
+    description: message,
+    status: 'pending',
+    needs_follow_up: true,
+    assigned_to: person.name,
+  });
+
+  if (!taskId) {
+    console.error('[routines] delegation: createTask failed', { routineId: routine.id });
+    return false;
+  }
+
+  // Build and persist the confirmation URL so the escalation cron can use it.
+  const confirmationUrl = `${appBaseUrl}/confirm?task_id=${encodeURIComponent(taskId)}`;
+  await fetch(
+    `${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}`,
+    {
+      method: 'PATCH',
+      headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=minimal' },
+      body: JSON.stringify({ confirmation_url: confirmationUrl }),
+    },
+  ).catch((err) => console.warn('[routines] failed to patch confirmation_url:', err?.message));
+
+  console.log('[routines] delegation task created', {
+    taskId,
+    routineId: routine.id,
+    assignedTo: person.name,
+  });
+
+  // Send WhatsApp — failure is logged but non-fatal (task exists; cron retries).
+  try {
+    const msgRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: person.phone,
+        messageText: message,
+        confirmationLink: confirmationUrl,
+        taskId,
+        recipientName: person.name,
+        ownerName,
+      }),
+    });
+    if (msgRes.ok) {
+      console.log('[routines] delegation WhatsApp sent', { routineId: routine.id, taskId, to: person.name });
+    } else {
+      const err = await msgRes.json().catch(() => ({}));
+      console.error('[routines] delegation WhatsApp failed', {
+        routineId: routine.id,
+        taskId,
+        status: msgRes.status,
+        error: err?.error,
+      });
+    }
+  } catch (err) {
+    console.error('[routines] delegation WhatsApp threw', { routineId: routine.id, taskId, error: err?.message });
+  }
+
+  // Escalation follow-up is handled automatically: the task exists in the
+  // tasks table with needs_follow_up=true, so the escalation cron (which runs
+  // every 10 min) will fire the follow-up at the 10-min mark and the owner
+  // push at the 20-min mark — no explicit scheduling needed here.
+
+  return true;
+}
+
+// ── Routine-specific helpers ──────────────────────────────────────────────────
+
+/** Insert a task row and return the new UUID, or null on failure. */
+async function createTask(supabaseUrl, serviceKey, fields) {
+  const res = await fetch(`${supabaseUrl}/rest/v1/tasks`, {
+    method: 'POST',
+    headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=representation' },
+    body: JSON.stringify(fields),
+  });
+  const rows = await res.json().catch(() => []);
+  if (!res.ok) {
+    console.error('[routines] createTask failed', {
+      status: res.status,
+      message: rows?.message,
+      details: rows?.details,
+    });
+    return null;
+  }
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  return row?.id || null;
+}
+
+/** Look up a person by UUID, scoped to the owning user. */
+async function resolvePersonById(supabaseUrl, serviceKey, userId, personId) {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/people` +
+      `?id=eq.${encodeURIComponent(personId)}` +
+      `&user_id=eq.${encodeURIComponent(userId)}` +
+      `&select=id,name,phone` +
+      `&limit=1`,
+    { headers: supabaseHeaders(serviceKey) },
+  );
+  const rows = await res.json().catch(() => []);
+  if (!res.ok || !Array.isArray(rows) || rows.length === 0) return null;
+  return rows[0];
+}
+
+/** Send a web-push to all active subscriptions for a user. */
+async function sendOwnerPush({ userId, title, body, supabaseUrl, serviceKey }) {
+  const subsRes = await fetch(
+    `${supabaseUrl}/rest/v1/push_subscriptions` +
+      `?user_id=eq.${encodeURIComponent(userId)}` +
+      `&enabled=eq.true` +
+      `&select=id,endpoint,p256dh,auth`,
+    { headers: supabaseHeaders(serviceKey) },
+  );
+  const subscriptions = await subsRes.json().catch(() => []);
+  if (!subsRes.ok || !Array.isArray(subscriptions) || subscriptions.length === 0) return false;
+
+  const payload = JSON.stringify({ title, body });
+  let sent = false;
+
+  for (const sub of subscriptions) {
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        payload,
+        { urgency: 'normal', TTL: 600 },
+      );
+      sent = true;
+    } catch (err) {
+      const status = err?.statusCode ?? null;
+      console.warn('[routines] push failed', { subId: sub.id, status, error: err?.message });
+      // Clean up permanently invalid subscriptions.
+      if (status === 410 || status === 404) {
+        await fetch(
+          `${supabaseUrl}/rest/v1/push_subscriptions?id=eq.${encodeURIComponent(sub.id)}`,
+          { method: 'DELETE', headers: supabaseHeaders(serviceKey) },
+        ).catch(() => {});
+      }
+    }
+  }
+
+  return sent;
+}
+
+/** Stamp last_run_at on a routine after successful execution. */
+async function stampRoutineLastRun(supabaseUrl, serviceKey, routineId, value) {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/routines?id=eq.${encodeURIComponent(routineId)}`,
+    {
+      method: 'PATCH',
+      headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=minimal' },
+      body: JSON.stringify({ last_run_at: value }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    console.error('[routines] stampRoutineLastRun failed', { routineId, status: res.status, body });
+  } else {
+    console.log('[routines] last_run_at stamped', { routineId, value });
+  }
+}
+
+/** Set enabled=false on a routine (e.g. when its referenced person is gone). */
+async function disableRoutine(supabaseUrl, serviceKey, routineId) {
+  await fetch(
+    `${supabaseUrl}/rest/v1/routines?id=eq.${encodeURIComponent(routineId)}`,
+    {
+      method: 'PATCH',
+      headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=minimal' },
+      body: JSON.stringify({ enabled: false }),
+    },
+  ).catch((err) => console.warn('[routines] disableRoutine failed:', err?.message));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function isAuthorized(req) {
   const secret = process.env.CRON_SECRET;
