@@ -217,3 +217,57 @@ export function formatEventEndTime(event: CalendarEvent): string {
   if (Number.isNaN(end.getTime())) return "";
   return end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
+
+export interface CreateCalendarEventResult {
+  ok: boolean;
+  /** Google Calendar event ID. Present on success. */
+  id?: string;
+  title?: string;
+  /** ISO datetime string for the event start. Present on success. */
+  start?: string;
+  /** ISO datetime string for the event end. Present on success. */
+  end?: string;
+  /** Machine-readable error code returned by the server. */
+  code?: string;
+}
+
+/**
+ * Create a Google Calendar event on the user's primary calendar.
+ *
+ * Calls POST /api/google-calendar with the current Supabase JWT.
+ * Never throws — returns { ok: false, code } on any failure so callers
+ * can surface a typed inline error without a try/catch.
+ *
+ * @param title           Event title.
+ * @param date            Local date in YYYY-MM-DD format.
+ * @param time            Local 24-hour time in HH:MM format.
+ * @param durationMinutes Event length in minutes (default 60).
+ */
+export async function createCalendarEvent(
+  title: string,
+  date: string,
+  time: string,
+  durationMinutes = 60,
+): Promise<CreateCalendarEventResult> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const jwt = sessionData?.session?.access_token;
+    if (!jwt) return { ok: false, code: "unauthenticated" };
+
+    const res = await fetch("/api/google-calendar", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ title, date, time, duration_minutes: durationMinutes }),
+      cache: "no-store",
+    });
+
+    const data = await res.json().catch(() => null);
+    if (!data) return { ok: false, code: "parse_error" };
+    return data as CreateCalendarEventResult;
+  } catch {
+    return { ok: false, code: "network_error" };
+  }
+}

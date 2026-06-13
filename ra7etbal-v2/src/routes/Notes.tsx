@@ -14,6 +14,7 @@ import { useTasksStore } from "../stores/tasks";
 import { useAuthStore } from "../stores/auth";
 import { parseVoiceTime } from "../lib/parse-voice-time";
 import { scheduleReminderPush } from "../lib/qstash-reminder";
+import { createCalendarEvent } from "../lib/calendar";
 import { buildDelegationMessage } from "../lib/delegation-message";
 import { stripClosingLine } from "../lib/personal-note";
 import { createMessage } from "../lib/messages";
@@ -70,6 +71,18 @@ export default function Notes() {
   const [delegateError, setDelegateError] = useState<string | null>(null);
   /** Maps noteId → person name for success display. */
   const [delegatedMap, setDelegatedMap] = useState<Map<string, string>>(new Map());
+
+  // ── Add to Calendar state ──────────────────────────────────────────────────
+  /** Which note has the calendar time input open. Only one at a time. */
+  const [calendarNoteId, setCalendarNoteId] = useState<string | null>(null);
+  /** The natural-language time phrase typed by the user. */
+  const [calendarTimeText, setCalendarTimeText] = useState("");
+  /** Which note is currently being submitted to the calendar API. */
+  const [settingCalendarId, setSettingCalendarId] = useState<string | null>(null);
+  /** Inline error for the calendar panel. */
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  /** Notes that were successfully added to the calendar. */
+  const [calendarAddedIds, setCalendarAddedIds] = useState<Set<string>>(new Set());
 
   // Reactive people list — re-renders when the store updates after on-demand load.
   const peopleItems = usePeopleStore((state) => state.items);
@@ -286,6 +299,66 @@ export default function Notes() {
     }
   }
 
+  // ── Add to Calendar handlers ───────────────────────────────────────────────
+
+  function handleOpenCalendar(note: CarsonNote) {
+    setCalendarNoteId(note.id);
+    setCalendarTimeText("");
+    setCalendarError(null);
+  }
+
+  function handleCancelCalendar() {
+    setCalendarNoteId(null);
+    setCalendarTimeText("");
+    setCalendarError(null);
+  }
+
+  async function handleCalendarSubmit(note: CarsonNote) {
+    const phrase = calendarTimeText.trim();
+    if (!phrase) {
+      setCalendarError("Enter a time, e.g. tomorrow at 11");
+      return;
+    }
+    if (settingCalendarId) return;
+
+    // Parse natural-language time phrase into an ISO timestamp.
+    const parsed = parseVoiceTime(phrase);
+    if (parsed.error || !parsed.dueAt) {
+      setCalendarError(`Couldn't parse "${phrase}". Try: tomorrow at 11am`);
+      return;
+    }
+
+    // Convert ISO timestamp → local YYYY-MM-DD and HH:MM for the API.
+    // Using local date methods ensures the event lands on the correct
+    // calendar day regardless of the user's timezone offset.
+    const d = new Date(parsed.dueAt);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+    setSettingCalendarId(note.id);
+    setCalendarError(null);
+    try {
+      const result = await createCalendarEvent(note.note, date, time);
+      if (!result.ok) {
+        if (result.code === "reconnect_required") {
+          setCalendarError("Google Calendar is not connected. Reconnect it in Settings.");
+        } else {
+          setCalendarError("Couldn't add the event. Please try again.");
+        }
+        return;
+      }
+      setCalendarAddedIds((prev) => new Set(prev).add(note.id));
+      setCalendarNoteId(null);
+      setCalendarTimeText("");
+      console.log("[notes] calendar event created from note:", result.id, date, time);
+    } catch (err) {
+      setCalendarError(err instanceof Error ? err.message : "Couldn't add the event.");
+    } finally {
+      setSettingCalendarId(null);
+    }
+  }
+
   // ── Remind Me handlers ────────────────────────────────────────────────────
 
   function handleOpenRemind(note: CarsonNote) {
@@ -443,6 +516,15 @@ export default function Notes() {
                 onDelegateSubmit={handleDelegateSubmit}
                 onDelegateCancel={handleCancelDelegate}
                 peopleItems={peopleItems}
+                addingToCalendar={calendarNoteId === note.id}
+                calendarTimeText={calendarNoteId === note.id ? calendarTimeText : ""}
+                onCalendarTimeChange={setCalendarTimeText}
+                settingCalendar={settingCalendarId === note.id}
+                calendarAdded={calendarAddedIds.has(note.id)}
+                calendarError={calendarNoteId === note.id ? calendarError : null}
+                onAddToCalendar={handleOpenCalendar}
+                onCalendarSubmit={handleCalendarSubmit}
+                onCalendarCancel={handleCancelCalendar}
               />
             </li>
           ))}
@@ -479,6 +561,15 @@ function NoteCard({
   onDelegateSubmit,
   onDelegateCancel,
   peopleItems,
+  addingToCalendar,
+  calendarTimeText,
+  onCalendarTimeChange,
+  settingCalendar,
+  calendarAdded,
+  calendarError,
+  onAddToCalendar,
+  onCalendarSubmit,
+  onCalendarCancel,
 }: {
   note: CarsonNote;
   deleting: boolean;
@@ -506,8 +597,17 @@ function NoteCard({
   onDelegateSubmit: (note: CarsonNote) => Promise<void>;
   onDelegateCancel: () => void;
   peopleItems: import("../types/person").Person[];
+  addingToCalendar: boolean;
+  calendarTimeText: string;
+  onCalendarTimeChange: (v: string) => void;
+  settingCalendar: boolean;
+  calendarAdded: boolean;
+  calendarError: string | null;
+  onAddToCalendar: (note: CarsonNote) => void;
+  onCalendarSubmit: (note: CarsonNote) => Promise<void>;
+  onCalendarCancel: () => void;
 }) {
-  const busy = makingTask || deleting || settingReminder || sendingDelegate;
+  const busy = makingTask || deleting || settingReminder || sendingDelegate || settingCalendar;
 
   return (
     <article className="rounded-2xl border border-sage/25 bg-white/85 p-4 shadow-sm">
@@ -613,6 +713,51 @@ function NoteCard({
         </div>
       )}
 
+      {/* Add to Calendar — inline time input */}
+      {addingToCalendar && (
+        <div className="mt-3 space-y-2 rounded-xl border border-sky-200 bg-sky-50/60 p-3">
+          <label className="text-xs font-medium text-ink/60">
+            When? (e.g. tomorrow at 11, Monday at 2pm)
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={calendarTimeText}
+              onChange={(e) => onCalendarTimeChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void onCalendarSubmit(note);
+                if (e.key === "Escape") onCalendarCancel();
+              }}
+              placeholder="e.g. tomorrow at 11am"
+              disabled={settingCalendar}
+              // eslint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+              className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink/35 focus:border-sky-400 disabled:opacity-50"
+            />
+            <button
+              type="button"
+              onClick={() => void onCalendarSubmit(note)}
+              disabled={settingCalendar || !calendarTimeText.trim()}
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {settingCalendar && <Spinner size={11} />}
+              <span>{settingCalendar ? "Adding…" : "Add"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onCalendarCancel}
+              disabled={settingCalendar}
+              className="inline-flex min-h-[34px] items-center rounded-lg border border-charcoal/15 px-2.5 py-1.5 text-xs text-ink/55 transition hover:bg-charcoal/5 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+          {calendarError && (
+            <p className="text-xs text-danger">{calendarError}</p>
+          )}
+        </div>
+      )}
+
       <div className="mt-3 flex items-center justify-between gap-3 border-t border-sage/15 pt-3">
         <div className="flex flex-wrap items-center gap-2">
           {/* Make Task */}
@@ -651,10 +796,24 @@ function NoteCard({
             <button
               type="button"
               onClick={() => void onDelegate(note)}
-              disabled={busy || reminding}
+              disabled={busy || reminding || addingToCalendar}
               className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-charcoal/20 bg-charcoal/5 px-3 py-1 text-xs font-medium text-charcoal/75 transition hover:bg-charcoal/10 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span>Delegate</span>
+            </button>
+          ) : null}
+
+          {/* Add to Calendar */}
+          {calendarAdded ? (
+            <span className="text-xs font-medium text-sky-700">Added to calendar.</span>
+          ) : !addingToCalendar ? (
+            <button
+              type="button"
+              onClick={() => onAddToCalendar(note)}
+              disabled={busy || reminding || delegating}
+              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span>Add to Calendar</span>
             </button>
           ) : null}
         </div>
@@ -666,7 +825,7 @@ function NoteCard({
           <button
             type="button"
             onClick={() => void onDelete(note)}
-            disabled={deleting || reminding || delegating}
+            disabled={deleting || reminding || delegating || addingToCalendar}
             className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition hover:bg-rose-100 disabled:opacity-50"
           >
             {deleting && <Spinner size={12} />}
