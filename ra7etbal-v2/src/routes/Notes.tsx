@@ -9,6 +9,9 @@ import {
   saveCarsonNote,
   type CarsonNote,
 } from "../lib/carson-notes";
+import { createTask } from "../lib/tasks";
+import { useTasksStore } from "../stores/tasks";
+import { useAuthStore } from "../stores/auth";
 
 export default function Notes() {
   const { user } = useAuth();
@@ -20,6 +23,10 @@ export default function Notes() {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  /** Which note is currently being converted to a task. */
+  const [makingTaskId, setMakingTaskId] = useState<string | null>(null);
+  /** Notes that have been successfully converted — show "Task created." feedback. */
+  const [madeTaskIds, setMadeTaskIds] = useState<Set<string>>(new Set());
 
   const trimmedDraft = draft.trim();
   const canSave = !!userId && trimmedDraft.length > 0 && !saving;
@@ -87,6 +94,35 @@ export default function Notes() {
       setError(err instanceof Error ? err.message : "Could not delete note.");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function handleMakeTask(note: CarsonNote) {
+    if (makingTaskId) return;
+    const authUserId = useAuthStore.getState().user?.id ?? userId;
+    if (!authUserId) return;
+
+    setMakingTaskId(note.id);
+    setError(null);
+    try {
+      const task = await createTask({
+        user_id: authUserId,
+        description: note.note,
+        type: "action",
+        assigned_to: null,
+        status: "pending",
+        needs_follow_up: false,
+        confirmation_url: null,
+        due_at: null,
+      });
+      // Refresh the tasks store so the new item appears in the Actions tab.
+      useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+      setMadeTaskIds((prev) => new Set(prev).add(note.id));
+      console.log("[notes] task created from note:", task.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create task.");
+    } finally {
+      setMakingTaskId(null);
     }
   }
 
@@ -163,6 +199,9 @@ export default function Notes() {
                 deleting={deletingId === note.id}
                 confirmingDelete={confirmingDeleteId === note.id}
                 onDelete={handleDelete}
+                makingTask={makingTaskId === note.id}
+                taskMade={madeTaskIds.has(note.id)}
+                onMakeTask={handleMakeTask}
               />
             </li>
           ))}
@@ -177,11 +216,17 @@ function NoteCard({
   deleting,
   confirmingDelete,
   onDelete,
+  makingTask,
+  taskMade,
+  onMakeTask,
 }: {
   note: CarsonNote;
   deleting: boolean;
   confirmingDelete: boolean;
   onDelete: (note: CarsonNote) => Promise<void>;
+  makingTask: boolean;
+  taskMade: boolean;
+  onMakeTask: (note: CarsonNote) => Promise<void>;
 }) {
   return (
     <article className="rounded-2xl border border-sage/25 bg-white/85 p-4 shadow-sm">
@@ -199,18 +244,37 @@ function NoteCard({
       </p>
 
       <div className="mt-3 flex items-center justify-between gap-3 border-t border-sage/15 pt-3">
-        <span className="text-xs text-ink/45">
-          {note.source === "manual" ? "Manual note" : "Saved by Carson"}
-        </span>
-        <button
-          type="button"
-          onClick={() => void onDelete(note)}
-          disabled={deleting}
-          className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition hover:bg-rose-100 disabled:opacity-50"
-        >
-          {deleting && <Spinner size={12} />}
-          <span>{deleting ? "Deleting..." : confirmingDelete ? "Tap again" : "Delete"}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Make Task — converts note text into a pending action task */}
+          {taskMade ? (
+            <span className="text-xs font-medium text-sage">Task created.</span>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void onMakeTask(note)}
+              disabled={makingTask || deleting}
+              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/35 bg-sage/8 px-3 py-1 text-xs font-medium text-sage transition hover:bg-sage/15 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {makingTask && <Spinner size={12} />}
+              <span>{makingTask ? "Creating…" : "Make Task"}</span>
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-ink/45">
+            {note.source === "manual" ? "Manual" : "Carson"}
+          </span>
+          <button
+            type="button"
+            onClick={() => void onDelete(note)}
+            disabled={deleting}
+            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition hover:bg-rose-100 disabled:opacity-50"
+          >
+            {deleting && <Spinner size={12} />}
+            <span>{deleting ? "Deleting..." : confirmingDelete ? "Tap again" : "Delete"}</span>
+          </button>
+        </div>
       </div>
     </article>
   );
