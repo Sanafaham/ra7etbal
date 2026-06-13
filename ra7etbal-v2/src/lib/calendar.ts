@@ -156,9 +156,12 @@ export function filterCalendarEventsByRange(
       rangeEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2);
       break;
     case "this_week": {
+      // Start from today (not last Sunday) so the range aligns with the
+      // planning cache, which only contains events from today onward.
+      // rangeEnd = next Sunday (start of next week).
       const dow = now.getDay();
-      rangeStart = new Date(today.getFullYear(), today.getMonth(), today.getDate() - dow);
-      rangeEnd = new Date(rangeStart.getFullYear(), rangeStart.getMonth(), rangeStart.getDate() + 7);
+      rangeStart = today;
+      rangeEnd = new Date(today.getFullYear(), today.getMonth(), today.getDate() + (7 - dow));
       break;
     }
     case "next_week": {
