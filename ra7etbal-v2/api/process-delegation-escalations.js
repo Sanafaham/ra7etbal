@@ -581,20 +581,20 @@ async function setupRoutinesSchedule(res, { appBaseUrl }) {
     return res.status(500).json({ error: 'CRON_SECRET not configured' });
   }
 
-  // Hardcode production URL — avoids any env-var scheme issues.
-  // APP_BASE_URL is a fallback for local dev; production always hits ra7etbal-v2.vercel.app.
+  // Use Upstash-Destination header instead of path-based URL.
+  // The path approach with encodeURIComponent can be mangled by the Node runtime.
   const targetUrl = 'https://ra7etbal-v2.vercel.app/api/process-delegation-escalations';
-  const encodedUrl = encodeURIComponent(targetUrl);
 
   console.log('[routines-setup] registering QStash schedule', { targetUrl });
 
   try {
     const schedRes = await fetch(
-      `https://qstash.upstash.io/v2/schedules/${encodedUrl}`,
+      'https://qstash.upstash.io/v2/schedules',
       {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${qstashToken}`,
+          'Upstash-Destination': targetUrl,
           'Upstash-Cron': '0 * * * *',          // top of every hour
           'Upstash-Forward-Authorization': `Bearer ${cronSecret}`,
           'Upstash-Method': 'POST',
