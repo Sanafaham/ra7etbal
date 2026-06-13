@@ -137,9 +137,6 @@ export default async function handler(req, res) {
   if (requestBody.action === 'run-routines') {
     return runRoutines(req, res, { supabaseUrl, serviceKey, appBaseUrl });
   }
-  if (requestBody.action === 'setup-routines-schedule') {
-    return setupRoutinesSchedule(res, { appBaseUrl });
-  }
 
   const now = new Date();
   const followupThresholdMs = testMode ? TEST_FOLLOWUP_MS : PROD_FOLLOWUP_MS;
@@ -294,7 +291,19 @@ export default async function handler(req, res) {
     ...stats,
     durationMs: Date.now() - runStartedAt.getTime(),
   });
-  return res.status(200).json(stats);
+
+  // ── Routines — piggyback on the existing 10-min escalation cron ─────────────
+  // runRoutinesCore uses isRoutineDue guards so it safely no-ops between schedule
+  // windows even when the cron fires 6x per hour.
+  const routinesStats = await runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }).catch((err) => {
+    console.error('[escalation] routines subsystem error (non-fatal):', err?.message);
+    return null;
+  });
+  if (routinesStats) {
+    console.log('[escalation] routines piggybacked', routinesStats);
+  }
+
+  return res.status(200).json({ ...stats, routines: routinesStats });
 }
 
 // ── Follow-up: re-send the original WhatsApp template ─────────────────────────
@@ -557,88 +566,22 @@ function isTestMode(req) {
   }
 }
 
-// ── QStash schedule setup ─────────────────────────────────────────────────────
-
-/**
- * Self-registers an hourly QStash cron schedule that POSTs
- * { action: "run-routines" } to this same endpoint.
- * Called once via: POST /api/process-delegation-escalations?testMode=true
- *                  body: { "action": "setup-routines-schedule" }
- *
- * Idempotent — QStash deduplicates by schedule ID. Re-running overwrites
- * the existing schedule with the same settings (safe to call again).
- */
-async function setupRoutinesSchedule(res, { appBaseUrl }) {
-  const qstashToken = process.env.QSTASH_TOKEN;
-  const cronSecret  = process.env.CRON_SECRET;
-
-  if (!qstashToken) {
-    console.error('[routines-setup] QSTASH_TOKEN not set');
-    return res.status(500).json({ error: 'QSTASH_TOKEN not configured' });
-  }
-  if (!cronSecret) {
-    console.error('[routines-setup] CRON_SECRET not set');
-    return res.status(500).json({ error: 'CRON_SECRET not configured' });
-  }
-
-  // Use Upstash-Destination header instead of path-based URL.
-  // The path approach with encodeURIComponent can be mangled by the Node runtime.
-  const targetUrl = 'https://ra7etbal-v2.vercel.app/api/process-delegation-escalations';
-
-  console.log('[routines-setup] registering QStash schedule', { targetUrl });
-
-  try {
-    const schedRes = await fetch(
-      'https://qstash.upstash.io/v2/schedules',
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${qstashToken}`,
-          'Upstash-Destination': targetUrl,
-          'Upstash-Cron': '0 * * * *',          // top of every hour
-          'Upstash-Forward-Authorization': `Bearer ${cronSecret}`,
-          'Upstash-Method': 'POST',
-          'Upstash-Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ action: 'run-routines' }),
-      },
-    );
-
-    const data = await schedRes.json().catch(() => ({}));
-
-    if (!schedRes.ok) {
-      console.error('[routines-setup] QStash registration failed', {
-        status: schedRes.status,
-        error: data?.error,
-      });
-      return res.status(500).json({ error: 'QStash registration failed', details: data });
-    }
-
-    console.log('[routines-setup] QStash schedule registered', {
-      scheduleId: data?.scheduleId || data?.schedule_id || null,
-      cron: '0 * * * *',
-      targetUrl,
-    });
-    return res.status(200).json({
-      ok: true,
-      scheduleId: data?.scheduleId || data?.schedule_id || null,
-      cron: '0 * * * *',
-      targetUrl,
-    });
-  } catch (err) {
-    console.error('[routines-setup] fetch threw:', err?.message);
-    return res.status(500).json({ error: err?.message });
-  }
-}
-
 // ── Routines runner ───────────────────────────────────────────────────────────
 
 /**
- * Handle { action: "run-routines" } dispatched from the main handler.
- * Queries all enabled routines, checks which are due, and executes them.
- * Each routine is wrapped in try/catch — one failure never stops the batch.
+ * Routines are executed by piggybacking on the existing 10-min escalation cron
+ * (no separate QStash schedule needed). runRoutinesCore is called at the end of
+ * every escalation handler run. The isRoutineDue guard prevents double-execution.
+ *
+ * Direct { action: "run-routines" } dispatch is also supported for manual testing.
  */
-async function runRoutines(_req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
+/**
+ * Core routines logic — no res dependency.
+ * Returns { checked, executed, skipped, failed }.
+ * Called both from the `run-routines` action dispatch AND at the end of
+ * every escalation run (the existing 10-min QStash cron handles both).
+ */
+async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
   const startedAt = new Date();
   console.log('[routines] job started', { startedAt: startedAt.toISOString() });
 
@@ -656,12 +599,12 @@ async function runRoutines(_req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
 
   if (!routinesRes.ok) {
     console.error('[routines] failed to fetch routines:', routines?.message);
-    return res.status(500).json({ error: 'Could not fetch routines.' });
+    return stats; // non-fatal — escalation still completes
   }
 
   if (!Array.isArray(routines) || routines.length === 0) {
     console.log('[routines] no enabled routines');
-    return res.status(200).json(stats);
+    return stats;
   }
 
   stats.checked = routines.length;
@@ -691,7 +634,6 @@ async function runRoutines(_req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
       } else if (routine.type === 'delegation') {
         const result = await executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appBaseUrl });
         if (result === 'missing_person') {
-          // Person is gone — disable routine so it stops firing.
           await disableRoutine(supabaseUrl, serviceKey, routine.id);
           console.warn('[routines] routine disabled (missing person)', { routineId: routine.id });
           stats.skipped++;
@@ -722,7 +664,18 @@ async function runRoutines(_req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
     ...stats,
     durationMs: Date.now() - startedAt.getTime(),
   });
-  return res.status(200).json(stats);
+  return stats;
+}
+
+/** Action dispatch handler — wraps runRoutinesCore with an HTTP response. */
+async function runRoutines(_req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
+  try {
+    const stats = await runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl });
+    return res.status(200).json(stats);
+  } catch (err) {
+    console.error('[routines] fatal error:', err?.message);
+    return res.status(500).json({ error: err?.message });
+  }
 }
 
 /**
