@@ -14,6 +14,23 @@ import { useTasksStore } from "../stores/tasks";
 import { useAuthStore } from "../stores/auth";
 import { parseVoiceTime } from "../lib/parse-voice-time";
 import { scheduleReminderPush } from "../lib/qstash-reminder";
+import { buildDelegationMessage } from "../lib/delegation-message";
+import { stripClosingLine } from "../lib/personal-note";
+import { createMessage } from "../lib/messages";
+import { sendWhatsAppTask } from "../lib/whatsapp";
+import { scheduleEscalationMessages } from "../lib/qstash-escalation";
+import { usePeopleStore } from "../stores/people";
+import { useProfileStore } from "../stores/profile";
+
+/** Replace first-person owner pronouns with the owner's display name in outgoing delegation messages. */
+function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
+  const name = ownerName?.trim() || "the sender";
+  return text
+    .replace(/\bmy\b/gi, `${name}'s`)
+    .replace(/\bmyself\b/gi, name)
+    .replace(/\bme\b/gi, name)
+    .replace(/\bI\b/g, name);
+}
 
 export default function Notes() {
   const { user } = useAuth();
@@ -41,6 +58,21 @@ export default function Notes() {
   const [reminderInputError, setReminderInputError] = useState<string | null>(null);
   /** Notes where a reminder was successfully set. */
   const [reminderSetIds, setReminderSetIds] = useState<Set<string>>(new Set());
+
+  // ── Delegate state ─────────────────────────────────────────────────────────
+  /** Which note has the person picker open. Only one at a time. */
+  const [delegatingNoteId, setDelegatingNoteId] = useState<string | null>(null);
+  /** Currently selected person ID in the picker. */
+  const [delegatePersonId, setDelegatePersonId] = useState<string>("");
+  /** Which note is being sent (in-flight guard). */
+  const [sendingDelegateId, setSendingDelegateId] = useState<string | null>(null);
+  /** Inline error for the Delegate panel. */
+  const [delegateError, setDelegateError] = useState<string | null>(null);
+  /** Maps noteId → person name for success display. */
+  const [delegatedMap, setDelegatedMap] = useState<Map<string, string>>(new Map());
+
+  // Reactive people list — re-renders when the store updates after on-demand load.
+  const peopleItems = usePeopleStore((state) => state.items);
 
   const trimmedDraft = draft.trim();
   const canSave = !!userId && trimmedDraft.length > 0 && !saving;
@@ -137,6 +169,120 @@ export default function Notes() {
       setError(err instanceof Error ? err.message : "Could not create task.");
     } finally {
       setMakingTaskId(null);
+    }
+  }
+
+  // ── Delegate handlers ─────────────────────────────────────────────────────
+
+  async function handleOpenDelegate(note: CarsonNote) {
+    // Ensure People are loaded before opening the picker.
+    const authUserId = useAuthStore.getState().user?.id ?? userId;
+    if (authUserId) {
+      const ps = usePeopleStore.getState();
+      if (ps.status === "idle" || ps.items.length === 0) {
+        await usePeopleStore.getState().loadFor(authUserId);
+      }
+    }
+    setDelegatingNoteId(note.id);
+    setDelegatePersonId("");
+    setDelegateError(null);
+  }
+
+  function handleCancelDelegate() {
+    setDelegatingNoteId(null);
+    setDelegatePersonId("");
+    setDelegateError(null);
+  }
+
+  async function handleDelegateSubmit(note: CarsonNote) {
+    if (!delegatePersonId || sendingDelegateId) return;
+
+    const people = usePeopleStore.getState().items;
+    const person = people.find((p) => p.id === delegatePersonId);
+    if (!person) {
+      setDelegateError("Person not found. Please try again.");
+      return;
+    }
+    if (!person.phone) {
+      setDelegateError(`${person.name} has no phone number saved. Add one in People settings.`);
+      return;
+    }
+
+    const authUserId = useAuthStore.getState().user?.id ?? userId;
+    if (!authUserId) return;
+
+    const ownerName = useProfileStore.getState().displayName ?? undefined;
+
+    setSendingDelegateId(note.id);
+    setDelegateError(null);
+    try {
+      // Build message — person personality notes applied via buildDelegationMessage,
+      // then rewrite owner pronouns so "my car" → "Sana's car". No personal note for V1.
+      const messageText = stripClosingLine(
+        rewriteOwnerPronouns(
+          buildDelegationMessage({
+            personName: person.name,
+            taskText: note.note,
+            personNotes: person.notes ?? null,
+            ownerName: ownerName ?? null,
+          }),
+          ownerName,
+        ),
+      );
+
+      const taskId = crypto.randomUUID();
+      const confirmationUrl = `${window.location.origin}/confirm?task=${taskId}`;
+
+      const task = await createTask({
+        id: taskId,
+        user_id: authUserId,
+        description: note.note,
+        type: "delegation",
+        assigned_to: person.name,
+        status: "pending",
+        needs_follow_up: true,
+        confirmation_url: confirmationUrl,
+        due_at: null,
+      });
+
+      let messageRecord;
+      try {
+        messageRecord = await createMessage({
+          user_id: authUserId,
+          task_id: task.id,
+          recipient: person.name,
+          content: messageText,
+          confirmation_url: confirmationUrl,
+        });
+      } catch {
+        // Non-fatal — send still proceeds.
+      }
+
+      await sendWhatsAppTask({
+        to: person.phone,
+        messageText,
+        confirmationLink: confirmationUrl,
+        messageRecordId: messageRecord?.id ?? null,
+        taskId: task.id,
+        recipientName: person.name,
+        ownerName: ownerName ?? null,
+      });
+
+      if (task.created_at) {
+        scheduleEscalationMessages(task.id, task.created_at).catch((err) =>
+          console.error("[notes] escalation schedule failed:", err),
+        );
+      }
+
+      useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+      setDelegatedMap((prev) => new Map(prev).set(note.id, person.name));
+      setDelegatingNoteId(null);
+      setDelegatePersonId("");
+      console.log("[notes] delegation sent from note:", task.id, "→", person.name);
+    } catch (err) {
+      setDelegateError(err instanceof Error ? err.message : "Could not send delegation.");
+    } finally {
+      setSendingDelegateId(null);
     }
   }
 
@@ -287,6 +433,16 @@ export default function Notes() {
                 onRemindMe={handleOpenRemind}
                 onRemindSubmit={handleRemindSubmit}
                 onRemindCancel={handleCancelRemind}
+                delegating={delegatingNoteId === note.id}
+                delegatePersonId={delegatingNoteId === note.id ? delegatePersonId : ""}
+                onDelegatePersonChange={setDelegatePersonId}
+                sendingDelegate={sendingDelegateId === note.id}
+                delegatedName={delegatedMap.get(note.id) ?? null}
+                delegateError={delegatingNoteId === note.id ? delegateError : null}
+                onDelegate={handleOpenDelegate}
+                onDelegateSubmit={handleDelegateSubmit}
+                onDelegateCancel={handleCancelDelegate}
+                peopleItems={peopleItems}
               />
             </li>
           ))}
@@ -313,6 +469,16 @@ function NoteCard({
   onRemindMe,
   onRemindSubmit,
   onRemindCancel,
+  delegating,
+  delegatePersonId,
+  onDelegatePersonChange,
+  sendingDelegate,
+  delegatedName,
+  delegateError,
+  onDelegate,
+  onDelegateSubmit,
+  onDelegateCancel,
+  peopleItems,
 }: {
   note: CarsonNote;
   deleting: boolean;
@@ -330,8 +496,18 @@ function NoteCard({
   onRemindMe: (note: CarsonNote) => void;
   onRemindSubmit: (note: CarsonNote) => Promise<void>;
   onRemindCancel: () => void;
+  delegating: boolean;
+  delegatePersonId: string;
+  onDelegatePersonChange: (id: string) => void;
+  sendingDelegate: boolean;
+  delegatedName: string | null;
+  delegateError: string | null;
+  onDelegate: (note: CarsonNote) => Promise<void>;
+  onDelegateSubmit: (note: CarsonNote) => Promise<void>;
+  onDelegateCancel: () => void;
+  peopleItems: import("../types/person").Person[];
 }) {
-  const busy = makingTask || deleting || settingReminder;
+  const busy = makingTask || deleting || settingReminder || sendingDelegate;
 
   return (
     <article className="rounded-2xl border border-sage/25 bg-white/85 p-4 shadow-sm">
@@ -393,6 +569,50 @@ function NoteCard({
         </div>
       )}
 
+      {/* Delegate — inline person picker */}
+      {delegating && (
+        <div className="mt-3 space-y-2 rounded-xl border border-charcoal/15 bg-charcoal/4 p-3">
+          <label className="text-xs font-medium text-ink/60">Who should handle this?</label>
+          <div className="flex gap-2">
+            <select
+              value={delegatePersonId}
+              onChange={(e) => onDelegatePersonChange(e.target.value)}
+              disabled={sendingDelegate}
+              // eslint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+              className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none focus:border-sage disabled:opacity-50"
+            >
+              <option value="">Select a person…</option>
+              {peopleItems.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}{p.phone ? "" : " (no phone)"}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => void onDelegateSubmit(note)}
+              disabled={sendingDelegate || !delegatePersonId}
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-charcoal px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {sendingDelegate && <Spinner size={11} />}
+              <span>{sendingDelegate ? "Sending…" : "Send"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onDelegateCancel}
+              disabled={sendingDelegate}
+              className="inline-flex min-h-[34px] items-center rounded-lg border border-charcoal/15 px-2.5 py-1.5 text-xs text-ink/55 transition hover:bg-charcoal/5 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+          {delegateError && (
+            <p className="text-xs text-danger">{delegateError}</p>
+          )}
+        </div>
+      )}
+
       <div className="mt-3 flex items-center justify-between gap-3 border-t border-sage/15 pt-3">
         <div className="flex flex-wrap items-center gap-2">
           {/* Make Task */}
@@ -402,7 +622,7 @@ function NoteCard({
             <button
               type="button"
               onClick={() => void onMakeTask(note)}
-              disabled={busy || reminding}
+              disabled={busy || reminding || delegating}
               className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/35 bg-sage/8 px-3 py-1 text-xs font-medium text-sage transition hover:bg-sage/15 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {makingTask && <Spinner size={12} />}
@@ -417,10 +637,24 @@ function NoteCard({
             <button
               type="button"
               onClick={() => onRemindMe(note)}
-              disabled={busy}
+              disabled={busy || delegating}
               className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-gold/35 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span>Remind Me</span>
+            </button>
+          ) : null}
+
+          {/* Delegate */}
+          {delegatedName ? (
+            <span className="text-xs font-medium text-charcoal/70">Sent to {delegatedName}.</span>
+          ) : !delegating ? (
+            <button
+              type="button"
+              onClick={() => void onDelegate(note)}
+              disabled={busy || reminding}
+              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-charcoal/20 bg-charcoal/5 px-3 py-1 text-xs font-medium text-charcoal/75 transition hover:bg-charcoal/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span>Delegate</span>
             </button>
           ) : null}
         </div>
@@ -432,7 +666,7 @@ function NoteCard({
           <button
             type="button"
             onClick={() => void onDelete(note)}
-            disabled={deleting || reminding}
+            disabled={deleting || reminding || delegating}
             className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition hover:bg-rose-100 disabled:opacity-50"
           >
             {deleting && <Spinner size={12} />}
