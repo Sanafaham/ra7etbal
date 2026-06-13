@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -214,9 +214,11 @@ function PersistentCarsonWidget() {
   const [now, setNow] = useState(() => new Date());
 
   // On Home, the widget is portaled into #carson-home-slot (inside Home.tsx).
-  // That slot mounts after Routes renders, so we resolve it in an effect.
+  // useLayoutEffect fires synchronously after DOM commit and before the
+  // browser paints, so the slot is guaranteed to exist when we look for it —
+  // no async render gap, no first-frame flash.
   const [homeSlot, setHomeSlot] = useState<HTMLElement | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!isHome) { setHomeSlot(null); return; }
     setHomeSlot(document.getElementById("carson-home-slot"));
   }, [isHome]);
