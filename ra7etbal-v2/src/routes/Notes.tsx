@@ -12,6 +12,8 @@ import {
 import { createTask } from "../lib/tasks";
 import { useTasksStore } from "../stores/tasks";
 import { useAuthStore } from "../stores/auth";
+import { parseVoiceTime } from "../lib/parse-voice-time";
+import { scheduleReminderPush } from "../lib/qstash-reminder";
 
 export default function Notes() {
   const { user } = useAuth();
@@ -27,6 +29,18 @@ export default function Notes() {
   const [makingTaskId, setMakingTaskId] = useState<string | null>(null);
   /** Notes that have been successfully converted — show "Task created." feedback. */
   const [madeTaskIds, setMadeTaskIds] = useState<Set<string>>(new Set());
+
+  // ── Remind Me state ────────────────────────────────────────────────────────
+  /** Which note has the time input open. Only one at a time. */
+  const [remindingNoteId, setRemindingNoteId] = useState<string | null>(null);
+  /** The natural-language time phrase typed by the user. */
+  const [remindTimeText, setRemindTimeText] = useState("");
+  /** Which note is currently being submitted (in-flight guard). */
+  const [settingReminderId, setSettingReminderId] = useState<string | null>(null);
+  /** Inline parse/save error for the Remind Me input. */
+  const [reminderInputError, setReminderInputError] = useState<string | null>(null);
+  /** Notes where a reminder was successfully set. */
+  const [reminderSetIds, setReminderSetIds] = useState<Set<string>>(new Set());
 
   const trimmedDraft = draft.trim();
   const canSave = !!userId && trimmedDraft.length > 0 && !saving;
@@ -126,6 +140,68 @@ export default function Notes() {
     }
   }
 
+  // ── Remind Me handlers ────────────────────────────────────────────────────
+
+  function handleOpenRemind(note: CarsonNote) {
+    // Opening a new note closes any previously open input.
+    setRemindingNoteId(note.id);
+    setRemindTimeText("");
+    setReminderInputError(null);
+  }
+
+  function handleCancelRemind() {
+    setRemindingNoteId(null);
+    setRemindTimeText("");
+    setReminderInputError(null);
+  }
+
+  async function handleRemindSubmit(note: CarsonNote) {
+    const phrase = remindTimeText.trim();
+    if (!phrase) {
+      setReminderInputError("Enter a time, e.g. tomorrow at 5pm");
+      return;
+    }
+    if (settingReminderId) return;
+
+    const authUserId = useAuthStore.getState().user?.id ?? userId;
+    if (!authUserId) return;
+
+    // Parse the natural-language phrase using the same lib the widget uses.
+    const parsed = parseVoiceTime(phrase);
+    if (parsed.error || !parsed.dueAt) {
+      setReminderInputError(`Couldn't parse "${phrase}". Try: tomorrow at 5pm`);
+      return;
+    }
+
+    setSettingReminderId(note.id);
+    setReminderInputError(null);
+    try {
+      const task = await createTask({
+        user_id: authUserId,
+        description: note.note,
+        type: "reminder",
+        assigned_to: null,
+        status: "pending",
+        needs_follow_up: false,
+        confirmation_url: null,
+        due_at: parsed.dueAt,
+      });
+      // Schedule the push notification — same path as the voice widget.
+      scheduleReminderPush(task.id, parsed.dueAt).catch((err) =>
+        console.error("[notes] QStash reminder schedule failed:", err),
+      );
+      useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+      setReminderSetIds((prev) => new Set(prev).add(note.id));
+      setRemindingNoteId(null);
+      setRemindTimeText("");
+      console.log("[notes] reminder created from note:", task.id, "due:", parsed.dueAt);
+    } catch (err) {
+      setReminderInputError(err instanceof Error ? err.message : "Could not set reminder.");
+    } finally {
+      setSettingReminderId(null);
+    }
+  }
+
   return (
     <section className="space-y-5">
       <header className="flex items-start justify-between gap-3">
@@ -202,6 +278,15 @@ export default function Notes() {
                 makingTask={makingTaskId === note.id}
                 taskMade={madeTaskIds.has(note.id)}
                 onMakeTask={handleMakeTask}
+                reminding={remindingNoteId === note.id}
+                remindTimeText={remindingNoteId === note.id ? remindTimeText : ""}
+                onRemindTimeChange={setRemindTimeText}
+                settingReminder={settingReminderId === note.id}
+                reminderSet={reminderSetIds.has(note.id)}
+                reminderInputError={remindingNoteId === note.id ? reminderInputError : null}
+                onRemindMe={handleOpenRemind}
+                onRemindSubmit={handleRemindSubmit}
+                onRemindCancel={handleCancelRemind}
               />
             </li>
           ))}
@@ -219,6 +304,15 @@ function NoteCard({
   makingTask,
   taskMade,
   onMakeTask,
+  reminding,
+  remindTimeText,
+  onRemindTimeChange,
+  settingReminder,
+  reminderSet,
+  reminderInputError,
+  onRemindMe,
+  onRemindSubmit,
+  onRemindCancel,
 }: {
   note: CarsonNote;
   deleting: boolean;
@@ -227,7 +321,18 @@ function NoteCard({
   makingTask: boolean;
   taskMade: boolean;
   onMakeTask: (note: CarsonNote) => Promise<void>;
+  reminding: boolean;
+  remindTimeText: string;
+  onRemindTimeChange: (v: string) => void;
+  settingReminder: boolean;
+  reminderSet: boolean;
+  reminderInputError: string | null;
+  onRemindMe: (note: CarsonNote) => void;
+  onRemindSubmit: (note: CarsonNote) => Promise<void>;
+  onRemindCancel: () => void;
 }) {
+  const busy = makingTask || deleting || settingReminder;
+
   return (
     <article className="rounded-2xl border border-sage/25 bg-white/85 p-4 shadow-sm">
       <header className="flex items-start justify-between gap-3">
@@ -243,22 +348,81 @@ function NoteCard({
         {note.note}
       </p>
 
+      {/* Remind Me — inline time input, shown when reminding === true */}
+      {reminding && (
+        <div className="mt-3 space-y-2 rounded-xl border border-gold/30 bg-amber-50/60 p-3">
+          <label className="text-xs font-medium text-ink/60">
+            When? (e.g. tomorrow at 5pm, Monday at 10)
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={remindTimeText}
+              onChange={(e) => onRemindTimeChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void onRemindSubmit(note);
+                if (e.key === "Escape") onRemindCancel();
+              }}
+              placeholder="e.g. tomorrow at 5pm"
+              disabled={settingReminder}
+              // eslint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+              className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink/35 focus:border-sage disabled:opacity-50"
+            />
+            <button
+              type="button"
+              onClick={() => void onRemindSubmit(note)}
+              disabled={settingReminder || !remindTimeText.trim()}
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-gold px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {settingReminder && <Spinner size={11} />}
+              <span>{settingReminder ? "Setting…" : "Set"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onRemindCancel}
+              disabled={settingReminder}
+              className="inline-flex min-h-[34px] items-center rounded-lg border border-charcoal/15 px-2.5 py-1.5 text-xs text-ink/55 transition hover:bg-charcoal/5 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+          {reminderInputError && (
+            <p className="text-xs text-danger">{reminderInputError}</p>
+          )}
+        </div>
+      )}
+
       <div className="mt-3 flex items-center justify-between gap-3 border-t border-sage/15 pt-3">
-        <div className="flex items-center gap-2">
-          {/* Make Task — converts note text into a pending action task */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Make Task */}
           {taskMade ? (
             <span className="text-xs font-medium text-sage">Task created.</span>
           ) : (
             <button
               type="button"
               onClick={() => void onMakeTask(note)}
-              disabled={makingTask || deleting}
+              disabled={busy || reminding}
               className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/35 bg-sage/8 px-3 py-1 text-xs font-medium text-sage transition hover:bg-sage/15 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {makingTask && <Spinner size={12} />}
               <span>{makingTask ? "Creating…" : "Make Task"}</span>
             </button>
           )}
+
+          {/* Remind Me */}
+          {reminderSet ? (
+            <span className="text-xs font-medium text-gold">Reminder set.</span>
+          ) : !reminding ? (
+            <button
+              type="button"
+              onClick={() => onRemindMe(note)}
+              disabled={busy}
+              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-gold/35 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span>Remind Me</span>
+            </button>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-2">
@@ -268,7 +432,7 @@ function NoteCard({
           <button
             type="button"
             onClick={() => void onDelete(note)}
-            disabled={deleting}
+            disabled={deleting || reminding}
             className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition hover:bg-rose-100 disabled:opacity-50"
           >
             {deleting && <Spinner size={12} />}
