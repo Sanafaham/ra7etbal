@@ -1,15 +1,12 @@
 /**
- * Inbox — merged view of:
- *  - Unprocessed inbox items (InboxReviewPanel)
- *  - Carson notes (from Notes.tsx)
- *
- * All note logic is preserved verbatim from Notes.tsx.
- * Replaces: Notes, and the InboxReviewPanel section of Home.
+ * Inbox — notes + unprocessed items.
+ * Sections: Needs Processing (InboxReviewPanel) → Notes (searchable).
+ * Note actions: Remind Me + Delegate visible; Make Task / Add to Calendar / Delete in ··· overflow.
+ * Refresh on mount only — no visible refresh button.
  */
 import { useEffect, useMemo, useState } from "react";
 import AuthNotice from "../components/auth/AuthNotice";
 import InboxReviewPanel from "../components/home/InboxReviewPanel";
-import RefreshButton from "../components/RefreshButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import {
@@ -34,7 +31,6 @@ import { useProfileStore } from "../stores/profile";
 import { useDraftStore } from "../stores/draft";
 import { useNavigate } from "react-router-dom";
 
-/** Replace first-person owner pronouns with the owner's display name. */
 function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
   const name = ownerName?.trim() || "the sender";
   return text
@@ -48,6 +44,7 @@ export default function Inbox() {
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const navigate = useNavigate();
+
   const [notes, setNotes] = useState<CarsonNote[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -57,22 +54,25 @@ export default function Inbox() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
   const [makingTaskId, setMakingTaskId] = useState<string | null>(null);
   const [madeTaskIds, setMadeTaskIds] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  /** Which note has the ··· overflow menu open. */
+  const [openOverflowId, setOpenOverflowId] = useState<string | null>(null);
 
-  // ── Remind Me state ────────────────────────────────────────────────────────
+  // ── Remind Me ────────────────────────────────────────────────────────────
   const [remindingNoteId, setRemindingNoteId] = useState<string | null>(null);
   const [remindTimeText, setRemindTimeText] = useState("");
   const [settingReminderId, setSettingReminderId] = useState<string | null>(null);
   const [reminderInputError, setReminderInputError] = useState<string | null>(null);
   const [reminderSetIds, setReminderSetIds] = useState<Set<string>>(new Set());
 
-  // ── Delegate state ─────────────────────────────────────────────────────────
+  // ── Delegate ─────────────────────────────────────────────────────────────
   const [delegatingNoteId, setDelegatingNoteId] = useState<string | null>(null);
   const [delegatePersonId, setDelegatePersonId] = useState<string>("");
   const [sendingDelegateId, setSendingDelegateId] = useState<string | null>(null);
   const [delegateError, setDelegateError] = useState<string | null>(null);
   const [delegatedMap, setDelegatedMap] = useState<Map<string, string>>(new Map());
 
-  // ── Add to Calendar state ──────────────────────────────────────────────────
+  // ── Calendar ─────────────────────────────────────────────────────────────
   const [calendarNoteId, setCalendarNoteId] = useState<string | null>(null);
   const [calendarTimeText, setCalendarTimeText] = useState("");
   const [settingCalendarId, setSettingCalendarId] = useState<string | null>(null);
@@ -80,17 +80,19 @@ export default function Inbox() {
   const [calendarAddedIds, setCalendarAddedIds] = useState<Set<string>>(new Set());
 
   const peopleItems = usePeopleStore((state) => state.items);
-
   const trimmedDraft = draft.trim();
   const canSave = !!userId && trimmedDraft.length > 0 && !saving;
   const initialLoading = status === "loading" && notes.length === 0;
-  const showEmpty = status === "ready" && notes.length === 0;
 
-  const groupedNotes = useMemo(() => notes, [notes]);
+  const filteredNotes = useMemo(() => {
+    if (!searchQuery.trim()) return notes;
+    const q = searchQuery.toLowerCase();
+    return notes.filter((n) => n.note.toLowerCase().includes(q) || (n.category ?? "").toLowerCase().includes(q));
+  }, [notes, searchQuery]);
 
   async function reload() {
     if (!userId) return;
-    setStatus((current) => (current === "ready" ? "ready" : "loading"));
+    setStatus((s) => s === "ready" ? "ready" : "loading");
     setError(null);
     try {
       const loaded = await loadRecentNotes(100);
@@ -127,9 +129,7 @@ export default function Inbox() {
     if (deletingId) return;
     if (confirmingDeleteId !== note.id) {
       setConfirmingDeleteId(note.id);
-      window.setTimeout(() => {
-        setConfirmingDeleteId((current) => (current === note.id ? null : current));
-      }, 3000);
+      window.setTimeout(() => setConfirmingDeleteId((c) => c === note.id ? null : c), 3000);
       return;
     }
     setConfirmingDeleteId(null);
@@ -137,7 +137,7 @@ export default function Inbox() {
     setError(null);
     try {
       await deleteCarsonNote(note.id);
-      setNotes((current) => current.filter((item) => item.id !== note.id));
+      setNotes((prev) => prev.filter((i) => i.id !== note.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not delete note.");
     } finally {
@@ -152,18 +152,10 @@ export default function Inbox() {
     setMakingTaskId(note.id);
     setError(null);
     try {
-      const task = await createTask({
-        user_id: authUserId,
-        description: note.note,
-        type: "action",
-        assigned_to: null,
-        status: "pending",
-        needs_follow_up: false,
-        confirmation_url: null,
-        due_at: null,
-      });
+      const task = await createTask({ user_id: authUserId, description: note.note, type: "action", assigned_to: null, status: "pending", needs_follow_up: false, confirmation_url: null, due_at: null });
       useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
       setMadeTaskIds((prev) => new Set(prev).add(note.id));
+      setOpenOverflowId(null);
       console.log("[inbox] task created from note:", task.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create task.");
@@ -178,20 +170,13 @@ export default function Inbox() {
     const authUserId = useAuthStore.getState().user?.id ?? userId;
     if (authUserId) {
       const ps = usePeopleStore.getState();
-      if (ps.status === "idle" || ps.items.length === 0) {
-        await usePeopleStore.getState().loadFor(authUserId);
-      }
+      if (ps.status === "idle" || ps.items.length === 0) await usePeopleStore.getState().loadFor(authUserId);
     }
     setDelegatingNoteId(note.id);
     setDelegatePersonId("");
     setDelegateError(null);
   }
-
-  function handleCancelDelegate() {
-    setDelegatingNoteId(null);
-    setDelegatePersonId("");
-    setDelegateError(null);
-  }
+  function handleCancelDelegate() { setDelegatingNoteId(null); setDelegatePersonId(""); setDelegateError(null); }
 
   async function handleDelegateSubmit(note: CarsonNote) {
     if (!delegatePersonId || sendingDelegateId) return;
@@ -205,19 +190,12 @@ export default function Inbox() {
     setSendingDelegateId(note.id);
     setDelegateError(null);
     try {
-      const messageText = stripClosingLine(
-        rewriteOwnerPronouns(
-          buildDelegationMessage({ personName: person.name, taskText: note.note, personNotes: person.notes ?? null, ownerName: ownerName ?? null }),
-          ownerName,
-        ),
-      );
+      const messageText = stripClosingLine(rewriteOwnerPronouns(buildDelegationMessage({ personName: person.name, taskText: note.note, personNotes: person.notes ?? null, ownerName: ownerName ?? null }), ownerName));
       const taskId = crypto.randomUUID();
       const confirmationUrl = `${window.location.origin}/confirm?task=${taskId}`;
       const task = await createTask({ id: taskId, user_id: authUserId, description: note.note, type: "delegation", assigned_to: person.name, status: "pending", needs_follow_up: true, confirmation_url: confirmationUrl, due_at: null });
       let messageRecord;
-      try {
-        messageRecord = await createMessage({ user_id: authUserId, task_id: task.id, recipient: person.name, content: messageText, confirmation_url: confirmationUrl });
-      } catch { /* non-fatal */ }
+      try { messageRecord = await createMessage({ user_id: authUserId, task_id: task.id, recipient: person.name, content: messageText, confirmation_url: confirmationUrl }); } catch { /* non-fatal */ }
       await sendWhatsAppTask({ to: person.phone, messageText, confirmationLink: confirmationUrl, messageRecordId: messageRecord?.id ?? null, taskId: task.id, recipientName: person.name, ownerName: ownerName ?? null });
       if (task.created_at) scheduleEscalationMessages(task.id, task.created_at).catch((err) => console.error("[inbox] escalation schedule failed:", err));
       useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
@@ -233,7 +211,7 @@ export default function Inbox() {
 
   // ── Calendar handlers ─────────────────────────────────────────────────────
 
-  function handleOpenCalendar(note: CarsonNote) { setCalendarNoteId(note.id); setCalendarTimeText(""); setCalendarError(null); }
+  function handleOpenCalendar(note: CarsonNote) { setCalendarNoteId(note.id); setCalendarTimeText(""); setCalendarError(null); setOpenOverflowId(null); }
   function handleCancelCalendar() { setCalendarNoteId(null); setCalendarTimeText(""); setCalendarError(null); }
 
   async function handleCalendarSubmit(note: CarsonNote) {
@@ -250,10 +228,7 @@ export default function Inbox() {
     setCalendarError(null);
     try {
       const result = await createCalendarEvent(note.note, date, time);
-      if (!result.ok) {
-        setCalendarError(result.code === "reconnect_required" ? "Google Calendar is not connected. Reconnect in Settings." : "Couldn't add the event. Please try again.");
-        return;
-      }
+      if (!result.ok) { setCalendarError(result.code === "reconnect_required" ? "Google Calendar is not connected. Reconnect in Settings." : "Couldn't add the event."); return; }
       setCalendarAddedIds((prev) => new Set(prev).add(note.id));
       setCalendarNoteId(null);
       setCalendarTimeText("");
@@ -294,16 +269,28 @@ export default function Inbox() {
   }
 
   return (
-    <section className="space-y-5">
-      <header className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-ink">Inbox</h1>
-          <p className="text-sm text-ink/60">Ideas, thoughts, and items to process.</p>
-        </div>
-        <RefreshButton onClick={reload} />
+    <section className="space-y-4">
+      {/* ── Header ── */}
+      <header>
+        <h1 className="text-2xl font-semibold text-ink">Inbox</h1>
+        <p className="text-sm text-ink/55">Ideas, thoughts, and items to process.</p>
       </header>
 
-      {/* Unprocessed inbox items from Text Carson */}
+      {/* ── Search ── */}
+      <div className="relative">
+        <svg className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink/30" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+        </svg>
+        <input
+          type="search"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search notes…"
+          className="w-full rounded-2xl border border-sage/20 bg-white/70 py-2.5 pl-9 pr-4 text-sm text-ink placeholder:text-ink/35 outline-none focus:border-sage/40 focus:bg-white"
+        />
+      </div>
+
+      {/* ── Unprocessed inbox items ── */}
       <InboxReviewPanel
         userId={userId}
         onPrefill={(text) => {
@@ -312,42 +299,39 @@ export default function Inbox() {
         }}
       />
 
-      {/* Manual note input */}
-      <section className="rounded-2xl border border-sage/30 bg-white/75 p-4 shadow-sm">
-        <label
-          htmlFor="manual-note-inbox"
-          className="text-xs font-medium uppercase tracking-wide text-ink/55"
-        >
-          Add a note
-        </label>
-        <textarea
-          id="manual-note-inbox"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="Write a note, idea, or thought…"
-          rows={3}
-          className="mt-2 block min-h-[92px] w-full resize-y rounded-xl border border-sage/25 bg-cream/35 px-3 py-2 text-base leading-relaxed text-ink outline-none placeholder:text-ink/35 focus:border-sage focus:bg-white"
-        />
-        <div className="mt-3 flex justify-end">
-          <button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={!canSave}
-            aria-busy={saving}
-            className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-full bg-sage px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:bg-sage/35"
-          >
-            {saving && <Spinner size={14} />}
-            <span>{saving ? "Saving..." : "Save Note"}</span>
-          </button>
-        </div>
-      </section>
+      {/* ── Add a note ── */}
+      {!searchQuery && (
+        <section className="rounded-2xl border border-sage/20 bg-white/70 p-4 shadow-sm">
+          <label htmlFor="manual-note-inbox" className="text-xs font-medium uppercase tracking-wide text-ink/45">
+            Add a note
+          </label>
+          <textarea
+            id="manual-note-inbox"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Write a note, idea, or thought…"
+            rows={3}
+            className="mt-2 block min-h-[80px] w-full resize-y rounded-xl border border-sage/20 bg-cream/30 px-3 py-2 text-base leading-relaxed text-ink outline-none placeholder:text-ink/30 focus:border-sage focus:bg-white"
+          />
+          <div className="mt-2.5 flex justify-end">
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={!canSave}
+              aria-busy={saving}
+              className="inline-flex min-h-[38px] items-center justify-center gap-2 rounded-full bg-sage px-4 py-1.5 text-sm font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:bg-sage/35"
+            >
+              {saving && <Spinner size={13} />}
+              <span>{saving ? "Saving..." : "Save"}</span>
+            </button>
+          </div>
+        </section>
+      )}
 
       {error && (
         <AuthNotice kind="error">
           {error}{" "}
-          {userId && (
-            <button type="button" onClick={() => void reload()} className="ml-1 underline">Try again</button>
-          )}
+          {userId && <button type="button" onClick={() => void reload()} className="ml-1 underline">Try again</button>}
         </AuthNotice>
       )}
 
@@ -357,63 +341,79 @@ export default function Inbox() {
         </div>
       )}
 
-      {showEmpty && (
-        <div className="rounded-2xl border border-dashed border-sage/40 bg-white/60 p-8 text-center text-sm text-ink/70">
-          No notes yet. Ask Carson to save an idea or thought.
-        </div>
-      )}
+      {/* ── Notes section ── */}
+      {status === "ready" && (
+        <section className="space-y-2.5">
+          {filteredNotes.length > 0 && (
+            <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-ink/35">
+              Notes{searchQuery ? ` · ${filteredNotes.length} result${filteredNotes.length !== 1 ? "s" : ""}` : ""}
+            </h2>
+          )}
 
-      {groupedNotes.length > 0 && (
-        <ul className="space-y-3">
-          {groupedNotes.map((note) => (
-            <li key={note.id}>
-              <NoteCard
-                note={note}
-                deleting={deletingId === note.id}
-                confirmingDelete={confirmingDeleteId === note.id}
-                onDelete={handleDelete}
-                makingTask={makingTaskId === note.id}
-                taskMade={madeTaskIds.has(note.id)}
-                onMakeTask={handleMakeTask}
-                reminding={remindingNoteId === note.id}
-                remindTimeText={remindingNoteId === note.id ? remindTimeText : ""}
-                onRemindTimeChange={setRemindTimeText}
-                settingReminder={settingReminderId === note.id}
-                reminderSet={reminderSetIds.has(note.id)}
-                reminderInputError={remindingNoteId === note.id ? reminderInputError : null}
-                onRemindMe={handleOpenRemind}
-                onRemindSubmit={handleRemindSubmit}
-                onRemindCancel={handleCancelRemind}
-                delegating={delegatingNoteId === note.id}
-                delegatePersonId={delegatingNoteId === note.id ? delegatePersonId : ""}
-                onDelegatePersonChange={setDelegatePersonId}
-                sendingDelegate={sendingDelegateId === note.id}
-                delegatedName={delegatedMap.get(note.id) ?? null}
-                delegateError={delegatingNoteId === note.id ? delegateError : null}
-                onDelegate={handleOpenDelegate}
-                onDelegateSubmit={handleDelegateSubmit}
-                onDelegateCancel={handleCancelDelegate}
-                peopleItems={peopleItems}
-                addingToCalendar={calendarNoteId === note.id}
-                calendarTimeText={calendarNoteId === note.id ? calendarTimeText : ""}
-                onCalendarTimeChange={setCalendarTimeText}
-                settingCalendar={settingCalendarId === note.id}
-                calendarAdded={calendarAddedIds.has(note.id)}
-                calendarError={calendarNoteId === note.id ? calendarError : null}
-                onAddToCalendar={handleOpenCalendar}
-                onCalendarSubmit={handleCalendarSubmit}
-                onCalendarCancel={handleCancelCalendar}
-              />
-            </li>
-          ))}
-        </ul>
+          {filteredNotes.length === 0 && searchQuery && (
+            <div className="rounded-2xl border border-dashed border-sage/25 bg-white/50 px-4 py-6 text-center text-sm text-ink/45">
+              No notes match "{searchQuery}"
+            </div>
+          )}
+
+          {filteredNotes.length === 0 && !searchQuery && notes.length === 0 && (
+            <div className="rounded-2xl border border-dashed border-sage/30 bg-white/50 p-8 text-center text-sm text-ink/60">
+              No notes yet. Ask Carson to save an idea or thought.
+            </div>
+          )}
+
+          <ul className="space-y-3">
+            {filteredNotes.map((note) => (
+              <li key={note.id}>
+                <NoteCard
+                  note={note}
+                  deleting={deletingId === note.id}
+                  confirmingDelete={confirmingDeleteId === note.id}
+                  onDelete={handleDelete}
+                  makingTask={makingTaskId === note.id}
+                  taskMade={madeTaskIds.has(note.id)}
+                  onMakeTask={handleMakeTask}
+                  reminding={remindingNoteId === note.id}
+                  remindTimeText={remindingNoteId === note.id ? remindTimeText : ""}
+                  onRemindTimeChange={setRemindTimeText}
+                  settingReminder={settingReminderId === note.id}
+                  reminderSet={reminderSetIds.has(note.id)}
+                  reminderInputError={remindingNoteId === note.id ? reminderInputError : null}
+                  onRemindMe={handleOpenRemind}
+                  onRemindSubmit={handleRemindSubmit}
+                  onRemindCancel={handleCancelRemind}
+                  delegating={delegatingNoteId === note.id}
+                  delegatePersonId={delegatingNoteId === note.id ? delegatePersonId : ""}
+                  onDelegatePersonChange={setDelegatePersonId}
+                  sendingDelegate={sendingDelegateId === note.id}
+                  delegatedName={delegatedMap.get(note.id) ?? null}
+                  delegateError={delegatingNoteId === note.id ? delegateError : null}
+                  onDelegate={handleOpenDelegate}
+                  onDelegateSubmit={handleDelegateSubmit}
+                  onDelegateCancel={handleCancelDelegate}
+                  peopleItems={peopleItems}
+                  addingToCalendar={calendarNoteId === note.id}
+                  calendarTimeText={calendarNoteId === note.id ? calendarTimeText : ""}
+                  onCalendarTimeChange={setCalendarTimeText}
+                  settingCalendar={settingCalendarId === note.id}
+                  calendarAdded={calendarAddedIds.has(note.id)}
+                  calendarError={calendarNoteId === note.id ? calendarError : null}
+                  onAddToCalendar={handleOpenCalendar}
+                  onCalendarSubmit={handleCalendarSubmit}
+                  onCalendarCancel={handleCancelCalendar}
+                  overflowOpen={openOverflowId === note.id}
+                  onToggleOverflow={() => setOpenOverflowId((id) => id === note.id ? null : note.id)}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
     </section>
   );
 }
 
-// ── NoteCard ──────────────────────────────────────────────────────────────────
-// Preserved verbatim from Notes.tsx
+// ── NoteCard ─────────────────────────────────────────────────────────────────
 
 function NoteCard({
   note, deleting, confirmingDelete, onDelete,
@@ -424,6 +424,7 @@ function NoteCard({
   onDelegate, onDelegateSubmit, onDelegateCancel, peopleItems,
   addingToCalendar, calendarTimeText, onCalendarTimeChange, settingCalendar, calendarAdded, calendarError,
   onAddToCalendar, onCalendarSubmit, onCalendarCancel,
+  overflowOpen, onToggleOverflow,
 }: {
   note: CarsonNote;
   deleting: boolean; confirmingDelete: boolean; onDelete: (note: CarsonNote) => Promise<void>;
@@ -438,39 +439,41 @@ function NoteCard({
   addingToCalendar: boolean; calendarTimeText: string; onCalendarTimeChange: (v: string) => void;
   settingCalendar: boolean; calendarAdded: boolean; calendarError: string | null;
   onAddToCalendar: (note: CarsonNote) => void; onCalendarSubmit: (note: CarsonNote) => Promise<void>; onCalendarCancel: () => void;
+  overflowOpen: boolean; onToggleOverflow: () => void;
 }) {
   const busy = makingTask || deleting || settingReminder || sendingDelegate || settingCalendar;
 
   return (
-    <article className="rounded-2xl border border-sage/25 bg-white/85 p-4 shadow-sm">
+    <article className="rounded-2xl border border-sage/20 bg-white/85 p-4 shadow-sm">
       <header className="flex items-start justify-between gap-3">
-        <span className="rounded-full border border-sage/30 bg-sage/10 px-2.5 py-0.5 text-xs font-medium uppercase tracking-wide text-sage">
+        <span className="rounded-full border border-sage/25 bg-sage/8 px-2.5 py-0.5 text-xs font-medium uppercase tracking-wide text-sage">
           {note.category || "general"}
         </span>
-        <time className="text-xs text-ink/45" dateTime={note.created_at}>
+        <time className="shrink-0 text-xs text-ink/40" dateTime={note.created_at}>
           {formatNoteTime(note.created_at)}
         </time>
       </header>
 
-      <p className="mt-3 whitespace-pre-wrap text-base leading-relaxed text-ink">{note.note}</p>
+      <p className="mt-3 whitespace-pre-wrap text-[15px] leading-relaxed text-ink">{note.note}</p>
 
+      {/* ── Remind Me inline ── */}
       {reminding && (
-        <div className="mt-3 space-y-2 rounded-xl border border-gold/30 bg-amber-50/60 p-3">
-          <label className="text-xs font-medium text-ink/60">When? (e.g. tomorrow at 5pm, Monday at 10)</label>
+        <div className="mt-3 space-y-2 rounded-xl border border-gold/25 bg-amber-50/50 p-3">
+          <label className="text-xs font-medium text-ink/55">When? (e.g. tomorrow at 5pm)</label>
           <div className="flex gap-2">
             <input type="text" value={remindTimeText} onChange={(e) => onRemindTimeChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void onRemindSubmit(note); if (e.key === "Escape") onRemindCancel(); }}
-              placeholder="e.g. tomorrow at 5pm" disabled={settingReminder}
+              placeholder="tomorrow at 5pm"
               // eslint-disable-next-line jsx-a11y/no-autofocus
-              autoFocus
-              className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink/35 focus:border-sage disabled:opacity-50" />
+              autoFocus disabled={settingReminder}
+              className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-sage disabled:opacity-50" />
             <button type="button" onClick={() => void onRemindSubmit(note)} disabled={settingReminder || !remindTimeText.trim()}
-              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-gold px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-gold px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:opacity-50">
               {settingReminder && <Spinner size={11} />}
               <span>{settingReminder ? "Setting…" : "Set"}</span>
             </button>
             <button type="button" onClick={onRemindCancel} disabled={settingReminder}
-              className="inline-flex min-h-[34px] items-center rounded-lg border border-charcoal/15 px-2.5 py-1.5 text-xs text-ink/55 transition hover:bg-charcoal/5 disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center rounded-lg border border-ink/10 px-2.5 py-1.5 text-xs text-ink/50 transition hover:bg-ink/5 disabled:opacity-50">
               Cancel
             </button>
           </div>
@@ -478,26 +481,25 @@ function NoteCard({
         </div>
       )}
 
+      {/* ── Delegate inline ── */}
       {delegating && (
-        <div className="mt-3 space-y-2 rounded-xl border border-charcoal/15 bg-charcoal/5 p-3">
-          <label className="text-xs font-medium text-ink/60">Who should handle this?</label>
+        <div className="mt-3 space-y-2 rounded-xl border border-charcoal/10 bg-charcoal/5 p-3">
+          <label className="text-xs font-medium text-ink/55">Who should handle this?</label>
           <div className="flex gap-2">
             <select value={delegatePersonId} onChange={(e) => onDelegatePersonChange(e.target.value)} disabled={sendingDelegate}
               // eslint-disable-next-line jsx-a11y/no-autofocus
               autoFocus
               className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none focus:border-sage disabled:opacity-50">
               <option value="">Select a person…</option>
-              {peopleItems.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}{p.phone ? "" : " (no phone)"}</option>
-              ))}
+              {peopleItems.map((p) => <option key={p.id} value={p.id}>{p.name}{p.phone ? "" : " (no phone)"}</option>)}
             </select>
             <button type="button" onClick={() => void onDelegateSubmit(note)} disabled={sendingDelegate || !delegatePersonId}
-              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-charcoal px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-charcoal px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-50">
               {sendingDelegate && <Spinner size={11} />}
               <span>{sendingDelegate ? "Sending…" : "Send"}</span>
             </button>
             <button type="button" onClick={onDelegateCancel} disabled={sendingDelegate}
-              className="inline-flex min-h-[34px] items-center rounded-lg border border-charcoal/15 px-2.5 py-1.5 text-xs text-ink/55 transition hover:bg-charcoal/5 disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center rounded-lg border border-ink/10 px-2.5 py-1.5 text-xs text-ink/50 transition hover:bg-ink/5 disabled:opacity-50">
               Cancel
             </button>
           </div>
@@ -505,23 +507,24 @@ function NoteCard({
         </div>
       )}
 
+      {/* ── Calendar inline ── */}
       {addingToCalendar && (
-        <div className="mt-3 space-y-2 rounded-xl border border-sky-200 bg-sky-50/60 p-3">
-          <label className="text-xs font-medium text-ink/60">When? (e.g. tomorrow at 11, Monday at 2pm)</label>
+        <div className="mt-3 space-y-2 rounded-xl border border-sky-200 bg-sky-50/50 p-3">
+          <label className="text-xs font-medium text-ink/55">When? (e.g. tomorrow at 11, Monday at 2pm)</label>
           <div className="flex gap-2">
             <input type="text" value={calendarTimeText} onChange={(e) => onCalendarTimeChange(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") void onCalendarSubmit(note); if (e.key === "Escape") onCalendarCancel(); }}
-              placeholder="e.g. tomorrow at 11am" disabled={settingCalendar}
+              placeholder="tomorrow at 11am"
               // eslint-disable-next-line jsx-a11y/no-autofocus
-              autoFocus
-              className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink/35 focus:border-sky-400 disabled:opacity-50" />
+              autoFocus disabled={settingCalendar}
+              className="flex-1 rounded-lg border border-sage/25 bg-white px-2.5 py-1.5 text-sm text-ink outline-none placeholder:text-ink/30 focus:border-sky-400 disabled:opacity-50" />
             <button type="button" onClick={() => void onCalendarSubmit(note)} disabled={settingCalendar || !calendarTimeText.trim()}
-              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:brightness-105 disabled:opacity-50">
               {settingCalendar && <Spinner size={11} />}
               <span>{settingCalendar ? "Adding…" : "Add"}</span>
             </button>
             <button type="button" onClick={onCalendarCancel} disabled={settingCalendar}
-              className="inline-flex min-h-[34px] items-center rounded-lg border border-charcoal/15 px-2.5 py-1.5 text-xs text-ink/55 transition hover:bg-charcoal/5 disabled:opacity-50">
+              className="inline-flex min-h-[34px] items-center rounded-lg border border-ink/10 px-2.5 py-1.5 text-xs text-ink/50 transition hover:bg-ink/5 disabled:opacity-50">
               Cancel
             </button>
           </div>
@@ -529,53 +532,73 @@ function NoteCard({
         </div>
       )}
 
-      <div className="mt-3 flex items-center justify-between gap-3 border-t border-sage/15 pt-3">
-        <div className="flex flex-wrap items-center gap-2">
-          {taskMade ? (
-            <span className="text-xs font-medium text-sage">Task created.</span>
-          ) : (
-            <button type="button" onClick={() => void onMakeTask(note)} disabled={busy || reminding || delegating}
-              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/35 bg-sage/10 px-3 py-1 text-xs font-medium text-sage transition hover:bg-sage/15 disabled:cursor-not-allowed disabled:opacity-50">
-              {makingTask && <Spinner size={12} />}
-              <span>{makingTask ? "Creating…" : "Make Task"}</span>
-            </button>
-          )}
-
-          {reminderSet ? (
-            <span className="text-xs font-medium text-gold">Reminder set.</span>
-          ) : !reminding ? (
-            <button type="button" onClick={() => onRemindMe(note)} disabled={busy || delegating}
-              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-gold/35 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50">
-              <span>Remind Me</span>
-            </button>
-          ) : null}
-
-          {delegatedName ? (
-            <span className="text-xs font-medium text-charcoal/70">Sent to {delegatedName}.</span>
-          ) : !delegating ? (
-            <button type="button" onClick={() => void onDelegate(note)} disabled={busy || reminding || addingToCalendar}
-              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-charcoal/20 bg-charcoal/5 px-3 py-1 text-xs font-medium text-charcoal/75 transition hover:bg-charcoal/10 disabled:cursor-not-allowed disabled:opacity-50">
-              <span>Delegate</span>
-            </button>
-          ) : null}
-
-          {calendarAdded ? (
-            <span className="text-xs font-medium text-sky-700">Added to calendar.</span>
-          ) : !addingToCalendar ? (
-            <button type="button" onClick={() => onAddToCalendar(note)} disabled={busy || reminding || delegating}
-              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:opacity-50">
-              <span>Add to Calendar</span>
-            </button>
-          ) : null}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-ink/45">{note.source === "manual" ? "Manual" : "Carson"}</span>
-          <button type="button" onClick={() => void onDelete(note)} disabled={deleting || reminding || delegating || addingToCalendar}
-            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-medium text-rose-800 transition hover:bg-rose-100 disabled:opacity-50">
-            {deleting && <Spinner size={12} />}
-            <span>{deleting ? "Deleting..." : confirmingDelete ? "Tap again" : "Delete"}</span>
+      {/* ── Footer: primary actions + overflow ── */}
+      <div className="mt-3 flex items-center gap-2 border-t border-sage/10 pt-3">
+        {/* Remind Me */}
+        {reminderSet ? (
+          <span className="text-xs font-medium text-gold">Reminder set ✓</span>
+        ) : !reminding ? (
+          <button type="button" onClick={() => onRemindMe(note)} disabled={busy || delegating || addingToCalendar}
+            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-100 disabled:opacity-50">
+            Remind Me
           </button>
+        ) : null}
+
+        {/* Delegate */}
+        {delegatedName ? (
+          <span className="text-xs font-medium text-ink/60">Sent to {delegatedName} ✓</span>
+        ) : !delegating ? (
+          <button type="button" onClick={() => void onDelegate(note)} disabled={busy || reminding || addingToCalendar}
+            className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-charcoal/15 bg-charcoal/5 px-3 py-1 text-xs font-medium text-charcoal/75 transition hover:bg-charcoal/10 disabled:opacity-50">
+            Delegate
+          </button>
+        ) : null}
+
+        {/* Overflow ··· */}
+        <div className="relative ml-auto">
+          <button
+            type="button"
+            onClick={onToggleOverflow}
+            aria-label="More actions"
+            aria-expanded={overflowOpen}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-ink/10 bg-white text-ink/40 transition hover:bg-ink/5 hover:text-ink/60"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" />
+            </svg>
+          </button>
+
+          {overflowOpen && (
+            <div className="absolute right-0 bottom-full mb-1.5 z-20 min-w-[160px] rounded-2xl border border-sage/20 bg-white shadow-xl">
+              {/* Make Task */}
+              {taskMade ? (
+                <div className="px-4 py-3 text-xs font-medium text-sage">Task created ✓</div>
+              ) : (
+                <button type="button" onClick={() => void onMakeTask(note)} disabled={busy}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-sm text-ink transition hover:bg-sage/5 rounded-t-2xl disabled:opacity-50">
+                  {makingTask && <Spinner size={12} />}
+                  <span>{makingTask ? "Creating…" : "Make Task"}</span>
+                </button>
+              )}
+
+              {/* Add to Calendar */}
+              {calendarAdded ? (
+                <div className="px-4 py-3 text-xs font-medium text-sky-700">Added to calendar ✓</div>
+              ) : (
+                <button type="button" onClick={() => onAddToCalendar(note)} disabled={busy}
+                  className="flex w-full items-center gap-3 border-t border-sage/10 px-4 py-3 text-sm text-ink transition hover:bg-sage/5 disabled:opacity-50">
+                  Add to Calendar
+                </button>
+              )}
+
+              {/* Delete */}
+              <button type="button" onClick={() => void onDelete(note)} disabled={deleting || reminding || delegating || addingToCalendar}
+                className="flex w-full items-center gap-3 border-t border-sage/10 px-4 py-3 text-sm text-danger transition hover:bg-rose-50 rounded-b-2xl disabled:opacity-50">
+                {deleting ? <Spinner size={12} /> : null}
+                <span>{deleting ? "Deleting..." : confirmingDelete ? "Tap again to confirm" : "Delete"}</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </article>

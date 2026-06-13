@@ -184,8 +184,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const { status: authStatus, user } = useAuth();
-  const { open: carsonOpen, setOpen: setCarsonOpen } = useCarsonStore();
-  const [carsonCallStatus, setCarsonCallStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
+  const { open: carsonOpen, setOpen: setCarsonOpen, callStatus: carsonCallStatus, setCallStatus: setCarsonCallStatus } = useCarsonStore();
 
   const showNav = useShowNavInner();
 
@@ -262,41 +261,58 @@ export default function App() {
       )}
 
       {/* ── Carson bottom sheet ──────────────────────────────────────────── */}
-      {/* Always mounted so voice sessions survive sheet open/close. */}
+      {/* Always mounted so voice sessions survive sheet open/close.
+          Half-sheet when idle, full-sheet when a session is active. */}
       <div
         className="fixed inset-x-0 bottom-0 z-50 flex flex-col rounded-t-3xl bg-warm-white shadow-2xl"
         style={{
-          top: "15dvh",
+          top: carsonCallStatus === "idle" ? "48dvh" : "12dvh",
           transform: carsonOpen ? "translateY(0)" : "translateY(110%)",
-          transition: "transform 0.3s cubic-bezier(0.32, 0.72, 0, 1)",
+          transition: "transform 0.3s cubic-bezier(0.32, 0.72, 0, 1), top 0.3s cubic-bezier(0.32, 0.72, 0, 1)",
           paddingBottom: "env(safe-area-inset-bottom)",
         }}
         aria-hidden={!carsonOpen}
       >
-        {/* Handle + header */}
-        <div className="flex shrink-0 items-center justify-between px-5 pb-3 pt-3">
-          <div className="flex flex-col">
-            <span className="text-xs font-semibold uppercase tracking-[0.18em] text-stone">Carson</span>
-            <span className="text-[11px] text-ink/45">Your Chief of Staff</span>
-          </div>
-          {/* Drag handle — center */}
-          <div className="absolute left-1/2 top-3 -translate-x-1/2">
-            <div className="h-1 w-10 rounded-full bg-ink/15" />
+        {/* Drag handle — tap anywhere on the bar to close */}
+        <button
+          type="button"
+          onClick={() => setCarsonOpen(false)}
+          aria-label="Close Carson"
+          className="flex shrink-0 flex-col items-center pt-3 pb-1"
+        >
+          <div className="h-1 w-10 rounded-full bg-ink/15" />
+        </button>
+
+        {/* Header row */}
+        <div className="flex shrink-0 items-center justify-between px-5 pb-2 pt-1">
+          <div>
+            <p className="text-sm font-semibold text-ink">Carson</p>
+            <p className="text-[11px] text-ink/45">Your Chief of Staff</p>
           </div>
           <button
             type="button"
             onClick={() => setCarsonOpen(false)}
-            aria-label="Close Carson"
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-ink/8 text-ink/60 transition hover:bg-ink/15"
+            aria-label="Close"
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-ink/5 text-ink/50 transition hover:bg-ink/10"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
           </button>
         </div>
 
-        {/* Widget — always rendered to keep session alive */}
-        <div className="flex-1 overflow-y-auto px-4 pb-4">
+        {/* Widget — centered when idle, natural flow when active */}
+        <div
+          className={
+            "flex flex-1 overflow-y-auto px-5 pb-6 " +
+            (carsonCallStatus === "idle" ? "flex-col items-center justify-center gap-3" : "flex-col")
+          }
+        >
+          {carsonCallStatus === "idle" && (
+            <p className="mb-1 text-center text-[13px] text-ink/40">
+              Ask about your tasks, delegate to someone, or set a reminder.
+            </p>
+          )}
           <PersistentCarsonWidget
             onCallStatusChange={setCarsonCallStatus}
             onRequestClose={() => setCarsonOpen(false)}

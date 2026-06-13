@@ -20,6 +20,7 @@ import { listInboxItems, markInboxItemProcessed } from "../../lib/inbox";
 import { createTask } from "../../lib/tasks";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
+import { useBadgeStore } from "../../stores/badges";
 
 interface Props {
   userId: string | null;
@@ -35,14 +36,15 @@ export default function InboxReviewPanel({ userId, onPrefill }: Props) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [successes, setSuccesses] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
+  const setInboxCount = useBadgeStore((s) => s.setInboxCount);
 
   useEffect(() => {
     if (!userId) return;
     listInboxItems()
-      .then(setItems)
+      .then((result) => { setItems(result); setInboxCount(result.length); })
       .catch(() => {/* panel stays hidden */})
       .finally(() => setLoaded(true));
-  }, [userId]);
+  }, [userId, setInboxCount]);
 
   const visible = items.filter((item) => !kept.has(item.id));
 
@@ -79,7 +81,7 @@ export default function InboxReviewPanel({ userId, onPrefill }: Props) {
 
       // Mark processed ONLY after reminder is saved.
       await markInboxItemProcessed(item.id);
-      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      setItems((prev) => { const next = prev.filter((i) => i.id !== item.id); setInboxCount(next.length); return next; });
 
       const msg = timeLabel ? `Reminder set for ${timeLabel}.` : "Reminder saved.";
       setSuccesses((prev) => ({ ...prev, [item.id]: msg }));
@@ -101,7 +103,7 @@ export default function InboxReviewPanel({ userId, onPrefill }: Props) {
     setDismissing((prev) => new Set(prev).add(item.id));
     try {
       await markInboxItemProcessed(item.id);
-      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      setItems((prev) => { const next = prev.filter((i) => i.id !== item.id); setInboxCount(next.length); return next; });
     } catch {
       // Leave item visible if dismiss fails.
     } finally {
