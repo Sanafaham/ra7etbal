@@ -479,7 +479,7 @@ function NoteCard({
       )}
 
       {delegating && (
-        <div className="mt-3 space-y-2 rounded-xl border border-charcoal/15 bg-charcoal/4 p-3">
+        <div className="mt-3 space-y-2 rounded-xl border border-charcoal/15 bg-charcoal/5 p-3">
           <label className="text-xs font-medium text-ink/60">Who should handle this?</label>
           <div className="flex gap-2">
             <select value={delegatePersonId} onChange={(e) => onDelegatePersonChange(e.target.value)} disabled={sendingDelegate}
@@ -535,7 +535,7 @@ function NoteCard({
             <span className="text-xs font-medium text-sage">Task created.</span>
           ) : (
             <button type="button" onClick={() => void onMakeTask(note)} disabled={busy || reminding || delegating}
-              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/35 bg-sage/8 px-3 py-1 text-xs font-medium text-sage transition hover:bg-sage/15 disabled:cursor-not-allowed disabled:opacity-50">
+              className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/35 bg-sage/10 px-3 py-1 text-xs font-medium text-sage transition hover:bg-sage/15 disabled:cursor-not-allowed disabled:opacity-50">
               {makingTask && <Spinner size={12} />}
               <span>{makingTask ? "Creating…" : "Make Task"}</span>
             </button>

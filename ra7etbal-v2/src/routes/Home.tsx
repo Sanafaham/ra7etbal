@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useCarsonStore } from "../stores/carson";
 import AuthNotice from "../components/auth/AuthNotice";
-import InboxReviewPanel from "../components/home/InboxReviewPanel";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
@@ -231,18 +230,6 @@ export default function Home() {
         </button>
       </section>
 
-      {/* ── Inbox ─────────────────────────────────────────────────────── */}
-      <InboxReviewPanel
-        userId={userId}
-        onPrefill={(prefillText) => {
-          setText(prefillText);
-          setTimeout(() => {
-            textareaRef.current?.focus();
-            textareaRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
-          }, 50);
-        }}
-      />
-
       {/* ── Carson row ─────────────────────────────────────────────── */}
       <section className="mt-3">
         <button
@@ -250,7 +237,7 @@ export default function Home() {
           onClick={() => openCarson(true)}
           className="flex w-full items-center gap-3 rounded-[26px] border border-sage/25 bg-warm-white/95 px-4 py-3.5 shadow-[0_10px_30px_-20px_rgba(20,20,20,0.18)] backdrop-blur-sm transition hover:border-sage/40 hover:bg-warm-white active:scale-[0.99]"
         >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sage/12">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sage/10">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
