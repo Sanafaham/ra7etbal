@@ -1782,7 +1782,7 @@ export default function ElevenLabsAgentWidget({
       style={
         inline
           ? undefined
-          : { top: "calc(env(safe-area-inset-top) + 140px)", right: "20px", bottom: "auto" }
+          : { top: "calc(env(safe-area-inset-top) + 240px)", right: "20px", bottom: "auto" }
       }
     >
       {/*
