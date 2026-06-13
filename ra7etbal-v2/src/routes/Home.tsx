@@ -240,11 +240,17 @@ export default function Home() {
         }}
       />
 
-      {/* ── Carson in-page slot ─────────────────────────────────────── */}
-      {/* PersistentCarsonWidget portals here when pathname === "/" so the
-          voice session stays mounted globally while the visual button sits
-          inline (no fixed overlay, no Safari viewport jank). */}
-      <div id="carson-home-slot" className="mt-3" />
+      {/* ── Carson ──────────────────────────────────────────────────── */}
+      {/* PersistentCarsonWidget portals its output here on "/".
+          The card is always rendered so the slot div exists in the DOM
+          before the effect in App.tsx looks for it. */}
+      <section className="mt-3 rounded-[26px] border border-sage/25 bg-warm-white/95 px-4 py-3 shadow-[0_10px_30px_-20px_rgba(20,20,20,0.18)] backdrop-blur-sm sm:mt-4">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h2 className="text-xs font-semibold uppercase tracking-[0.18em] text-stone">Carson</h2>
+          <span className="text-xs text-ink/50">Your Chief of Staff</span>
+        </div>
+        <div id="carson-home-slot" />
+      </section>
 
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
       <section className="mt-3 rounded-[26px] border border-border/80 bg-card/82 p-4 shadow-[0_24px_70px_-60px_rgba(20,20,20,0.45)] backdrop-blur-sm sm:mt-4 sm:p-5">
