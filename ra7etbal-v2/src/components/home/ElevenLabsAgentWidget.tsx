@@ -532,6 +532,8 @@ export default function ElevenLabsAgentWidget({
   planningCalendarEvents = [],
   inline = false,
   onBeforeCallStart,
+  onCallStatusChange,
+  onRequestClose,
 }: {
   briefStateText: string;
   /** Pre-built spoken daily brief paragraph injected as `daily_brief` dynamic variable. */
@@ -555,12 +557,19 @@ export default function ElevenLabsAgentWidget({
    * after a task is confirmed in Supabase.
    */
   onBeforeCallStart?: () => Promise<{ briefStateText: string; spokenBrief: string }>;
+  /** Called whenever the call status changes — lets the parent track connected state. */
+  onCallStatusChange?: (status: CallStatus) => void;
+  /** Called when the user taps a close/dismiss control inside the widget. */
+  onRequestClose?: () => void;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
 
   const [status, setStatus] = useState<CallStatus>("idle");
   const [mode, setMode] = useState<AgentMode>("listening");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Notify parent whenever call status changes.
+  useEffect(() => { onCallStatusChange?.(status); }, [status, onCallStatusChange]);
   /** Latest finalized spoken response from Carson. Cleared at session start, persists after disconnect. */
   const [lastCarsonMessage, setLastCarsonMessage] = useState<string | null>(null);
   const conversationRef = useRef<Awaited<
@@ -2091,7 +2100,7 @@ export default function ElevenLabsAgentWidget({
       {status === "error" && (
         <button
           type="button"
-          onClick={() => { setStatus("idle"); setErrorMsg(null); }}
+          onClick={() => { setStatus("idle"); setErrorMsg(null); onRequestClose?.(); }}
           aria-label="Connection failed — tap to retry"
           className="flex items-center gap-2 rounded-full border border-danger/30 bg-warm-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm transition hover:bg-white active:scale-95"
         >

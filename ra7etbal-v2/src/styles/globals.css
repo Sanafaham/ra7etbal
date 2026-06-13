@@ -12,6 +12,20 @@
   --color-ink: #2B2A26;
   --color-sage: #5B7245;
 
+  /* Extended palette — V2 design system */
+  --color-warm-white: #FDFBF7;
+  --color-charcoal: #2A2927;
+  --color-ivory: #FAF7F2;
+  --color-card: #FFFFFF;
+  --color-danger: #C0392B;
+  --color-muted: #A8A29E;
+  --color-text: #2B2A26;
+  --color-text-soft: #6B6762;
+  --color-text-muted: #9B9690;
+  --color-gold-soft: #D4B483;
+  --color-gold-dark: #8B6F3E;
+  --color-border: #E2D9C8;
+
   /* Type stack. Display = elegant serif (Cormorant Garamond).
      Script = handwritten italic (Caveat). Body = DM Sans. */
   --font-display: "Cormorant Garamond", "Playfair Display", Georgia, serif;
