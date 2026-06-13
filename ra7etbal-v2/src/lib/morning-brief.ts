@@ -189,47 +189,80 @@ export function buildMorningBriefSpoken(
   const hasAttention = brief.needsAttention.length > 0;
   const hasWaiting = brief.waitingOn.length > 0;
 
-  // ── 1. Calendar / fixed agenda (always first) ─────────────────────────────
+  // ── 1. Calendar / fixed agenda (always first) ────────────────────────────
+  // calendarEvents may now contain a broader range (e.g. next_7_days).
+  // We split by local date so the brief stays date-aware regardless of range.
   const calEvents = calendarEvents ?? [];
-  const upcomingEvents = calEvents.filter(
-    (ev) => classifyCalendarEvent(ev, now) === "upcoming",
-  );
-  const inProgressEvents = calEvents.filter(
-    (ev) => classifyCalendarEvent(ev, now) === "in_progress",
-  );
-  const pastEvents = calEvents.filter(
-    (ev) => classifyCalendarEvent(ev, now) === "past",
-  );
-  const hasActiveCalendar = inProgressEvents.length > 0 || upcomingEvents.length > 0;
+  const todayMidnight   = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrowMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const dayAfterMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 2);
+  const isEvening = now.getHours() >= 18;
 
-  // In-progress events
-  for (const ev of inProgressEvents.slice(0, 1)) {
+  /** Returns the local calendar-date of an event as a midnight Date. */
+  function eventLocalDate(ev: CalendarEvent): Date | null {
+    if (!ev.start) return null;
+    if (ev.allDay) {
+      const parts = ev.start.split("-").map(Number);
+      if (parts.length < 3) return null;
+      return new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+    const d = new Date(ev.start);
+    if (Number.isNaN(d.getTime())) return null;
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+
+  const todayEvents    = calEvents.filter((ev) => { const d = eventLocalDate(ev); return d !== null && d >= todayMidnight && d < tomorrowMidnight; });
+  const tomorrowEvents = calEvents.filter((ev) => { const d = eventLocalDate(ev); return d !== null && d >= tomorrowMidnight && d < dayAfterMidnight; });
+
+  const inProgressToday = todayEvents.filter((ev) => classifyCalendarEvent(ev, now) === "in_progress");
+  const upcomingToday   = todayEvents.filter((ev) => classifyCalendarEvent(ev, now) === "upcoming");
+  const pastToday       = todayEvents.filter((ev) => classifyCalendarEvent(ev, now) === "past");
+
+  // In-progress event (always mention if running)
+  for (const ev of inProgressToday.slice(0, 1)) {
     const endStr = formatEventEndTime(ev);
     const untilClause = endStr ? `, until ${endStr}` : "";
     sentences.push(`You're currently in ${ev.title}${untilClause}.`);
   }
 
-  // Upcoming events (cap at 2)
-  const upcomingCap = upcomingEvents.slice(0, 2);
-  if (upcomingCap.length === 1) {
-    const ev = upcomingCap[0];
-    const timeStr = ev.allDay
-      ? "later today"
-      : ev.start
-        ? `at ${new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-        : "later today";
-    sentences.push(`You have ${ev.title} ${timeStr}.`);
-  } else if (upcomingCap.length === 2) {
-    const t1 = upcomingCap[0].title;
-    const t2 = upcomingCap[1].title;
-    sentences.push(`Coming up today: ${t1} and ${t2}.`);
-  } else if (upcomingEvents.length > 2) {
-    sentences.push(`You have ${spokenCount(upcomingEvents.length)} events coming up today.`);
-  }
-
-  // Past events: only mention if nothing active/upcoming on calendar
-  if (!hasActiveCalendar && pastEvents.length > 0) {
-    const ev = pastEvents[pastEvents.length - 1];
+  if (upcomingToday.length > 0) {
+    // Today has upcoming events — name up to 3
+    const cap = upcomingToday.slice(0, 3);
+    if (cap.length === 1) {
+      const ev = cap[0];
+      const timeStr = ev.allDay
+        ? "later today"
+        : ev.start
+          ? `at ${new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+          : "later today";
+      sentences.push(`You have ${ev.title} ${timeStr}.`);
+    } else if (cap.length === 2) {
+      sentences.push(`Coming up today: ${cap[0].title} and ${cap[1].title}.`);
+    } else {
+      sentences.push(`Coming up today: ${cap[0].title}, ${cap[1].title}, and ${cap[2].title}.`);
+    }
+    if (upcomingToday.length > 3) {
+      sentences.push(`Plus ${spokenCount(upcomingToday.length - 3)} more.`);
+    }
+  } else if (isEvening || todayEvents.length === 0) {
+    // Evening or nothing today — anchor on tomorrow instead
+    const cap = tomorrowEvents.slice(0, 2);
+    if (cap.length === 1) {
+      const ev = cap[0];
+      const timeStr = ev.allDay
+        ? ""
+        : ev.start
+          ? ` at ${new Date(ev.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+          : "";
+      sentences.push(`Tomorrow you have ${ev.title}${timeStr}.`);
+    } else if (cap.length === 2) {
+      sentences.push(`Tomorrow: ${cap[0].title} and ${cap[1].title}.`);
+    } else if (tomorrowEvents.length > 2) {
+      sentences.push(`You have ${spokenCount(tomorrowEvents.length)} things on tomorrow.`);
+    }
+  } else if (pastToday.length > 0) {
+    // Daytime, today's events all past, nothing tomorrow to show
+    const ev = pastToday[pastToday.length - 1];
     sentences.push(`Your last calendar event was ${ev.title}.`);
   }
 

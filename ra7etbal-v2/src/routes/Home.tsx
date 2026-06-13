@@ -97,10 +97,11 @@ export default function Home() {
       .catch(() => setNotesBlock(""));
   }, [userId]);
 
-  // Load today's calendar events on mount (fire-and-load — never blocks render).
+  // Load upcoming calendar events on mount (fire-and-load — never blocks render).
+  // next_7_days covers today + tomorrow so the opening brief is date-aware.
   useEffect(() => {
     if (!userId) return;
-    fetchCalendarEvents("today").then((result) => {
+    fetchCalendarEvents("next_7_days").then((result) => {
       if (result.connected) setCalendarEvents(result.events);
     }).catch(() => {});
   }, [userId]);
@@ -286,8 +287,9 @@ export default function Home() {
             }
             let freshCalendarEvents = calendarEvents;
             try {
-              // Fetch today's events for daily_brief / ra7etbal_state (today-only).
-              const calResult = await fetchCalendarEvents("today");
+              // Fetch next_7_days so daily_brief / ra7etbal_state and the spoken
+              // brief are date-aware (today + tomorrow visible to Carson).
+              const calResult = await fetchCalendarEvents("next_7_days");
               if (calResult.connected) {
                 freshCalendarEvents = calResult.events;
                 setCalendarEvents(calResult.events);
