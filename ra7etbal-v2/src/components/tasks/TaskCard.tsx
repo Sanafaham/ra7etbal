@@ -209,7 +209,7 @@ export default function TaskCard({
         </p>
       )}
 
-      {reminderDue && (
+      {reminderDue && !isDone && (
         <div className="mt-2 space-y-0.5 text-xs font-medium">
           <p className={reminderDue.overdue ? "text-rose-800" : "text-amber-900"}>
             {reminderDue.dueTime}
@@ -256,7 +256,7 @@ export default function TaskCard({
             }
           >
             {busy === "done" && <Spinner size={12} />}
-            <span>{isDone ? "Mark pending" : "Mark done"}</span>
+            <span>{isDone ? "Reopen" : "Mark done"}</span>
           </button>
         )}
 
