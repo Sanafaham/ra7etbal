@@ -4,6 +4,8 @@ export interface Profile {
   display_name: string | null;
   weather_city: string | null;
   morning_brief_timezone: string | null;
+  evening_brief_enabled: boolean;
+  evening_brief_time: string;
 }
 
 /**
@@ -13,13 +15,15 @@ export interface Profile {
 export async function getProfile(): Promise<Profile> {
   const { data, error } = await supabase
     .from("profiles")
-    .select("display_name, weather_city, morning_brief_timezone")
+    .select("display_name, weather_city, morning_brief_timezone, evening_brief_enabled, evening_brief_time")
     .maybeSingle();
   if (error) throw friendly(error);
   return {
     display_name: data?.display_name ?? null,
     weather_city: data?.weather_city ?? null,
     morning_brief_timezone: data?.morning_brief_timezone ?? null,
+    evening_brief_enabled: data?.evening_brief_enabled ?? false,
+    evening_brief_time: data?.evening_brief_time ?? "20:00",
   };
 }
 

@@ -112,41 +112,36 @@ export default async function handler(req, res) {
     // ── 2. Fetch user's profile (brief prefs + last sent) ─────────────────
     const profileRes = await fetchSupabase(
       config,
-      `/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=morning_brief_enabled,morning_brief_timezone,morning_brief_time,last_morning_brief_sent_at`,
+      `/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}&select=morning_brief_enabled,morning_brief_timezone,morning_brief_time,last_morning_brief_sent_at,evening_brief_enabled,evening_brief_time,last_evening_brief_sent_at`,
     );
     const profiles = profileRes.ok ? await profileRes.json().catch(() => []) : [];
     const profile = profiles?.[0] ?? {};
 
-    const briefEnabled = profile.morning_brief_enabled !== false; // default true
     const timezone = profile.morning_brief_timezone || 'Europe/Istanbul';
-    const briefTime = profile.morning_brief_time || '08:00'; // HH:MM
-    const lastSentAt = profile.last_morning_brief_sent_at ?? null;
-
-    // ── Skip if morning brief is disabled for this user ───────────────────
-    if (!briefEnabled) {
-      totalSkipped += 1;
-      continue;
-    }
-
-    // ── Check if already sent today in the user's local timezone ──────────
-    if (lastSentAt) {
-      const lastSentLocalDate = toLocalDateString(new Date(lastSentAt), timezone);
-      const todayLocalDate = toLocalDateString(now, timezone);
-      if (lastSentLocalDate === todayLocalDate) {
-        totalSkipped += 1;
-        continue; // Already sent today — skip.
-      }
-    }
-
-    // ── Check if current local time is inside the 15-minute brief window ──
-    // Window: [briefTime, briefTime + 15 minutes)
     const userLocalHHMM = toLocalHHMM(now, timezone);
-    if (!isInWindow(userLocalHHMM, briefTime)) {
+    const todayLocalDate = toLocalDateString(now, timezone);
+
+    // ── Determine which briefs to send this tick ──────────────────────────
+    const shouldSendMorning = (() => {
+      if (profile.morning_brief_enabled === false) return false;
+      const lastSentAt = profile.last_morning_brief_sent_at ?? null;
+      if (lastSentAt && toLocalDateString(new Date(lastSentAt), timezone) === todayLocalDate) return false;
+      return isInWindow(userLocalHHMM, profile.morning_brief_time || '08:00');
+    })();
+
+    const shouldSendEvening = (() => {
+      if (!profile.evening_brief_enabled) return false; // off by default
+      const lastSentAt = profile.last_evening_brief_sent_at ?? null;
+      if (lastSentAt && toLocalDateString(new Date(lastSentAt), timezone) === todayLocalDate) return false;
+      return isInWindow(userLocalHHMM, profile.evening_brief_time || '20:00');
+    })();
+
+    if (!shouldSendMorning && !shouldSendEvening) {
       totalSkipped += 1;
       continue;
     }
 
-    // ── 3. Fetch user's tasks ──────────────────────────────────────────────
+    // ── 3. Fetch user's tasks (shared by both briefs) ─────────────────────
     const tasksRes = await fetchSupabase(
       config,
       `/rest/v1/tasks?select=id,description,type,status,assigned_to,due_at,needs_follow_up,escalated_at,confirmed_at,created_at,archived_at&user_id=eq.${encodeURIComponent(userId)}&archived_at=is.null&order=created_at.desc&limit=60`,
@@ -157,60 +152,72 @@ export default async function handler(req, res) {
     }
     const tasks = await tasksRes.json().catch(() => []);
 
-    // ── 4. Build brief headline ────────────────────────────────────────────
-    const headline = buildBriefHeadline(tasks);
-
     if (testMode) {
-      // In test mode: return first user's data without sending
+      const headline = shouldSendMorning
+        ? buildBriefHeadline(tasks)
+        : buildEveningBriefHeadline(tasks, timezone, now);
       return res.status(200).json({
         testMode: true,
         usersFound: byUser.size,
         sampleUserId: shortId,
         timezone,
-        briefTime,
         userLocalHHMM,
-        inWindow: true,
+        shouldSendMorning,
+        shouldSendEvening,
         headline,
         taskCounts: summariseCounts(tasks),
       });
     }
 
-    // ── 5. Send push to all of this user's subscriptions ──────────────────
-    const payload = JSON.stringify({
-      title: 'Ra7etBal — Morning Brief',
-      body: headline,
-    });
-
-    let sentAtLeastOne = false;
-    for (const sub of subs) {
-      try {
-        await webpush.sendNotification(
-          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-          payload,
-          { urgency: 'normal', TTL: 3600 },
-        );
-        totalSent += 1;
-        sentAtLeastOne = true;
-      } catch (err) {
-        totalFailed += 1;
-        const statusCode = err?.statusCode ?? null;
-        console.error(`[morning-brief-push] userId=${shortId} push failed statusCode=${statusCode}`);
-        if (statusCode === 410 || statusCode === 404) {
-          await removeExpiredSub(config, sub.id, shortId);
+    // ── Helper: send push to all subscriptions for this user ──────────────
+    const sendPush = async (title, body) => {
+      const payload = JSON.stringify({ title, body });
+      let sent = false;
+      for (const sub of subs) {
+        try {
+          await webpush.sendNotification(
+            { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+            payload,
+            { urgency: 'normal', TTL: 3600 },
+          );
+          totalSent += 1;
+          sent = true;
+        } catch (err) {
+          totalFailed += 1;
+          const statusCode = err?.statusCode ?? null;
+          console.error(`[morning-brief-push] userId=${shortId} push failed statusCode=${statusCode}`);
+          if (statusCode === 410 || statusCode === 404) {
+            await removeExpiredSub(config, sub.id, shortId);
+          }
         }
+      }
+      return sent;
+    };
+
+    // ── 4. Send morning brief ─────────────────────────────────────────────
+    if (shouldSendMorning) {
+      const headline = buildBriefHeadline(tasks);
+      const sent = await sendPush('Ra7etBal — Morning Brief', headline);
+      if (sent) {
+        await fetchSupabase(
+          config,
+          `/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`,
+          { method: 'PATCH', body: JSON.stringify({ last_morning_brief_sent_at: now.toISOString() }) },
+        );
       }
     }
 
-    // ── 6. Mark brief as sent today (prevents duplicate sends) ───────────
-    if (sentAtLeastOne) {
-      await fetchSupabase(
-        config,
-        `/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`,
-        {
-          method: 'PATCH',
-          body: JSON.stringify({ last_morning_brief_sent_at: now.toISOString() }),
-        },
-      );
+    // ── 5. Send evening brief ─────────────────────────────────────────────
+    if (shouldSendEvening) {
+      const headline = buildEveningBriefHeadline(tasks, timezone, now);
+      const sent = await sendPush('Ra7etBal — Evening Brief', headline);
+      if (sent) {
+        await fetchSupabase(
+          config,
+          `/rest/v1/profiles?id=eq.${encodeURIComponent(userId)}`,
+          { method: 'PATCH', body: JSON.stringify({ last_evening_brief_sent_at: now.toISOString() }) },
+        );
+      }
     }
 
     usersProcessed += 1;
@@ -323,6 +330,136 @@ function capitalise(str) {
 function spokenCount(n) {
   const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
   return n < words.length ? words[n] : String(n);
+}
+
+function spokenDesc(raw) {
+  const s = (raw ?? '').trim().replace(/[.!?]+$/, '').trim();
+  return s.length > 40 ? s.slice(0, 40).trimEnd() + '…' : s;
+}
+
+// ---------------------------------------------------------------------------
+// Evening brief headline builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a calm, closing push notification headline for the end of day.
+ *
+ * Tone: reassuring, not nagging. Closes the loop without piling on.
+ *
+ * Sections (each conditional):
+ *   1. What got done today
+ *   2. What is still open tonight
+ *   3. What is waiting on others
+ *   4. Reassurance close
+ */
+function buildEveningBriefHeadline(tasks, timezone, now) {
+  now = now || new Date();
+  const active = tasks.filter(t => t.archived_at == null);
+  const todayLocalDate = toLocalDateString(now, timezone);
+
+  // ── Done today: confirmed in the user's local calendar day ───────────────
+  const doneToday = tasks.filter(t => {
+    if (t.status !== 'done' || !t.confirmed_at) return false;
+    return toLocalDateString(new Date(t.confirmed_at), timezone) === todayLocalDate;
+  });
+
+  // ── Waiting on others: pending delegations/followups ─────────────────────
+  const waiting = active.filter(t => {
+    if (t.status !== 'pending') return false;
+    if (t.type === 'delegation' && t.assigned_to) return true;
+    if (t.type === 'followup') return true;
+    if (t.needs_follow_up && t.assigned_to) return true;
+    return false;
+  });
+  const waitingIds = new Set(waiting.map(t => t.id));
+
+  // ── Still open tonight: overdue reminders + owner tasks ──────────────────
+  const stillOpen = active.filter(t => {
+    if (t.status !== 'pending') return false;
+    if (waitingIds.has(t.id)) return false;
+    // Overdue reminder
+    if (t.type === 'reminder' && t.due_at && new Date(t.due_at) < now) return true;
+    // Reminder due today
+    if (t.type === 'reminder' && t.due_at) {
+      return toLocalDateString(new Date(t.due_at), timezone) === todayLocalDate;
+    }
+    // Owner task (unassigned or self)
+    const assignee = (t.assigned_to ?? '').trim().toLowerCase();
+    return !assignee || assignee === 'me';
+  });
+
+  // ── Compose headline ──────────────────────────────────────────────────────
+  const parts = [];
+
+  // Done today
+  if (doneToday.length === 1) {
+    const t = doneToday[0];
+    const who = t.assigned_to?.trim();
+    const isDelegated = t.type === 'delegation' || t.type === 'followup' ||
+      (who && who.toLowerCase() !== 'me');
+    if (isDelegated && who) {
+      parts.push(`${capitalise(who)} confirmed ${spokenDesc(t.description)}.`);
+    } else {
+      parts.push(`You wrapped up ${spokenDesc(t.description)} today.`);
+    }
+  } else if (doneToday.length === 2) {
+    const delegated = doneToday.filter(t => {
+      const who = t.assigned_to?.trim()?.toLowerCase();
+      return t.type === 'delegation' || t.type === 'followup' || (who && who !== 'me');
+    });
+    if (delegated.length === 2) {
+      const names = [...new Set(delegated.map(t => capitalise(t.assigned_to?.trim())).filter(Boolean))];
+      if (names.length === 2) parts.push(`${names[0]} and ${names[1]} both confirmed today.`);
+      else if (names.length === 1) parts.push(`${names[0]} confirmed two things today.`);
+      else parts.push('Two things were confirmed today.');
+    } else {
+      parts.push(`${spokenCount(doneToday.length)} things got done today.`);
+    }
+  } else if (doneToday.length > 2) {
+    parts.push(`${spokenCount(doneToday.length)} things wrapped up today.`);
+  }
+
+  // Still open
+  if (stillOpen.length === 1) {
+    parts.push(`${spokenDesc(stillOpen[0].description)} is still open.`);
+  } else if (stillOpen.length > 1) {
+    parts.push(`${spokenCount(stillOpen.length)} things are still open.`);
+  }
+
+  // Waiting on others
+  if (waiting.length > 0) {
+    const names = [...new Set(
+      waiting.map(t => (t.assigned_to ?? '').trim()).filter(Boolean)
+    )].slice(0, 2).map(capitalise);
+
+    if (names.length === 1) {
+      parts.push(`You're waiting on ${names[0]}.`);
+    } else if (names.length === 2) {
+      parts.push(`You're waiting on ${names[0]} and ${names[1]}.`);
+    } else {
+      parts.push(`${spokenCount(waiting.length)} people haven't confirmed yet.`);
+    }
+  }
+
+  // Reassurance close
+  const hasOpenItems = stillOpen.length > 0;
+  const hasWaiting = waiting.length > 0;
+
+  if (parts.length === 0) {
+    return "Everything important is handled for today. You're clear for the evening.";
+  }
+
+  if (!hasOpenItems && !hasWaiting) {
+    parts.push("Nothing else needs you tonight.");
+  } else if (!hasOpenItems && hasWaiting) {
+    parts.push("Nothing you need to act on tonight.");
+  } else {
+    parts.push("Nothing urgent tonight.");
+  }
+
+  // Prefix with calm opener
+  const opener = doneToday.length > 0 ? "Quick wrap-up." : "End of day.";
+  return `${opener} ${parts.join(' ')}`;
 }
 
 function summariseCounts(tasks) {
