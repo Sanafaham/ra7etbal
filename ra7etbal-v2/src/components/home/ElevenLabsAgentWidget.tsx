@@ -1174,8 +1174,14 @@ export default function ElevenLabsAgentWidget({
               : start
                 ? start.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
                 : "";
+            // Suppress end time when duration is exactly 60 minutes — that is
+            // the create_calendar_event default for unspecified durations, so
+            // showing it would make "dentist at 11" read as "dentist 11–12".
+            // Explicit longer durations (90 min, 2 h, etc.) are still shown.
+            const durationMs = start && end ? end.getTime() - start.getTime() : null;
+            const isDefaultDuration = durationMs === 60 * 60 * 1000;
             const endStr =
-              !ev.allDay && end
+              !ev.allDay && end && !isDefaultDuration
                 ? `–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
                 : "";
             const locStr = ev.location ? ` (${ev.location})` : "";
