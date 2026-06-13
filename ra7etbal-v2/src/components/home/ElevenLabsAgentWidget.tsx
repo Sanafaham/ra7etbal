@@ -1269,6 +1269,20 @@ export default function ElevenLabsAgentWidget({
           ? startDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })
           : date;
 
+        // Append to in-session planning cache so get_calendar_events sees the
+        // new event immediately — no re-fetch needed for same-session queries.
+        planningCalendarEventsRef.current = [
+          ...planningCalendarEventsRef.current,
+          {
+            id: data.id ?? crypto.randomUUID(),
+            title: data.title,
+            start: data.start ?? null,
+            end: data.end ?? null,
+            location: null,
+            allDay: false,
+          } satisfies CalendarEvent,
+        ];
+
         return `Added ${data.title} to your Google Calendar — ${dateLabel} at ${timeLabel}.`;
       } catch {
         return "I couldn't add the event to your calendar right now. Please try again.";
