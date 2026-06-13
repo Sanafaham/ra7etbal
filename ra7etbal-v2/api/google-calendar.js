@@ -15,11 +15,23 @@
  *      Verifies JWT, loads refresh_token, fetches Google Calendar events.
  *      Never returns refresh_token to client.
  *
+ *   4. Create event      POST (JSON body)
+ *      Requires Authorization: Bearer <supabase-jwt> header.
+ *      Body: { title, date (YYYY-MM-DD), time (HH:MM), duration_minutes?, description? }
+ *      Verifies JWT, loads refresh_token, inserts event on primary calendar.
+ *      Returns: { ok: true, id, title, start, end } on success.
+ *      Returns: { ok: false, code: "reconnect_required" } on scope/auth error.
+ *
  * All Supabase access uses raw fetch against the REST / Auth v1 APIs.
  * No @supabase/supabase-js import.
+ *
+ * Scope change note (Calendar Create V1):
+ *   Upgraded from calendar.readonly → calendar.events so the server can
+ *   insert events. Existing users who authorized under the old read-only
+ *   scope must reconnect Google Calendar in Settings to grant write access.
  */
 
-const SCOPES = "https://www.googleapis.com/auth/calendar.readonly";
+const SCOPES = "https://www.googleapis.com/auth/calendar.events";
 
 export default async function handler(req, res) {
   const { code, state, userId, range } = req.query;
@@ -275,6 +287,136 @@ export default async function handler(req, res) {
       res.setHeader("Expires", "0");
       res.setHeader("Surrogate-Control", "no-store");
       return res.status(200).json({ connected: true, events });
+    }
+
+    // ── Route 4: Create event (POST, JWT-authenticated) ───────────────────
+    if (req.method === "POST" && authHeader.startsWith("Bearer ")) {
+      const jwt = authHeader.slice(7);
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+
+      // Verify JWT and get userId
+      const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        headers: { apikey: anonKey, Authorization: `Bearer ${jwt}` },
+      });
+      if (!userRes.ok) return res.status(401).json({ ok: false, error: "Unauthorized" });
+      const { id: uid } = await userRes.json();
+
+      // Parse body
+      const { title, date, time, duration_minutes, description } = req.body ?? {};
+      if (!title || !date || !time) {
+        return res.status(400).json({ ok: false, code: "missing_fields", error: "title, date, and time are required." });
+      }
+
+      // Validate date (YYYY-MM-DD) and time (HH:MM)
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+        return res.status(400).json({ ok: false, code: "invalid_format", error: "date must be YYYY-MM-DD, time must be HH:MM." });
+      }
+
+      // Load refresh_token from profiles
+      const profileRes = await fetch(
+        `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}&select=google_refresh_token`,
+        { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+      );
+      if (!profileRes.ok) return res.status(500).json({ ok: false, error: "Failed to load profile" });
+      const profiles = await profileRes.json();
+      const refreshToken = profiles?.[0]?.google_refresh_token;
+      if (!refreshToken) {
+        return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar is not connected." });
+      }
+
+      // Exchange refresh_token for access_token
+      const accessRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: process.env.GOOGLE_CLIENT_ID,
+          client_secret: process.env.GOOGLE_CLIENT_SECRET,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token",
+        }),
+      });
+      if (!accessRes.ok) {
+        const errText = await accessRes.text();
+        if (accessRes.status === 400 || accessRes.status === 401) {
+          // Clear revoked token
+          await fetch(`${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}`, {
+            method: "PATCH",
+            headers: {
+              apikey: serviceKey,
+              Authorization: `Bearer ${serviceKey}`,
+              "Content-Type": "application/json",
+              Prefer: "return=minimal",
+            },
+            body: JSON.stringify({ google_refresh_token: null, google_calendar_connected_at: null }),
+          });
+          return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
+        }
+        console.error("[google-calendar] token refresh failed:", errText);
+        return res.status(502).json({ ok: false, error: "Google token refresh failed" });
+      }
+      const { access_token } = await accessRes.json();
+
+      // Build event start/end datetimes
+      const durationMins = Number(duration_minutes) > 0 ? Number(duration_minutes) : 60;
+      const [year, month, day] = date.split("-").map(Number);
+      const [hour, minute] = time.split(":").map(Number);
+      // Use local date construction so time is interpreted in user's wall clock
+      const startDt = new Date(year, month - 1, day, hour, minute, 0);
+      const endDt = new Date(startDt.getTime() + durationMins * 60 * 1000);
+
+      // Format as RFC3339 with local offset
+      const pad = (n) => String(n).padStart(2, "0");
+      const tzOffset = -startDt.getTimezoneOffset();
+      const sign = tzOffset >= 0 ? "+" : "-";
+      const absOffset = Math.abs(tzOffset);
+      const offsetStr = `${sign}${pad(Math.floor(absOffset / 60))}:${pad(absOffset % 60)}`;
+      const toRFC3339 = (d) =>
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00${offsetStr}`;
+
+      const eventBody = {
+        summary: title.trim(),
+        ...(description ? { description: description.trim() } : {}),
+        start: { dateTime: toRFC3339(startDt) },
+        end:   { dateTime: toRFC3339(endDt) },
+      };
+
+      // Insert event via Google Calendar API
+      const insertRes = await fetch(
+        "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(eventBody),
+        },
+      );
+
+      if (!insertRes.ok) {
+        const errBody = await insertRes.text();
+        // 403 = insufficient scope — user authorized under read-only, must reconnect
+        if (insertRes.status === 403) {
+          return res.status(200).json({
+            ok: false,
+            code: "reconnect_required",
+            error: "Google Calendar needs to be reconnected in Settings to allow event creation.",
+          });
+        }
+        console.error("[google-calendar] event insert failed:", errBody);
+        return res.status(502).json({ ok: false, error: "Failed to create calendar event" });
+      }
+
+      const created = await insertRes.json();
+      return res.status(200).json({
+        ok: true,
+        id: created.id,
+        title: created.summary,
+        start: created.start?.dateTime ?? created.start?.date ?? null,
+        end:   created.end?.dateTime ?? created.end?.date ?? null,
+      });
     }
 
     // ── No matching route ─────────────────────────────────────────────────

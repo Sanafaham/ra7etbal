@@ -1,5 +1,6 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { supabase } from "../../lib/supabase";
 import { resizeImage, uploadTaskImage } from "../../lib/image-upload";
 import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
@@ -1189,6 +1190,82 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Client tool: create_calendar_event
+  // Creates a Google Calendar event on the user's primary calendar.
+  // Carson must confirm with the user before calling this tool.
+  // Returns a plain-English result string Carson reads aloud.
+  // ------------------------------------------------------------------
+  const createCalendarEvent = useCallback(
+    async (params: any): Promise<string> => {
+      try {
+        const title: string = (params?.title ?? "").trim();
+        const date: string  = (params?.date  ?? "").trim();
+        const time: string  = (params?.time  ?? "").trim();
+        const durationMinutes: number = Number(params?.duration_minutes) > 0
+          ? Number(params.duration_minutes)
+          : 60;
+        const description: string = (params?.description ?? "").trim();
+
+        if (!title || !date || !time) {
+          return "I need the event title, date, and time before I can add it to your calendar.";
+        }
+
+        // Validate formats before hitting the API
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+          return "I couldn't parse the date. Please say the date clearly and try again.";
+        }
+        if (!/^\d{2}:\d{2}$/.test(time)) {
+          return "I couldn't parse the time. Please say the time clearly and try again.";
+        }
+
+        const { data: sessionData } = await supabase.auth.getSession();
+        const jwt = sessionData?.session?.access_token;
+        if (!jwt) return "You're not signed in. Please sign in and try again.";
+
+        const body: Record<string, unknown> = { title, date, time, duration_minutes: durationMinutes };
+        if (description) body.description = description;
+
+        const res = await fetch("/api/google-calendar", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${jwt}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+          cache: "no-store",
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!data) return "Something went wrong. Please try again.";
+
+        if (!data.ok) {
+          if (data.code === "reconnect_required") {
+            return "I couldn't add that because Google Calendar needs to be reconnected in Settings to allow event creation.";
+          }
+          if (data.code === "missing_fields") {
+            return "I need the event title, date, and time before I can add it.";
+          }
+          return "I couldn't add the event to your calendar. Please try again.";
+        }
+
+        // Format the confirmation string Carson reads aloud
+        const startDate = data.start ? new Date(data.start) : null;
+        const timeLabel = startDate
+          ? startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          : time;
+        const dateLabel = startDate
+          ? startDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })
+          : date;
+
+        return `Added ${data.title} to your Google Calendar — ${dateLabel} at ${timeLabel}.`;
+      } catch {
+        return "I couldn't add the event to your calendar right now. Please try again.";
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
   // Shared delegation/message pipeline
   //
   // execute_instruction is the PREFERRED tool for Voice Carson delegation
@@ -1470,6 +1547,7 @@ export default function ElevenLabsAgentWidget({
           save_city: saveCity,
           save_note: saveNote,
           get_calendar_events: getCalendarEvents,
+          create_calendar_event: createCalendarEvent,
           save_instruction: async ({
             instruction,
             category,
