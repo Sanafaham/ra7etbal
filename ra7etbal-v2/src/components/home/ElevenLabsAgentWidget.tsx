@@ -6,7 +6,7 @@ import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
-import { saveCarsonNote } from "../../lib/carson-notes";
+import { saveCarsonNote, loadRecentNotes, type CarsonNote } from "../../lib/carson-notes";
 import { filterCalendarEventsByRange } from "../../lib/calendar";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
@@ -653,6 +653,10 @@ export default function ElevenLabsAgentWidget({
   /** Accumulates successful tool-call descriptions for this session.
    *  Flushed to carson_memory on disconnect. */
   const sessionActionsRef = useRef<string[]>([]);
+
+  /** Snapshot of saved notes loaded at startCall. Used by act_on_note for
+   *  in-memory keyword lookup without hitting Supabase during the call. */
+  const notesRef = useRef<CarsonNote[]>([]);
 
   /** Accumulates finalized transcript messages (both user and agent) for
    *  this session. Summarised by Haiku at disconnect for conversational memory. */
@@ -1337,6 +1341,184 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Client tool: act_on_note
+  // Execute an action (task / reminder / delegate / calendar) on a saved note
+  // matched by keyword. Returns a spoken confirmation or clarification string.
+  // Notes are pre-loaded into notesRef at startCall — no in-call network fetch.
+  // Defined after createCalendarEvent so the calendar branch can call it directly.
+  // ------------------------------------------------------------------
+  const actOnNote = useCallback(
+    async ({
+      query,
+      action,
+      time_text,
+      person_name,
+    }: {
+      /** Keyword(s) to match against note text — case-insensitive substring. */
+      query: string;
+      action: "task" | "reminder" | "delegate" | "calendar";
+      /** Required for reminder + calendar. Raw time phrase as spoken, e.g. "tomorrow at 5pm". */
+      time_text?: string;
+      /** Required for delegate. Exact person name. */
+      person_name?: string;
+    }): Promise<string> => {
+      const q = query?.trim();
+      if (!q) {
+        return "I did not receive a search term. Ask the user which note they mean.";
+      }
+
+      // ── Note lookup ──────────────────────────────────────────────────────────
+      const matches = notesRef.current.filter((n) =>
+        n.note.toLowerCase().includes(q.toLowerCase()),
+      );
+
+      if (matches.length === 0) {
+        return `I couldn't find a note matching "${q}". Ask the user what the note says exactly.`;
+      }
+
+      if (matches.length > 1) {
+        const snippets = matches
+          .slice(0, 4)
+          .map((n) => `"${n.note.slice(0, 45).trim()}${n.note.length > 45 ? "…" : ""}"`)
+          .join(", ");
+        return `I found ${matches.length} notes matching "${q}": ${snippets}. Ask the user which one they mean.`;
+      }
+
+      const note = matches[0];
+      const authUserId = useAuthStore.getState().user?.id;
+      if (!authUserId) return "You are not signed in. Please sign in and try again.";
+
+      // ── task ────────────────────────────────────────────────────────────────
+      if (action === "task") {
+        try {
+          const task = await createTask({
+            user_id: authUserId,
+            description: note.note,
+            type: "action",
+            assigned_to: null,
+            status: "pending",
+            needs_follow_up: false,
+            confirmation_url: null,
+            due_at: null,
+          });
+          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+          sessionActionsRef.current.push(`Turned note into task: ${note.note}`);
+          console.log("[act_on_note] task created from note:", task.id);
+          return `Done. I've turned that note into a task: "${note.note.slice(0, 60)}${note.note.length > 60 ? "…" : ""}".`;
+        } catch (err) {
+          return `Couldn't create the task. ${err instanceof Error ? err.message : "Please try again."}`;
+        }
+      }
+
+      // ── reminder ────────────────────────────────────────────────────────────
+      if (action === "reminder") {
+        const phrase = time_text?.trim();
+        if (!phrase) {
+          return "I need to know when to remind you. Ask the user for a time.";
+        }
+        const parsed = parseVoiceTime(phrase);
+        if (parsed.error || !parsed.dueAt) {
+          return `I couldn't understand the time "${phrase}". Ask the user to say when they want the reminder.`;
+        }
+        try {
+          const task = await createTask({
+            user_id: authUserId,
+            description: note.note,
+            type: "reminder",
+            assigned_to: null,
+            status: "pending",
+            needs_follow_up: false,
+            confirmation_url: null,
+            due_at: parsed.dueAt,
+          });
+          scheduleReminderPush(task.id, parsed.dueAt).catch((err) =>
+            console.error("[act_on_note] QStash reminder schedule failed:", err),
+          );
+          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+          sessionActionsRef.current.push(`Set reminder from note: ${note.note}`);
+          const d = new Date(parsed.dueAt);
+          const timeStr = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+          const isToday = d.toDateString() === new Date().toDateString();
+          const isTomorrow =
+            d.toDateString() === new Date(Date.now() + 86_400_000).toDateString();
+          const dateLabel = isToday
+            ? "today"
+            : isTomorrow
+            ? "tomorrow"
+            : d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+          console.log("[act_on_note] reminder created:", task.id, parsed.dueAt);
+          return `Reminder set for "${note.note.slice(0, 50)}${note.note.length > 50 ? "…" : ""}" — ${dateLabel} at ${timeStr}.`;
+        } catch (err) {
+          return `Couldn't set the reminder. ${err instanceof Error ? err.message : "Please try again."}`;
+        }
+      }
+
+      // ── delegate ────────────────────────────────────────────────────────────
+      if (action === "delegate") {
+        const personNameInput = person_name?.trim();
+        if (!personNameInput) {
+          return "I need to know who to delegate this to. Ask the user for a name.";
+        }
+
+        // Ensure people store is loaded.
+        const peopleState = usePeopleStore.getState();
+        if (peopleState.status === "idle" || peopleState.items.length === 0) {
+          await usePeopleStore.getState().loadFor(authUserId);
+        }
+        const people = usePeopleStore.getState().items;
+        const person = people.find(
+          (p) => p.name.trim().toLowerCase() === personNameInput.toLowerCase(),
+        );
+        if (!person) {
+          return `I couldn't find "${personNameInput}" in your contacts. Ask the user to add them first.`;
+        }
+        if (!person.phone) {
+          return `${person.name} has no phone number saved. Ask the user to add one in People settings.`;
+        }
+
+        try {
+          const result = await createAndSendDelegation({
+            userId: authUserId,
+            person,
+            taskText: note.note,
+            ownerName: displayName,
+          });
+          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+          sessionActionsRef.current.push(`Delegated note to ${person.name}: ${note.note}`);
+          console.log("[act_on_note] delegation sent:", result.taskId, "→", person.name);
+          return `Done. Sent to ${person.name}: "${note.note.slice(0, 50)}${note.note.length > 50 ? "…" : ""}".`;
+        } catch (err) {
+          return `Couldn't send the delegation. ${err instanceof Error ? err.message : "Please try again."}`;
+        }
+      }
+
+      // ── calendar ────────────────────────────────────────────────────────────
+      if (action === "calendar") {
+        const phrase = time_text?.trim();
+        if (!phrase) {
+          return "I need a date and time. Ask the user when to add this to the calendar.";
+        }
+        const parsed = parseVoiceTime(phrase);
+        if (parsed.error || !parsed.dueAt) {
+          return `I couldn't understand "${phrase}". Ask the user to say the date and time clearly.`;
+        }
+        const d = new Date(parsed.dueAt);
+        const pad = (n: number) => String(n).padStart(2, "0");
+        // Delegate to the existing createCalendarEvent callback which handles
+        // JWT auth, conflict detection, and cache update.
+        return createCalendarEvent({
+          title: note.note,
+          date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+          time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
+        });
+      }
+
+      return "I don't know how to perform that action on a note. Ask the user to clarify.";
+    },
+    [displayName, createCalendarEvent],
+  );
+
+  // ------------------------------------------------------------------
   // Shared delegation/message pipeline
   //
   // execute_instruction is the PREFERRED tool for Voice Carson delegation
@@ -1515,6 +1697,13 @@ export default function ElevenLabsAgentWidget({
       // Non-fatal — Carson starts without persistent instructions.
     }
 
+    // Load saved notes into ref for in-call act_on_note lookups — non-fatal.
+    try {
+      notesRef.current = await loadRecentNotes(100);
+    } catch {
+      notesRef.current = [];
+    }
+
     // Fetch live weather for the user's saved city — non-fatal.
     // If city is not set, current_weather is "" and Carson will ask.
     let currentWeather = "";
@@ -1618,6 +1807,7 @@ export default function ElevenLabsAgentWidget({
           create_reminder: createReminder,
           save_city: saveCity,
           save_note: saveNote,
+          act_on_note: actOnNote,
           get_calendar_events: getCalendarEvents,
           create_calendar_event: createCalendarEvent,
           save_instruction: async ({
@@ -1735,7 +1925,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Couldn't connect. Tap to retry.");
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, clearPendingPhotoPreviews, onBeforeCallStart, status]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, clearPendingPhotoPreviews, onBeforeCallStart, status]);
 
   // ------------------------------------------------------------------
   // Session teardown
