@@ -561,6 +561,8 @@ export default function ElevenLabsAgentWidget({
   const [status, setStatus] = useState<CallStatus>("idle");
   const [mode, setMode] = useState<AgentMode>("listening");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  /** Latest finalized spoken response from Carson. Cleared at session start, persists after disconnect. */
+  const [lastCarsonMessage, setLastCarsonMessage] = useState<string | null>(null);
   const conversationRef = useRef<Awaited<
     ReturnType<typeof Conversation.startSession>
   > | null>(null);
@@ -1488,6 +1490,7 @@ export default function ElevenLabsAgentWidget({
     sessionActionsRef.current = [];
     sessionTranscriptRef.current = [];
     sentDelegationsRef.current = [];
+    setLastCarsonMessage(null);
 
     // Load structured user memory and recent session summaries before opening
     // the ElevenLabs connection. Failures are non-fatal.
@@ -1639,6 +1642,16 @@ export default function ElevenLabsAgentWidget({
           // Accumulate both sides of the conversation for end-of-session
           // summarisation. Only finalized messages arrive here.
           sessionTranscriptRef.current.push({ role, message });
+          // "agent" is the ElevenLabs SDK role for Carson's spoken turns.
+          // If the role value ever changes, this silently stops updating — check
+          // the console log below if the transcript bubble stops appearing.
+          if (role === "agent") {
+            console.log("[transcript] agent role confirmed, message len=%d", message.length);
+            setLastCarsonMessage(message);
+          } else if (role !== "user") {
+            // Unexpected role — surface in dev console so it can be caught.
+            console.warn("[transcript] unexpected onMessage role:", role);
+          }
         },
         onDisconnect: () => {
           // Capture refs before any async work so they can be reset immediately.
@@ -1901,6 +1914,13 @@ export default function ElevenLabsAgentWidget({
             {errorMsg ?? "Couldn't connect — tap to retry"}
           </span>
         </button>
+      )}
+
+      {/* Latest Carson response — persists after session ends, clears on next session start */}
+      {lastCarsonMessage && (
+        <div className="mt-2 max-w-[280px] rounded-2xl border border-charcoal/10 bg-white/90 px-3.5 py-2.5 shadow-sm">
+          <p className="text-[12px] leading-relaxed text-ink/70">{lastCarsonMessage}</p>
+        </div>
       )}
     </div>
   );
