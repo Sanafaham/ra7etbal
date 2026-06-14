@@ -104,7 +104,9 @@ export function buildCarsonContext(input: CarsonContextInput): string {
     lines.push("OPEN: none");
   } else {
     lines.push("OPEN:");
-    for (const t of open.slice(0, 15)) {
+    const openSlice = open.slice(0, 15);
+    if (open.length > 15) lines.push(`(showing 15 of ${open.length} open items)`);
+    for (const t of openSlice) {
       const assigned = t.assigned_to ? `, assigned to ${t.assigned_to}` : "";
       const dueLabel = t.due_at ? formatReminderDue(t.due_at, now) : null;
       const due = dueLabel ? `, due ${dueLabel}` : "";
