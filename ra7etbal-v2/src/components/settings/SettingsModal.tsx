@@ -22,11 +22,13 @@ interface Props {
   open: boolean;
   onClose: () => void;
   userId: string | null;
+  calendarRevoked?: boolean;
+  onCalendarReconnected?: () => void;
 }
 
 type View = "list" | "confirm-clear" | "confirm-archive";
 
-export default function SettingsModal({ open, onClose, userId }: Props) {
+export default function SettingsModal({ open, onClose, userId, calendarRevoked, onCalendarReconnected }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [view, setView] = useState<View>("list");
@@ -48,6 +50,7 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
 
     if (calParam === "connected") {
       setNotice({ kind: "success", text: "Google Calendar connected." });
+      onCalendarReconnected?.();
     } else if (calParam === "error") {
       setNotice({ kind: "error", text: "Couldn't connect Google Calendar. Please try again." });
     }
@@ -168,6 +171,8 @@ export default function SettingsModal({ open, onClose, userId }: Props) {
         notice={notice?.kind === "success" ? notice.text : null}
         displayName={profileStore.displayName}
         weatherCity={profileStore.weatherCity}
+        calendarRevoked={calendarRevoked ?? false}
+        onCalendarReconnected={onCalendarReconnected}
         onSaveDisplayName={async (name) => {
           if (!userId) return;
           await profileStore.save(userId, name);
@@ -203,6 +208,8 @@ function SettingsList({
   notice,
   displayName,
   weatherCity,
+  calendarRevoked,
+  onCalendarReconnected,
   onSaveDisplayName,
   onSaveWeatherCity,
   onClickViewHistory,
@@ -214,6 +221,8 @@ function SettingsList({
   notice: string | null;
   displayName: string | null;
   weatherCity: string | null;
+  calendarRevoked: boolean;
+  onCalendarReconnected?: () => void;
   onSaveDisplayName: (name: string) => Promise<void>;
   onSaveWeatherCity: (city: string) => Promise<void>;
   onClickViewHistory: () => void;
@@ -240,7 +249,7 @@ function SettingsList({
       </Group>
 
       <Group label="Integrations">
-        <GoogleCalendarRow userId={userId} />
+        <GoogleCalendarRow userId={userId} revoked={calendarRevoked} onReconnected={onCalendarReconnected} />
       </Group>
 
       <Group label="Reminders">
@@ -672,8 +681,19 @@ function getReminderStatusText(
  * Shows Google Calendar connection status and a connect/reconnect button.
  * Checks profiles.google_calendar_connected_at to determine current state.
  * Connect action redirects to /api/google-calendar (server-side OAuth flow).
+ *
+ * revoked — when true (token revoked on Google's side), overrides the normal
+ * "Connected" display with a warning so the user knows they need to reconnect.
  */
-function GoogleCalendarRow({ userId }: { userId: string | null }) {
+function GoogleCalendarRow({
+  userId,
+  revoked = false,
+  onReconnected,
+}: {
+  userId: string | null;
+  revoked?: boolean;
+  onReconnected?: () => void;
+}) {
   const [connected, setConnected] = useState<boolean | null>(null); // null = loading
 
   useEffect(() => {
@@ -695,19 +715,32 @@ function GoogleCalendarRow({ userId }: { userId: string | null }) {
 
   function handleConnect() {
     if (!userId) return;
+    onReconnected?.();
     // Full page redirect — OAuth flow requires browser navigation.
     window.location.href = `/api/google-calendar?userId=${encodeURIComponent(userId)}`;
   }
 
+  const isRevoked = revoked && connected !== false;
+
   const statusText =
     connected === null
       ? "Checking…"
-      : connected
-        ? "Connected — tap to reconnect"
-        : "Not connected";
+      : isRevoked
+        ? "Disconnected — reconnect to restore calendar access"
+        : connected
+          ? "Connected — tap to reconnect"
+          : "Not connected";
 
   const dotColor =
-    connected === null ? "bg-ink/20" : connected ? "bg-sage" : "bg-ink/20";
+    connected === null
+      ? "bg-ink/20"
+      : isRevoked
+        ? "bg-amber-400"
+        : connected
+          ? "bg-sage"
+          : "bg-ink/20";
+
+  const statusClass = isRevoked ? "text-amber-700" : "text-ink/55";
 
   return (
     <div className="border-b border-sage/10 px-4 py-3 last:border-b-0">
@@ -724,7 +757,7 @@ function GoogleCalendarRow({ userId }: { userId: string | null }) {
               Beta
             </span>
           </span>
-          <span className="block text-xs text-ink/55">{statusText}</span>
+          <span className={`block text-xs ${statusClass}`}>{statusText}</span>
         </span>
         <span aria-hidden className={`h-3 w-3 shrink-0 rounded-full ${dotColor}`} />
       </button>

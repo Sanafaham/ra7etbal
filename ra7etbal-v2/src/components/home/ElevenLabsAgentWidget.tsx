@@ -1174,7 +1174,7 @@ export default function ElevenLabsAgentWidget({
           ? (range as CalendarRange)
           : "today";
         const cached = planningCalendarEventsRef.current;
-        if (!cached || cached.length === 0) return "Calendar range data is not loaded yet.";
+        if (!cached || cached.length === 0) return "No calendar events are loaded. If Google Calendar is not connected, the user should connect it in Settings.";
         const filtered = filterCalendarEventsByRange(cached, safeRange);
         if (filtered.length === 0) return "No events found for that period.";
         return filtered

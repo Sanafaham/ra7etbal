@@ -88,9 +88,11 @@ function useGlobalTasksRefresh() {
 function PersistentCarsonWidget({
   onCallStatusChange,
   onRequestClose,
+  onCalendarRevokedChange,
 }: {
   onCallStatusChange: (status: "idle" | "connecting" | "connected" | "error") => void;
   onRequestClose: () => void;
+  onCalendarRevokedChange: (revoked: boolean) => void;
 }) {
   const { status, user } = useAuth();
   const userId = user?.id ?? null;
@@ -118,9 +120,16 @@ function PersistentCarsonWidget({
   useEffect(() => {
     if (!userId) return;
     fetchCalendarEvents("next_7_days")
-      .then((result) => { if (result.connected) setCalendarEvents(result.events); })
+      .then((result) => {
+        if (result.connected) {
+          setCalendarEvents(result.events);
+          onCalendarRevokedChange(false);
+        } else if (result.revoked) {
+          onCalendarRevokedChange(true);
+        }
+      })
       .catch(() => {});
-  }, [userId]);
+  }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!userId) { setNotesBlock(""); return; }
@@ -144,7 +153,13 @@ function PersistentCarsonWidget({
     let freshCalendarEvents = calendarEvents;
     try {
       const calResult = await fetchCalendarEvents("next_7_days");
-      if (calResult.connected) { freshCalendarEvents = calResult.events; setCalendarEvents(calResult.events); }
+      if (calResult.connected) {
+        freshCalendarEvents = calResult.events;
+        setCalendarEvents(calResult.events);
+        onCalendarRevokedChange(false);
+      } else if (calResult.revoked) {
+        onCalendarRevokedChange(true);
+      }
     } catch { /* keep existing */ }
 
     try {
@@ -161,7 +176,7 @@ function PersistentCarsonWidget({
       briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock }),
       spokenBrief: buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents),
     };
-  }, [userId, loadTasks, calendarEvents, people, user?.email, displayName]);
+  }, [userId, loadTasks, calendarEvents, people, user?.email, displayName, onCalendarRevokedChange]);
 
   if (status !== "signed_in" || !userId) return null;
 
@@ -184,6 +199,7 @@ export default function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [calendarRevoked, setCalendarRevoked] = useState(false);
   const { status: authStatus, user } = useAuth();
   const { open: carsonOpen, setOpen: setCarsonOpen, callStatus: carsonCallStatus, setCallStatus: setCarsonCallStatus } = useCarsonStore();
 
@@ -319,6 +335,7 @@ export default function App() {
           <PersistentCarsonWidget
             onCallStatusChange={setCarsonCallStatus}
             onRequestClose={() => setCarsonOpen(false)}
+            onCalendarRevokedChange={setCalendarRevoked}
           />
         </div>
       </div>
@@ -345,6 +362,8 @@ export default function App() {
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
           userId={user.id}
+          calendarRevoked={calendarRevoked}
+          onCalendarReconnected={() => setCalendarRevoked(false)}
         />
       )}
     </div>
