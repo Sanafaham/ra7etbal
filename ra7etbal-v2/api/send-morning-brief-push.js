@@ -588,7 +588,8 @@ async function handleRegister(res) {
   if (!qstashToken) return res.status(500).json({ error: 'QSTASH_TOKEN not set' });
   if (!cronSecret) return res.status(500).json({ error: 'CRON_SECRET not set' });
 
-  const TARGET_URL = 'https://ra7etbal-v2.vercel.app/api/send-morning-brief-push';
+  const APP_BASE_URL = (process.env.APP_BASE_URL || 'https://ra7etbal.com').trim();
+  const TARGET_URL = `${APP_BASE_URL}/api/send-morning-brief-push`;
   const CRON_EXPR = '0 5 * * *';
 
   // QStash expects the destination URL raw (not percent-encoded) in the path.

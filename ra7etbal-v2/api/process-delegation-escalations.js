@@ -8,7 +8,7 @@
  * To register the QStash schedule (run once after each new production deployment):
  *
  *   curl -X POST \
- *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal-v2.vercel.app%2Fapi%2Fprocess-delegation-escalations" \
+ *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal.com%2Fapi%2Fprocess-delegation-escalations" \
  *     -H "Authorization: Bearer <QSTASH_TOKEN>" \
  *     -H "Upstash-Cron: every 10 minutes" \
  *     -H "Upstash-Forward-Authorization: Bearer <CRON_SECRET>" \
@@ -26,7 +26,7 @@
  * If no schedule is returned, register it:
  *
  *   curl -X POST \
- *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal-v2.vercel.app%2Fapi%2Fprocess-delegation-escalations" \
+ *     "https://qstash.upstash.io/v2/schedules/https%3A%2F%2Fra7etbal.com%2Fapi%2Fprocess-delegation-escalations" \
  *     -H "Authorization: Bearer $QSTASH_TOKEN" \
  *     -H "Upstash-Cron: every 10 minutes" \
  *     -H "Upstash-Forward-Authorization: Bearer $CRON_SECRET" \
