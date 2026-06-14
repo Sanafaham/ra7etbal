@@ -89,10 +89,14 @@ function PersistentCarsonWidget({
   onCallStatusChange,
   onRequestClose,
   onCalendarRevokedChange,
+  calendarDisconnectCount,
 }: {
   onCallStatusChange: (status: "idle" | "connecting" | "connected" | "error") => void;
   onRequestClose: () => void;
   onCalendarRevokedChange: (revoked: boolean) => void;
+  /** Incremented by App each time the user disconnects Google Calendar.
+   *  Widget watches this to clear stale calendar events. */
+  calendarDisconnectCount: number;
 }) {
   const { status, user } = useAuth();
   const userId = user?.id ?? null;
@@ -110,6 +114,14 @@ function PersistentCarsonWidget({
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [planningCalendarEvents, setPlanningCalendarEvents] = useState<CalendarEvent[]>([]);
   const [notesBlock, setNotesBlock] = useState("");
+
+  // When calendarDisconnectCount increments, clear stale calendar events so
+  // Carson does not see them in the next session after a disconnect.
+  useEffect(() => {
+    if (calendarDisconnectCount === 0) return;
+    setCalendarEvents([]);
+    setPlanningCalendarEvents([]);
+  }, [calendarDisconnectCount]);
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -200,6 +212,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [calendarRevoked, setCalendarRevoked] = useState(false);
+  const [calendarDisconnectCount, setCalendarDisconnectCount] = useState(0);
   const { status: authStatus, user } = useAuth();
   const { open: carsonOpen, setOpen: setCarsonOpen, callStatus: carsonCallStatus, setCallStatus: setCarsonCallStatus } = useCarsonStore();
 
@@ -336,6 +349,7 @@ export default function App() {
             onCallStatusChange={setCarsonCallStatus}
             onRequestClose={() => setCarsonOpen(false)}
             onCalendarRevokedChange={setCalendarRevoked}
+            calendarDisconnectCount={calendarDisconnectCount}
           />
         </div>
       </div>
@@ -364,6 +378,10 @@ export default function App() {
           userId={user.id}
           calendarRevoked={calendarRevoked}
           onCalendarReconnected={() => setCalendarRevoked(false)}
+          onCalendarDisconnected={() => {
+            setCalendarRevoked(false);
+            setCalendarDisconnectCount((n) => n + 1);
+          }}
         />
       )}
     </div>

@@ -24,11 +24,12 @@ interface Props {
   userId: string | null;
   calendarRevoked?: boolean;
   onCalendarReconnected?: () => void;
+  onCalendarDisconnected?: () => void;
 }
 
-type View = "list" | "confirm-clear" | "confirm-archive";
+type View = "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-disconnect";
 
-export default function SettingsModal({ open, onClose, userId, calendarRevoked, onCalendarReconnected }: Props) {
+export default function SettingsModal({ open, onClose, userId, calendarRevoked, onCalendarReconnected, onCalendarDisconnected }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [view, setView] = useState<View>("list");
@@ -115,9 +116,53 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
     }
   }
 
+  async function handleCalendarDisconnect() {
+    if (!userId || busy) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ google_refresh_token: null, google_calendar_connected_at: null })
+        .eq("id", userId);
+      if (error) throw error;
+      setNotice({ kind: "success", text: "Google Calendar disconnected." });
+      onCalendarDisconnected?.();
+      setView("list");
+    } catch (err) {
+      setNotice({
+        kind: "error",
+        text: err instanceof Error ? err.message : "Could not disconnect. Please try again.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function close() {
     if (busy) return;
     onClose();
+  }
+
+  if (view === "confirm-calendar-disconnect") {
+    return (
+      <Modal open={open} onClose={close} title="Settings" dismissable={!busy}>
+        <ConfirmPane
+          title="Disconnect Google Calendar?"
+          body="Carson will not be able to read or manage your calendar until you reconnect."
+          confirmLabel="Disconnect"
+          tone="strong"
+          busy={busy}
+          busyLabel="Disconnecting…"
+          notice={notice?.kind === "error" ? notice.text : null}
+          onCancel={() => {
+            if (busy) return;
+            setNotice(null);
+            setView("list");
+          }}
+          onConfirm={() => void handleCalendarDisconnect()}
+        />
+      </Modal>
+    );
   }
 
   if (view === "confirm-archive") {
@@ -173,6 +218,10 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
         weatherCity={profileStore.weatherCity}
         calendarRevoked={calendarRevoked ?? false}
         onCalendarReconnected={onCalendarReconnected}
+        onClickDisconnectCalendar={() => {
+          setNotice(null);
+          setView("confirm-calendar-disconnect");
+        }}
         onSaveDisplayName={async (name) => {
           if (!userId) return;
           await profileStore.save(userId, name);
@@ -210,6 +259,7 @@ function SettingsList({
   weatherCity,
   calendarRevoked,
   onCalendarReconnected,
+  onClickDisconnectCalendar,
   onSaveDisplayName,
   onSaveWeatherCity,
   onClickViewHistory,
@@ -223,6 +273,7 @@ function SettingsList({
   weatherCity: string | null;
   calendarRevoked: boolean;
   onCalendarReconnected?: () => void;
+  onClickDisconnectCalendar: () => void;
   onSaveDisplayName: (name: string) => Promise<void>;
   onSaveWeatherCity: (city: string) => Promise<void>;
   onClickViewHistory: () => void;
@@ -249,7 +300,12 @@ function SettingsList({
       </Group>
 
       <Group label="Integrations">
-        <GoogleCalendarRow userId={userId} revoked={calendarRevoked} onReconnected={onCalendarReconnected} />
+        <GoogleCalendarRow
+          userId={userId}
+          revoked={calendarRevoked}
+          onReconnected={onCalendarReconnected}
+          onDisconnect={onClickDisconnectCalendar}
+        />
       </Group>
 
       <Group label="Reminders">
@@ -689,10 +745,12 @@ function GoogleCalendarRow({
   userId,
   revoked = false,
   onReconnected,
+  onDisconnect,
 }: {
   userId: string | null;
   revoked?: boolean;
   onReconnected?: () => void;
+  onDisconnect?: () => void;
 }) {
   const [connected, setConnected] = useState<boolean | null>(null); // null = loading
 
@@ -742,6 +800,9 @@ function GoogleCalendarRow({
 
   const statusClass = isRevoked ? "text-amber-700" : "text-ink/55";
 
+  // Show the disconnect link when calendar is connected or in a revoked-but-was-connected state.
+  const showDisconnect = onDisconnect && (connected === true || isRevoked);
+
   return (
     <div className="border-b border-sage/10 px-4 py-3 last:border-b-0">
       <button
@@ -761,6 +822,15 @@ function GoogleCalendarRow({
         </span>
         <span aria-hidden className={`h-3 w-3 shrink-0 rounded-full ${dotColor}`} />
       </button>
+      {showDisconnect && (
+        <button
+          type="button"
+          onClick={onDisconnect}
+          className="mt-1.5 text-[11px] text-ink/40 underline underline-offset-2 transition hover:text-ink/60"
+        >
+          Disconnect Google Calendar
+        </button>
+      )}
       <p className="mt-1 text-[11px] leading-snug text-ink/40">
         Available to approved test accounts while we finish Google verification.
       </p>
