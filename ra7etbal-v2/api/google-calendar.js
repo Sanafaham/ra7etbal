@@ -473,6 +473,230 @@ export default async function handler(req, res) {
       });
     }
 
+    // ── Route 5: Update event (PATCH, JWT-authenticated) ─────────────────
+    if (req.method === "PATCH" && authHeader.startsWith("Bearer ")) {
+      const jwt = authHeader.slice(7);
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+
+      // Verify JWT
+      const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        headers: { apikey: anonKey, Authorization: `Bearer ${jwt}` },
+      });
+      if (!userRes.ok) return res.status(401).json({ ok: false, error: "Unauthorized" });
+      const { id: uid } = await userRes.json();
+
+      const { event_id, title, date, time, duration_minutes } = req.body ?? {};
+      if (!event_id) {
+        return res.status(400).json({ ok: false, code: "missing_event_id", error: "event_id is required." });
+      }
+
+      // Load profile (refresh token + timezone)
+      const profileRes = await fetch(
+        `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}&select=google_refresh_token,morning_brief_timezone`,
+        { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+      );
+      if (!profileRes.ok) return res.status(500).json({ ok: false, error: "Failed to load profile" });
+      const profiles = await profileRes.json();
+      const refreshToken = profiles?.[0]?.google_refresh_token;
+      const userTimezone = profiles?.[0]?.morning_brief_timezone || "Europe/Istanbul";
+      if (!refreshToken) return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar is not connected." });
+
+      // Exchange refresh token for access token
+      const accessRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: process.env.GOOGLE_CLIENT_ID,
+          client_secret: process.env.GOOGLE_CLIENT_SECRET,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token",
+        }),
+      });
+      if (!accessRes.ok) {
+        if (accessRes.status === 400 || accessRes.status === 401) {
+          return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
+        }
+        return res.status(502).json({ ok: false, error: "Google token refresh failed" });
+      }
+      const { access_token } = await accessRes.json();
+
+      const patchBody = {};
+      if (title) patchBody.summary = title.trim();
+
+      // If date or time is changing, fetch the existing event to preserve duration
+      if (date || time) {
+        const getRes = await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event_id)}`,
+          { headers: { Authorization: `Bearer ${access_token}` } },
+        );
+        if (!getRes.ok) {
+          return res.status(502).json({ ok: false, error: "Could not retrieve the existing event." });
+        }
+        const existing = await getRes.json();
+
+        // Extract existing wall-clock time from the ISO dateTime string
+        // Google returns e.g. "2026-06-14T10:00:00+03:00" — take the HH:MM before the offset
+        function extractWallClockTime(dateTimeStr) {
+          if (!dateTimeStr) return null;
+          const tPart = dateTimeStr.split("T")[1] ?? "";
+          const withoutOffset = tPart.replace(/[Z+].*$/, "").replace(/-\d{2}:\d{2}$/, "");
+          const [h, m] = withoutOffset.split(":");
+          if (!h || !m) return null;
+          return `${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
+        }
+
+        // Compute existing duration in minutes
+        let existingDurationMins = 60;
+        if (existing.start?.dateTime && existing.end?.dateTime) {
+          const startMs = new Date(existing.start.dateTime).getTime();
+          const endMs = new Date(existing.end.dateTime).getTime();
+          if (!Number.isNaN(startMs) && !Number.isNaN(endMs) && endMs > startMs) {
+            existingDurationMins = Math.round((endMs - startMs) / 60000);
+          }
+        }
+
+        // Existing date: extract YYYY-MM-DD from the start dateTime
+        const existingDateRaw = existing.start?.dateTime ?? existing.start?.date ?? null;
+        const existingDate = existingDateRaw ? existingDateRaw.substring(0, 10) : null;
+        const existingTime = existing.start?.dateTime ? extractWallClockTime(existing.start.dateTime) : null;
+
+        const newDate = date ?? existingDate;
+        const newTime = time ?? existingTime;
+        if (!newDate || !newTime) {
+          return res.status(400).json({ ok: false, error: "Could not determine new event date/time." });
+        }
+
+        const durationMins = (Number(duration_minutes) > 0) ? Number(duration_minutes) : existingDurationMins;
+        const pad = (n) => String(n).padStart(2, "0");
+        const [startHour, startMinute] = newTime.split(":").map(Number);
+        const totalStartMins = startHour * 60 + startMinute;
+        const totalEndMins = totalStartMins + durationMins;
+        const endHour = Math.floor(totalEndMins / 60) % 24;
+        const endMinute = totalEndMins % 60;
+        const endDateRollover = totalEndMins >= 1440;
+        const [year, month, day] = newDate.split("-").map(Number);
+        const endDate = endDateRollover
+          ? (() => {
+              const d = new Date(Date.UTC(year, month - 1, day + 1));
+              return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+            })()
+          : newDate;
+
+        patchBody.start = { dateTime: `${newDate}T${pad(startHour)}:${pad(startMinute)}:00`, timeZone: userTimezone };
+        patchBody.end   = { dateTime: `${endDate}T${pad(endHour)}:${pad(endMinute)}:00`,     timeZone: userTimezone };
+      }
+
+      if (Object.keys(patchBody).length === 0) {
+        return res.status(400).json({ ok: false, error: "Nothing to update — provide title, date, or time." });
+      }
+
+      const patchRes = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event_id)}`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(patchBody),
+        },
+      );
+
+      if (!patchRes.ok) {
+        const errBody = await patchRes.text();
+        if (patchRes.status === 403) {
+          return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar needs to be reconnected in Settings." });
+        }
+        if (patchRes.status === 404) {
+          return res.status(200).json({ ok: false, code: "not_found", error: "Event not found on Google Calendar." });
+        }
+        console.error("[calendar-update] Google PATCH failed:", patchRes.status, errBody);
+        return res.status(502).json({ ok: false, error: "Failed to update calendar event" });
+      }
+
+      const updated = await patchRes.json();
+      return res.status(200).json({
+        ok: true,
+        id: updated.id,
+        title: updated.summary,
+        start: updated.start?.dateTime ?? updated.start?.date ?? null,
+        end:   updated.end?.dateTime   ?? updated.end?.date   ?? null,
+      });
+    }
+
+    // ── Route 6: Delete event (DELETE, JWT-authenticated) ─────────────────
+    if (req.method === "DELETE" && authHeader.startsWith("Bearer ")) {
+      const jwt = authHeader.slice(7);
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+
+      // Verify JWT
+      const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        headers: { apikey: anonKey, Authorization: `Bearer ${jwt}` },
+      });
+      if (!userRes.ok) return res.status(401).json({ ok: false, error: "Unauthorized" });
+      const { id: uid } = await userRes.json();
+
+      const { event_id } = req.body ?? {};
+      if (!event_id) {
+        return res.status(400).json({ ok: false, code: "missing_event_id", error: "event_id is required." });
+      }
+
+      // Load profile (refresh token only)
+      const profileRes = await fetch(
+        `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}&select=google_refresh_token`,
+        { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+      );
+      if (!profileRes.ok) return res.status(500).json({ ok: false, error: "Failed to load profile" });
+      const profiles = await profileRes.json();
+      const refreshToken = profiles?.[0]?.google_refresh_token;
+      if (!refreshToken) return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar is not connected." });
+
+      // Exchange refresh token for access token
+      const accessRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: process.env.GOOGLE_CLIENT_ID,
+          client_secret: process.env.GOOGLE_CLIENT_SECRET,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token",
+        }),
+      });
+      if (!accessRes.ok) {
+        if (accessRes.status === 400 || accessRes.status === 401) {
+          return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
+        }
+        return res.status(502).json({ ok: false, error: "Google token refresh failed" });
+      }
+      const { access_token } = await accessRes.json();
+
+      const deleteRes = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(event_id)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${access_token}` },
+        },
+      );
+
+      // 204 = success, 410 = already deleted — both are OK
+      if (!deleteRes.ok && deleteRes.status !== 204 && deleteRes.status !== 410) {
+        if (deleteRes.status === 403) {
+          return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar needs to be reconnected in Settings." });
+        }
+        if (deleteRes.status === 404) {
+          return res.status(200).json({ ok: false, code: "not_found", error: "Event not found on Google Calendar." });
+        }
+        console.error("[calendar-delete] Google DELETE failed:", deleteRes.status);
+        return res.status(502).json({ ok: false, error: "Failed to delete calendar event" });
+      }
+
+      return res.status(200).json({ ok: true });
+    }
+
     // ── No matching route ─────────────────────────────────────────────────
     return res.status(400).json({ error: "Invalid request" });
 

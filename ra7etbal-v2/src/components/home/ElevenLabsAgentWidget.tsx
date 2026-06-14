@@ -1200,7 +1200,9 @@ export default function ElevenLabsAgentWidget({
                 ? `–${end.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
                 : "";
             const locStr = ev.location ? ` (${ev.location})` : "";
-            return `${dateStr} ${timeStr}${endStr}: ${ev.title}${locStr}`;
+            // Embed event_id so Carson can pass it to update/delete tools.
+            // Format: [event_id:xxx] — Carson is instructed never to read this aloud.
+            return `${dateStr} ${timeStr}${endStr}: ${ev.title}${locStr} [event_id:${ev.id}]`;
           })
           .join("\n");
       } catch {
@@ -1344,6 +1346,165 @@ export default function ElevenLabsAgentWidget({
         return `Added ${data.title} to your Google Calendar — ${dateLabel} at ${timeLabel}.`;
       } catch {
         return "I couldn't add the event to your calendar right now. Please try again.";
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
+  // Client tool: update_calendar_event
+  // Moves, renames, or reschedules an existing Google Calendar event.
+  // Uses the event_id embedded by get_calendar_events in [event_id:xxx] format.
+  // Preserves duration unless duration_minutes is explicitly provided.
+  // After success, updates planningCalendarEventsRef so conflict detection stays accurate.
+  // ------------------------------------------------------------------
+  const updateCalendarEventTool = useCallback(
+    async (params: any): Promise<string> => {
+      try {
+        const eventId: string = (params?.event_id ?? "").trim();
+        if (!eventId) {
+          return "I need the event ID to update it. Please call get_calendar_events first to find the event.";
+        }
+
+        const patch: Record<string, string | number> = {};
+        if (params?.title) patch.title = String(params.title).trim();
+        if (params?.date) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(String(params.date))) {
+            return "I couldn't parse the date. Please use YYYY-MM-DD format.";
+          }
+          patch.date = String(params.date);
+        }
+        if (params?.time) {
+          if (!/^\d{2}:\d{2}$/.test(String(params.time))) {
+            return "I couldn't parse the time. Please use HH:MM 24-hour format.";
+          }
+          patch.time = String(params.time);
+        }
+        if (Number(params?.duration_minutes) > 0) {
+          patch.duration_minutes = Number(params.duration_minutes);
+        }
+
+        if (Object.keys(patch).length === 0) {
+          return "I need something to change — a new title, date, or time.";
+        }
+
+        const { data: sessionData } = await supabase.auth.getSession();
+        const jwt = sessionData?.session?.access_token;
+        if (!jwt) return "You're not signed in. Please sign in and try again.";
+
+        const res = await fetch("/api/google-calendar", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${jwt}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ event_id: eventId, ...patch }),
+          cache: "no-store",
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!data) return "Something went wrong. Please try again.";
+
+        if (!data.ok) {
+          if (data.code === "reconnect_required") {
+            return "Google Calendar needs to be reconnected in Settings.";
+          }
+          if (data.code === "not_found") {
+            return "I couldn't find that event on your calendar. It may have already been deleted.";
+          }
+          return "I couldn't update that event. Please try again.";
+        }
+
+        // Mutate the in-session cache so conflict detection and get_calendar_events stay accurate
+        planningCalendarEventsRef.current = planningCalendarEventsRef.current.map((ev) =>
+          ev.id === eventId
+            ? ({
+                ...ev,
+                title: data.title ?? ev.title,
+                start: data.start ?? ev.start,
+                end:   data.end   ?? ev.end,
+              } satisfies CalendarEvent)
+            : ev,
+        );
+
+        // Spoken confirmation
+        const newStart = data.start ? new Date(data.start) : null;
+        const timeLabel = newStart
+          ? newStart.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+          : "";
+        const dateLabel = newStart
+          ? newStart.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })
+          : "";
+
+        const parts: string[] = [];
+        if (dateLabel) parts.push(`for ${dateLabel}`);
+        if (timeLabel) parts.push(`at ${timeLabel}`);
+
+        return `Done. ${data.title} is now on your calendar${parts.length ? " " + parts.join(" ") : ""}.`;
+      } catch {
+        return "I couldn't update that event right now. Please try again.";
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
+  // Client tool: delete_calendar_event
+  // Deletes an existing Google Calendar event by event_id.
+  // SAFETY: Only call when the user has explicitly said delete, cancel, or remove.
+  // After success, removes the event from planningCalendarEventsRef.
+  // ------------------------------------------------------------------
+  const deleteCalendarEventTool = useCallback(
+    async (params: any): Promise<string> => {
+      try {
+        const eventId: string = (params?.event_id ?? "").trim();
+        if (!eventId) {
+          return "I need the event ID to delete it. Please call get_calendar_events first to find the event.";
+        }
+
+        // Capture the event title for the confirmation message before removing from cache
+        const eventEntry = planningCalendarEventsRef.current.find((ev) => ev.id === eventId);
+        const eventTitle = eventEntry?.title ?? "that event";
+
+        const { data: sessionData } = await supabase.auth.getSession();
+        const jwt = sessionData?.session?.access_token;
+        if (!jwt) return "You're not signed in. Please sign in and try again.";
+
+        const res = await fetch("/api/google-calendar", {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${jwt}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ event_id: eventId }),
+          cache: "no-store",
+        });
+
+        const data = await res.json().catch(() => null);
+        if (!data) return "Something went wrong. Please try again.";
+
+        if (!data.ok) {
+          if (data.code === "reconnect_required") {
+            return "Google Calendar needs to be reconnected in Settings.";
+          }
+          if (data.code === "not_found") {
+            // Already gone — still remove from local cache
+            planningCalendarEventsRef.current = planningCalendarEventsRef.current.filter(
+              (ev) => ev.id !== eventId,
+            );
+            return `Done. ${eventTitle} has been removed from your calendar.`;
+          }
+          return "I couldn't delete that event. Please try again.";
+        }
+
+        // Remove from in-session cache so conflict detection and get_calendar_events stay accurate
+        planningCalendarEventsRef.current = planningCalendarEventsRef.current.filter(
+          (ev) => ev.id !== eventId,
+        );
+
+        return `Done. ${eventTitle} has been removed from your calendar.`;
+      } catch {
+        return "I couldn't delete that event right now. Please try again.";
       }
     },
     [],
@@ -1819,6 +1980,8 @@ export default function ElevenLabsAgentWidget({
           act_on_note: actOnNote,
           get_calendar_events: getCalendarEvents,
           create_calendar_event: createCalendarEvent,
+          update_calendar_event: updateCalendarEventTool,
+          delete_calendar_event: deleteCalendarEventTool,
           save_instruction: async ({
             instruction,
             category,
