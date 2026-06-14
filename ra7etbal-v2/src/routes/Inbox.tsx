@@ -40,7 +40,7 @@ function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
     .replace(/\bI\b/g, name);
 }
 
-export default function Inbox() {
+export default function Inbox({ headerless = false }: { headerless?: boolean } = {}) {
   const { user } = useAuth();
   const userId = user?.id ?? null;
   const navigate = useNavigate();
@@ -270,11 +270,13 @@ export default function Inbox() {
 
   return (
     <section className="space-y-4">
-      {/* ── Header ── */}
-      <header>
-        <h1 className="text-2xl font-semibold text-ink">Inbox</h1>
-        <p className="text-sm text-ink/55">Ideas, thoughts, and items to process.</p>
-      </header>
+      {/* ── Header (hidden when embedded in Updates) ── */}
+      {!headerless && (
+        <header>
+          <h1 className="text-2xl font-semibold text-ink">Inbox</h1>
+          <p className="text-sm text-ink/55">Ideas, thoughts, and items to process.</p>
+        </header>
+      )}
 
       {/* ── Search ── */}
       <div className="relative">

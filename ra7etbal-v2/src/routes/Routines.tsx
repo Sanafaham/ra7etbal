@@ -89,7 +89,7 @@ function blankForm(): FormState {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function Routines() {
+export default function Routines({ headerless = false }: { headerless?: boolean } = {}) {
   const { user } = useAuth();
   const userId = user?.id ?? null;
 
@@ -304,14 +304,16 @@ export default function Routines() {
 
   return (
     <section className="space-y-5">
-      {/* ── Header ── */}
+      {/* ── Header (hidden when embedded in Updates) ── */}
       <header className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold text-ink">Routines</h1>
-          <p className="text-sm text-ink/60">
-            Recurring reminders and delegations that run automatically.
-          </p>
-        </div>
+        {!headerless && (
+          <div>
+            <h1 className="text-2xl font-semibold text-ink">Routines</h1>
+            <p className="text-sm text-ink/60">
+              Recurring reminders and delegations that run automatically.
+            </p>
+          </div>
+        )}
         {!showForm && (
           <button
             type="button"

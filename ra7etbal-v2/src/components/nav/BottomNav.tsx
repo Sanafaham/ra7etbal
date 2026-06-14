@@ -1,6 +1,7 @@
 import { useMemo } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { useCarsonStore } from "../../stores/carson";
+import { useBadgeStore } from "../../stores/badges";
 import { useTasksStore } from "../../stores/tasks";
 import { buildDailyBrief } from "../../lib/daily-brief";
 
@@ -18,17 +19,27 @@ function Badge({ count }: { count: number }) {
 
 /**
  * 4-tab bottom navigation bar.
- * Home / Active / People / Carson (mic opens sheet)
- * Badges: Active = urgent task count, Carson = connected dot.
+ * Home / Updates / People / Carson
+ *
+ * Updates badge priority: needsAttention → waitingOnOthers → inboxCount
+ * (highest-priority non-zero count shown, red pill).
+ * Carson: pulsing green dot when connected.
  */
 export default function BottomNav() {
   const { setOpen: setCarsonOpen, callStatus } = useCarsonStore();
+  const inboxCount = useBadgeStore((s) => s.inboxCount);
   const tasks = useTasksStore((s) => s.items);
+  const { pathname } = useLocation();
 
-  const urgentCount = useMemo(() => {
+  const updatesIsActive = pathname === "/updates" || pathname.startsWith("/updates");
+
+  const updatesBadge = useMemo(() => {
     const brief = buildDailyBrief(tasks, new Date());
-    return brief.needsAttention.length;
-  }, [tasks]);
+    if (brief.needsAttention.length > 0) return brief.needsAttention.length;
+    if (brief.waitingOnOthers.length > 0) return brief.waitingOnOthers.length;
+    if (inboxCount > 0) return inboxCount;
+    return 0;
+  }, [tasks, inboxCount]);
 
   return (
     <nav
@@ -58,27 +69,23 @@ export default function BottomNav() {
           )}
         </NavLink>
 
-        {/* Active — badge: urgent task count */}
+        {/* Updates — badge: priority count (needs you → waiting → inbox) */}
         <NavLink
-          to="/active"
-          aria-label="Active tasks"
-          className={({ isActive }) =>
+          to="/updates"
+          aria-label="Updates"
+          className={
             "relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " +
-            (isActive ? "text-sage" : "text-ink/45 hover:text-ink/70")
+            (updatesIsActive ? "text-sage" : "text-ink/45 hover:text-ink/70")
           }
         >
-          {({ isActive }) => (
-            <>
-              <span className="relative">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={isActive ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M9 11l3 3L22 4" />
-                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                </svg>
-                <Badge count={urgentCount} />
-              </span>
-              <span>Active</span>
-            </>
-          )}
+          <span className="relative">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={updatesIsActive ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 11l3 3L22 4" />
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+            </svg>
+            <Badge count={updatesBadge} />
+          </span>
+          <span>Updates</span>
         </NavLink>
 
         {/* People — core product destination */}

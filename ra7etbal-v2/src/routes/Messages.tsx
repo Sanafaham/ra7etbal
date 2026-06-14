@@ -1,2 +1,2 @@
 import { Navigate } from "react-router-dom";
-export default function Messages() { return <Navigate to="/active" replace />; }
+export default function Messages() { return <Navigate to="/updates?tab=waiting" replace />; }

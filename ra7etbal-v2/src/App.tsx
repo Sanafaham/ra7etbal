@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import Actions from "./routes/Actions";
 import Active from "./routes/Active";
+import Updates from "./routes/Updates";
 import Auth from "./routes/Auth";
 import Confirm from "./routes/Confirm";
 import Debug from "./routes/Debug";
@@ -14,7 +15,7 @@ import Messages from "./routes/Messages";
 import Notes from "./routes/Notes";
 import People from "./routes/People";
 import Reset from "./routes/Reset";
-import Routines from "./routes/Routines";
+
 import Review from "./routes/Review";
 import BottomNav from "./components/nav/BottomNav";
 import MoreSheet from "./components/nav/MoreSheet";
@@ -228,6 +229,8 @@ export default function App() {
           <Route path="/auth" element={<AuthRoute />} />
           <Route path="/reset" element={<ResetRoute />} />
           <Route path="/review" element={<ProtectedRoute><Review /></ProtectedRoute>} />
+          <Route path="/updates" element={<ProtectedRoute><Updates /></ProtectedRoute>} />
+          {/* Legacy redirects */}
           <Route path="/active" element={<ProtectedRoute><Active /></ProtectedRoute>} />
           <Route path="/inbox" element={<ProtectedRoute><Inbox /></ProtectedRoute>} />
           {/* Legacy routes — redirect to new structure */}
@@ -237,7 +240,7 @@ export default function App() {
           <Route path="/notes" element={<ProtectedRoute><Notes /></ProtectedRoute>} />
           <Route path="/people" element={<ProtectedRoute><People /></ProtectedRoute>} />
           <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
-          <Route path="/routines" element={<ProtectedRoute><Routines /></ProtectedRoute>} />
+          <Route path="/routines" element={<Navigate to="/updates?tab=routines" replace />} />
           <Route path="/confirm" element={<Confirm />} />
           <Route path="/debug" element={<Debug />} />
           <Route
