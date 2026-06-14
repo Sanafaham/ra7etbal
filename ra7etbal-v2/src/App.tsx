@@ -206,8 +206,8 @@ export default function App() {
           <div className="ml-auto flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setSettingsOpen(true)}
-              aria-label="Settings"
+              onClick={() => setMoreOpen(true)}
+              aria-label="Menu"
               className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sage/40 bg-white text-ink shadow-sm transition hover:bg-cream"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
