@@ -15,7 +15,8 @@ import Messages from "./routes/Messages";
 import Notes from "./routes/Notes";
 import People from "./routes/People";
 import Reset from "./routes/Reset";
-
+import Privacy from "./routes/Privacy";
+import Terms from "./routes/Terms";
 import Review from "./routes/Review";
 import BottomNav from "./components/nav/BottomNav";
 import MoreSheet from "./components/nav/MoreSheet";
@@ -278,6 +279,8 @@ export default function App() {
           <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
           <Route path="/routines" element={<Navigate to="/updates?tab=routines" replace />} />
           <Route path="/confirm" element={<Confirm />} />
+          <Route path="/privacy" element={<Privacy />} />
+          <Route path="/terms" element={<Terms />} />
           <Route path="/debug" element={<Debug />} />
           <Route
             path="*"

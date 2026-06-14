@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import AuthNotice from "../components/auth/AuthNotice";
 import PasswordField from "../components/auth/PasswordField";
 import Spinner from "../components/Spinner";
@@ -242,6 +242,18 @@ export default function Auth() {
           <span>{submitLabel}</span>
         </button>
       </form>
+
+      <p className="text-center text-[11px] text-ink/40">
+        By continuing you agree to our{" "}
+        <Link to="/terms" className="underline underline-offset-2 hover:text-ink/60">
+          Terms
+        </Link>{" "}
+        and{" "}
+        <Link to="/privacy" className="underline underline-offset-2 hover:text-ink/60">
+          Privacy Policy
+        </Link>
+        .
+      </p>
     </section>
   );
 }
