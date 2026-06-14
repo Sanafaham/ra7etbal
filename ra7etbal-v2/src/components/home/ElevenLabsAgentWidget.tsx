@@ -530,6 +530,7 @@ export default function ElevenLabsAgentWidget({
   spokenBrief,
   displayName,
   planningCalendarEvents = [],
+  calendarFetched = false,
   inline = false,
   onBeforeCallStart,
   onCallStatusChange,
@@ -544,6 +545,12 @@ export default function ElevenLabsAgentWidget({
    * Powers get_calendar_events in-memory filtering — no live network call needed.
    */
   planningCalendarEvents?: CalendarEvent[];
+  /**
+   * True once App has completed a successful 30-day calendar fetch (even if it
+   * returned zero events). Lets get_calendar_events distinguish "calendar
+   * connected but empty" from "calendar not connected / fetch not yet done".
+   */
+  calendarFetched?: boolean;
   /** When true, renders inline (no fixed positioning). Use inside the Carson section. */
   inline?: boolean;
   /**
@@ -676,6 +683,13 @@ export default function ElevenLabsAgentWidget({
   useEffect(() => {
     planningCalendarEventsRef.current = planningCalendarEvents;
   }, [planningCalendarEvents]);
+
+  // Tracks whether App has completed a successful 30-day calendar fetch.
+  // Lets get_calendar_events distinguish "connected but empty" from "not connected".
+  const calendarFetchedRef = useRef<boolean>(calendarFetched);
+  useEffect(() => {
+    calendarFetchedRef.current = calendarFetched;
+  }, [calendarFetched]);
 
   const maybeSendImpliedDinnerDelegation = useCallback(
     async (userId: string): Promise<void> => {
@@ -1174,7 +1188,14 @@ export default function ElevenLabsAgentWidget({
           ? (range as CalendarRange)
           : "today";
         const cached = planningCalendarEventsRef.current;
-        if (!cached || cached.length === 0) return "No calendar events are loaded. If Google Calendar is not connected, the user should connect it in Settings.";
+        // If the 30-day fetch has never succeeded (not connected or not yet run),
+        // tell Carson to prompt the user to connect Google Calendar in Settings.
+        // If fetch succeeded but returned zero events, say "no events" instead —
+        // not "connect Google Calendar" (calendar IS connected, just empty).
+        if (!calendarFetchedRef.current) {
+          return "No calendar events are loaded. If Google Calendar is not connected, the user should connect it in Settings.";
+        }
+        if (!cached || cached.length === 0) return "No events found in the next 30 days.";
         const filtered = filterCalendarEventsByRange(cached, safeRange);
         if (filtered.length === 0) return "No events found for that period.";
         return filtered

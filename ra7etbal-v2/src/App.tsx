@@ -113,6 +113,8 @@ function PersistentCarsonWidget({
 
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [planningCalendarEvents, setPlanningCalendarEvents] = useState<CalendarEvent[]>([]);
+  /** True once the 30-day calendar fetch completed successfully (even if empty). */
+  const [calendarFetched, setCalendarFetched] = useState(false);
   const [notesBlock, setNotesBlock] = useState("");
 
   // When calendarDisconnectCount increments, clear stale calendar events so
@@ -121,6 +123,7 @@ function PersistentCarsonWidget({
     if (calendarDisconnectCount === 0) return;
     setCalendarEvents([]);
     setPlanningCalendarEvents([]);
+    setCalendarFetched(false);
   }, [calendarDisconnectCount]);
   const [now, setNow] = useState(() => new Date());
 
@@ -176,7 +179,10 @@ function PersistentCarsonWidget({
 
     try {
       const planResult = await fetchCalendarEvents("next_30_days");
-      if (planResult.connected) setPlanningCalendarEvents(planResult.events);
+      if (planResult.connected) {
+        setPlanningCalendarEvents(planResult.events);
+        setCalendarFetched(true);
+      }
     } catch { /* keep existing */ }
 
     const freshTasks = useTasksStore.getState().items;
@@ -199,6 +205,7 @@ function PersistentCarsonWidget({
       spokenBrief={spokenBrief}
       displayName={displayName}
       planningCalendarEvents={planningCalendarEvents}
+      calendarFetched={calendarFetched}
       onBeforeCallStart={handleBeforeCallStart}
       onCallStatusChange={onCallStatusChange}
       onRequestClose={onRequestClose}
