@@ -814,9 +814,6 @@ function GoogleCalendarRow({
         <span className="min-w-0">
           <span className="flex items-center gap-1.5">
             <span className="block text-base text-ink">Google Calendar</span>
-            <span className="rounded-full bg-gold-soft/70 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
-              Beta
-            </span>
           </span>
           <span className={`block text-xs ${statusClass}`}>{statusText}</span>
         </span>
