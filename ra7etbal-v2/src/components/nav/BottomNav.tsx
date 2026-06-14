@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { NavLink } from "react-router-dom";
 import { useCarsonStore } from "../../stores/carson";
-import { useBadgeStore } from "../../stores/badges";
 import { useTasksStore } from "../../stores/tasks";
 import { buildDailyBrief } from "../../lib/daily-brief";
 
@@ -19,12 +18,11 @@ function Badge({ count }: { count: number }) {
 
 /**
  * 4-tab bottom navigation bar.
- * Home / Active / Inbox / Carson (mic opens sheet)
- * Badges: Active = urgent count, Inbox = unprocessed inbox items, Carson = connected dot.
+ * Home / Active / People / Carson (mic opens sheet)
+ * Badges: Active = urgent task count, Carson = connected dot.
  */
 export default function BottomNav() {
   const { setOpen: setCarsonOpen, callStatus } = useCarsonStore();
-  const inboxCount = useBadgeStore((s) => s.inboxCount);
   const tasks = useTasksStore((s) => s.items);
 
   const urgentCount = useMemo(() => {
@@ -83,10 +81,10 @@ export default function BottomNav() {
           )}
         </NavLink>
 
-        {/* Inbox — badge: unprocessed inbox items */}
+        {/* People — core product destination */}
         <NavLink
-          to="/inbox"
-          aria-label="Inbox"
+          to="/people"
+          aria-label="People"
           className={({ isActive }) =>
             "relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " +
             (isActive ? "text-sage" : "text-ink/45 hover:text-ink/70")
@@ -94,14 +92,13 @@ export default function BottomNav() {
         >
           {({ isActive }) => (
             <>
-              <span className="relative">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={isActive ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
-                  <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
-                </svg>
-                <Badge count={inboxCount} />
-              </span>
-              <span>Inbox</span>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={isActive ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              <span>People</span>
             </>
           )}
         </NavLink>

@@ -50,17 +50,15 @@ export default function MoreSheet({ open, onClose, onSettings }: Props) {
               <button
                 type="button"
                 className="flex w-full items-center gap-4 py-4 text-left transition hover:bg-sage/5 active:bg-sage/10 rounded-xl px-2"
-                onClick={() => nav("/people")}
+                onClick={() => nav("/inbox")}
               >
                 <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sage/10">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    <polyline points="22 12 16 12 14 15 10 15 8 12 2 12" />
+                    <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
                   </svg>
                 </span>
-                <span className="text-base font-medium text-ink">People</span>
+                <span className="text-base font-medium text-ink">Inbox &amp; Notes</span>
               </button>
             </li>
             <li>
