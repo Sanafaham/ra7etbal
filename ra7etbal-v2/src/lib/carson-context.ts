@@ -130,7 +130,7 @@ export function buildCarsonContext(input: CarsonContextInput): string {
   if (done.length > 0) {
     lines.push("COMPLETED (recent, treat as history only):");
     for (const t of done) {
-      const by = t.assigned_to ? `, confirmed by ${t.assigned_to}` : "";
+      const by = t.assigned_to ? `, completed by ${t.assigned_to}` : "";
       const when = t.confirmed_at
         ? `, at ${new Date(t.confirmed_at).toLocaleString()}`
         : "";
