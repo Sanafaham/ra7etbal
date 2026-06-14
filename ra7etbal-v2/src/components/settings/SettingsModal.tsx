@@ -832,7 +832,7 @@ function GoogleCalendarRow({
         </button>
       )}
       <p className="mt-1 text-[11px] leading-snug text-ink/40">
-        Available to approved test accounts while we finish Google verification.
+        Connect to let Carson read and manage your Google Calendar.
       </p>
     </div>
   );
