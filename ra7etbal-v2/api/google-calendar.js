@@ -115,7 +115,7 @@ export default async function handler(req, res) {
     }
 
     // ── Route 3: Fetch events (JWT-authenticated) ─────────────────────────
-    if (req.method !== "POST" && authHeader.startsWith("Bearer ")) {
+    if (req.method === "GET" && authHeader.startsWith("Bearer ")) {
       const jwt = authHeader.slice(7);
       const supabaseUrl = process.env.SUPABASE_URL;
       const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

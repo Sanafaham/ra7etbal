@@ -1361,6 +1361,12 @@ export default function ElevenLabsAgentWidget({
   const updateCalendarEventTool = useCallback(
     async (params: any): Promise<string> => {
       try {
+        console.log("[calendar:update_tool_called] event_id=%s title=%s date=%s time=%s",
+          params?.event_id ?? "none",
+          params?.title ?? "none",
+          params?.date ?? "none",
+          params?.time ?? "none",
+        );
         const eventId: string = (params?.event_id ?? "").trim();
         if (!eventId) {
           return "I need the event ID to update it. Please call get_calendar_events first to find the event.";
@@ -1402,8 +1408,10 @@ export default function ElevenLabsAgentWidget({
           cache: "no-store",
         });
 
+        console.log("[calendar:update_tool_called] backend_status=%d", res.status);
         const data = await res.json().catch(() => null);
-        if (!data) return "Something went wrong. Please try again.";
+        console.log("[calendar:update_tool_called] backend_ok=%s code=%s", data?.ok, data?.code ?? "none");
+        if (!data) return "I couldn't update that event. Please try again.";
 
         if (!data.ok) {
           if (data.code === "reconnect_required") {
@@ -1457,6 +1465,7 @@ export default function ElevenLabsAgentWidget({
   const deleteCalendarEventTool = useCallback(
     async (params: any): Promise<string> => {
       try {
+        console.log("[calendar:delete_tool_called] event_id=%s", params?.event_id ?? "none");
         const eventId: string = (params?.event_id ?? "").trim();
         if (!eventId) {
           return "I need the event ID to delete it. Please call get_calendar_events first to find the event.";
@@ -1480,8 +1489,10 @@ export default function ElevenLabsAgentWidget({
           cache: "no-store",
         });
 
+        console.log("[calendar:delete_tool_called] backend_status=%d", res.status);
         const data = await res.json().catch(() => null);
-        if (!data) return "Something went wrong. Please try again.";
+        console.log("[calendar:delete_tool_called] backend_ok=%s code=%s", data?.ok, data?.code ?? "none");
+        if (!data) return "I couldn't delete that event. Please try again.";
 
         if (!data.ok) {
           if (data.code === "reconnect_required") {
