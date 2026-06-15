@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "./lib/supabase";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import Actions from "./routes/Actions";
@@ -54,29 +55,68 @@ function AuthRoute() {
 function ResetRoute() {
   const { status } = useAuth();
   const location = useLocation();
-  const [codeExchangeTimedOut, setCodeExchangeTimedOut] = useState(false);
+  // Whether verifyOtp has settled (resolved or rejected).
+  const [exchangeAttempted, setExchangeAttempted] = useState(false);
+  const [exchangeTimedOut, setExchangeTimedOut] = useState(false);
 
-  // With flowType:"pkce", Supabase sends the recovery link to
-  // /reset?code=XXXX rather than /#access_token=...&type=recovery.
-  // Supabase JS fires INITIAL_SESSION with null (no prior session) before it
-  // exchanges the code and fires PASSWORD_RECOVERY. If we let ResetRoute
-  // redirect to /auth during that window, the recovery session is lost.
-  //
-  // Fix: stay on the loading pane while status is signed_out AND a ?code
-  // param is present — that is the PKCE exchange in-flight window.
-  // A 10-second timeout ejects to /auth for stale/expired codes.
+  // --- token_hash flow (new) ---
+  // The Recovery email template now links directly to our app:
+  //   https://www.ra7etbal.com/reset?token_hash=<hash>&type=recovery
+  // Our JS calls verifyOtp() so Gmail/Google prefetchers (which don't run JS)
+  // can never consume the single-use token. No PKCE code-verifier required.
+  const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const tokenHash = params.get("token_hash");
+  const tokenType = params.get("type");
+  const hasTokenHash = !!tokenHash && tokenType === "recovery";
+
+  // --- legacy PKCE code path ---
+  // Supabase SDK strips ?code= from the URL synchronously (before React mounts)
+  // via history.replaceState, so this is usually false by the time we render.
+  // Kept as a belt-and-suspenders guard in case timing differs.
   const hasPkceCode = location.search.includes("code=");
 
   useEffect(() => {
+    if (!hasTokenHash) return;
+    let cancelled = false;
+    const t = window.setTimeout(() => setExchangeTimedOut(true), 10_000);
+    supabase.auth
+      .verifyOtp({ token_hash: tokenHash!, type: "recovery" })
+      .finally(() => {
+        if (!cancelled) {
+          setExchangeAttempted(true);
+          window.clearTimeout(t);
+        }
+      });
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [hasTokenHash, tokenHash]);
+
+  // For the legacy PKCE path: if signed_out + code still in URL, wait up to
+  // 10 s for the SDK's async exchange before ejecting to /auth.
+  useEffect(() => {
     if (!hasPkceCode) return;
-    const t = window.setTimeout(() => setCodeExchangeTimedOut(true), 10_000);
+    const t = window.setTimeout(() => setExchangeTimedOut(true), 10_000);
     return () => window.clearTimeout(t);
   }, [hasPkceCode]);
 
-  console.debug("[ResetRoute]", { status, hasPkceCode, codeExchangeTimedOut, search: location.search });
+  const waitingForExchange =
+    (hasTokenHash && !exchangeAttempted && !exchangeTimedOut) ||
+    (hasPkceCode && status === "signed_out" && !exchangeTimedOut);
+
+  console.debug("[ResetRoute]", {
+    status,
+    hasTokenHash,
+    hasPkceCode,
+    exchangeAttempted,
+    exchangeTimedOut,
+    waitingForExchange,
+    search: location.search,
+  });
 
   if (status === "loading") return <LoadingPane />;
-  if (status === "signed_out" && hasPkceCode && !codeExchangeTimedOut) return <LoadingPane />;
+  if (waitingForExchange) return <LoadingPane />;
   if (status === "recovery") return <Reset />;
   if (status === "signed_in") return <Navigate to="/" replace />;
   return <Navigate to="/auth" replace />;

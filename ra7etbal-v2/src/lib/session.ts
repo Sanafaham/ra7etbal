@@ -84,7 +84,15 @@ function handleEvent(event: AuthChangeEvent, session: Session | null): void {
         path: window.location.pathname,
         currentStatus: useAuthStore.getState().status,
       });
-      if (session) store._setSignedIn(session.user);
+      if (!session) return;
+      // On /reset, verifyOtp fires SIGNED_IN immediately before PASSWORD_RECOVERY.
+      // Pre-set recovery here to avoid a flash-navigate to "/" before the
+      // PASSWORD_RECOVERY event arrives in the next tick.
+      if (window.location.pathname === "/reset") {
+        store._setRecovery(session.user);
+      } else {
+        store._setSignedIn(session.user);
+      }
       return;
 
     case "SIGNED_OUT":
