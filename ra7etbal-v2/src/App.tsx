@@ -15,6 +15,7 @@ import Inbox from "./routes/Inbox";
 import Messages from "./routes/Messages";
 import Notes from "./routes/Notes";
 import People from "./routes/People";
+import Landing from "./routes/Landing";
 import Reset from "./routes/Reset";
 import Privacy from "./routes/Privacy";
 import Terms from "./routes/Terms";
@@ -128,6 +129,14 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (status === "signed_out") return <Navigate to="/auth" replace />;
   if (status === "recovery") return <Navigate to="/reset" replace />;
   return <>{children}</>;
+}
+
+function HomeRoute() {
+  const { status } = useAuth();
+  if (status === "loading") return <LoadingPane />;
+  if (status === "signed_out") return <Landing />;
+  if (status === "recovery") return <Navigate to="/reset" replace />;
+  return <Home />;
 }
 
 /**
@@ -325,7 +334,7 @@ export default function App() {
         <ConfirmationNotices />
 
         <Routes>
-          <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+          <Route path="/" element={<HomeRoute />} />
           <Route path="/auth" element={<AuthRoute />} />
           <Route path="/reset" element={<ResetRoute />} />
           <Route path="/review" element={<ProtectedRoute><Review /></ProtectedRoute>} />
