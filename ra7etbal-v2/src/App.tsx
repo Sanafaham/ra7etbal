@@ -53,7 +53,28 @@ function AuthRoute() {
 
 function ResetRoute() {
   const { status } = useAuth();
+  const location = useLocation();
+  const [codeExchangeTimedOut, setCodeExchangeTimedOut] = useState(false);
+
+  // With flowType:"pkce", Supabase sends the recovery link to
+  // /reset?code=XXXX rather than /#access_token=...&type=recovery.
+  // Supabase JS fires INITIAL_SESSION with null (no prior session) before it
+  // exchanges the code and fires PASSWORD_RECOVERY. If we let ResetRoute
+  // redirect to /auth during that window, the recovery session is lost.
+  //
+  // Fix: stay on the loading pane while status is signed_out AND a ?code
+  // param is present — that is the PKCE exchange in-flight window.
+  // A 10-second timeout ejects to /auth for stale/expired codes.
+  const hasPkceCode = location.search.includes("code=");
+
+  useEffect(() => {
+    if (!hasPkceCode) return;
+    const t = window.setTimeout(() => setCodeExchangeTimedOut(true), 10_000);
+    return () => window.clearTimeout(t);
+  }, [hasPkceCode]);
+
   if (status === "loading") return <LoadingPane />;
+  if (status === "signed_out" && hasPkceCode && !codeExchangeTimedOut) return <LoadingPane />;
   if (status === "recovery") return <Reset />;
   if (status === "signed_in") return <Navigate to="/" replace />;
   return <Navigate to="/auth" replace />;
