@@ -42,23 +42,48 @@ function handleEvent(event: AuthChangeEvent, session: Session | null): void {
     case "INITIAL_SESSION":
       if (!session) {
         store._setSignedOut();
+        console.debug("[auth] INITIAL_SESSION → signed_out (no session)");
         return;
       }
-      // If the URL still carries a recovery hash, the very next event will be
-      // PASSWORD_RECOVERY — let that handler set the state. Otherwise this is
-      // a normal restored session.
-      if (window.location.hash.includes("type=recovery")) {
-        store._setRecovery(session.user);
-      } else {
-        store._setSignedIn(session.user);
+      // Two recovery indicators to check:
+      //   1. Implicit flow: URL hash contains `type=recovery` (legacy, non-PKCE)
+      //   2. PKCE flow: SDK exchanges the ?code= and removes it from the URL via
+      //      history.replaceState *before* INITIAL_SESSION fires, so we can no
+      //      longer see ?code= here. But we know we're on /reset because that's
+      //      the redirectTo we sent to Supabase, and the only way INITIAL_SESSION
+      //      fires with a live session on /reset is via the PKCE recovery exchange.
+      //      The real PASSWORD_RECOVERY event arrives in the next setTimeout tick;
+      //      pre-setting recovery here prevents ResetRoute from navigating away
+      //      with a premature signed_in → Navigate("/") before that tick fires.
+      {
+        const isImplicitRecovery = window.location.hash.includes("type=recovery");
+        const isPkceRecovery = window.location.pathname === "/reset";
+        console.debug("[auth] INITIAL_SESSION → session present", {
+          isImplicitRecovery,
+          isPkceRecovery,
+          path: window.location.pathname,
+          hash: window.location.hash,
+          search: window.location.search,
+        });
+        if (isImplicitRecovery || isPkceRecovery) {
+          store._setRecovery(session.user);
+        } else {
+          store._setSignedIn(session.user);
+        }
       }
       return;
 
     case "PASSWORD_RECOVERY":
+      console.debug("[auth] PASSWORD_RECOVERY fired", { hasSession: !!session });
       if (session) store._setRecovery(session.user);
       return;
 
     case "SIGNED_IN":
+      console.debug("[auth] SIGNED_IN fired", {
+        hasSession: !!session,
+        path: window.location.pathname,
+        currentStatus: useAuthStore.getState().status,
+      });
       if (session) store._setSignedIn(session.user);
       return;
 

@@ -27,14 +27,15 @@ export async function signUpWithPassword({ email, password }: Credentials): Prom
 export async function sendResetEmail(email: string): Promise<void> {
   // Always use the canonical www origin so the redirectTo matches the Supabase
   // allowlist regardless of which domain the user triggered the reset from.
-  // Use the non-www canonical origin. www.ra7etbal.com has a DNS-level
-  // redirect (registrar, not Vercel) that strips path+query, so any link to
-  // www.ra7etbal.com/reset?code=XXX lands at ra7etbal.com (root) with the
-  // PKCE code gone. ra7etbal.com has no such redirect, so the code survives.
+  // www.ra7etbal.com is the primary domain Vercel serves directly.
+  // ra7etbal.com has a Vercel 308 redirect → www (path+query preserved).
+  // Using www avoids the extra redirect hop and keeps the PKCE verifier
+  // (stored in www.ra7etbal.com localStorage) on the same origin as the
+  // PKCE code-exchange callback URL.
   const origin =
     window.location.hostname === "localhost"
       ? window.location.origin
-      : "https://ra7etbal.com";
+      : "https://www.ra7etbal.com";
   const redirectTo = origin + "/reset";
   const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
   if (error) throw friendly(error, "reset");

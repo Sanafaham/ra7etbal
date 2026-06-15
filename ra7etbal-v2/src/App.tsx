@@ -73,6 +73,8 @@ function ResetRoute() {
     return () => window.clearTimeout(t);
   }, [hasPkceCode]);
 
+  console.debug("[ResetRoute]", { status, hasPkceCode, codeExchangeTimedOut, search: location.search });
+
   if (status === "loading") return <LoadingPane />;
   if (status === "signed_out" && hasPkceCode && !codeExchangeTimedOut) return <LoadingPane />;
   if (status === "recovery") return <Reset />;
