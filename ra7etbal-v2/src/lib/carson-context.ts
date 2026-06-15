@@ -22,6 +22,7 @@ import type { Task } from "../types/task";
 import type { CalendarEvent } from "./calendar";
 import { formatReminderDue } from "./reminder-time";
 import { classifyCalendarEvent, formatEventTime, formatEventEndTime } from "./calendar";
+import { derivePendingItems, formatPendingItemsForCarson } from "./pending-items";
 
 export interface CarsonContextInput {
   tasks: Task[];
@@ -113,6 +114,10 @@ export function buildCarsonContext(input: CarsonContextInput): string {
       lines.push(`- ${t.type}, ${t.status}${assigned}${due}: ${t.description.trim()}`);
     }
   }
+
+  // ── Pending loops (stale, escalated, waiting — explicit open loop list) ─────
+  const pendingItems = derivePendingItems(tasks, now);
+  lines.push(formatPendingItemsForCarson(pendingItems, now));
 
   // ── Recent completions (last 5, regardless of confirmation date) ──────────
   // Sorted by confirmed_at descending so the most recent confirmation is first.

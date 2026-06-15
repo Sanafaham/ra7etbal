@@ -70,14 +70,17 @@ export function buildMorningBrief(
 
   // ── 2. Waiting on others ─────────────────────────────────────────────────
   // Active delegations / followups; excludes items already in overdue.
-  const waitingOn = active.filter((t) => {
-    if (t.status !== "pending") return false;
-    if (overdueIds.has(t.id)) return false;
-    if (t.type === "delegation" && t.assigned_to) return true;
-    if (t.type === "followup") return true;
-    if (t.needs_follow_up && t.assigned_to) return true;
-    return false;
-  });
+  const waitingOn = active
+    .filter((t) => {
+      if (t.status !== "pending") return false;
+      if (overdueIds.has(t.id)) return false;
+      if (t.type === "delegation" && t.assigned_to) return true;
+      if (t.type === "followup") return true;
+      if (t.needs_follow_up && t.assigned_to) return true;
+      return false;
+    })
+    // Oldest first — escalated/stale items surface before fresh ones
+    .sort((a, b) => getDateValue(a.created_at) - getDateValue(b.created_at));
   const waitingIds = new Set(waitingOn.map((t) => t.id));
 
   // ── 1. Needs your attention ──────────────────────────────────────────────
@@ -415,6 +418,12 @@ export function buildMorningBriefSpoken(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function getDateValue(value: string | null): number {
+  if (!value) return 0;
+  const t = new Date(value).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
 
 function isSameLocalDay(a: Date, b: Date): boolean {
   return (
