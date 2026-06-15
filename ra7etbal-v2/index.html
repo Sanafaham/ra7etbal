@@ -20,6 +20,21 @@
     />
   </head>
   <body>
+    <!--
+      Canonical-domain redirect — must run before any module script so the
+      Supabase PKCE code_verifier (stored in localStorage) is always written
+      under the ra7etbal.com origin. If the user lands on www.ra7etbal.com the
+      code_verifier is stored there; the reset email redirects to ra7etbal.com;
+      the exchange silently fails because the two origins have separate storage.
+      Redirecting www → non-www here, preserving path + query + hash, fixes it.
+    -->
+    <script>
+      if (location.hostname === 'www.ra7etbal.com') {
+        location.replace(
+          'https://ra7etbal.com' + location.pathname + location.search + location.hash
+        );
+      }
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
