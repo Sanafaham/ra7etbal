@@ -1,8 +1,6 @@
 # Ra7etBal v2
 
-Clean rebuild of Ra7etBal. Lives alongside the legacy `ra7etbal/` single-file app.
-Deployed to a **separate Vercel project** at its own preview URL.
-Production cutover only after the regression checklist passes on Chrome, Safari, and iOS Safari.
+Clean rebuild of Ra7etBal. Deployed on Vercel with custom domain **https://ra7etbal.com**.
 
 ## Stack
 

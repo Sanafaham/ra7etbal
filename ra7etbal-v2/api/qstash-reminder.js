@@ -34,7 +34,7 @@ export default async function handler(req, res) {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const qstashToken = process.env.QSTASH_TOKEN;
   const cronSecret = process.env.CRON_SECRET;
-  let appBaseUrl = (process.env.APP_BASE_URL || 'https://ra7etbal-v2.vercel.app').trim();
+  let appBaseUrl = (process.env.APP_BASE_URL || 'https://ra7etbal.com').trim();
   // Ensure the URL has a scheme — QStash rejects destinations without https://
   if (appBaseUrl && !appBaseUrl.startsWith('http://') && !appBaseUrl.startsWith('https://')) {
     appBaseUrl = `https://${appBaseUrl}`;

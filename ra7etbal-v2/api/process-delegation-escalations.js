@@ -106,7 +106,7 @@ export default async function handler(req, res) {
   const vapidPublic    = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY;
   const vapidPrivate   = process.env.VAPID_PRIVATE_KEY;
   const vapidSubject   = process.env.VAPID_SUBJECT;
-  const appBaseUrl     = (process.env.APP_BASE_URL || 'https://ra7etbal-v2.vercel.app').trim();
+  const appBaseUrl     = (process.env.APP_BASE_URL || 'https://ra7etbal.com').trim();
 
   const missing = [];
   if (!supabaseUrl)  missing.push('SUPABASE_URL');
