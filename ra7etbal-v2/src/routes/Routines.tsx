@@ -54,6 +54,11 @@ function autoName(
       : `Weekly: ${title}`;
   }
   const name = personName.trim() || "someone";
+  if (type === "message") {
+    return schedule === "daily"
+      ? `Daily message → ${name}`
+      : `${WEEKDAYS[scheduleDay] ?? "Weekly"} message → ${name}`;
+  }
   return schedule === "daily"
     ? `Daily delegation → ${name}`
     : `${WEEKDAYS[scheduleDay] ?? "Weekly"} delegation → ${name}`;
@@ -69,6 +74,8 @@ interface FormState {
   reminderTitle: string;
   delegatePersonId: string;
   delegateMessage: string;
+  messagePersonId: string;
+  messageBody: string;
   name: string;
   nameEdited: boolean;        // true once user manually edits name
 }
@@ -82,6 +89,8 @@ function blankForm(): FormState {
     reminderTitle: "",
     delegatePersonId: "",
     delegateMessage: "",
+    messagePersonId: "",
+    messageBody: "",
     name: "",
     nameEdited: false,
   };
@@ -166,8 +175,11 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
       // Auto-update name unless user has manually edited it
       if (!prev.nameEdited) {
-        const personName =
-          delegatablePeople.find((p) => p.id === (key === "delegatePersonId" ? (value as string) : prev.delegatePersonId))?.name ?? "";
+        // Resolve the relevant person ID for the active type
+        const delegateId = key === "delegatePersonId" ? (value as string) : prev.delegatePersonId;
+        const messageId  = key === "messagePersonId"  ? (value as string) : prev.messagePersonId;
+        const activePersonId = next.type === "message" ? messageId : delegateId;
+        const personName = delegatablePeople.find((p) => p.id === activePersonId)?.name ?? "";
         next.name = autoName(
           next.type,
           next.schedule,
@@ -217,6 +229,16 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
         return;
       }
     }
+    if (form.type === "message") {
+      if (!form.messagePersonId) {
+        setFormError("Please select a recipient.");
+        return;
+      }
+      if (!form.messageBody.trim()) {
+        setFormError("Please enter the message to send.");
+        return;
+      }
+    }
     if (!form.scheduleTime) {
       setFormError("Please set a time for this routine.");
       return;
@@ -225,7 +247,9 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
     const payload: Record<string, unknown> =
       form.type === "reminder"
         ? { title: form.reminderTitle.trim() }
-        : { person_id: form.delegatePersonId, message: form.delegateMessage.trim() };
+        : form.type === "message"
+          ? { person_id: form.messagePersonId, message: form.messageBody.trim() }
+          : { person_id: form.delegatePersonId, message: form.delegateMessage.trim() };
 
     const input: CreateRoutineInput = {
       name: form.name.trim(),
@@ -348,8 +372,8 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           {/* Type picker */}
           <div className="space-y-1.5">
             <p className="text-xs font-medium text-ink/50 uppercase tracking-wide">Type</p>
-            <div className="flex gap-2">
-              {(["reminder", "delegation"] as RoutineType[]).map((t) => (
+            <div className="flex flex-wrap gap-2">
+              {(["reminder", "delegation", "message"] as RoutineType[]).map((t) => (
                 <button
                   key={t}
                   type="button"
@@ -360,7 +384,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                       : "bg-sand/60 text-ink/70 hover:bg-sand"
                   }`}
                 >
-                  {t === "reminder" ? "Remind me" : "Delegate"}
+                  {t === "reminder" ? "Remind me" : t === "delegation" ? "Delegate" : "Send message"}
                 </button>
               ))}
             </div>
@@ -424,6 +448,55 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   rows={3}
                   className="w-full resize-none rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-ink/30 focus:border-sage/60 focus:outline-none"
                 />
+              </div>
+            </div>
+          )}
+
+          {/* Message fields */}
+          {form.type === "message" && (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+                  Recipient
+                </label>
+                {peopleStatus === "loading" && delegatablePeople.length === 0 ? (
+                  <p className="text-sm text-ink/40">Loading people…</p>
+                ) : delegatablePeople.length === 0 ? (
+                  <p className="text-sm text-ink/50">
+                    No people with saved phone numbers.{" "}
+                    <a href="/people" className="text-sage underline underline-offset-2">
+                      Add someone in People.
+                    </a>
+                  </p>
+                ) : (
+                  <select
+                    value={form.messagePersonId}
+                    onChange={(e) => setField("messagePersonId", e.target.value)}
+                    className="w-full rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink focus:border-sage/60 focus:outline-none"
+                  >
+                    <option value="">Select a recipient…</option>
+                    {delegatablePeople.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+                  Message
+                </label>
+                <textarea
+                  value={form.messageBody}
+                  onChange={(e) => setField("messageBody", e.target.value)}
+                  placeholder={`e.g. Good morning Loulya, I love you. Please keep me posted on your day.`}
+                  rows={4}
+                  className="w-full resize-none rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-ink/30 focus:border-sage/60 focus:outline-none"
+                />
+                <p className="text-[11px] text-ink/40">
+                  Sent verbatim — not rewritten or modified.
+                </p>
               </div>
             </div>
           )}
@@ -593,11 +666,13 @@ function RoutineCard({
   onToggle,
   onDelete,
 }: RoutineCardProps) {
-  const typeLabel = routine.type === "reminder" ? "Reminder" : "Delegation";
+  const typeLabel =
+    routine.type === "reminder" ? "Reminder" :
+    routine.type === "message"  ? "Message"  : "Delegation";
   const typeBadgeClass =
-    routine.type === "reminder"
-      ? "bg-stone/40 text-espresso/70"
-      : "bg-sage/15 text-sage";
+    routine.type === "reminder" ? "bg-stone/40 text-espresso/70" :
+    routine.type === "message"  ? "bg-blue-50 text-blue-600"     :
+    "bg-sage/15 text-sage";
 
   return (
     <div

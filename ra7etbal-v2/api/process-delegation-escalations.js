@@ -640,6 +640,16 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
           continue;
         }
         executed = result === true;
+
+      } else if (routine.type === 'message') {
+        const result = await executeMessageRoutine({ routine, supabaseUrl, serviceKey });
+        if (result === 'missing_person') {
+          // Don't disable — person might get a phone added later; just skip this tick.
+          console.warn('[routines] message routine skipped (missing person or phone)', { routineId: routine.id });
+          stats.skipped++;
+          continue;
+        }
+        executed = result === true;
       }
 
       if (executed) {
@@ -889,6 +899,138 @@ async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appB
   // push at the 20-min mark — no explicit scheduling needed here.
 
   return true;
+}
+
+/**
+ * Execute a message routine:
+ *   1. Validate template config (WHATSAPP_ROUTINE_MESSAGE_TEMPLATE env var).
+ *   2. Resolve person — skip (not disable) if person or phone missing.
+ *   3. Call Meta Graph API directly with the routine message template.
+ *   4. NO task creation. NO confirmation link. Message sent verbatim.
+ *
+ * Returns true on successful Meta acceptance,
+ *         'missing_person' if person/phone cannot be resolved,
+ *         false on other failures (template missing, Meta error, etc).
+ */
+async function executeMessageRoutine({ routine, supabaseUrl, serviceKey }) {
+  const { user_id, payload, id: routineId, name: routineName } = routine;
+
+  // ── Guard: template must be configured ───────────────────────────────────
+  const accessToken      = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId    = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const templateName     = (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || '').trim();
+  const templateLanguage = (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
+
+  if (!templateName) {
+    console.warn('[routines] message: WHATSAPP_ROUTINE_MESSAGE_TEMPLATE not set — skipping', { routineId, routineName });
+    return false;
+  }
+  if (!accessToken || !phoneNumberId) {
+    console.warn('[routines] message: WhatsApp not configured (missing ACCESS_TOKEN or PHONE_NUMBER_ID) — skipping', { routineId });
+    return false;
+  }
+
+  // ── Guard: payload must have person_id and non-empty message ─────────────
+  const { person_id, message } = payload || {};
+
+  if (!person_id) {
+    console.error('[routines] message: missing person_id in payload', { routineId });
+    return false;
+  }
+  const cleanMessage = typeof message === 'string' ? message.trim() : '';
+  if (!cleanMessage) {
+    console.error('[routines] message: message body is empty — skipping', { routineId });
+    return false;
+  }
+
+  // ── Resolve person ────────────────────────────────────────────────────────
+  const person = await resolvePersonById(supabaseUrl, serviceKey, user_id, person_id);
+  if (!person) {
+    console.warn('[routines] message: person not found', { routineId, person_id });
+    return 'missing_person';
+  }
+  if (!person.phone) {
+    console.warn('[routines] message: person has no phone number', { routineId, person_id, personName: person.name });
+    return 'missing_person';
+  }
+
+  // ── Normalise phone (strip non-digits, remove leading 00) ────────────────
+  let digits = String(person.phone).replace(/[^\d]/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  const normalizedPhone = digits.length >= 7 ? digits : null;
+  if (!normalizedPhone) {
+    console.warn('[routines] message: phone number could not be normalised', { routineId, personName: person.name });
+    return 'missing_person';
+  }
+
+  // ── Send via Meta Graph API ───────────────────────────────────────────────
+  const metaUrl = `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`;
+  const metaPayload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: normalizedPhone,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: templateLanguage },
+      components: [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: cleanMessage }, // {{1}} = message body
+          ],
+        },
+      ],
+    },
+  };
+
+  console.log('[routines] message: sending', {
+    routineId,
+    routineName,
+    templateName,
+    templateLanguage,
+    recipientName: person.name,
+    messageLength: cleanMessage.length,
+  });
+
+  try {
+    const metaRes = await fetch(metaUrl, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(metaPayload),
+    });
+
+    const metaBody = await metaRes.json().catch(() => null);
+
+    if (!metaRes.ok) {
+      console.error('[routines] message: Meta rejected the message', {
+        routineId,
+        status: metaRes.status,
+        metaCode: metaBody?.error?.code ?? null,
+        metaMessage: metaBody?.error?.message ?? null,
+        templateName,
+      });
+      return false;
+    }
+
+    const metaMessageId = Array.isArray(metaBody?.messages) ? metaBody.messages[0]?.id ?? null : null;
+    console.log('[routines] message: Meta accepted', {
+      routineId,
+      metaMessageId,
+      recipientName: person.name,
+    });
+    return true;
+
+  } catch (err) {
+    console.error('[routines] message: fetch to Meta threw', {
+      routineId,
+      error: err?.message ?? String(err),
+    });
+    return false;
+  }
 }
 
 // ── Routine-specific helpers ──────────────────────────────────────────────────

@@ -12,7 +12,7 @@ import { supabase } from "./supabase";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type RoutineType = "reminder" | "delegation";
+export type RoutineType = "reminder" | "delegation" | "message";
 export type RoutineSchedule = "daily" | "weekly";
 
 export interface Routine {
