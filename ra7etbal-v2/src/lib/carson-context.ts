@@ -36,6 +36,11 @@ export interface CarsonContextInput {
    * Pass empty string or omit when notes aren't loaded yet.
    */
   notesBlock?: string;
+  /**
+   * Household-level delegation rules text (from household_rules table).
+   * Injected verbatim into Carson's context so it guides assignment decisions.
+   */
+  householdRules?: string | null;
 }
 
 /**
@@ -58,18 +63,80 @@ export function buildCarsonContext(input: CarsonContextInput): string {
   // ── Identity ──────────────────────────────────────────────────────────────
   if (email) lines.push(`User email: ${email}`);
 
-  // ── People ────────────────────────────────────────────────────────────────
+  // ── People & Household Intelligence ──────────────────────────────────────
   if (people.length > 0) {
-    const items = people.slice(0, 12).map((p) => {
-      const role = p.role?.trim() ? ` (${p.role.trim()})` : "";
-      const notes = p.notes?.trim()
-        ? ` — ${p.notes.trim().replace(/\s+/g, " ").slice(0, 300)}`
-        : "";
-      return `${p.name.trim()}${role}${notes}`;
-    });
-    lines.push(`People: ${items.join("; ")}`);
+    lines.push("PEOPLE & DELEGATION INTELLIGENCE:");
+    for (const p of people.slice(0, 20)) {
+      const name = p.name.trim();
+      const role = p.role?.trim() ?? "";
+
+      // Family members get special top-line treatment
+      if (p.is_family) {
+        const rel = p.relationship?.trim() ? ` — ${p.relationship.trim()}` : "";
+        const guidance = p.delegation_guidance?.trim()
+          ? ` | ${p.delegation_guidance.trim().slice(0, 200)}`
+          : "";
+        lines.push(`${name}${role ? ` (${role})` : ""}${rel} [FAMILY — do not treat as staff${guidance}]`);
+        continue;
+      }
+
+      // Build a structured staff entry
+      const parts: string[] = [];
+      if (role) parts.push(role);
+      if (p.relationship?.trim()) parts.push(p.relationship.trim());
+
+      const flags: string[] = [];
+      if (p.reliability_level) {
+        const label: Record<string, string> = {
+          very_high: "RELIABILITY: very high",
+          high: "RELIABILITY: high",
+          medium: "RELIABILITY: medium",
+          needs_support: "RELIABILITY: needs support",
+        };
+        flags.push(label[p.reliability_level] ?? p.reliability_level);
+      }
+      if (p.follow_up_level && p.follow_up_level !== "none") {
+        const label: Record<string, string> = {
+          light: "FOLLOW-UP: light",
+          regular: "FOLLOW-UP: required",
+          high: "FOLLOW-UP: high — always check in",
+        };
+        flags.push(label[p.follow_up_level] ?? p.follow_up_level);
+      }
+
+      const header = `${name}${parts.length ? ` (${parts.join(", ")})` : ""}${flags.length ? ` [${flags.join(" | ")}]` : ""}`;
+      lines.push(header);
+
+      if (p.responsibilities?.trim()) {
+        lines.push(`  Responsibilities: ${p.responsibilities.trim().slice(0, 250)}`);
+      }
+      if (p.delegation_guidance?.trim()) {
+        lines.push(`  Delegation guidance: ${p.delegation_guidance.trim().slice(0, 300)}`);
+      }
+      if (p.should_not_assign?.trim()) {
+        lines.push(`  Do NOT assign: ${p.should_not_assign.trim().slice(0, 200)}`);
+      }
+      if (p.escalate_to?.trim()) {
+        lines.push(`  Escalate to: ${p.escalate_to.trim()}`);
+      }
+      if (p.communication_style?.trim()) {
+        lines.push(`  Communication style: ${p.communication_style.trim().slice(0, 150)}`);
+      }
+      if (p.notes?.trim()) {
+        lines.push(`  Notes: ${p.notes.trim().slice(0, 200)}`);
+      }
+      if (p.phone?.trim()) {
+        lines.push(`  Phone: ${p.phone.trim()}`);
+      }
+    }
   } else {
-    lines.push("People: none saved.");
+    lines.push("PEOPLE: none saved.");
+  }
+
+  // ── Household Delegation Rules ────────────────────────────────────────────
+  if (input.householdRules?.trim()) {
+    lines.push("HOUSEHOLD DELEGATION RULES:");
+    lines.push(input.householdRules.trim());
   }
 
   // ── Calendar ──────────────────────────────────────────────────────────────

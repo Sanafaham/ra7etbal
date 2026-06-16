@@ -81,6 +81,15 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
       phone: draft.phone,
       notes: draft.notes,
       created_at: new Date().toISOString(),
+      relationship: draft.relationship ?? null,
+      is_family: draft.is_family ?? false,
+      responsibilities: draft.responsibilities ?? null,
+      reliability_level: draft.reliability_level ?? null,
+      follow_up_level: draft.follow_up_level ?? null,
+      delegation_guidance: draft.delegation_guidance ?? null,
+      should_not_assign: draft.should_not_assign ?? null,
+      escalate_to: draft.escalate_to ?? null,
+      communication_style: draft.communication_style ?? null,
     };
     set((s) => ({ items: [...s.items, optimistic] }));
     try {

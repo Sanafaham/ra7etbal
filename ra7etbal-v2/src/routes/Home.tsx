@@ -141,6 +141,12 @@ export default function Home() {
   );
   const supportingLines = statusSummary.lines;
 
+  const isEvening = now.getHours() >= 20;
+  const nightSweepLines = useMemo(
+    () => (isEvening ? buildNightSweepLines(tasks, now) : []),
+    [tasks, now, isEvening],
+  );
+
   const trimmed = text.trim();
   const canSubmit = !submitting && (trimmed.length > 0 || !!draftImageFile) && !!userId;
   const keyboardOpen = textareaFocused || viewportShrunk;

@@ -10,7 +10,12 @@ import type { Person, PersonDraft, PersonPatch } from "../types/person";
  * (`user_id default auth.uid()`) configured on the column.
  */
 
-const COLUMNS = "id, user_id, name, role, phone, notes, created_at";
+const COLUMNS = [
+  "id", "user_id", "name", "role", "phone", "notes", "created_at",
+  "relationship", "is_family", "responsibilities",
+  "reliability_level", "follow_up_level", "delegation_guidance",
+  "should_not_assign", "escalate_to", "communication_style",
+].join(", ");
 
 export async function listPeople(): Promise<Person[]> {
   const { data, error } = await supabase
@@ -18,7 +23,7 @@ export async function listPeople(): Promise<Person[]> {
     .select(COLUMNS)
     .order("created_at", { ascending: true });
   if (error) throw friendly(error);
-  return (data ?? []) as Person[];
+  return (data ?? []) as unknown as Person[];
 }
 
 export async function createPerson(draft: PersonDraft): Promise<Person> {
@@ -28,7 +33,7 @@ export async function createPerson(draft: PersonDraft): Promise<Person> {
     .select(COLUMNS)
     .single();
   if (error) throw friendly(error);
-  return data as Person;
+  return data as unknown as Person;
 }
 
 export async function updatePerson(id: string, patch: PersonPatch): Promise<Person> {
@@ -39,7 +44,7 @@ export async function updatePerson(id: string, patch: PersonPatch): Promise<Pers
     .select(COLUMNS)
     .single();
   if (error) throw friendly(error);
-  return data as Person;
+  return data as unknown as Person;
 }
 
 export async function deletePerson(id: string): Promise<void> {

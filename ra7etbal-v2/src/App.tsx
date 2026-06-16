@@ -32,7 +32,9 @@ import { buildCarsonContext } from "./lib/carson-context";
 import { fetchCalendarEvents, type CalendarEvent } from "./lib/calendar";
 import { formatNotesForContext, loadRecentNotes } from "./lib/carson-notes";
 import { buildMorningBriefSpoken } from "./lib/morning-brief";
+import { buildNightSweepSpoken } from "./lib/night-sweep";
 import { useCarsonStore } from "./stores/carson";
+import { useHouseholdRulesStore } from "./stores/household-rules";
 import { usePeopleStore } from "./stores/people";
 import { useProfileStore } from "./stores/profile";
 import { useTasksStore } from "./stores/tasks";
@@ -184,6 +186,10 @@ function PersistentCarsonWidget({
     useShallow((s) => ({ displayName: s.displayName })),
   );
 
+  const { householdRules, loadHouseholdRules } = useHouseholdRulesStore(
+    (s) => ({ householdRules: s.rules, loadHouseholdRules: s.load }),
+  );
+
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [planningCalendarEvents, setPlanningCalendarEvents] = useState<CalendarEvent[]>([]);
   /** True once the 30-day calendar fetch completed successfully (even if empty). */
@@ -226,13 +232,23 @@ function PersistentCarsonWidget({
       .catch(() => setNotesBlock(""));
   }, [userId]);
 
+  useEffect(() => {
+    if (!userId) return;
+    void loadHouseholdRules();
+  }, [userId, loadHouseholdRules]);
+
   const elevenLabsBriefStateText = useMemo(
-    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock }),
-    [tasks, people, user?.email, now, calendarEvents, notesBlock],
+    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, householdRules }),
+    [tasks, people, user?.email, now, calendarEvents, notesBlock, householdRules],
   );
+  const isEvening = now.getHours() >= 20;
   const spokenBrief = useMemo(
-    () => buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents),
-    [tasks, people, displayName, now, calendarEvents],
+    () =>
+      isEvening
+        ? buildNightSweepSpoken(tasks, displayName, now)
+        : buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tasks, people, displayName, now, calendarEvents, isEvening],
   );
 
   const handleBeforeCallStart = useCallback(async () => {
@@ -263,9 +279,14 @@ function PersistentCarsonWidget({
     const freshNotesBlock = userId ? formatNotesForContext(await loadRecentNotes(20)) : "";
     setNotesBlock(freshNotesBlock);
 
+    const freshHouseholdRules = useHouseholdRulesStore.getState().rules;
+
     return {
-      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock }),
-      spokenBrief: buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents),
+      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, householdRules: freshHouseholdRules }),
+      spokenBrief:
+        freshNow.getHours() >= 20
+          ? buildNightSweepSpoken(freshTasks, displayName, freshNow)
+          : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents),
     };
   }, [userId, loadTasks, calendarEvents, people, user?.email, displayName, onCalendarRevokedChange]);
 
