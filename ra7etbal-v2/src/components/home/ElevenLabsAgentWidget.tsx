@@ -16,6 +16,7 @@ import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
+import { detectRecurringSchedule, createVoiceRoutine } from "../../lib/routine-detection";
 import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/people-behavior";
 import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "../../lib/personal-note";
 import { composeMergedMessage } from "../../lib/ai/compose-message";
@@ -1797,6 +1798,28 @@ export default function ElevenLabsAgentWidget({
             const reason = imgErr instanceof Error ? imgErr.message : "Image too large.";
             return `Could not attach the image: ${reason}`;
           }
+        }
+
+        // ── Recurring-language detection ──────────────────────────────────
+        // If the instruction contains "every two days / daily / every Monday"
+        // etc., create a routine instead of a one-time task.
+        // Images are not attached to routines (they fire on a schedule, not now).
+        const recurringSchedule = detectRecurringSchedule(rawInstruction);
+        if (recurringSchedule) {
+          const routineSummary = await createVoiceRoutine({
+            rawInstruction,
+            schedule: recurringSchedule,
+            people,
+            userId: authUserId,
+            displayName,
+          });
+          if (routineSummary) {
+            sessionActionsRef.current.push(`Routine created: ${rawInstruction}`);
+            return routineSummary;
+          }
+          // routineSummary is null when the instruction didn't resolve to a
+          // delegation (e.g. recurring reminder without a person). Fall through
+          // to normal extraction so nothing is silently dropped.
         }
 
         // Belt-and-suspenders: if the session-start injection somehow missed
