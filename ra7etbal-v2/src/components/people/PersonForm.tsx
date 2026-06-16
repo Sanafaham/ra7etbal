@@ -1,3 +1,4 @@
+// PersonForm v2 — Description/Notes field visible in main form
 import { useId, useRef, useState, type FormEvent } from "react";
 import AuthNotice from "../auth/AuthNotice";
 import Spinner from "../Spinner";
