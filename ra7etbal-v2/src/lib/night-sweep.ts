@@ -131,9 +131,7 @@ function buildUpcomingDeadline(
     return [
       {
         id: upcomingReminder.id,
-        text: dueLabel
-          ? `${briefDesc(upcomingReminder.description)} is ${formatDuePhrase(dueLabel)}.`
-          : `${briefDesc(upcomingReminder.description)} is coming up.`,
+        text: buildDeadlineSentence(briefDesc(upcomingReminder.description), dueLabel),
         canMarkDone: true,
       },
     ];
@@ -227,7 +225,7 @@ function buildRequiresYouText(task: Task, now: Date): string {
   if (task.type === "reminder" && task.due_at) {
     if (isReminderOverdue(task.due_at, now)) return `${desc} is overdue.`;
     const dueLabel = formatReminderDue(task.due_at, now);
-    return dueLabel ? `${desc} is ${formatDuePhrase(dueLabel)}.` : `${desc} needs your attention.`;
+    return buildDeadlineSentence(desc, dueLabel);
   }
   return `${desc} needs your attention.`;
 }
@@ -344,9 +342,54 @@ function withLeadingThe(value: string): string {
   return `the ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}`;
 }
 
-function formatDuePhrase(label: string): string {
-  if (label.startsWith("Due ")) return label.charAt(0).toLowerCase() + label.slice(1);
-  return `due ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+/**
+ * Builds a natural deadline sentence from a task description and a dueLabel
+ * produced by formatReminderDue().
+ *
+ * formatReminderDue() returns:
+ *   "Due in N minutes/hours"  — still some time today
+ *   "Due today at H:MM AM/PM" — today with time
+ *   "Tomorrow at H:MM AM/PM"  — tomorrow (no "Due" prefix)
+ *   "Friday at H:MM AM/PM"    — weekday (no "Due" prefix)
+ *   "Jun 20 at H:MM AM/PM"    — date (no "Due" prefix)
+ *
+ * Desired output examples:
+ *   "Call Angela tomorrow at 5:00 PM."   ← not "is due tomorrow"
+ *   "Pay internet bill by Friday."        ← not "is due Friday"
+ *   "Passport renewal is due in 10 days." ← keep "is due" for abstract intervals
+ *   "Call Angela today at 9:00 AM."       ← not "is due today"
+ */
+function buildDeadlineSentence(desc: string, dueLabel: string | null): string {
+  if (!dueLabel) return `${desc} is coming up.`;
+
+  // "Due today at H:MM" → "X today at H:MM."
+  const todayAt = dueLabel.match(/^Due today at (.+)$/i);
+  if (todayAt) return `${desc} today at ${todayAt[1]}.`;
+
+  // "Due in N minutes/hours/days" → "X is due in N …."
+  if (/^Due in /i.test(dueLabel)) {
+    return `${desc} is due ${dueLabel.replace(/^Due /i, "").toLowerCase()}.`;
+  }
+
+  // "Tomorrow at H:MM" → "X tomorrow at H:MM."
+  const tomorrowAt = dueLabel.match(/^Tomorrow at (.+)$/i);
+  if (tomorrowAt) return `${desc} tomorrow at ${tomorrowAt[1]}.`;
+
+  // "Weekday at H:MM" (e.g. "Friday at 5:00 PM") → "X by Friday at H:MM."
+  // But if there is a time component, "by Friday at 5 PM" reads fine.
+  const weekdayAt = dueLabel.match(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) at (.+)$/i);
+  if (weekdayAt) return `${desc} by ${weekdayAt[1]} at ${weekdayAt[2]}.`;
+
+  // "Weekday" alone with no time → "X by Weekday."
+  const weekdayOnly = dueLabel.match(/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$/i);
+  if (weekdayOnly) return `${desc} by ${weekdayOnly[1]}.`;
+
+  // "Jun 20 at H:MM" or any date string → "X is due Jun 20 at H:MM."
+  const dateAt = dueLabel.match(/^(.+) at (.+)$/);
+  if (dateAt) return `${desc} is due ${dateAt[1].toLowerCase()} at ${dateAt[2]}.`;
+
+  // Fallback
+  return `${desc} is due ${dueLabel.toLowerCase()}.`;
 }
 
 function formatUpcomingEventTime(event: CalendarEvent, now: Date): string {
