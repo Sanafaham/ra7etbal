@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { extractItems } from "../lib/ai/extract";
+import { extractItemsFromPhoto } from "../lib/ai/extract-photo";
 import type { Assignment, ExtractedItem } from "../types/extraction";
 import type { Person } from "../types/person";
 
@@ -22,6 +23,7 @@ export interface ExtractionState {
   error: string | null;
 
   run: (text: string, people: Person[], ownerName?: string) => Promise<void>;
+  runFromPhoto: (file: File, people: Person[], ownerName?: string) => Promise<void>;
   setAssignment: (itemId: string, assignedTo: Assignment) => void;
   setDescription: (itemId: string, description: string) => void;
   setSuggestedMessage: (itemId: string, suggestedMessage: string | null) => void;
@@ -54,6 +56,29 @@ export const useExtractionStore = create<ExtractionState>((set, get) => ({
           err instanceof Error
             ? err.message
             : "Couldn't process that. Please try again.",
+      });
+      throw err;
+    }
+  },
+
+  async runFromPhoto(file, people, ownerName) {
+    set({ status: "running", error: null });
+    try {
+      const result = await extractItemsFromPhoto(file, people, ownerName);
+      set({
+        status: "ready",
+        items: result.extracted,
+        summary: result.summary,
+        sourceText: "(photo)",
+        error: null,
+      });
+    } catch (err) {
+      set({
+        status: "error",
+        error:
+          err instanceof Error
+            ? err.message
+            : "Couldn't process the photo. Please try again.",
       });
       throw err;
     }

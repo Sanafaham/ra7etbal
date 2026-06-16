@@ -118,7 +118,7 @@ export default function Home() {
   const supportingLines = statusSummary.lines;
 
   const trimmed = text.trim();
-  const canSubmit = !submitting && trimmed.length > 0 && !!userId;
+  const canSubmit = !submitting && (trimmed.length > 0 || !!draftImageFile) && !!userId;
   const keyboardOpen = textareaFocused || viewportShrunk;
 
   async function handleNext() {
@@ -142,19 +142,26 @@ export default function Home() {
       await loadPeople(userId);
       const peopleNow = usePeopleStore.getState().items;
 
-      // If a photo is attached, describe it and inject the description into the
-      // extraction text so the AI understands the image context during task
-      // generation. Failure is silent — extraction still runs on text alone.
-      let extractionText = trimmed;
       const imageForExtraction = draftImageFile;
-      if (imageForExtraction) {
-        const description = await describeImageForTextCarson(imageForExtraction).catch(() => null);
-        if (description) {
-          extractionText = `${trimmed}\n\nAttached image:\n${description}`;
-        }
-      }
 
-      await runExtraction(extractionText, peopleNow, displayName ?? undefined);
+      if (!trimmed && imageForExtraction) {
+        // Image-only submission: extract directly from the photo via vision API.
+        await useExtractionStore.getState().runFromPhoto(
+          imageForExtraction,
+          peopleNow,
+          displayName ?? undefined,
+        );
+      } else {
+        // Text (+ optional image) submission: describe image for context, then extract from text.
+        let extractionText = trimmed;
+        if (imageForExtraction) {
+          const description = await describeImageForTextCarson(imageForExtraction).catch(() => null);
+          if (description) {
+            extractionText = `${trimmed}\n\nAttached image:\n${description}`;
+          }
+        }
+        await runExtraction(extractionText, peopleNow, displayName ?? undefined);
+      }
 
       // Auto-attach the image to the first delegation item so Review shows it
       // pre-loaded and savePending uploads it without the user having to re-attach.
