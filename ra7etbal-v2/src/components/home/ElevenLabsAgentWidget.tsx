@@ -1868,28 +1868,39 @@ export default function ElevenLabsAgentWidget({
         // Images are not attached to routines (they fire on a schedule, not now).
         const recurringSchedules = detectAllRecurringSchedules(rawInstruction);
         if (recurringSchedules.length > 0) {
+          console.log("[routine] detected schedules", recurringSchedules, { rawInstruction });
+
           // Create one routine per detected schedule (handles "every Monday and Thursday").
           const results = await Promise.all(
-            recurringSchedules.map((sched) =>
-              createVoiceRoutine({
-                rawInstruction,
-                schedule: sched,
-                people,
-                userId: authUserId,
-                displayName: displayName ?? null,
-              }).catch(() => null),
-            ),
+            recurringSchedules.map(async (sched) => {
+              try {
+                return await createVoiceRoutine({
+                  rawInstruction,
+                  schedule: sched,
+                  people,
+                  userId: authUserId,
+                  displayName: displayName ?? null,
+                });
+              } catch (err) {
+                console.error("[routine] createVoiceRoutine threw", {
+                  sched,
+                  error: (err as Error).message,
+                });
+                return null;
+              }
+            }),
           );
+
           const successes = results.filter(Boolean) as string[];
           if (successes.length > 0) {
             sessionActionsRef.current.push(`Routine(s) created: ${rawInstruction}`);
-            // If multiple routines were created, join the summaries.
             return successes.join(" ");
           }
-          // Detection found recurring language but routine creation failed
-          // (person not found, extraction error, etc.).
-          // Hard-block the one-time path — never send a WhatsApp for a recurring instruction.
-          return "I detected recurring language but couldn't set up the routine — the person may not be in your contacts. Please check and try again.";
+
+          // Hard-block: recurring language detected but routine creation failed.
+          // Never fall through to a one-time WhatsApp send.
+          console.warn("[routine] all schedules failed to create", { rawInstruction });
+          return "I couldn't create that routine — I may not have found the person in your contacts. Check their name in People and try again.";
         }
 
         // Belt-and-suspenders: if the session-start injection somehow missed

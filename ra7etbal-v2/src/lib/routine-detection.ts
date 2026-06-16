@@ -9,7 +9,6 @@
  */
 
 import type { Person } from "../types/person";
-import { extractItems } from "./ai/extract";
 import { createRoutine } from "./routines";
 import type { RoutineSchedule } from "./routines";
 
@@ -92,11 +91,57 @@ export function detectAllRecurringSchedules(text: string): RecurringSchedule[] {
 
 /**
  * Returns the first recurring schedule found, or null.
- * Used by callers that only need to know "is this recurring at all?"
  */
 export function detectRecurringSchedule(text: string): RecurringSchedule | null {
   const all = detectAllRecurringSchedules(text);
   return all.length > 0 ? all[0] : null;
+}
+
+// ── Person + message extraction (regex-first, no AI call) ─────────────────────
+
+/**
+ * Finds the first person whose name appears in the instruction.
+ * Sorted by name length descending to prefer longer matches.
+ */
+function findPersonInInstruction(instruction: string, people: Person[]): Person | null {
+  const lower = instruction.toLowerCase();
+  return (
+    [...people]
+      .sort((a, b) => b.name.length - a.name.length)
+      .find((p) => lower.includes(p.name.trim().toLowerCase())) ?? null
+  );
+}
+
+// Recurring language to strip from the task message before storing in payload.
+const RECURRING_CLEAN_RE =
+  /\b(every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|day|week|\d+\s+days?|[a-z]+\s+days?)|daily|weekly|as\s+a\s+routine\s+task|as\s+a\s+routine|on\s+a\s+recurring\s+basis|recurring\s+basis|routine\s+task|regularly)\b/gi;
+
+/**
+ * Strips recurring language and the routing prefix ("ask Grace to") from an
+ * instruction to produce the clean WhatsApp task message for the payload.
+ */
+function extractCleanTaskMessage(instruction: string, personName: string): string {
+  let msg = instruction;
+
+  // Remove recurring language
+  msg = msg.replace(RECURRING_CLEAN_RE, "").replace(/\s{2,}/g, " ").trim();
+
+  // Remove "ask/tell/have/get [name] to" routing prefix
+  const escaped = personName.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  msg = msg
+    .replace(new RegExp(`\\b(ask|tell|have|get)\\s+${escaped}\\s+to\\s*`, "i"), "")
+    .replace(new RegExp(`^\\s*${escaped}\\s+should\\s+`, "i"), "")
+    .trim();
+
+  // Remove leading connectors left behind after stripping
+  msg = msg.replace(/^(and|,|,\s*and)\s*/i, "").trim();
+
+  // Capitalise first letter
+  if (msg.length > 0) {
+    msg = msg.charAt(0).toUpperCase() + msg.slice(1);
+  }
+
+  return msg;
 }
 
 // ── Routine creation ───────────────────────────────────────────────────────────
@@ -110,63 +155,76 @@ interface CreateVoiceRoutineOptions {
 }
 
 /**
- * Extracts the delegation target and message from the instruction via AI,
- * then creates a routine row in the database.
+ * Creates a recurring routine from a voice instruction using regex-first
+ * extraction (no AI call). Throws on Supabase insert failure so the widget
+ * can surface a clear error rather than silently falling through.
  *
- * Returns a Carson-ready spoken summary on success, or null if the
- * instruction does not resolve to a delegation (fallback to normal path).
+ * Returns a Carson-ready spoken summary on success, or null if the instruction
+ * does not contain a recognisable person name from the contacts list.
  */
 export async function createVoiceRoutine(
   opts: CreateVoiceRoutineOptions,
 ): Promise<string | null> {
-  const { rawInstruction, schedule, people, displayName } = opts;
+  const { rawInstruction, schedule, people } = opts;
+  const LOG = "[routine]";
 
-  // Use the existing extraction pipeline to identify person + task message.
-  const result = await extractItems(rawInstruction, people, displayName ?? undefined);
+  console.log(LOG, "start", { rawInstruction, schedule, peopleCount: people.length });
 
-  const delegation = result.extracted.find(
-    (item) => item.type === "delegation" || item.type === "message",
-  );
-
-  if (!delegation) return null; // not a delegation — fall through to normal path
-
-  const assignedTo = (delegation.assignedTo ?? "").trim();
-  if (!assignedTo) return null;
-
-  // Resolve person_id from the people store (case-insensitive name match).
-  const person = people.find(
-    (p) => p.name.trim().toLowerCase() === assignedTo.toLowerCase(),
-  );
+  // ── 1. Detect person ───────────────────────────────────────────────────────
+  const person = findPersonInInstruction(rawInstruction, people);
+  console.log(LOG, "person detection", { found: person?.name ?? null });
 
   if (!person) {
-    // Person not in contacts — cannot create a routine without a person_id.
+    console.warn(LOG, "no person matched in instruction — cannot create routine");
     return null;
   }
 
-  const message = delegation.description.trim();
-  if (!message) return null;
+  // ── 2. Extract clean message ───────────────────────────────────────────────
+  const message = extractCleanTaskMessage(rawInstruction, person.name);
+  console.log(LOG, "message extraction", { raw: rawInstruction, clean: message });
 
-  // Compute next_run_at for every_n_days (seed: now + interval).
+  if (!message) {
+    console.warn(LOG, "empty message after extraction — cannot create routine");
+    return null;
+  }
+
+  // ── 3. Compute next_run_at for every_n_days ────────────────────────────────
   let nextRunAt: string | undefined;
   if (schedule.schedule === "every_n_days" && schedule.intervalDays) {
     const ms = schedule.intervalDays * 24 * 60 * 60 * 1000;
     nextRunAt = new Date(Date.now() + ms).toISOString();
   }
 
-  // Build a human-readable routine name.
-  const scheduleLabel = scheduleDisplayLabel(schedule);
-  const routineName = `${scheduleLabel} → ${person.name}`;
+  // ── 4. Build routine name ──────────────────────────────────────────────────
+  const schedLabel = scheduleDisplayLabel(schedule);
+  const routineName = `${schedLabel} → ${person.name}`;
 
-  await createRoutine({
+  const routinePayload = { person_id: person.id, message };
+
+  console.log(LOG, "createRoutine payload", {
+    name: routineName,
+    type: "delegation",
+    schedule: schedule.schedule,
+    schedule_day: schedule.scheduleDay ?? null,
+    schedule_time: "08:00",
+    payload: routinePayload,
+    interval_days: schedule.intervalDays ?? null,
+    next_run_at: nextRunAt ?? null,
+  });
+
+  // ── 5. Insert into Supabase ────────────────────────────────────────────────
+  const routine = await createRoutine({
     name: routineName,
     type: "delegation",
     schedule: schedule.schedule,
     schedule_day: schedule.scheduleDay,
-    schedule_time: "08:00", // sensible default; user can edit in Routines
-    payload: { person_id: person.id, message },
+    schedule_time: "08:00",
+    payload: routinePayload,
     interval_days: schedule.intervalDays,
     next_run_at: nextRunAt,
   });
+
+  console.log(LOG, "routine created", { routineId: routine.id, name: routine.name });
 
   return buildRoutineSummary(person.name, message, schedule);
 }
@@ -203,10 +261,11 @@ function buildRoutineSummary(
       `You can manage it in Updates → Routines.`
     );
   }
-  const dayName = schedule.scheduleDay != null
-    ? WEEKDAY_NAMES[schedule.scheduleDay].charAt(0).toUpperCase() +
-      WEEKDAY_NAMES[schedule.scheduleDay].slice(1)
-    : "weekly";
+  const dayName =
+    schedule.scheduleDay != null
+      ? WEEKDAY_NAMES[schedule.scheduleDay].charAt(0).toUpperCase() +
+        WEEKDAY_NAMES[schedule.scheduleDay].slice(1)
+      : "weekly";
   return (
     `Routine set. I'll ask ${personName} every ${dayName}: "${shortMsg}". ` +
     `You can manage it in Updates → Routines.`
