@@ -8,6 +8,7 @@ import type { Task } from "../types/task";
 export interface NightSweepItem {
   id: string;
   text: string;
+  canMarkDone?: boolean;
 }
 
 export interface NightSweep {
@@ -38,10 +39,12 @@ export function buildNightSweep(
   const stillWaiting = waitingTasks.slice(0, 2).map((task) => ({
     id: task.id,
     text: buildWaitingText(task),
+    canMarkDone: true,
   }));
   const requiresYou = brief.needsAttention.slice(0, 1).map((task) => ({
     id: task.id,
     text: buildRequiresYouText(task, now),
+    canMarkDone: true,
   }));
   const upcomingDeadline = buildUpcomingDeadline(tasks, calendarEvents, now);
   const openLoopCount = waitingTasks.length;
@@ -118,6 +121,7 @@ function buildUpcomingDeadline(
         text: dueLabel
           ? `${briefDesc(upcomingReminder.description)} is ${formatDuePhrase(dueLabel)}.`
           : `${briefDesc(upcomingReminder.description)} is coming up.`,
+        canMarkDone: true,
       },
     ];
   }
@@ -202,21 +206,40 @@ function cleanForObject(raw: string): string {
 
 function cleanCompletedObject(raw: string, who: string): string {
   const desc = briefDesc(raw);
-  const lower = desc.toLowerCase();
+  const clause = normalizeCompletedClause(desc);
+  const lower = clause.toLowerCase();
   const pronoun = subjectPronounForName(who);
 
-  if (/^if\s+/.test(lower)) return desc.replace(/^if\s+/i, "").replace(/^the\s+/i, "the ");
-  if (/^whether\s+/.test(lower)) return desc.replace(/^whether\s+/i, "");
-  if (/^buy\s+/.test(lower)) return `${pronoun} bought ${desc.replace(/^buy\s+/i, "")}`;
-  if (/^order\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^order\s+/i, ""))} were ordered`;
-  if (/^pay\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^pay\s+/i, ""))} was paid`;
-  if (/^book\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^book\s+/i, ""))} is booked`;
-  if (/^schedule\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^schedule\s+/i, ""))} is scheduled`;
-  if (/^confirm\s+/.test(lower)) return cleanForObject(desc);
-  if (/^check\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^check\s+/i, ""))} was checked`;
-  if (/^send\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^send\s+/i, ""))} was sent`;
+  if (isResolvedClause(clause)) return withLeadingArticleForResolvedClause(clause);
+  if (/^buy\s+/.test(lower)) return `${pronoun} bought ${clause.replace(/^buy\s+/i, "")}`;
+  if (/^order\s+/.test(lower)) return `${withLeadingThe(clause.replace(/^order\s+/i, ""))} were ordered`;
+  if (/^pay\s+/.test(lower)) return `${withLeadingThe(clause.replace(/^pay\s+/i, ""))} was paid`;
+  if (/^book\s+/.test(lower)) return `${withLeadingThe(clause.replace(/^book\s+/i, ""))} is booked`;
+  if (/^schedule\s+/.test(lower)) return `${withLeadingThe(clause.replace(/^schedule\s+/i, ""))} is scheduled`;
+  if (/^check\s+/.test(lower)) return `${withLeadingThe(clause.replace(/^check\s+/i, ""))} was checked`;
+  if (/^send\s+/.test(lower)) return `${withLeadingThe(clause.replace(/^send\s+/i, ""))} was sent`;
 
-  return cleanForObject(desc);
+  return cleanForObject(clause);
+}
+
+function normalizeCompletedClause(value: string): string {
+  return value
+    .replace(/^(Confirm|Check|Verify|Find out|Find|See|Make sure)\s+/i, "")
+    .replace(/^(if|whether|that)\s+/i, "")
+    .trim();
+}
+
+function isResolvedClause(value: string): boolean {
+  return /\b(is|are|was|were|has been|have been)\b/i.test(value);
+}
+
+function withLeadingArticleForResolvedClause(value: string): string {
+  const cleaned = value.trim();
+  if (!cleaned) return cleaned;
+  if (/^(the|a|an|my|your|his|her|their|our)\s+/i.test(cleaned)) {
+    return cleaned.charAt(0).toLowerCase() + cleaned.slice(1);
+  }
+  return `the ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}`;
 }
 
 function subjectPronounForName(name: string): string {

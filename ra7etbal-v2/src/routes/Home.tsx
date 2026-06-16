@@ -35,8 +35,12 @@ export default function Home() {
     useShallow((s) => ({ displayName: s.displayName, loadProfile: s.loadFor })),
   );
 
-  const { tasks, loadTasks } = useTasksStore(
-    useShallow((s) => ({ tasks: s.items, loadTasks: s.loadFor })),
+  const { tasks, loadTasks, markDone } = useTasksStore(
+    useShallow((s) => ({
+      tasks: s.items,
+      loadTasks: s.loadFor,
+      markDone: s.markDone,
+    })),
   );
 
   const runExtraction = useExtractionStore((s) => s.run);
@@ -48,6 +52,7 @@ export default function Home() {
   const [textareaFocused, setTextareaFocused] = useState(false);
   const [viewportShrunk, setViewportShrunk] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [completingNightSweepItemId, setCompletingNightSweepItemId] = useState<string | null>(null);
   const submittingRef = useRef(false);
 
   // Photo attachment for Clear My Head — described before extraction so the
@@ -210,6 +215,20 @@ export default function Home() {
     navigate("/active");
   }
 
+  async function handleNightSweepMarkDone(id: string) {
+    if (!userId || completingNightSweepItemId) return;
+    setCompletingNightSweepItemId(id);
+    try {
+      await markDone(id);
+      await loadTasks(userId, { force: true });
+    } catch (err) {
+      console.error(err);
+      setError("Couldn't mark that done. Please try again.");
+    } finally {
+      setCompletingNightSweepItemId(null);
+    }
+  }
+
 
   return (
     <section
@@ -265,10 +284,30 @@ export default function Home() {
         </div>
 
         <div className="space-y-2.5">
-          <NightSweepSection title="Handled today" items={nightSweep.handledToday} />
-          <NightSweepSection title="Still waiting" items={nightSweep.stillWaiting} />
-          <NightSweepSection title="Requires you" items={nightSweep.requiresYou} />
-          <NightSweepSection title="Upcoming" items={nightSweep.upcomingDeadline} />
+          <NightSweepSection
+            title="Handled today"
+            items={nightSweep.handledToday}
+            completingItemId={completingNightSweepItemId}
+            onMarkDone={handleNightSweepMarkDone}
+          />
+          <NightSweepSection
+            title="Still waiting"
+            items={nightSweep.stillWaiting}
+            completingItemId={completingNightSweepItemId}
+            onMarkDone={handleNightSweepMarkDone}
+          />
+          <NightSweepSection
+            title="Requires you"
+            items={nightSweep.requiresYou}
+            completingItemId={completingNightSweepItemId}
+            onMarkDone={handleNightSweepMarkDone}
+          />
+          <NightSweepSection
+            title="Upcoming"
+            items={nightSweep.upcomingDeadline}
+            completingItemId={completingNightSweepItemId}
+            onMarkDone={handleNightSweepMarkDone}
+          />
         </div>
 
         <p className="mt-3 border-t border-sage/15 pt-2.5 text-[13px] font-medium leading-snug text-ink">
@@ -484,9 +523,13 @@ export default function Home() {
 function NightSweepSection({
   title,
   items,
+  completingItemId,
+  onMarkDone,
 }: {
   title: string;
-  items: { id: string; text: string }[];
+  items: { id: string; text: string; canMarkDone?: boolean }[];
+  completingItemId: string | null;
+  onMarkDone: (id: string) => void;
 }) {
   if (items.length === 0) return null;
 
@@ -497,8 +540,18 @@ function NightSweepSection({
       </p>
       <ul className="mt-1 space-y-1">
         {items.map((item) => (
-          <li key={item.id} className="text-[13px] leading-snug text-text-soft">
-            {item.text}
+          <li key={item.id} className="flex items-start justify-between gap-3 text-[13px] leading-snug text-text-soft">
+            <span>{item.text}</span>
+            {item.canMarkDone && (
+              <button
+                type="button"
+                onClick={() => onMarkDone(item.id)}
+                disabled={completingItemId !== null}
+                className="shrink-0 rounded-full border border-sage/20 bg-white/70 px-2.5 py-1 text-[11px] font-medium text-sage transition hover:border-sage/35 hover:bg-sage/5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {completingItemId === item.id ? "Saving..." : "Mark done"}
+              </button>
+            )}
           </li>
         ))}
       </ul>
