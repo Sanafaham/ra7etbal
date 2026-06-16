@@ -154,7 +154,6 @@ async function handlePost(req, res) {
         body: JSON.stringify({
           status: 'done',
           confirmed_at: now,
-          confirmed_by: confirmedBy || null,
           ...(proofImagePath ? { proof_image_path: proofImagePath } : {}),
         }),
       },
