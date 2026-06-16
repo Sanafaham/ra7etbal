@@ -108,7 +108,7 @@ export async function createRoutine(input: CreateRoutineInput): Promise<Routine>
 
   const timezone = await resolveTimezone();
 
-  const insert = {
+  const insert: Record<string, unknown> = {
     user_id: user.id,
     name: input.name,
     type: input.type,
@@ -118,16 +118,21 @@ export async function createRoutine(input: CreateRoutineInput): Promise<Routine>
     timezone,
     payload: input.payload,
     enabled: true,
-    interval_days: input.interval_days ?? null,
-    next_run_at: input.next_run_at ?? null,
   };
+  if (input.schedule === "every_n_days") {
+    insert.interval_days = input.interval_days ?? null;
+    insert.next_run_at = input.next_run_at ?? null;
+  }
 
+  console.log("[routine:CREATE_ROUTINE_PAYLOAD]", insert);
   const { data, error } = await supabase
     .from("routines")
     .insert(insert)
     .select()
     .single();
 
+  console.log("[routine:SUPABASE_INSERT_SUCCESS]", data);
+  console.error("[routine:SUPABASE_INSERT_ERROR]", error);
   if (error) throw new Error(error.message);
   return data as Routine;
 }

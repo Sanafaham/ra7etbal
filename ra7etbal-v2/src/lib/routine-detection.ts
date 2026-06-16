@@ -111,6 +111,10 @@ export function detectRecurringSchedule(text: string): RecurringSchedule | null 
  */
 function findPersonInInstruction(instruction: string, people: Person[]): Person | null {
   const lower = instruction.toLowerCase();
+  console.log("[routine:PERSON_SEARCH]", {
+    instruction: lower,
+    candidates: people.map((p) => p.name?.trim().toLowerCase()),
+  });
   return (
     [...people]
       .sort((a, b) => b.name.length - a.name.length)
@@ -174,10 +178,13 @@ export async function createVoiceRoutine(
   const { rawInstruction, schedule, people } = opts;
   const LOG = "[routine:createVoiceRoutine]";
 
+  console.log("[routine:RAW_INSTRUCTION]", rawInstruction);
+  console.log("[routine:PEOPLE_STORE]", people.map((p) => ({ id: p.id, name: p.name })));
   console.log("[routine:CREATE_ROUTINE] start", { rawInstruction, schedule, peopleCount: people.length });
 
   // ── 1. Detect person ───────────────────────────────────────────────────────
   const person = findPersonInInstruction(rawInstruction, people);
+  console.log("[routine:PERSON_FOUND]", person?.name ?? "null");
   console.log(LOG, "person detection", { found: person?.name ?? null });
 
   if (!person) {

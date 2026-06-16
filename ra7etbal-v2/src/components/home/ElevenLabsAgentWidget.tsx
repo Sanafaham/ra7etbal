@@ -1796,7 +1796,7 @@ export default function ElevenLabsAgentWidget({
       // Ensure stores are fresh before extraction so person data is current.
       const peopleState = usePeopleStore.getState();
       if (peopleState.status === "idle" || peopleState.items.length === 0) {
-        await usePeopleStore.getState().loadFor(authUserId);
+        await usePeopleStore.getState().loadFor(authUserId, { force: true });
       }
       const tasksState = useTasksStore.getState();
       if (tasksState.status === "idle" || tasksState.items.length === 0) {
@@ -1938,6 +1938,7 @@ export default function ElevenLabsAgentWidget({
                 }
                 return summary;
               } catch (err) {
+                console.error("[executeInstruction:catch]", err);
                 console.error("[routine:CREATE_ROUTINE_ERROR]", {
                   sched,
                   error: (err as Error).message,
@@ -2019,6 +2020,7 @@ export default function ElevenLabsAgentWidget({
         }
         return summary;
       } catch (err) {
+        console.error("[executeInstruction:catch]", err);
         const detail = err instanceof Error ? err.message : "Please try again.";
         return `Could not process that. ${detail}`;
       }

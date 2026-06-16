@@ -54,7 +54,7 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
     const sameUser = loadedForUserId === userId;
     const cached = sameUser && status === "ready";
     if (cached && !opts?.force) return;
-    if (status === "loading" && sameUser) return;
+    if (status === "loading" && sameUser && !opts?.force) return;
 
     set({ status: "loading", error: null });
     try {
