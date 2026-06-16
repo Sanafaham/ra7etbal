@@ -308,7 +308,7 @@ function SettingsList({
         />
       </Group>
 
-      <Group label="Reminders">
+      <Group label="Notifications">
         <ReminderNotificationsRow userId={userId} />
       </Group>
 
@@ -665,7 +665,7 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
         className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-cream/60 disabled:cursor-default disabled:hover:bg-transparent"
       >
         <span className="min-w-0">
-          <span className="block text-base text-ink">Reminder notifications</span>
+          <span className="block text-base text-ink">Push notifications</span>
           <span className="block text-xs text-ink/55">{statusText}</span>
         </span>
         <span
@@ -717,15 +717,15 @@ function getReminderStatusText(
 
   switch (status) {
     case "enabled":
-      return "Enabled — tap to refresh subscription";
+      return "Enabled — receive reminders, confirmations, follow-ups, and updates";
     case "denied":
-      return "Permission denied — see below";
+      return "Disabled — tap to enable notifications";
     case "unsupported":
       return "Not supported on this device";
     case "error":
       return "Something went wrong — tap to retry";
     case "idle":
-      return "Off — tap to enable";
+      return "Disabled — tap to enable notifications";
   }
 }
 
