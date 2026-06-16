@@ -32,12 +32,11 @@ const WEEKDAY_NAMES = [
 ];
 
 /**
- * Returns a RecurringSchedule if the text contains recurring language,
- * or null if the instruction looks like a one-time request.
- *
- * Priority: every_n_days > daily > weekly > specific weekday
+ * Returns ALL recurring schedules detected in the text.
+ * For "every Monday and Thursday" this returns two weekly schedules.
+ * For "daily" / "every 3 days" this returns a single entry.
  */
-export function detectRecurringSchedule(text: string): RecurringSchedule | null {
+export function detectAllRecurringSchedules(text: string): RecurringSchedule[] {
   const lower = text.toLowerCase();
 
   // every N days  (numeric: "every 2 days")
@@ -45,39 +44,59 @@ export function detectRecurringSchedule(text: string): RecurringSchedule | null 
   if (numericMatch) {
     const n = parseInt(numericMatch[1], 10);
     if (n >= 1) {
-      return n === 1
-        ? { schedule: "daily" }
-        : { schedule: "every_n_days", intervalDays: n };
+      return [n === 1 ? { schedule: "daily" } : { schedule: "every_n_days", intervalDays: n }];
     }
   }
 
   // every <word> days  ("every two days", "every three days")
   for (const [word, n] of Object.entries(WORD_TO_NUMBER)) {
     if (lower.includes(`every ${word} day`)) {
-      return n === 1
-        ? { schedule: "daily" }
-        : { schedule: "every_n_days", intervalDays: n };
+      return [n === 1 ? { schedule: "daily" } : { schedule: "every_n_days", intervalDays: n }];
     }
   }
 
   // daily / every day
   if (/\bevery\s+day\b/.test(lower) || /\bdaily\b/.test(lower)) {
-    return { schedule: "daily" };
+    return [{ schedule: "daily" }];
   }
 
   // every week / weekly
   if (/\bevery\s+week\b/.test(lower) || /\bweekly\b/.test(lower)) {
-    return { schedule: "weekly", scheduleDay: 1 }; // Monday default
+    return [{ schedule: "weekly", scheduleDay: 1 }]; // Monday default
   }
 
-  // every <weekday>  ("every Monday", "every Friday")
+  // every <weekday> — collect ALL matching weekdays so "every Monday and Thursday"
+  // creates two routines rather than silently dropping Thursday.
+  const weekdayMatches: RecurringSchedule[] = [];
   for (let i = 0; i < WEEKDAY_NAMES.length; i++) {
     if (lower.includes(`every ${WEEKDAY_NAMES[i]}`)) {
-      return { schedule: "weekly", scheduleDay: i };
+      weekdayMatches.push({ schedule: "weekly", scheduleDay: i });
     }
   }
+  if (weekdayMatches.length > 0) return weekdayMatches;
 
-  return null;
+  // "routine task" / "as a routine" / "on a recurring basis" / "regularly" —
+  // treat as weekly (Monday default) when no explicit cadence is stated.
+  if (
+    /\broutine\s+task\b/.test(lower) ||
+    /\bas\s+a\s+routine\b/.test(lower) ||
+    /\bon\s+a\s+recurring\s+basis\b/.test(lower) ||
+    /\brecurring\s+basis\b/.test(lower) ||
+    /\bregularly\b/.test(lower)
+  ) {
+    return [{ schedule: "weekly", scheduleDay: 1 }];
+  }
+
+  return [];
+}
+
+/**
+ * Returns the first recurring schedule found, or null.
+ * Used by callers that only need to know "is this recurring at all?"
+ */
+export function detectRecurringSchedule(text: string): RecurringSchedule | null {
+  const all = detectAllRecurringSchedules(text);
+  return all.length > 0 ? all[0] : null;
 }
 
 // ── Routine creation ───────────────────────────────────────────────────────────

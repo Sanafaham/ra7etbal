@@ -16,7 +16,7 @@ import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
-import { detectRecurringSchedule, createVoiceRoutine } from "../../lib/routine-detection";
+import { detectAllRecurringSchedules, createVoiceRoutine } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
@@ -1862,25 +1862,34 @@ export default function ElevenLabsAgentWidget({
         }
 
         // ── Recurring-language detection ──────────────────────────────────
-        // If the instruction contains "every two days / daily / every Monday"
-        // etc., create a routine instead of a one-time task.
+        // If the instruction contains recurring language (every Monday, daily,
+        // every N days, "routine task", etc.) create routine(s) and NEVER
+        // fall through to the one-time delegation path.
         // Images are not attached to routines (they fire on a schedule, not now).
-        const recurringSchedule = detectRecurringSchedule(rawInstruction);
-        if (recurringSchedule) {
-          const routineSummary = await createVoiceRoutine({
-            rawInstruction,
-            schedule: recurringSchedule,
-            people,
-            userId: authUserId,
-            displayName: displayName ?? null,
-          });
-          if (routineSummary) {
-            sessionActionsRef.current.push(`Routine created: ${rawInstruction}`);
-            return routineSummary;
+        const recurringSchedules = detectAllRecurringSchedules(rawInstruction);
+        if (recurringSchedules.length > 0) {
+          // Create one routine per detected schedule (handles "every Monday and Thursday").
+          const results = await Promise.all(
+            recurringSchedules.map((sched) =>
+              createVoiceRoutine({
+                rawInstruction,
+                schedule: sched,
+                people,
+                userId: authUserId,
+                displayName: displayName ?? null,
+              }).catch(() => null),
+            ),
+          );
+          const successes = results.filter(Boolean) as string[];
+          if (successes.length > 0) {
+            sessionActionsRef.current.push(`Routine(s) created: ${rawInstruction}`);
+            // If multiple routines were created, join the summaries.
+            return successes.join(" ");
           }
-          // routineSummary is null when the instruction didn't resolve to a
-          // delegation (e.g. recurring reminder without a person). Fall through
-          // to normal extraction so nothing is silently dropped.
+          // Detection found recurring language but routine creation failed
+          // (person not found, extraction error, etc.).
+          // Hard-block the one-time path — never send a WhatsApp for a recurring instruction.
+          return "I detected recurring language but couldn't set up the routine — the person may not be in your contacts. Please check and try again.";
         }
 
         // Belt-and-suspenders: if the session-start injection somehow missed
