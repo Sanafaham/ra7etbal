@@ -17,6 +17,17 @@ import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { detectRecurringSchedule, createVoiceRoutine } from "../../lib/routine-detection";
+import {
+  detectHouseholdOutcome,
+  buildOperationalPlanFromOutcome,
+  executeProposedPlan,
+  rejectProposedPlan,
+  isConfirmation,
+  isRejection,
+  isPlanExpired,
+  loadLatestPendingPlan,
+  type ProposedPlan,
+} from "../../lib/ops-intelligence";
 import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/people-behavior";
 import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "../../lib/personal-note";
 import { composeMergedMessage } from "../../lib/ai/compose-message";
@@ -670,6 +681,10 @@ export default function ElevenLabsAgentWidget({
   /** Accumulates successful tool-call descriptions for this session.
    *  Flushed to carson_memory on disconnect. */
   const sessionActionsRef = useRef<string[]>([]);
+
+  /** Holds an unconfirmed operational plan proposed by Operations Intelligence.
+   *  Cleared on execution or when a new instruction doesn't confirm it. */
+  const pendingPlanRef = useRef<ProposedPlan | null>(null);
 
   /** Snapshot of saved notes loaded at startCall. Used by act_on_note for
    *  in-memory keyword lookup without hitting Supabase during the call. */
@@ -1800,6 +1815,52 @@ export default function ElevenLabsAgentWidget({
           }
         }
 
+        // ── Operations Intelligence — confirmation / rejection leg ─────────
+        // Resolve the active pending plan: prefer the local ref (fast), fall
+        // back to the DB (survives a disconnect/reconnect between turns).
+        let activePlan = pendingPlanRef.current;
+        if (!activePlan && (isConfirmation(rawInstruction) || isRejection(rawInstruction))) {
+          activePlan = await loadLatestPendingPlan().catch(() => null);
+          if (activePlan) pendingPlanRef.current = activePlan;
+        }
+
+        if (activePlan) {
+          if (isPlanExpired(activePlan)) {
+            // Plan is older than 5 minutes — discard silently.
+            pendingPlanRef.current = null;
+          } else if (isRejection(rawInstruction)) {
+            const cancelMsg = await rejectProposedPlan(activePlan);
+            pendingPlanRef.current = null;
+            return cancelMsg;
+          } else if (isConfirmation(rawInstruction)) {
+            const plan = activePlan;
+            pendingPlanRef.current = null;
+            const execSummary = await executeProposedPlan(plan, {
+              displayName,
+              userId: authUserId,
+              people,
+            });
+            sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+            useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+            return execSummary;
+          }
+        }
+
+        // ── Operations Intelligence — outcome detection leg ────────────────
+        // If the instruction describes a household outcome (guests arriving,
+        // etc.), propose a plan and store it — do NOT execute yet.
+        const outcomeType = detectHouseholdOutcome(rawInstruction);
+        if (outcomeType) {
+          // Clear any stale pending plan before building a new one.
+          pendingPlanRef.current = null;
+          const plan = await buildOperationalPlanFromOutcome(rawInstruction, people);
+          if (plan) {
+            pendingPlanRef.current = plan;
+            return plan.proposalSpeech;
+          }
+          // If plan building fails, fall through to normal delegation.
+        }
+
         // ── Recurring-language detection ──────────────────────────────────
         // If the instruction contains "every two days / daily / every Monday"
         // etc., create a routine instead of a one-time task.
@@ -2131,6 +2192,24 @@ export default function ElevenLabsAgentWidget({
           conversationRef.current = null;
           setStatus("error");
           setErrorMsg(msg || "Connection lost. Tap to retry.");
+
+          // Save whatever transcript we have so the session isn't lost.
+          // Mirror the onDisconnect memory-save path but run fire-and-forget.
+          const userId = useAuthStore.getState().user?.id ?? null;
+          const transcript = [...sessionTranscriptRef.current];
+          if (userId && transcript.length > 0) {
+            (async () => {
+              try {
+                await savePeopleMemoryFromTranscript(userId, transcript);
+              } catch { /* non-fatal */ }
+              try {
+                const conversationSummary = await summarizeConversation(transcript);
+                if (conversationSummary && isSummaryWorthSaving(conversationSummary)) {
+                  await saveSessionMemory(conversationSummary);
+                }
+              } catch { /* non-fatal */ }
+            })();
+          }
         },
         onConnect: () => {
           setStatus("connected");
