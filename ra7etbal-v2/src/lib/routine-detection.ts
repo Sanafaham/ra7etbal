@@ -166,9 +166,9 @@ export async function createVoiceRoutine(
   opts: CreateVoiceRoutineOptions,
 ): Promise<string | null> {
   const { rawInstruction, schedule, people } = opts;
-  const LOG = "[routine]";
+  const LOG = "[routine:createVoiceRoutine]";
 
-  console.log(LOG, "start", { rawInstruction, schedule, peopleCount: people.length });
+  console.log("[routine:CREATE_ROUTINE] start", { rawInstruction, schedule, peopleCount: people.length });
 
   // ── 1. Detect person ───────────────────────────────────────────────────────
   const person = findPersonInInstruction(rawInstruction, people);
@@ -224,7 +224,8 @@ export async function createVoiceRoutine(
     next_run_at: nextRunAt,
   });
 
-  console.log(LOG, "routine created", { routineId: routine.id, name: routine.name });
+  console.log("[routine:SUPABASE_INSERT_SUCCESS] routine_id=" + routine.id + " name=" + routine.name);
+  console.log("[routine:ROUTINE_ID]", routine.id);
 
   return buildRoutineSummary(person.name, message, schedule);
 }

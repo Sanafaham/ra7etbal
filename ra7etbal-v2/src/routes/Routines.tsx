@@ -157,6 +157,17 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  // Refresh routine list when Voice Carson creates a routine mid-session.
+  useEffect(() => {
+    function handleVoiceRoutineCreated() {
+      console.log("[routine:ROUTINES_REFRESH] received ra7etbal:routine-created — reloading");
+      void loadRoutines();
+    }
+    window.addEventListener("ra7etbal:routine-created", handleVoiceRoutineCreated);
+    return () => window.removeEventListener("ra7etbal:routine-created", handleVoiceRoutineCreated);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Load people when the create form is opened (needed for delegation picker)
   useEffect(() => {
     if (showForm && userId && peopleLoadedFor !== userId) {

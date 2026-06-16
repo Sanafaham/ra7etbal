@@ -1868,21 +1868,27 @@ export default function ElevenLabsAgentWidget({
         // Images are not attached to routines (they fire on a schedule, not now).
         const recurringSchedules = detectAllRecurringSchedules(rawInstruction);
         if (recurringSchedules.length > 0) {
-          console.log("[routine] detected schedules", recurringSchedules, { rawInstruction });
+          console.log("[routine:VOICE_INPUT]", rawInstruction);
+          console.log("[routine:RECURRING_DETECTED]", recurringSchedules);
 
           // Create one routine per detected schedule (handles "every Monday and Thursday").
           const results = await Promise.all(
             recurringSchedules.map(async (sched) => {
               try {
-                return await createVoiceRoutine({
+                console.log("[routine:CREATE_ROUTINE]", { sched, peopleCount: people.length });
+                const summary = await createVoiceRoutine({
                   rawInstruction,
                   schedule: sched,
                   people,
                   userId: authUserId,
                   displayName: displayName ?? null,
                 });
+                if (summary) {
+                  console.log("[routine:CREATE_ROUTINE_SUCCESS]", summary);
+                }
+                return summary;
               } catch (err) {
-                console.error("[routine] createVoiceRoutine threw", {
+                console.error("[routine:CREATE_ROUTINE_ERROR]", {
                   sched,
                   error: (err as Error).message,
                 });
@@ -1894,12 +1900,15 @@ export default function ElevenLabsAgentWidget({
           const successes = results.filter(Boolean) as string[];
           if (successes.length > 0) {
             sessionActionsRef.current.push(`Routine(s) created: ${rawInstruction}`);
+            // Signal Routines.tsx to refresh its list.
+            console.log("[routine:ROUTINES_REFRESH] dispatching ra7etbal:routine-created");
+            window.dispatchEvent(new CustomEvent("ra7etbal:routine-created"));
             return successes.join(" ");
           }
 
           // Hard-block: recurring language detected but routine creation failed.
           // Never fall through to a one-time WhatsApp send.
-          console.warn("[routine] all schedules failed to create", { rawInstruction });
+          console.warn("[routine:HARD_BLOCK] all schedules failed — not sending as one-time", { rawInstruction });
           return "I couldn't create that routine — I may not have found the person in your contacts. Check their name in People and try again.";
         }
 
