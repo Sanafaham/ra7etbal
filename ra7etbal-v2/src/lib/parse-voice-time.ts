@@ -72,6 +72,17 @@ export function parseVoiceTime(
 
   const raw = (timeText ?? "").trim().toLowerCase();
 
+  // ── Reject "N <unit> before" phrases ─────────────────────────────────────
+  // "one day before", "three days before" etc. are relative to an implicit
+  // deadline, not a standalone time. Parsing them as "now + N days" is wrong.
+  // Return an error so the agent can ask for clarification rather than silently
+  // creating a reminder for the wrong date.
+  if (/\bbefore\b/.test(raw) && !/\bbefore\s+(noon|midnight|bed|morning|evening|afternoon)\b/.test(raw)) {
+    const error = `Phrase "${timeText}" contains "before" — cannot resolve without a reference date.`;
+    console.error(`[parse-voice-time] REJECTED: ${error}`);
+    return { dueAt: "", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, localNow: now.toLocaleString(), rawText: timeText, parsedAs: "rejected", error };
+  }
+
   // ── Spoken-number normalisation ──────────────────────────────────────────
   // ElevenLabs STT transcribes spoken digits as words ("five" not "5").
   // Replace word-numbers with digits before any pattern matching so that
