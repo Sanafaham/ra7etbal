@@ -133,6 +133,33 @@ export function buildCarsonContext(input: CarsonContextInput): string {
     lines.push("PEOPLE: none saved.");
   }
 
+  // ── Coordination Decision Guidance ───────────────────────────────────────
+  // Derived from people data. Injected as explicit reasoning rules so Carson
+  // always distinguishes executor from coordinator, not just lists names.
+  const graceIsCoordinator = people.some(
+    (p) => !p.is_family && (
+      p.name.toLowerCase() === "grace" ||
+      p.delegation_guidance?.toLowerCase().includes("loop in grace") ||
+      p.delegation_guidance?.toLowerCase().includes("always grace") ||
+      p.escalate_to?.toLowerCase() === "grace"
+    ),
+  );
+
+  if (people.length > 0) {
+    lines.push("DELEGATION DECISION RULES (apply every time you assign a task):");
+    lines.push("- Always name TWO roles when assigning work: (1) Executor — who performs the task; (2) Coordinator / Follow-up owner — who supervises or follows up.");
+    lines.push("- If a task is guest-related, event-related, time-sensitive, high-importance, or involves more than one staff member, you MUST name a coordinator.");
+    if (graceIsCoordinator) {
+      lines.push("- Grace is the household coordinator. For any guest-related, event-related, time-sensitive, or multi-person household task: Nasira or Christopher executes, Grace coordinates and follows up.");
+      lines.push("- Even if only one executor is needed, if the task is guest-related or important, end your answer with: 'Grace should coordinate / follow up.'");
+    }
+    // Per-person: if their escalation path is Grace, call it out
+    for (const p of people.filter((p) => !p.is_family && p.escalate_to?.toLowerCase() === "grace")) {
+      lines.push(`- ${p.name.trim()} tasks: always loop Grace in for follow-up or if ${p.name.trim()} is unresponsive.`);
+    }
+    lines.push("- Never give a single name as the complete answer when the task is important or time-sensitive — always include coordinator.");
+  }
+
   // ── Household Delegation Rules ────────────────────────────────────────────
   if (input.householdRules?.trim()) {
     lines.push("HOUSEHOLD DELEGATION RULES:");

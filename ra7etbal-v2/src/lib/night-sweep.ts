@@ -285,3 +285,33 @@ function capitalize(str: string): string {
   if (!str) return str;
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
+
+/**
+ * Converts a NightSweep structured object into a spoken brief string
+ * suitable for the ElevenLabs voice agent.
+ */
+export function buildNightSweepSpoken(
+  tasks: Task[],
+  displayName?: string | null,
+  now?: Date,
+  calendarEvents?: CalendarEvent[],
+): string {
+  const sweep = buildNightSweep(tasks, now ?? new Date(), calendarEvents ?? []);
+  const greeting = displayName ? `Here's your night sweep, ${displayName}.` : "Here's your night sweep.";
+  const parts: string[] = [greeting];
+
+  if (sweep.handledToday.length > 0) {
+    parts.push(`Handled today: ${sweep.handledToday.map((i) => i.text).join(". ")}.`);
+  }
+  if (sweep.stillWaiting.length > 0) {
+    parts.push(`Still waiting: ${sweep.stillWaiting.map((i) => i.text).join(". ")}.`);
+  }
+  if (sweep.requiresYou.length > 0) {
+    parts.push(`Requires you: ${sweep.requiresYou.map((i) => i.text).join(". ")}.`);
+  }
+  if (sweep.upcomingDeadline.length > 0) {
+    parts.push(`Coming up: ${sweep.upcomingDeadline.map((i) => i.text).join(". ")}.`);
+  }
+  parts.push(sweep.reassurance);
+  return parts.join(" ");
+}
