@@ -55,6 +55,25 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {
 }
 
 /**
+ * Hide selected completed tasks from the active workspace while keeping them
+ * available in /history. Used for dismissing Night Sweep handled items.
+ */
+export async function archiveDoneTasks(ids: string[]): Promise<Task[]> {
+  const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+  if (uniqueIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("tasks")
+    .update({ archived_at: new Date().toISOString() })
+    .in("id", uniqueIds)
+    .eq("status", "done")
+    .is("archived_at", null)
+    .select(COLUMNS);
+  if (error) throw friendly(error);
+  return (data ?? []) as Task[];
+}
+
+/**
  * Write the confirmation URL onto a task after it has been created.
  * confirmation_url is intentionally excluded from TaskPatch (write-once at
  * save time), so this narrow helper bypasses the typed patch.

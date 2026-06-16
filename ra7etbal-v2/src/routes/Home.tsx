@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { describeImageForTextCarson } from "../lib/text-carson";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -35,11 +35,12 @@ export default function Home() {
     useShallow((s) => ({ displayName: s.displayName, loadProfile: s.loadFor })),
   );
 
-  const { tasks, loadTasks, markDone } = useTasksStore(
+  const { tasks, loadTasks, markDone, archiveDone } = useTasksStore(
     useShallow((s) => ({
       tasks: s.items,
       loadTasks: s.loadFor,
       markDone: s.markDone,
+      archiveDone: s.archiveDone,
     })),
   );
 
@@ -53,6 +54,7 @@ export default function Home() {
   const [viewportShrunk, setViewportShrunk] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const [completingNightSweepItemId, setCompletingNightSweepItemId] = useState<string | null>(null);
+  const [clearingHandled, setClearingHandled] = useState(false);
   const submittingRef = useRef(false);
 
   // Photo attachment for Clear My Head — described before extraction so the
@@ -229,6 +231,20 @@ export default function Home() {
     }
   }
 
+  async function handleClearHandled() {
+    if (!userId || clearingHandled || nightSweep.handledToday.length === 0) return;
+    setClearingHandled(true);
+    try {
+      await archiveDone(nightSweep.handledToday.map((item) => item.id));
+      await loadTasks(userId, { force: true });
+    } catch (err) {
+      console.error(err);
+      setError("Couldn't clear handled items. Please try again.");
+    } finally {
+      setClearingHandled(false);
+    }
+  }
+
 
   return (
     <section
@@ -289,6 +305,16 @@ export default function Home() {
             items={nightSweep.handledToday}
             completingItemId={completingNightSweepItemId}
             onMarkDone={handleNightSweepMarkDone}
+            action={
+              <button
+                type="button"
+                onClick={handleClearHandled}
+                disabled={clearingHandled}
+                className="rounded-full border border-sage/20 bg-white/70 px-2.5 py-1 text-[11px] font-medium normal-case tracking-normal text-sage transition hover:border-sage/35 hover:bg-sage/5 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {clearingHandled ? "Clearing..." : "Clear handled"}
+              </button>
+            }
           />
           <NightSweepSection
             title="Still waiting"
@@ -525,19 +551,24 @@ function NightSweepSection({
   items,
   completingItemId,
   onMarkDone,
+  action,
 }: {
   title: string;
   items: { id: string; text: string; canMarkDone?: boolean }[];
   completingItemId: string | null;
   onMarkDone: (id: string) => void;
+  action?: ReactNode;
 }) {
   if (items.length === 0) return null;
 
   return (
     <div>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-muted">
-        {title}
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+          {title}
+        </p>
+        {action}
+      </div>
       <ul className="mt-1 space-y-1">
         {items.map((item) => (
           <li key={item.id} className="flex items-start justify-between gap-3 text-[13px] leading-snug text-text-soft">

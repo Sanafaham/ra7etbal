@@ -5,6 +5,7 @@ import {
   scheduleReminderPush,
 } from "../lib/qstash-reminder";
 import {
+  archiveDoneTasks as apiArchiveDone,
   createTask as apiCreate,
   deleteTask as apiDelete,
   listTasks as apiList,
@@ -30,6 +31,7 @@ export interface TasksState {
   remove: (id: string) => Promise<void>;
   markDone: (id: string) => Promise<Task>;
   markPending: (id: string) => Promise<Task>;
+  archiveDone: (ids: string[]) => Promise<Task[]>;
   /** Replace a single row in place (used by realtime updates). */
   upsert: (row: Task) => void;
 }
@@ -143,6 +145,26 @@ export const useTasksStore = create<TasksState>((set, get) => ({
       void scheduleReminderPush(result.id, result.due_at);
     }
     return result;
+  },
+
+  async archiveDone(ids) {
+    const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+    if (uniqueIds.length === 0) return [];
+
+    const uniqueIdSet = new Set(uniqueIds);
+    const prev = get().items;
+    set({
+      items: prev.filter(
+        (task) => !(uniqueIdSet.has(task.id) && task.status === "done"),
+      ),
+    });
+
+    try {
+      return await apiArchiveDone(uniqueIds);
+    } catch (err) {
+      set({ items: prev });
+      throw err;
+    }
   },
 
   upsert(row) {
