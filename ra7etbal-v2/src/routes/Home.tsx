@@ -260,7 +260,7 @@ export default function Home() {
             Night Sweep
           </h2>
           <span className="rounded-full bg-sage/10 px-2.5 py-1 text-[11px] font-medium text-sage">
-            Loops closed
+            {nightSweep.badgeLabel}
           </span>
         </div>
 
@@ -268,7 +268,7 @@ export default function Home() {
           <NightSweepSection title="Handled today" items={nightSweep.handledToday} />
           <NightSweepSection title="Still waiting" items={nightSweep.stillWaiting} />
           <NightSweepSection title="Requires you" items={nightSweep.requiresYou} />
-          <NightSweepSection title="Upcoming deadline" items={nightSweep.upcomingDeadline} />
+          <NightSweepSection title="Upcoming" items={nightSweep.upcomingDeadline} />
         </div>
 
         <p className="mt-3 border-t border-sage/15 pt-2.5 text-[13px] font-medium leading-snug text-ink">

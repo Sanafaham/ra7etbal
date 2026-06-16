@@ -16,6 +16,8 @@ export interface NightSweep {
   requiresYou: NightSweepItem[];
   upcomingDeadline: NightSweepItem[];
   reassurance: string;
+  openLoopCount: number;
+  badgeLabel: string;
 }
 
 export function buildNightSweep(
@@ -42,17 +44,18 @@ export function buildNightSweep(
     text: buildRequiresYouText(task, now),
   }));
   const upcomingDeadline = buildUpcomingDeadline(tasks, calendarEvents, now);
+  const openLoopCount = waitingTasks.length;
 
   return {
     handledToday,
     stillWaiting,
     requiresYou,
     upcomingDeadline,
+    openLoopCount,
+    badgeLabel: buildBadgeLabel(openLoopCount),
     reassurance: buildReassurance({
-      handledCount: handledToday.length,
-      waitingCount: stillWaiting.length,
+      waitingCount: waitingTasks.length,
       requiresCount: requiresYou.length,
-      deadlineCount: upcomingDeadline.length,
       hasOverdue: pendingItems.some(
         (item) => item.task.type === "reminder" && isReminderOverdue(item.task.due_at, now),
       ),
@@ -120,12 +123,12 @@ function buildUpcomingDeadline(
   }
 
   if (!upcomingCalendarEvent) return [];
-  const eventTime = formatEventTime(upcomingCalendarEvent, now);
+  const eventTime = formatUpcomingEventTime(upcomingCalendarEvent, now);
   return [
     {
       id: `calendar-${upcomingCalendarEvent.id}`,
       text: eventTime
-        ? `${upcomingCalendarEvent.title} is ${eventTime}.`
+        ? `${upcomingCalendarEvent.title} ${eventTime}.`
         : `${upcomingCalendarEvent.title} is coming up.`,
     },
   ];
@@ -134,7 +137,7 @@ function buildUpcomingDeadline(
 function buildHandledText(task: Task): string {
   const who = task.assigned_to?.trim();
   if (who && who.toLowerCase() !== "me") {
-    return `${capitalize(who)} confirmed ${cleanForObject(task.description)}.`;
+    return `${capitalize(who)} confirmed ${cleanCompletedObject(task.description, who)}.`;
   }
   return `${briefDesc(task.description)} is handled.`;
 }
@@ -158,25 +161,17 @@ function buildRequiresYouText(task: Task, now: Date): string {
 }
 
 function buildReassurance(input: {
-  handledCount: number;
   waitingCount: number;
   requiresCount: number;
-  deadlineCount: number;
   hasOverdue: boolean;
 }): string {
   if (input.hasOverdue || input.requiresCount > 0) {
-    return "Everything else has an owner.";
+    return "Nothing urgent is at risk tonight. We'll pick up the rest tomorrow.";
   }
-  if (input.waitingCount > 0 && input.deadlineCount === 0) {
-    return "The rest is waiting on someone else.";
+  if (input.waitingCount > 0) {
+    return "Everything important is being tracked. I'll keep an eye on the remaining open loops.";
   }
-  if (input.deadlineCount > 0) {
-    return "Nothing else needs your attention tonight.";
-  }
-  if (input.handledCount > 0) {
-    return "You can stop thinking about it tonight.";
-  }
-  return "Nothing urgent needs your attention tonight.";
+  return "Everything delegated has an owner. Nothing urgent needs your attention tonight.";
 }
 
 function getCalendarStartValue(event: CalendarEvent): number {
@@ -205,9 +200,62 @@ function cleanForObject(raw: string): string {
   return cleaned.charAt(0).toLowerCase() + cleaned.slice(1);
 }
 
+function cleanCompletedObject(raw: string, who: string): string {
+  const desc = briefDesc(raw);
+  const lower = desc.toLowerCase();
+  const pronoun = subjectPronounForName(who);
+
+  if (/^if\s+/.test(lower)) return desc.replace(/^if\s+/i, "").replace(/^the\s+/i, "the ");
+  if (/^whether\s+/.test(lower)) return desc.replace(/^whether\s+/i, "");
+  if (/^buy\s+/.test(lower)) return `${pronoun} bought ${desc.replace(/^buy\s+/i, "")}`;
+  if (/^order\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^order\s+/i, ""))} were ordered`;
+  if (/^pay\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^pay\s+/i, ""))} was paid`;
+  if (/^book\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^book\s+/i, ""))} is booked`;
+  if (/^schedule\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^schedule\s+/i, ""))} is scheduled`;
+  if (/^confirm\s+/.test(lower)) return cleanForObject(desc);
+  if (/^check\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^check\s+/i, ""))} was checked`;
+  if (/^send\s+/.test(lower)) return `${withLeadingThe(desc.replace(/^send\s+/i, ""))} was sent`;
+
+  return cleanForObject(desc);
+}
+
+function subjectPronounForName(name: string): string {
+  const normalized = name.trim().toLowerCase();
+  if (["nasira", "grace", "loulya", "jewel", "dina", "angela"].includes(normalized)) {
+    return "she";
+  }
+  if (["ghulam", "suresh", "saeed", "christopher"].includes(normalized)) {
+    return "he";
+  }
+  return "they";
+}
+
+function withLeadingThe(value: string): string {
+  const cleaned = value.trim();
+  if (!cleaned) return cleaned;
+  if (/^(the|a|an|my|your|his|her|their|our)\s+/i.test(cleaned)) {
+    return cleaned.charAt(0).toLowerCase() + cleaned.slice(1);
+  }
+  return `the ${cleaned.charAt(0).toLowerCase()}${cleaned.slice(1)}`;
+}
+
 function formatDuePhrase(label: string): string {
   if (label.startsWith("Due ")) return label.charAt(0).toLowerCase() + label.slice(1);
   return `due ${label.charAt(0).toLowerCase()}${label.slice(1)}`;
+}
+
+function formatUpcomingEventTime(event: CalendarEvent, now: Date): string {
+  const label = formatEventTime(event, now);
+  if (!label) return "";
+  if (label.startsWith("Today ")) return `at ${label.replace(/^Today\s+/i, "")}`;
+  if (label.startsWith("Tomorrow ")) return `tomorrow at ${label.replace(/^Tomorrow\s+/i, "")}`;
+  if (label === "All day") return "all day";
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+
+function buildBadgeLabel(openLoopCount: number): string {
+  if (openLoopCount === 0) return "All clear";
+  return `${openLoopCount} open loop${openLoopCount === 1 ? "" : "s"}`;
 }
 
 function capitalize(str: string): string {
