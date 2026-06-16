@@ -225,56 +225,57 @@ export function buildMorningBriefSpoken(
   const inProgress = todayEvs.filter(ev => classifyCalendarEvent(ev, now) === "in_progress");
 
   // ── SECTION 1: RESOLVED SINCE YESTERDAY ───────────────────────────────────
-  // Max 3 completions. Leads with greeting. Closes loops first — relief before burden.
+  // Leads with greeting + what is handled. Relief before burden.
+  // Max 3 completions. If none, greeting stands alone.
   const resolved = brief.recentCompletions.slice(0, 3);
   let section1 = open;
 
   if (resolved.length === 0) {
-    // No completions — greeting stands alone; rest of brief carries the load
+    // No completions — greeting alone; sections 2–4 carry the context
   } else if (resolved.length === 1) {
-    section1 += ` ${buildCompletionSentence(resolved[0])}`;
+    section1 += ` Here's what's handled: ${buildCompletionSentence(resolved[0])}`;
   } else if (resolved.length === 2) {
-    section1 += ` ${buildCompletionSentence(resolved[0])} ${buildCompletionSentence(resolved[1])}`;
+    section1 += ` Here's what's handled: ${buildCompletionSentence(resolved[0])} ${buildCompletionSentence(resolved[1])}`;
   } else {
-    // 3 items — summarise the first two and count the rest
     const first = buildCompletionSentence(resolved[0]);
-    section1 += ` ${first} And ${spokenCount(resolved.length - 1)} more things were confirmed since yesterday.`;
+    section1 += ` Here's what's handled: ${first} And ${spokenCount(resolved.length - 1)} more things confirmed since yesterday.`;
   }
 
   // ── SECTION 2: STILL WAITING ───────────────────────────────────────────────
-  // Max 2 unconfirmed delegations, oldest first (sorted in buildMorningBrief).
+  // Calming framing: "Here's what is still waiting." not a list of problems.
+  // Max 2 unconfirmed delegations, oldest first.
   let section2 = "";
   const waiting = brief.waitingOn.slice(0, 2);
+  const totalWaiting = brief.waitingOn.length;
 
   if (waiting.length === 1) {
-    const t   = waiting[0];
-    const who = cap(t.assigned_to);
+    const t    = waiting[0];
+    const who  = cap(t.assigned_to);
     const what = cleanDesc(t.description);
     section2 = who && what
-      ? `Still waiting on ${who} to confirm ${what}.`
+      ? `${who} is still waiting to confirm ${what}.`
       : who
-        ? `Still waiting on ${who}.`
+        ? `${who} still has an open item.`
         : "One item is still waiting on confirmation.";
-  } else if (waiting.length === 2) {
+  } else if (waiting.length >= 2) {
     const names = waiting.map(t => cap(t.assigned_to)).filter(Boolean);
-    const totalWaiting = brief.waitingOn.length;
     if (names.length === 2) {
       section2 = totalWaiting > 2
-        ? `Waiting on ${names[0]}, ${names[1]}, and ${totalWaiting - 2} other${totalWaiting - 2 === 1 ? "" : "s"}.`
-        : `Waiting on ${names[0]} and ${names[1]}.`;
+        ? `${names[0]} and ${names[1]} are still waiting — and ${totalWaiting - 2} other${totalWaiting - 2 === 1 ? "" : "s"}.`
+        : `${names[0]} and ${names[1]} are still waiting to confirm.`;
     } else {
-      section2 = `${spokenCount(totalWaiting)} items are waiting on others.`;
+      section2 = `${spokenCount(totalWaiting)} items are still waiting on others.`;
     }
   }
 
   // ── SECTION 3: OLDEST STUCK LOOP ──────────────────────────────────────────
-  // Max 1. Priority: escalated → stale 72h → stale 48h → overdue reminder.
+  // Surfaces the single most stuck item. Calm, factual, no alarm.
+  // Priority: escalated → stale 72h → stale 48h → overdue reminder.
   let section3 = "";
   const nowMs  = now.getTime();
   const MS_72H = 72 * 60 * 60 * 1000;
   const MS_48H = 48 * 60 * 60 * 1000;
 
-  // Find the single most-stuck item
   const escalatedItem = brief.waitingOn.find(t => t.escalated_at != null);
   const stale72Item   = brief.waitingOn.find(t => nowMs - new Date(t.created_at).getTime() >= MS_72H);
   const stale48Item   = brief.waitingOn.find(t => nowMs - new Date(t.created_at).getTime() >= MS_48H);
@@ -282,63 +283,70 @@ export function buildMorningBriefSpoken(
   const stuckItem     = escalatedItem ?? stale72Item ?? stale48Item ?? overdueItem ?? null;
 
   if (stuckItem) {
-    const ageMs  = nowMs - new Date(stuckItem.created_at).getTime();
-    const days   = Math.floor(ageMs / (24 * 60 * 60 * 1000));
-    const who    = cap(stuckItem.assigned_to);
-    const what   = cleanDesc(stuckItem.description);
+    const ageMs = nowMs - new Date(stuckItem.created_at).getTime();
+    const days  = Math.floor(ageMs / (24 * 60 * 60 * 1000));
+    const who   = cap(stuckItem.assigned_to);
+    const what  = cleanDesc(stuckItem.description);
 
     if (stuckItem.escalated_at && who) {
       section3 = what
-        ? `${who} has not responded to "${spokenDesc(stuckItem.description)}" — that's been escalated.`
-        : `${who} has an escalated item with no response.`;
+        ? `One thing I want to flag: ${who} hasn't responded to ${what} — I can follow up.`
+        : `One thing I want to flag: ${who} has an open item with no response — I can follow up.`;
     } else if (days >= 2 && who) {
       section3 = what
-        ? `${who} still hasn't confirmed ${what} — it's been ${days} day${days === 1 ? "" : "s"}.`
-        : `${who} has had an open item for ${days} day${days === 1 ? "" : "s"}.`;
+        ? `${who} hasn't confirmed ${what} in ${days} day${days === 1 ? "" : "s"} — I can follow up.`
+        : `${who} has had an open item for ${days} day${days === 1 ? "" : "s"} — I can follow up.`;
     } else if (stuckItem.type === "reminder" && isReminderOverdue(stuckItem.due_at, now)) {
-      section3 = `Your reminder about "${spokenDesc(stuckItem.description)}" is overdue.`;
+      section3 = `One reminder is overdue: "${spokenDesc(stuckItem.description)}."`;
     } else if (who) {
       section3 = what
-        ? `${who} still hasn't confirmed ${what}.`
+        ? `${who} hasn't confirmed ${what} yet — I can follow up.`
         : `${who} still has an open item.`;
     }
   }
 
   // ── SECTION 4: UPCOMING DEADLINE ──────────────────────────────────────────
-  // Max 1. Reminder due today (not overdue) OR next calendar event.
+  // Calendar is secondary. Only surface if in-progress, timed reminder, or 1 clear
+  // upcoming event. Skip generic calendar mentions unless event is timed and soon.
+  // Do NOT say "busy day" unless there are 4+ calendar events today.
   let section4 = "";
 
-  // Reminder due today takes priority over calendar
   const todayReminder = brief.needsAttention.find(
     t => t.type === "reminder" && t.due_at && !isReminderOverdue(t.due_at, now),
   );
 
   if (inProgress.length > 0) {
+    // In-progress event is urgent enough to surface
     const ev     = inProgress[0];
     const endStr = formatEventEndTime(ev);
     section4 = endStr
-      ? `You're currently in ${ev.title}, until ${endStr}.`
+      ? `You're currently in ${ev.title}, wrapping up at ${endStr}.`
       : `You're currently in ${ev.title}.`;
   } else if (todayReminder) {
+    // Timed reminder is more actionable than calendar
     const timeSuffix = spokenTimeSuffix(todayReminder.due_at, now);
     section4 = timeSuffix
       ? `Reminder: "${spokenDesc(todayReminder.description)}" ${timeSuffix}.`
       : `You have a reminder about "${spokenDesc(todayReminder.description)}" today.`;
+  } else if (todayEvs.length >= 4) {
+    // Many events — brief summary instead of listing
+    section4 = `You have ${spokenCount(todayEvs.length)} things on your calendar today.`;
   } else if (upcoming.length > 0) {
+    // Single upcoming event — name it only if timed
     const ev = upcoming[0];
     const t  = evTime(ev);
-    section4 = t ? `${ev.title} is at ${t}.` : `You have ${ev.title} later today.`;
+    section4 = t ? `${ev.title} is at ${t}.` : "";
   }
 
   // ── SECTION 5: ONE QUESTION ────────────────────────────────────────────────
-  // Exactly one question. Context-driven priority:
-  //   escalated → stale → waiting → overdue reminder → attention → clear
+  // Always exactly one. Context-driven. Offers a specific action, not a vague ask.
+  // Priority: escalated → stale → waiting → overdue → reminder → clear
   let section5 = "";
 
   if (escalatedItem) {
     const who = cap(escalatedItem.assigned_to);
     section5 = who
-      ? `Would you like me to follow up with ${who} again?`
+      ? `Would you like me to follow up with ${who}?`
       : "Should I escalate this further?";
   } else if (stale72Item ?? stale48Item) {
     const item = stale72Item ?? stale48Item!;
@@ -351,16 +359,16 @@ export function buildMorningBriefSpoken(
     const who = cap(t.assigned_to);
     section5 = who
       ? `Would you like me to follow up with ${who}?`
-      : "Should I send a follow-up on the oldest pending item?";
+      : "Should I follow up on the oldest pending item?";
   } else if (overdueItem) {
     section5 = `Should I remind you about "${spokenDesc(overdueItem.description)}" now?`;
   } else if (brief.needsAttention.length > 0) {
     const t = brief.needsAttention[0];
     section5 = t.type === "reminder"
       ? `Should I remind you about "${spokenDesc(t.description)}" later today?`
-      : "Is there anything you'd like me to handle first?";
+      : "Is there anything you'd like me to take care of first?";
   } else {
-    section5 = "Is there anything you'd like me to take care of today?";
+    section5 = "Is there anything you'd like me to handle today?";
   }
 
   // ── Assemble ───────────────────────────────────────────────────────────────
