@@ -7,7 +7,9 @@ import AuthNotice from "../components/auth/AuthNotice";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
+import { fetchCalendarEvents, type CalendarEvent } from "../lib/calendar";
 import { buildDailyBrief } from "../lib/daily-brief";
+import { buildNightSweep } from "../lib/night-sweep";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
@@ -45,6 +47,7 @@ export default function Home() {
   const [redirectMessage, setRedirectMessage] = useState<string | null>(null);
   const [textareaFocused, setTextareaFocused] = useState(false);
   const [viewportShrunk, setViewportShrunk] = useState(false);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const submittingRef = useRef(false);
 
   // Photo attachment for Clear My Head — described before extraction so the
@@ -76,6 +79,16 @@ export default function Home() {
   }, [userId, loadProfile]);
 
   useEffect(() => {
+    if (!userId) {
+      setCalendarEvents([]);
+      return;
+    }
+    fetchCalendarEvents("next_7_days")
+      .then((result) => setCalendarEvents(result.connected ? result.events : []))
+      .catch(() => setCalendarEvents([]));
+  }, [userId]);
+
+  useEffect(() => {
     const intervalId = window.setInterval(() => setNow(new Date()), 30_000);
     return () => window.clearInterval(intervalId);
   }, []);
@@ -96,6 +109,10 @@ export default function Home() {
   }, []);
 
   const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
+  const nightSweep = useMemo(
+    () => buildNightSweep(tasks, now, calendarEvents),
+    [tasks, now, calendarEvents],
+  );
   const urgentCount = useMemo(
     () =>
       brief.needsAttention.filter(
@@ -235,6 +252,28 @@ export default function Home() {
         >
           View Details
         </button>
+      </section>
+
+      <section className="mt-3 rounded-[24px] border border-sage/20 bg-white/72 px-4 py-3.5 shadow-[0_18px_55px_-46px_rgba(20,20,20,0.38)] backdrop-blur-sm">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone">
+            Night Sweep
+          </h2>
+          <span className="rounded-full bg-sage/10 px-2.5 py-1 text-[11px] font-medium text-sage">
+            Loops closed
+          </span>
+        </div>
+
+        <div className="space-y-2.5">
+          <NightSweepSection title="Handled today" items={nightSweep.handledToday} />
+          <NightSweepSection title="Still waiting" items={nightSweep.stillWaiting} />
+          <NightSweepSection title="Requires you" items={nightSweep.requiresYou} />
+          <NightSweepSection title="Upcoming deadline" items={nightSweep.upcomingDeadline} />
+        </div>
+
+        <p className="mt-3 border-t border-sage/15 pt-2.5 text-[13px] font-medium leading-snug text-ink">
+          {nightSweep.reassurance}
+        </p>
       </section>
 
       {/* ── Carson row ─────────────────────────────────────────────── */}
@@ -439,6 +478,31 @@ export default function Home() {
         </div>
       )}
     </section>
+  );
+}
+
+function NightSweepSection({
+  title,
+  items,
+}: {
+  title: string;
+  items: { id: string; text: string }[];
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+        {title}
+      </p>
+      <ul className="mt-1 space-y-1">
+        {items.map((item) => (
+          <li key={item.id} className="text-[13px] leading-snug text-text-soft">
+            {item.text}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
