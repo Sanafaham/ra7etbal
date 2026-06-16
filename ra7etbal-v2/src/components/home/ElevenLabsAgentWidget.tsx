@@ -1836,7 +1836,7 @@ export default function ElevenLabsAgentWidget({
             const plan = activePlan;
             pendingPlanRef.current = null;
             const execSummary = await executeProposedPlan(plan, {
-              displayName,
+              displayName: displayName ?? null,
               userId: authUserId,
               people,
             });
@@ -1872,7 +1872,7 @@ export default function ElevenLabsAgentWidget({
             schedule: recurringSchedule,
             people,
             userId: authUserId,
-            displayName,
+            displayName: displayName ?? null,
           });
           if (routineSummary) {
             sessionActionsRef.current.push(`Routine created: ${rawInstruction}`);

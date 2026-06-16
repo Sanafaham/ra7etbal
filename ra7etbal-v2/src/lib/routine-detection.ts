@@ -100,7 +100,7 @@ interface CreateVoiceRoutineOptions {
 export async function createVoiceRoutine(
   opts: CreateVoiceRoutineOptions,
 ): Promise<string | null> {
-  const { rawInstruction, schedule, people, userId, displayName } = opts;
+  const { rawInstruction, schedule, people, displayName } = opts;
 
   // Use the existing extraction pipeline to identify person + task message.
   const result = await extractItems(rawInstruction, people, displayName ?? undefined);
@@ -111,7 +111,7 @@ export async function createVoiceRoutine(
 
   if (!delegation) return null; // not a delegation — fall through to normal path
 
-  const assignedTo = (delegation.assigned_to ?? "").trim();
+  const assignedTo = (delegation.assignedTo ?? "").trim();
   if (!assignedTo) return null;
 
   // Resolve person_id from the people store (case-insensitive name match).

@@ -24,7 +24,6 @@ import type { ExtractedItem } from "../types/extraction";
 import { savePending } from "./save";
 import { sendWhatsAppTask } from "./whatsapp";
 import { buildDelegationMessage } from "./delegation-message";
-import { rewriteOwnerPronouns } from "./personal-note";
 import { supabase } from "./supabase";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -300,15 +299,12 @@ export async function executeProposedPlan(
       const person = people.find(
         (p) => p.name.trim().toLowerCase() === task.personName.toLowerCase(),
       );
-      return rewriteOwnerPronouns(
-        buildDelegationMessage({
-          personName: task.personName,
-          taskText: task.message,
-          personNotes: person?.notes ?? null,
-          ownerName: displayName,
-        }),
-        displayName,
-      );
+      return buildDelegationMessage({
+        personName: task.personName,
+        taskText: task.message,
+        personNotes: person?.notes ?? null,
+        ownerName: displayName,
+      });
     })(),
     personalNote: null,
     needsPerson: false,
