@@ -305,9 +305,28 @@ export function buildMorningBriefSpoken(
     }
   }
 
+  // ── Invisible deadline window (tomorrow → 14 days) ───────────────────────
+  // Finds the soonest pending reminder or decision task with a future due_at
+  // that falls outside today but within the 14-day horizon. These are "invisible
+  // deadlines" — things like "school registration closes in 9 days" that don't
+  // appear in needsAttention (today-only) or waitingOn (delegation-only).
+  const tomorrowStart  = new Date(todayStart.getTime() + 86_400_000);
+  const horizonEnd     = new Date(todayStart.getTime() + 14 * 86_400_000);
+  const active         = tasks.filter(t => t.archived_at == null && t.status === "pending");
+
+  const upcomingDeadline = active
+    .filter(t => {
+      if (!t.due_at) return false;
+      if (t.type !== "reminder" && t.type !== "decision") return false;
+      const due = new Date(t.due_at);
+      return due >= tomorrowStart && due < horizonEnd;
+    })
+    .sort((a, b) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime())[0] ?? null;
+
   // ── SECTION 4: UPCOMING DEADLINE ──────────────────────────────────────────
-  // Calendar is secondary. Only surface if in-progress, timed reminder, or 1 clear
-  // upcoming event. Skip generic calendar mentions unless event is timed and soon.
+  // Priority: in-progress event → today reminder → invisible deadline (1–14 days)
+  //           → many-calendar summary → single timed calendar event.
+  // Calendar is secondary unless event is timed and soon.
   // Do NOT say "busy day" unless there are 4+ calendar events today.
   let section4 = "";
 
@@ -316,23 +335,24 @@ export function buildMorningBriefSpoken(
   );
 
   if (inProgress.length > 0) {
-    // In-progress event is urgent enough to surface
     const ev     = inProgress[0];
     const endStr = formatEventEndTime(ev);
     section4 = endStr
       ? `You're currently in ${ev.title}, wrapping up at ${endStr}.`
       : `You're currently in ${ev.title}.`;
   } else if (todayReminder) {
-    // Timed reminder is more actionable than calendar
     const timeSuffix = spokenTimeSuffix(todayReminder.due_at, now);
     section4 = timeSuffix
       ? `Reminder: "${spokenDesc(todayReminder.description)}" ${timeSuffix}.`
       : `You have a reminder about "${spokenDesc(todayReminder.description)}" today.`;
+  } else if (upcomingDeadline) {
+    // Invisible deadline — use day-count language, never invent a reminder date
+    const dayCount = spokenDaysUntil(upcomingDeadline.due_at!, now);
+    const what     = spokenDesc(upcomingDeadline.description);
+    section4 = `One deadline is coming up: ${what} — ${dayCount}.`;
   } else if (todayEvs.length >= 4) {
-    // Many events — brief summary instead of listing
     section4 = `You have ${spokenCount(todayEvs.length)} things on your calendar today.`;
   } else if (upcoming.length > 0) {
-    // Single upcoming event — name it only if timed
     const ev = upcoming[0];
     const t  = evTime(ev);
     section4 = t ? `${ev.title} is at ${t}.` : "";
@@ -340,7 +360,7 @@ export function buildMorningBriefSpoken(
 
   // ── SECTION 5: ONE QUESTION ────────────────────────────────────────────────
   // Always exactly one. Context-driven. Offers a specific action, not a vague ask.
-  // Priority: escalated → stale → waiting → overdue → reminder → clear
+  // Priority: escalated → stale → waiting → upcoming deadline → overdue → reminder → clear
   let section5 = "";
 
   if (escalatedItem) {
@@ -360,6 +380,9 @@ export function buildMorningBriefSpoken(
     section5 = who
       ? `Would you like me to follow up with ${who}?`
       : "Should I follow up on the oldest pending item?";
+  } else if (upcomingDeadline) {
+    const what = spokenDesc(upcomingDeadline.description);
+    section5 = `Would you like me to remind you about ${what} before the deadline?`;
   } else if (overdueItem) {
     section5 = `Should I remind you about "${spokenDesc(overdueItem.description)}" now?`;
   } else if (brief.needsAttention.length > 0) {
@@ -448,6 +471,24 @@ function spokenTimeSuffix(dueAt: string | null, now: Date): string {
   result = result.replace(/:00\s*(AM|PM)/gi, " $1");
 
   return result.trim();
+}
+
+/**
+ * Returns a spoken day-count phrase for a future deadline, e.g. "in 9 days",
+ * "tomorrow", "in 2 weeks". Never returns a calendar date — keeps the brief
+ * feeling conversational and avoids invented reminder times.
+ */
+function spokenDaysUntil(dueAt: string, now: Date): string {
+  const due        = new Date(dueAt);
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueMidnight   = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+  const days = Math.round((dueMidnight.getTime() - todayMidnight.getTime()) / 86_400_000);
+
+  if (days <= 1) return "tomorrow";
+  if (days === 7) return "in one week";
+  if (days === 14) return "in two weeks";
+  if (days % 7 === 0) return `in ${spokenCount(days / 7)} weeks`;
+  return `in ${spokenCount(days)} day${days === 1 ? "" : "s"}`;
 }
 
 function buildCompletionSentence(t: Task): string {

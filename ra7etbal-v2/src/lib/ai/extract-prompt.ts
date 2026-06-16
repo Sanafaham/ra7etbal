@@ -381,6 +381,9 @@ Defaults when no specific time is given:
   - tomorrow: tomorrow at 9:00 AM local time.
   - tonight: today at 8:00 PM local time; if already past, tomorrow at 8:00 PM.
   - weekday only: the next upcoming instance of that weekday at 9:00 AM.
+  - "in N days": today + N days at 9:00 AM local time.
+  - "in N weeks": today + N×7 days at 9:00 AM local time.
+  - a specific date ("June 30", "July 15"): that date at 9:00 AM local time.
 
 If no due timing is stated, set dueText and dueAt to null.
 
@@ -442,6 +445,91 @@ Input: "Renew passport 2 days ago."
     dueText: "2 days ago"
     dueAt: "<2 days ago at 9:00 AM local time as ISO 8601>"
     suggestedMessage: null
+
+================================================================
+INVISIBLE DEADLINES
+================================================================
+
+Many mental loads are not "remind me" requests — they are deadlines that
+exist whether or not the user asks to be reminded. These are invisible
+deadlines: registration closing dates, contract expiry, quote validity,
+decision windows, renewal deadlines.
+
+Trigger phrases: "closes", "closes on", "deadline is", "due by", "expires",
+"expiry", "valid until", "last day to", "must decide by", "I need to decide by",
+"submit by", "register by", "renew by".
+
+Rule: whenever the user mentions a deadline phrase + a date/timeframe,
+classify the item as either:
+  - type: "reminder" — if it is a time-based action to complete
+  - type: "decision" — if it is a choice the user must make
+
+Always extract dueAt when a deadline phrase is present. The item must be
+saved as a permanent open loop — it should appear in the morning brief
+before the date arrives.
+
+dueAt for invisible deadlines:
+  - "closes next Friday" → next Friday at 9:00 AM local time
+  - "deadline is June 30" → June 30 at 9:00 AM local time (current or next year)
+  - "expires in 10 days" → today + 10 days at 9:00 AM local time
+  - "decide by Wednesday" → next Wednesday at 9:00 AM local time
+  - "valid until July 15" → July 15 at 9:00 AM local time
+
+Decision items MUST include dueAt whenever a deadline or decision-by date is given.
+Do not set dueAt to null for a decision item when the user stated a date.
+
+Invisible deadline examples:
+
+Input: "School registration closes next Friday."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "School registration closes next Friday."
+    dueText: "Next Friday"
+    dueAt: "<next Friday at 9:00 AM local time as ISO 8601>"
+    suggestedMessage: null
+    needsClarification: false
+
+Input: "The visa renewal deadline is June 30."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "Visa renewal deadline — June 30."
+    dueText: "June 30"
+    dueAt: "<June 30 at 9:00 AM local time as ISO 8601>"
+    suggestedMessage: null
+    needsClarification: false
+
+Input: "The contractor quote expires in 10 days."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "Contractor quote expires."
+    dueText: "In 10 days"
+    dueAt: "<today + 10 days at 9:00 AM local time as ISO 8601>"
+    suggestedMessage: null
+    needsClarification: false
+
+Input: "I need to decide on the school by Wednesday."
+  Output:
+    type: "decision"
+    assignedTo: "__me__"
+    description: "Decide on the school."
+    dueText: "By Wednesday"
+    dueAt: "<next Wednesday at 9:00 AM local time as ISO 8601>"
+    suggestedMessage: null
+    needsClarification: false
+
+Input: "Remind me 3 days before the school registration deadline."
+  Output:
+    type: "reminder"
+    assignedTo: "__me__"
+    description: "School registration deadline approaching."
+    dueText: "3 days before deadline"
+    dueAt: null
+    suggestedMessage: null
+    needsClarification: true
+    clarificationQuestion: "Deadline date not given."
 
 ================================================================
 OUTPUT SHAPE
