@@ -5,6 +5,9 @@ import { derivePendingItems } from "./pending-items";
 import { formatReminderDue, isReminderOverdue } from "./reminder-time";
 import type { Task } from "../types/task";
 
+/** Hour (0–23) at which Night Sweep replaces Today's Snapshot. */
+export const EVENING_HOUR = 20;
+
 export interface NightSweepItem {
   id: string;
   text: string;
@@ -19,6 +22,8 @@ export interface NightSweep {
   reassurance: string;
   openLoopCount: number;
   badgeLabel: string;
+  /** true when used as daytime "Today's Snapshot", false when evening Night Sweep */
+  isSnapshot: boolean;
 }
 
 export function buildNightSweep(
@@ -26,28 +31,42 @@ export function buildNightSweep(
   now = new Date(),
   calendarEvents: CalendarEvent[] = [],
 ): NightSweep {
+  const isSnapshot = now.getHours() < EVENING_HOUR;
+
   const brief = buildDailyBrief(tasks, now);
   const pendingItems = derivePendingItems(tasks, now);
+
   const handledToday = brief.done.slice(0, 3).map((task) => ({
     id: task.id,
     text: buildHandledText(task),
   }));
+
   const waitingTasks = orderWaitingTasksFromPendingItems(
     pendingItems.map((item) => item.task),
     brief.waitingOnOthers,
   );
+
   const stillWaiting = waitingTasks.slice(0, 2).map((task) => ({
     id: task.id,
     text: buildWaitingText(task),
     canMarkDone: true,
   }));
+
   const requiresYou = brief.needsAttention.slice(0, 1).map((task) => ({
     id: task.id,
     text: buildRequiresYouText(task, now),
     canMarkDone: true,
   }));
+
   const upcomingDeadline = buildUpcomingDeadline(tasks, calendarEvents, now);
   const openLoopCount = waitingTasks.length;
+
+  // "All Clear" is genuine only when nothing is unresolved:
+  // no waiting, no requires-you, no upcoming deadline with mental load.
+  const hasUnresolvedLoad =
+    stillWaiting.length > 0 ||
+    requiresYou.length > 0 ||
+    upcomingDeadline.some((i) => i.canMarkDone); // task deadlines carry load; calendar-only don't
 
   return {
     handledToday,
@@ -55,14 +74,17 @@ export function buildNightSweep(
     requiresYou,
     upcomingDeadline,
     openLoopCount,
-    badgeLabel: buildBadgeLabel(openLoopCount),
+    badgeLabel: buildBadgeLabel(openLoopCount, hasUnresolvedLoad),
     reassurance: buildReassurance({
       waitingCount: waitingTasks.length,
       requiresCount: requiresYou.length,
       hasOverdue: pendingItems.some(
         (item) => item.task.type === "reminder" && isReminderOverdue(item.task.due_at, now),
       ),
+      hasUnresolvedLoad,
+      isSnapshot,
     }),
+    isSnapshot,
   };
 }
 
@@ -79,41 +101,32 @@ function orderWaitingTasksFromPendingItems(
   ];
 }
 
+/**
+ * Upcoming section priority order:
+ *   1. Task deadlines (reminders with due_at)
+ *   2. Pending waiting items (delegations / follow-ups)
+ *   3. Unresolved decisions
+ *   4. Imminent calendar events (≤24h away) or ones requiring preparation
+ *
+ * Routine calendar events further out are excluded — they don't add mental load tonight.
+ */
 function buildUpcomingDeadline(
   tasks: Task[],
   calendarEvents: CalendarEvent[],
   now: Date,
 ): NightSweepItem[] {
-  const upcomingReminder = tasks
-    .filter((task) => task.archived_at == null)
-    .filter((task) => task.status !== "done" && task.type === "reminder" && task.due_at)
-    .filter((task) => {
-      const due = new Date(task.due_at!);
+  const unarchived = tasks.filter((t) => t.archived_at == null && t.status !== "done");
+
+  // 1. Soonest task deadline
+  const upcomingReminder = unarchived
+    .filter((t) => t.type === "reminder" && t.due_at)
+    .filter((t) => {
+      const due = new Date(t.due_at!);
       return !Number.isNaN(due.getTime()) && due > now;
     })
     .sort((a, b) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime())[0];
 
-  const upcomingCalendarEvent = calendarEvents
-    .filter((event) => classifyCalendarEvent(event, now) === "upcoming")
-    .filter((event) => {
-      if (!event.start) return false;
-      const start = event.allDay ? parseAllDayDate(event.start) : new Date(event.start);
-      return start !== null && start > now;
-    })
-    .sort((a, b) => getCalendarStartValue(a) - getCalendarStartValue(b))[0];
-
-  const reminderTime = upcomingReminder?.due_at
-    ? new Date(upcomingReminder.due_at).getTime()
-    : Number.POSITIVE_INFINITY;
-  const calendarTime = upcomingCalendarEvent
-    ? getCalendarStartValue(upcomingCalendarEvent)
-    : Number.POSITIVE_INFINITY;
-
-  if (reminderTime === Number.POSITIVE_INFINITY && calendarTime === Number.POSITIVE_INFINITY) {
-    return [];
-  }
-
-  if (reminderTime <= calendarTime && upcomingReminder) {
+  if (upcomingReminder) {
     const dueLabel = formatReminderDue(upcomingReminder.due_at, now);
     return [
       {
@@ -126,17 +139,72 @@ function buildUpcomingDeadline(
     ];
   }
 
-  if (!upcomingCalendarEvent) return [];
-  const eventTime = formatUpcomingEventTime(upcomingCalendarEvent, now);
+  // 2. Soonest stale delegation / follow-up (unresolved mental load)
+  const staleDelegation = unarchived
+    .filter((t) => t.type === "delegation" || t.type === "followup")
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0];
+
+  if (staleDelegation) {
+    return [
+      {
+        id: staleDelegation.id,
+        text: buildWaitingText(staleDelegation),
+        canMarkDone: true,
+      },
+    ];
+  }
+
+  // 3. Unresolved decision
+  const decision = unarchived
+    .filter((t) => t.type === "decision")
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())[0];
+
+  if (decision) {
+    return [
+      {
+        id: decision.id,
+        text: `${briefDesc(decision.description)} still needs a decision.`,
+        canMarkDone: true,
+      },
+    ];
+  }
+
+  // 4. Calendar events — only if imminent (≤24h) or require preparation
+  const imminentOrPrepEvent = calendarEvents
+    .filter((ev) => classifyCalendarEvent(ev, now) === "upcoming")
+    .filter((ev) => {
+      if (!ev.start) return false;
+      const start = ev.allDay ? parseAllDayDate(ev.start) : new Date(ev.start);
+      if (!start || start <= now) return false;
+      const hoursUntil = (start.getTime() - now.getTime()) / 3_600_000;
+      const isImminent = hoursUntil <= 24;
+      const requiresPrep = PREP_KEYWORDS.some((kw) =>
+        ev.title?.toLowerCase().includes(kw),
+      );
+      return isImminent || requiresPrep;
+    })
+    .sort((a, b) => getCalendarStartValue(a) - getCalendarStartValue(b))[0];
+
+  if (!imminentOrPrepEvent) return [];
+
+  const eventTime = formatUpcomingEventTime(imminentOrPrepEvent, now);
   return [
     {
-      id: `calendar-${upcomingCalendarEvent.id}`,
+      id: `calendar-${imminentOrPrepEvent.id}`,
       text: eventTime
-        ? `${upcomingCalendarEvent.title} ${eventTime}.`
-        : `${upcomingCalendarEvent.title} is coming up.`,
+        ? `${imminentOrPrepEvent.title} ${eventTime}.`
+        : `${imminentOrPrepEvent.title} is coming up.`,
+      // calendar items can't be marked done from here
     },
   ];
 }
+
+/** Calendar event titles/descriptions containing these words imply preparation needed. */
+const PREP_KEYWORDS = [
+  "meeting", "interview", "presentation", "review", "call", "appointment",
+  "dinner", "lunch", "guest", "visit", "flight", "travel", "trip",
+  "surgery", "checkup", "exam",
+];
 
 function buildHandledText(task: Task): string {
   const who = task.assigned_to?.trim();
@@ -168,14 +236,28 @@ function buildReassurance(input: {
   waitingCount: number;
   requiresCount: number;
   hasOverdue: boolean;
+  hasUnresolvedLoad: boolean;
+  isSnapshot: boolean;
 }): string {
   if (input.hasOverdue || input.requiresCount > 0) {
-    return "Nothing urgent is at risk tonight. We'll pick up the rest tomorrow.";
+    return input.isSnapshot
+      ? "One item still needs your attention today."
+      : "Nothing urgent is at risk tonight. We'll pick up the rest tomorrow.";
   }
   if (input.waitingCount > 0) {
-    return "Everything important is being tracked. I'll keep an eye on the remaining open loops.";
+    return input.isSnapshot
+      ? "Everything has an owner. Check in later."
+      : "Everything important is being tracked. I'll keep an eye on the remaining open loops.";
   }
-  return "Everything delegated has an owner. Nothing urgent needs your attention tonight.";
+  // Only show "All Clear" when there is genuinely no unresolved mental load
+  if (!input.hasUnresolvedLoad) {
+    return input.isSnapshot
+      ? "Nothing urgent right now. Enjoy your day."
+      : "Everything delegated has an owner. You can stop thinking about it tonight.";
+  }
+  return input.isSnapshot
+    ? "A few things are still in motion."
+    : "A few things are still in motion. We'll follow up tomorrow.";
 }
 
 function getCalendarStartValue(event: CalendarEvent): number {
@@ -276,8 +358,8 @@ function formatUpcomingEventTime(event: CalendarEvent, now: Date): string {
   return label.charAt(0).toLowerCase() + label.slice(1);
 }
 
-function buildBadgeLabel(openLoopCount: number): string {
-  if (openLoopCount === 0) return "All clear";
+function buildBadgeLabel(openLoopCount: number, hasUnresolvedLoad: boolean): string {
+  if (openLoopCount === 0 && !hasUnresolvedLoad) return "All clear";
   return `${openLoopCount} open loop${openLoopCount === 1 ? "" : "s"}`;
 }
 

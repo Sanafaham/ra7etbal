@@ -32,7 +32,7 @@ import { buildCarsonContext } from "./lib/carson-context";
 import { fetchCalendarEvents, type CalendarEvent } from "./lib/calendar";
 import { formatNotesForContext, loadRecentNotes } from "./lib/carson-notes";
 import { buildMorningBriefSpoken } from "./lib/morning-brief";
-import { buildNightSweepSpoken } from "./lib/night-sweep";
+import { buildNightSweepSpoken, EVENING_HOUR } from "./lib/night-sweep";
 import { useCarsonStore } from "./stores/carson";
 import { useHouseholdRulesStore } from "./stores/household-rules";
 import { usePeopleStore } from "./stores/people";
@@ -241,7 +241,7 @@ function PersistentCarsonWidget({
     () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, householdRules }),
     [tasks, people, user?.email, now, calendarEvents, notesBlock, householdRules],
   );
-  const isEvening = now.getHours() >= 20;
+  const isEvening = now.getHours() >= EVENING_HOUR;
   const spokenBrief = useMemo(
     () =>
       isEvening
@@ -284,7 +284,7 @@ function PersistentCarsonWidget({
     return {
       briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, householdRules: freshHouseholdRules }),
       spokenBrief:
-        freshNow.getHours() >= 20
+        freshNow.getHours() >= EVENING_HOUR
           ? buildNightSweepSpoken(freshTasks, displayName, freshNow)
           : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents),
     };

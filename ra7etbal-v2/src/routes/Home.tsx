@@ -9,7 +9,7 @@ import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import { fetchCalendarEvents, type CalendarEvent } from "../lib/calendar";
 import { buildDailyBrief } from "../lib/daily-brief";
-import { buildNightSweep } from "../lib/night-sweep";
+import { buildNightSweep, EVENING_HOUR } from "../lib/night-sweep";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
@@ -116,6 +116,7 @@ export default function Home() {
   }, []);
 
   const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
+  const isEvening = now.getHours() >= EVENING_HOUR;
   const nightSweep = useMemo(
     () => buildNightSweep(tasks, now, calendarEvents),
     [tasks, now, calendarEvents],
@@ -292,7 +293,7 @@ export default function Home() {
       <section className="mt-3 rounded-[24px] border border-sage/20 bg-white/72 px-4 py-3.5 shadow-[0_18px_55px_-46px_rgba(20,20,20,0.38)] backdrop-blur-sm">
         <div className="mb-2 flex items-center justify-between gap-3">
           <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone">
-            Night Sweep
+            {isEvening ? "Night Sweep" : "Today's Snapshot"}
           </h2>
           <span className="rounded-full bg-sage/10 px-2.5 py-1 text-[11px] font-medium text-sage">
             {nightSweep.badgeLabel}
