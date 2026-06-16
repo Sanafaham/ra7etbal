@@ -1778,6 +1778,14 @@ export default function ElevenLabsAgentWidget({
         .reverse()
         .find((m) => m.role === "user")?.message?.trim();
       const rawInstruction = (lastUserMessage || instruction?.trim() || "").trim();
+
+      // ── Routing trace — emitted before any branching ──────────────────
+      console.log("[routine:TRACE] instruction_param=", (instruction?.trim() ?? "null").slice(0, 120));
+      console.log("[routine:TRACE] lastUserMessage=", (lastUserMessage ?? "null").slice(0, 120));
+      console.log("[routine:TRACE] recurringRawRef=", (recurringRawRef.current ?? "null").slice(0, 120));
+      console.log("[routine:TRACE] rawInstruction=", rawInstruction.slice(0, 120));
+      console.log("[routine:TRACE] transcriptLength=", sessionTranscriptRef.current.length, "people=", usePeopleStore.getState().items.length);
+
       if (!rawInstruction) {
         return "I did not receive an instruction. Ask the user what they want to do.";
       }
@@ -1871,28 +1879,47 @@ export default function ElevenLabsAgentWidget({
         }
 
         // ── Recurring-language detection ──────────────────────────────────
-        // If the instruction contains recurring language (every Monday, daily,
-        // every N days, "routine task", etc.) create routine(s) and NEVER
-        // fall through to the one-time delegation path.
-        // Images are not attached to routines (they fire on a schedule, not now).
+        // Check ALL three possible sources for recurring language and use the
+        // first one that matches. This guards against ElevenLabs stripping
+        // recurring words from the instruction param before it reaches here,
+        // and against onMessage not firing for the user transcript role.
         //
-        // Priority for detection source:
-        //   1. recurringRawRef — raw user utterance captured in onMessage BEFORE
-        //      the LLM rewrites it. Most reliable because ElevenLabs often strips
-        //      recurring language from the `instruction` param it passes here.
-        //   2. rawInstruction — the last user transcript message or the LLM-supplied
-        //      instruction parameter. Used as fallback when ref is not set.
-        const recurringSource = recurringRawRef.current || rawInstruction;
-        const recurringSchedules = detectAllRecurringSchedules(recurringSource);
-        // Consume the ref so a second execute_instruction call in the same turn
-        // (e.g. a follow-up one-time task) doesn't accidentally inherit it.
+        // Source priority (most verbatim first):
+        //   1. recurringRawRef  — captured in onMessage before LLM processes
+        //   2. lastUserMessage  — verbatim transcript (may be same as #1)
+        //   3. instruction param — LLM-rewritten; last resort but still works
+        //      when the LLM preserves "every morning" / "daily" etc.
+        const candidateSources = [
+          recurringRawRef.current,
+          lastUserMessage ?? null,
+          instruction?.trim() ?? null,
+        ].filter((s): s is string => !!s);
+
+        // Consume ref now regardless — prevents inheritance by later calls.
+        const consumedRawRef = recurringRawRef.current;
         recurringRawRef.current = null;
-        if (recurringSchedules.length > 0) {
+
+        // Find the first source that contains recurring language.
+        let recurringSource: string | null = null;
+        let recurringSchedules: ReturnType<typeof detectAllRecurringSchedules> = [];
+        for (const src of candidateSources) {
+          const schedules = detectAllRecurringSchedules(src);
+          if (schedules.length > 0) {
+            recurringSource = src;
+            recurringSchedules = schedules;
+            break;
+          }
+        }
+
+        console.log("[routine:TRACE] consumedRawRef=", (consumedRawRef ?? "null").slice(0, 120));
+        console.log("[routine:TRACE] candidateSources_count=", candidateSources.length);
+        console.log("[routine:RECURRING_DETECTED]", recurringSchedules.length > 0 ? recurringSchedules : "none");
+
+        if (recurringSchedules.length > 0 && recurringSource) {
           // Use recurringSource as the raw instruction for person extraction since
           // it preserves the original phrasing the user spoke ("Madam", "Grace", etc.)
           const routineInstruction = recurringSource;
           console.log("[routine:VOICE_INPUT]", routineInstruction);
-          console.log("[routine:RECURRING_DETECTED]", recurringSchedules);
 
           // Create one routine per detected schedule (handles "every Monday and Thursday").
           const results = await Promise.all(
@@ -1934,6 +1961,23 @@ export default function ElevenLabsAgentWidget({
           console.warn("[routine:HARD_BLOCK] all schedules failed — not sending as one-time", { rawInstruction });
           return "I couldn't create that routine — I may not have found the person in your contacts. Check their name in People and try again.";
         }
+
+        // ── FINAL SAFETY BLOCK ────────────────────────────────────────────
+        // If ANY source still contains recurring language at this point it means
+        // the detection above failed to catch it (e.g. the source set was empty
+        // when the ref was captured). Hard-block before savePending is ever called.
+        const safetyCheck = candidateSources.some(
+          (s) => detectAllRecurringSchedules(s).length > 0,
+        );
+        if (safetyCheck) {
+          console.error(
+            "[routine:SAFETY_BLOCK] executeDelegationFromText reached with recurring language — blocked.",
+            { candidateSources: candidateSources.map((s) => s.slice(0, 80)) },
+          );
+          return "I detected recurring language but couldn't create the routine. Check your contacts in People and try again.";
+        }
+
+        console.log("[routine:TRACE] executeDelegationFromText called →", rawInstruction.slice(0, 100));
 
         // Belt-and-suspenders: if the session-start injection somehow missed
         // (e.g. description resolved after sendContextualUpdate was called),
