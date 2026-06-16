@@ -690,6 +690,15 @@ export default function ElevenLabsAgentWidget({
    *  in-memory keyword lookup without hitting Supabase during the call. */
   const notesRef = useRef<CarsonNote[]>([]);
 
+  /**
+   * Last user utterance that contained recurring language, captured in onMessage
+   * BEFORE the LLM processes it. ElevenLabs sometimes strips recurring language
+   * from the `instruction` param passed to execute_instruction, so we capture the
+   * raw text here and use it as the authoritative source for recurring detection.
+   * Cleared at session start and consumed (set null) after the first matching tool call.
+   */
+  const recurringRawRef = useRef<string | null>(null);
+
   /** Accumulates finalized transcript messages (both user and agent) for
    *  this session. Summarised by Haiku at disconnect for conversational memory. */
   const sessionTranscriptRef = useRef<TranscriptMessage[]>([]);
@@ -1866,9 +1875,23 @@ export default function ElevenLabsAgentWidget({
         // every N days, "routine task", etc.) create routine(s) and NEVER
         // fall through to the one-time delegation path.
         // Images are not attached to routines (they fire on a schedule, not now).
-        const recurringSchedules = detectAllRecurringSchedules(rawInstruction);
+        //
+        // Priority for detection source:
+        //   1. recurringRawRef — raw user utterance captured in onMessage BEFORE
+        //      the LLM rewrites it. Most reliable because ElevenLabs often strips
+        //      recurring language from the `instruction` param it passes here.
+        //   2. rawInstruction — the last user transcript message or the LLM-supplied
+        //      instruction parameter. Used as fallback when ref is not set.
+        const recurringSource = recurringRawRef.current || rawInstruction;
+        const recurringSchedules = detectAllRecurringSchedules(recurringSource);
+        // Consume the ref so a second execute_instruction call in the same turn
+        // (e.g. a follow-up one-time task) doesn't accidentally inherit it.
+        recurringRawRef.current = null;
         if (recurringSchedules.length > 0) {
-          console.log("[routine:VOICE_INPUT]", rawInstruction);
+          // Use recurringSource as the raw instruction for person extraction since
+          // it preserves the original phrasing the user spoke ("Madam", "Grace", etc.)
+          const routineInstruction = recurringSource;
+          console.log("[routine:VOICE_INPUT]", routineInstruction);
           console.log("[routine:RECURRING_DETECTED]", recurringSchedules);
 
           // Create one routine per detected schedule (handles "every Monday and Thursday").
@@ -1877,7 +1900,7 @@ export default function ElevenLabsAgentWidget({
               try {
                 console.log("[routine:CREATE_ROUTINE]", { sched, peopleCount: people.length });
                 const summary = await createVoiceRoutine({
-                  rawInstruction,
+                  rawInstruction: routineInstruction,
                   schedule: sched,
                   people,
                   userId: authUserId,
@@ -1987,6 +2010,7 @@ export default function ElevenLabsAgentWidget({
     sessionActionsRef.current = [];
     sessionTranscriptRef.current = [];
     sentDelegationsRef.current = [];
+    recurringRawRef.current = null;
     setLastCarsonMessage(null);
 
     // Load structured user memory and recent session summaries before opening
@@ -2149,13 +2173,23 @@ export default function ElevenLabsAgentWidget({
           // Accumulate both sides of the conversation for end-of-session
           // summarisation. Only finalized messages arrive here.
           sessionTranscriptRef.current.push({ role, message });
-          // "agent" is the ElevenLabs SDK role for Carson's spoken turns.
-          // If the role value ever changes, this silently stops updating — check
-          // the console log below if the transcript bubble stops appearing.
-          if (role === "agent") {
+          if (role === "user") {
+            // Capture recurring language from the raw user utterance BEFORE the
+            // LLM processes it. The ElevenLabs dashboard LLM often strips recurring
+            // language ("every Saturday", "weekly", etc.) when it rewrites the
+            // instruction passed to execute_instruction. Storing the original here
+            // lets executeInstruction use the verbatim text for detection.
+            if (detectAllRecurringSchedules(message).length > 0) {
+              recurringRawRef.current = message;
+              console.log("[routine:RAW_CAPTURE]", message);
+            }
+          } else if (role === "agent") {
+            // "agent" is the ElevenLabs SDK role for Carson's spoken turns.
+            // If the role value ever changes, this silently stops updating — check
+            // the console log below if the transcript bubble stops appearing.
             console.log("[transcript] agent role confirmed, message len=%d", message.length);
             setLastCarsonMessage(message);
-          } else if (role !== "user") {
+          } else {
             // Unexpected role — surface in dev console so it can be caught.
             console.warn("[transcript] unexpected onMessage role:", role);
           }
