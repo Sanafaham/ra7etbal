@@ -138,14 +138,26 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         </datalist>
       </div>
 
-      <div className="flex items-center gap-3 rounded-xl border border-sage/20 bg-sage/4 px-4 py-3">
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={notesId} className="text-xs font-medium uppercase tracking-wide text-ink/60">
+          Description / Notes <span className="font-normal normal-case text-ink/40">(optional)</span>
+        </label>
+        <textarea
+          id={notesId} value={notes} onChange={(e) => setNotes(e.target.value)}
+          placeholder="Tell Carson who this person is, what they do, and anything important to remember."
+          rows={3} disabled={!!busy}
+          className="w-full resize-none rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+        />
+      </div>
+
+      <div className="flex items-start gap-2.5 pt-0.5">
         <input
           id="is-family" type="checkbox" checked={isFamily}
           onChange={(e) => setIsFamily(e.target.checked)} disabled={!!busy}
-          className="h-4 w-4 rounded border-sage/40 text-sage focus:ring-sage/30"
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-sage/40 text-sage focus:ring-sage/30"
         />
-        <label htmlFor="is-family" className="text-sm text-ink/80">
-          This person is <strong>family</strong> — Carson will not assign them household tasks or treat them as staff.
+        <label htmlFor="is-family" className="text-sm text-ink/60 leading-snug">
+          Family member — Carson won't assign them household tasks or treat them as staff.
         </label>
       </div>
 
@@ -300,18 +312,6 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
               />
             </div>
 
-            {/* Legacy notes */}
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor={notesId} className="text-xs font-medium uppercase tracking-wide text-ink/55">
-                Additional notes
-              </label>
-              <textarea
-                id={notesId} value={notes} onChange={(e) => setNotes(e.target.value)}
-                placeholder="Anything else Carson should know"
-                rows={2} disabled={!!busy}
-                className="w-full resize-none rounded-xl border border-sage/25 bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
-              />
-            </div>
           </div>
         )}
       </div>
