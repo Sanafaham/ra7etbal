@@ -85,6 +85,36 @@ export default function Updates() {
   const doneTasks = useMemo(() => tasks.filter((t) => t.status === "done"), [tasks]);
   const initialLoading = tasksStatus === "loading" && tasks.length === 0;
 
+  // Pending reminders due in the next 14 days (not today, not overdue — those
+  // already appear in needsAttention). Sorted by due date ascending.
+  const MS_14_DAYS = 14 * 24 * 60 * 60 * 1000;
+  const upcomingReminders = useMemo(() => {
+    const nowMs = now.getTime();
+    return tasks
+      .filter((t) => {
+        if (t.archived_at != null) return false;
+        if (t.status !== "pending") return false;
+        if (t.type !== "reminder") return false;
+        if (!t.due_at) return false;
+        const dueMs = new Date(t.due_at).getTime();
+        if (Number.isNaN(dueMs)) return false;
+        // Future only, within 14 days, not today (today/overdue live in needsAttention)
+        return dueMs > nowMs && dueMs <= nowMs + MS_14_DAYS;
+      })
+      .sort((a, b) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime());
+  }, [tasks, now]);
+
+  // IDs already shown in upcomingReminders — exclude from brief.later to avoid duplication
+  const upcomingReminderIds = useMemo(
+    () => new Set(upcomingReminders.map((t) => t.id)),
+    [upcomingReminders],
+  );
+
+  const laterFiltered = useMemo(
+    () => brief.later.filter((t) => !upcomingReminderIds.has(t.id)),
+    [brief.later, upcomingReminderIds],
+  );
+
   const overdueCount = useMemo(
     () =>
       brief.needsAttention.filter(
@@ -204,15 +234,41 @@ export default function Updates() {
             </ul>
           )}
 
+          {/* Upcoming reminders — future pending reminders within 14 days */}
+          {upcomingReminders.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 px-1">
+                <span className="text-xs font-medium uppercase tracking-wide text-ink/50">
+                  Upcoming reminders
+                </span>
+                <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
+                  {upcomingReminders.length}
+                </span>
+              </div>
+              <ul className="space-y-3">
+                {upcomingReminders.map((task) => (
+                  <li key={task.id}>
+                    <TaskCard
+                      task={task}
+                      message={messageByTaskId.get(task.id) ?? null}
+                      recipientPhone={null}
+                      {...sharedTaskProps}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Later — muted, hidden when empty */}
-          {brief.later.length > 0 && (
+          {laterFiltered.length > 0 && (
             <details className="group">
               <summary className="flex cursor-pointer select-none list-none items-center gap-2 py-1 px-1">
                 <span className="text-xs font-medium uppercase tracking-wide text-ink/40">Later</span>
-                <span className="text-xs text-ink/30">{brief.later.length}</span>
+                <span className="text-xs text-ink/30">{laterFiltered.length}</span>
               </summary>
               <ul className="mt-2 space-y-3">
-                {brief.later.map((task) => (
+                {laterFiltered.map((task) => (
                   <li key={task.id}>
                     <TaskCard
                       task={task}
