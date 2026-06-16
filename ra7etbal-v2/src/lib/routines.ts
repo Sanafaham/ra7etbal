@@ -13,7 +13,7 @@ import { supabase } from "./supabase";
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export type RoutineType = "reminder" | "delegation" | "message";
-export type RoutineSchedule = "daily" | "weekly";
+export type RoutineSchedule = "daily" | "weekly" | "every_n_days";
 
 export interface Routine {
   id: string;
@@ -21,12 +21,16 @@ export interface Routine {
   name: string;
   type: RoutineType;
   schedule: RoutineSchedule;
-  /** 0 = Sunday … 6 = Saturday. null for daily routines. */
+  /** 0 = Sunday … 6 = Saturday. null for daily/every_n_days routines. */
   schedule_day: number | null;
   /** "HH:MM" 24-hour local time, e.g. "08:30" */
   schedule_time: string;
   /** IANA timezone string, e.g. "Europe/Istanbul" */
   timezone: string;
+  /** Days between runs. Required when schedule = "every_n_days". */
+  interval_days: number | null;
+  /** UTC timestamp of the next scheduled run. Used by every_n_days routines. */
+  next_run_at: string | null;
   /**
    * Type-specific payload.
    * reminder:   { title: string }
@@ -47,6 +51,10 @@ export interface CreateRoutineInput {
   /** "HH:MM" 24-hour local time. */
   schedule_time: string;
   payload: Record<string, unknown>;
+  /** Required when schedule is "every_n_days". Minimum 1. */
+  interval_days?: number;
+  /** UTC ISO string for first run. Computed client-side for every_n_days routines. */
+  next_run_at?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -110,6 +118,8 @@ export async function createRoutine(input: CreateRoutineInput): Promise<Routine>
     timezone,
     payload: input.payload,
     enabled: true,
+    interval_days: input.interval_days ?? null,
+    next_run_at: input.next_run_at ?? null,
   };
 
   const { data, error } = await supabase

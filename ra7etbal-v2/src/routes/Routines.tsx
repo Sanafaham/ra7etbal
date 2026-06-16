@@ -19,6 +19,14 @@ function scheduleLabel(routine: Routine): string {
   if (routine.schedule === "daily") {
     return `Daily at ${formatTime(routine.schedule_time)}`;
   }
+  if (routine.schedule === "every_n_days") {
+    const n = routine.interval_days ?? "?";
+    const nextRun = routine.next_run_at ? new Date(routine.next_run_at) : null;
+    const nextLabel = nextRun
+      ? `next ${nextRun.toLocaleDateString([], { month: "short", day: "numeric" })}`
+      : "";
+    return `Every ${n} days${nextLabel ? ` · ${nextLabel}` : ""}`;
+  }
   const day = routine.schedule_day != null ? WEEKDAYS[routine.schedule_day] : "?";
   return `Every ${day} at ${formatTime(routine.schedule_time)}`;
 }
@@ -46,22 +54,24 @@ function autoName(
   _scheduleTime: string,
   reminderTitle: string,
   personName: string,
+  intervalDays: number,
 ): string {
+  const schedulePrefix =
+    schedule === "daily"
+      ? "Daily"
+      : schedule === "every_n_days"
+        ? `Every ${intervalDays}d`
+        : WEEKDAYS[scheduleDay] ?? "Weekly";
+
   if (type === "reminder") {
     const title = reminderTitle.trim() || "Reminder";
-    return schedule === "daily"
-      ? `Daily: ${title}`
-      : `Weekly: ${title}`;
+    return `${schedulePrefix}: ${title}`;
   }
   const name = personName.trim() || "someone";
   if (type === "message") {
-    return schedule === "daily"
-      ? `Daily message → ${name}`
-      : `${WEEKDAYS[scheduleDay] ?? "Weekly"} message → ${name}`;
+    return `${schedulePrefix} message → ${name}`;
   }
-  return schedule === "daily"
-    ? `Daily delegation → ${name}`
-    : `${WEEKDAYS[scheduleDay] ?? "Weekly"} delegation → ${name}`;
+  return `${schedulePrefix} delegation → ${name}`;
 }
 
 // ── Blank form state ───────────────────────────────────────────────────────────
@@ -71,6 +81,7 @@ interface FormState {
   schedule: RoutineSchedule;
   scheduleDay: number;        // 0–6
   scheduleTime: string;       // "HH:MM"
+  intervalDays: number;       // used when schedule = "every_n_days"
   reminderTitle: string;
   delegatePersonId: string;
   delegateMessage: string;
@@ -86,6 +97,7 @@ function blankForm(): FormState {
     schedule: "daily",
     scheduleDay: 1,            // Monday
     scheduleTime: "08:00",
+    intervalDays: 2,
     reminderTitle: "",
     delegatePersonId: "",
     delegateMessage: "",
@@ -187,6 +199,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           next.scheduleTime,
           next.reminderTitle,
           personName,
+          next.intervalDays,
         );
       }
 
@@ -243,6 +256,12 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       setFormError("Please set a time for this routine.");
       return;
     }
+    if (form.schedule === "every_n_days") {
+      if (!form.intervalDays || form.intervalDays < 1) {
+        setFormError("Please enter a valid interval (1 day or more).");
+        return;
+      }
+    }
 
     const payload: Record<string, unknown> =
       form.type === "reminder"
@@ -251,6 +270,13 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           ? { person_id: form.messagePersonId, message: form.messageBody.trim() }
           : { person_id: form.delegatePersonId, message: form.delegateMessage.trim() };
 
+    // For every_n_days routines, seed next_run_at = now + interval_days.
+    let nextRunAt: string | undefined;
+    if (form.schedule === "every_n_days") {
+      const ms = form.intervalDays * 24 * 60 * 60 * 1000;
+      nextRunAt = new Date(Date.now() + ms).toISOString();
+    }
+
     const input: CreateRoutineInput = {
       name: form.name.trim(),
       type: form.type,
@@ -258,6 +284,8 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       schedule_day: form.schedule === "weekly" ? form.scheduleDay : undefined,
       schedule_time: form.scheduleTime,
       payload,
+      interval_days: form.schedule === "every_n_days" ? form.intervalDays : undefined,
+      next_run_at: nextRunAt,
     };
 
     setSaving(true);
@@ -504,23 +532,45 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           {/* Schedule */}
           <div className="space-y-3">
             <p className="text-xs font-medium text-ink/50 uppercase tracking-wide">Schedule</p>
-            {/* Daily / Weekly chips */}
-            <div className="flex gap-2">
-              {(["daily", "weekly"] as RoutineSchedule[]).map((s) => (
+            {/* Daily / Weekly / Every N days chips */}
+            <div className="flex flex-wrap gap-2">
+              {([["daily", "Daily"], ["weekly", "Weekly"], ["every_n_days", "Every N days"]] as [RoutineSchedule, string][]).map(([s, label]) => (
                 <button
                   key={s}
                   type="button"
                   onClick={() => setField("schedule", s)}
-                  className={`rounded-full px-4 py-1.5 text-sm font-medium capitalize transition ${
+                  className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
                     form.schedule === s
                       ? "bg-sage text-white"
                       : "bg-sand/60 text-ink/70 hover:bg-sand"
                   }`}
                 >
-                  {s}
+                  {label}
                 </button>
               ))}
             </div>
+            {/* Every N days — interval input */}
+            {form.schedule === "every_n_days" && (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+                  Every how many days?
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={form.intervalDays}
+                    onChange={(e) => setField("intervalDays", Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    className="w-24 rounded-xl border border-sand bg-white px-3.5 py-2.5 text-sm text-ink focus:border-sage/60 focus:outline-none"
+                  />
+                  <span className="text-sm text-ink/50">days</span>
+                </div>
+                <p className="text-[11px] text-ink/40">
+                  First run in {form.intervalDays} {form.intervalDays === 1 ? "day" : "days"}.
+                </p>
+              </div>
+            )}
             {/* Weekday picker — only when weekly */}
             {form.schedule === "weekly" && (
               <select

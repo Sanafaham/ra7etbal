@@ -592,7 +592,7 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
   const routinesRes = await fetch(
     `${supabaseUrl}/rest/v1/routines` +
       `?enabled=eq.true` +
-      `&select=id,user_id,name,type,schedule,schedule_day,schedule_time,timezone,payload,last_run_at`,
+      `&select=id,user_id,name,type,schedule,schedule_day,schedule_time,timezone,payload,last_run_at,interval_days,next_run_at`,
     { headers: supabaseHeaders(serviceKey) },
   );
   const routines = await routinesRes.json().catch(() => []);
@@ -653,9 +653,17 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
       }
 
       if (executed) {
-        await stampRoutineLastRun(supabaseUrl, serviceKey, routine.id, now.toISOString());
+        // For every_n_days routines, advance next_run_at by interval_days.
+        let nextRunAt = null;
+        if (routine.schedule === 'every_n_days' && routine.interval_days >= 1) {
+          const baseMs = routine.next_run_at
+            ? new Date(routine.next_run_at).getTime()
+            : now.getTime();
+          nextRunAt = new Date(baseMs + routine.interval_days * 24 * 60 * 60 * 1000).toISOString();
+        }
+        await stampRoutineLastRun(supabaseUrl, serviceKey, routine.id, now.toISOString(), nextRunAt);
         stats.executed++;
-        console.log('[routines] executed ok', { routineId: routine.id });
+        console.log('[routines] executed ok', { routineId: routine.id, nextRunAt });
       } else {
         stats.failed++;
         console.warn('[routines] execution returned false', { routineId: routine.id });
@@ -691,15 +699,24 @@ async function runRoutines(_req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
 /**
  * Determine if a routine should fire on this cron tick.
  *
- * A routine is due when ALL of these hold in its local timezone:
+ * every_n_days: due when next_run_at <= now. After firing, next_run_at is
+ *   advanced by interval_days. No time-window check — fires on the first
+ *   cron tick after next_run_at.
+ *
+ * daily / weekly: due when ALL of these hold in the routine's local timezone:
  *   1. It is the correct day-of-week (weekly only).
  *   2. The scheduled clock time has passed (nowMinutes >= schedMinutes).
- *   3. No more than 59 minutes have elapsed past the schedule time, so a
- *      missed tick from a previous hour is not re-fired.
- *   4. It has not already run during today's schedule window (last_run_at is
- *      before today's schedule_time in the same local timezone).
+ *   3. No more than 59 minutes have elapsed past the schedule time.
+ *   4. It has not already run during today's schedule window.
  */
 function isRoutineDue(routine, now) {
+  // ── every_n_days: compare against stored next_run_at ─────────────────────
+  if (routine.schedule === 'every_n_days') {
+    if (!routine.next_run_at) return false; // not seeded yet
+    return new Date(routine.next_run_at) <= now;
+  }
+
+  // ── daily / weekly ────────────────────────────────────────────────────────
   const tz = routine.timezone || 'UTC';
   try {
     const local = getLocalParts(now, tz);
@@ -1109,14 +1126,19 @@ async function sendOwnerPush({ userId, title, body, supabaseUrl, serviceKey }) {
   return sent;
 }
 
-/** Stamp last_run_at on a routine after successful execution. */
-async function stampRoutineLastRun(supabaseUrl, serviceKey, routineId, value) {
+/**
+ * Stamp last_run_at on a routine after successful execution.
+ * For every_n_days routines, also updates next_run_at.
+ */
+async function stampRoutineLastRun(supabaseUrl, serviceKey, routineId, value, nextRunAt = null) {
+  const patch = { last_run_at: value };
+  if (nextRunAt) patch.next_run_at = nextRunAt;
   const res = await fetch(
     `${supabaseUrl}/rest/v1/routines?id=eq.${encodeURIComponent(routineId)}`,
     {
       method: 'PATCH',
       headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=minimal' },
-      body: JSON.stringify({ last_run_at: value }),
+      body: JSON.stringify(patch),
     },
   );
   if (!res.ok) {
