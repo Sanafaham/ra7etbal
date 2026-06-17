@@ -1,5 +1,23 @@
-const DEFAULT_TEMPLATE_LANGUAGE = 'en';
+const DEFAULT_TEMPLATE_LANGUAGE = 'en_US';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
+const TEMPLATE_SPECS = {
+  ra7etbal_task_v3: {
+    bodyParams: ['owner', 'message'],
+    legacyBodyParams: ['owner', 'message', 'link'],
+    buttonParam: 'link',
+  },
+  ra7etbal_task_image: {
+    header: 'image',
+    bodyParams: ['message'],
+    legacyBodyParams: ['message', 'link'],
+    buttonParam: 'link',
+  },
+  ra7etbal_task_assignment: {
+    bodyParams: ['message'],
+    legacyBodyParams: ['message', 'link'],
+    buttonParam: 'link',
+  },
+};
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -116,6 +134,14 @@ export default async function handler(req, res) {
   const useImageTemplate = imagePath && metaMediaId !== null;
   const effectivePrimaryTemplate = useImageTemplate ? primaryTemplateName : (imagePath ? 'ra7etbal_task_assignment' : primaryTemplateName);
 
+  console.log('[send-whatsapp-task] route config', {
+    accessTokenConfigured: Boolean(accessToken),
+    phoneNumberIdConfigured: Boolean(phoneNumberId),
+    phoneNumberIdLast4,
+    supabaseConfigured: Boolean(supabaseUrl && serviceKey),
+    templateLanguage,
+  });
+
   console.log('[send-whatsapp-task] template selected', {
     templateType: imagePath ? 'image' : 'text',
     primaryTemplate: primaryTemplateName,
@@ -168,20 +194,30 @@ export default async function handler(req, res) {
    * Build the template payload for a given template name.
    *
    * ra7etbal_task_v3 (PRIMARY — text tasks):
-   *   body: {{1}} owner, {{2}} message, {{3}} link  (3 params)
+   *   body:   {{1}} owner, {{2}} message
+   *   button: confirmation link suffix
    *
    * ra7etbal_task_image (PRIMARY — image tasks):
    *   header: image (via Meta media_id)
-   *   body:   {{1}} message, {{2}} link  (2 params — image header replaces owner context)
+   *   body:   {{1}} message
+   *   button: confirmation link suffix
    *
    * ra7etbal_task_assignment (FALLBACK):
-   *   body: {{1}} message, {{2}} link  (2 params)
+   *   body:   {{1}} message
+   *   button: confirmation link suffix
    */
-  function buildTemplatePayload(tplName, mediaId = null) {
+  function buildTemplatePayload(
+    tplName,
+    mediaId = null,
+    linkPlacement = 'button',
+    buttonValueMode = 'full',
+  ) {
+    const spec = TEMPLATE_SPECS[tplName] || TEMPLATE_SPECS.ra7etbal_task_assignment;
     const isImageTemplate = tplName === 'ra7etbal_task_image';
-    // Only ra7etbal_task_v3 uses 3 body params (owner + message + link).
-    // ra7etbal_task_image and ra7etbal_task_assignment use 2 body params.
-    const is3Param = tplName === 'ra7etbal_task_v3';
+    const bodyParamNames =
+      linkPlacement === 'body'
+        ? (spec.legacyBodyParams || spec.bodyParams)
+        : spec.bodyParams;
 
     const components = [];
 
@@ -196,17 +232,26 @@ export default async function handler(req, res) {
     // Body component
     components.push({
       type: 'body',
-      parameters: is3Param
-        ? [
-            { type: 'text', text: cleanOwnerName }, // {{1}} — owner name
-            { type: 'text', text: cleanMessage },   // {{2}} — task text
-            { type: 'text', text: cleanLink },      // {{3}} — confirmation link
-          ]
-        : [
-            { type: 'text', text: cleanMessage },   // {{1}} — task text
-            { type: 'text', text: cleanLink },      // {{2}} — confirmation link
-          ],
+      parameters: bodyParamNames.map((paramName) => ({
+        type: 'text',
+        text: paramName === 'owner'
+          ? cleanOwnerName
+          : paramName === 'link'
+          ? cleanLink
+          : cleanMessage,
+      })),
     });
+
+    // Dynamic URL button component. Meta expects only the variable suffix
+    // when the approved template button has a fixed URL prefix.
+    if (linkPlacement === 'button' && spec.buttonParam === 'link') {
+      components.push({
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameters: [{ type: 'text', text: buildButtonLinkValue(cleanLink, buttonValueMode) }],
+      });
+    }
 
     return {
       messaging_product: 'whatsapp',
@@ -222,69 +267,79 @@ export default async function handler(req, res) {
   }
 
   try {
-    // ── Primary send ─────────────────────────────────────────────────────────
-    const primaryPayload = buildTemplatePayload(effectivePrimaryTemplate, metaMediaId);
+    const attempts = [
+      { label: 'primary-button-full', templateName: effectivePrimaryTemplate, isFallback: false, linkPlacement: 'button', buttonValueMode: 'full', mediaId: metaMediaId },
+      { label: 'primary-button-path', templateName: effectivePrimaryTemplate, isFallback: false, linkPlacement: 'button', buttonValueMode: 'path', mediaId: metaMediaId },
+      { label: 'primary-button-task', templateName: effectivePrimaryTemplate, isFallback: false, linkPlacement: 'button', buttonValueMode: 'task', mediaId: metaMediaId },
+      { label: 'primary-body-link', templateName: effectivePrimaryTemplate, isFallback: false, linkPlacement: 'body', mediaId: metaMediaId },
+      { label: 'fallback-button-full', templateName: fallbackTemplateName, isFallback: true, linkPlacement: 'button', buttonValueMode: 'full', mediaId: null },
+      { label: 'fallback-button-path', templateName: fallbackTemplateName, isFallback: true, linkPlacement: 'button', buttonValueMode: 'path', mediaId: null },
+      { label: 'fallback-button-task', templateName: fallbackTemplateName, isFallback: true, linkPlacement: 'button', buttonValueMode: 'task', mediaId: null },
+      { label: 'fallback-body-link', templateName: fallbackTemplateName, isFallback: true, linkPlacement: 'body', mediaId: null },
+    ];
 
-    console.log('[send-whatsapp-task] primary send attempt', {
-      phoneNumberIdLast4,
-      to: normalizedTo,
-      tokenConfigured: Boolean(accessToken),
-      taskId: taskId || null,
-      messageRecordId: messageRecordId || null,
-      recipientName: recipientName || null,
-      ownerName: cleanOwnerName,
-      imagePathPresent: Boolean(imagePath),
-      metaMediaId: metaMediaId || null,
-      imageSendStatus,
-      templateName: effectivePrimaryTemplate,
-      templateType: imagePath ? 'image' : 'text',
-      isFallback: false,
-      templateLanguage,
-      payload: redactPayloadForLog(primaryPayload),
-    });
-
-    let templateResult = await sendMetaMessage({ url, accessToken, payload: primaryPayload });
+    let templateResult = null;
     let usedTemplateName = effectivePrimaryTemplate;
+    let usedAttempt = null;
 
-    // ── Fallback send ─────────────────────────────────────────────────────────
-    // If Meta rejects the primary template, retry once with ra7etbal_task_assignment.
-    // For image tasks where the image template failed but we already sent a
-    // separate media message (legacy path), ra7etbal_task_assignment still works.
-    if (!templateResult.ok) {
-      const metaCode = templateResult.metaError?.code;
-      const isTemplateError =
-        metaCode === 132001 || // template not found
-        metaCode === 132000 || // template does not exist
-        metaCode === 100;      // generic parameter / template issue
+    for (const attempt of attempts) {
+      const payload = buildTemplatePayload(
+        attempt.templateName,
+        attempt.mediaId,
+        attempt.linkPlacement,
+        attempt.buttonValueMode || 'full',
+      );
 
-      if (isTemplateError || templateResult.status === 400) {
-        console.warn('WhatsApp primary template failed — retrying with fallback', {
-          primaryTemplate: effectivePrimaryTemplate,
-          fallbackTemplate: fallbackTemplateName,
-          metaCode,
-          status: templateResult.status,
+      logSendAttempt(attempt.label, {
+          phoneNumberIdLast4,
+          taskId,
+          messageRecordId,
+          recipientName,
+          ownerName: cleanOwnerName,
+          imagePathPresent: Boolean(imagePath),
+          metaMediaId: attempt.mediaId,
+          imageSendStatus,
+          templateName: attempt.templateName,
+          templateType: imagePath && attempt.templateName === 'ra7etbal_task_image' ? 'image' : 'text',
+          isFallback: attempt.isFallback,
+          linkPlacement: attempt.linkPlacement,
+          buttonValueMode: attempt.buttonValueMode || null,
+          templateLanguage,
+          payload,
         });
 
-        const fallbackPayload = buildTemplatePayload(fallbackTemplateName);
-        templateResult = await sendMetaMessage({ url, accessToken, payload: fallbackPayload });
-        usedTemplateName = fallbackTemplateName;
+      templateResult = await sendMetaMessage({ url, accessToken, payload });
+      usedTemplateName = attempt.templateName;
+      usedAttempt = attempt;
 
-        console.log('[send-whatsapp-task] fallback send attempt', {
-          templateName: fallbackTemplateName,
-          isFallback: true,
-          ownerName: cleanOwnerName,
+      console.log('[send-whatsapp-task] send attempt result', {
+          attempt: attempt.label,
+          templateName: attempt.templateName,
+          isFallback: attempt.isFallback,
+          linkPlacement: attempt.linkPlacement,
+          buttonValueMode: attempt.buttonValueMode || null,
           ok: templateResult.ok,
           status: templateResult.status,
         });
-      }
-    }
 
-    if (!templateResult.ok) {
-      console.error('[send-whatsapp-task] template send failed', {
+      if (templateResult.ok) break;
+
+      console.warn('[send-whatsapp-task] template attempt failed — trying next template shape', {
+        attempt: attempt.label,
+        templateName: attempt.templateName,
+        linkPlacement: attempt.linkPlacement,
+        buttonValueMode: attempt.buttonValueMode || null,
         status: templateResult.status,
         metaError: templateResult.metaError,
+      });
+      }
+
+    if (!templateResult?.ok) {
+      console.error('[send-whatsapp-task] template send failed', {
+        status: templateResult?.status ?? null,
+        metaError: templateResult?.metaError ?? null,
         usedTemplateName,
-        isFallback: usedTemplateName === fallbackTemplateName,
+        usedAttempt,
       });
       return sendFailure(res, templateResult);
     }
@@ -292,6 +347,9 @@ export default async function handler(req, res) {
     console.log('[send-whatsapp-task] send accepted', {
       templateName: usedTemplateName,
       isFallback: usedTemplateName === fallbackTemplateName,
+      attempt: usedAttempt?.label ?? null,
+      linkPlacement: usedAttempt?.linkPlacement ?? null,
+      buttonValueMode: usedAttempt?.buttonValueMode ?? null,
       templateType: imagePath ? 'image' : 'text',
       ownerName: cleanOwnerName,
       messageId: templateResult.messageId,
@@ -314,6 +372,9 @@ export default async function handler(req, res) {
       phoneNumberIdLast4,
       templateName: usedTemplateName,
       templateLanguage,
+      attempt: usedAttempt?.label ?? null,
+      linkPlacement: usedAttempt?.linkPlacement ?? null,
+      buttonValueMode: usedAttempt?.buttonValueMode ?? null,
       imageSendStatus,
     });
   } catch (err) {
@@ -332,6 +393,12 @@ export default async function handler(req, res) {
 }
 
 async function sendMetaMessage({ url, accessToken, payload }) {
+  console.log('[send-whatsapp-task] Meta request', {
+    url: redactGraphUrl(url),
+    payload,
+    tokenConfigured: Boolean(accessToken),
+  });
+
   const response = await fetch(url, {
     method: 'POST',
     headers: {
@@ -342,6 +409,11 @@ async function sendMetaMessage({ url, accessToken, payload }) {
   });
 
   const metaResponse = await readMetaResponse(response);
+  console.log('[send-whatsapp-task] Meta response JSON', {
+    status: response.status,
+    ok: response.ok,
+    body: metaResponse,
+  });
   const messageId = Array.isArray(metaResponse?.messages)
     ? metaResponse.messages[0]?.id || null
     : null;
@@ -381,6 +453,7 @@ function sendFailure(res, result, freeFormError = null) {
     status: result.status || 502,
     error: 'Could not send WhatsApp message.',
     errorMessage,
+    metaResponse: result.metaResponse,
     metaError: result.metaError,
     details: errorMessage,
     freeFormError,
@@ -394,6 +467,30 @@ function normalizeWhatsAppPhone(phone) {
   let digits = raw.replace(/[^\d]/g, '');
   if (digits.startsWith('00')) digits = digits.slice(2);
   return digits.length >= 7 ? digits : null;
+}
+
+function buildButtonLinkValue(link, mode) {
+  const value = String(link || '').trim();
+  if (!value) return value;
+  if (mode === 'full') return value;
+
+  try {
+    const url = new URL(value);
+    if (mode === 'path') return `${url.pathname}${url.search}${url.hash}`;
+    if (mode === 'task') {
+      return (
+        url.searchParams.get('task') ||
+        url.searchParams.get('task_id') ||
+        url.pathname.split('/').filter(Boolean).pop() ||
+        value
+      );
+    }
+  } catch {
+    // If link is already a suffix, keep it as-is for non-full modes.
+    return value;
+  }
+
+  return value;
 }
 
 function safeMetaMessage(metaError) {
@@ -410,36 +507,37 @@ function safeMetaMessage(metaError) {
   return 'Could not send WhatsApp message.';
 }
 
-function redactPayloadForLog(payload) {
-  return {
-    ...payload,
-    text: payload.text
-      ? {
-          ...payload.text,
-          body: summarizeText(payload.text.body),
-        }
-      : undefined,
-    template: payload.template
-      ? {
-          ...payload.template,
-          components: payload.template.components?.map((component) => ({
-            ...component,
-            parameters: component.parameters?.map((param) => ({
-              ...param,
-              text: summarizeText(param.text),
-            })),
-          })),
-        }
-      : undefined,
-  };
+function logSendAttempt(label, details) {
+  const bodyComponent = details.payload.template?.components?.find((c) => c.type === 'body');
+  const buttonComponent = details.payload.template?.components?.find((c) => c.type === 'button');
+  console.log(`[send-whatsapp-task] ${label} send attempt`, {
+    phoneNumberIdLast4: details.phoneNumberIdLast4,
+    to: details.payload.to,
+    taskId: details.taskId || null,
+    messageRecordId: details.messageRecordId || null,
+    recipientName: details.recipientName || null,
+    ownerName: details.ownerName,
+    imagePathPresent: details.imagePathPresent,
+    metaMediaId: details.metaMediaId || null,
+    imageSendStatus: details.imageSendStatus,
+    templateName: details.templateName,
+    templateType: details.templateType,
+    isFallback: details.isFallback,
+    templateLanguage: details.templateLanguage,
+    linkPlacement: details.linkPlacement,
+    buttonValueMode: details.buttonValueMode || null,
+    bodyParameterCount: bodyComponent?.parameters?.length ?? 0,
+    buttonParameterCount: buttonComponent?.parameters?.length ?? 0,
+    buttonIndex: buttonComponent?.index ?? null,
+    payload: details.payload,
+  });
 }
 
-function summarizeText(value) {
-  const text = String(value || '');
-  return {
-    present: text.length > 0,
-    length: text.length,
-  };
+function redactGraphUrl(url) {
+  return String(url).replace(/graph\.facebook\.com\/v\d+\.\d+\/([^/]+)/, (_match, id) => {
+    const value = String(id);
+    return `graph.facebook.com/v20.0/...${value.slice(-4)}`;
+  });
 }
 
 async function markMessageAccepted({
