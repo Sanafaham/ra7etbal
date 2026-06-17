@@ -990,15 +990,15 @@ export default function ElevenLabsAgentWidget({
 
       // 1. Ensure stores are loaded
       const authUserId = useAuthStore.getState().user?.id;
-      if (authUserId) {
-        const peopleState = usePeopleStore.getState();
-        if (peopleState.status === "idle" || peopleState.items.length === 0) {
-          await usePeopleStore.getState().loadFor(authUserId);
-        }
-        const tasksState = useTasksStore.getState();
-        if (tasksState.status === "idle" || tasksState.items.length === 0) {
-          await useTasksStore.getState().loadFor(authUserId);
-        }
+      if (!authUserId) return "You are not signed in. Please sign in and try again.";
+
+      const peopleState = usePeopleStore.getState();
+      if (peopleState.status === "idle" || peopleState.items.length === 0) {
+        await usePeopleStore.getState().loadFor(authUserId);
+      }
+      const tasksState = useTasksStore.getState();
+      if (tasksState.status === "idle" || tasksState.items.length === 0) {
+        await useTasksStore.getState().loadFor(authUserId);
       }
 
       // 2. Resolve person
@@ -1013,6 +1013,73 @@ export default function ElevenLabsAgentWidget({
         return `I found more than one person named ${normalizedName}. Ask the user to clarify which one.`;
       }
       const person = matches[0];
+
+      const lastUserMessage = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((m) => m.role === "user")?.message?.trim();
+      const recurringSources = [
+        recurringRawRef.current,
+        lastUserMessage ?? null,
+        taskText,
+        message?.trim() ?? null,
+        note?.trim() ?? null,
+      ].filter((source): source is string => !!source);
+
+      let recurringSource: string | null = null;
+      let recurringSchedules: ReturnType<typeof detectAllRecurringSchedules> = [];
+      for (const source of recurringSources) {
+        const schedules = detectAllRecurringSchedules(source);
+        if (schedules.length > 0) {
+          recurringSource = source;
+          recurringSchedules = schedules;
+          break;
+        }
+      }
+
+      if (recurringSchedules.length > 0 && recurringSource) {
+        recurringRawRef.current = null;
+        console.warn("[routine:LEGACY_SEND_DELEGATION_BLOCKED]", {
+          name: person.name,
+          taskText,
+          recurringSource,
+          recurringSchedules,
+        });
+
+        const sourceHasPerson = recurringSource
+          .toLowerCase()
+          .includes(person.name.trim().toLowerCase());
+        const routineInstruction = sourceHasPerson
+          ? recurringSource
+          : `${recurringSource} ask ${person.name} to ${taskText}`;
+
+        const results = await Promise.all(
+          recurringSchedules.map(async (sched) => {
+            try {
+              return await createVoiceRoutine({
+                rawInstruction: routineInstruction,
+                schedule: sched,
+                people,
+                userId: authUserId,
+                displayName: displayName ?? null,
+              });
+            } catch (err) {
+              console.error("[routine:LEGACY_CREATE_ROUTINE_ERROR]", err);
+              return null;
+            }
+          }),
+        );
+
+        const successes = results.filter(Boolean) as string[];
+        if (successes.length > 0) {
+          sessionActionsRef.current.push(`Routine(s) created: ${routineInstruction}`);
+          console.log("[routine:ROUTINES_REFRESH] dispatching ra7etbal:routine-created");
+          window.dispatchEvent(new CustomEvent("ra7etbal:routine-created"));
+          return successes.join(" ");
+        }
+
+        return "I detected this is a recurring instruction, but I couldn't create the routine. I did not create a waiting item or send a WhatsApp message.";
+      }
+
       if (!person.phone) {
         return `${person.name} does not have a phone number saved. Ask the user to add one in People settings.`;
       }
@@ -1027,7 +1094,6 @@ export default function ElevenLabsAgentWidget({
       }
 
       const userId = authUserId;
-      if (!userId) return "You are not signed in. Please sign in and try again.";
 
       // Snapshot pending photos — prefer live ref, fall back to session snapshot.
       const delegationPhotos =

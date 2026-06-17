@@ -8,6 +8,7 @@ import { buildCarsonContext } from "./carson-context";
 import { CARSON_STATUS_POLICY } from "./carson-status-policy";
 import { extractItems } from "./ai/extract";
 import { savePending } from "./save";
+import { detectAllRecurringSchedules } from "./routine-detection";
 import { sendWhatsAppTask } from "./whatsapp";
 import { useTasksStore } from "../stores/tasks";
 import { summarizeConversation } from "./carson-summarize";
@@ -273,6 +274,11 @@ export async function executeDelegationFromText(
   context: TextCarsonContext,
 ): Promise<string> {
   if (!context.userId) throw new Error("Not signed in.");
+  if (detectAllRecurringSchedules(input).length > 0) {
+    throw new Error(
+      "Recurring instruction blocked before delegation save. Use routine creation instead.",
+    );
+  }
 
   const result = await extractItems(input, context.people, context.displayName ?? undefined);
 
