@@ -127,11 +127,10 @@ export default function Home() {
     if (brief.needsAttention.length > 0) return "attention";
     return "clear";
   }, [brief.needsAttention.length, urgentCount]);
-  const statusSummary = useMemo(
-    () => buildStatusSummary(brief, now),
-    [brief, now],
-  );
-  const supportingLines = statusSummary.lines;
+
+  const greeting = useMemo(() => buildGreeting(now, displayName), [now, displayName]);
+  const premiumStatus = buildPremiumStatus(statusTone);
+  const briefSentence = useMemo(() => buildBriefSentence(brief, now), [brief, now]);
 
   const trimmed = text.trim();
   const canSubmit = !submitting && (trimmed.length > 0 || !!draftImageFile) && !!userId;
@@ -205,22 +204,31 @@ export default function Home() {
 
   const openCarson = useCarsonStore((s) => s.setOpen);
 
-  function viewBriefDetails() {
-    navigate("/active");
-  }
-
 
   return (
     <section
       className="mx-auto max-w-2xl"
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
     >
-      <section className="mt-3 rounded-[30px] border border-sage/25 bg-warm-white/95 px-5 py-4 text-center shadow-[0_34px_90px_-70px_rgba(20,20,20,0.55)] backdrop-blur-sm sm:mt-5 sm:px-9 sm:py-5">
-        <div className="inline-flex items-center justify-center gap-2 rounded-full border border-white/80 bg-white/65 px-3 py-1.5 shadow-[0_10px_28px_-22px_rgba(20,20,20,0.45)]">
+      {/* ── Hero ────────────────────────────────────────────────────── */}
+      <section className="mt-3 rounded-[30px] border border-sage/20 bg-warm-white/95 px-6 py-9 text-center shadow-[0_34px_90px_-70px_rgba(20,20,20,0.55)] backdrop-blur-sm sm:mt-5 sm:px-10 sm:py-11">
+        {/* Greeting */}
+        <p className="text-[13px] font-medium text-text-muted">{greeting}</p>
+
+        {/* Large status */}
+        <h1
+          className="mx-auto mt-3 max-w-sm text-[38px] leading-[1.03] tracking-[-0.01em] text-text sm:text-[50px]"
+          style={{ fontFamily: "var(--font-display)" }}
+        >
+          {premiumStatus}
+        </h1>
+
+        {/* Status dot + brief sentence */}
+        <div className="mt-4 flex items-center justify-center gap-2">
           <span
             aria-hidden
             className={
-              "relative h-3.5 w-3.5 rounded-full shadow-[inset_0_0_0_1px_rgba(255,255,255,0.55),0_0_0_4px_rgba(255,255,255,0.75)] " +
+              "h-2 w-2 shrink-0 rounded-full " +
               (statusTone === "urgent"
                 ? "bg-danger"
                 : statusTone === "attention"
@@ -228,58 +236,34 @@ export default function Home() {
                   : "bg-sage")
             }
           />
-          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-text-muted">
-            Right now
-          </p>
+          <p className="text-[13px] leading-snug text-text-soft">{briefSentence}</p>
         </div>
-        <h1
-          className="mx-auto mt-2 max-w-xl text-[44px] leading-[0.95] tracking-normal text-text sm:text-[64px]"
-          style={{ fontFamily: "var(--font-display)" }}
-        >
-          {statusSummary.headline}
-        </h1>
-        <div className="mx-auto mt-2 max-w-md space-y-1 text-[14px] leading-snug text-text-soft sm:text-[15px]">
-          {supportingLines.map((line) => (
-            <p key={line}>{line}</p>
-          ))}
-        </div>
-
-        <button
-          type="button"
-          onClick={viewBriefDetails}
-          className="mt-2.5 text-[11px] font-medium text-text-muted underline-offset-4 hover:text-text-soft hover:underline"
-        >
-          View Details
-        </button>
       </section>
 
-      {/* ── Next Up awareness card ─────────────────────────────────── */}
-      <AwarenessCard events={calendarEvents} now={now} />
-
-      {/* ── Carson row ─────────────────────────────────────────────── */}
-      <section className="mt-3">
+      {/* ── Talk to Carson — primary CTA ────────────────────────────── */}
+      <section className="mt-4">
         <button
           type="button"
           onClick={() => openCarson(true)}
-          className="flex w-full items-center gap-3 rounded-[26px] border border-sage/25 bg-warm-white/95 px-4 py-3.5 shadow-[0_10px_30px_-20px_rgba(20,20,20,0.18)] backdrop-blur-sm transition hover:border-sage/40 hover:bg-warm-white active:scale-[0.99]"
+          className="group flex w-full flex-col items-center gap-3 rounded-[28px] border border-sage/25 bg-warm-white/95 px-5 py-7 shadow-[0_14px_46px_-28px_rgba(20,20,20,0.20)] backdrop-blur-sm transition hover:border-sage/40 active:scale-[0.985]"
         >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sage/10">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-sage/10 ring-1 ring-sage/20 transition group-hover:bg-sage/[0.14]">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" y1="19" x2="12" y2="23" />
               <line x1="8" y1="23" x2="16" y2="23" />
             </svg>
           </span>
-          <div className="flex flex-col items-start">
-            <span className="text-sm font-semibold text-ink">Talk to Carson</span>
-            <span className="text-[11px] text-ink/45">Your Chief of Staff · tap to start</span>
+          <div className="text-center">
+            <p className="text-[15px] font-semibold text-ink">Talk to Carson</p>
+            <p className="mt-0.5 text-[12px] text-ink/40">Your Chief of Staff</p>
           </div>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="ml-auto text-ink/30">
-            <path d="M9 18l6-6-6-6" />
-          </svg>
         </button>
       </section>
+
+      {/* ── Next Up awareness card ─────────────────────────────────── */}
+      <AwarenessCard events={calendarEvents} now={now} />
 
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
       <section className="mt-3 rounded-[26px] border border-border/80 bg-card/82 p-4 shadow-[0_24px_70px_-60px_rgba(20,20,20,0.45)] backdrop-blur-sm sm:mt-4 sm:p-5">
@@ -492,6 +476,59 @@ function looksLikeQuestion(input: string): boolean {
   if (/^(?:can you|do you|could you|would you)\b/.test(lower)) return true;
 
   return false;
+}
+
+function buildGreeting(now: Date, displayName: string | null): string {
+  const hour = now.getHours();
+  const name = displayName ? `, ${displayName}` : "";
+  if (hour < 12) return `Good morning${name}`;
+  if (hour < 18) return `Good afternoon${name}`;
+  return `Good evening${name}`;
+}
+
+function buildPremiumStatus(tone: "urgent" | "attention" | "clear"): string {
+  if (tone === "urgent") return "Immediate attention required.";
+  if (tone === "attention") return "A few things need attention.";
+  return "Everything is under control.";
+}
+
+function buildBriefSentence(
+  brief: ReturnType<typeof buildDailyBrief>,
+  now: Date,
+): string {
+  const urgent = brief.needsAttention.filter(
+    (t) => t.type === "reminder" && t.due_at && new Date(t.due_at) <= now,
+  );
+  const attention = brief.needsAttention.filter(
+    (t) => !(t.type === "reminder" && t.due_at && new Date(t.due_at) <= now),
+  );
+  const waiting = brief.waitingOnOthers;
+  const done = brief.completedToday;
+
+  if (urgent.length > 0) {
+    return urgent.length === 1
+      ? "One reminder is overdue."
+      : `${urgent.length} reminders are overdue.`;
+  }
+  if (attention.length > 0) {
+    if (waiting.length > 0) {
+      return `${attention.length} item${attention.length > 1 ? "s" : ""} to review, ${waiting.length} waiting on others.`;
+    }
+    return attention.length === 1
+      ? "One item ready for your review."
+      : `${attention.length} items ready for your review.`;
+  }
+  if (waiting.length > 0) {
+    return waiting.length === 1
+      ? "One item is waiting on someone."
+      : `${waiting.length} items are waiting on others.`;
+  }
+  if (done.length > 0) {
+    return done.length === 1
+      ? "One thing wrapped up today."
+      : `${done.length} things wrapped up today.`;
+  }
+  return "Your day is clear.";
 }
 
 function buildStatusSummary(
