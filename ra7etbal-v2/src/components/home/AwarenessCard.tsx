@@ -105,11 +105,11 @@ export default function AwarenessCard({ events, now }: AwarenessCardProps) {
 
   return (
     <section
-      aria-label="Awareness"
+      aria-label="Next Up"
       className="mt-3 rounded-[24px] border border-sage/20 bg-white/72 px-4 py-3.5 shadow-[0_18px_55px_-46px_rgba(20,20,20,0.38)] backdrop-blur-sm"
     >
       <h2 className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-stone">
-        Be Aware Of
+        Next Up
       </h2>
 
       <div className="space-y-2.5">
