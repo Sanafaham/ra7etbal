@@ -1039,6 +1039,19 @@ async function executeMessageRoutine({ routine, supabaseUrl, serviceKey }) {
       metaMessageId,
       recipientName: person.name,
     });
+
+    // Notify owner — best-effort, does not affect return value.
+    const pushed = await sendOwnerPush({
+      userId: user_id,
+      title: 'Ra7etBal',
+      body: `Routine message sent: ${routineName || person.name}`,
+      supabaseUrl,
+      serviceKey,
+    });
+    if (!pushed) {
+      console.warn('[routines] message: owner push not delivered (no subscriptions?)', { routineId });
+    }
+
     return true;
 
   } catch (err) {
