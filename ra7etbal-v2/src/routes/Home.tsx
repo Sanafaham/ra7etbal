@@ -210,21 +210,16 @@ export default function Home() {
       className="mx-auto max-w-2xl"
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
     >
-      {/* ── Hero ────────────────────────────────────────────────────── */}
-      <section className="mt-3 rounded-[30px] border border-sage/20 bg-warm-white/95 px-6 py-9 text-center shadow-[0_34px_90px_-70px_rgba(20,20,20,0.55)] backdrop-blur-sm sm:mt-5 sm:px-10 sm:py-11">
-        {/* Greeting */}
+      {/* ── Briefing — no card, text on page ────────────────────────── */}
+      <div className="mt-8 px-2 text-center sm:mt-10">
         <p className="text-[13px] font-medium text-text-muted">{greeting}</p>
-
-        {/* Large status */}
         <h1
-          className="mx-auto mt-3 max-w-sm text-[38px] leading-[1.03] tracking-[-0.01em] text-text sm:text-[50px]"
+          className="mx-auto mt-2 max-w-xs text-[34px] leading-[1.06] tracking-[-0.015em] text-text sm:text-[42px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {premiumStatus}
         </h1>
-
-        {/* Status dot + brief sentence */}
-        <div className="mt-4 flex items-center justify-center gap-2">
+        <div className="mt-3 flex items-center justify-center gap-2">
           <span
             aria-hidden
             className={
@@ -236,19 +231,19 @@ export default function Home() {
                   : "bg-sage")
             }
           />
-          <p className="text-[13px] leading-snug text-text-soft">{briefSentence}</p>
+          <p className="text-[13px] text-text-soft">{briefSentence}</p>
         </div>
-      </section>
+      </div>
 
-      {/* ── Talk to Carson — primary CTA ────────────────────────────── */}
-      <section className="mt-4">
+      {/* ── Talk to Carson — visual hero ────────────────────────────── */}
+      <section className="mt-6 sm:mt-8">
         <button
           type="button"
           onClick={() => openCarson(true)}
-          className="group flex w-full flex-col items-center gap-3 rounded-[28px] border border-sage/25 bg-warm-white/95 px-5 py-7 shadow-[0_14px_46px_-28px_rgba(20,20,20,0.20)] backdrop-blur-sm transition hover:border-sage/40 active:scale-[0.985]"
+          className="group flex w-full flex-col items-center gap-5 rounded-[36px] bg-warm-white/98 px-6 py-14 shadow-[0_32px_80px_-40px_rgba(20,20,20,0.38)] backdrop-blur-sm transition active:scale-[0.982]"
         >
-          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-sage/10 ring-1 ring-sage/20 transition group-hover:bg-sage/[0.14]">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
+          <span className="flex h-[72px] w-[72px] items-center justify-center rounded-full bg-sage/10 ring-1 ring-sage/25 transition group-hover:bg-sage/[0.15] group-hover:ring-sage/40">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" y1="19" x2="12" y2="23" />
@@ -256,17 +251,14 @@ export default function Home() {
             </svg>
           </span>
           <div className="text-center">
-            <p className="text-[15px] font-semibold text-ink">Talk to Carson</p>
-            <p className="mt-0.5 text-[12px] text-ink/40">Your Chief of Staff</p>
+            <p className="text-[22px] font-semibold tracking-[-0.02em] text-ink">Talk to Carson</p>
+            <p className="mt-1.5 text-[13px] text-ink/40">Tap to speak with your Chief of Staff</p>
           </div>
         </button>
       </section>
 
-      {/* ── Next Up awareness card ─────────────────────────────────── */}
-      <AwarenessCard events={calendarEvents} now={now} />
-
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
-      <section className="mt-3 rounded-[26px] border border-border/80 bg-card/82 p-4 shadow-[0_24px_70px_-60px_rgba(20,20,20,0.45)] backdrop-blur-sm sm:mt-4 sm:p-5">
+      <section className="mt-4 rounded-[28px] border border-border/50 bg-card/60 p-4 shadow-[0_16px_50px_-46px_rgba(20,20,20,0.35)] backdrop-blur-sm sm:mt-5 sm:p-5">
         <div className="mb-3 flex items-center justify-between gap-3">
           <label
             htmlFor={textareaId}
@@ -418,6 +410,9 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {/* ── Next Up — lightweight context ───────────────────────────── */}
+      <AwarenessCard events={calendarEvents} now={now} />
 
       {keyboardOpen && (
         <div
