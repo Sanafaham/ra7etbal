@@ -461,49 +461,6 @@ export default function Home() {
   );
 }
 
-function NightSweepSection({
-  title,
-  items,
-  completingItemId,
-  onMarkDone,
-  action,
-}: {
-  title: string;
-  items: { id: string; text: string; canMarkDone?: boolean }[];
-  completingItemId: string | null;
-  onMarkDone: (id: string) => void;
-  action?: ReactNode;
-}) {
-  if (items.length === 0) return null;
-
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-text-muted">
-          {title}
-        </p>
-        {action}
-      </div>
-      <ul className="mt-1 space-y-1">
-        {items.map((item) => (
-          <li key={item.id} className="flex items-start justify-between gap-3 text-[13px] leading-snug text-text-soft">
-            <span>{item.text}</span>
-            {item.canMarkDone && (
-              <button
-                type="button"
-                onClick={() => onMarkDone(item.id)}
-                disabled={completingItemId !== null}
-                className="shrink-0 rounded-full border border-sage/20 bg-white/70 px-2.5 py-1 text-[11px] font-medium text-sage transition hover:border-sage/35 hover:bg-sage/5 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {completingItemId === item.id ? "Saving..." : "Mark done"}
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
 
 /**
  * Returns true when the input is requesting information from Carson rather
