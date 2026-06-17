@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useCarsonStore } from "../stores/carson";
 import AuthNotice from "../components/auth/AuthNotice";
+import AwarenessCard from "../components/home/AwarenessCard";
 import VoiceButton from "../components/home/VoiceButton";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
@@ -289,6 +290,9 @@ export default function Home() {
           View Details
         </button>
       </section>
+
+      {/* ── Awareness Card (Home V2 experiment) ───────────────────── */}
+      <AwarenessCard events={calendarEvents} now={now} />
 
       <section className="mt-3 rounded-[24px] border border-sage/20 bg-white/72 px-4 py-3.5 shadow-[0_18px_55px_-46px_rgba(20,20,20,0.38)] backdrop-blur-sm">
         <div className="mb-2 flex items-center justify-between gap-3">
