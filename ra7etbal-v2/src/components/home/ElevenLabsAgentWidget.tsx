@@ -42,6 +42,16 @@ import { useTasksStore } from "../../stores/tasks";
 
 type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
+type ExecuteInstructionParams =
+  | string
+  | {
+      instruction?: unknown;
+      instructions?: unknown;
+      text?: unknown;
+      input?: unknown;
+    }
+  | null
+  | undefined;
 
 interface PendingPhoto {
   id: string;
@@ -50,6 +60,16 @@ interface PendingPhoto {
   name: string;
 }
 
+function extractInstructionParam(params: ExecuteInstructionParams): string {
+  if (typeof params === "string") return params;
+  if (!params || typeof params !== "object") return "";
+
+  for (const key of ["instruction", "instructions", "text", "input"] as const) {
+    const value = params[key];
+    if (typeof value === "string") return value;
+  }
+  return "";
+}
 
 // ---------------------------------------------------------------------------
 // Image analysis — converts an attached File to a 1-sentence Claude description.
@@ -1768,7 +1788,10 @@ export default function ElevenLabsAgentWidget({
   // quote so the classification is handled by the shared Claude pipeline.
   // ------------------------------------------------------------------
   const executeInstruction = useCallback(
-    async ({ instruction }: { instruction: string }): Promise<string> => {
+    async (params?: ExecuteInstructionParams): Promise<string> => {
+      const instruction = extractInstructionParam(params);
+      console.log("[executeInstruction:PARAMS]", params);
+
       // Prefer the exact user transcript from sessionTranscriptRef over the
       // agent-provided instruction parameter. The ElevenLabs agent may rephrase
       // the user's spoken words before passing them here — dropping personal notes,
@@ -2182,7 +2205,15 @@ export default function ElevenLabsAgentWidget({
           // execute_instruction takes the raw spoken instruction and routes it
           // through the same shared pipeline as Text Carson. Use this for all
           // compound instructions, personal notes, and ambiguous cases.
-          execute_instruction: executeInstruction,
+          execute_instruction: async (params: ExecuteInstructionParams) => {
+            try {
+              return await executeInstruction(params);
+            } catch (err) {
+              console.error("[executeInstruction:catch]", err);
+              const detail = err instanceof Error ? err.message : "Please try again.";
+              return `Could not process that. ${detail}`;
+            }
+          },
           // ── Legacy/simple fallbacks ──────────────────────────────────────
           // send_delegation and send_followup are kept for backward compat with
           // existing ElevenLabs dashboard prompts that call them directly.
