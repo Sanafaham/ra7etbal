@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { describeImageForTextCarson } from "../lib/text-carson";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
@@ -10,7 +10,6 @@ import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import { fetchCalendarEvents, type CalendarEvent } from "../lib/calendar";
 import { buildDailyBrief } from "../lib/daily-brief";
-import { buildNightSweep, EVENING_HOUR } from "../lib/night-sweep";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
@@ -36,12 +35,10 @@ export default function Home() {
     useShallow((s) => ({ displayName: s.displayName, loadProfile: s.loadFor })),
   );
 
-  const { tasks, loadTasks, markDone, archiveDone } = useTasksStore(
+  const { tasks, loadTasks } = useTasksStore(
     useShallow((s) => ({
       tasks: s.items,
       loadTasks: s.loadFor,
-      markDone: s.markDone,
-      archiveDone: s.archiveDone,
     })),
   );
 
@@ -54,8 +51,6 @@ export default function Home() {
   const [textareaFocused, setTextareaFocused] = useState(false);
   const [viewportShrunk, setViewportShrunk] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
-  const [completingNightSweepItemId, setCompletingNightSweepItemId] = useState<string | null>(null);
-  const [clearingHandled, setClearingHandled] = useState(false);
   const submittingRef = useRef(false);
 
   // Photo attachment for Clear My Head — described before extraction so the
@@ -117,11 +112,6 @@ export default function Home() {
   }, []);
 
   const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
-  const isEvening = now.getHours() >= EVENING_HOUR;
-  const nightSweep = useMemo(
-    () => buildNightSweep(tasks, now, calendarEvents),
-    [tasks, now, calendarEvents],
-  );
   const urgentCount = useMemo(
     () =>
       brief.needsAttention.filter(
@@ -219,34 +209,6 @@ export default function Home() {
     navigate("/active");
   }
 
-  async function handleNightSweepMarkDone(id: string) {
-    if (!userId || completingNightSweepItemId) return;
-    setCompletingNightSweepItemId(id);
-    try {
-      await markDone(id);
-      await loadTasks(userId, { force: true });
-    } catch (err) {
-      console.error(err);
-      setError("Couldn't mark that done. Please try again.");
-    } finally {
-      setCompletingNightSweepItemId(null);
-    }
-  }
-
-  async function handleClearHandled() {
-    if (!userId || clearingHandled || nightSweep.handledToday.length === 0) return;
-    setClearingHandled(true);
-    try {
-      await archiveDone(nightSweep.handledToday.map((item) => item.id));
-      await loadTasks(userId, { force: true });
-    } catch (err) {
-      console.error(err);
-      setError("Couldn't clear handled items. Please try again.");
-    } finally {
-      setClearingHandled(false);
-    }
-  }
-
 
   return (
     <section
@@ -291,60 +253,8 @@ export default function Home() {
         </button>
       </section>
 
-      {/* ── Awareness Card (Home V2 experiment) ───────────────────── */}
+      {/* ── Next Up awareness card ─────────────────────────────────── */}
       <AwarenessCard events={calendarEvents} now={now} />
-
-      <section className="mt-3 rounded-[24px] border border-sage/20 bg-white/72 px-4 py-3.5 shadow-[0_18px_55px_-46px_rgba(20,20,20,0.38)] backdrop-blur-sm">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <h2 className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone">
-            {isEvening ? "Night Sweep" : "Today's Snapshot"}
-          </h2>
-          <span className="rounded-full bg-sage/10 px-2.5 py-1 text-[11px] font-medium text-sage">
-            {nightSweep.badgeLabel}
-          </span>
-        </div>
-
-        <div className="space-y-2.5">
-          <NightSweepSection
-            title="Handled today"
-            items={nightSweep.handledToday}
-            completingItemId={completingNightSweepItemId}
-            onMarkDone={handleNightSweepMarkDone}
-            action={
-              <button
-                type="button"
-                onClick={handleClearHandled}
-                disabled={clearingHandled}
-                className="rounded-full border border-sage/20 bg-white/70 px-2.5 py-1 text-[11px] font-medium normal-case tracking-normal text-sage transition hover:border-sage/35 hover:bg-sage/5 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {clearingHandled ? "Clearing..." : "Clear handled"}
-              </button>
-            }
-          />
-          <NightSweepSection
-            title="Still waiting"
-            items={nightSweep.stillWaiting}
-            completingItemId={completingNightSweepItemId}
-            onMarkDone={handleNightSweepMarkDone}
-          />
-          <NightSweepSection
-            title="Requires you"
-            items={nightSweep.requiresYou}
-            completingItemId={completingNightSweepItemId}
-            onMarkDone={handleNightSweepMarkDone}
-          />
-          <NightSweepSection
-            title="Upcoming"
-            items={nightSweep.upcomingDeadline}
-            completingItemId={completingNightSweepItemId}
-            onMarkDone={handleNightSweepMarkDone}
-          />
-        </div>
-
-        <p className="mt-3 border-t border-sage/15 pt-2.5 text-[13px] font-medium leading-snug text-ink">
-          {nightSweep.reassurance}
-        </p>
-      </section>
 
       {/* ── Carson row ─────────────────────────────────────────────── */}
       <section className="mt-3">
