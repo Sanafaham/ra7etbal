@@ -212,9 +212,9 @@ export default function Home() {
     >
       {/* ── Briefing — no card, text on page ────────────────────────── */}
       <div className="mt-8 px-2 text-center sm:mt-10">
-        <p className="text-[13px] font-medium text-text-muted">{greeting}</p>
+        <p className="text-[13px] font-medium text-stone">{greeting}</p>
         <h1
-          className="mx-auto mt-2 max-w-xs text-[24px] leading-[1.1] tracking-[-0.01em] text-text-soft sm:text-[28px]"
+          className="mx-auto mt-2 max-w-xs text-[24px] leading-[1.1] tracking-[-0.01em] text-text sm:text-[28px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {premiumStatus}
@@ -231,7 +231,7 @@ export default function Home() {
                   : "bg-sage")
             }
           />
-          <p className="text-[13px] text-text-soft">{briefSentence}</p>
+          <p className="text-[13px] text-stone">{briefSentence}</p>
         </div>
       </div>
 
@@ -240,7 +240,7 @@ export default function Home() {
         <button
           type="button"
           onClick={() => openCarson(true)}
-          className="group flex w-full flex-col items-center gap-6 rounded-[36px] bg-warm-white px-6 py-16 shadow-[0_40px_90px_-40px_rgba(20,20,20,0.45)] backdrop-blur-sm transition active:scale-[0.982]"
+          className="group flex w-full flex-col items-center gap-5 rounded-[36px] bg-warm-white px-6 py-11 shadow-[0_40px_90px_-40px_rgba(20,20,20,0.45)] backdrop-blur-sm transition active:scale-[0.982]"
         >
           <span className="flex h-[80px] w-[80px] items-center justify-center rounded-full bg-sage/[0.12] ring-[1.5px] ring-sage/35 transition group-hover:bg-sage/[0.18] group-hover:ring-sage/55">
             <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
@@ -253,16 +253,17 @@ export default function Home() {
           <div className="text-center">
             <p className="text-[24px] font-semibold tracking-[-0.025em] text-ink">Talk to Carson</p>
             <p className="mt-1.5 text-[13px] text-ink/50">Ready when you are.</p>
+            <p className="mt-3 text-[12px] text-ink/30">{briefSentence}</p>
           </div>
         </button>
       </section>
 
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
-      <section className="mt-3 rounded-[24px] border border-border/40 bg-card/50 p-3.5 shadow-[0_8px_32px_-24px_rgba(20,20,20,0.28)] backdrop-blur-sm sm:mt-4 sm:p-4">
-        <div className="mb-2 flex items-center justify-between gap-3">
+      <section className="mt-3 rounded-[20px] border border-border/20 bg-transparent px-3.5 pb-3.5 pt-3 sm:mt-4">
+        <div className="mb-1.5 flex items-center justify-between gap-3">
           <label
             htmlFor={textareaId}
-            className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone"
+            className="text-[10px] font-semibold uppercase tracking-[0.2em] text-text-muted"
           >
             Clear My Head
           </label>
