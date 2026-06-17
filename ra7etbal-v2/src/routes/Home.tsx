@@ -214,7 +214,7 @@ export default function Home() {
       <div className="mt-8 px-2 text-center sm:mt-10">
         <p className="text-[13px] font-medium text-text-muted">{greeting}</p>
         <h1
-          className="mx-auto mt-2 max-w-xs text-[34px] leading-[1.06] tracking-[-0.015em] text-text sm:text-[42px]"
+          className="mx-auto mt-2 max-w-xs text-[24px] leading-[1.1] tracking-[-0.01em] text-text-soft sm:text-[28px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {premiumStatus}
@@ -240,10 +240,10 @@ export default function Home() {
         <button
           type="button"
           onClick={() => openCarson(true)}
-          className="group flex w-full flex-col items-center gap-5 rounded-[36px] bg-warm-white/98 px-6 py-14 shadow-[0_32px_80px_-40px_rgba(20,20,20,0.38)] backdrop-blur-sm transition active:scale-[0.982]"
+          className="group flex w-full flex-col items-center gap-6 rounded-[36px] bg-warm-white px-6 py-16 shadow-[0_40px_90px_-40px_rgba(20,20,20,0.45)] backdrop-blur-sm transition active:scale-[0.982]"
         >
-          <span className="flex h-[72px] w-[72px] items-center justify-center rounded-full bg-sage/10 ring-1 ring-sage/25 transition group-hover:bg-sage/[0.15] group-hover:ring-sage/40">
-            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
+          <span className="flex h-[80px] w-[80px] items-center justify-center rounded-full bg-sage/[0.12] ring-[1.5px] ring-sage/35 transition group-hover:bg-sage/[0.18] group-hover:ring-sage/55">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" y1="19" x2="12" y2="23" />
@@ -251,15 +251,15 @@ export default function Home() {
             </svg>
           </span>
           <div className="text-center">
-            <p className="text-[22px] font-semibold tracking-[-0.02em] text-ink">Talk to Carson</p>
-            <p className="mt-1.5 text-[13px] text-ink/40">Tap to speak with your Chief of Staff</p>
+            <p className="text-[24px] font-semibold tracking-[-0.025em] text-ink">Talk to Carson</p>
+            <p className="mt-1.5 text-[13px] text-ink/50">Ready when you are.</p>
           </div>
         </button>
       </section>
 
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
-      <section className="mt-4 rounded-[28px] border border-border/50 bg-card/60 p-4 shadow-[0_16px_50px_-46px_rgba(20,20,20,0.35)] backdrop-blur-sm sm:mt-5 sm:p-5">
-        <div className="mb-3 flex items-center justify-between gap-3">
+      <section className="mt-3 rounded-[24px] border border-border/40 bg-card/50 p-3.5 shadow-[0_8px_32px_-24px_rgba(20,20,20,0.28)] backdrop-blur-sm sm:mt-4 sm:p-4">
+        <div className="mb-2 flex items-center justify-between gap-3">
           <label
             htmlFor={textareaId}
             className="text-[11px] font-semibold uppercase tracking-[0.18em] text-stone"
@@ -293,7 +293,7 @@ export default function Home() {
           rows={4}
           disabled={submitting}
           style={{ fieldSizing: "content", fontFamily: "var(--font-sans)" }}
-          className="block min-h-[104px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-muted focus:outline-none disabled:opacity-70"
+          className="block min-h-[84px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-muted focus:outline-none disabled:opacity-70"
         />
 
         {/*
