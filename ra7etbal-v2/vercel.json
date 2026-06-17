@@ -3,6 +3,12 @@
   "framework": "vite",
   "headers": [
     {
+      "source": "/((?!api/|assets/|sw\\.js$|manifest\\.webmanifest$|icons/).*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store" }
+      ]
+    },
+    {
       "source": "/sw.js",
       "headers": [
         { "key": "Content-Type", "value": "application/javascript; charset=utf-8" },
