@@ -142,8 +142,9 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
     })),
   );
 
-  // People with a phone number only (required for delegation)
-  const delegatablePeople = peopleItems.filter((p) => p.phone);
+  // All people — phone is required for delivery, not for routine creation.
+  // The runner handles missing phones at send time.
+  const delegatablePeople = peopleItems;
 
   // ── Effects ────────────────────────────────────────────────────────────────
 
@@ -456,7 +457,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   <p className="text-sm text-ink/40">Loading people…</p>
                 ) : delegatablePeople.length === 0 ? (
                   <p className="text-sm text-ink/50">
-                    No people with saved phone numbers.{" "}
+                    No people added yet.{" "}
                     <a href="/people" className="text-sage underline underline-offset-2">
                       Add someone in People.
                     </a>
@@ -502,7 +503,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                   <p className="text-sm text-ink/40">Loading people…</p>
                 ) : delegatablePeople.length === 0 ? (
                   <p className="text-sm text-ink/50">
-                    No people with saved phone numbers.{" "}
+                    No people added yet.{" "}
                     <a href="/people" className="text-sage underline underline-offset-2">
                       Add someone in People.
                     </a>
