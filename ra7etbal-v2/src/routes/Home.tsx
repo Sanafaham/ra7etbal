@@ -498,7 +498,6 @@ function buildBriefSentence(
     (t) => !(t.type === "reminder" && t.due_at && new Date(t.due_at) <= now),
   );
   const waiting = brief.waitingOnOthers;
-  const done = brief.completedToday;
 
   if (urgent.length > 0) {
     return urgent.length === 1
@@ -518,47 +517,11 @@ function buildBriefSentence(
       ? "One item is waiting on someone."
       : `${waiting.length} items are waiting on others.`;
   }
-  if (done.length > 0) {
-    return done.length === 1
+  if (brief.done.length > 0) {
+    return brief.done.length === 1
       ? "One thing wrapped up today."
-      : `${done.length} things wrapped up today.`;
+      : `${brief.done.length} things wrapped up today.`;
   }
   return "Your day is clear.";
 }
 
-function buildStatusSummary(
-  brief: ReturnType<typeof buildDailyBrief>,
-  now: Date,
-): { headline: string; lines: string[] } {
-  const urgent = brief.needsAttention.filter(
-    (t) => t.type === "reminder" && t.due_at && new Date(t.due_at) <= now,
-  );
-  const attention = brief.needsAttention.filter(
-    (t) => !(t.type === "reminder" && t.due_at && new Date(t.due_at) <= now),
-  );
-  const waiting = brief.waitingOnOthers;
-
-  if (urgent.length === 0 && attention.length === 0 && waiting.length === 0) {
-    return { headline: "You're in good shape.", lines: ["Nothing needs your attention right now."] };
-  }
-
-  let headline = "";
-  const lines: string[] = [];
-
-  if (urgent.length > 0) {
-    headline = urgent.length === 1 ? "Something needs you now." : `${urgent.length} things need you now.`;
-  } else if (attention.length > 0) {
-    headline = attention.length === 1 ? "One thing needs your attention." : `${attention.length} things need your attention.`;
-  } else {
-    headline = waiting.length === 1 ? "One item is waiting on someone." : `${waiting.length} things are waiting on others.`;
-  }
-
-  if (urgent.length > 0 && attention.length > 0) {
-    lines.push(attention.length === 1 ? "Plus one more open item." : `Plus ${attention.length} open items.`);
-  }
-  if ((urgent.length > 0 || attention.length > 0) && waiting.length > 0) {
-    lines.push(waiting.length === 1 ? "One item waiting on others." : `${waiting.length} waiting on others.`);
-  }
-
-  return { headline, lines };
-}
