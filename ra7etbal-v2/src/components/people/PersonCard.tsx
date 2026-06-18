@@ -17,7 +17,7 @@ export default function PersonCard({ person, onEdit }: Props) {
     <button
       type="button"
       onClick={() => onEdit(person)}
-      className="flex w-full items-center gap-3 rounded-2xl border border-sage/30 bg-white/80 px-4 py-3 text-left shadow-sm transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-sage/40"
+      className="flex w-full items-center gap-3 rounded-2xl border border-sage/30 bg-white/80 px-4 py-2.5 text-left shadow-sm transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-sage/40"
     >
       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sage/15 text-sm font-semibold text-sage">
         {initials(person.name)}
@@ -26,7 +26,7 @@ export default function PersonCard({ person, onEdit }: Props) {
         <span className="truncate text-sm font-medium text-ink">{person.name}</span>
         {person.role && <span className="truncate text-xs text-ink/55">{person.role}</span>}
         {person.phone && (
-          <span className="truncate font-mono text-[11px] text-ink/28">
+          <span className="truncate font-mono text-[10px] text-ink/22">
             {person.phone}
           </span>
         )}

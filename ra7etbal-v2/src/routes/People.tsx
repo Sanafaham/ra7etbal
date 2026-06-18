@@ -80,7 +80,7 @@ export default function People() {
           type="button"
           onClick={() => setAdding(true)}
           aria-label="Add person"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-sage px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-105 active:brightness-95"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-sage px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105 active:brightness-95"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
             <path d="M12 5v14M5 12h14" />
@@ -172,7 +172,7 @@ export default function People() {
 
       {/* ── People list ── */}
       {filtered.length > 0 && (
-        <ul className="space-y-1.5">
+        <ul className="space-y-1">
           {filtered.map((p) => (
             <li key={p.id}>
               <PersonCard person={p} onEdit={setEditing} />
