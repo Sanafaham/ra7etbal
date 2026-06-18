@@ -23,7 +23,6 @@ const ESCALATION_DELAY_MS = 20 * 60 * 1000; // 20 min
  */
 export default async function handler(req, res) {
   const requestId = Math.random().toString(36).slice(2, 8);
-  console.log(`[qstash-reminder][${requestId}] ${req.method} received`);
 
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
@@ -55,8 +54,6 @@ export default async function handler(req, res) {
     });
   }
 
-  console.log(`[qstash-reminder][${requestId}] env vars OK, appBaseUrl=${appBaseUrl}`);
-
   // ── 2. Verify caller is a signed-in Supabase user ──────────────────────────
   const authorization = req.headers.authorization || req.headers.Authorization || '';
   const userToken = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
@@ -84,8 +81,6 @@ export default async function handler(req, res) {
   const body = req.body ?? {};
   const { action, taskId, dueAt, sentAt } = body;
 
-  console.log(`[qstash-reminder][${requestId}] action=${action} taskId=${taskId} dueAt=${dueAt} sentAt=${sentAt}`);
-
   if (!action || !taskId) {
     return res.status(400).json({ success: false, error: 'action and taskId are required.' });
   }
@@ -112,8 +107,6 @@ export default async function handler(req, res) {
     console.warn(`[qstash-reminder][${requestId}] task ownership mismatch`);
     return res.status(403).json({ success: false, error: 'Not your task.' });
   }
-
-  console.log(`[qstash-reminder][${requestId}] task verified, existing qstash_message_id=${task.qstash_message_id}`);
 
   // ── 5. Execute action ───────────────────────────────────────────────────────
   try {
@@ -159,9 +152,6 @@ export default async function handler(req, res) {
       const followupUnix    = Math.floor((sentMs + FOLLOWUP_DELAY_MS)  / 1000);
       const escalationUnix  = Math.floor((sentMs + ESCALATION_DELAY_MS) / 1000);
 
-      console.log(`[qstash-reminder][${requestId}] scheduling followup  at unix=${followupUnix}  (${new Date(followupUnix * 1000).toISOString()})`);
-      console.log(`[qstash-reminder][${requestId}] scheduling escalation at unix=${escalationUnix} (${new Date(escalationUnix * 1000).toISOString()})`);
-
       const [fuResult, esResult] = await Promise.allSettled([
         publishEscalationMessage({ targetUrl, qstashToken, cronSecret, dedupId: `followup-${taskId}`,   notBefore: followupUnix,   payload: { taskId }, requestId, label: 'followup' }),
         publishEscalationMessage({ targetUrl, qstashToken, cronSecret, dedupId: `escalation-${taskId}`, notBefore: escalationUnix, payload: { taskId }, requestId, label: 'escalation' }),
@@ -199,8 +189,6 @@ async function scheduleMessage(appBaseUrl, taskId, dueAt, qstashToken, requestId
   const notBeforeUnix = Math.floor(dueMs / 1000);
 
   const callbackUrl = `${appBaseUrl}/api/send-push-for-task`;
-  console.log(`[qstash-reminder][${requestId}] callback URL = ${callbackUrl}`);
-  console.log(`[qstash-reminder][${requestId}] publishing to QStash, notBefore=${notBeforeUnix} (${new Date(dueMs).toISOString()})`);
 
   // QStash publish endpoint expects the destination URL as a raw absolute URL in the path.
   // Do not encode it. Encoding turns "https://..." into "https%3A%2F%2F..." and QStash rejects it as missing a scheme.
@@ -217,7 +205,7 @@ async function scheduleMessage(appBaseUrl, taskId, dueAt, qstashToken, requestId
   });
 
   const data = await response.json().catch(() => null);
-  console.log(`[qstash-reminder][${requestId}] QStash publish response: status=${response.status} body=${JSON.stringify(data)}`);
+  console.log(`[qstash-reminder][DIAG][${requestId}] action=schedule callbackUrl=${callbackUrl} notBefore=${notBeforeUnix} QStash_status=${response.status} QStash_body=${JSON.stringify(data)}`);
 
   if (!response.ok) {
     throw new Error(data?.error || `QStash schedule failed (${response.status})`);
@@ -286,7 +274,7 @@ async function publishEscalationMessage({ targetUrl, qstashToken, cronSecret, de
   });
 
   const data = await response.json().catch(() => null);
-  console.log(`[qstash-reminder][${requestId}] ${label} publish status=${response.status} body=${JSON.stringify(data)}`);
+  console.log(`[qstash-reminder][DIAG][${requestId}] action=schedule-escalation label=${label} targetUrl=${targetUrl} notBefore=${notBefore} QStash_status=${response.status} QStash_body=${JSON.stringify(data)}`);
 
   if (!response.ok) {
     throw new Error(data?.error || `QStash publish failed (${response.status})`);
