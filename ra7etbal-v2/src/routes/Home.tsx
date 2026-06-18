@@ -211,19 +211,19 @@ export default function Home() {
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
     >
       {/* ── Briefing — no card, text on page ────────────────────────── */}
-      <div className="mt-5 px-2 text-center sm:mt-7">
-        <p className="text-[13px] font-medium text-stone">{greeting}</p>
+      <div className="mt-4 px-2 text-center sm:mt-6">
+        <p className="text-[12px] font-normal text-stone/55">{greeting}</p>
         <h1
-          className="mx-auto mt-1.5 max-w-xs text-[22px] leading-[1.1] tracking-[-0.01em] text-text sm:text-[26px]"
+          className="mx-auto mt-1 max-w-xs text-[22px] leading-[1.1] tracking-[-0.01em] text-text sm:text-[26px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {premiumStatus}
         </h1>
-        <div className="mt-2 flex items-center justify-center gap-2">
+        <div className="mt-1.5 flex items-center justify-center gap-2">
           <span
             aria-hidden
             className={
-              "h-2 w-2 shrink-0 rounded-full " +
+              "h-1.5 w-1.5 shrink-0 rounded-full " +
               (statusTone === "urgent"
                 ? "bg-danger"
                 : statusTone === "attention"
@@ -231,7 +231,7 @@ export default function Home() {
                   : "bg-sage")
             }
           />
-          <p className="text-[13px] text-stone">{briefSentence}</p>
+          <p className="text-[12px] text-stone/70">{briefSentence}</p>
         </div>
       </div>
 
@@ -258,11 +258,11 @@ export default function Home() {
       </section>
 
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
-      <section className="mt-2.5 rounded-[20px] border border-border/20 bg-transparent px-3.5 pb-3.5 pt-3 sm:mt-3">
+      <section className="mt-2.5 rounded-[20px] border border-border/10 bg-transparent px-3.5 pb-3.5 pt-3 sm:mt-3">
         <div className="mb-1.5 flex items-center justify-between gap-3">
           <label
             htmlFor={textareaId}
-            className="text-[10px] font-semibold uppercase tracking-[0.2em] text-text-muted"
+            className="text-[10px] font-medium uppercase tracking-[0.18em] text-text-muted/70"
           >
             Clear My Head
           </label>
