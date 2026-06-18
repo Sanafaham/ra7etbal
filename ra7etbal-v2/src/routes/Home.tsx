@@ -212,7 +212,7 @@ export default function Home() {
     >
       {/* ── Briefing — no card, text on page ────────────────────────── */}
       <div className="mt-4 px-2 text-center sm:mt-6">
-        <p className="text-[12px] font-normal text-ink/50">{greeting}</p>
+        <p className="text-[12px] font-normal text-ink/65">{greeting}</p>
         <h1
           className="mx-auto mt-1 max-w-xs text-[22px] leading-[1.1] tracking-[-0.01em] text-text sm:text-[26px]"
           style={{ fontFamily: "var(--font-display)" }}
