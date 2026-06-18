@@ -411,7 +411,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
           {/* Type picker */}
           <div className="space-y-1.5">
-            <p className="text-xs font-medium text-ink/50 uppercase tracking-wide">Type</p>
+            <p className="text-xs font-medium text-ink/60 uppercase tracking-wide">Type</p>
             <div className="flex flex-wrap gap-2">
               {(["reminder", "delegation", "message"] as RoutineType[]).map((t) => (
                 <button
@@ -433,7 +433,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           {/* Reminder fields */}
           {form.type === "reminder" && (
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+              <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
                 Reminder title
               </label>
               <input
@@ -450,7 +450,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           {form.type === "delegation" && (
             <div className="space-y-3">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+                <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
                   Person
                 </label>
                 {peopleStatus === "loading" && delegatablePeople.length === 0 ? (
@@ -478,7 +478,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                 )}
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+                <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
                   Message
                 </label>
                 <textarea
@@ -496,7 +496,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           {form.type === "message" && (
             <div className="space-y-3">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+                <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
                   Recipient
                 </label>
                 {peopleStatus === "loading" && delegatablePeople.length === 0 ? (
@@ -524,7 +524,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
                 )}
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+                <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
                   Message
                 </label>
                 <textarea
@@ -543,7 +543,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
           {/* Schedule */}
           <div className="space-y-3">
-            <p className="text-xs font-medium text-ink/50 uppercase tracking-wide">Schedule</p>
+            <p className="text-xs font-medium text-ink/60 uppercase tracking-wide">Schedule</p>
             {/* Daily / Weekly / Every N days chips */}
             <div className="flex flex-wrap gap-2">
               {([["daily", "Daily"], ["weekly", "Weekly"], ["every_n_days", "Every N days"]] as [RoutineSchedule, string][]).map(([s, label]) => (
@@ -564,7 +564,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
             {/* Every N days — interval input */}
             {form.schedule === "every_n_days" && (
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+                <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
                   Every how many days?
                 </label>
                 <div className="flex items-center gap-2">
@@ -599,7 +599,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
             )}
             {/* Time */}
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+              <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
                 Time
               </label>
               <input
@@ -613,7 +613,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
           {/* Routine name */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-ink/50 uppercase tracking-wide">
+            <label className="text-xs font-medium text-ink/60 uppercase tracking-wide">
               Routine name
             </label>
             <input
@@ -673,7 +673,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       {/* ── Active routines ── */}
       {activeRoutines.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-ink/40">Active</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-ink/55">Active</p>
           {activeRoutines.map((r) => (
             <RoutineCard
               key={r.id}
@@ -691,7 +691,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       {/* ── Paused routines ── */}
       {pausedRoutines.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-ink/40">Paused</p>
+          <p className="text-xs font-medium uppercase tracking-wide text-ink/55">Paused</p>
           {pausedRoutines.map((r) => (
             <RoutineCard
               key={r.id}

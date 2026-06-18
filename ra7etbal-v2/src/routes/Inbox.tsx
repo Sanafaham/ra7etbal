@@ -304,7 +304,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
       {/* ── Add a note ── */}
       {!searchQuery && (
         <section className="rounded-2xl border border-sage/20 bg-white/70 p-4 shadow-sm">
-          <label htmlFor="manual-note-inbox" className="text-xs font-medium uppercase tracking-wide text-ink/45">
+          <label htmlFor="manual-note-inbox" className="text-xs font-medium uppercase tracking-wide text-ink/60">
             Add a note
           </label>
           <textarea
@@ -347,7 +347,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
       {status === "ready" && (
         <section className="space-y-2.5">
           {filteredNotes.length > 0 && (
-            <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-ink/35">
+            <h2 className="px-1 text-xs font-medium uppercase tracking-wide text-ink/50">
               Notes{searchQuery ? ` · ${filteredNotes.length} result${filteredNotes.length !== 1 ? "s" : ""}` : ""}
             </h2>
           )}

@@ -138,8 +138,8 @@ export default function Updates() {
     <section className="space-y-4">
       {/* ── Header ── */}
       <header>
-        <h1 className="text-2xl font-semibold text-ink">Updates</h1>
-        <p className="text-sm text-ink/55">What Carson is managing for you.</p>
+        <h1 className="text-xl font-semibold text-ink">Updates</h1>
+        <p className="text-xs text-ink/55">What Carson is managing for you.</p>
       </header>
 
       {/* ── Segmented control ── */}
@@ -160,7 +160,7 @@ export default function Updates() {
               "shrink-0 rounded-xl px-3 py-1.5 text-xs font-medium transition " +
               (activeTab === tab.id
                 ? "bg-sage text-white shadow-sm"
-                : "text-ink/50 hover:text-ink/75 hover:bg-sage/8")
+                : "text-ink/65 hover:text-ink/80 hover:bg-sage/8")
             }
           >
             {tab.label}
@@ -213,7 +213,7 @@ export default function Updates() {
           {upcomingReminders.length > 0 && (
             <div className="space-y-2">
               <div className="flex items-center gap-2 px-1">
-                <span className="text-xs font-medium uppercase tracking-wide text-ink/50">
+                <span className="text-[12px] font-medium text-ink/55">
                   Upcoming reminders
                 </span>
                 <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-800">
@@ -239,8 +239,9 @@ export default function Updates() {
           {laterFiltered.length > 0 && (
             <details className="group">
               <summary className="flex cursor-pointer select-none list-none items-center gap-2 py-1 px-1">
-                <span className="text-xs font-medium uppercase tracking-wide text-ink/40">Later</span>
-                <span className="text-xs text-ink/30">{laterFiltered.length}</span>
+                <span className="text-xs font-medium uppercase tracking-wide text-ink/55">Later</span>
+                <span className="text-xs text-ink/55">{laterFiltered.length}</span>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ink/40 transition-transform group-open:rotate-180" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
               </summary>
               <ul className="mt-2 space-y-3">
                 {laterFiltered.map((task) => (
@@ -264,15 +265,6 @@ export default function Updates() {
       ══════════════════════════════════════════════════════════════ */}
       {activeTab === "waiting" && !initialLoading && tasksStatus === "ready" && (
         <div className="space-y-3">
-          <div className="flex items-center gap-2 rounded-xl border border-amber-100/60 bg-amber-50/40 px-3 py-2">
-            <h2 className="text-sm font-semibold text-amber-900/80">Waiting on others</h2>
-            {brief.waitingOnOthers.length > 0 && (
-              <span className="rounded-full bg-amber-100/70 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-                {brief.waitingOnOthers.length}
-              </span>
-            )}
-          </div>
-
           {brief.waitingOnOthers.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-sage/20 bg-white/40 px-4 py-6 text-sm text-ink/45">
               Nothing is waiting on others right now.
@@ -310,7 +302,7 @@ export default function Updates() {
       {activeTab === "history" && !initialLoading && (
         <div className="space-y-3">
           <div className="flex items-center gap-2 px-1 py-0.5">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-ink/40">Completed</h2>
+            <h2 className="text-xs font-medium uppercase tracking-wide text-ink/60">Completed</h2>
             {doneTasks.length > 0 && (
               <span className="text-xs text-ink/30">{doneTasks.length}</span>
             )}

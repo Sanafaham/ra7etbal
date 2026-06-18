@@ -171,12 +171,6 @@ export default function TaskCard({
               Overdue
             </span>
           )}
-         {(task.type === "followup" || task.type === "delegation") &&
-  task.created_at && (
-    <span className="text-[11px] text-ink/45">
-      {formatFollowUpSentTime(task.created_at)}
-    </span>
-  )}
           <span>{assignedLabel === "Me" ? "Me" : `→ ${assignedLabel}`}</span>
         </div>
       </header>
@@ -189,6 +183,12 @@ export default function TaskCard({
       >
         {task.description}
       </p>
+
+      {(task.type === "followup" || task.type === "delegation") && task.created_at && (
+        <p className="mt-1 text-[11px] text-ink/40">
+          {formatFollowUpSentTime(task.created_at)}
+        </p>
+      )}
 
       {signedImageUrl && (
         <div className="mt-3 space-y-1">
