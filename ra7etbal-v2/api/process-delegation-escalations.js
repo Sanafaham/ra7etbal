@@ -137,6 +137,10 @@ export default async function handler(req, res) {
   if (requestBody.action === 'run-routines') {
     return runRoutines(req, res, { supabaseUrl, serviceKey, appBaseUrl });
   }
+  // TEMPORARY DIAGNOSTIC — testMode only, remove after template name confirmed
+  if (testMode && requestBody.action === 'list-routine-templates') {
+    return listRoutineTemplates(req, res);
+  }
 
   const now = new Date();
   const followupThresholdMs = testMode ? TEST_FOLLOWUP_MS : PROD_FOLLOWUP_MS;
@@ -1177,6 +1181,31 @@ async function disableRoutine(supabaseUrl, serviceKey, routineId) {
       body: JSON.stringify({ enabled: false }),
     },
   ).catch((err) => console.warn('[routines] disableRoutine failed:', err?.message));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEMPORARY DIAGNOSTIC — remove after template name confirmed
+async function listRoutineTemplates(_req, res) {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const wabaId      = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+  if (!accessToken || !wabaId) {
+    return res.status(500).json({ error: 'WHATSAPP_ACCESS_TOKEN or WHATSAPP_BUSINESS_ACCOUNT_ID not set' });
+  }
+  const url = `https://graph.facebook.com/v20.0/${wabaId}/message_templates` +
+    `?fields=name,id,status,language&limit=100&access_token=${accessToken}`;
+  try {
+    const metaRes  = await fetch(url);
+    const metaBody = await metaRes.json().catch(() => ({}));
+    if (!metaRes.ok) {
+      return res.status(metaRes.status).json({ error: metaBody?.error?.message ?? 'Meta API error' });
+    }
+    const templates = (metaBody.data ?? [])
+      .filter((t) => typeof t.name === 'string' && t.name.toLowerCase().includes('routine'))
+      .map(({ name, id, status, language }) => ({ name, id, status, language }));
+    return res.status(200).json({ templates });
+  } catch (err) {
+    return res.status(500).json({ error: err?.message ?? 'fetch failed' });
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
