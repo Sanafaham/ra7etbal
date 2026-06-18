@@ -212,7 +212,7 @@ export default function Home() {
     >
       {/* ── Briefing — no card, text on page ────────────────────────── */}
       <div className="mt-4 px-2 text-center sm:mt-6">
-        <p className="text-[12px] font-normal text-stone/55">{greeting}</p>
+        <p className="text-[12px] font-normal text-ink/50">{greeting}</p>
         <h1
           className="mx-auto mt-1 max-w-xs text-[22px] leading-[1.1] tracking-[-0.01em] text-text sm:text-[26px]"
           style={{ fontFamily: "var(--font-display)" }}
@@ -231,7 +231,7 @@ export default function Home() {
                   : "bg-sage")
             }
           />
-          <p className="text-[12px] text-stone/70">{briefSentence}</p>
+          <p className="text-[12px] text-ink/60">{briefSentence}</p>
         </div>
       </div>
 
@@ -262,7 +262,7 @@ export default function Home() {
         <div className="mb-1.5 flex items-center justify-between gap-3">
           <label
             htmlFor={textareaId}
-            className="text-[10px] font-medium uppercase tracking-[0.18em] text-text-muted/70"
+            className="text-[10px] font-semibold uppercase tracking-[0.18em] text-ink/50"
           >
             Clear My Head
           </label>
@@ -293,7 +293,7 @@ export default function Home() {
           rows={4}
           disabled={submitting}
           style={{ fieldSizing: "content", fontFamily: "var(--font-sans)" }}
-          className="block min-h-[84px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-muted focus:outline-none disabled:opacity-70"
+          className="block min-h-[84px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-ink/35 focus:outline-none disabled:opacity-70"
         />
 
         {/*
