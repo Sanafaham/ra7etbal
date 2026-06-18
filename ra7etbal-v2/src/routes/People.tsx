@@ -110,7 +110,7 @@ export default function People() {
       {/* ── Header ── */}
       <header className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-ink">People</h1>
+          <h1 className="text-xl font-semibold text-ink">People</h1>
           <p className="text-sm text-ink/55">The people Carson works with.</p>
         </div>
         <button
