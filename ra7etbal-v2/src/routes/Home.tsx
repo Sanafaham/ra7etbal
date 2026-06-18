@@ -211,15 +211,15 @@ export default function Home() {
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
     >
       {/* ── Briefing — no card, text on page ────────────────────────── */}
-      <div className="mt-8 px-2 text-center sm:mt-10">
+      <div className="mt-5 px-2 text-center sm:mt-7">
         <p className="text-[13px] font-medium text-stone">{greeting}</p>
         <h1
-          className="mx-auto mt-2 max-w-xs text-[24px] leading-[1.1] tracking-[-0.01em] text-text sm:text-[28px]"
+          className="mx-auto mt-1.5 max-w-xs text-[22px] leading-[1.1] tracking-[-0.01em] text-text sm:text-[26px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {premiumStatus}
         </h1>
-        <div className="mt-3 flex items-center justify-center gap-2">
+        <div className="mt-2 flex items-center justify-center gap-2">
           <span
             aria-hidden
             className={
@@ -236,14 +236,14 @@ export default function Home() {
       </div>
 
       {/* ── Talk to Carson — visual hero ────────────────────────────── */}
-      <section className="mt-6 sm:mt-8">
+      <section className="mt-4 sm:mt-5">
         <button
           type="button"
           onClick={() => openCarson(true)}
-          className="group flex w-full flex-col items-center gap-5 rounded-[36px] bg-warm-white px-6 py-11 shadow-[0_40px_90px_-40px_rgba(20,20,20,0.45)] backdrop-blur-sm transition active:scale-[0.982]"
+          className="group flex w-full flex-col items-center gap-3 rounded-[28px] bg-warm-white px-6 py-7 shadow-[0_40px_90px_-40px_rgba(20,20,20,0.45)] backdrop-blur-sm transition active:scale-[0.982]"
         >
-          <span className="flex h-[80px] w-[80px] items-center justify-center rounded-full bg-sage/[0.12] ring-[1.5px] ring-sage/35 transition group-hover:bg-sage/[0.18] group-hover:ring-sage/55">
-            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
+          <span className="flex h-[64px] w-[64px] items-center justify-center rounded-full bg-sage/[0.12] ring-[1.5px] ring-sage/35 transition group-hover:bg-sage/[0.18] group-hover:ring-sage/55">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" y1="19" x2="12" y2="23" />
@@ -251,14 +251,14 @@ export default function Home() {
             </svg>
           </span>
           <div className="text-center">
-            <p className="text-[24px] font-semibold tracking-[-0.025em] text-ink">Talk to Carson</p>
-            <p className="mt-1.5 text-[13px] text-ink/50">Ready when you are.</p>
+            <p className="text-[20px] font-semibold tracking-[-0.025em] text-ink">Talk to Carson</p>
+            <p className="mt-1 text-[13px] text-ink/50">Ready when you are.</p>
           </div>
         </button>
       </section>
 
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
-      <section className="mt-3 rounded-[20px] border border-border/20 bg-transparent px-3.5 pb-3.5 pt-3 sm:mt-4">
+      <section className="mt-2.5 rounded-[20px] border border-border/20 bg-transparent px-3.5 pb-3.5 pt-3 sm:mt-3">
         <div className="mb-1.5 flex items-center justify-between gap-3">
           <label
             htmlFor={textareaId}
