@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import PersonCard from "../components/people/PersonCard";
@@ -7,7 +7,6 @@ import Spinner from "../components/Spinner";
 import Modal from "../components/ui/Modal";
 import { useAuth } from "../hooks/useAuth";
 import { usePeopleStore } from "../stores/people";
-import { useHouseholdRulesStore } from "../stores/household-rules";
 import type { Person, PersonDraft } from "../types/person";
 
 export default function People() {
@@ -27,44 +26,6 @@ export default function People() {
         remove: s.remove,
       })),
     );
-
-  // ── Household Rules ──────────────────────────────────────────────────────
-  const { rules: savedRules, status: rulesStatus, error: rulesError, load: loadRules, save: saveRules } =
-    useHouseholdRulesStore(
-      useShallow((s) => ({
-        rules: s.rules,
-        status: s.status,
-        error: s.error,
-        load: s.load,
-        save: s.save,
-      })),
-    );
-  const [rulesText, setRulesText]     = useState("");
-  const [rulesSaving, setRulesSaving] = useState(false);
-  const [rulesSaved,  setRulesSaved]  = useState(false);
-  const rulesBusyRef = useRef(false);
-
-  // Sync local text when store loads
-  useEffect(() => {
-    if (rulesStatus === "idle") void loadRules();
-  }, [rulesStatus, loadRules]);
-  useEffect(() => {
-    if (rulesStatus === "ready") setRulesText(savedRules);
-  }, [rulesStatus, savedRules]);
-
-  async function handleSaveRules() {
-    if (rulesBusyRef.current) return;
-    rulesBusyRef.current = true;
-    setRulesSaving(true);
-    try {
-      await saveRules(rulesText);
-      setRulesSaved(true);
-      setTimeout(() => setRulesSaved(false), 2500);
-    } finally {
-      rulesBusyRef.current = false;
-      setRulesSaving(false);
-    }
-  }
 
   useEffect(() => {
     if (!userId) return;
@@ -224,54 +185,6 @@ export default function People() {
           Carson uses these people for delegation and reminders.
         </p>
       )}
-
-      {/* ── Household Delegation Rules ───────────────────────────────────────── */}
-      <div className="rounded-2xl border border-sage/15 bg-white/60 p-5">
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-ink">Household Delegation Rules</h2>
-            <p className="mt-0.5 text-[11px] leading-relaxed text-ink/45">
-              Global rules Carson follows when helping you delegate. Applies to everyone.
-            </p>
-          </div>
-          {rulesSaved && (
-            <span className="shrink-0 rounded-full bg-sage/10 px-3 py-1 text-[11px] font-medium text-sage">
-              Saved
-            </span>
-          )}
-        </div>
-
-        {rulesError && (
-          <div className="mb-3">
-            <AuthNotice kind="error">{rulesError}</AuthNotice>
-          </div>
-        )}
-
-        <textarea
-          value={rulesText}
-          onChange={(e) => setRulesText(e.target.value)}
-          placeholder={
-            "e.g.\n• Grace manages all household staff — always loop her in.\n• Never assign financial tasks to staff without my approval.\n• Loulya's schedule always takes priority."
-          }
-          rows={5}
-          disabled={rulesStatus === "loading" || rulesSaving}
-          className="w-full resize-none rounded-xl border border-sage/20 bg-white px-4 py-3 text-sm text-ink placeholder:text-ink/30 outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
-        />
-
-        <div className="mt-3 flex justify-end">
-          <button
-            type="button"
-            onClick={() => void handleSaveRules()}
-            disabled={rulesStatus === "loading" || rulesSaving || rulesText === savedRules}
-            className="inline-flex items-center gap-2 rounded-full bg-sage px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {rulesSaving && (
-              <Spinner size={12} />
-            )}
-            {rulesSaving ? "Saving…" : "Save rules"}
-          </button>
-        </div>
-      </div>
 
       {/* ── Modals ── */}
       <Modal open={adding} onClose={() => setAdding(false)} title="Add a person">

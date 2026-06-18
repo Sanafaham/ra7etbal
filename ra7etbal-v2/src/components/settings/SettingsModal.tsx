@@ -6,6 +6,7 @@ import Modal from "../ui/Modal";
 import { archiveCompleted } from "../../lib/archive";
 import { clearUserData } from "../../lib/cleanup";
 import { supabase } from "../../lib/supabase";
+import { useHouseholdRulesStore } from "../../stores/household-rules";
 import {
   checkPushSupport,
   disableReminderNotifications,
@@ -310,6 +311,10 @@ function SettingsList({
 
       <Group label="Notifications">
         <ReminderNotificationsRow userId={userId} />
+      </Group>
+
+      <Group label="Carson">
+        <HouseholdDelegationRulesSection />
       </Group>
 
       <Group label="Dev">
@@ -831,6 +836,78 @@ function GoogleCalendarRow({
       <p className="mt-1 text-[11px] leading-snug text-ink/40">
         Connect to let Carson read and manage your Google Calendar.
       </p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function HouseholdDelegationRulesSection() {
+  const { rules: savedRules, status, error, load, save } = useHouseholdRulesStore();
+  const [text, setText] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const busyRef = useRef(false);
+
+  useEffect(() => {
+    if (status === "idle") void load();
+  }, [status, load]);
+
+  useEffect(() => {
+    if (status === "ready") setText(savedRules);
+  }, [status, savedRules]);
+
+  async function handleSave() {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setSaving(true);
+    try {
+      await save(text);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } finally {
+      busyRef.current = false;
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="px-4 py-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs text-ink/50 leading-snug">
+          Global rules Carson follows when delegating. Applies to all people.
+        </p>
+        {saved && (
+          <span className="shrink-0 text-[11px] font-medium text-sage">Saved ✓</span>
+        )}
+      </div>
+
+      {error && (
+        <div className="mb-2">
+          <AuthNotice kind="error">{error}</AuthNotice>
+        </div>
+      )}
+
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={"e.g.\n• Grace manages all household staff — always loop her in.\n• Never assign financial tasks to staff without my approval.\n• Loulya's schedule always takes priority."}
+        rows={5}
+        disabled={status === "loading" || saving}
+        className="w-full resize-none rounded-xl border border-sage/20 bg-white px-3 py-2.5 text-sm text-ink placeholder:text-ink/30 outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+      />
+
+      <div className="mt-2.5 flex justify-end">
+        <button
+          type="button"
+          onClick={() => void handleSave()}
+          disabled={status === "loading" || saving || text === savedRules}
+          className="inline-flex items-center gap-2 rounded-full bg-sage px-4 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {saving && <Spinner size={11} />}
+          {saving ? "Saving…" : "Save rules"}
+        </button>
+      </div>
     </div>
   );
 }
