@@ -28,7 +28,7 @@ interface Props {
   onCalendarDisconnected?: () => void;
 }
 
-type View = "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-disconnect";
+type View = "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-disconnect" | "delegation-rules";
 
 export default function SettingsModal({ open, onClose, userId, calendarRevoked, onCalendarReconnected, onCalendarDisconnected }: Props) {
   const navigate = useNavigate();
@@ -210,6 +210,14 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
     );
   }
 
+  if (view === "delegation-rules") {
+    return (
+      <Modal open={open} onClose={close} title="Settings">
+        <HouseholdDelegationRulesPanel onBack={() => setView("list")} />
+      </Modal>
+    );
+  }
+
   return (
     <Modal open={open} onClose={close} title="Settings">
       <SettingsList
@@ -242,6 +250,7 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
           setNotice(null);
           setView("confirm-clear");
         }}
+        onClickDelegationRules={() => setView("delegation-rules")}
         onClickDebug={() => {
           onClose();
           navigate("/debug");
@@ -266,6 +275,7 @@ function SettingsList({
   onClickViewHistory,
   onClickArchive,
   onClickClear,
+  onClickDelegationRules,
   onClickDebug,
 }: {
   userId: string | null;
@@ -280,6 +290,7 @@ function SettingsList({
   onClickViewHistory: () => void;
   onClickArchive: () => void;
   onClickClear: () => void;
+  onClickDelegationRules: () => void;
   onClickDebug: () => void;
 }) {
   return (
@@ -314,7 +325,17 @@ function SettingsList({
       </Group>
 
       <Group label="Carson">
-        <HouseholdDelegationRulesSection />
+        <button
+          type="button"
+          onClick={onClickDelegationRules}
+          className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
+        >
+          <span className="min-w-0">
+            <span className="block text-base text-ink">Household Delegation Rules</span>
+            <span className="block text-xs text-ink/55">Global rules Carson follows when delegating.</span>
+          </span>
+          <span aria-hidden className="text-ink/30">›</span>
+        </button>
       </Group>
 
       <Group label="Dev">
@@ -842,7 +863,7 @@ function GoogleCalendarRow({
 
 // ---------------------------------------------------------------------------
 
-function HouseholdDelegationRulesSection() {
+function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
   const { rules: savedRules, status, error, load, save } = useHouseholdRulesStore();
   const [text, setText] = useState("");
   const [saving, setSaving] = useState(false);
@@ -872,41 +893,53 @@ function HouseholdDelegationRulesSection() {
   }
 
   return (
-    <div className="px-4 py-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs text-ink/50 leading-snug">
-          Global rules Carson follows when delegating. Applies to all people.
+    <div className="space-y-4">
+      {/* Back nav */}
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-sm text-ink/55 transition hover:text-ink"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+        Settings
+      </button>
+
+      {/* Header */}
+      <div>
+        <h3 className="text-base font-semibold text-ink">Household Delegation Rules</h3>
+        <p className="mt-0.5 text-xs leading-relaxed text-ink/55">
+          Global rules Carson follows when helping you delegate. Applies to all people.
         </p>
-        {saved && (
-          <span className="shrink-0 text-[11px] font-medium text-sage">Saved ✓</span>
-        )}
       </div>
 
-      {error && (
-        <div className="mb-2">
-          <AuthNotice kind="error">{error}</AuthNotice>
-        </div>
-      )}
+      {error && <AuthNotice kind="error">{error}</AuthNotice>}
 
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder={"e.g.\n• Grace manages all household staff — always loop her in.\n• Never assign financial tasks to staff without my approval.\n• Loulya's schedule always takes priority."}
-        rows={5}
+        rows={8}
         disabled={status === "loading" || saving}
-        className="w-full resize-none rounded-xl border border-sage/20 bg-white px-3 py-2.5 text-sm text-ink placeholder:text-ink/30 outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+        className="w-full resize-none rounded-xl border border-sage/20 bg-white px-4 py-3 text-sm text-ink placeholder:text-ink/30 outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
       />
 
-      <div className="mt-2.5 flex justify-end">
-        <button
-          type="button"
-          onClick={() => void handleSave()}
-          disabled={status === "loading" || saving || text === savedRules}
-          className="inline-flex items-center gap-2 rounded-full bg-sage px-4 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {saving && <Spinner size={11} />}
-          {saving ? "Saving…" : "Save rules"}
-        </button>
+      <div className="flex items-center justify-between gap-3">
+        {saved && (
+          <span className="text-xs font-medium text-sage">Saved ✓</span>
+        )}
+        <div className="ml-auto">
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={status === "loading" || saving || text === savedRules}
+            className="inline-flex items-center gap-2 rounded-full bg-sage px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {saving && <Spinner size={12} />}
+            {saving ? "Saving…" : "Save rules"}
+          </button>
+        </div>
       </div>
     </div>
   );
