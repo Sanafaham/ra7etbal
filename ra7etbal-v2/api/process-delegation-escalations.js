@@ -137,11 +137,6 @@ export default async function handler(req, res) {
   if (requestBody.action === 'run-routines') {
     return runRoutines(req, res, { supabaseUrl, serviceKey, appBaseUrl });
   }
-  // TEMPORARY DIAGNOSTIC — testMode only, remove after template name confirmed
-  if (testMode && requestBody.action === 'list-routine-templates') {
-    return listRoutineTemplates(req, res);
-  }
-
   const now = new Date();
   const followupThresholdMs = testMode ? TEST_FOLLOWUP_MS : PROD_FOLLOWUP_MS;
   const escalateThresholdMs = testMode ? TEST_ESCALATE_MS : PROD_ESCALATE_MS;
@@ -585,10 +580,7 @@ function isTestMode(req) {
  * Called both from the `run-routines` action dispatch AND at the end of
  * every escalation run (the existing 10-min QStash cron handles both).
  */
-async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }, opts = {}) {
-  const { debug = false } = opts;
-  const debugErrors = [];
-
+async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
   const startedAt = new Date();
   console.log('[routines] job started', { startedAt: startedAt.toISOString() });
 
@@ -649,7 +641,7 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }, opts = {
         executed = result === true;
 
       } else if (routine.type === 'message') {
-        const result = await executeMessageRoutine({ routine, supabaseUrl, serviceKey, debugCollector: debug ? debugErrors : null });
+        const result = await executeMessageRoutine({ routine, supabaseUrl, serviceKey });
         if (result === 'missing_person') {
           // Don't disable — person might get a phone added later; just skip this tick.
           console.warn('[routines] message routine skipped (missing person or phone)', { routineId: routine.id });
@@ -689,14 +681,13 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }, opts = {
     ...stats,
     durationMs: Date.now() - startedAt.getTime(),
   });
-  return debug ? { ...stats, debugErrors } : stats;
+  return stats;
 }
 
 /** Action dispatch handler — wraps runRoutinesCore with an HTTP response. */
 async function runRoutines(req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
-  const debug = isTestMode(req);
   try {
-    const stats = await runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }, { debug });
+    const stats = await runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl });
     return res.status(200).json(stats);
   } catch (err) {
     console.error('[routines] fatal error:', err?.message);
@@ -937,7 +928,7 @@ async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appB
  *         'missing_person' if person/phone cannot be resolved,
  *         false on other failures (template missing, Meta error, etc).
  */
-async function executeMessageRoutine({ routine, supabaseUrl, serviceKey, debugCollector = null }) {
+async function executeMessageRoutine({ routine, supabaseUrl, serviceKey }) {
   const { user_id, payload, id: routineId, name: routineName } = routine;
 
   // ── Guard: template must be configured ───────────────────────────────────
@@ -1036,10 +1027,8 @@ async function executeMessageRoutine({ routine, supabaseUrl, serviceKey, debugCo
         metaCode: metaBody?.error?.code ?? null,
         metaMessage: metaBody?.error?.message ?? null,
         templateName,
-        templateLanguage,
       };
       console.error('[routines] message: Meta rejected the message', { routineId, ...rejection });
-      if (debugCollector) debugCollector.push(rejection);
       return false;
     }
 
@@ -1183,53 +1172,6 @@ async function disableRoutine(supabaseUrl, serviceKey, routineId) {
     },
   ).catch((err) => console.warn('[routines] disableRoutine failed:', err?.message));
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TEMPORARY DIAGNOSTIC — remove after template name confirmed
-async function listRoutineTemplates(_req, res) {
-  const accessToken    = process.env.WHATSAPP_ACCESS_TOKEN;
-  const wabaId         = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
-  const phoneNumberId  = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  const templateLang   = (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
-  if (!accessToken || !wabaId) {
-    return res.status(500).json({ error: 'WHATSAPP_ACCESS_TOKEN or WHATSAPP_BUSINESS_ACCOUNT_ID not set' });
-  }
-  try {
-    // 1. List templates
-    const tplUrl  = `https://graph.facebook.com/v20.0/${wabaId}/message_templates` +
-      `?fields=name,id,status,language&limit=100&access_token=${accessToken}`;
-    const tplRes  = await fetch(tplUrl);
-    const tplBody = await tplRes.json().catch(() => ({}));
-    if (!tplRes.ok) {
-      return res.status(tplRes.status).json({ error: tplBody?.error?.message ?? 'Meta templates API error' });
-    }
-    const templates = (tplBody.data ?? [])
-      .filter((t) => typeof t.name === 'string' && t.name.toLowerCase().includes('routine'))
-      .map(({ name, id, status, language }) => ({ name, id, status, language }));
-
-    // 2. List phone numbers for this WABA — check if configured phone ID is in same WABA
-    const pnUrl   = `https://graph.facebook.com/v20.0/${wabaId}/phone_numbers` +
-      `?fields=id,display_phone_number,verified_name&access_token=${accessToken}`;
-    const pnRes   = await fetch(pnUrl);
-    const pnBody  = await pnRes.json().catch(() => ({}));
-    const wabaPhoneNumbers = pnRes.ok
-      ? (pnBody.data ?? []).map(({ id, display_phone_number, verified_name }) => ({ id, display_phone_number, verified_name }))
-      : [];
-    const phoneInWaba = phoneNumberId ? wabaPhoneNumbers.some((p) => p.id === phoneNumberId) : null;
-
-    return res.status(200).json({
-      templates,
-      wabaPhoneNumbers,
-      phoneNumberId_configured: phoneNumberId ?? null,
-      phoneInWaba,
-      templateLanguage_configured: templateLang,
-    });
-  } catch (err) {
-    return res.status(500).json({ error: err?.message ?? 'fetch failed' });
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 async function isAuthorized(req) {
   const secret = process.env.CRON_SECRET;
