@@ -332,7 +332,7 @@ export default function App() {
           type="button"
           aria-label="More options"
           onClick={() => setMoreOpen(true)}
-          className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-sage/8 active:bg-sage/15"
+          className="flex h-10 w-10 items-center justify-center rounded-full border border-sage/15 bg-white/70 shadow-[0_1px_4px_-1px_rgba(20,20,20,0.08)] transition hover:bg-white/90 active:bg-white/95 active:scale-95"
         >
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
             <circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none" />
