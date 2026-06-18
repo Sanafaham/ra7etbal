@@ -106,7 +106,7 @@ export default function AwarenessCard({ events, now }: AwarenessCardProps) {
   return (
     <section
       aria-label="Next Up"
-      className="mt-3"
+      className="mt-2"
     >
       <p className="mb-2 px-1 text-[12px] font-semibold tracking-[-0.01em] text-ink/65">
         Next Up

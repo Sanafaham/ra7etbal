@@ -211,8 +211,8 @@ export default function Home() {
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
     >
       {/* ── Briefing — no card, text on page ────────────────────────── */}
-      <div className="mt-4 px-2 text-center sm:mt-6">
-        <p className="text-[12px] font-normal text-ink/65">{greeting}</p>
+      <div className="mt-3 px-2 text-center sm:mt-5">
+        <p className="text-[13px] font-normal text-ink/75">{greeting}</p>
         <h1
           className="mx-auto mt-1 max-w-xs text-[22px] leading-[1.1] tracking-[-0.01em] text-text sm:text-[26px]"
           style={{ fontFamily: "var(--font-display)" }}
@@ -231,12 +231,12 @@ export default function Home() {
                   : "bg-sage")
             }
           />
-          <p className="text-[12px] text-ink/60">{briefSentence}</p>
+          <p className="text-[13px] font-medium text-ink/70">{briefSentence}</p>
         </div>
       </div>
 
       {/* ── Talk to Carson — visual hero ────────────────────────────── */}
-      <section className="mt-4 sm:mt-5">
+      <section className="mt-3 sm:mt-4">
         <button
           type="button"
           onClick={() => openCarson(true)}
@@ -258,7 +258,7 @@ export default function Home() {
       </section>
 
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
-      <section className="mt-2.5 rounded-[20px] border border-border/10 bg-transparent px-3.5 pb-3.5 pt-3 sm:mt-3">
+      <section className="mt-2 rounded-[20px] border border-border/10 bg-transparent px-3.5 pb-3.5 pt-3 sm:mt-3">
         <div className="mb-1.5 flex items-center justify-between gap-3">
           <label
             htmlFor={textareaId}
