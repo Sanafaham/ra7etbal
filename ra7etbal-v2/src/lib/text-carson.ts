@@ -9,7 +9,7 @@ import { CARSON_STATUS_POLICY } from "./carson-status-policy";
 import { extractItems } from "./ai/extract";
 import { savePending } from "./save";
 import { detectAllRecurringSchedules } from "./routine-detection";
-import { sendWhatsAppTask } from "./whatsapp";
+import { deliverTaskMessage } from "./delivery";
 import { useTasksStore } from "../stores/tasks";
 import { summarizeConversation } from "./carson-summarize";
 import { extractDurableFacts } from "./carson-fact-extract";
@@ -307,9 +307,15 @@ export async function executeDelegationFromText(
   );
 
   const phoneByName = new Map<string, string>();
+  const noConsentNames = new Set<string>();
   for (const person of context.people) {
     const key = person.name.trim().toLowerCase();
-    if (key && person.phone) phoneByName.set(key, person.phone);
+    if (!key) continue;
+    if (person.phone && person.whatsapp_opted_in) {
+      phoneByName.set(key, person.phone);
+    } else if (person.phone && !person.whatsapp_opted_in) {
+      noConsentNames.add(key);
+    }
   }
 
   // Send WhatsApp only for delegation/message rows (same as Review.tsx).
@@ -317,15 +323,23 @@ export async function executeDelegationFromText(
   // others — all sends are attempted independently. The summary below
   // accurately reflects which recipients were actually messaged vs which
   // failed, so Voice Carson cannot claim success for an unsent message.
-  const sendableMessages = saved.messages.filter(
+  const allMessages = saved.messages.filter(
     (m) => !!m.recipient.trim() && !!m.content.trim(),
+  );
+
+  // Split into messages we can send (consented) vs pre-blocked (no consent).
+  const sendableMessages = allMessages.filter(
+    (m) => !noConsentNames.has(m.recipient.trim().toLowerCase()),
+  );
+  const noConsentMessages = allMessages.filter(
+    (m) => noConsentNames.has(m.recipient.trim().toLowerCase()),
   );
 
   const sendResults =
     sendableMessages.length > 0
       ? await Promise.allSettled(
           sendableMessages.map((message) =>
-            sendWhatsAppTask({
+            deliverTaskMessage({
               to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
               messageText: withImageContext(message.content, context.imageDescription),
               confirmationLink: message.confirmation_url ?? null,
@@ -333,8 +347,6 @@ export async function executeDelegationFromText(
               taskId: message.task_id,
               recipientName: message.recipient,
               ownerName: context.displayName ?? null,
-              // Pass imagePath from the upload result so ra7etbal_task_image
-              // fires automatically when the task had an attached image.
               imagePath: message.task_id
                 ? (saved.imagePathsByTaskId.get(message.task_id) ?? null)
                 : null,
@@ -346,19 +358,29 @@ export async function executeDelegationFromText(
   // Split into succeeded vs failed sends for honest summary reporting.
   const sentNames: string[] = [];
   const failedSends: Array<{ recipient: string; reason: string }> = [];
+
+  // Pre-populate with consent-blocked recipients.
+  for (const m of noConsentMessages) {
+    failedSends.push({ recipient: m.recipient, reason: "WhatsApp consent not recorded — update their profile to enable messaging" });
+  }
+
   for (let i = 0; i < sendableMessages.length; i++) {
     const result = sendResults[i];
-    if (result.status === "fulfilled") {
+    if (result.status === "fulfilled" && result.value.success) {
+      const channel = result.value.channel;
       sentNames.push(sendableMessages[i].recipient);
+      if (channel === "sms") {
+        console.log(`[executeDelegationFromText] delivered via SMS fallback for ${sendableMessages[i].recipient}`);
+      }
     } else {
       const reason =
-        result.reason instanceof Error
-          ? result.reason.message
-          : "send failed";
+        result.status === "rejected"
+          ? result.reason instanceof Error ? result.reason.message : "send failed"
+          : (result.value.error ?? "delivery failed");
       failedSends.push({ recipient: sendableMessages[i].recipient, reason });
       console.error(
-        `[executeDelegationFromText] WhatsApp send failed for ${sendableMessages[i].recipient}:`,
-        result.reason,
+        `[executeDelegationFromText] delivery failed for ${sendableMessages[i].recipient}:`,
+        reason,
       );
     }
   }

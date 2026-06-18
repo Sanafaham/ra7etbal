@@ -34,6 +34,14 @@ export interface Person {
   escalate_to: string | null;
   /** How they prefer to receive instructions (e.g. "short WhatsApp messages"). */
   communication_style: string | null;
+
+  // WhatsApp consent
+  /** True only when the person has explicitly consented to receive WhatsApp messages. */
+  whatsapp_opted_in: boolean;
+  /** ISO timestamp of when consent was recorded. */
+  whatsapp_consent_at: string | null;
+  /** How consent was collected: 'owner_confirmed' | 'self_registered' */
+  whatsapp_consent_method: string | null;
 }
 
 /** Payload for create — the server fills id/user_id/created_at. */
@@ -51,6 +59,9 @@ export interface PersonDraft {
   should_not_assign: string | null;
   escalate_to: string | null;
   communication_style: string | null;
+  whatsapp_opted_in: boolean;
+  whatsapp_consent_at: string | null;
+  whatsapp_consent_method: string | null;
 }
 
 /** Payload for update — only mutable fields. */

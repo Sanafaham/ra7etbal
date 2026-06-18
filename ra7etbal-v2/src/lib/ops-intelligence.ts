@@ -22,7 +22,7 @@
 import type { Person } from "../types/person";
 import type { ExtractedItem } from "../types/extraction";
 import { savePending } from "./save";
-import { sendWhatsAppTask } from "./whatsapp";
+import { deliverTaskMessage } from "./delivery";
 import { buildDelegationMessage } from "./delegation-message";
 import { supabase } from "./supabase";
 
@@ -315,22 +315,28 @@ export async function executeProposedPlan(
   // savePending creates task rows and message rows in Supabase.
   const saved = await savePending(extractedItems, userId, displayName, people);
 
-  // Build phone lookup map from the people list.
+  // Build phone lookup map — only for consented recipients.
   const phoneByName = new Map<string, string>();
+  const noConsentNames = new Set<string>();
   for (const person of people) {
-    if (person.name && person.phone) {
-      phoneByName.set(person.name.trim().toLowerCase(), person.phone);
+    const key = person.name?.trim().toLowerCase();
+    if (!key) continue;
+    if (person.phone && person.whatsapp_opted_in) {
+      phoneByName.set(key, person.phone);
+    } else if (person.phone && !person.whatsapp_opted_in) {
+      noConsentNames.add(key);
     }
   }
 
-  // Send WhatsApp in parallel (not sequential) — much faster than awaiting each.
+  // Send WhatsApp in parallel — skip recipients who have not consented.
   const sendableMessages = saved.messages.filter(
-    (m) => !!m.recipient.trim() && !!m.content.trim(),
+    (m) => !!m.recipient.trim() && !!m.content.trim()
+      && !noConsentNames.has(m.recipient.trim().toLowerCase()),
   );
 
   await Promise.allSettled(
     sendableMessages.map((msg) =>
-      sendWhatsAppTask({
+      deliverTaskMessage({
         to: phoneByName.get(msg.recipient.trim().toLowerCase()) ?? null,
         messageText: msg.content,
         confirmationLink: msg.confirmation_url ?? null,

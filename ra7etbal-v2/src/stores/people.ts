@@ -90,6 +90,9 @@ export const usePeopleStore = create<PeopleState>((set, get) => ({
       should_not_assign: draft.should_not_assign ?? null,
       escalate_to: draft.escalate_to ?? null,
       communication_style: draft.communication_style ?? null,
+      whatsapp_opted_in: draft.whatsapp_opted_in ?? false,
+      whatsapp_consent_at: draft.whatsapp_consent_at ?? null,
+      whatsapp_consent_method: draft.whatsapp_consent_method ?? null,
     };
     set((s) => ({ items: [...s.items, optimistic] }));
     try {

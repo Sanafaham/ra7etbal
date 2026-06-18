@@ -1,4 +1,4 @@
-// PersonForm v2 — Description/Notes field visible in main form
+// PersonForm v3 — WhatsApp consent fields
 import { useId, useRef, useState, type FormEvent } from "react";
 import AuthNotice from "../auth/AuthNotice";
 import Spinner from "../Spinner";
@@ -54,6 +54,22 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
   const [escalateTo,         setEscalateTo]         = useState(initial?.escalate_to        ?? "");
   const [communicationStyle, setCommunicationStyle] = useState(initial?.communication_style ?? "");
 
+  // WhatsApp consent
+  const [whatsappOptedIn,     setWhatsappOptedIn]     = useState(initial?.whatsapp_opted_in     ?? false);
+  const [whatsappConsentAt,   setWhatsappConsentAt]   = useState(initial?.whatsapp_consent_at   ?? null as string | null);
+  const [whatsappConsentMethod, setWhatsappConsentMethod] = useState(initial?.whatsapp_consent_method ?? null as string | null);
+
+  function handleConsentToggle(checked: boolean) {
+    setWhatsappOptedIn(checked);
+    if (checked) {
+      setWhatsappConsentAt(new Date().toISOString());
+      setWhatsappConsentMethod("owner_confirmed");
+    } else {
+      setWhatsappConsentAt(null);
+      setWhatsappConsentMethod(null);
+    }
+  }
+
   const [showIntelligence, setShowIntelligence] = useState(
     // Auto-expand when any intelligence field already has data
     !!(initial?.relationship || initial?.responsibilities || initial?.delegation_guidance ||
@@ -91,6 +107,9 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         should_not_assign:  shouldNotAssign.trim()    || null,
         escalate_to:        escalateTo.trim()         || null,
         communication_style: communicationStyle.trim() || null,
+        whatsapp_opted_in:     whatsappOptedIn,
+        whatsapp_consent_at:   whatsappConsentAt,
+        whatsapp_consent_method: whatsappConsentMethod,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save. Please try again.");
@@ -171,6 +190,38 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
           placeholder="+971 50 000 0000" autoComplete="tel" inputMode="tel" disabled={!!busy}
           className="w-full rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
         />
+      </div>
+
+      {/* ── WhatsApp Consent ──────────────────────────────────────── */}
+      <div className="rounded-2xl border border-sage/20 bg-white px-4 py-3">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
+            <input
+              id="whatsapp-consent"
+              type="checkbox"
+              checked={whatsappOptedIn}
+              onChange={(e) => handleConsentToggle(e.target.checked)}
+              disabled={!!busy}
+              className="h-4 w-4 rounded border-sage/40 text-sage focus:ring-sage/30"
+            />
+          </div>
+          <div className="flex-1 min-w-0">
+            <label htmlFor="whatsapp-consent" className="cursor-pointer text-sm font-medium text-ink leading-snug">
+              WhatsApp consent recorded
+            </label>
+            <p className="mt-0.5 text-xs leading-relaxed text-ink/50">
+              {whatsappOptedIn
+                ? "This person has agreed to receive WhatsApp messages from Ra7etBal."
+                : "Without consent, Carson will not send WhatsApp messages to this person."}
+            </p>
+            {whatsappOptedIn && whatsappConsentAt && (
+              <p className="mt-1 text-[11px] text-ink/40">
+                Recorded {new Date(whatsappConsentAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+                {whatsappConsentMethod === "owner_confirmed" ? " · confirmed by you" : ""}
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ── Carson Intelligence ────────────────────────────────────── */}
