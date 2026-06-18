@@ -106,13 +106,13 @@ export default function AwarenessCard({ events, now }: AwarenessCardProps) {
   return (
     <section
       aria-label="Next Up"
-      className="mt-5 px-2"
+      className="mt-5"
     >
-      <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">
+      <p className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-text-muted">
         Next Up
       </p>
 
-      <div className="space-y-3">
+      <div className="rounded-2xl border border-sage/15 bg-white/50 px-4 py-3 space-y-3">
         {groups.map((group) => (
           <div key={group.bucket}>
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-text-muted/60">

@@ -333,21 +333,6 @@ export default function App() {
           <span className="font-semibold text-ink">راحة بال</span>
         </button>
 
-        {authStatus === "signed_in" && user && (
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setMoreOpen(true)}
-              aria-label="Menu"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-sage/40 bg-white text-ink shadow-sm transition hover:bg-cream"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path d="M19.14 12.94a7.49 7.49 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.51 7.51 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.14.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.65 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.49.39 1.04.7 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.51 7.51 0 0 0 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-                <circle cx="12" cy="12" r="2.6" stroke="currentColor" strokeWidth="1.6" />
-              </svg>
-            </button>
-          </div>
-        )}
       </header>
 
       {/* ── Main content ────────────────────────────────────────────────── */}

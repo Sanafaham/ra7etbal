@@ -26,7 +26,7 @@ function Badge({ count }: { count: number }) {
  * Carson: pulsing green dot when connected.
  */
 export default function BottomNav() {
-  const { setOpen: setCarsonOpen, callStatus } = useCarsonStore();
+  const { setOpen: setCarsonOpen, callStatus, open: carsonOpen } = useCarsonStore();
   const inboxCount = useBadgeStore((s) => s.inboxCount);
   const tasks = useTasksStore((s) => s.items);
   const { pathname } = useLocation();
@@ -110,15 +110,15 @@ export default function BottomNav() {
           )}
         </NavLink>
 
-        {/* Carson — dot indicator when connected */}
+        {/* Carson — active when sheet open, dot when connected */}
         <button
           type="button"
           onClick={() => setCarsonOpen(true)}
           aria-label="Talk to Carson"
-          className="relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium text-ink/45 transition hover:text-ink/70"
+          className={"relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " + (carsonOpen ? "text-sage" : "text-ink/45 hover:text-ink/70")}
         >
           <span className="relative">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={carsonOpen ? 2 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" y1="19" x2="12" y2="23" />

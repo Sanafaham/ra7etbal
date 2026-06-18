@@ -19,14 +19,18 @@ interface Props {
   onDelete: (task: Task) => Promise<unknown>;
 }
 
+// 3 calm color groups:
+//   sage  — things to do (action, errand)
+//   amber — time-sensitive or pending decisions (reminder, decision, parked)
+//   slate — delegated or awaiting others (delegation, followup)
 const TYPE_META: Record<TaskType, { label: string; cls: string }> = {
-  action: { label: "Action", cls: "bg-sage/15 text-sage border-sage/30" },
-  reminder: { label: "Reminder", cls: "bg-amber-100 text-amber-900 border-amber-300" },
-  delegation: { label: "Delegation", cls: "bg-emerald-100 text-emerald-900 border-emerald-300" },
-  decision: { label: "Decision", cls: "bg-violet-100 text-violet-900 border-violet-300" },
-  followup: { label: "Follow-up", cls: "bg-rose-100 text-rose-900 border-rose-300" },
-  errand: { label: "Errand", cls: "bg-teal-100 text-teal-900 border-teal-300" },
-  parked: { label: "Parked", cls: "bg-stone-100 text-stone-700 border-stone-300" },
+  action:     { label: "Action",     cls: "bg-sage/15 text-sage border-sage/30" },
+  errand:     { label: "Errand",     cls: "bg-sage/15 text-sage border-sage/30" },
+  reminder:   { label: "Reminder",   cls: "bg-amber-100 text-amber-800 border-amber-200" },
+  decision:   { label: "Decision",   cls: "bg-amber-100 text-amber-800 border-amber-200" },
+  parked:     { label: "Parked",     cls: "bg-amber-50 text-amber-700 border-amber-200" },
+  delegation: { label: "Delegation", cls: "bg-slate-100 text-slate-700 border-slate-200" },
+  followup:   { label: "Follow-up",  cls: "bg-slate-100 text-slate-700 border-slate-200" },
 };
 
 export default function TaskCard({

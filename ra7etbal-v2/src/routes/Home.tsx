@@ -253,7 +253,6 @@ export default function Home() {
           <div className="text-center">
             <p className="text-[24px] font-semibold tracking-[-0.025em] text-ink">Talk to Carson</p>
             <p className="mt-1.5 text-[13px] text-ink/50">Ready when you are.</p>
-            <p className="mt-3 text-[12px] text-ink/30">{briefSentence}</p>
           </div>
         </button>
       </section>
@@ -341,9 +340,6 @@ export default function Home() {
         )}
 
         <div className="mt-3 space-y-2.5 border-t border-border/70 pt-3">
-          <p className="text-[13px] italic leading-snug text-text-soft">
-            Ra7etBal will organize it before anything is saved.
-          </p>
           <div className="flex items-center gap-2">
             <button
               type="button"
