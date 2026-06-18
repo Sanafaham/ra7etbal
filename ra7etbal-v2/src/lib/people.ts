@@ -15,6 +15,7 @@ const COLUMNS = [
   "relationship", "is_family", "responsibilities",
   "reliability_level", "follow_up_level", "delegation_guidance",
   "should_not_assign", "escalate_to", "communication_style",
+  "whatsapp_opted_in", "whatsapp_consent_at", "whatsapp_consent_method",
 ].join(", ");
 
 export async function listPeople(): Promise<Person[]> {

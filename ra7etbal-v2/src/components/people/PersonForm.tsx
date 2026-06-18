@@ -211,7 +211,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
             </label>
             <p className="mt-0.5 text-xs leading-relaxed text-ink/50">
               {whatsappOptedIn
-                ? "This person has agreed to receive WhatsApp messages from Ra7etBal."
+                ? "This person agreed to receive Ra7etBal task messages by WhatsApp."
                 : "Without consent, Carson will not send WhatsApp messages to this person."}
             </p>
             {whatsappOptedIn && whatsappConsentAt && (
