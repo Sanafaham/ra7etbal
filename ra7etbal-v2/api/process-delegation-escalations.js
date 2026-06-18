@@ -581,7 +581,10 @@ function isTestMode(req) {
  * Called both from the `run-routines` action dispatch AND at the end of
  * every escalation run (the existing 10-min QStash cron handles both).
  */
-async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
+async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }, opts = {}) {
+  const { debug = false } = opts;
+  const debugErrors = [];
+
   const startedAt = new Date();
   console.log('[routines] job started', { startedAt: startedAt.toISOString() });
 
@@ -642,7 +645,7 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
         executed = result === true;
 
       } else if (routine.type === 'message') {
-        const result = await executeMessageRoutine({ routine, supabaseUrl, serviceKey });
+        const result = await executeMessageRoutine({ routine, supabaseUrl, serviceKey, debugCollector: debug ? debugErrors : null });
         if (result === 'missing_person') {
           // Don't disable — person might get a phone added later; just skip this tick.
           console.warn('[routines] message routine skipped (missing person or phone)', { routineId: routine.id });
@@ -682,13 +685,14 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
     ...stats,
     durationMs: Date.now() - startedAt.getTime(),
   });
-  return stats;
+  return debug ? { ...stats, debugErrors } : stats;
 }
 
 /** Action dispatch handler — wraps runRoutinesCore with an HTTP response. */
-async function runRoutines(_req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
+async function runRoutines(req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
+  const debug = isTestMode(req);
   try {
-    const stats = await runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl });
+    const stats = await runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }, { debug });
     return res.status(200).json(stats);
   } catch (err) {
     console.error('[routines] fatal error:', err?.message);
@@ -929,7 +933,7 @@ async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appB
  *         'missing_person' if person/phone cannot be resolved,
  *         false on other failures (template missing, Meta error, etc).
  */
-async function executeMessageRoutine({ routine, supabaseUrl, serviceKey }) {
+async function executeMessageRoutine({ routine, supabaseUrl, serviceKey, debugCollector = null }) {
   const { user_id, payload, id: routineId, name: routineName } = routine;
 
   // ── Guard: template must be configured ───────────────────────────────────
@@ -1023,13 +1027,14 @@ async function executeMessageRoutine({ routine, supabaseUrl, serviceKey }) {
     const metaBody = await metaRes.json().catch(() => null);
 
     if (!metaRes.ok) {
-      console.error('[routines] message: Meta rejected the message', {
-        routineId,
+      const rejection = {
         status: metaRes.status,
         metaCode: metaBody?.error?.code ?? null,
         metaMessage: metaBody?.error?.message ?? null,
         templateName,
-      });
+      };
+      console.error('[routines] message: Meta rejected the message', { routineId, ...rejection });
+      if (debugCollector) debugCollector.push(rejection);
       return false;
     }
 
