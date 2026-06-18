@@ -26,7 +26,7 @@ export default function PersonCard({ person, onEdit }: Props) {
         <span className="truncate text-sm font-medium text-ink">{person.name}</span>
         {person.role && <span className="truncate text-xs text-ink/55">{person.role}</span>}
         {person.phone && (
-          <span className="truncate font-mono text-[11px] text-ink/38">
+          <span className="truncate font-mono text-[11px] text-ink/28">
             {person.phone}
           </span>
         )}

@@ -71,8 +71,10 @@ export default function People() {
       {/* ── Header ── */}
       <header className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-ink">People</h1>
-          <p className="text-sm text-ink/55">The people Carson works with.</p>
+          <h1 className="text-xl font-semibold text-ink">
+            People{items.length > 0 && <span className="ml-1.5 text-base font-normal text-ink/40">({items.length})</span>}
+          </h1>
+          <p className="text-sm text-ink/55">People Carson can coordinate with.</p>
         </div>
         <button
           type="button"
@@ -170,7 +172,7 @@ export default function People() {
 
       {/* ── People list ── */}
       {filtered.length > 0 && (
-        <ul className="space-y-2.5">
+        <ul className="space-y-1.5">
           {filtered.map((p) => (
             <li key={p.id}>
               <PersonCard person={p} onEdit={setEditing} />
