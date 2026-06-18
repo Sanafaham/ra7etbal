@@ -137,6 +137,33 @@ export default async function handler(req, res) {
   if (requestBody.action === 'run-routines') {
     return runRoutines(req, res, { supabaseUrl, serviceKey, appBaseUrl });
   }
+
+  // TEMPORARY DIAGNOSTIC — testMode only, remove after template name is confirmed
+  if (requestBody.action === 'list-task-templates') {
+    if (!testMode) return res.status(403).json({ error: 'Diagnostic only available in testMode' });
+    const wabaId    = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+    const wabaToken = process.env.WHATSAPP_ACCESS_TOKEN;
+    if (!wabaId || !wabaToken) {
+      return res.status(500).json({ error: 'WHATSAPP_BUSINESS_ACCOUNT_ID or WHATSAPP_ACCESS_TOKEN not configured' });
+    }
+    const tplUrl = `https://graph.facebook.com/v20.0/${wabaId}/message_templates?fields=name,id,status,language,category&limit=100`;
+    const tplRes  = await fetch(tplUrl, { headers: { Authorization: `Bearer ${wabaToken}` } });
+    const tplJson = await tplRes.json().catch(() => ({}));
+    if (!tplRes.ok) {
+      return res.status(502).json({ error: 'Meta API error', status: tplRes.status, body: tplJson });
+    }
+    const keywords = ['task', 'assignment'];
+    const filtered = (tplJson.data || []).filter(t =>
+      keywords.some(k => (t.name || '').toLowerCase().includes(k))
+    );
+    return res.status(200).json({
+      total: (tplJson.data || []).length,
+      matched: filtered.length,
+      templates: filtered.map(({ name, id, status, language, category }) => ({ name, id, status, language, category })),
+    });
+  }
+  // END TEMPORARY DIAGNOSTIC
+
   const now = new Date();
   const followupThresholdMs = testMode ? TEST_FOLLOWUP_MS : PROD_FOLLOWUP_MS;
   const escalateThresholdMs = testMode ? TEST_ESCALATE_MS : PROD_ESCALATE_MS;
