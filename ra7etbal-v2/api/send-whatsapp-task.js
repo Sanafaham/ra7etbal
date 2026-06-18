@@ -87,14 +87,14 @@ export default async function handler(req, res) {
 
   // ── Template selection ────────────────────────────────────────────────────
   // Text tasks (no imagePath):
-  //   PRIMARY:  ra7etbal_task_v3       (3 params: owner, message, link)
-  //   FALLBACK: ra7etbal_task_assignment (2 params: message, link)
+  //   PRIMARY:  ra7etbal_task_v3    (3 params: owner, message, link)
+  //   FALLBACK: ra7etbal_task_v3    (same template, different link placement variants)
   //
   // Image tasks (imagePath present):
-  //   PRIMARY:  ra7etbal_task_image    (image header + 3 body params: owner, message, link)
-  //   FALLBACK: ra7etbal_task_assignment + separate image media message (legacy behavior)
+  //   PRIMARY:  ra7etbal_task_image (image header + 3 body params: owner, message, link)
+  //   FALLBACK: ra7etbal_task_v3   + separate image media message (if Meta upload fails)
   const primaryTemplateName = imagePath ? 'ra7etbal_task_image' : 'ra7etbal_task_v3';
-  const fallbackTemplateName = 'ra7etbal_task_assignment';
+  const fallbackTemplateName = 'ra7etbal_task_v3';
 
   // ── Image upload for ra7etbal_task_image ──────────────────────────────────
   // For image tasks, attempt to upload the image to Meta and use it in the
@@ -130,9 +130,9 @@ export default async function handler(req, res) {
   }
 
   // If image upload failed, revert to legacy path:
-  // send as separate media message + ra7etbal_task_assignment
+  // send as separate media message + ra7etbal_task_v3
   const useImageTemplate = imagePath && metaMediaId !== null;
-  const effectivePrimaryTemplate = useImageTemplate ? primaryTemplateName : (imagePath ? 'ra7etbal_task_assignment' : primaryTemplateName);
+  const effectivePrimaryTemplate = useImageTemplate ? primaryTemplateName : (imagePath ? 'ra7etbal_task_v3' : primaryTemplateName);
 
   console.log('[send-whatsapp-task] route config', {
     accessTokenConfigured: Boolean(accessToken),
@@ -212,7 +212,7 @@ export default async function handler(req, res) {
     linkPlacement = 'button',
     buttonValueMode = 'full',
   ) {
-    const spec = TEMPLATE_SPECS[tplName] || TEMPLATE_SPECS.ra7etbal_task_assignment;
+    const spec = TEMPLATE_SPECS[tplName] || TEMPLATE_SPECS.ra7etbal_task_v3;
     const isImageTemplate = tplName === 'ra7etbal_task_image';
     const bodyParamNames =
       linkPlacement === 'body'
