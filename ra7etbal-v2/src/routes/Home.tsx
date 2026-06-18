@@ -212,7 +212,7 @@ export default function Home() {
     >
       {/* ── Briefing — no card, text on page ────────────────────────── */}
       <div className="mt-3 px-2 text-center sm:mt-5">
-        <p className="text-[13px] font-normal text-ink/75">{greeting}</p>
+        <p className="text-[13px] font-normal text-ink/85">{greeting}</p>
         <h1
           className="mx-auto mt-1 max-w-xs text-[22px] leading-[1.1] tracking-[-0.01em] text-text sm:text-[26px]"
           style={{ fontFamily: "var(--font-display)" }}
@@ -252,7 +252,7 @@ export default function Home() {
           </span>
           <div className="text-center">
             <p className="text-[20px] font-semibold tracking-[-0.025em] text-ink">Talk to Carson</p>
-            <p className="mt-1 text-[13px] text-ink/50">Ready when you are.</p>
+            <p className="mt-1 text-[13px] text-ink/65">Ready when you are.</p>
           </div>
         </button>
       </section>
@@ -262,7 +262,7 @@ export default function Home() {
         <div className="mb-1.5 flex items-center justify-between gap-3">
           <label
             htmlFor={textareaId}
-            className="text-[10px] font-semibold uppercase tracking-[0.18em] text-ink/50"
+            className="text-[10px] font-semibold uppercase tracking-[0.18em] text-ink/65"
           >
             Clear My Head
           </label>
@@ -293,7 +293,7 @@ export default function Home() {
           rows={4}
           disabled={submitting}
           style={{ fieldSizing: "content", fontFamily: "var(--font-sans)" }}
-          className="block min-h-[84px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-ink/35 focus:outline-none disabled:opacity-70"
+          className="block min-h-[84px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-ink/45 focus:outline-none disabled:opacity-70"
         />
 
         {/*

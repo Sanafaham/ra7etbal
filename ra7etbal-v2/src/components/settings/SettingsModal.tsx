@@ -332,7 +332,7 @@ function SettingsList({
         >
           <span className="min-w-0">
             <span className="block text-base text-ink">Household Delegation Rules</span>
-            <span className="block text-xs text-ink/55">Global rules Carson follows when delegating.</span>
+            <span className="block text-xs text-ink/65">Global rules Carson follows when delegating.</span>
           </span>
           <span aria-hidden className="text-ink/30">›</span>
         </button>
@@ -392,7 +392,7 @@ function DisplayNameRow({
   if (editing) {
     return (
       <div className="border-b border-sage/10 px-4 py-3 last:border-b-0">
-        <p className="mb-1.5 text-xs text-ink/50">Your name</p>
+        <p className="mb-1.5 text-xs text-ink/60">Your name</p>
         <input
           ref={inputRef}
           type="text"
@@ -439,7 +439,7 @@ function DisplayNameRow({
     >
       <span className="min-w-0">
         <span className="block text-base text-ink">Your name</span>
-        <span className="block text-xs text-ink/55">
+        <span className="block text-xs text-ink/65">
           {saved ? "Saved ✓" : (displayName ?? "Not set")}
         </span>
       </span>
@@ -497,7 +497,7 @@ function WeatherCityRow({
   if (editing) {
     return (
       <div className="border-b border-sage/10 px-4 py-3 last:border-b-0">
-        <p className="mb-1.5 text-xs text-ink/50">Weather city</p>
+        <p className="mb-1.5 text-xs text-ink/60">Weather city</p>
         <input
           ref={inputRef}
           type="text"
@@ -544,7 +544,7 @@ function WeatherCityRow({
     >
       <span className="min-w-0">
         <span className="block text-base text-ink">Weather city</span>
-        <span className="block text-xs text-ink/55">
+        <span className="block text-xs text-ink/65">
           {saved ? "Saved ✓" : (weatherCity ?? "Not set — tap to add")}
         </span>
       </span>
@@ -558,7 +558,7 @@ function WeatherCityRow({
 function Group({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <section className="space-y-2">
-      <h3 className="px-1 text-[10px] font-medium uppercase tracking-wide text-ink/50">
+      <h3 className="px-1 text-[10px] font-medium uppercase tracking-wide text-ink/60">
         {label}
       </h3>
       <div className="overflow-hidden rounded-2xl border border-sage/20 bg-white/80 shadow-sm">
@@ -692,7 +692,7 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
       >
         <span className="min-w-0">
           <span className="block text-base text-ink">Push notifications</span>
-          <span className="block text-xs text-ink/55">{statusText}</span>
+          <span className="block text-xs text-ink/65">{statusText}</span>
         </span>
         <span
           aria-hidden
@@ -824,7 +824,7 @@ function GoogleCalendarRow({
           ? "bg-sage"
           : "bg-ink/20";
 
-  const statusClass = isRevoked ? "text-amber-700" : "text-ink/55";
+  const statusClass = isRevoked ? "text-amber-700" : "text-ink/65";
 
   // Show the disconnect link when calendar is connected or in a revoked-but-was-connected state.
   const showDisconnect = onDisconnect && (connected === true || isRevoked);
@@ -898,7 +898,7 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-1.5 text-sm text-ink/55 transition hover:text-ink"
+        className="flex items-center gap-1.5 text-sm text-ink/65 transition hover:text-ink"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
           <path d="M15 18l-6-6 6-6" />
@@ -909,7 +909,7 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
       {/* Header */}
       <div>
         <h3 className="text-base font-semibold text-ink">Household Delegation Rules</h3>
-        <p className="mt-0.5 text-xs leading-relaxed text-ink/55">
+        <p className="mt-0.5 text-xs leading-relaxed text-ink/65">
           Global rules Carson follows when helping you delegate. Applies to all people.
         </p>
       </div>
