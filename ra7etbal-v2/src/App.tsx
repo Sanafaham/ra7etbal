@@ -322,17 +322,24 @@ export default function App() {
   return (
     <div className="min-h-dvh bg-cream text-ink">
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <header className="mx-auto flex max-w-3xl items-center gap-3 px-5 pt-5" style={{ paddingTop: "max(20px, env(safe-area-inset-top))" }}>
+      <header className="mx-auto flex max-w-3xl items-center justify-between px-5 pt-5" style={{ paddingTop: "max(20px, env(safe-area-inset-top))" }}>
+        <div className="flex items-center gap-2 px-1 py-1">
+          <span aria-hidden className="text-xl">🌿</span>
+          <span className="font-semibold text-ink">راحة بال</span>
+        </div>
+
         <button
           type="button"
           aria-label="More options"
           onClick={() => setMoreOpen(true)}
-          className="flex items-center gap-2 rounded-xl px-1 py-1 transition hover:bg-sage/5 active:bg-sage/10"
+          className="flex h-9 w-9 items-center justify-center rounded-full transition hover:bg-sage/8 active:bg-sage/15"
         >
-          <span aria-hidden className="text-xl">🌿</span>
-          <span className="font-semibold text-ink">راحة بال</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+            <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+            <circle cx="19" cy="12" r="1.2" fill="currentColor" stroke="none" />
+          </svg>
         </button>
-
       </header>
 
       {/* ── Main content ────────────────────────────────────────────────── */}
