@@ -1,4 +1,4 @@
-const DEFAULT_TEMPLATE_LANGUAGE = 'en_US';
+const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
 const TEMPLATE_SPECS = {
   ra7etbal_task_v3: {
@@ -28,8 +28,9 @@ export default async function handler(req, res) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const templateLanguage =
-    process.env.WHATSAPP_TEMPLATE_LANGUAGE || DEFAULT_TEMPLATE_LANGUAGE;
+  // Task templates are approved in 'en' — independent of the global
+  // WHATSAPP_TEMPLATE_LANGUAGE env var (which is en_US for routine messages).
+  const templateLanguage = DEFAULT_TEMPLATE_LANGUAGE;
 
   const {
     to,
