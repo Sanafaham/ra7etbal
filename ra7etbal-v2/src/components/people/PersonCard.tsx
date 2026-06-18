@@ -17,16 +17,16 @@ export default function PersonCard({ person, onEdit }: Props) {
     <button
       type="button"
       onClick={() => onEdit(person)}
-      className="flex w-full items-center gap-4 rounded-2xl border border-sage/30 bg-white/80 p-4 text-left shadow-sm transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-sage/40"
+      className="flex w-full items-center gap-3 rounded-2xl border border-sage/30 bg-white/80 px-4 py-3 text-left shadow-sm transition hover:bg-white focus:outline-none focus:ring-2 focus:ring-sage/40"
     >
-      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-sage/15 text-sm font-semibold text-sage">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sage/15 text-sm font-semibold text-sage">
         {initials(person.name)}
       </span>
       <span className="flex min-w-0 flex-1 flex-col leading-tight">
-        <span className="truncate text-base font-medium text-ink">{person.name}</span>
-        <span className="truncate text-sm text-ink/60">{person.role}</span>
+        <span className="truncate text-sm font-medium text-ink">{person.name}</span>
+        {person.role && <span className="truncate text-xs text-ink/55">{person.role}</span>}
         {person.phone && (
-          <span className="mt-0.5 truncate font-mono text-xs text-ink/50">
+          <span className="truncate font-mono text-[11px] text-ink/38">
             {person.phone}
           </span>
         )}

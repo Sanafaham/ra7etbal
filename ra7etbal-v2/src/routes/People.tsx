@@ -164,7 +164,7 @@ export default function People() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search people…"
             aria-label="Search people"
-            className="w-full rounded-2xl border border-sage/20 bg-white/70 py-2.5 pl-9 pr-4 text-sm text-ink placeholder:text-ink/35 focus:border-sage/40 focus:outline-none focus:ring-2 focus:ring-sage/15"
+            className="w-full rounded-2xl border border-sage/20 bg-white/70 py-2 pl-9 pr-4 text-sm text-ink placeholder:text-ink/35 focus:border-sage/40 focus:outline-none focus:ring-2 focus:ring-sage/15"
           />
         </div>
       )}
