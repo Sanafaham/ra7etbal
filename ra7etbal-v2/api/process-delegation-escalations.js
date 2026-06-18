@@ -1036,6 +1036,7 @@ async function executeMessageRoutine({ routine, supabaseUrl, serviceKey, debugCo
         metaCode: metaBody?.error?.code ?? null,
         metaMessage: metaBody?.error?.message ?? null,
         templateName,
+        templateLanguage,
       };
       console.error('[routines] message: Meta rejected the message', { routineId, ...rejection });
       if (debugCollector) debugCollector.push(rejection);
