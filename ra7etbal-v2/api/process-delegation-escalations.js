@@ -1187,23 +1187,43 @@ async function disableRoutine(supabaseUrl, serviceKey, routineId) {
 // ─────────────────────────────────────────────────────────────────────────────
 // TEMPORARY DIAGNOSTIC — remove after template name confirmed
 async function listRoutineTemplates(_req, res) {
-  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-  const wabaId      = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+  const accessToken    = process.env.WHATSAPP_ACCESS_TOKEN;
+  const wabaId         = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
+  const phoneNumberId  = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const templateLang   = (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
   if (!accessToken || !wabaId) {
     return res.status(500).json({ error: 'WHATSAPP_ACCESS_TOKEN or WHATSAPP_BUSINESS_ACCOUNT_ID not set' });
   }
-  const url = `https://graph.facebook.com/v20.0/${wabaId}/message_templates` +
-    `?fields=name,id,status,language&limit=100&access_token=${accessToken}`;
   try {
-    const metaRes  = await fetch(url);
-    const metaBody = await metaRes.json().catch(() => ({}));
-    if (!metaRes.ok) {
-      return res.status(metaRes.status).json({ error: metaBody?.error?.message ?? 'Meta API error' });
+    // 1. List templates
+    const tplUrl  = `https://graph.facebook.com/v20.0/${wabaId}/message_templates` +
+      `?fields=name,id,status,language&limit=100&access_token=${accessToken}`;
+    const tplRes  = await fetch(tplUrl);
+    const tplBody = await tplRes.json().catch(() => ({}));
+    if (!tplRes.ok) {
+      return res.status(tplRes.status).json({ error: tplBody?.error?.message ?? 'Meta templates API error' });
     }
-    const templates = (metaBody.data ?? [])
+    const templates = (tplBody.data ?? [])
       .filter((t) => typeof t.name === 'string' && t.name.toLowerCase().includes('routine'))
       .map(({ name, id, status, language }) => ({ name, id, status, language }));
-    return res.status(200).json({ templates });
+
+    // 2. List phone numbers for this WABA — check if configured phone ID is in same WABA
+    const pnUrl   = `https://graph.facebook.com/v20.0/${wabaId}/phone_numbers` +
+      `?fields=id,display_phone_number,verified_name&access_token=${accessToken}`;
+    const pnRes   = await fetch(pnUrl);
+    const pnBody  = await pnRes.json().catch(() => ({}));
+    const wabaPhoneNumbers = pnRes.ok
+      ? (pnBody.data ?? []).map(({ id, display_phone_number, verified_name }) => ({ id, display_phone_number, verified_name }))
+      : [];
+    const phoneInWaba = phoneNumberId ? wabaPhoneNumbers.some((p) => p.id === phoneNumberId) : null;
+
+    return res.status(200).json({
+      templates,
+      wabaPhoneNumbers,
+      phoneNumberId_configured: phoneNumberId ?? null,
+      phoneInWaba,
+      templateLanguage_configured: templateLang,
+    });
   } catch (err) {
     return res.status(500).json({ error: err?.message ?? 'fetch failed' });
   }
