@@ -244,11 +244,21 @@ export function buildMorningBriefSpoken(
   // 1: name it. 2: name both. 3+: name notable delegated one + count.
   let section2 = "";
   const recentCutoff = new Date(nowMs - 24 * 60 * 60 * 1000);
+  // Self-assigned keywords: delegations where the user assigned the task to themselves.
+  const SELF_LABELS = new Set(["me", "myself", "self"]);
+  const userNameLower = (name ?? "").toLowerCase();
   const recentDone = tasks
     .filter(t => {
       if (t.status !== "done" || !t.confirmed_at) return false;
       const confirmedAt = new Date(t.confirmed_at);
-      return confirmedAt >= recentCutoff && confirmedAt <= now;
+      if (confirmedAt < recentCutoff || confirmedAt > now) return false;
+      // Exclude self-assigned delegations — not real delegated work.
+      if (t.type === "delegation") {
+        const a = (t.assigned_to ?? "").trim().toLowerCase();
+        if (SELF_LABELS.has(a)) return false;
+        if (userNameLower && a === userNameLower) return false;
+      }
+      return true;
     })
     .sort((a, b) => new Date(b.confirmed_at!).getTime() - new Date(a.confirmed_at!).getTime());
 
