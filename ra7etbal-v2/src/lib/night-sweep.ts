@@ -411,9 +411,98 @@ function capitalize(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Private helpers for buildNightSweepSpoken — duplicated from morning-brief.ts
+// to avoid a cross-module dependency on unexported symbols. Keep in sync if the
+// label patterns change.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const NS_LABEL_PATTERNS: Array<[RegExp, string]> = [
+  [/\bcat food\b/,                      "cat food task"],
+  [/\bflower|bouquet/,                  "flowers request"],
+  [/\bcar\b|driver|pick.?up|drop.?off/, "car task"],
+  [/\bdelivery|courier/,                "delivery task"],
+  [/\bbill|electric|utilities|utility/, "bill task"],
+  [/\bgroceries|grocery|kitchen\b/,     "food task"],
+  [/\bfood\b/,                          "food task"],
+];
+
+const NS_LEADING_VERB =
+  /^(check and make sure|make sure|please|order|remind|ask|tell|confirm|have|message|send|check|follow up on|follow up|get)\s+/i;
+
+function nsTaskLabel(raw: string): string {
+  const lower = raw.trim().toLowerCase();
+  for (const [pattern, label] of NS_LABEL_PATTERNS) {
+    if (pattern.test(lower)) return label;
+  }
+  let s = raw.trim().replace(/[.!?]+$/, "").trim();
+  s = s.replace(NS_LEADING_VERB, "").trim();
+  s = s.charAt(0).toLowerCase() + s.slice(1);
+  if (s.length <= 35) return s;
+  const cut = s.slice(0, 35);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+}
+
+function nsCap(value: string | null | undefined): string {
+  if (!value) return "";
+  const v = value.trim();
+  return v.charAt(0).toUpperCase() + v.slice(1);
+}
+
+function nsCapFirst(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function nsSpokenCount(n: number): string {
+  const words = [
+    "zero", "one", "two", "three", "four", "five",
+    "six", "seven", "eight", "nine", "ten",
+  ];
+  return n < words.length ? words[n] : String(n);
+}
+
+function nsNightCompletionSentence(t: Task): string {
+  const assignee = t.assigned_to?.trim() ?? "";
+  const isSelfOrEmpty = !assignee || ["me", "myself", "self"].includes(assignee.toLowerCase());
+  const what = nsTaskLabel(t.description);
+  if (!isSelfOrEmpty) {
+    return what
+      ? `${nsCap(assignee)} confirmed the ${what}.`
+      : `${nsCap(assignee)} confirmed an open item.`;
+  }
+  return what ? `The ${what} is done.` : "One item was completed.";
+}
+
+function nsEvLocalDate(ev: CalendarEvent): Date | null {
+  if (!ev.start) return null;
+  if (ev.allDay) {
+    const parts = ev.start.split("-").map(Number);
+    if (parts.length < 3) return null;
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+  }
+  const d = new Date(ev.start);
+  return Number.isNaN(d.getTime()) ? null : new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Converts a NightSweep structured object into a spoken brief string
- * suitable for the ElevenLabs voice agent.
+ * Night Sweep V1.4 — spoken end-of-day closure.
+ *
+ * Five sections, hard cap 5 sentences:
+ *   1. GREETING              — "Good evening Sana."
+ *   2. NOTABLE COMPLETION    — rolling 24h, named, self-assigned excluded
+ *   3. OPEN LOOP             — top waiter, risk-framed when escalated/stale
+ *   4. TOMORROW SIGNAL       — calendar shape or fused risk+calendar sentence
+ *   5. CLOSE                 — "You can close the day." / "Everything else is set."
+ *
+ * Dedup rule: if section 3 names the risk and section 4 would repeat it,
+ * section 4 is omitted and section 5 uses "That is the main thing to check."
+ *
+ * Note: App.tsx currently calls this without calendarEvents; section 4 will
+ * be empty in the production widget until that call site is updated.
  */
 export function buildNightSweepSpoken(
   tasks: Task[],
@@ -421,22 +510,149 @@ export function buildNightSweepSpoken(
   now?: Date,
   calendarEvents?: CalendarEvent[],
 ): string {
-  const sweep = buildNightSweep(tasks, now ?? new Date(), calendarEvents ?? []);
-  const greeting = displayName ? `Here's your night sweep, ${displayName}.` : "Here's your night sweep.";
-  const parts: string[] = [greeting];
+  const _now     = now ?? new Date();
+  const nowMs    = _now.getTime();
+  const MS_DAY   = 24 * 60 * 60 * 1000;
+  const MS_72H   = 72 * 60 * 60 * 1000;
+  const _calEvs  = calendarEvents ?? [];
+  const name     = displayName?.trim() || null;
+  const hour     = _now.getHours();
+  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
-  if (sweep.handledToday.length > 0) {
-    parts.push(`Handled today: ${sweep.handledToday.map((i) => i.text).join(". ")}.`);
+  // ── S1: GREETING ────────────────────────────────────────────────────────────
+  const section1 = name ? `${greeting} ${name}.` : `${greeting}.`;
+
+  // ── S2: COMPLETIONS (rolling 24h, self-assigned excluded) ─────────────────
+  const NS_SELF = new Set(["me", "myself", "self"]);
+  const userLower = (name ?? "").toLowerCase();
+  const recentCutoff = new Date(nowMs - MS_DAY);
+
+  const recentDone = tasks
+    .filter(t => {
+      if (t.status !== "done" || !t.confirmed_at) return false;
+      const ca = new Date(t.confirmed_at);
+      if (ca < recentCutoff || ca > _now) return false;
+      if (t.type === "delegation") {
+        const a = (t.assigned_to ?? "").trim().toLowerCase();
+        if (NS_SELF.has(a)) return false;
+        if (userLower && a === userLower) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => new Date(b.confirmed_at!).getTime() - new Date(a.confirmed_at!).getTime());
+
+  let section2 = "";
+  if (recentDone.length === 1) {
+    section2 = nsNightCompletionSentence(recentDone[0]);
+  } else if (recentDone.length >= 2) {
+    const notable = recentDone.find(t => {
+      const a = (t.assigned_to ?? "").trim().toLowerCase();
+      return !!a && !NS_SELF.has(a) && a !== userLower &&
+        (t.type === "delegation" || t.type === "followup");
+    });
+    const countWord = nsSpokenCount(recentDone.length);
+    if (notable && nsCap(notable.assigned_to) && nsTaskLabel(notable.description)) {
+      section2 = `${nsCapFirst(countWord)} items were handled in the last 24 hours, including ${nsCap(notable.assigned_to)}'s ${nsTaskLabel(notable.description)}.`;
+    } else {
+      section2 = `${nsCapFirst(countWord)} items were handled in the last 24 hours.`;
+    }
   }
-  if (sweep.stillWaiting.length > 0) {
-    parts.push(`Still waiting: ${sweep.stillWaiting.map((i) => i.text).join(". ")}.`);
+
+  // ── S3: OPEN LOOP ──────────────────────────────────────────────────────────
+  const active = tasks.filter(t => t.archived_at == null && t.status === "pending");
+  const waitingOn = active
+    .filter(t => {
+      if (t.type === "delegation" && t.assigned_to) return true;
+      if (t.type === "followup") return true;
+      if (t.needs_follow_up && t.assigned_to) return true;
+      return false;
+    })
+    .sort((a, b) => {
+      const aEsc = a.escalated_at != null ? 0 : 1;
+      const bEsc = b.escalated_at != null ? 0 : 1;
+      if (aEsc !== bEsc) return aEsc - bEsc;
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    });
+
+  const totalWaiting   = waitingOn.length;
+  const escalatedItem  = waitingOn.find(t => t.escalated_at != null);
+  const stale72Item    = waitingOn.find(t => nowMs - new Date(t.created_at).getTime() >= MS_72H);
+  const riskItem       = escalatedItem ?? stale72Item ?? null;
+  const topWaiter      = riskItem ?? waitingOn[0] ?? null;
+
+  let section3 = "";
+  if (topWaiter) {
+    const who  = nsCap(topWaiter.assigned_to);
+    const what = nsTaskLabel(topWaiter.description);
+    const days = Math.floor((nowMs - new Date(topWaiter.created_at).getTime()) / MS_DAY);
+
+    if (topWaiter.escalated_at != null) {
+      section3 = who && what
+        ? `${who} still hasn't confirmed the ${what}.`
+        : who ? `${who} hasn't responded to an open item.` : "One item hasn't received a response.";
+    } else if (days >= 3) {
+      section3 = who && what
+        ? `${who} hasn't confirmed the ${what} in ${days} day${days === 1 ? "" : "s"}.`
+        : who ? `${who} has had an open item for ${days} days.` : `One item has been waiting for ${days} days.`;
+    } else if (totalWaiting === 1) {
+      section3 = who && what
+        ? `${who} is still waiting on the ${what}.`
+        : who ? `${who} still has an open item.` : "One item is awaiting confirmation.";
+    } else {
+      section3 = `${nsCapFirst(nsSpokenCount(totalWaiting))} items are still waiting on others.`;
+    }
   }
-  if (sweep.requiresYou.length > 0) {
-    parts.push(`Requires you: ${sweep.requiresYou.map((i) => i.text).join(". ")}.`);
+
+  // ── S4: TOMORROW SIGNAL ────────────────────────────────────────────────────
+  // Fuse risk+calendar when both are present — but never repeat what S3 said.
+  // If S3 already named the risk and there are tomorrow events, skip the fused
+  // sentence (would be redundant) and let S5 reference "tomorrow" instead.
+  const todayStart    = new Date(_now.getFullYear(), _now.getMonth(), _now.getDate());
+  const tomorrowStart = new Date(todayStart.getTime() + MS_DAY);
+  const dayAfterStart = new Date(tomorrowStart.getTime() + MS_DAY);
+
+  const tomorrowEvs = _calEvs.filter(ev => {
+    const d = nsEvLocalDate(ev);
+    return d !== null && d >= tomorrowStart && d < dayAfterStart;
+  });
+
+  let section4 = "";
+  // Only fuse when S3 is empty (risk not yet named) AND we have both a risk + tomorrow event.
+  // If S3 named the risk, adding a fused S4 would duplicate it.
+  const riskAlreadyNamed = riskItem != null && section3.length > 0;
+  if (!riskAlreadyNamed && riskItem && tomorrowEvs.length > 0) {
+    const ev   = tomorrowEvs[0];
+    const what = nsTaskLabel(riskItem.description);
+    section4 = what
+      ? `${ev.title} is tomorrow and the ${what} is still open.`
+      : `${ev.title} is tomorrow and one item is still unconfirmed.`;
+  } else if (tomorrowEvs.length === 1) {
+    section4 = `You have one event tomorrow — ${tomorrowEvs[0].title}.`;
+  } else if (tomorrowEvs.length > 1) {
+    section4 = `You have ${nsSpokenCount(tomorrowEvs.length)} events tomorrow.`;
   }
-  if (sweep.upcomingDeadline.length > 0) {
-    parts.push(`Coming up: ${sweep.upcomingDeadline.map((i) => i.text).join(". ")}.`);
+
+  // ── S5: CLOSE ──────────────────────────────────────────────────────────────
+  const riskFusedInS4 = !riskAlreadyNamed && riskItem != null && section4.length > 0;
+
+  let section5: string;
+  if (totalWaiting === 0) {
+    section5 = "You can close the day.";
+  } else if (riskFusedInS4) {
+    section5 = "That is the main thing to check before tomorrow.";
+  } else if (riskItem != null) {
+    // Risk was named in S3; S4 may have calendar shape (not fused risk).
+    section5 = tomorrowEvs.length > 0
+      ? "That is the main thing to check before tomorrow."
+      : "Everything else is set.";
+  } else {
+    // Fresh waiters but no stale/escalated risk.
+    section5 = "Everything else is set.";
   }
-  parts.push(sweep.reassurance);
-  return parts.join(" ");
+
+  // ── ASSEMBLE ───────────────────────────────────────────────────────────────
+  return [section1, section2, section3, section4, section5]
+    .filter(Boolean)
+    .slice(0, 5)
+    .join(" ");
 }
