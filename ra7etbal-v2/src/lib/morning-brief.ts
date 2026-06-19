@@ -30,11 +30,14 @@ import { classifyCalendarEvent, formatEventEndTime } from "./calendar";
 export interface MorningBriefData {
   /** Owner-action items: pending personal tasks + reminders due today. */
   needsAttention: Task[];
-  /** Active delegations / followups awaiting recipient confirmation. */
+  /**
+   * Active delegations / followups awaiting confirmation — including escalated.
+   * Escalated tasks are sorted first so highest-risk items surface earliest.
+   */
   waitingOn: Task[];
-  /** Overdue reminders + escalated delegations still pending. */
+  /** Overdue reminders only (escalated delegations stay in waitingOn). */
   overdueItems: Task[];
-  /** Tasks confirmed done in the last 24 hours. */
+  /** Tasks confirmed done since start of today (local midnight). */
   recentCompletions: Task[];
   /** Risk signals: long-pending tasks, per-person backlog. */
   risks: RiskItem[];
@@ -59,17 +62,18 @@ export function buildMorningBrief(
   const nowMs = now.getTime();
 
   // ── 3. Overdue items ─────────────────────────────────────────────────────
-  // Overdue reminder OR escalated delegation still pending.
+  // Overdue reminders only. Escalated delegations remain in waitingOn so they
+  // are visible to the spoken brief sections that read waitingOn.
   const overdueItems = active.filter((t) => {
     if (t.status !== "pending") return false;
     if (t.type === "reminder" && isReminderOverdue(t.due_at, now)) return true;
-    if (t.escalated_at != null) return true;
     return false;
   });
   const overdueIds = new Set(overdueItems.map((t) => t.id));
 
   // ── 2. Waiting on others ─────────────────────────────────────────────────
-  // Active delegations / followups; excludes items already in overdue.
+  // All pending delegations/followups including escalated ones.
+  // Escalated items sort first so highest-risk surfaces earliest.
   const waitingOn = active
     .filter((t) => {
       if (t.status !== "pending") return false;
@@ -79,8 +83,13 @@ export function buildMorningBrief(
       if (t.needs_follow_up && t.assigned_to) return true;
       return false;
     })
-    // Oldest first — escalated/stale items surface before fresh ones
-    .sort((a, b) => getDateValue(a.created_at) - getDateValue(b.created_at));
+    .sort((a, b) => {
+      // Escalated first, then oldest-created first
+      const aEsc = a.escalated_at != null ? 0 : 1;
+      const bEsc = b.escalated_at != null ? 0 : 1;
+      if (aEsc !== bEsc) return aEsc - bEsc;
+      return getDateValue(a.created_at) - getDateValue(b.created_at);
+    });
   const waitingIds = new Set(waitingOn.map((t) => t.id));
 
   // ── 1. Needs your attention ──────────────────────────────────────────────
@@ -101,13 +110,13 @@ export function buildMorningBrief(
     return !assignee || assignee === "me";
   });
 
-  // ── 4. Recent completions (last 24 h) ────────────────────────────────────
-  const cutoff = new Date(nowMs - 24 * 60 * 60 * 1000);
+  // ── 4. Recent completions (since start of today, local time) ─────────────
+  const todayCutoff = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const recentCompletions = tasks
     .filter((t) => {
       if (t.status !== "done" || !t.confirmed_at) return false;
       const confirmedAt = new Date(t.confirmed_at);
-      return confirmedAt >= cutoff && confirmedAt <= now;
+      return confirmedAt >= todayCutoff && confirmedAt <= now;
     })
     .sort(
       (a, b) =>
@@ -236,17 +245,17 @@ export function buildMorningBriefSpoken(
     section1 = `${namePrefix} — you have ${spokenCount(todayEvs.length)} events on your calendar today.`;
   }
 
-  // ── SECTION 2: RECENT COMPLETIONS (last 18 h) ─────────────────────────────
+  // ── SECTION 2: COMPLETIONS TODAY ──────────────────────────────────────────
   // Named and specific. Relief before burden.
   // Max 2 individual items; 3+ becomes a count summary.
+  // Uses start-of-day boundary (local midnight) so copy is always "today".
   let section2 = "";
-  const MS_18H  = 18 * 60 * 60 * 1000;
-  const recentCutoff = new Date(nowMs - MS_18H);
+  const todayStartForBrief = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const recentDone = tasks
     .filter(t => {
       if (t.status !== "done" || !t.confirmed_at) return false;
       const confirmedAt = new Date(t.confirmed_at);
-      return confirmedAt >= recentCutoff && confirmedAt <= now;
+      return confirmedAt >= todayStartForBrief && confirmedAt <= now;
     })
     .sort((a, b) => new Date(b.confirmed_at!).getTime() - new Date(a.confirmed_at!).getTime());
 
@@ -255,7 +264,7 @@ export function buildMorningBriefSpoken(
   } else if (recentDone.length === 2) {
     section2 = `${buildCompletionSentenceV3(recentDone[0])} ${buildCompletionSentenceV3(recentDone[1])}`;
   } else if (recentDone.length >= 3) {
-    section2 = `${spokenCount(recentDone.length)} items were completed since yesterday.`;
+    section2 = `${spokenCount(recentDone.length)} items were completed today.`;
   }
 
   // ── SECTION 3: WAITING ON OTHERS ──────────────────────────────────────────
@@ -334,11 +343,12 @@ export function buildMorningBriefSpoken(
   }
 
   // ── SECTION 5: STATUS CLOSE ────────────────────────────────────────────────
-  // Always present. Explicit all-clear OR one named risk. Never vague.
-  // Risk priority: escalated → stale 72h+ → overdue reminder → oldest waiting
+  // Always present. Explicit all-clear OR honest status. Never fake all-clear.
+  // Risk priority: escalated → stale 72h+ → overdue reminder → fresh waiting → clear
   let section5: string;
   const MS_72H = 72 * 60 * 60 * 1000;
 
+  // Fix 1 makes escalated tasks visible in brief.waitingOn, so this check now works.
   const escalatedItem = brief.waitingOn.find(t => t.escalated_at != null);
   const stale72Item   = brief.waitingOn.find(
     t => nowMs - new Date(t.created_at).getTime() >= MS_72H,
@@ -355,14 +365,20 @@ export function buildMorningBriefSpoken(
     const days = Math.floor((nowMs - new Date(stale72Item.created_at).getTime()) / MS_DAY);
     const what = cleanDesc(stale72Item.description);
     section5 = who && what
-      ? `The ${what} task has been open for ${days} days with no response — worth a follow-up today.`
+      ? `The ${what} task has been open for ${days} days — worth a follow-up today.`
       : who
         ? `${who} has had an open item for ${days} days — worth a follow-up today.`
         : "One item has been open for several days — worth a follow-up today.";
   } else if (overdueReminder) {
     section5 = `One overdue reminder needs your attention before anything else.`;
-  } else if (brief.waitingOn.length > 0 || brief.needsAttention.length > 0) {
-    section5 = "Nothing appears blocked — your day is under control.";
+  } else if (brief.waitingOn.length > 0) {
+    // Items are waiting but none are stale or escalated — honest in-progress status.
+    const n = brief.waitingOn.length;
+    section5 = n === 1
+      ? "One item is currently awaiting confirmation."
+      : `${spokenCount(n)} items are currently awaiting confirmation.`;
+  } else if (brief.needsAttention.length > 0) {
+    section5 = "Nothing is blocked — your attention items are on track.";
   } else {
     section5 = "Nothing is waiting — your day is under control.";
   }
