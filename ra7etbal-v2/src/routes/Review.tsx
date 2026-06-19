@@ -80,6 +80,16 @@ export default function Review() {
     return m;
   }, [people]);
 
+  // Maps lowercased name → whatsapp_opted_in for consent gate in handleSave.
+  const consentByName = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const person of people) {
+      const key = person.name.trim().toLowerCase();
+      if (key) m.set(key, person.whatsapp_opted_in === true);
+    }
+    return m;
+  }, [people]);
+
   // No extraction has run — user landed on /review directly. Send them home.
   if (status === "idle") {
     return <Navigate to="/" replace />;
@@ -208,11 +218,20 @@ export default function Review() {
         if (item.imageFile) imageFiles.set(item.id, item.imageFile);
       }
       const result = await savePending(itemsToSave, userId, displayName, people, imageFiles.size > 0 ? imageFiles : undefined);
-      const sendableSavedMessages = result.messages.filter(
+      const savedMessages = result.messages.filter(
         (message) =>
           !!message.recipient.trim() &&
           !!message.content.trim(),
       );
+
+      // Split by consent — only send to recipients with whatsapp_opted_in=true.
+      const consentedMessages = savedMessages.filter((m) =>
+        consentByName.get(m.recipient.trim().toLowerCase()) === true,
+      );
+      const blockedRecipients = savedMessages
+        .filter((m) => consentByName.get(m.recipient.trim().toLowerCase()) !== true)
+        .map((m) => m.recipient);
+
       // Build a lookup so we can pass the Reference image path for each task.
       // Primary source: imagePathsByTaskId recorded at upload time (before DB
       // round-trips). Fallback: task.image_path from the DB response in case
@@ -225,12 +244,12 @@ export default function Review() {
       }
       let sendError: string | null = null;
 
-      if (hasSendableMessages && sendableSavedMessages.length === 0) {
+      if (hasSendableMessages && consentedMessages.length === 0 && blockedRecipients.length === 0) {
         sendError = "WhatsApp send could not start";
-      } else if (hasSendableMessages) {
+      } else if (consentedMessages.length > 0) {
         try {
           await Promise.all(
-            sendableSavedMessages.map((message) =>
+            consentedMessages.map((message) =>
               sendWhatsAppTask({
                 to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
                 messageText: message.content,
@@ -262,14 +281,26 @@ export default function Review() {
       useDraftStore.getState().clear();
       useExtractionStore.getState().clear();
       await stopSavingBeforeBlockingAlert();
-      if (hasSendableMessages) {
-        window.alert(
-          sendError
+      const consentWarning = blockedRecipients.length > 0
+        ? blockedRecipients
+            .map((name) => `WhatsApp consent is not recorded for ${name}. Open their profile and record consent before messaging.`)
+            .join("\n\n")
+        : null;
+
+      if (hasSendableMessages || consentWarning) {
+        const parts: string[] = [];
+        if (consentedMessages.length > 0) {
+          parts.push(sendError
             ? sendError === "WhatsApp send could not start"
               ? "Saved, but WhatsApp send could not start. You can retry from Messages."
               : `Saved, but WhatsApp send failed: ${sendError}. You can retry from Messages.`
-            : "Saved and sent on WhatsApp.",
-        );
+            : "Saved and sent on WhatsApp.");
+        } else if (!consentWarning) {
+          parts.push("Saved, but WhatsApp send could not start. You can retry from Messages.");
+        }
+        if (consentWarning) parts.push(consentWarning);
+        if (!parts.length) parts.push("Saved.");
+        window.alert(parts.join("\n\n"));
         navigate("/messages", { replace: true });
       } else {
         navigate("/actions", { replace: true });
