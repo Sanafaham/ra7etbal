@@ -1,7 +1,13 @@
 import { useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { useAuth } from "../hooks/useAuth";
 import { signOut } from "../lib/session";
 import { supabase } from "../lib/supabase";
+import { useTasksStore } from "../stores/tasks";
+import { usePeopleStore } from "../stores/people";
+import { useProfileStore } from "../stores/profile";
+import { fetchCalendarEvents } from "../lib/calendar";
+import { buildMorningBriefSpoken } from "../lib/morning-brief";
 
 const statusColors: Record<string, string> = {
   loading: "bg-amber-100 text-amber-900 border-amber-300",
@@ -20,11 +26,33 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 type TestPushState = "idle" | "sending" | "success" | "error";
+type BriefPreviewState = "idle" | "loading" | "done" | "error";
 
 export default function Debug() {
   const { status, user, lastEvent, eventCount } = useAuth();
   const [testPushState, setTestPushState] = useState<TestPushState>("idle");
   const [testPushResult, setTestPushResult] = useState<string | null>(null);
+  const [briefState, setBriefState] = useState<BriefPreviewState>("idle");
+  const [briefText, setBriefText] = useState<string | null>(null);
+
+  const tasks = useTasksStore(useShallow((s) => s.items));
+  const people = usePeopleStore(useShallow((s) => s.items));
+  const displayName = useProfileStore((s) => s.displayName);
+
+  async function handlePreviewBrief() {
+    setBriefState("loading");
+    setBriefText(null);
+    try {
+      const calResult = await fetchCalendarEvents("next_7_days").catch(() => null);
+      const calEvents = calResult?.connected ? calResult.events : [];
+      const text = buildMorningBriefSpoken(tasks, people, displayName, new Date(), calEvents);
+      setBriefText(text || "(no brief generated — no data)");
+      setBriefState("done");
+    } catch (err) {
+      setBriefText(err instanceof Error ? err.message : "Unexpected error.");
+      setBriefState("error");
+    }
+  }
 
   async function handleTestPush() {
     setTestPushState("sending");
@@ -103,6 +131,15 @@ export default function Debug() {
         >
           {testPushState === "sending" ? "Sending…" : "Send test push"}
         </button>
+
+        <button
+          type="button"
+          onClick={() => { void handlePreviewBrief(); }}
+          disabled={status !== "signed_in" || briefState === "loading"}
+          className="rounded-full border border-charcoal/20 bg-white px-4 py-2 text-sm font-medium text-ink shadow-sm transition hover:bg-cream disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {briefState === "loading" ? "Generating…" : "Preview morning brief"}
+        </button>
       </div>
 
       {testPushResult && (
@@ -116,6 +153,22 @@ export default function Debug() {
         >
           {testPushResult}
         </p>
+      )}
+
+      {briefText && (
+        <div
+          className={
+            "rounded-xl border px-4 py-3 text-sm " +
+            (briefState === "error"
+              ? "border-rose-200 bg-rose-50 text-rose-900"
+              : "border-sage/30 bg-sage/5 text-ink")
+          }
+        >
+          <p className="mb-1 text-xs font-medium uppercase tracking-wide text-ink/40">
+            Morning Brief V3 preview
+          </p>
+          <p className="leading-relaxed">{briefText}</p>
+        </div>
       )}
 
       <p className="text-xs text-ink/60">
