@@ -264,35 +264,64 @@ export function buildMorningBriefSpoken(
   } else if (recentDone.length === 2) {
     section2 = `${buildCompletionSentenceV3(recentDone[0])} ${buildCompletionSentenceV3(recentDone[1])}`;
   } else if (recentDone.length >= 3) {
-    section2 = `${spokenCount(recentDone.length)} items were completed today.`;
+    // Find the first delegated completion to name — gives the count human context.
+    const notable = recentDone.find(t => {
+      const a = t.assigned_to?.trim().toLowerCase();
+      return !!a && a !== "me" && (t.type === "delegation" || t.type === "followup");
+    });
+    const countPhrase = capFirst(spokenCount(recentDone.length));
+    if (notable) {
+      const who  = cap(notable.assigned_to);
+      const what = cleanDesc(notable.description);
+      section2 = who && what
+        ? `${countPhrase} items were completed today, including ${who}'s ${what}.`
+        : `${countPhrase} items were completed today.`;
+    } else {
+      section2 = `${countPhrase} items were completed today.`;
+    }
   }
 
   // ── SECTION 3: WAITING ON OTHERS ──────────────────────────────────────────
   // Named, max 2, staleness included when ≥ 2 days.
+  // Suppressed when there is exactly 1 waiting item and section 5 will name it
+  // as a risk — avoids saying the same thing twice in different words.
   let section3 = "";
   const waiting      = brief.waitingOn.slice(0, 2);
   const totalWaiting = brief.waitingOn.length;
   const MS_DAY       = 24 * 60 * 60 * 1000;
+  const MS_72H       = 72 * 60 * 60 * 1000;
 
-  if (waiting.length === 1) {
-    const t     = waiting[0];
-    const who   = cap(t.assigned_to);
-    const what  = cleanDesc(t.description);
-    const days  = Math.floor((nowMs - new Date(t.created_at).getTime()) / MS_DAY);
-    const stale = days >= 2 ? ` — sent ${days} day${days === 1 ? "" : "s"} ago` : "";
-    section3 = who && what
-      ? `${who} still owes confirmation on ${what}${stale}.`
-      : who
-        ? `${who} still has an open item${stale}.`
-        : "One item is still waiting on confirmation.";
-  } else if (waiting.length >= 2) {
-    const names = waiting.map(t => cap(t.assigned_to)).filter(Boolean);
-    if (names.length === 2 && totalWaiting === 2) {
-      section3 = `Two items are still waiting: ${names[0]} on ${cleanDesc(waiting[0].description)} and ${names[1]} on ${cleanDesc(waiting[1].description)}.`;
-    } else if (names.length === 2 && totalWaiting > 2) {
-      section3 = `${names[0]} and ${names[1]} are still waiting — and ${totalWaiting - 2} other${totalWaiting - 2 === 1 ? "" : "s"}.`;
-    } else {
-      section3 = `${spokenCount(totalWaiting)} items are still waiting on others.`;
+  // Pre-compute which item section 5 will call out by name, so section 3
+  // can avoid duplicating it when there is only one waiting item.
+  const escalatedItem = brief.waitingOn.find(t => t.escalated_at != null);
+  const stale72Item   = brief.waitingOn.find(
+    t => nowMs - new Date(t.created_at).getTime() >= MS_72H,
+  );
+  const riskItem = escalatedItem ?? stale72Item ?? null;
+  // Only suppress when there is exactly 1 waiter AND section 5 will name it.
+  const section3Suppressed = totalWaiting === 1 && riskItem != null;
+
+  if (!section3Suppressed) {
+    if (waiting.length === 1) {
+      const t     = waiting[0];
+      const who   = cap(t.assigned_to);
+      const what  = cleanDesc(t.description);
+      const days  = Math.floor((nowMs - new Date(t.created_at).getTime()) / MS_DAY);
+      const stale = days >= 2 ? ` — sent ${days} day${days === 1 ? "" : "s"} ago` : "";
+      section3 = who && what
+        ? `${who} is still waiting on ${what}${stale}.`
+        : who
+          ? `${who} still has an open item${stale}.`
+          : "One item is still waiting on confirmation.";
+    } else if (waiting.length >= 2) {
+      const names = waiting.map(t => cap(t.assigned_to)).filter(Boolean);
+      if (names.length === 2 && totalWaiting === 2) {
+        section3 = `Two items are still waiting: ${names[0]} on ${cleanDesc(waiting[0].description)} and ${names[1]} on ${cleanDesc(waiting[1].description)}.`;
+      } else if (names.length === 2 && totalWaiting > 2) {
+        section3 = `${names[0]} and ${names[1]} are still waiting — and ${totalWaiting - 2} other${totalWaiting - 2 === 1 ? "" : "s"}.`;
+      } else {
+        section3 = `${spokenCount(totalWaiting)} items are still waiting on others.`;
+      }
     }
   }
 
@@ -345,14 +374,8 @@ export function buildMorningBriefSpoken(
   // ── SECTION 5: STATUS CLOSE ────────────────────────────────────────────────
   // Always present. Explicit all-clear OR honest status. Never fake all-clear.
   // Risk priority: escalated → stale 72h+ → overdue reminder → fresh waiting → clear
+  // escalatedItem, stale72Item, riskItem already computed above for section 3.
   let section5: string;
-  const MS_72H = 72 * 60 * 60 * 1000;
-
-  // Fix 1 makes escalated tasks visible in brief.waitingOn, so this check now works.
-  const escalatedItem = brief.waitingOn.find(t => t.escalated_at != null);
-  const stale72Item   = brief.waitingOn.find(
-    t => nowMs - new Date(t.created_at).getTime() >= MS_72H,
-  );
 
   if (escalatedItem) {
     const who  = cap(escalatedItem.assigned_to);
@@ -418,9 +441,17 @@ function cap(value: string | null | undefined): string | null {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+function capFirst(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 function spokenDesc(raw: string): string {
   const s = raw.trim().replace(/[.!?]+$/, "").trim();
-  return s.length > 40 ? s.slice(0, 40).trimEnd() + "…" : s;
+  if (s.length <= 35) return s;
+  // Cut at the last word boundary before 35 chars to avoid mid-word truncation.
+  const cut = s.slice(0, 35);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
 }
 
 function cleanDesc(raw: string): string {
