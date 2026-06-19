@@ -267,14 +267,24 @@ export function buildMorningBriefSpoken(
   } else if (recentDone.length === 2) {
     section2 = `${buildCompletionSentenceV3(recentDone[0])} ${buildCompletionSentenceV3(recentDone[1])}`;
   } else if (recentDone.length >= 3) {
+    // Lead with the best-named completion; count becomes a trailing qualifier only
+    // when there is no notable delegated item to name.
     const notable = recentDone.find(t => {
       const a = t.assigned_to?.trim().toLowerCase();
       return !!a && a !== "me" && (t.type === "delegation" || t.type === "followup");
     });
-    const countPhrase = capFirst(spokenCount(recentDone.length));
-    section2 = notable && cap(notable.assigned_to) && cleanDesc(notable.description)
-      ? `${countPhrase} items were completed in the last 24 hours, including ${cap(notable.assigned_to)}'s ${cleanDesc(notable.description)}.`
-      : `${countPhrase} items were completed in the last 24 hours.`;
+    const rest = recentDone.length - 1;
+    const restPhrase = spokenCount(rest);
+    if (notable && cap(notable.assigned_to) && cleanDesc(notable.description)) {
+      // "Christopher confirmed the cat food task. Seven other items were also completed."
+      const lead = buildCompletionSentenceV3(notable);
+      section2 = rest > 0
+        ? `${lead} ${capFirst(restPhrase)} other item${rest === 1 ? " was" : "s were"} also completed.`
+        : lead;
+    } else {
+      const countPhrase = capFirst(spokenCount(recentDone.length));
+      section2 = `${countPhrase} items were completed in the last 24 hours.`;
+    }
   }
 
   // ── SECTION 3: WAITING ────────────────────────────────────────────────────
