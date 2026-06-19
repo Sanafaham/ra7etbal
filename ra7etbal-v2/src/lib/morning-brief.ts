@@ -439,14 +439,47 @@ function spokenDesc(raw: string): string {
   return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
 }
 
+// Keyword → label map. Checked against the full description (lowercased).
+// First match wins; order matters — more specific patterns first.
+const LABEL_PATTERNS: Array<[RegExp, string]> = [
+  [/\bcat food\b/,                      "cat food task"],
+  [/\bflower|bouquet/,                  "flowers request"],
+  [/\bcar\b|driver|pick.?up|drop.?off/, "car task"],
+  [/\bdelivery|courier/,                "delivery task"],
+  [/\bbill|electric|utilities|utility/, "bill task"],
+  [/\bgroceries|grocery|kitchen\b/,     "food task"],
+  [/\bfood\b/,                          "food task"],
+];
+
+// Strip leading imperative verbs that add no noun content.
+const LEADING_VERB = /^(check and make sure|make sure|please|order|remind|ask|tell|confirm|have|message|send|check|follow up on|follow up|get)\s+/i;
+
+/**
+ * Returns a short spoken label for a task description.
+ * Tries keyword matching first; falls back to stripping leading verbs
+ * and truncating to a clean noun phrase.
+ */
+function taskLabel(raw: string): string {
+  const lower = raw.trim().toLowerCase();
+
+  for (const [pattern, label] of LABEL_PATTERNS) {
+    if (pattern.test(lower)) return label;
+  }
+
+  // Fallback: strip leading verbs, lowercase, truncate.
+  let s = raw.trim().replace(/[.!?]+$/, "").trim();
+  s = s.replace(LEADING_VERB, "").trim();
+  s = s.charAt(0).toLowerCase() + s.slice(1);
+
+  if (s.length <= 35) return s;
+  const cut = s.slice(0, 35);
+  const lastSpace = cut.lastIndexOf(" ");
+  return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+}
+
+// Alias so callers that used cleanDesc still work during migration.
 function cleanDesc(raw: string): string {
-  const desc = spokenDesc(raw);
-  const cleaned = desc.replace(
-    /^(Confirm|Ask|Tell|Remind|Have|Message|Send|Check|Follow up on|Follow up|Get)\s+/i,
-    "",
-  );
-  const result = cleaned === desc ? desc : cleaned;
-  return result.charAt(0).toLowerCase() + result.slice(1);
+  return taskLabel(raw);
 }
 
 function spokenCount(n: number): string {
