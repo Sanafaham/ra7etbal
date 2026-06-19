@@ -109,7 +109,7 @@ export default function AwarenessCard({ events, now }: AwarenessCardProps) {
       aria-label="Next Up"
       className="mt-6 sm:mt-8"
     >
-      <p data-testid="awareness-card-heading" className="mb-3 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink/75">
+      <p data-testid="awareness-card-heading" className="mb-2.5 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink/75">
         Next Up
       </p>
 

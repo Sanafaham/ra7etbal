@@ -244,9 +244,9 @@ export default function Home() {
           data-testid="home-talk-to-carson-button"
           type="button"
           onClick={() => openCarson(true)}
-          className="group flex w-full flex-col items-center gap-3 rounded-[28px] bg-warm-white px-6 py-7 shadow-[0_24px_60px_-30px_rgba(20,20,20,0.28)] backdrop-blur-sm transition active:scale-[0.982]"
+          className="group flex w-full flex-col items-center gap-2.5 rounded-[28px] bg-warm-white px-6 py-6 shadow-[0_24px_60px_-30px_rgba(20,20,20,0.28)] backdrop-blur-sm transition active:scale-[0.982]"
         >
-          <span className="flex h-[64px] w-[64px] items-center justify-center rounded-full bg-sage/[0.12] ring-1 ring-sage/30 transition group-hover:bg-sage/[0.18] group-hover:ring-sage/55">
+          <span className="flex h-[56px] w-[56px] items-center justify-center rounded-full bg-sage/[0.12] ring-1 ring-sage/30 transition group-hover:bg-sage/[0.18] group-hover:ring-sage/55">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
@@ -377,7 +377,7 @@ export default function Home() {
               onTouchStart={(e) => e.stopPropagation()}
               disabled={!canSubmit}
               aria-busy={submitting}
-              className="inline-flex flex-1 min-h-[48px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold tracking-[-0.005em] text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
+              className="inline-flex flex-1 min-h-[48px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold tracking-[-0.005em] text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:border-border disabled:bg-warm-white disabled:text-text-muted disabled:shadow-inner"
             >
               {submitting && <Spinner size={14} />}
               <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
@@ -440,7 +440,7 @@ export default function Home() {
             onTouchStart={(e) => e.stopPropagation()}
             disabled={!canSubmit}
             aria-busy={submitting}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-[15px] font-medium tracking-[-0.005em] text-ivory shadow-[0_18px_45px_-22px_rgba(20,20,20,0.50)] transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft disabled:shadow-none"
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-5 py-3 text-[15px] font-medium tracking-[-0.005em] text-ivory shadow-[0_18px_45px_-22px_rgba(20,20,20,0.50)] transition hover:bg-espresso disabled:cursor-not-allowed disabled:border-border disabled:bg-warm-white disabled:text-text-muted disabled:shadow-inner"
           >
             {submitting && <Spinner size={16} />}
             <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
