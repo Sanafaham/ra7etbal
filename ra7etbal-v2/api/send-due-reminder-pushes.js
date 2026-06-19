@@ -117,6 +117,9 @@ export default async function handler(req, res) {
         continue;
       }
 
+      const overdueMs = new Date(runStartedAt).getTime() - new Date(task.due_at).getTime();
+      const overdueSec = Math.round(overdueMs / 1000);
+      console.log(`[safety-net] sending overdue reminder push after 30s grace — taskId=${task.id} overdue=${overdueSec}s due_at=${task.due_at}`);
       const result = await sendTaskReminder(task, subscriptions, config.values);
       sent += result.sent;
       failed += result.failed;
@@ -245,9 +248,11 @@ function hasVapidKeys() {
 }
 
 async function fetchDueReminderTasks(config, nowIso) {
-  // Safety net: only catch reminders that QStash missed (2+ minutes overdue and still unsent).
-  // On-time reminders are delivered by QStash within ~5 seconds of due_at.
-  const twoMinutesAgo = new Date(new Date(nowIso).getTime() - 2 * 60 * 1000).toISOString();
+  // Safety net: catch reminders that QStash missed (30+ seconds overdue and still unsent).
+  // QStash delivers within ~5 s of due_at; 30 s gives enough margin without a noticeable delay.
+  // Previously 2 minutes — reduced so users don't wait a full 2 min if QStash skips.
+  const thirtySecondsAgo = new Date(new Date(nowIso).getTime() - 30 * 1000).toISOString();
+  console.log(`[safety-net] scanning for reminders overdue by 30+ seconds (threshold=${thirtySecondsAgo})`);
 
   const url =
     `${config.supabaseUrl}/rest/v1/tasks` +
@@ -256,7 +261,7 @@ async function fetchDueReminderTasks(config, nowIso) {
     '&status=eq.pending' +
     '&archived_at=is.null' +
     '&last_push_sent_at=is.null' +
-    `&due_at=lte.${encodeURIComponent(twoMinutesAgo)}` +
+    `&due_at=lte.${encodeURIComponent(thirtySecondsAgo)}` +
     '&order=due_at.asc' +
     `&limit=${MAX_TASKS_PER_RUN}`;
 
