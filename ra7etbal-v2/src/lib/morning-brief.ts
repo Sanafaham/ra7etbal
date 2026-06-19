@@ -165,22 +165,21 @@ function buildRisks(waitingOn: Task[], nowMs: number): RiskItem[] {
 }
 
 // ---------------------------------------------------------------------------
-// buildMorningBriefSpoken — Morning Confirmation Loop V1
+// buildMorningBriefSpoken — Morning Brief V3
 // ---------------------------------------------------------------------------
 
 /**
- * Morning Confirmation Loop — Carson's spoken daily brief.
+ * Morning Brief V3 — Chief of Staff briefing.
  *
- * Five sections, relief-first. Not a dashboard. Not a task list.
- * Goal: user hears this and knows they can relax or knows exactly one thing to do.
+ * Five sections, hard cap 6 sentences total.
+ * Not a task list. Not a dashboard. A calm, named, specific status read.
  *
- *   1. RESOLVED SINCE YESTERDAY — max 3 completions (closes loops, builds trust)
- *   2. STILL WAITING            — max 2 unconfirmed delegations (oldest first)
- *   3. OLDEST STUCK LOOP        — max 1 (escalated > stale 72h > stale 48h)
- *   4. UPCOMING DEADLINE        — max 1 (reminder today or next calendar event)
- *   5. ONE QUESTION             — exactly 1, context-driven, always last
+ *   1. GREETING + DAY SHAPE    — always present; event count or clear calendar
+ *   2. RECENT COMPLETIONS      — named, last 18 h; max 2 or summary
+ *   3. WAITING ON OTHERS       — named, max 2, with staleness when useful
+ *   4. ONE TIME-PRESSURE ITEM  — overdue > today reminder > prep event > busy day
+ *   5. STATUS CLOSE            — always present; all-clear OR single named risk
  *
- * Hard cap: 5 sentences total (greeting is embedded in section 1).
  * Called from App.tsx as `daily_brief` ElevenLabs dynamic variable.
  */
 export function buildMorningBriefSpoken(
@@ -190,14 +189,14 @@ export function buildMorningBriefSpoken(
   now = new Date(),
   calendarEvents?: CalendarEvent[],
 ): string {
-  const brief = buildMorningBrief(tasks, people, now);
-  const name  = displayName?.trim() || null;
-  const hour  = now.getHours();
+  const brief  = buildMorningBrief(tasks, people, now);
+  const name   = displayName?.trim() || null;
+  const hour   = now.getHours();
+  const nowMs  = now.getTime();
   const greeting =
     hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-  const open = name ? `${greeting} ${name}.` : `${greeting}.`;
 
-  // ── Calendar helpers ───────────────────────────────────────────────────────
+  // ── Calendar setup ─────────────────────────────────────────────────────────
   const calEvents  = calendarEvents ?? [];
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const tomStart   = new Date(todayStart.getTime() + 86_400_000);
@@ -220,101 +219,79 @@ export function buildMorningBriefSpoken(
     return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
 
-  const todayEvs  = calEvents.filter(ev => { const d = evLocalDate(ev); return d !== null && d >= todayStart && d < tomStart; });
-  const upcoming  = todayEvs.filter(ev => classifyCalendarEvent(ev, now) === "upcoming");
+  const todayEvs   = calEvents.filter(ev => { const d = evLocalDate(ev); return d !== null && d >= todayStart && d < tomStart; });
+  const upcoming   = todayEvs.filter(ev => classifyCalendarEvent(ev, now) === "upcoming");
   const inProgress = todayEvs.filter(ev => classifyCalendarEvent(ev, now) === "in_progress");
 
-  // ── SECTION 1: RESOLVED SINCE YESTERDAY ───────────────────────────────────
-  // Leads with greeting + what is handled. Relief before burden.
-  // Max 3 completions. If none, greeting stands alone.
-  const resolved = brief.recentCompletions.slice(0, 3);
-  let section1 = open;
+  // ── SECTION 1: GREETING + DAY SHAPE ───────────────────────────────────────
+  // Always present. One sentence. Orients the user to their day.
+  let section1: string;
+  const namePrefix = name ? `${greeting} ${name}` : greeting;
 
-  if (resolved.length === 0) {
-    // No completions — greeting alone; sections 2–4 carry the context
-  } else if (resolved.length === 1) {
-    section1 += ` Here's what's handled: ${buildCompletionSentence(resolved[0])}`;
-  } else if (resolved.length === 2) {
-    section1 += ` Here's what's handled: ${buildCompletionSentence(resolved[0])} ${buildCompletionSentence(resolved[1])}`;
+  if (todayEvs.length === 0) {
+    section1 = `${namePrefix} — your calendar is clear today.`;
+  } else if (todayEvs.length === 1) {
+    section1 = `${namePrefix} — you have one event on your calendar today.`;
   } else {
-    const first = buildCompletionSentence(resolved[0]);
-    section1 += ` Here's what's handled: ${first} And ${spokenCount(resolved.length - 1)} more things confirmed since yesterday.`;
+    section1 = `${namePrefix} — you have ${spokenCount(todayEvs.length)} events on your calendar today.`;
   }
 
-  // ── SECTION 2: STILL WAITING ───────────────────────────────────────────────
-  // Calming framing: "Here's what is still waiting." not a list of problems.
-  // Max 2 unconfirmed delegations, oldest first.
+  // ── SECTION 2: RECENT COMPLETIONS (last 18 h) ─────────────────────────────
+  // Named and specific. Relief before burden.
+  // Max 2 individual items; 3+ becomes a count summary.
   let section2 = "";
-  const waiting = brief.waitingOn.slice(0, 2);
+  const MS_18H  = 18 * 60 * 60 * 1000;
+  const recentCutoff = new Date(nowMs - MS_18H);
+  const recentDone = tasks
+    .filter(t => {
+      if (t.status !== "done" || !t.confirmed_at) return false;
+      const confirmedAt = new Date(t.confirmed_at);
+      return confirmedAt >= recentCutoff && confirmedAt <= now;
+    })
+    .sort((a, b) => new Date(b.confirmed_at!).getTime() - new Date(a.confirmed_at!).getTime());
+
+  if (recentDone.length === 1) {
+    section2 = buildCompletionSentenceV3(recentDone[0]);
+  } else if (recentDone.length === 2) {
+    section2 = `${buildCompletionSentenceV3(recentDone[0])} ${buildCompletionSentenceV3(recentDone[1])}`;
+  } else if (recentDone.length >= 3) {
+    section2 = `${spokenCount(recentDone.length)} items were completed since yesterday.`;
+  }
+
+  // ── SECTION 3: WAITING ON OTHERS ──────────────────────────────────────────
+  // Named, max 2, staleness included when ≥ 2 days.
+  let section3 = "";
+  const waiting      = brief.waitingOn.slice(0, 2);
   const totalWaiting = brief.waitingOn.length;
+  const MS_DAY       = 24 * 60 * 60 * 1000;
 
   if (waiting.length === 1) {
-    const t    = waiting[0];
-    const who  = cap(t.assigned_to);
-    const what = cleanDesc(t.description);
-    section2 = who && what
-      ? `${who} is still waiting to confirm ${what}.`
+    const t     = waiting[0];
+    const who   = cap(t.assigned_to);
+    const what  = cleanDesc(t.description);
+    const days  = Math.floor((nowMs - new Date(t.created_at).getTime()) / MS_DAY);
+    const stale = days >= 2 ? ` — sent ${days} day${days === 1 ? "" : "s"} ago` : "";
+    section3 = who && what
+      ? `${who} still owes confirmation on ${what}${stale}.`
       : who
-        ? `${who} still has an open item.`
+        ? `${who} still has an open item${stale}.`
         : "One item is still waiting on confirmation.";
   } else if (waiting.length >= 2) {
     const names = waiting.map(t => cap(t.assigned_to)).filter(Boolean);
-    if (names.length === 2) {
-      section2 = totalWaiting > 2
-        ? `${names[0]} and ${names[1]} are still waiting — and ${totalWaiting - 2} other${totalWaiting - 2 === 1 ? "" : "s"}.`
-        : `${names[0]} and ${names[1]} are still waiting to confirm.`;
+    if (names.length === 2 && totalWaiting === 2) {
+      section3 = `Two items are still waiting: ${names[0]} on ${cleanDesc(waiting[0].description)} and ${names[1]} on ${cleanDesc(waiting[1].description)}.`;
+    } else if (names.length === 2 && totalWaiting > 2) {
+      section3 = `${names[0]} and ${names[1]} are still waiting — and ${totalWaiting - 2} other${totalWaiting - 2 === 1 ? "" : "s"}.`;
     } else {
-      section2 = `${spokenCount(totalWaiting)} items are still waiting on others.`;
+      section3 = `${spokenCount(totalWaiting)} items are still waiting on others.`;
     }
   }
 
-  // ── SECTION 3: OLDEST STUCK LOOP ──────────────────────────────────────────
-  // Surfaces the single most stuck item. Calm, factual, no alarm.
-  // Priority: escalated → stale 72h → stale 48h → overdue reminder.
-  let section3 = "";
-  const nowMs  = now.getTime();
-  const MS_72H = 72 * 60 * 60 * 1000;
-  const MS_48H = 48 * 60 * 60 * 1000;
-
-  const escalatedItem = brief.waitingOn.find(t => t.escalated_at != null);
-  const stale72Item   = brief.waitingOn.find(t => nowMs - new Date(t.created_at).getTime() >= MS_72H);
-  const stale48Item   = brief.waitingOn.find(t => nowMs - new Date(t.created_at).getTime() >= MS_48H);
-  const overdueItem   = brief.overdueItems.find(t => t.type === "reminder");
-  const stuckItem     = escalatedItem ?? stale72Item ?? stale48Item ?? overdueItem ?? null;
-
-  if (stuckItem) {
-    const ageMs = nowMs - new Date(stuckItem.created_at).getTime();
-    const days  = Math.floor(ageMs / (24 * 60 * 60 * 1000));
-    const who   = cap(stuckItem.assigned_to);
-    const what  = cleanDesc(stuckItem.description);
-
-    if (stuckItem.escalated_at && who) {
-      section3 = what
-        ? `One thing I want to flag: ${who} hasn't responded to ${what} — I can follow up.`
-        : `One thing I want to flag: ${who} has an open item with no response — I can follow up.`;
-    } else if (days >= 2 && who) {
-      section3 = what
-        ? `${who} hasn't confirmed ${what} in ${days} day${days === 1 ? "" : "s"} — I can follow up.`
-        : `${who} has had an open item for ${days} day${days === 1 ? "" : "s"} — I can follow up.`;
-    } else if (stuckItem.type === "reminder" && isReminderOverdue(stuckItem.due_at, now)) {
-      section3 = `One reminder is overdue: "${spokenDesc(stuckItem.description)}."`;
-    } else if (who) {
-      section3 = what
-        ? `${who} hasn't confirmed ${what} yet — I can follow up.`
-        : `${who} still has an open item.`;
-    }
-  }
-
-  // ── Invisible deadline window (tomorrow → 14 days) ───────────────────────
-  // Finds the soonest pending reminder or decision task with a future due_at
-  // that falls outside today but within the 14-day horizon. These are "invisible
-  // deadlines" — things like "school registration closes in 9 days" that don't
-  // appear in needsAttention (today-only) or waitingOn (delegation-only).
-  const tomorrowStart  = new Date(todayStart.getTime() + 86_400_000);
-  const horizonEnd     = new Date(todayStart.getTime() + 14 * 86_400_000);
-  const active         = tasks.filter(t => t.archived_at == null && t.status === "pending");
-
-  const upcomingDeadline = active
+  // ── Invisible deadline window (tomorrow → 14 days) ────────────────────────
+  const tomorrowStart    = new Date(todayStart.getTime() + 86_400_000);
+  const horizonEnd       = new Date(todayStart.getTime() + 14 * 86_400_000);
+  const activePending    = tasks.filter(t => t.archived_at == null && t.status === "pending");
+  const upcomingDeadline = activePending
     .filter(t => {
       if (!t.due_at) return false;
       if (t.type !== "reminder" && t.type !== "decision") return false;
@@ -323,84 +300,82 @@ export function buildMorningBriefSpoken(
     })
     .sort((a, b) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime())[0] ?? null;
 
-  // ── SECTION 4: UPCOMING DEADLINE ──────────────────────────────────────────
-  // Priority: in-progress event → today reminder → invisible deadline (1–14 days)
-  //           → many-calendar summary → single timed calendar event.
-  // Calendar is secondary unless event is timed and soon.
-  // Do NOT say "busy day" unless there are 4+ calendar events today.
+  // ── SECTION 4: ONE TIME-PRESSURE ITEM ─────────────────────────────────────
+  // Priority: overdue reminder → today reminder → prep calendar event → 4+ busy day
   let section4 = "";
 
-  const todayReminder = brief.needsAttention.find(
+  const overdueReminder  = brief.overdueItems.find(t => t.type === "reminder");
+  const todayReminder    = brief.needsAttention.find(
     t => t.type === "reminder" && t.due_at && !isReminderOverdue(t.due_at, now),
   );
+  const prepEvent        = [...inProgress, ...upcoming].find(ev => classifyCalendarEvent(ev, now) !== "past");
 
-  if (inProgress.length > 0) {
+  if (overdueReminder) {
+    section4 = `One reminder is overdue: "${spokenDesc(overdueReminder.description)}."`;
+  } else if (todayReminder) {
+    const timeSuffix = spokenTimeSuffix(todayReminder.due_at, now);
+    section4 = timeSuffix
+      ? `One deadline needs attention: "${spokenDesc(todayReminder.description)}" ${timeSuffix}.`
+      : `One item needs your attention today: "${spokenDesc(todayReminder.description)}."`;
+  } else if (upcomingDeadline) {
+    const dayCount = spokenDaysUntil(upcomingDeadline.due_at!, now);
+    section4 = `One deadline is coming up: ${spokenDesc(upcomingDeadline.description)} — ${dayCount}.`;
+  } else if (inProgress.length > 0) {
     const ev     = inProgress[0];
     const endStr = formatEventEndTime(ev);
     section4 = endStr
       ? `You're currently in ${ev.title}, wrapping up at ${endStr}.`
       : `You're currently in ${ev.title}.`;
-  } else if (todayReminder) {
-    const timeSuffix = spokenTimeSuffix(todayReminder.due_at, now);
-    section4 = timeSuffix
-      ? `Reminder: "${spokenDesc(todayReminder.description)}" ${timeSuffix}.`
-      : `You have a reminder about "${spokenDesc(todayReminder.description)}" today.`;
-  } else if (upcomingDeadline) {
-    // Invisible deadline — use day-count language, never invent a reminder date
-    const dayCount = spokenDaysUntil(upcomingDeadline.due_at!, now);
-    const what     = spokenDesc(upcomingDeadline.description);
-    section4 = `One deadline is coming up: ${what} — ${dayCount}.`;
   } else if (todayEvs.length >= 4) {
-    section4 = `You have ${spokenCount(todayEvs.length)} things on your calendar today.`;
-  } else if (upcoming.length > 0) {
-    const ev = upcoming[0];
-    const t  = evTime(ev);
-    section4 = t ? `${ev.title} is at ${t}.` : "";
+    section4 = `You have ${spokenCount(todayEvs.length)} things on your calendar today — it's a full day.`;
+  } else if (prepEvent) {
+    const t = evTime(prepEvent);
+    section4 = t ? `${prepEvent.title} is at ${t}.` : "";
   }
 
-  // ── SECTION 5: ONE QUESTION ────────────────────────────────────────────────
-  // Always exactly one. Context-driven. Offers a specific action, not a vague ask.
-  // Priority: escalated → stale → waiting → upcoming deadline → overdue → reminder → clear
-  let section5 = "";
+  // ── SECTION 5: STATUS CLOSE ────────────────────────────────────────────────
+  // Always present. Explicit all-clear OR one named risk. Never vague.
+  // Risk priority: escalated → stale 72h+ → overdue reminder → oldest waiting
+  let section5: string;
+  const MS_72H = 72 * 60 * 60 * 1000;
+
+  const escalatedItem = brief.waitingOn.find(t => t.escalated_at != null);
+  const stale72Item   = brief.waitingOn.find(
+    t => nowMs - new Date(t.created_at).getTime() >= MS_72H,
+  );
 
   if (escalatedItem) {
-    const who = cap(escalatedItem.assigned_to);
-    section5 = who
-      ? `Would you like me to follow up with ${who}?`
-      : "Should I escalate this further?";
-  } else if (stale72Item ?? stale48Item) {
-    const item = stale72Item ?? stale48Item!;
-    const who  = cap(item.assigned_to);
-    section5 = who
-      ? `Would you like me to send ${who} a follow-up?`
-      : "Should I follow up on the oldest open item?";
-  } else if (brief.waitingOn.length > 0) {
-    const t   = brief.waitingOn[0];
-    const who = cap(t.assigned_to);
-    section5 = who
-      ? `Would you like me to follow up with ${who}?`
-      : "Should I follow up on the oldest pending item?";
-  } else if (upcomingDeadline) {
-    const what = spokenDesc(upcomingDeadline.description);
-    section5 = `Would you like me to remind you about ${what} before the deadline?`;
-  } else if (overdueItem) {
-    section5 = `Should I remind you about "${spokenDesc(overdueItem.description)}" now?`;
-  } else if (brief.needsAttention.length > 0) {
-    const t = brief.needsAttention[0];
-    section5 = t.type === "reminder"
-      ? `Should I remind you about "${spokenDesc(t.description)}" later today?`
-      : "Is there anything you'd like me to take care of first?";
+    const who  = cap(escalatedItem.assigned_to);
+    const what = cleanDesc(escalatedItem.description);
+    section5 = who && what
+      ? `${who} hasn't responded to ${what} — worth a follow-up today.`
+      : "One item has been escalated with no response — worth a follow-up today.";
+  } else if (stale72Item) {
+    const who  = cap(stale72Item.assigned_to);
+    const days = Math.floor((nowMs - new Date(stale72Item.created_at).getTime()) / MS_DAY);
+    const what = cleanDesc(stale72Item.description);
+    section5 = who && what
+      ? `The ${what} task has been open for ${days} days with no response — worth a follow-up today.`
+      : who
+        ? `${who} has had an open item for ${days} days — worth a follow-up today.`
+        : "One item has been open for several days — worth a follow-up today.";
+  } else if (overdueReminder) {
+    section5 = `One overdue reminder needs your attention before anything else.`;
+  } else if (brief.waitingOn.length > 0 || brief.needsAttention.length > 0) {
+    section5 = "Nothing appears blocked — your day is under control.";
   } else {
-    section5 = "Is there anything you'd like me to handle today?";
+    section5 = "Nothing is waiting — your day is under control.";
   }
 
   // ── Assemble ───────────────────────────────────────────────────────────────
-  // Build up to 5 sentences: greeting+resolved, waiting, stuck, deadline, question.
-  // Skip empty sections. Always end with the question.
-  const parts = [section1, section2, section3, section4].filter(Boolean);
-  // Hard cap: leave room for the question (always included)
-  const body = parts.slice(0, 4).join(" ");
-  return body ? `${body} ${section5}` : `${open} ${section5}`;
+  // Hard cap: 6 sentences. Section 1 and 5 are always present.
+  // Sections 2–4 are conditional; fill slots until cap is reached.
+  const body = [section1, section2, section3, section4, section5]
+    .filter(Boolean)
+    .slice(0, 6)
+    .join(" ");
+
+  return body;
 }
 
 // ---------------------------------------------------------------------------
@@ -491,14 +466,17 @@ function spokenDaysUntil(dueAt: string, now: Date): string {
   return `in ${spokenCount(days)} day${days === 1 ? "" : "s"}`;
 }
 
-function buildCompletionSentence(t: Task): string {
+function buildCompletionSentenceV3(t: Task): string {
   const assignee = t.assigned_to?.trim() ?? "";
   const isDelegated =
     t.type === "delegation" ||
     t.type === "followup" ||
     (!!assignee && assignee.toLowerCase() !== "me");
+  const what = cleanDesc(t.description);
   if (isDelegated && assignee) {
-    return `${cap(assignee)} confirmed: ${spokenDesc(t.description)}.`;
+    return what
+      ? `${cap(assignee)} confirmed ${what}.`
+      : `${cap(assignee)} confirmed an open item.`;
   }
-  return `You completed "${spokenDesc(t.description)}" recently.`;
+  return what ? `You completed ${what}.` : "One item was completed.";
 }
