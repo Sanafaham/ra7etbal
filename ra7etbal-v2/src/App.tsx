@@ -245,7 +245,7 @@ function PersistentCarsonWidget({
   const spokenBrief = useMemo(
     () =>
       isEvening
-        ? buildNightSweepSpoken(tasks, displayName, now)
+        ? buildNightSweepSpoken(tasks, displayName, now, calendarEvents)
         : buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [tasks, people, displayName, now, calendarEvents, isEvening],
@@ -285,7 +285,7 @@ function PersistentCarsonWidget({
       briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, householdRules: freshHouseholdRules }),
       spokenBrief:
         freshNow.getHours() >= EVENING_HOUR
-          ? buildNightSweepSpoken(freshTasks, displayName, freshNow)
+          ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents)
           : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents),
     };
   }, [userId, loadTasks, calendarEvents, people, user?.email, displayName, onCalendarRevokedChange]);
