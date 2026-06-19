@@ -290,21 +290,21 @@ export function buildMorningBriefSpoken(
     if (topWaiter.escalated_at != null) {
       // Escalated — strong but calm framing
       section3 = who && what
-        ? `${who} still hasn't confirmed ${what}.`
+        ? `${who} still hasn't confirmed the ${what}.`
         : who
           ? `${who} hasn't responded to an open item.`
           : "One item hasn't received a response.";
     } else if (days >= 3) {
       // Stale 72h+ — time signal
       section3 = who && what
-        ? `${who} hasn't confirmed ${what} in ${days} day${days === 1 ? "" : "s"}.`
+        ? `${who} hasn't confirmed the ${what} in ${days} day${days === 1 ? "" : "s"}.`
         : who
           ? `${who} has had an open item for ${days} days.`
           : `One item has been waiting for ${days} days.`;
     } else if (totalWaiting === 1) {
       // Single fresh waiter
       section3 = who && what
-        ? `${who} is still waiting on ${what}.`
+        ? `${who} is still waiting on the ${what}.`
         : who
           ? `${who} still has an open item.`
           : "One item is awaiting confirmation.";
