@@ -234,7 +234,6 @@ export function buildMorningBriefSpoken(
 
   const todayEvs   = calEvents.filter(ev => { const d = evLocalDate(ev); return d !== null && d >= todayStart && d < tomStart; });
   const inProgress = todayEvs.filter(ev => classifyCalendarEvent(ev, now) === "in_progress");
-  const upcoming   = todayEvs.filter(ev => classifyCalendarEvent(ev, now) === "upcoming");
 
   // ── SECTION 1: GREETING (standalone) ──────────────────────────────────────
   // Just the name. Calendar belongs in section 4 so completions come first.
