@@ -1244,6 +1244,8 @@ export default function ElevenLabsAgentWidget({
       cadence_phrase,
       first_run_text,
       assignee_name,
+      proof_required,
+      proof_type,
     }: {
       /** Short display title, e.g. "Daily kitchen check". */
       title: string;
@@ -1261,6 +1263,10 @@ export default function ElevenLabsAgentWidget({
       first_run_text: string;
       /** Optional: name of the person to assign this loop to. */
       assignee_name?: string;
+      /** Whether the assignee must submit proof of completion. */
+      proof_required?: boolean;
+      /** Type of proof required: "photo", "confirmation", or "text". */
+      proof_type?: "photo" | "confirmation" | "text" | null;
     }): Promise<string> => {
       const titleTrimmed = title?.trim();
       const instrTrimmed = instruction?.trim();
@@ -1346,6 +1352,8 @@ export default function ElevenLabsAgentWidget({
         timezone,
         assignee_id: assigneeId,
         created_by: "carson",
+        proof_required: proof_required === true,
+        proof_type: proof_type ?? null,
       };
 
       let result: { automation?: { id: string; title: string } };
