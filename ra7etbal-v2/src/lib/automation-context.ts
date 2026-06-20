@@ -272,36 +272,36 @@ export function formatAutomationForMorning(digest: AutomationDigest): string {
   // Escalated — highest urgency
   if (digest.escalated.length === 1) {
     const r = digest.escalated[0];
-    const who = r.assignee ? ` — ${r.assignee} hasn't confirmed.` : " — no response yet.";
-    return `The ${lc(r.automationTitle)} loop has been escalated${who}`;
+    const who = r.assignee ? ` — ${cap(r.assignee)} hasn't responded.` : " — no response yet.";
+    return `One automation has been escalated${who}`;
   }
   if (digest.escalated.length > 1) {
-    return `${digest.escalated.length} automation loops have been escalated and need attention.`;
+    return `${digest.escalated.length} automations have been escalated and need attention.`;
   }
 
   // Pending — medium priority
   if (digest.pending.length === 1) {
     const r = digest.pending[0];
-    const who = r.assignee ? `${cap(r.assignee)} hasn't` : "No one has";
-    return `${who} confirmed the ${lc(r.automationTitle)} loop yet.`;
+    const who = r.assignee ? ` from ${cap(r.assignee)}` : "";
+    return `One automation is waiting for confirmation${who}.`;
   }
   if (digest.pending.length > 1) {
-    return `${digest.pending.length} automation loops are still waiting for confirmation.`;
+    return `${digest.pending.length} automations are waiting for confirmation.`;
   }
 
   // Confirmed — positive signal
   if (digest.confirmedToday.length === 1) {
     const r = digest.confirmedToday[0];
-    if (r.assignee) return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} loop.`;
-    return `The ${lc(r.automationTitle)} loop was confirmed.`;
+    if (r.assignee) return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} automation.`;
+    return `The ${lc(r.automationTitle)} automation was confirmed.`;
   }
   if (digest.confirmedToday.length > 1) {
     const r = digest.confirmedToday[0];
     const rest = digest.confirmedToday.length - 1;
     if (r.assignee) {
-      return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} loop, and ${rest} other${rest === 1 ? "" : "s"} were confirmed too.`;
+      return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} automation, and ${rest} other${rest === 1 ? "" : "s"} were confirmed too.`;
     }
-    return `${digest.confirmedToday.length} automation loops were confirmed today.`;
+    return `${digest.confirmedToday.length} automations were confirmed today.`;
   }
 
   return "";

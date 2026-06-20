@@ -239,9 +239,6 @@ export function buildMorningBriefSpoken(
   const todayEvs   = calEvents.filter(ev => { const d = evLocalDate(ev); return d !== null && d >= todayStart && d < tomStart; });
   const inProgress = todayEvs.filter(ev => classifyCalendarEvent(ev, now) === "in_progress");
 
-  // ── GREETING (always) ────────────────────────────────────────────────────
-  const slotGreeting = name ? `${greeting} ${name}.` : `${greeting}.`;
-
   // ── URGENT — items requiring Sana's direct action ─────────────────────────
   // Priority: overdue reminders → personal reminders due today → personal tasks → upcoming deadline
   const overdueReminder = brief.overdueItems.find(t => t.type === "reminder");
@@ -276,7 +273,7 @@ export function buildMorningBriefSpoken(
     slotUrgent = `${spokenCount(personalTasks.length)} tasks need your attention today.`;
   } else if (upcomingDeadline) {
     const dayCount = spokenDaysUntil(upcomingDeadline.due_at!, now);
-    slotUrgent = `One deadline coming up — ${spokenDesc(upcomingDeadline.description)} ${dayCount}.`;
+    slotUrgent = `You have the ${spokenDesc(upcomingDeadline.description)} coming up ${dayCount}.`;
   }
 
   // ── COMPLETIONS (rolling 24 h) ────────────────────────────────────────────
@@ -347,10 +344,12 @@ export function buildMorningBriefSpoken(
           ? `${who} has had an open item for ${days} days.`
           : `One item has been waiting for ${days} days.`;
     } else if (totalWaiting === 1) {
+      const hoursAgo = Math.round(ageMs / 3_600_000);
+      const ageSuffix = hoursAgo < 1 ? " — sent recently" : hoursAgo === 1 ? " — sent about an hour ago" : hoursAgo < 24 ? ` — sent about ${hoursAgo} hours ago` : "";
       slotWaiting = who && what
-        ? `${who} still hasn't responded about the ${what}.`
+        ? `${who} hasn't confirmed the ${what}${ageSuffix}.`
         : who
-          ? `${who} still has an open item.`
+          ? `${who} still has an open item${ageSuffix}.`
           : "One item is awaiting confirmation.";
     } else {
       const top2  = brief.waitingOn.slice(0, 2);
@@ -379,10 +378,10 @@ export function buildMorningBriefSpoken(
     const ev = todayEvs[0];
     const t  = evTime(ev);
     slotCalendar = t
-      ? `You have one event today — ${ev.title} at ${t}.`
-      : `You have one event today — ${ev.title}.`;
+      ? `You also have ${ev.title} at ${t}.`
+      : `You also have ${ev.title} on the calendar today.`;
   } else {
-    slotCalendar = `You have ${spokenCount(todayEvs.length)} events on the calendar today.`;
+    slotCalendar = `You also have ${spokenCount(todayEvs.length)} events on the calendar today.`;
   }
 
   // ── AUTOMATION STATUS (guaranteed slot) ───────────────────────────────────
@@ -390,11 +389,16 @@ export function buildMorningBriefSpoken(
     ? formatAutomationForMorning(automationDigest)
     : "";
 
+  // ── GREETING (built last so it can reference what's open) ────────────────
+  const hasAnything = !!(slotUrgent || slotWaiting || slotAutomation);
+  const frame = hasAnything ? " Here's what needs attention." : "";
+  const slotGreeting = name ? `${greeting} ${name}.${frame}` : `${greeting}.${frame}`;
+
   // ── CLOSE ─────────────────────────────────────────────────────────────────
   const hasOpen = brief.waitingOn.length > 0 || brief.needsAttention.length > 0 || brief.overdueItems.length > 0;
   const slotClose = hasOpen
     ? "Everything else is on track."
-    : "Nothing is waiting — your day is under control.";
+    : "You're clear for the rest of the day.";
 
   // ── PRIORITY SLOT SELECTION ───────────────────────────────────────────────
   // Collect all candidate sentences with priority and speech-order weights.
