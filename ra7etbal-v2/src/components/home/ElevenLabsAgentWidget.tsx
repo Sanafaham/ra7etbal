@@ -606,6 +606,7 @@ export default function ElevenLabsAgentWidget({
   const [status, setStatus] = useState<CallStatus>("idle");
   const [mode, setMode] = useState<AgentMode>("listening");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [sessionEndedMsg, setSessionEndedMsg] = useState<string | null>(null);
 
   // Notify parent whenever call status changes.
   useEffect(() => { onCallStatusChange?.(status); }, [status, onCallStatusChange]);
@@ -2326,6 +2327,7 @@ export default function ElevenLabsAgentWidget({
 
     setStatus("connecting");
     setErrorMsg(null);
+    setSessionEndedMsg(null);
 
     // Reset session state for this new session.
     sessionActionsRef.current = [];
@@ -2531,6 +2533,7 @@ export default function ElevenLabsAgentWidget({
           conversationRef.current = null;
           setStatus("idle");
           setMode("listening");
+          setSessionEndedMsg("Session ended. Tap to talk again.");
           clearPendingPhotoPreviews();
 
           // Build and save session memory asynchronously — non-blocking.
@@ -2640,13 +2643,21 @@ export default function ElevenLabsAgentWidget({
   }, [clearPendingPhotoPreviews]);
 
   const endCall = stopSession;
+  const visibilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ------------------------------------------------------------------
   // Lifecycle cleanup
   // ------------------------------------------------------------------
   useEffect(() => {
     function handleVisibilityChange() {
-      if (document.visibilityState === "hidden") stopSession();
+      if (document.visibilityState === "hidden") {
+        visibilityTimerRef.current = setTimeout(() => stopSession(), 30_000);
+      } else {
+        if (visibilityTimerRef.current !== null) {
+          clearTimeout(visibilityTimerRef.current);
+          visibilityTimerRef.current = null;
+        }
+      }
     }
     function handlePageHide() { stopSession(); }
     function handleBeforeUnload() { stopSession(); }
@@ -2656,6 +2667,7 @@ export default function ElevenLabsAgentWidget({
     window.addEventListener("beforeunload", handleBeforeUnload);
 
     return () => {
+      if (visibilityTimerRef.current !== null) clearTimeout(visibilityTimerRef.current);
       stopSession();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pagehide", handlePageHide);
@@ -2719,6 +2731,10 @@ export default function ElevenLabsAgentWidget({
             {status === "idle" ? "Photo ready" : "Photo attached"}
           </span>
         </div>
+      )}
+
+      {status === "idle" && sessionEndedMsg && (
+        <p className="mb-2 text-center text-[11px] text-ink/45">{sessionEndedMsg}</p>
       )}
 
       {status === "idle" && (
