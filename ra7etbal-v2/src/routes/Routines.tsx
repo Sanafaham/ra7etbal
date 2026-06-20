@@ -159,6 +159,10 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
   const [automations, setAutomations] = useState<AutomationRow[]>([]);
   const [automationRuns, setAutomationRuns] = useState<Record<string, string>>({});
 
+  // ── Automation action state ────────────────────────────────────────────────
+  const [automationActioningId, setAutomationActioningId] = useState<string | null>(null);
+  const [automationConfirmStopId, setAutomationConfirmStopId] = useState<string | null>(null);
+
   // ── Create form state ──────────────────────────────────────────────────────
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<FormState>(blankForm);
@@ -269,6 +273,53 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       }
     }
     setAutomationRuns(stateMap);
+  }
+
+  // ── Automation action handler ──────────────────────────────────────────────
+
+  async function handleAutomationAction(id: string, action: "pause" | "resume" | "stop") {
+    if (automationActioningId) return;
+
+    if (action === "stop") {
+      if (automationConfirmStopId !== id) {
+        setAutomationConfirmStopId(id);
+        window.setTimeout(() => {
+          setAutomationConfirmStopId((cur) => (cur === id ? null : cur));
+        }, 3000);
+        return;
+      }
+      setAutomationConfirmStopId(null);
+    }
+
+    setAutomationActioningId(id);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const jwt = sessionData?.session?.access_token;
+      if (!jwt) return;
+
+      const res = await fetch("/api/automations", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${jwt}`,
+        },
+        body: JSON.stringify({ id, action }),
+      });
+
+      if (!res.ok) return;
+
+      // Optimistic update: reflect new status immediately, then reload
+      const nextStatus = action === "pause" ? "paused" : action === "resume" ? "active" : "stopped";
+      setAutomations((prev) =>
+        action === "stop"
+          ? prev.filter((a) => a.id !== id)
+          : prev.map((a) => (a.id === id ? { ...a, status: nextStatus as AutomationRow["status"] } : a)),
+      );
+    } catch {
+      // Silently fail — list reload on next visit will correct state
+    } finally {
+      setAutomationActioningId(null);
+    }
   }
 
   // ── Form helpers ───────────────────────────────────────────────────────────
@@ -761,6 +812,11 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               key={a.id}
               automation={a}
               latestState={automationRuns[a.id] ?? null}
+              actioning={automationActioningId === a.id}
+              confirmingStop={automationConfirmStopId === a.id}
+              onPause={() => handleAutomationAction(a.id, "pause")}
+              onResume={() => handleAutomationAction(a.id, "resume")}
+              onStop={() => handleAutomationAction(a.id, "stop")}
             />
           ))}
           {activeRoutines.map((r) => (
@@ -786,6 +842,11 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               key={a.id}
               automation={a}
               latestState={automationRuns[a.id] ?? null}
+              actioning={automationActioningId === a.id}
+              confirmingStop={automationConfirmStopId === a.id}
+              onPause={() => handleAutomationAction(a.id, "pause")}
+              onResume={() => handleAutomationAction(a.id, "resume")}
+              onStop={() => handleAutomationAction(a.id, "stop")}
             />
           ))}
           {pausedRoutines.map((r) => (
@@ -810,6 +871,11 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 interface AutomationCardProps {
   automation: AutomationRow;
   latestState: string | null;
+  actioning: boolean;
+  confirmingStop: boolean;
+  onPause: () => void;
+  onResume: () => void;
+  onStop: () => void;
 }
 
 type StateConfig = {
@@ -869,7 +935,15 @@ function resolveStateConfig(state: string | null): StateConfig {
   }
 }
 
-function AutomationCard({ automation, latestState }: AutomationCardProps) {
+function AutomationCard({
+  automation,
+  latestState,
+  actioning,
+  confirmingStop,
+  onPause,
+  onResume,
+  onStop,
+}: AutomationCardProps) {
   const assigneeName =
     automation.people?.name ??
     (automation.assignee_id ? "Unknown" : null);
@@ -884,6 +958,8 @@ function AutomationCard({ automation, latestState }: AutomationCardProps) {
     : null;
 
   const state = resolveStateConfig(latestState);
+  const isActive = automation.status === "active";
+  const isPaused = automation.status === "paused";
 
   return (
     <div className={`rounded-2xl border border-sand border-l-4 ${state.border} bg-white/80 px-4 py-3.5 shadow-sm transition`}>
@@ -896,6 +972,11 @@ function AutomationCard({ automation, latestState }: AutomationCardProps) {
             <span className="rounded-full bg-sage/15 px-2 py-0.5 text-[11px] font-medium text-sage">
               Automation
             </span>
+            {isPaused && (
+              <span className="rounded-full bg-stone/40 px-2 py-0.5 text-[11px] font-medium text-ink/50">
+                Paused
+              </span>
+            )}
           </div>
 
           {/* Cadence + assignee */}
@@ -911,10 +992,52 @@ function AutomationCard({ automation, latestState }: AutomationCardProps) {
           </div>
 
           {/* Next run */}
-          {nextRun && (
+          {nextRun && isActive && (
             <p className="text-[11px] text-ink/35">Next run {nextRun}</p>
           )}
 
+        </div>
+
+        {/* Controls */}
+        <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
+          {/* Pause / Resume toggle */}
+          {isActive && (
+            <button
+              type="button"
+              onClick={onPause}
+              disabled={actioning}
+              aria-label="Pause automation"
+              className="rounded-full px-2.5 py-1 text-xs font-medium text-ink/40 transition hover:bg-sand hover:text-ink/70 disabled:opacity-40"
+            >
+              {actioning ? "…" : "Pause"}
+            </button>
+          )}
+          {isPaused && (
+            <button
+              type="button"
+              onClick={onResume}
+              disabled={actioning}
+              aria-label="Resume automation"
+              className="rounded-full px-2.5 py-1 text-xs font-medium text-sage transition hover:bg-sage/10 disabled:opacity-40"
+            >
+              {actioning ? "…" : "Resume"}
+            </button>
+          )}
+
+          {/* Stop — requires confirm tap */}
+          <button
+            type="button"
+            onClick={onStop}
+            disabled={actioning}
+            aria-label={confirmingStop ? "Confirm stop" : "Stop automation"}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 ${
+              confirmingStop
+                ? "bg-red-100 text-red-600 hover:bg-red-200"
+                : "text-ink/30 hover:text-red-500"
+            }`}
+          >
+            {actioning ? "…" : confirmingStop ? "Confirm?" : "Stop"}
+          </button>
         </div>
       </div>
     </div>
