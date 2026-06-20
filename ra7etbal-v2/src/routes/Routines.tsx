@@ -245,7 +245,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
     const { data: rows } = await supabase
       .from("automations")
       .select("*, people(name)")
-      .eq("created_by", userId)
+      .eq("user_id", userId)
       .in("status", ["active", "paused"])
       .order("created_at", { ascending: false });
 
