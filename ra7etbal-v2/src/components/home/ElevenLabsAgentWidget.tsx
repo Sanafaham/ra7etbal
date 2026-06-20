@@ -1233,6 +1233,164 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Client tool: create_automation
+  // Carson calls this to schedule a recurring task loop.
+  // Cadence resolution is done client-side (browser clock + timezone).
+  // ------------------------------------------------------------------
+  const createAutomation = useCallback(
+    async ({
+      title,
+      instruction,
+      cadence_phrase,
+      first_run_text,
+      assignee_name,
+    }: {
+      /** Short display title, e.g. "Daily kitchen check". */
+      title: string;
+      /** The full instruction sent to the assignee or executed as an action. */
+      instruction: string;
+      /**
+       * Natural-language cadence, e.g. "daily", "every morning", "weekly",
+       * "every Monday", "every 3 days", "monthly", "once".
+       */
+      cadence_phrase: string;
+      /**
+       * Natural-language first-run time, e.g. "tomorrow at 9 AM", "tonight",
+       * "next Monday at 8 AM". Resolved via parseVoiceTime.
+       */
+      first_run_text: string;
+      /** Optional: name of the person to assign this loop to. */
+      assignee_name?: string;
+    }): Promise<string> => {
+      const titleTrimmed = title?.trim();
+      const instrTrimmed = instruction?.trim();
+      if (!titleTrimmed) return "I did not receive a title. Ask the user what to call this automation.";
+      if (!instrTrimmed) return "I did not receive an instruction. Ask the user what Carson should do.";
+      if (!cadence_phrase?.trim()) return "I did not receive a cadence. Ask the user how often this should run.";
+      if (!first_run_text?.trim()) return "I did not receive a first-run time. Ask the user when this should first fire.";
+
+      // ── Resolve first run time ──────────────────────────────────────────
+      const parsed = parseVoiceTime(first_run_text.trim());
+      if (parsed.error || !parsed.dueAt) {
+        return `I could not understand "${first_run_text}" as a time. Ask the user when this should first fire.`;
+      }
+      const nextRunAt = parsed.dueAt;
+      const timezone = parsed.timezone;
+
+      // ── Parse cadence phrase → (cadence_type, cadence_value) ───────────
+      const raw = cadence_phrase.trim().toLowerCase();
+
+      type CadenceType = "once" | "daily" | "weekly" | "every_n_days" | "monthly";
+      let cadenceType: CadenceType = "once";
+      let cadenceValue: Record<string, unknown> = {};
+
+      if (/\bonce\b|\bone.?time\b|\bone.?off\b/.test(raw)) {
+        cadenceType = "once";
+      } else if (/\bdaily\b|\bevery\s+day\b|\bevery\s+morning\b|\bevery\s+night\b|\bevery\s+evening\b/.test(raw)) {
+        cadenceType = "daily";
+      } else if (/\bweekly\b|\bevery\s+week\b/.test(raw)) {
+        cadenceType = "weekly";
+      } else if (/\bmonthly\b|\bevery\s+month\b/.test(raw)) {
+        cadenceType = "monthly";
+      } else {
+        // "every N days" / "every other day"
+        const everyNMatch = raw.match(/every\s+(\d+)\s+days?/);
+        const otherDay = /every\s+other\s+day/.test(raw);
+        const weekdayMatch = raw.match(/every\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)/);
+        if (everyNMatch) {
+          cadenceType = "every_n_days";
+          cadenceValue = { n: parseInt(everyNMatch[1], 10) };
+        } else if (otherDay) {
+          cadenceType = "every_n_days";
+          cadenceValue = { n: 2 };
+        } else if (weekdayMatch) {
+          // Map named weekday → weekly (next_run_at already lands on correct day)
+          cadenceType = "weekly";
+        } else {
+          // Fallback: treat unknown cadence as daily rather than fail silently
+          cadenceType = "daily";
+        }
+      }
+
+      // ── Resolve optional assignee ───────────────────────────────────────
+      let assigneeId: string | null = null;
+      if (assignee_name?.trim()) {
+        const authUserId = useAuthStore.getState().user?.id;
+        if (authUserId) {
+          const peopleState = usePeopleStore.getState();
+          if (peopleState.status === "idle" || peopleState.items.length === 0) {
+            await usePeopleStore.getState().loadFor(authUserId);
+          }
+          const people = usePeopleStore.getState().items;
+          const match = people.find(
+            (p) => p.name.trim().toLowerCase() === assignee_name.trim().toLowerCase(),
+          );
+          if (!match) {
+            return `I could not find "${assignee_name}" in your contacts. Ask the user to add them first, or create the automation without an assignee.`;
+          }
+          assigneeId = match.id;
+        }
+      }
+
+      // ── POST to /api/automations ────────────────────────────────────────
+      const { data: sessionData } = await supabase.auth.getSession();
+      const jwt = sessionData?.session?.access_token;
+      if (!jwt) return "You are not signed in. Please sign in and try again.";
+
+      const body = {
+        title: titleTrimmed,
+        instruction: instrTrimmed,
+        cadence_type: cadenceType,
+        cadence_value: cadenceValue,
+        next_run_at: nextRunAt,
+        timezone,
+        assignee_id: assigneeId,
+        created_by: "carson",
+      };
+
+      let result: { automation?: { id: string; title: string } };
+      try {
+        const res = await fetch("/api/automations", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${jwt}`,
+          },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          return `I could not create that automation. ${(err as { error?: string }).error ?? "Please try again."}`;
+        }
+        result = await res.json();
+      } catch {
+        return "I could not reach the server. Please check your connection and try again.";
+      }
+
+      // ── Confirmation for Carson to speak back ───────────────────────────
+      const cadenceLabel: Record<CadenceType, string> = {
+        once: "once",
+        daily: "daily",
+        weekly: "weekly",
+        every_n_days: cadenceValue.n ? `every ${cadenceValue.n} days` : "every few days",
+        monthly: "monthly",
+      };
+      const firstRunDate = new Date(nextRunAt);
+      const timeStr = firstRunDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const isToday = firstRunDate.toDateString() === new Date().toDateString();
+      const isTomorrow = firstRunDate.toDateString() === new Date(Date.now() + 86_400_000).toDateString();
+      const dateLabel = isToday ? "today" : isTomorrow ? "tomorrow" : firstRunDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+
+      const assigneeLabel = assignee_name?.trim() ? ` for ${assignee_name.trim()}` : "";
+
+      sessionActionsRef.current.push(`Created automation: ${titleTrimmed} (${cadenceLabel[cadenceType]})`);
+      console.log("[create_automation] created id=", result.automation?.id, "cadence=", cadenceType);
+      return `CREATED: "${titleTrimmed}" automation is set${assigneeLabel} — runs ${cadenceLabel[cadenceType]}, first on ${dateLabel} at ${timeStr}.`;
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
   // Client tool: save_city
   // Carson calls this when the user tells it their city for the first time.
   // Persists to profiles.weather_city so future sessions have weather.
@@ -2287,6 +2445,7 @@ export default function ElevenLabsAgentWidget({
           send_followup: sendFollowup,
           send_delegation: sendDelegation,
           create_reminder: createReminder,
+          create_automation: createAutomation,
           save_city: saveCity,
           save_note: saveNote,
           act_on_note: actOnNote,
