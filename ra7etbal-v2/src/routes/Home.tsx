@@ -244,7 +244,7 @@ export default function Home() {
           data-testid="home-talk-to-carson-button"
           type="button"
           onClick={() => openCarson(true)}
-          className="group flex w-full flex-col items-center gap-0.5 rounded-[28px] bg-warm-white px-6 py-2 shadow-[0_24px_60px_-30px_rgba(20,20,20,0.28)] backdrop-blur-sm transition active:scale-[0.982]"
+          className="group flex w-full flex-col items-center gap-0.5 rounded-[28px] bg-warm-white px-6 py-1.5 shadow-[0_24px_60px_-30px_rgba(20,20,20,0.28)] backdrop-blur-sm transition active:scale-[0.982]"
         >
           <span className="flex h-[56px] w-[56px] items-center justify-center rounded-full bg-sage/[0.12] ring-1 ring-sage/30 transition group-hover:bg-sage/[0.18] group-hover:ring-sage/55">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
@@ -256,7 +256,7 @@ export default function Home() {
           </span>
           <div className="text-center">
             <p className="text-[20px] font-semibold tracking-[-0.02em] text-ink">Talk to Carson</p>
-            <p className="mt-1 text-[13px] text-text-soft">Ready when you are.</p>
+            <p className="text-[13px] text-text-soft">Ready when you are.</p>
           </div>
         </button>
       </section>
@@ -377,7 +377,7 @@ export default function Home() {
               onTouchStart={(e) => e.stopPropagation()}
               disabled={!canSubmit}
               aria-busy={submitting}
-              className="inline-flex flex-1 min-h-[48px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold tracking-[-0.005em] text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:border-stone-200 disabled:bg-white disabled:text-stone-400 disabled:shadow-none"
+              className="inline-flex flex-1 min-h-[48px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold tracking-[-0.005em] text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-100 disabled:text-stone-400 disabled:shadow-none"
             >
               {submitting && <Spinner size={14} />}
               <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
