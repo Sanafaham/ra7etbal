@@ -9,7 +9,43 @@ import {
   toggleRoutine,
 } from "../lib/routines";
 import type { CreateRoutineInput, Routine, RoutineSchedule, RoutineType } from "../lib/routines";
+import { supabase } from "../lib/supabase";
 import { usePeopleStore } from "../stores/people";
+
+// ── Automation types ───────────────────────────────────────────────────────────
+
+interface AutomationRow {
+  id: string;
+  title: string;
+  instruction: string;
+  assignee_id: string | null;
+  cadence_type: "daily" | "weekly" | "every_n_days" | "monthly" | "once";
+  cadence_value: { n?: number } | null;
+  next_run_at: string | null;
+  timezone: string | null;
+  status: "active" | "paused" | "stopped" | "archived";
+  created_at: string;
+  people?: { name: string } | null;
+}
+
+interface AutomationRunRow {
+  automation_id: string;
+  current_state: string;
+}
+
+function automationCadenceLabel(row: AutomationRow): string {
+  switch (row.cadence_type) {
+    case "daily": return "Daily";
+    case "weekly": return "Weekly";
+    case "monthly": return "Monthly";
+    case "once": return "Once";
+    case "every_n_days": {
+      const n = row.cadence_value?.n ?? "?";
+      return `Every ${n} days`;
+    }
+    default: return row.cadence_type;
+  }
+}
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -119,6 +155,10 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
   const [listStatus, setListStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const [listError, setListError] = useState<string | null>(null);
 
+  // ── Automations list state ─────────────────────────────────────────────────
+  const [automations, setAutomations] = useState<AutomationRow[]>([]);
+  const [automationRuns, setAutomationRuns] = useState<Record<string, string>>({});
+
   // ── Create form state ──────────────────────────────────────────────────────
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<FormState>(blankForm);
@@ -151,21 +191,30 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
   useEffect(() => {
     if (!userId) {
       setRoutines([]);
+      setAutomations([]);
       setListStatus("idle");
       return;
     }
     void loadRoutines();
+    void loadAutomations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
-  // Refresh routine list when Voice Carson creates a routine mid-session.
+  // Refresh lists when Voice Carson creates a routine or automation mid-session.
   useEffect(() => {
     function handleVoiceRoutineCreated() {
       console.log("[routine:ROUTINES_REFRESH] received ra7etbal:routine-created — reloading");
       void loadRoutines();
     }
+    function handleAutomationCreated() {
+      void loadAutomations();
+    }
     window.addEventListener("ra7etbal:routine-created", handleVoiceRoutineCreated);
-    return () => window.removeEventListener("ra7etbal:routine-created", handleVoiceRoutineCreated);
+    window.addEventListener("ra7etbal:automation-created", handleAutomationCreated);
+    return () => {
+      window.removeEventListener("ra7etbal:routine-created", handleVoiceRoutineCreated);
+      window.removeEventListener("ra7etbal:automation-created", handleAutomationCreated);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -189,6 +238,37 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       setListError(err instanceof Error ? err.message : "Could not load routines.");
       setListStatus("error");
     }
+  }
+
+  async function loadAutomations() {
+    if (!userId) return;
+    const { data: rows } = await supabase
+      .from("automations")
+      .select("*, people(name)")
+      .eq("created_by", userId)
+      .in("status", ["active", "paused"])
+      .order("created_at", { ascending: false });
+
+    if (!rows) return;
+    setAutomations(rows as AutomationRow[]);
+
+    // Fetch latest run state per automation
+    const ids = rows.map((r: AutomationRow) => r.id);
+    if (ids.length === 0) return;
+    const { data: runs } = await supabase
+      .from("automation_runs")
+      .select("automation_id, current_state")
+      .in("automation_id", ids)
+      .order("created_at", { ascending: false });
+
+    if (!runs) return;
+    const stateMap: Record<string, string> = {};
+    for (const run of runs as AutomationRunRow[]) {
+      if (!stateMap[run.automation_id]) {
+        stateMap[run.automation_id] = run.current_state;
+      }
+    }
+    setAutomationRuns(stateMap);
   }
 
   // ── Form helpers ───────────────────────────────────────────────────────────
@@ -359,8 +439,10 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
   const activeRoutines = routines.filter((r) => r.enabled);
   const pausedRoutines = routines.filter((r) => !r.enabled);
+  const activeAutomations = automations.filter((a) => a.status === "active");
+  const pausedAutomations = automations.filter((a) => a.status === "paused");
   const showInitialLoading = listStatus === "loading" && routines.length === 0;
-  const showEmpty = listStatus === "ready" && routines.length === 0 && !showForm;
+  const showEmpty = listStatus === "ready" && routines.length === 0 && automations.length === 0 && !showForm;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -670,10 +752,17 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
         </div>
       )}
 
-      {/* ── Active routines ── */}
-      {activeRoutines.length > 0 && (
+      {/* ── Active (automations first, then legacy routines) ── */}
+      {(activeAutomations.length > 0 || activeRoutines.length > 0) && (
         <div className="space-y-2">
           <p className="text-xs font-medium uppercase tracking-wide text-ink/55">Active</p>
+          {activeAutomations.map((a) => (
+            <AutomationCard
+              key={a.id}
+              automation={a}
+              latestState={automationRuns[a.id] ?? null}
+            />
+          ))}
           {activeRoutines.map((r) => (
             <RoutineCard
               key={r.id}
@@ -688,10 +777,17 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
         </div>
       )}
 
-      {/* ── Paused routines ── */}
-      {pausedRoutines.length > 0 && (
+      {/* ── Paused ── */}
+      {(pausedAutomations.length > 0 || pausedRoutines.length > 0) && (
         <div className="space-y-2">
           <p className="text-xs font-medium uppercase tracking-wide text-ink/55">Paused</p>
+          {pausedAutomations.map((a) => (
+            <AutomationCard
+              key={a.id}
+              automation={a}
+              latestState={automationRuns[a.id] ?? null}
+            />
+          ))}
           {pausedRoutines.map((r) => (
             <RoutineCard
               key={r.id}
@@ -706,6 +802,54 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
         </div>
       )}
     </section>
+  );
+}
+
+// ── AutomationCard ────────────────────────────────────────────────────────────
+
+interface AutomationCardProps {
+  automation: AutomationRow;
+  latestState: string | null;
+}
+
+function AutomationCard({ automation, latestState }: AutomationCardProps) {
+  const assigneeName =
+    automation.people?.name ??
+    (automation.assignee_id ? "Unknown" : null);
+
+  const nextRun = automation.next_run_at
+    ? new Date(automation.next_run_at).toLocaleString([], {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+
+  const stateLabel = latestState
+    ? latestState.replace(/_/g, " ")
+    : null;
+
+  return (
+    <div className="rounded-2xl border border-sand bg-white/80 px-4 py-3.5 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-ink leading-snug">{automation.title}</span>
+            <span className="rounded-full bg-sage/15 px-2 py-0.5 text-[11px] font-medium text-sage">
+              Automation
+            </span>
+          </div>
+          <p className="text-xs text-ink/50">{automationCadenceLabel(automation)}{assigneeName ? ` · ${assigneeName}` : ""}</p>
+          {nextRun && (
+            <p className="text-[11px] text-ink/35">Next run {nextRun}</p>
+          )}
+          {stateLabel && (
+            <p className="text-[11px] text-ink/35 capitalize">Latest: {stateLabel}</p>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -749,6 +893,9 @@ function RoutineCard({
             <span className="text-sm font-medium text-ink leading-snug">{routine.name}</span>
             <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${typeBadgeClass}`}>
               {typeLabel}
+            </span>
+            <span className="rounded-full bg-stone/30 px-2 py-0.5 text-[11px] font-medium text-ink/40">
+              Legacy
             </span>
           </div>
           <p className="text-xs text-ink/50">{scheduleLabel(routine)}</p>
