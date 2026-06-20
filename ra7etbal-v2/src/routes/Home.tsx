@@ -207,20 +207,23 @@ export default function Home() {
 
   return (
     <section
+      data-testid="home-root"
       className="mx-auto max-w-2xl"
       style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 36px)" }}
     >
       {/* ── Briefing — no card, text on page ────────────────────────── */}
-      <div className="mt-3 px-2 text-center sm:mt-5">
-        <p className="text-[13px] font-normal text-ink/85">{greeting}</p>
+      <div data-testid="home-briefing" className="mt-0 px-2 text-center sm:mt-4">
+        <p data-testid="home-greeting" className="text-[13px] font-normal tracking-[0.01em] text-text-soft">{greeting}</p>
         <h1
-          className="mx-auto mt-1 max-w-xs text-[22px] leading-[1.1] tracking-[-0.01em] text-text sm:text-[26px]"
+          data-testid="home-status-headline"
+          className="mx-auto mt-1 max-w-xs text-[26px] leading-[1.1] tracking-[-0.015em] text-text sm:text-[32px]"
           style={{ fontFamily: "var(--font-display)" }}
         >
           {premiumStatus}
         </h1>
-        <div className="mt-1.5 flex items-center justify-center gap-2">
+        <div className="mt-2.5 flex items-center justify-center gap-2">
           <span
+            data-testid="home-status-indicator"
             aria-hidden
             className={
               "h-1.5 w-1.5 shrink-0 rounded-full " +
@@ -231,18 +234,19 @@ export default function Home() {
                   : "bg-sage")
             }
           />
-          <p className="text-[13px] font-medium text-ink/70">{briefSentence}</p>
+          <p data-testid="home-brief-sentence" className="text-[13px] font-medium text-text-soft">{briefSentence}</p>
         </div>
       </div>
 
       {/* ── Talk to Carson — visual hero ────────────────────────────── */}
-      <section className="mt-3 sm:mt-4">
+      <section data-testid="home-talk-to-carson-section" className="mt-6 sm:mt-8">
         <button
+          data-testid="home-talk-to-carson-button"
           type="button"
           onClick={() => openCarson(true)}
-          className="group flex w-full flex-col items-center gap-3 rounded-[28px] bg-warm-white px-6 py-7 shadow-[0_40px_90px_-40px_rgba(20,20,20,0.45)] backdrop-blur-sm transition active:scale-[0.982]"
+          className="group flex w-full flex-col items-center gap-0.5 rounded-[28px] bg-warm-white px-6 py-1.5 shadow-[0_24px_60px_-30px_rgba(20,20,20,0.28)] backdrop-blur-sm transition active:scale-[0.982]"
         >
-          <span className="flex h-[64px] w-[64px] items-center justify-center rounded-full bg-sage/[0.12] ring-[1.5px] ring-sage/35 transition group-hover:bg-sage/[0.18] group-hover:ring-sage/55">
+          <span className="flex h-[56px] w-[56px] items-center justify-center rounded-full bg-sage/[0.12] ring-1 ring-sage/30 transition group-hover:bg-sage/[0.18] group-hover:ring-sage/55">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
@@ -251,22 +255,23 @@ export default function Home() {
             </svg>
           </span>
           <div className="text-center">
-            <p className="text-[20px] font-semibold tracking-[-0.025em] text-ink">Talk to Carson</p>
-            <p className="mt-1 text-[13px] text-ink/65">Ready when you are.</p>
+            <p className="text-[20px] font-semibold tracking-[-0.02em] text-ink">Talk to Carson</p>
+            <p className="text-[13px] text-text-soft">Ready when you are.</p>
           </div>
         </button>
       </section>
 
       {/* ── Clear My Head ─────────────────────────────────────────────── */}
-      <section className="mt-2 rounded-[20px] border border-border/10 bg-transparent px-3.5 pb-3.5 pt-3 sm:mt-3">
-        <div className="mb-1.5 flex items-center justify-between gap-3">
+      <section data-testid="home-clear-my-head-section" className="mt-6 rounded-[24px] border border-border bg-warm-white/60 px-4 py-4 shadow-[0_18px_50px_-32px_rgba(20,20,20,0.20)] backdrop-blur-sm sm:mt-8 sm:px-5 sm:py-5">
+        <div className="mb-2.5 flex items-center justify-between gap-3">
           <label
+            data-testid="home-clear-my-head-label"
             htmlFor={textareaId}
-            className="text-[10px] font-semibold uppercase tracking-[0.18em] text-ink/65"
+            className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink/75"
           >
             Clear My Head
           </label>
-          <div className="[&_button]:rounded-full [&_button]:border-sage/30 [&_button]:bg-white [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-xs [&_button]:font-medium [&_button]:text-text [&_button]:shadow-sm [&_svg]:h-[13px] [&_svg]:w-[13px]">
+          <div data-testid="home-voice-button-slot" className="[&_button]:rounded-full [&_button]:border-border [&_button]:bg-warm-white [&_button]:px-3 [&_button]:py-1.5 [&_button]:text-[11px] [&_button]:font-medium [&_button]:text-text [&_button]:shadow-sm [&_svg]:h-[13px] [&_svg]:w-[13px]">
             <VoiceButton
               disabled={submitting}
               onTranscript={(transcript) => {
@@ -281,6 +286,7 @@ export default function Home() {
         </div>
 
         <textarea
+          data-testid="home-clear-my-head-textarea"
           id={textareaId}
           ref={textareaRef}
           value={text}
@@ -293,7 +299,7 @@ export default function Home() {
           rows={4}
           disabled={submitting}
           style={{ fieldSizing: "content", fontFamily: "var(--font-sans)" }}
-          className="block min-h-[84px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-ink/45 focus:outline-none disabled:opacity-70"
+          className="block min-h-[96px] w-full resize-y rounded-2xl bg-transparent text-[16px] leading-relaxed text-text outline-none placeholder:text-text-muted focus:outline-none disabled:opacity-70"
         />
 
         {/*
@@ -301,6 +307,7 @@ export default function Home() {
           * Safari never invalidates the File object reference on re-render.
           */}
         <input
+          data-testid="home-attach-input"
           ref={imageFileInputRef}
           type="file"
           accept="image/*"
@@ -314,14 +321,15 @@ export default function Home() {
         />
 
         {draftImagePreviewUrl && (
-          <div className="mt-2.5 flex items-center gap-2.5">
+          <div data-testid="home-attach-preview" className="mt-3 flex items-center gap-2.5">
             <div className="relative inline-block shrink-0">
               <img
                 src={draftImagePreviewUrl}
                 alt="Attached photo"
-                className="h-12 w-12 rounded-xl border border-sage/25 object-cover shadow-sm"
+                className="h-12 w-12 rounded-xl border border-border object-cover shadow-sm"
               />
               <button
+                data-testid="home-attach-preview-remove"
                 type="button"
                 onClick={() => setDraftImageFile(null)}
                 disabled={submitting}
@@ -333,15 +341,16 @@ export default function Home() {
                 </svg>
               </button>
             </div>
-            <p className="text-[11px] leading-snug text-ink/50">
+            <p className="text-[11px] leading-snug text-text-muted">
               Photo ready — Carson will describe it before organizing.
             </p>
           </div>
         )}
 
-        <div className="mt-3 space-y-2.5 border-t border-border/70 pt-3">
+        <div className="mt-4 space-y-3 border-t border-border pt-4">
           <div className="flex items-center gap-2">
             <button
+              data-testid="home-attach-button"
               type="button"
               onClick={() => imageFileInputRef.current?.click()}
               disabled={submitting}
@@ -350,8 +359,8 @@ export default function Home() {
               className={
                 "flex h-10 w-10 shrink-0 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
                 (draftImageFile
-                  ? "border-sage/40 bg-sage/10 text-sage"
-                  : "border-sage/25 bg-white text-ink/40 hover:border-sage/40 hover:text-ink/60")
+                  ? "border-sage bg-sage/10 text-sage"
+                  : "border-border bg-warm-white text-text-soft hover:border-sage hover:text-text")
               }
             >
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -361,13 +370,14 @@ export default function Home() {
               </svg>
             </button>
             <button
+              data-testid="home-submit-button"
               type="button"
               onClick={handleNext}
               onMouseDown={(e) => e.preventDefault()}
               onTouchStart={(e) => e.stopPropagation()}
               disabled={!canSubmit}
               aria-busy={submitting}
-              className="inline-flex flex-1 min-h-[44px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
+              className="inline-flex flex-1 min-h-[48px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold tracking-[-0.005em] text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-100 disabled:text-stone-400 disabled:shadow-none"
             >
               {submitting && <Spinner size={14} />}
               <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
@@ -376,10 +386,11 @@ export default function Home() {
         </div>
 
         {error && (
-          <div className="mt-3">
+          <div data-testid="home-error-notice" className="mt-4">
             <AuthNotice kind="error">
               {error}{" "}
               <button
+                data-testid="home-error-retry-button"
                 type="button"
                 onClick={handleNext}
                 className="ml-1 underline"
@@ -392,15 +403,16 @@ export default function Home() {
         )}
 
         {redirectMessage && (
-          <div className="mt-3 rounded-2xl border border-sage/25 bg-sage/5 px-3.5 py-3">
+          <div data-testid="home-redirect-notice" className="mt-4 rounded-2xl border border-border bg-warm-white/70 px-4 py-3.5">
             <p className="text-[13px] leading-snug text-text-soft">{redirectMessage}</p>
             <p className="mt-1.5 text-[12px] text-text-muted">
               Tap <strong className="font-medium text-text">Carson</strong> in the bottom nav, or use the button above to speak with your Chief of Staff.
             </p>
             <button
+              data-testid="home-redirect-dismiss-button"
               type="button"
               onClick={() => setRedirectMessage(null)}
-              className="mt-3 w-full rounded-xl bg-sage px-4 py-2 text-[13px] font-medium text-white"
+              className="mt-3 w-full rounded-full bg-sage px-4 py-2 text-[13px] font-medium tracking-[-0.005em] text-white"
             >
               Got it
             </button>
@@ -413,6 +425,7 @@ export default function Home() {
 
       {keyboardOpen && (
         <div
+          data-testid="home-sticky-cta"
           className="fixed z-50"
           style={{
             bottom: "calc(env(safe-area-inset-bottom) + 132px)",
@@ -420,13 +433,14 @@ export default function Home() {
           }}
         >
           <button
+            data-testid="home-sticky-cta-button"
             type="button"
             onClick={handleNext}
             onMouseDown={(e) => e.preventDefault()}
             onTouchStart={(e) => e.stopPropagation()}
             disabled={!canSubmit}
             aria-busy={submitting}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-[15px] font-medium tracking-[0.02em] text-ivory shadow-[0_22px_55px_-28px_rgba(20,20,20,0.62),0_3px_8px_-4px_rgba(20,20,20,0.16)] transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft disabled:shadow-none"
+            className="inline-flex items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-5 py-3 text-[15px] font-medium tracking-[-0.005em] text-ivory shadow-[0_18px_45px_-22px_rgba(20,20,20,0.50)] transition hover:bg-espresso disabled:cursor-not-allowed disabled:border-charcoal/25 disabled:bg-ivory disabled:text-ink/60 disabled:shadow-none"
           >
             {submitting && <Spinner size={16} />}
             <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
@@ -521,4 +535,3 @@ function buildBriefSentence(
   }
   return "Your day is clear.";
 }
-

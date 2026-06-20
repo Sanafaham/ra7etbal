@@ -54,18 +54,19 @@ export default function ConfirmationNotices() {
   if (visible.length === 0) return null;
 
   return (
-    <div className="mb-5 space-y-2" aria-live="polite">
+    <div data-testid="confirmation-notices" className="mb-4 space-y-2.5" aria-live="polite">
       {visible.map((task) => {
         const who = task.assigned_to ?? "Someone";
         return (
           <div
             key={task.id}
+            data-testid={`confirmation-notice-${task.id}`}
             role="status"
-            className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 shadow-sm"
+            className="flex items-start gap-3 rounded-2xl border border-sage/30 bg-sage/[0.08] px-4 py-3.5 shadow-[0_8px_24px_-18px_rgba(91,114,69,0.35)]"
           >
             <span
               aria-hidden
-              className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white"
+              className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sage text-white"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                 <path
@@ -77,11 +78,11 @@ export default function ConfirmationNotices() {
                 />
               </svg>
             </span>
-            <div className="flex-1 text-sm leading-snug text-emerald-900">
-              <span className="font-medium">{who} confirmed:</span>{" "}
+            <div className="flex-1 text-sm leading-snug text-text">
+              <span className="font-semibold text-ink">{who} confirmed:</span>{" "}
               {task.description}
               {task.proof_image_path && (
-                <span className="mt-1 flex items-center gap-1 text-[11px] font-medium text-emerald-700">
+                <span data-testid={`confirmation-notice-proof-${task.id}`} className="mt-1 flex items-center gap-1 text-[11px] font-medium text-sage">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path
                       d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
@@ -103,10 +104,11 @@ export default function ConfirmationNotices() {
               )}
             </div>
             <button
+              data-testid={`confirmation-notice-dismiss-${task.id}`}
               type="button"
               onClick={() => dismiss(task.id)}
               aria-label="Dismiss notification"
-              className="-mr-1 shrink-0 rounded-full p-1 text-emerald-800/60 transition hover:bg-emerald-100 hover:text-emerald-900"
+              className="-mr-1 shrink-0 rounded-full p-1 text-ink/45 transition hover:bg-sage/10 hover:text-ink/80"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path

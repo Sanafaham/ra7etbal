@@ -174,16 +174,17 @@ export default function VoiceButton({
         : "Record Dictate note";
 
   const baseCls =
-    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50";
+    "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11px] font-medium shadow-sm transition disabled:cursor-not-allowed disabled:opacity-50";
   const stateCls =
     mode === "recording"
       ? "border-rose-300 bg-rose-50 text-rose-800"
       : mode === "processing"
-        ? "border-sage/30 bg-white text-ink/70"
-        : "border-sage/30 bg-white text-ink hover:bg-cream";
+        ? "border-border bg-warm-white text-text-soft"
+        : "border-border bg-warm-white text-text hover:bg-cream";
 
   return (
     <button
+      data-testid="voice-button"
       type="button"
       onClick={handleTap}
       disabled={disabled || mode === "processing"}

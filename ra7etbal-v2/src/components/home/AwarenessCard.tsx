@@ -105,24 +105,26 @@ export default function AwarenessCard({ events, now }: AwarenessCardProps) {
 
   return (
     <section
+      data-testid="awareness-card"
       aria-label="Next Up"
-      className="mt-2"
+      className="mt-6 sm:mt-8"
     >
-      <p className="mb-2 px-1 text-[12px] font-semibold tracking-[-0.01em] text-ink/80">
+      <p data-testid="awareness-card-heading" className="mb-2.5 px-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink/75">
         Next Up
       </p>
 
-      <div className="rounded-2xl border border-sage/20 bg-white/60 px-4 py-3 space-y-3 shadow-[0_2px_12px_-6px_rgba(20,20,20,0.08)]">
+      <div data-testid="awareness-card-surface" className="rounded-[20px] border border-border bg-warm-white/60 px-4 py-4 space-y-4 shadow-[0_12px_36px_-26px_rgba(20,20,20,0.18)] backdrop-blur-sm">
         {groups.map((group) => (
-          <div key={group.bucket}>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ink/45">
+          <div key={group.bucket} data-testid={`awareness-bucket-${group.bucket}`}>
+            <p data-testid={`awareness-bucket-label-${group.bucket}`} className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink/55">
               {BUCKET_LABELS[group.bucket]}
             </p>
-            <ul className="mt-1 space-y-0.5">
+            <ul className="mt-1.5 space-y-1">
               {group.items.map((item) => (
                 <li
                   key={item.id}
-                  className="text-[14px] leading-snug text-ink/85"
+                  data-testid={`awareness-event-${item.id}`}
+                  className="text-[14px] leading-relaxed text-text"
                 >
                   {item.label}
                 </li>
