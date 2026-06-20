@@ -208,9 +208,14 @@ export async function createVoiceRoutine(
     nextRunAt = new Date(Date.now() + ms).toISOString();
   }
 
-  // ── 4. Build routine name ──────────────────────────────────────────────────
+  // ── 4. Parse schedule_time from raw instruction ────────────────────────────
+  // "at 9 AM" / "at 9:30 AM" / "at 21:00" — fallback to 09:00
+  const scheduleTime = extractTimeFromInstruction(rawInstruction) ?? "09:00";
+
+  // ── 5. Build routine name from message content ─────────────────────────────
+  const shortMsg = message.length > 40 ? message.slice(0, 40).trimEnd() + "…" : message;
   const schedLabel = scheduleDisplayLabel(schedule);
-  const routineName = `${schedLabel} → ${person.name}`;
+  const routineName = `${schedLabel}: ${shortMsg}`;
 
   const routinePayload = { person_id: person.id, message };
 
@@ -219,19 +224,19 @@ export async function createVoiceRoutine(
     type: "delegation",
     schedule: schedule.schedule,
     schedule_day: schedule.scheduleDay ?? null,
-    schedule_time: "08:00",
+    schedule_time: scheduleTime,
     payload: routinePayload,
     interval_days: schedule.intervalDays ?? null,
     next_run_at: nextRunAt ?? null,
   });
 
-  // ── 5. Insert into Supabase ────────────────────────────────────────────────
+  // ── 6. Insert into Supabase ────────────────────────────────────────────────
   const routine = await createRoutine({
     name: routineName,
     type: "delegation",
     schedule: schedule.schedule,
     schedule_day: schedule.scheduleDay,
-    schedule_time: "08:00",
+    schedule_time: scheduleTime,
     payload: routinePayload,
     interval_days: schedule.intervalDays,
     next_run_at: nextRunAt,
@@ -284,4 +289,55 @@ function buildRoutineSummary(
     `Routine set. I'll ask ${personName} every ${dayName}: "${shortMsg}". ` +
     `You can manage it in Updates → Routines.`
   );
+}
+
+/**
+ * Extracts a HH:MM schedule_time string from a natural-language instruction.
+ * Returns null when no time phrase is found.
+ *
+ * Handles: "at 9 AM", "at 9:30 AM", "at 21:00", "at noon", "at midnight"
+ */
+export function extractTimeFromInstruction(text: string): string | null {
+  const lower = text.toLowerCase();
+
+  if (/\bnoon\b/.test(lower)) return "12:00";
+  if (/\bmidnight\b/.test(lower)) return "00:00";
+
+  // "at 9:30 AM" / "at 09:30" / "at 9 AM"
+  const match = lower.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  if (!match) return null;
+
+  let hour = parseInt(match[1], 10);
+  const minute = match[2] ? parseInt(match[2], 10) : 0;
+  const meridiem = match[3];
+
+  if (meridiem === "pm" && hour < 12) hour += 12;
+  if (meridiem === "am" && hour === 12) hour = 0;
+
+  const hh = String(hour).padStart(2, "0");
+  const mm = String(minute).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+/**
+ * Normalizes LLM-rewritten cadence phrases back to canonical forms before
+ * detection. Prevents the LLM from hallucinating a specific weekday (e.g.
+ * "every Sunday") when the user said "every morning" or "every day".
+ *
+ * Only strips the weekday if the source ALSO contains a time-of-day word that
+ * implies daily cadence — so "every Sunday" alone stays weekly.
+ */
+export function normalizeCadenceText(text: string): string {
+  const lower = text.toLowerCase();
+
+  // "every <weekday> morning/evening/night" → "every morning/evening/night"
+  // The LLM often picks the next-occurring weekday when the user said "every morning".
+  const dailyMarkers = /\b(morning|evening|night|afternoon)\b/.test(lower);
+  if (dailyMarkers) {
+    return text.replace(
+      /\bevery\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/gi,
+      "every morning",
+    );
+  }
+  return text;
 }

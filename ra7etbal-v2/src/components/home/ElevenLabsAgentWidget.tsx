@@ -16,7 +16,7 @@ import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
-import { detectAllRecurringSchedules, createVoiceRoutine } from "../../lib/routine-detection";
+import { detectAllRecurringSchedules, createVoiceRoutine, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
@@ -1021,8 +1021,8 @@ export default function ElevenLabsAgentWidget({
         recurringRawRef.current,
         lastUserMessage ?? null,
         taskText,
-        message?.trim() ?? null,
-        note?.trim() ?? null,
+        message?.trim() ? normalizeCadenceText(message.trim()) : null,
+        note?.trim() ? normalizeCadenceText(note.trim()) : null,
       ].filter((source): source is string => !!source);
 
       let recurringSource: string | null = null;
@@ -2136,10 +2136,15 @@ export default function ElevenLabsAgentWidget({
         //   2. lastUserMessage  — verbatim transcript (may be same as #1)
         //   3. instruction param — LLM-rewritten; last resort but still works
         //      when the LLM preserves "every morning" / "daily" etc.
+        // Normalize the LLM-rewritten instruction to prevent hallucinated weekdays
+        // (e.g. "every Sunday morning" when the user said "every morning").
+        const normalizedInstruction = instruction?.trim()
+          ? normalizeCadenceText(instruction.trim())
+          : null;
         const candidateSources = [
           recurringRawRef.current,
           lastUserMessage ?? null,
-          instruction?.trim() ?? null,
+          normalizedInstruction,
         ].filter((s): s is string => !!s);
 
         // Consume ref now regardless — prevents inheritance by later calls.
