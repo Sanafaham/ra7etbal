@@ -138,6 +138,10 @@ export default async function handler(req, res) {
     return runRoutines(req, res, { supabaseUrl, serviceKey, appBaseUrl });
   }
 
+  if (requestBody.action === 'run-automations') {
+    return runAutomationsDispatch(req, res, { supabaseUrl, serviceKey, appBaseUrl });
+  }
+
   const now = new Date();
   const followupThresholdMs = testMode ? TEST_FOLLOWUP_MS : PROD_FOLLOWUP_MS;
   const escalateThresholdMs = testMode ? TEST_ESCALATE_MS : PROD_ESCALATE_MS;
@@ -303,7 +307,19 @@ export default async function handler(req, res) {
     console.log('[escalation] routines piggybacked', routinesStats);
   }
 
-  return res.status(200).json({ ...stats, routines: routinesStats });
+  // ── Automations — piggyback on the same 10-min cron ─────────────────────────
+  // runAutomationsCore queries WHERE next_run_at <= now() so it naturally
+  // no-ops when nothing is due. Each run is de-duplicated via the
+  // unique(automation_id, run_for) constraint in automation_runs.
+  const automationsStats = await runAutomationsCore({ supabaseUrl, serviceKey, appBaseUrl }).catch((err) => {
+    console.error('[escalation] automations subsystem error (non-fatal):', err?.message);
+    return null;
+  });
+  if (automationsStats) {
+    console.log('[escalation] automations piggybacked', automationsStats);
+  }
+
+  return res.status(200).json({ ...stats, routines: routinesStats, automations: automationsStats });
 }
 
 // ── Follow-up: re-send the original WhatsApp template ─────────────────────────
@@ -1172,6 +1188,428 @@ async function disableRoutine(supabaseUrl, serviceKey, routineId) {
       body: JSON.stringify({ enabled: false }),
     },
   ).catch((err) => console.warn('[routines] disableRoutine failed:', err?.message));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AGENT AUTOMATION LAYER — runner
+//
+// Processes automations whose next_run_at has passed.
+// Called on every escalation cron tick (every 10 min).
+// Also callable directly via { action: "run-automations" } for manual testing.
+//
+// Duplicate-run prevention:
+//   automation_runs has a UNIQUE(automation_id, run_for) constraint.
+//   The runner inserts with Prefer: resolution=ignore-duplicates.
+//   If a run already exists for this cycle, PostgREST returns [] and
+//   processAutomation() exits early. Guarantees exactly-once per cycle
+//   even if the cron fires twice within a 10-minute window.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const AUTOMATIONS_BATCH_SIZE = 25;
+
+/** Action dispatch handler — wraps runAutomationsCore with an HTTP response. */
+async function runAutomationsDispatch(req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
+  try {
+    const stats = await runAutomationsCore({ supabaseUrl, serviceKey, appBaseUrl });
+    return res.status(200).json(stats);
+  } catch (err) {
+    console.error('[automations] fatal error:', err?.message);
+    return res.status(500).json({ error: err?.message });
+  }
+}
+
+/**
+ * Core automations runner — no res dependency.
+ * Returns { checked, fired, skipped, failed }.
+ */
+async function runAutomationsCore({ supabaseUrl, serviceKey, appBaseUrl }) {
+  const startedAt = new Date();
+  const now = startedAt;
+  const stats = { checked: 0, fired: 0, skipped: 0, failed: 0 };
+
+  console.log('[automations] job started', { startedAt: startedAt.toISOString() });
+
+  // ── Fetch due automations ─────────────────────────────────────────────────
+  const autoRes = await fetch(
+    `${supabaseUrl}/rest/v1/automations` +
+    `?status=eq.active` +
+    `&next_run_at=lte.${encodeURIComponent(now.toISOString())}` +
+    `&order=next_run_at.asc` +
+    `&limit=${AUTOMATIONS_BATCH_SIZE}` +
+    `&select=*`,
+    { headers: supabaseHeaders(serviceKey) },
+  );
+  const automations = await autoRes.json().catch(() => []);
+
+  if (!autoRes.ok) {
+    console.error('[automations] failed to fetch due automations:', automations?.message);
+    return stats; // non-fatal — escalation still completes
+  }
+  if (!Array.isArray(automations) || automations.length === 0) {
+    console.log('[automations] no due automations');
+    return stats;
+  }
+
+  stats.checked = automations.length;
+  console.log('[automations] due automations found', { count: automations.length });
+
+  // ── Process each automation independently — one failure must not stop others ─
+  for (const automation of automations) {
+    try {
+      const result = await processAutomation({ automation, supabaseUrl, serviceKey, appBaseUrl, now });
+      if (result === 'skipped') {
+        stats.skipped++;
+      } else if (result === 'ok') {
+        stats.fired++;
+      } else {
+        stats.failed++;
+      }
+    } catch (err) {
+      console.error('[automations] uncaught error for automation', {
+        automationId: automation.id,
+        error: err?.message,
+      });
+      stats.failed++;
+    }
+  }
+
+  console.log('[automations] job completed', {
+    ...stats,
+    durationMs: Date.now() - startedAt.getTime(),
+  });
+  return stats;
+}
+
+/**
+ * Process one due automation.
+ *
+ * Steps:
+ *   1. Insert automation_run (conflict = already ran this cycle → skip)
+ *   2. Create real task row (delegation or action)
+ *   3. Link task to run; build + persist confirmation URL on task
+ *   4. Send WhatsApp if assignee has a phone
+ *   5. Update run state to sent / failed
+ *   6. Advance next_run_at (or stop if cadence=once)
+ *
+ * Returns: 'ok' | 'skipped' | 'failed'
+ */
+async function processAutomation({ automation, supabaseUrl, serviceKey, appBaseUrl, now }) {
+  const runFor = automation.next_run_at;
+
+  console.log('[automations] processing', {
+    automationId: automation.id,
+    title: automation.title,
+    cadenceType: automation.cadence_type,
+    runFor,
+  });
+
+  // ── Step 1: Insert automation_run (idempotent via ignore-duplicates) ──────
+  // PostgREST returns [] when a conflict is detected (row already exists).
+  // That means the cron already fired this cycle — skip safely.
+  const runInsertRes = await fetch(
+    `${supabaseUrl}/rest/v1/automation_runs`,
+    {
+      method: 'POST',
+      headers: {
+        ...supabaseHeaders(serviceKey),
+        Prefer: 'return=representation,resolution=ignore-duplicates',
+      },
+      body: JSON.stringify({
+        automation_id: automation.id,
+        user_id:       automation.user_id,
+        run_for:       runFor,
+        current_state: 'scheduled',
+      }),
+    },
+  );
+
+  const insertedRuns = await runInsertRes.json().catch(() => []);
+
+  if (!runInsertRes.ok) {
+    console.error('[automations] automation_run insert failed', {
+      automationId: automation.id,
+      status: runInsertRes.status,
+      error: insertedRuns?.message,
+    });
+    return 'failed';
+  }
+
+  const run = Array.isArray(insertedRuns) && insertedRuns.length > 0 ? insertedRuns[0] : null;
+  if (!run) {
+    // Empty array = duplicate — this cycle was already handled.
+    console.log('[automations] duplicate run detected, skipping', {
+      automationId: automation.id,
+      runFor,
+    });
+    return 'skipped';
+  }
+
+  const runId = run.id;
+
+  // ── Step 2: Resolve assignee ──────────────────────────────────────────────
+  let assignee = null;
+  if (automation.assignee_id) {
+    assignee = await resolvePersonById(supabaseUrl, serviceKey, automation.user_id, automation.assignee_id);
+    if (!assignee) {
+      console.warn('[automations] assignee not found, will create owner-only task', {
+        automationId: automation.id,
+        assigneeId: automation.assignee_id,
+      });
+    }
+  }
+
+  // ── Step 3: Create the real task row ─────────────────────────────────────
+  // Delegation task (with assignee): picked up by escalation cron for follow-up.
+  // Action task (no assignee): owner-only — visible in task list, no WhatsApp needed.
+  const taskId = await createTask(supabaseUrl, serviceKey, {
+    user_id:         automation.user_id,
+    type:            assignee ? 'delegation' : 'action',
+    description:     automation.instruction,
+    status:          'pending',
+    needs_follow_up: Boolean(assignee),
+    assigned_to:     assignee?.name ?? null,
+    due_at:          runFor,
+  });
+
+  if (!taskId) {
+    console.error('[automations] task creation failed', { automationId: automation.id, runId });
+    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+      current_state:  'failed',
+      failure_reason: 'Task creation failed.',
+    });
+    // Leave next_run_at unchanged — let the next cron tick retry (once run uniqueness allows).
+    // Actually, since we already created the run row, we need to advance next_run_at
+    // so the automation isn't permanently stuck. Advance and fail gracefully.
+    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+    return 'failed';
+  }
+
+  // ── Step 4: Link task to run + update state ───────────────────────────────
+  await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+    task_id:       taskId,
+    current_state: 'task_created',
+  });
+
+  // Persist confirmation URL on the task so escalation cron can use it.
+  const confirmationUrl = `${appBaseUrl}/confirm?task_id=${encodeURIComponent(taskId)}`;
+  await patchTask(supabaseUrl, serviceKey, taskId, { confirmation_url: confirmationUrl });
+
+  // ── Step 5: Send WhatsApp (if assignee + phone) ───────────────────────────
+  if (assignee?.phone) {
+    const ownerName = await resolveOwnerName(supabaseUrl, serviceKey, automation.user_id);
+    try {
+      const msgRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to:              assignee.phone,
+          messageText:     automation.instruction,
+          confirmationLink: confirmationUrl,
+          taskId,
+          recipientName:   assignee.name,
+          ownerName,
+        }),
+      });
+
+      if (msgRes.ok) {
+        await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+          current_state: 'sent',
+          sent_at:       now.toISOString(),
+        });
+        console.log('[automations] WhatsApp sent', {
+          automationId: automation.id,
+          taskId,
+          assignee: assignee.name,
+        });
+      } else {
+        const errBody = await msgRes.json().catch(() => ({}));
+        console.error('[automations] WhatsApp send failed', {
+          automationId: automation.id,
+          taskId,
+          status: msgRes.status,
+          error: errBody?.error,
+        });
+        await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+          current_state:  'failed',
+          failure_reason: `WhatsApp send failed (${msgRes.status}): ${errBody?.error ?? 'unknown'}`,
+        });
+        // Task exists and has needs_follow_up=true — the escalation cron will
+        // retry the WhatsApp follow-up at the 10-min mark automatically.
+      }
+    } catch (err) {
+      console.error('[automations] WhatsApp send threw', {
+        automationId: automation.id,
+        taskId,
+        error: err?.message,
+      });
+      await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+        current_state:  'failed',
+        failure_reason: `WhatsApp send threw: ${err?.message ?? 'unknown'}`,
+      });
+    }
+  } else {
+    // No assignee or no phone — task created for owner review, no WhatsApp needed.
+    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+      current_state: 'sent',
+      sent_at:       now.toISOString(),
+    });
+    console.log('[automations] owner-only task created (no WhatsApp)', {
+      automationId: automation.id,
+      taskId,
+      hasAssignee: Boolean(assignee),
+      hasPhone: Boolean(assignee?.phone),
+    });
+  }
+
+  // ── Step 6: Advance next_run_at / stop ────────────────────────────────────
+  await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+
+  return 'ok';
+}
+
+/**
+ * Advance automations.next_run_at based on cadence, or stop/pause the automation.
+ *
+ * once        → set status=stopped (single-fire)
+ * daily       → +1 day
+ * weekly      → +7 days
+ * every_n_days → +N days (reads cadence_value.n)
+ * monthly     → +1 month (same day, next calendar month)
+ * invalid     → pause with reason; do not crash
+ */
+async function advanceNextRunAt(supabaseUrl, serviceKey, automation, now) {
+  const nextRunAt = computeNextRunAt(automation);
+
+  if (nextRunAt === null) {
+    // once: stop after first run
+    await patchAutomation(supabaseUrl, serviceKey, automation.id, {
+      status:     'stopped',
+      updated_at: now.toISOString(),
+    });
+    console.log('[automations] once automation stopped', { automationId: automation.id });
+    return;
+  }
+
+  if (nextRunAt === 'invalid') {
+    await patchAutomation(supabaseUrl, serviceKey, automation.id, {
+      status:        'paused',
+      paused_reason: `Invalid cadence_value for cadence_type "${automation.cadence_type}". Check automation configuration.`,
+      updated_at:    now.toISOString(),
+    });
+    console.error('[automations] invalid cadence, automation paused', {
+      automationId:  automation.id,
+      cadenceType:   automation.cadence_type,
+      cadenceValue:  automation.cadence_value,
+    });
+    return;
+  }
+
+  await patchAutomation(supabaseUrl, serviceKey, automation.id, {
+    next_run_at: nextRunAt,
+    updated_at:  now.toISOString(),
+  });
+  console.log('[automations] next_run_at advanced', {
+    automationId: automation.id,
+    cadenceType:  automation.cadence_type,
+    nextRunAt,
+  });
+}
+
+/**
+ * Compute the next ISO timestamp based on the automation's cadence.
+ *
+ * Returns:
+ *   ISO string  — next scheduled datetime
+ *   null        — cadence=once, stop the automation
+ *   'invalid'   — unrecognised cadence or bad cadence_value, caller should pause
+ */
+function computeNextRunAt(automation) {
+  const base = new Date(automation.next_run_at);
+  const { cadence_type: type, cadence_value: val = {} } = automation;
+
+  if (type === 'once') return null;
+
+  if (type === 'daily') {
+    const next = new Date(base);
+    next.setUTCDate(next.getUTCDate() + 1);
+    return next.toISOString();
+  }
+
+  if (type === 'weekly') {
+    const next = new Date(base);
+    next.setUTCDate(next.getUTCDate() + 7);
+    return next.toISOString();
+  }
+
+  if (type === 'every_n_days') {
+    const n = Number(val?.n);
+    if (!Number.isInteger(n) || n < 1) return 'invalid';
+    const next = new Date(base);
+    next.setUTCDate(next.getUTCDate() + n);
+    return next.toISOString();
+  }
+
+  if (type === 'monthly') {
+    const next = new Date(base);
+    // Advance by one calendar month; setUTCMonth handles year rollovers.
+    next.setUTCMonth(next.getUTCMonth() + 1);
+    return next.toISOString();
+  }
+
+  return 'invalid';
+}
+
+// ── Automation-specific DB helpers ─────────────────────────────────────────────
+
+async function patchAutomationRun(supabaseUrl, serviceKey, runId, fields) {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/automation_runs?id=eq.${encodeURIComponent(runId)}`,
+    {
+      method:  'PATCH',
+      headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=minimal' },
+      body:    JSON.stringify(fields),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    console.error('[automations] patchAutomationRun failed', {
+      runId, fields, status: res.status, body,
+    });
+  }
+}
+
+async function patchTask(supabaseUrl, serviceKey, taskId, fields) {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}`,
+    {
+      method:  'PATCH',
+      headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=minimal' },
+      body:    JSON.stringify(fields),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    console.error('[automations] patchTask failed', {
+      taskId, fields, status: res.status, body,
+    });
+  }
+}
+
+async function patchAutomation(supabaseUrl, serviceKey, automationId, fields) {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/automations?id=eq.${encodeURIComponent(automationId)}`,
+    {
+      method:  'PATCH',
+      headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=minimal' },
+      body:    JSON.stringify(fields),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    console.error('[automations] patchAutomation failed', {
+      automationId, fields, status: res.status, body,
+    });
+  }
 }
 
 async function isAuthorized(req) {
