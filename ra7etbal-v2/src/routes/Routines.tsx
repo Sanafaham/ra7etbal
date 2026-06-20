@@ -812,6 +812,63 @@ interface AutomationCardProps {
   latestState: string | null;
 }
 
+type StateConfig = {
+  label: string;
+  dot: string;        // dot color class
+  text: string;       // label text color class
+  border: string;     // card left-border accent class
+};
+
+function resolveStateConfig(state: string | null): StateConfig {
+  switch (state) {
+    case "sent":
+    case "task_created":
+      return {
+        label: "Waiting for confirmation",
+        dot:   "bg-amber-400",
+        text:  "text-amber-600",
+        border: "border-l-amber-300",
+      };
+    case "followup_sent":
+      return {
+        label: "Follow-up sent",
+        dot:   "bg-amber-500",
+        text:  "text-amber-700",
+        border: "border-l-amber-400",
+      };
+    case "confirmed":
+    case "completed":
+      return {
+        label: "Confirmed",
+        dot:   "bg-sage",
+        text:  "text-sage",
+        border: "border-l-sage/40",
+      };
+    case "escalated":
+      return {
+        label: "Escalated — needs attention",
+        dot:   "bg-red-400",
+        text:  "text-red-600",
+        border: "border-l-red-300",
+      };
+    case "failed":
+    case "skipped":
+      return {
+        label: state === "failed" ? "Failed" : "Skipped",
+        dot:   "bg-red-400",
+        text:  "text-red-600",
+        border: "border-l-red-300",
+      };
+    default:
+      return {
+        label: "Not run yet",
+        dot:   "bg-ink/20",
+        text:  "text-ink/40",
+        border: "border-l-sand",
+      };
+  }
+}
+
 function AutomationCard({ automation, latestState }: AutomationCardProps) {
   const assigneeName =
     automation.people?.name ??
@@ -826,27 +883,38 @@ function AutomationCard({ automation, latestState }: AutomationCardProps) {
       })
     : null;
 
-  const stateLabel = latestState
-    ? latestState.replace(/_/g, " ")
-    : null;
+  const state = resolveStateConfig(latestState);
 
   return (
-    <div className="rounded-2xl border border-sand bg-white/80 px-4 py-3.5 shadow-sm">
+    <div className={`rounded-2xl border border-sand border-l-4 ${state.border} bg-white/80 px-4 py-3.5 shadow-sm transition`}>
       <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1 space-y-0.5">
+        <div className="min-w-0 flex-1 space-y-1">
+
+          {/* Title + Automation badge */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-ink leading-snug">{automation.title}</span>
             <span className="rounded-full bg-sage/15 px-2 py-0.5 text-[11px] font-medium text-sage">
               Automation
             </span>
           </div>
-          <p className="text-xs text-ink/50">{automationCadenceLabel(automation)}{assigneeName ? ` · ${assigneeName}` : ""}</p>
+
+          {/* Cadence + assignee */}
+          <p className="text-xs text-ink/50">
+            {automationCadenceLabel(automation)}
+            {assigneeName ? ` · ${assigneeName}` : ""}
+          </p>
+
+          {/* Run state */}
+          <div className="flex items-center gap-1.5 pt-0.5">
+            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${state.dot}`} />
+            <span className={`text-[11px] font-medium ${state.text}`}>{state.label}</span>
+          </div>
+
+          {/* Next run */}
           {nextRun && (
             <p className="text-[11px] text-ink/35">Next run {nextRun}</p>
           )}
-          {stateLabel && (
-            <p className="text-[11px] text-ink/35 capitalize">Latest: {stateLabel}</p>
-          )}
+
         </div>
       </div>
     </div>
