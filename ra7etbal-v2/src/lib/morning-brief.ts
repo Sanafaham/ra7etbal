@@ -22,6 +22,8 @@ import type { Task } from "../types/task";
 import type { Person } from "../types/person";
 import type { CalendarEvent } from "./calendar";
 import { classifyCalendarEvent, formatEventEndTime } from "./calendar";
+import type { AutomationDigest } from "./automation-context";
+import { formatAutomationForMorning } from "./automation-context";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -199,6 +201,7 @@ export function buildMorningBriefSpoken(
   displayName?: string | null,
   now = new Date(),
   calendarEvents?: CalendarEvent[],
+  automationDigest?: AutomationDigest,
 ): string {
   const brief  = buildMorningBrief(tasks, people, now);
   const name   = displayName?.trim() || null;
@@ -412,14 +415,22 @@ export function buildMorningBriefSpoken(
     section5 = "Nothing is waiting — your day is under control.";
   }
 
-  // ── Assemble ───────────────────────────────────────────────────────────────
-  // Hard cap: 5 sentences. S1 and S5 always present; S2–S4 conditional.
-  const body = [section1, section2, section3, section4, section5]
-    .filter(Boolean)
-    .slice(0, 5)
-    .join(" ");
+  // ── Automation signal (appended only when there is room) ──────────────────
+  // Automation loops are low-priority relative to urgent human tasks.
+  // Only surfaces when the main body has fewer than 5 sentences, so it never
+  // displaces a more important section. Max 1 sentence.
+  const automationSentence = automationDigest
+    ? formatAutomationForMorning(automationDigest)
+    : "";
 
-  return body;
+  // ── Assemble ───────────────────────────────────────────────────────────────
+  const coreSentences = [section1, section2, section3, section4, section5].filter(Boolean);
+  const allSentences =
+    automationSentence && coreSentences.length < 5
+      ? [...coreSentences, automationSentence]
+      : coreSentences;
+
+  return allSentences.slice(0, 5).join(" ");
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,8 @@ import { buildDailyBrief } from "./daily-brief";
 import { derivePendingItems } from "./pending-items";
 import { formatReminderDue, isReminderOverdue } from "./reminder-time";
 import type { Task } from "../types/task";
+import type { AutomationDigest } from "./automation-context";
+import { formatAutomationForNight } from "./automation-context";
 
 /** Hour (0–23) at which Night Sweep replaces Today's Snapshot. */
 export const EVENING_HOUR = 20;
@@ -509,6 +511,7 @@ export function buildNightSweepSpoken(
   displayName?: string | null,
   now?: Date,
   calendarEvents?: CalendarEvent[],
+  automationDigest?: AutomationDigest,
 ): string {
   const _now     = now ?? new Date();
   const nowMs    = _now.getTime();
@@ -650,9 +653,19 @@ export function buildNightSweepSpoken(
     section5 = "Everything else is set.";
   }
 
+  // ── Automation signal (appended only when there is room) ──────────────────
+  // Automation loops are low-priority relative to task-level open loops.
+  // Only surfaces when the main body has fewer than 5 sentences.
+  const automationSentence = automationDigest
+    ? formatAutomationForNight(automationDigest)
+    : "";
+
   // ── ASSEMBLE ───────────────────────────────────────────────────────────────
-  return [section1, section2, section3, section4, section5]
-    .filter(Boolean)
-    .slice(0, 5)
-    .join(" ");
+  const coreSentences = [section1, section2, section3, section4, section5].filter(Boolean);
+  const allSentences =
+    automationSentence && coreSentences.length < 5
+      ? [...coreSentences, automationSentence]
+      : coreSentences;
+
+  return allSentences.slice(0, 5).join(" ");
 }

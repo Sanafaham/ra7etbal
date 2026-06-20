@@ -31,7 +31,11 @@ import { useAuth } from "./hooks/useAuth";
 import { buildCarsonContext } from "./lib/carson-context";
 import { fetchCalendarEvents, type CalendarEvent } from "./lib/calendar";
 import { formatNotesForContext, loadRecentNotes } from "./lib/carson-notes";
-import { buildAutomationStatusBlock } from "./lib/automation-context";
+import {
+  fetchAutomationDigest,
+  buildAutomationStatusBlock,
+  type AutomationDigest,
+} from "./lib/automation-context";
 import { buildMorningBriefSpoken } from "./lib/morning-brief";
 import { buildNightSweepSpoken, EVENING_HOUR } from "./lib/night-sweep";
 import { useCarsonStore } from "./stores/carson";
@@ -196,7 +200,7 @@ function PersistentCarsonWidget({
   /** True once the 30-day calendar fetch completed successfully (even if empty). */
   const [calendarFetched, setCalendarFetched] = useState(false);
   const [notesBlock, setNotesBlock] = useState("");
-  const [automationStatusBlock, setAutomationStatusBlock] = useState("");
+  const [automationDigest, setAutomationDigest] = useState<AutomationDigest | null>(null);
 
   // When calendarDisconnectCount increments, clear stale calendar events so
   // Carson does not see them in the next session after a disconnect.
@@ -235,16 +239,21 @@ function PersistentCarsonWidget({
   }, [userId]);
 
   useEffect(() => {
-    if (!userId) { setAutomationStatusBlock(""); return; }
-    buildAutomationStatusBlock()
-      .then((block) => setAutomationStatusBlock(block))
-      .catch(() => setAutomationStatusBlock(""));
+    if (!userId) { setAutomationDigest(null); return; }
+    fetchAutomationDigest()
+      .then((digest) => setAutomationDigest(digest))
+      .catch(() => setAutomationDigest(null));
   }, [userId]);
 
   useEffect(() => {
     if (!userId) return;
     void loadHouseholdRules();
   }, [userId, loadHouseholdRules]);
+
+  const automationStatusBlock = useMemo(
+    () => automationDigest ? buildAutomationStatusBlock(automationDigest) : "",
+    [automationDigest],
+  );
 
   const elevenLabsBriefStateText = useMemo(
     () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, householdRules, automationStatusBlock }),
@@ -254,10 +263,10 @@ function PersistentCarsonWidget({
   const spokenBrief = useMemo(
     () =>
       isEvening
-        ? buildNightSweepSpoken(tasks, displayName, now, calendarEvents)
-        : buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents),
+        ? buildNightSweepSpoken(tasks, displayName, now, calendarEvents, automationDigest ?? undefined)
+        : buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents, automationDigest ?? undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tasks, people, displayName, now, calendarEvents, isEvening],
+    [tasks, people, displayName, now, calendarEvents, isEvening, automationDigest],
   );
 
   const handleBeforeCallStart = useCallback(async () => {
@@ -288,10 +297,13 @@ function PersistentCarsonWidget({
     const freshNotesBlock = userId ? formatNotesForContext(await loadRecentNotes(20)) : "";
     setNotesBlock(freshNotesBlock);
 
-    const freshAutomationStatusBlock = userId
-      ? await buildAutomationStatusBlock().catch(() => "")
+    const freshDigest = userId
+      ? await fetchAutomationDigest().catch(() => null)
+      : null;
+    if (freshDigest) setAutomationDigest(freshDigest);
+    const freshAutomationStatusBlock = freshDigest
+      ? buildAutomationStatusBlock(freshDigest)
       : "";
-    setAutomationStatusBlock(freshAutomationStatusBlock);
 
     const freshHouseholdRules = useHouseholdRulesStore.getState().rules;
 
@@ -299,8 +311,8 @@ function PersistentCarsonWidget({
       briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock }),
       spokenBrief:
         freshNow.getHours() >= EVENING_HOUR
-          ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents)
-          : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents),
+          ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined)
+          : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined),
     };
   }, [userId, loadTasks, calendarEvents, people, user?.email, displayName, onCalendarRevokedChange]);
 

@@ -1,206 +1,384 @@
 /**
  * automation-context.ts
  *
- * Builds the AUTOMATION STATUS block injected into ra7etbal_state / Carson context.
+ * Fetches live automation state from Supabase and formats it for Carson.
  *
- * Fetches from automations + automation_runs using the Supabase client
- * (anon key + RLS — user only sees their own rows).
+ * One fetch — three consumers:
+ *   1. buildAutomationStatusBlock()   → AUTOMATION STATUS text block for ra7etbal_state
+ *   2. formatAutomationForMorning()   → ≤1 spoken sentence for Morning Brief
+ *   3. formatAutomationForNight()     → ≤1 spoken sentence for Night Sweep
  *
- * Sections produced:
- *   Pending:          sent but not confirmed within the last 48 h
- *   Escalated:        runs currently in escalated state
- *   Firing today:     automations whose next_run_at falls within the next 24 h
- *   Recently confirmed: runs confirmed in the last 24 h
- *
- * All sections capped at 5 items. If nothing is active, emits a single
- * "No active automation issues." line so Carson doesn't stay silent.
+ * App.tsx calls fetchAutomationDigest() once and passes the result to all three.
  */
 
 import { supabase } from "./supabase";
 
-const MAX_ITEMS = 5;
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
-/** Returns a human-friendly "X ago" or "at HH:MM" label. */
-function relativeTime(iso: string | null, now: Date): string {
-  if (!iso) return "";
-  const ms = now.getTime() - new Date(iso).getTime();
-  const h = Math.round(ms / 3_600_000);
-  if (h < 1) {
-    const m = Math.round(ms / 60_000);
-    return `${m}m ago`;
-  }
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  return `${d}d ago`;
+export interface AutomationRunSummary {
+  automationTitle: string;
+  assignee: string | null;
+  /** ms elapsed since sent_at */
+  sentAgoMs: number;
+  isFollowupSent: boolean;
+  confirmedAgoMs?: number;
+  escalatedAgoMs?: number;
 }
 
-function todayLabel(iso: string, now: Date): string {
-  const d = new Date(iso);
-  const sameDay = d.toDateString() === now.toDateString();
-  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  if (sameDay) return `today at ${time}`;
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  if (d.toDateString() === tomorrow.toDateString()) return `tomorrow at ${time}`;
-  return `${d.toLocaleDateString([], { month: "short", day: "numeric" })} at ${time}`;
+export interface AutomationScheduleSummary {
+  title: string;
+  assignee: string | null;
+  nextRunAt: string;
 }
+
+export interface AutomationDigest {
+  /** Sent or follow-up sent — waiting for confirmation (last 48 h) */
+  pending: AutomationRunSummary[];
+  /** In escalated state (last 48 h) */
+  escalated: AutomationRunSummary[];
+  /** Confirmed within the last 24 h */
+  confirmedToday: AutomationRunSummary[];
+  /** Scheduled to fire within the next 24 h */
+  firingToday: AutomationScheduleSummary[];
+  /** Scheduled to fire between 24 h and 48 h from now (tomorrow) */
+  firingTomorrow: AutomationScheduleSummary[];
+}
+
+const EMPTY_DIGEST: AutomationDigest = {
+  pending: [],
+  escalated: [],
+  confirmedToday: [],
+  firingToday: [],
+  firingTomorrow: [],
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fetch
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Fetches automation state for the current signed-in user and returns
- * a formatted plain-text block for Carson's context.
- * Returns empty string on auth failure or query error (non-fatal).
+ * Single Supabase fetch that powers all automation context consumers.
+ * Returns EMPTY_DIGEST on auth failure or query error (never throws).
  */
-export async function buildAutomationStatusBlock(): Promise<string> {
+export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   const now = new Date();
+  const nowMs = now.getTime();
 
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return "";
+  if (!user) return EMPTY_DIGEST;
 
-  const windowStart48h = new Date(now.getTime() - 48 * 3_600_000).toISOString();
-  const windowEnd24h = new Date(now.getTime() + 24 * 3_600_000).toISOString();
+  const window48hAgo = new Date(nowMs - 48 * 3_600_000).toISOString();
+  const window24hAgo = new Date(nowMs - 24 * 3_600_000).toISOString();
+  const window24hFwd = new Date(nowMs + 24 * 3_600_000).toISOString();
+  const window48hFwd = new Date(nowMs + 48 * 3_600_000).toISOString();
 
-  // ── Fetch pending + escalated runs (sent or escalated, last 48 h) ─────────
-  // Join automation title via foreign key embed (PostgREST nested select).
-  // assignee_name is not stored on automation_runs — we pull from automations.
+  // ── Open runs (pending + escalated, last 48 h) ────────────────────────────
   const { data: openRuns } = await supabase
     .from("automation_runs")
-    .select(`
-      id,
-      automation_id,
-      current_state,
-      run_for,
-      sent_at,
-      confirmed_at,
-      escalated_at,
-      failure_reason,
-      automations!inner ( title )
-    `)
+    .select("automation_id, current_state, sent_at, confirmed_at, escalated_at, automations!inner(title)")
     .in("current_state", ["sent", "followup_sent", "escalated"])
-    .gte("sent_at", windowStart48h)
+    .gte("sent_at", window48hAgo)
     .order("sent_at", { ascending: false })
     .limit(20);
 
-  // ── Fetch recently confirmed runs (last 24 h) ─────────────────────────────
+  // ── Confirmed runs (last 24 h) ────────────────────────────────────────────
   const { data: confirmedRuns } = await supabase
     .from("automation_runs")
-    .select(`
-      id,
-      automation_id,
-      current_state,
-      run_for,
-      sent_at,
-      confirmed_at,
-      escalated_at,
-      failure_reason,
-      automations!inner ( title )
-    `)
+    .select("automation_id, current_state, sent_at, confirmed_at, automations!inner(title)")
     .eq("current_state", "confirmed")
-    .gte("confirmed_at", new Date(now.getTime() - 24 * 3_600_000).toISOString())
+    .gte("confirmed_at", window24hAgo)
     .order("confirmed_at", { ascending: false })
-    .limit(MAX_ITEMS);
+    .limit(5);
 
-  // ── Fetch automations firing within 24 h ─────────────────────────────────
-  const { data: firingAutomations } = await supabase
+  // ── Automations firing today (next 24 h) ──────────────────────────────────
+  const { data: firingTodayRows } = await supabase
     .from("automations")
-    .select("id, title, next_run_at, status")
+    .select("id, title, next_run_at")
     .eq("status", "active")
-    .lte("next_run_at", windowEnd24h)
     .gte("next_run_at", now.toISOString())
+    .lte("next_run_at", window24hFwd)
     .order("next_run_at", { ascending: true })
-    .limit(MAX_ITEMS);
+    .limit(5);
 
-  // ── Fetch assignee names for automation IDs we care about ─────────────────
-  // Automations store assignee_id (FK to people). We need a name for display.
-  // One extra query rather than a multi-hop join.
-  const allAutomationIds = [
-    ...(openRuns ?? []).map((r: Record<string, unknown>) => r.automation_id as string),
-    ...(confirmedRuns ?? []).map((r: Record<string, unknown>) => r.automation_id as string),
-    ...(firingAutomations ?? []).map((a: Record<string, unknown>) => a.id as string),
+  // ── Automations firing tomorrow (24–48 h) ─────────────────────────────────
+  const { data: firingTomorrowRows } = await supabase
+    .from("automations")
+    .select("id, title, next_run_at")
+    .eq("status", "active")
+    .gt("next_run_at", window24hFwd)
+    .lte("next_run_at", window48hFwd)
+    .order("next_run_at", { ascending: true })
+    .limit(5);
+
+  // ── Resolve assignee names for all relevant automation IDs ────────────────
+  const allIds = [
+    ...(openRuns ?? []).map((r) => (r as Record<string, unknown>).automation_id as string),
+    ...(confirmedRuns ?? []).map((r) => (r as Record<string, unknown>).automation_id as string),
+    ...(firingTodayRows ?? []).map((a) => (a as Record<string, unknown>).id as string),
+    ...(firingTomorrowRows ?? []).map((a) => (a as Record<string, unknown>).id as string),
   ].filter(Boolean);
 
-  const uniqueIds = [...new Set(allAutomationIds)];
-  let assigneeMap: Record<string, string | null> = {};
+  const uniqueIds = [...new Set(allIds)];
+  const assigneeMap: Record<string, string | null> = {};
 
   if (uniqueIds.length > 0) {
-    const { data: automationRows } = await supabase
+    const { data: autoRows } = await supabase
       .from("automations")
-      .select("id, assignee_id, people ( name )")
+      .select("id, people(name)")
       .in("id", uniqueIds);
 
-    if (automationRows) {
-      for (const row of automationRows as Record<string, unknown>[]) {
+    if (autoRows) {
+      for (const row of autoRows as Record<string, unknown>[]) {
         const person = row.people as { name?: string } | null;
         assigneeMap[row.id as string] = person?.name ?? null;
       }
     }
   }
 
-  // ── Format ─────────────────────────────────────────────────────────────────
+  // ── Assemble digest ───────────────────────────────────────────────────────
+
+  function toRunSummary(r: Record<string, unknown>, confirmedMode = false): AutomationRunSummary {
+    const auto = r.automations as { title?: string } | null;
+    const automationId = r.automation_id as string;
+    const sentAt = r.sent_at as string | null;
+    const confirmedAt = r.confirmed_at as string | null;
+    const escalatedAt = r.escalated_at as string | null;
+    return {
+      automationTitle: auto?.title ?? "Automation",
+      assignee: assigneeMap[automationId] ?? null,
+      sentAgoMs: sentAt ? nowMs - new Date(sentAt).getTime() : 0,
+      isFollowupSent: r.current_state === "followup_sent",
+      confirmedAgoMs: confirmedMode && confirmedAt ? nowMs - new Date(confirmedAt).getTime() : undefined,
+      escalatedAgoMs: escalatedAt ? nowMs - new Date(escalatedAt).getTime() : undefined,
+    };
+  }
+
+  const openRunsTyped = (openRuns ?? []) as Record<string, unknown>[];
+
+  const pending = openRunsTyped
+    .filter((r) => r.current_state === "sent" || r.current_state === "followup_sent")
+    .map((r) => toRunSummary(r));
+
+  const escalated = openRunsTyped
+    .filter((r) => r.current_state === "escalated")
+    .map((r) => toRunSummary(r));
+
+  const confirmedToday = ((confirmedRuns ?? []) as Record<string, unknown>[])
+    .map((r) => toRunSummary(r, true));
+
+  const firingToday = ((firingTodayRows ?? []) as Record<string, unknown>[]).map((a) => ({
+    title: a.title as string,
+    assignee: assigneeMap[a.id as string] ?? null,
+    nextRunAt: a.next_run_at as string,
+  }));
+
+  const firingTomorrow = ((firingTomorrowRows ?? []) as Record<string, unknown>[]).map((a) => ({
+    title: a.title as string,
+    assignee: assigneeMap[a.id as string] ?? null,
+    nextRunAt: a.next_run_at as string,
+  }));
+
+  return { pending, escalated, confirmedToday, firingToday, firingTomorrow };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Formatters — Carson context block (text)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MAX_TEXT = 5;
+
+function msToAgo(ms: number): string {
+  const h = Math.round(ms / 3_600_000);
+  if (h < 1) return `${Math.round(ms / 60_000)}m ago`;
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function firingLabel(isoAt: string, now = new Date()): string {
+  const d = new Date(isoAt);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const nowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const tomorrow = new Date(nowStart.getTime() + 86_400_000);
+  if (d >= nowStart && d < tomorrow) return `today at ${time}`;
+  return `tomorrow at ${time}`;
+}
+
+/**
+ * Builds the AUTOMATION STATUS text block for ra7etbal_state / Carson context.
+ * Pure function — takes a pre-fetched digest.
+ */
+export function buildAutomationStatusBlock(digest: AutomationDigest): string {
+  const now = new Date();
   const lines: string[] = ["AUTOMATION STATUS:"];
 
-  // Pending (sent / followup_sent — waiting for confirmation)
-  const pendingRuns = (openRuns ?? []).filter(
-    (r: Record<string, unknown>) => r.current_state === "sent" || r.current_state === "followup_sent",
-  );
-  if (pendingRuns.length > 0) {
+  if (digest.pending.length > 0) {
     lines.push("Pending:");
-    for (const r of pendingRuns.slice(0, MAX_ITEMS) as Record<string, unknown>[]) {
-      const auto = r.automations as { title?: string } | null;
-      const title = auto?.title ?? "Unknown";
-      const assignee = assigneeMap[r.automation_id as string];
-      const who = assignee ? ` — ${assignee}` : "";
-      const age = relativeTime(r.sent_at as string | null, now);
-      const followupFlag = r.current_state === "followup_sent" ? ", follow-up sent" : "";
-      lines.push(`- ${title}${who} — sent ${age}, no confirmation yet${followupFlag}`);
+    for (const r of digest.pending.slice(0, MAX_TEXT)) {
+      const who = r.assignee ? ` — ${r.assignee}` : "";
+      const age = msToAgo(r.sentAgoMs);
+      const fu = r.isFollowupSent ? ", follow-up sent" : "";
+      lines.push(`- ${r.automationTitle}${who} — sent ${age}, no confirmation yet${fu}`);
     }
   }
 
-  // Escalated
-  const escalatedRuns = (openRuns ?? []).filter(
-    (r: Record<string, unknown>) => r.current_state === "escalated",
-  );
-  if (escalatedRuns.length > 0) {
+  if (digest.escalated.length > 0) {
     lines.push("Escalated:");
-    for (const r of escalatedRuns.slice(0, MAX_ITEMS) as Record<string, unknown>[]) {
-      const auto = r.automations as { title?: string } | null;
-      const title = auto?.title ?? "Unknown";
-      const assignee = assigneeMap[r.automation_id as string];
-      const who = assignee ? ` — ${assignee}` : "";
-      const age = relativeTime(r.escalated_at as string | null, now);
-      lines.push(`- ${title}${who} — escalated ${age}`);
+    for (const r of digest.escalated.slice(0, MAX_TEXT)) {
+      const who = r.assignee ? ` — ${r.assignee}` : "";
+      const age = r.escalatedAgoMs != null ? msToAgo(r.escalatedAgoMs) : "";
+      lines.push(`- ${r.automationTitle}${who} — escalated ${age}`.trim());
     }
   }
 
-  // Firing today
-  if ((firingAutomations ?? []).length > 0) {
+  if (digest.firingToday.length > 0) {
     lines.push("Firing today:");
-    for (const a of (firingAutomations ?? []).slice(0, MAX_ITEMS) as Record<string, unknown>[]) {
-      const assignee = assigneeMap[a.id as string];
-      const who = assignee ? ` — ${assignee}` : "";
-      const when = todayLabel(a.next_run_at as string, now);
-      lines.push(`- ${a.title as string}${who} — scheduled ${when}`);
+    for (const a of digest.firingToday.slice(0, MAX_TEXT)) {
+      const who = a.assignee ? ` — ${a.assignee}` : "";
+      lines.push(`- ${a.title}${who} — scheduled ${firingLabel(a.nextRunAt, now)}`);
     }
   }
 
-  // Recently confirmed
-  if ((confirmedRuns ?? []).length > 0) {
+  if (digest.confirmedToday.length > 0) {
     lines.push("Recently confirmed:");
-    for (const r of (confirmedRuns ?? []).slice(0, MAX_ITEMS) as Record<string, unknown>[]) {
-      const auto = r.automations as { title?: string } | null;
-      const title = auto?.title ?? "Unknown";
-      const assignee = assigneeMap[r.automation_id as string];
-      const who = assignee ? ` — ${assignee}` : "";
-      const when = relativeTime(r.confirmed_at as string | null, now);
-      lines.push(`- ${title}${who} — confirmed ${when}`);
+    for (const r of digest.confirmedToday.slice(0, MAX_TEXT)) {
+      const who = r.assignee ? ` — ${r.assignee}` : "";
+      const age = r.confirmedAgoMs != null ? msToAgo(r.confirmedAgoMs) : "";
+      lines.push(`- ${r.automationTitle}${who} — confirmed ${age}`.trim());
     }
   }
 
-  // Nothing active
-  if (lines.length === 1) {
-    lines.push("No active automation issues.");
-  }
+  if (lines.length === 1) lines.push("No active automation issues.");
 
   return lines.join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spoken sentence formatters — brief integrations
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Returns ≤1 spoken sentence for the Morning Brief.
+ *
+ * Priority: escalated → pending → confirmed → "" (silence)
+ * Only speaks when there is a notable signal worth surfacing at morning time.
+ * Never repeats what the task waitingOn section already covers (those are
+ * regular tasks; these are automation-generated loops).
+ */
+export function formatAutomationForMorning(digest: AutomationDigest): string {
+  // Escalated — highest urgency
+  if (digest.escalated.length === 1) {
+    const r = digest.escalated[0];
+    const who = r.assignee ? ` — ${r.assignee} hasn't confirmed.` : " — no response yet.";
+    return `The ${lc(r.automationTitle)} loop has been escalated${who}`;
+  }
+  if (digest.escalated.length > 1) {
+    return `${digest.escalated.length} automation loops have been escalated and need attention.`;
+  }
+
+  // Pending — medium priority
+  if (digest.pending.length === 1) {
+    const r = digest.pending[0];
+    const who = r.assignee ? `${cap(r.assignee)} hasn't` : "No one has";
+    return `${who} confirmed the ${lc(r.automationTitle)} loop yet.`;
+  }
+  if (digest.pending.length > 1) {
+    return `${digest.pending.length} automation loops are still waiting for confirmation.`;
+  }
+
+  // Confirmed — positive signal
+  if (digest.confirmedToday.length === 1) {
+    const r = digest.confirmedToday[0];
+    if (r.assignee) return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} loop.`;
+    return `The ${lc(r.automationTitle)} loop was confirmed.`;
+  }
+  if (digest.confirmedToday.length > 1) {
+    const r = digest.confirmedToday[0];
+    const rest = digest.confirmedToday.length - 1;
+    if (r.assignee) {
+      return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} loop, and ${rest} other${rest === 1 ? "" : "s"} were confirmed too.`;
+    }
+    return `${digest.confirmedToday.length} automation loops were confirmed today.`;
+  }
+
+  return "";
+}
+
+/**
+ * Returns ≤1 spoken sentence for the Night Sweep.
+ *
+ * Priority: escalated/pending still open → firing tomorrow → confirmed today → "" (silence)
+ */
+export function formatAutomationForNight(digest: AutomationDigest): string {
+  const stillOpen = digest.escalated.length + digest.pending.length;
+
+  // Still waiting / escalated
+  if (digest.escalated.length === 1) {
+    const r = digest.escalated[0];
+    const who = r.assignee ? ` from ${cap(r.assignee)}` : "";
+    return `The ${lc(r.automationTitle)} loop is still waiting for confirmation${who}.`;
+  }
+  if (stillOpen === 1 && digest.pending.length === 1) {
+    const r = digest.pending[0];
+    const who = r.assignee ? ` from ${cap(r.assignee)}` : "";
+    return `The ${lc(r.automationTitle)} loop is still waiting for confirmation${who}.`;
+  }
+  if (stillOpen > 1) {
+    return `${stillOpen} automation loops are still waiting for confirmation tonight.`;
+  }
+
+  // Firing tomorrow — preview
+  if (digest.firingTomorrow.length === 1) {
+    const a = digest.firingTomorrow[0];
+    const who = a.assignee ? ` for ${cap(a.assignee)}` : "";
+    return `The ${lc(a.title)} loop fires tomorrow${who}.`;
+  }
+  if (digest.firingTomorrow.length > 1) {
+    return `${digest.firingTomorrow.length} automation loops fire tomorrow.`;
+  }
+
+  // Confirmed — positive close
+  if (digest.confirmedToday.length === 1) {
+    const r = digest.confirmedToday[0];
+    if (r.assignee) return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} loop today.`;
+    return `The ${lc(r.automationTitle)} loop was confirmed today.`;
+  }
+  if (digest.confirmedToday.length > 1) {
+    return `${digest.confirmedToday.length} automation loops were confirmed today.`;
+  }
+
+  return "";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Convenience wrapper — fetches and formats in one call (for App.tsx mount)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetches the digest and returns the formatted AUTOMATION STATUS block.
+ * Used for the initial page-load context string.
+ * App.tsx should use fetchAutomationDigest() directly when it also needs to
+ * pass the digest to spoken brief functions (avoids a duplicate Supabase fetch).
+ */
+export async function fetchAndBuildAutomationStatusBlock(): Promise<string> {
+  const digest = await fetchAutomationDigest().catch(() => EMPTY_DIGEST);
+  return buildAutomationStatusBlock(digest);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Private helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function cap(s: string | null | undefined): string {
+  if (!s) return "";
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Lowercase with no trailing punctuation — for embedding in a sentence. */
+function lc(s: string): string {
+  const clean = s.trim().replace(/[.!?]+$/, "");
+  return clean.charAt(0).toLowerCase() + clean.slice(1);
 }
