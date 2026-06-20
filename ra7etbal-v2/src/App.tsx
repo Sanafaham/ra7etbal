@@ -31,6 +31,7 @@ import { useAuth } from "./hooks/useAuth";
 import { buildCarsonContext } from "./lib/carson-context";
 import { fetchCalendarEvents, type CalendarEvent } from "./lib/calendar";
 import { formatNotesForContext, loadRecentNotes } from "./lib/carson-notes";
+import { buildAutomationStatusBlock } from "./lib/automation-context";
 import { buildMorningBriefSpoken } from "./lib/morning-brief";
 import { buildNightSweepSpoken, EVENING_HOUR } from "./lib/night-sweep";
 import { useCarsonStore } from "./stores/carson";
@@ -195,6 +196,7 @@ function PersistentCarsonWidget({
   /** True once the 30-day calendar fetch completed successfully (even if empty). */
   const [calendarFetched, setCalendarFetched] = useState(false);
   const [notesBlock, setNotesBlock] = useState("");
+  const [automationStatusBlock, setAutomationStatusBlock] = useState("");
 
   // When calendarDisconnectCount increments, clear stale calendar events so
   // Carson does not see them in the next session after a disconnect.
@@ -233,13 +235,20 @@ function PersistentCarsonWidget({
   }, [userId]);
 
   useEffect(() => {
+    if (!userId) { setAutomationStatusBlock(""); return; }
+    buildAutomationStatusBlock()
+      .then((block) => setAutomationStatusBlock(block))
+      .catch(() => setAutomationStatusBlock(""));
+  }, [userId]);
+
+  useEffect(() => {
     if (!userId) return;
     void loadHouseholdRules();
   }, [userId, loadHouseholdRules]);
 
   const elevenLabsBriefStateText = useMemo(
-    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, householdRules }),
-    [tasks, people, user?.email, now, calendarEvents, notesBlock, householdRules],
+    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, householdRules, automationStatusBlock }),
+    [tasks, people, user?.email, now, calendarEvents, notesBlock, householdRules, automationStatusBlock],
   );
   const isEvening = now.getHours() >= EVENING_HOUR;
   const spokenBrief = useMemo(
@@ -279,10 +288,15 @@ function PersistentCarsonWidget({
     const freshNotesBlock = userId ? formatNotesForContext(await loadRecentNotes(20)) : "";
     setNotesBlock(freshNotesBlock);
 
+    const freshAutomationStatusBlock = userId
+      ? await buildAutomationStatusBlock().catch(() => "")
+      : "";
+    setAutomationStatusBlock(freshAutomationStatusBlock);
+
     const freshHouseholdRules = useHouseholdRulesStore.getState().rules;
 
     return {
-      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, householdRules: freshHouseholdRules }),
+      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock }),
       spokenBrief:
         freshNow.getHours() >= EVENING_HOUR
           ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents)

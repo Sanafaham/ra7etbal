@@ -37,6 +37,11 @@ export interface CarsonContextInput {
    */
   notesBlock?: string;
   /**
+   * Pre-formatted automation status block from buildAutomationStatusBlock().
+   * Pass empty string or omit when automations aren't loaded yet.
+   */
+  automationStatusBlock?: string;
+  /**
    * Household-level delegation rules text (from household_rules table).
    * Injected verbatim into Carson's context so it guides assignment decisions.
    */
@@ -236,6 +241,9 @@ export function buildCarsonContext(input: CarsonContextInput): string {
       lines.push(`- ${t.description.trim()}${by}${when}`);
     }
   }
+
+  // ── Automation status ─────────────────────────────────────────────────────
+  if (input.automationStatusBlock) lines.push(input.automationStatusBlock);
 
   // ── Saved notes ───────────────────────────────────────────────────────────
   if (input.notesBlock) lines.push(input.notesBlock);
