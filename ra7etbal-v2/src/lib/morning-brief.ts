@@ -181,17 +181,18 @@ function buildRisks(waitingOn: Task[], nowMs: number): RiskItem[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Morning Brief V3 — Chief of Staff briefing.
+ * Morning Brief V3 — Executive operating briefing.
  *
- * Five sections, hard cap 5 sentences. Priority order:
- *   1. GREETING          — "Good morning Sana." — standalone, no calendar attached
- *   2. COMPLETIONS       — rolling 24h, named; answers "what happened?"
- *   3. WAITING           — top waiter, risk-framed when escalated/stale
- *   4. CALENDAR / DEADLINE — demoted; answers "what does my day look like?"
- *   5. STATUS CLOSE      — "Everything else is on track." or secondary risk
+ * Max 6 sentences. Priority for INCLUSION (drop lowest first when full):
+ *   1. Urgent items requiring Sana's direct action
+ *   2. Waiting on others
+ *   3. Automation status (guaranteed slot — never dropped as afterthought)
+ *   4. Calendar today
+ *   5. Status close
+ *   6. Recent completions (positive news — luxury slot, dropped first)
  *
- * Dedup rule: if section 3 names the risk, section 5 closes warmly.
- * Calendar never dominates — it lives in section 4, not the greeting.
+ * SPEECH ORDER follows natural arc regardless of what got included:
+ *   greeting → urgent → completions → waiting → calendar → automation → close
  *
  * Called from App.tsx as `daily_brief` ElevenLabs dynamic variable.
  */
@@ -238,122 +239,17 @@ export function buildMorningBriefSpoken(
   const todayEvs   = calEvents.filter(ev => { const d = evLocalDate(ev); return d !== null && d >= todayStart && d < tomStart; });
   const inProgress = todayEvs.filter(ev => classifyCalendarEvent(ev, now) === "in_progress");
 
-  // ── SECTION 1: GREETING (standalone) ──────────────────────────────────────
-  // Just the name. Calendar belongs in section 4 so completions come first.
-  const section1 = name ? `${greeting} ${name}.` : `${greeting}.`;
+  // ── GREETING (always) ────────────────────────────────────────────────────
+  const slotGreeting = name ? `${greeting} ${name}.` : `${greeting}.`;
 
-  // ── SECTION 2: COMPLETIONS (rolling 24 h) ─────────────────────────────────
-  // Named and specific. Named delegation confirmations get priority.
-  // 1: name it. 2: name both. 3+: name notable delegated one + count.
-  let section2 = "";
-  const recentCutoff = new Date(nowMs - 24 * 60 * 60 * 1000);
-  // Self-assigned keywords: delegations where the user assigned the task to themselves.
-  const SELF_LABELS = new Set(["me", "myself", "self"]);
-  const userNameLower = (name ?? "").toLowerCase();
-  const recentDone = tasks
-    .filter(t => {
-      if (t.status !== "done" || !t.confirmed_at) return false;
-      const confirmedAt = new Date(t.confirmed_at);
-      if (confirmedAt < recentCutoff || confirmedAt > now) return false;
-      // Exclude self-assigned delegations — not real delegated work.
-      if (t.type === "delegation") {
-        const a = (t.assigned_to ?? "").trim().toLowerCase();
-        if (SELF_LABELS.has(a)) return false;
-        if (userNameLower && a === userNameLower) return false;
-      }
-      return true;
-    })
-    .sort((a, b) => new Date(b.confirmed_at!).getTime() - new Date(a.confirmed_at!).getTime());
-
-  if (recentDone.length === 1) {
-    section2 = buildCompletionSentenceV3(recentDone[0]);
-  } else if (recentDone.length === 2) {
-    section2 = `${buildCompletionSentenceV3(recentDone[0])} ${buildCompletionSentenceV3(recentDone[1])}`;
-  } else if (recentDone.length >= 3) {
-    // Lead with the best-named completion; count becomes a trailing qualifier only
-    // when there is no notable delegated item to name.
-    const notable = recentDone.find(t => {
-      const a = t.assigned_to?.trim().toLowerCase();
-      return !!a && a !== "me" && (t.type === "delegation" || t.type === "followup");
-    });
-    const rest = recentDone.length - 1;
-    const restPhrase = spokenCount(rest);
-    if (notable && cap(notable.assigned_to) && cleanDesc(notable.description)) {
-      // "Christopher confirmed the cat food task. Seven other items were also completed."
-      const lead = buildCompletionSentenceV3(notable);
-      section2 = rest > 0
-        ? `${lead} ${capFirst(restPhrase)} other item${rest === 1 ? " was" : "s were"} also completed.`
-        : lead;
-    } else {
-      const countPhrase = capFirst(spokenCount(recentDone.length));
-      section2 = `${countPhrase} items were completed in the last 24 hours.`;
-    }
-  }
-
-  // ── SECTION 3: WAITING ────────────────────────────────────────────────────
-  // Always names the top waiter. Risk-framed (escalated/stale) or status-framed.
-  // When there is only 1 waiter and they are the risk: use risk framing here so
-  // section 5 can close warmly ("Everything else is on track.").
-  let section3 = "";
-  const totalWaiting   = brief.waitingOn.length;
-  const escalatedItem  = brief.waitingOn.find(t => t.escalated_at != null);
-  const stale72Item    = brief.waitingOn.find(
-    t => nowMs - new Date(t.created_at).getTime() >= MS_72H,
-  );
-  const riskItem = escalatedItem ?? stale72Item ?? null;
-  // The top waiter: risk item if present, otherwise first in sorted list.
-  const topWaiter = riskItem ?? brief.waitingOn[0] ?? null;
-
-  if (topWaiter) {
-    const who   = cap(topWaiter.assigned_to);
-    const what  = cleanDesc(topWaiter.description);
-    const ageMs = nowMs - new Date(topWaiter.created_at).getTime();
-    const days  = Math.floor(ageMs / MS_DAY);
-
-    if (topWaiter.escalated_at != null) {
-      // Escalated — strong but calm framing
-      section3 = who && what
-        ? `${who} still hasn't confirmed the ${what}.`
-        : who
-          ? `${who} hasn't responded to an open item.`
-          : "One item hasn't received a response.";
-    } else if (days >= 3) {
-      // Stale 72h+ — time signal
-      section3 = who && what
-        ? `${who} hasn't confirmed the ${what} in ${days} day${days === 1 ? "" : "s"}.`
-        : who
-          ? `${who} has had an open item for ${days} days.`
-          : `One item has been waiting for ${days} days.`;
-    } else if (totalWaiting === 1) {
-      // Single fresh waiter
-      section3 = who && what
-        ? `${who} is still waiting on the ${what}.`
-        : who
-          ? `${who} still has an open item.`
-          : "One item is awaiting confirmation.";
-    } else {
-      // Multiple waiters — name the top two
-      const top2  = brief.waitingOn.slice(0, 2);
-      const names = top2.map(t => cap(t.assigned_to)).filter(Boolean);
-      if (names.length === 2 && totalWaiting === 2) {
-        section3 = `Two items are waiting: ${names[0]} on ${cleanDesc(top2[0].description)} and ${names[1]} on ${cleanDesc(top2[1].description)}.`;
-      } else if (names.length === 2 && totalWaiting > 2) {
-        section3 = `${names[0]} and ${names[1]} are still waiting — and ${totalWaiting - 2} other${totalWaiting - 2 === 1 ? "" : "s"}.`;
-      } else {
-        section3 = `${spokenCount(totalWaiting)} items are waiting on others.`;
-      }
-    }
-  }
-
-  // ── SECTION 4: CALENDAR / DEADLINE ────────────────────────────────────────
-  // Calendar demoted here. Urgent deadline or reminder overrides calendar shape.
-  // Always produces a sentence so the user knows what their day looks like.
+  // ── URGENT — items requiring Sana's direct action ─────────────────────────
+  // Priority: overdue reminders → personal reminders due today → personal tasks → upcoming deadline
   const overdueReminder = brief.overdueItems.find(t => t.type === "reminder");
   const todayReminder   = brief.needsAttention.find(
     t => t.type === "reminder" && t.due_at && !isReminderOverdue(t.due_at, now),
   );
+  const personalTasks   = brief.needsAttention.filter(t => t.type !== "reminder");
 
-  // Invisible deadline: soonest reminder/decision 1–14 days out
   const tomorrowStart    = new Date(todayStart.getTime() + 86_400_000);
   const horizonEnd       = new Date(todayStart.getTime() + 14 * 86_400_000);
   const activePending    = tasks.filter(t => t.archived_at == null && t.status === "pending");
@@ -366,71 +262,167 @@ export function buildMorningBriefSpoken(
     })
     .sort((a, b) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime())[0] ?? null;
 
-  let section4 = "";
+  let slotUrgent = "";
   if (overdueReminder) {
-    section4 = `One reminder is overdue: ${spokenDesc(overdueReminder.description)}.`;
+    slotUrgent = `One reminder is overdue: ${spokenDesc(overdueReminder.description)}.`;
   } else if (todayReminder) {
     const timeSuffix = spokenTimeSuffix(todayReminder.due_at, now);
-    section4 = timeSuffix
+    slotUrgent = timeSuffix
       ? `You have a reminder — ${spokenDesc(todayReminder.description)} ${timeSuffix}.`
       : `You have a reminder today — ${spokenDesc(todayReminder.description)}.`;
-  } else if (inProgress.length > 0) {
-    const ev     = inProgress[0];
-    const endStr = formatEventEndTime(ev);
-    section4 = endStr
-      ? `You're currently in ${ev.title}, wrapping up at ${endStr}.`
-      : `You're currently in ${ev.title}.`;
+  } else if (personalTasks.length === 1) {
+    slotUrgent = `One task needs your attention: ${spokenDesc(personalTasks[0].description)}.`;
+  } else if (personalTasks.length > 1) {
+    slotUrgent = `${spokenCount(personalTasks.length)} tasks need your attention today.`;
   } else if (upcomingDeadline) {
     const dayCount = spokenDaysUntil(upcomingDeadline.due_at!, now);
-    section4 = `One deadline is coming up — ${spokenDesc(upcomingDeadline.description)} ${dayCount}.`;
+    slotUrgent = `One deadline coming up — ${spokenDesc(upcomingDeadline.description)} ${dayCount}.`;
+  }
+
+  // ── COMPLETIONS (rolling 24 h) ────────────────────────────────────────────
+  // Named and specific. Delegated confirmations get priority.
+  let slotCompletions = "";
+  const recentCutoff  = new Date(nowMs - 24 * 60 * 60 * 1000);
+  const SELF_LABELS   = new Set(["me", "myself", "self"]);
+  const userNameLower = (name ?? "").toLowerCase();
+  const recentDone = tasks
+    .filter(t => {
+      if (t.status !== "done" || !t.confirmed_at) return false;
+      const confirmedAt = new Date(t.confirmed_at);
+      if (confirmedAt < recentCutoff || confirmedAt > now) return false;
+      if (t.type === "delegation") {
+        const a = (t.assigned_to ?? "").trim().toLowerCase();
+        if (SELF_LABELS.has(a)) return false;
+        if (userNameLower && a === userNameLower) return false;
+      }
+      return true;
+    })
+    .sort((a, b) => new Date(b.confirmed_at!).getTime() - new Date(a.confirmed_at!).getTime());
+
+  if (recentDone.length === 1) {
+    slotCompletions = buildCompletionSentenceV3(recentDone[0]);
+  } else if (recentDone.length === 2) {
+    slotCompletions = `${buildCompletionSentenceV3(recentDone[0])} ${buildCompletionSentenceV3(recentDone[1])}`;
+  } else if (recentDone.length >= 3) {
+    const notable = recentDone.find(t => {
+      const a = t.assigned_to?.trim().toLowerCase();
+      return !!a && a !== "me" && (t.type === "delegation" || t.type === "followup");
+    });
+    const rest = recentDone.length - 1;
+    if (notable && cap(notable.assigned_to) && cleanDesc(notable.description)) {
+      const lead = buildCompletionSentenceV3(notable);
+      slotCompletions = rest > 0
+        ? `${lead} ${capFirst(spokenCount(rest))} other item${rest === 1 ? " was" : "s were"} also completed.`
+        : lead;
+    } else {
+      slotCompletions = `${capFirst(spokenCount(recentDone.length))} items were completed in the last 24 hours.`;
+    }
+  }
+
+  // ── WAITING ON OTHERS ─────────────────────────────────────────────────────
+  let slotWaiting = "";
+  const totalWaiting  = brief.waitingOn.length;
+  const escalatedItem = brief.waitingOn.find(t => t.escalated_at != null);
+  const stale72Item   = brief.waitingOn.find(
+    t => nowMs - new Date(t.created_at).getTime() >= MS_72H,
+  );
+  const topWaiter = escalatedItem ?? stale72Item ?? brief.waitingOn[0] ?? null;
+
+  if (topWaiter) {
+    const who   = cap(topWaiter.assigned_to);
+    const what  = cleanDesc(topWaiter.description);
+    const ageMs = nowMs - new Date(topWaiter.created_at).getTime();
+    const days  = Math.floor(ageMs / MS_DAY);
+
+    if (topWaiter.escalated_at != null) {
+      slotWaiting = who && what
+        ? `${who} still hasn't confirmed the ${what}.`
+        : who
+          ? `${who} hasn't responded to an open item.`
+          : "One item hasn't received a response.";
+    } else if (days >= 3) {
+      slotWaiting = who && what
+        ? `${who} hasn't confirmed the ${what} in ${days} day${days === 1 ? "" : "s"}.`
+        : who
+          ? `${who} has had an open item for ${days} days.`
+          : `One item has been waiting for ${days} days.`;
+    } else if (totalWaiting === 1) {
+      slotWaiting = who && what
+        ? `${who} still hasn't responded about the ${what}.`
+        : who
+          ? `${who} still has an open item.`
+          : "One item is awaiting confirmation.";
+    } else {
+      const top2  = brief.waitingOn.slice(0, 2);
+      const names = top2.map(t => cap(t.assigned_to)).filter(Boolean);
+      if (names.length === 2 && totalWaiting === 2) {
+        slotWaiting = `Two items are waiting: ${names[0]} on ${cleanDesc(top2[0].description)} and ${names[1]} on ${cleanDesc(top2[1].description)}.`;
+      } else if (names.length === 2 && totalWaiting > 2) {
+        slotWaiting = `${names[0]} and ${names[1]} are still waiting — and ${totalWaiting - 2} other${totalWaiting - 2 === 1 ? "" : "s"}.`;
+      } else {
+        slotWaiting = `${spokenCount(totalWaiting)} items are waiting on others.`;
+      }
+    }
+  }
+
+  // ── CALENDAR (today's events only — reminders/deadlines live in urgent) ───
+  let slotCalendar = "";
+  if (inProgress.length > 0) {
+    const ev     = inProgress[0];
+    const endStr = formatEventEndTime(ev);
+    slotCalendar = endStr
+      ? `You're currently in ${ev.title}, wrapping up at ${endStr}.`
+      : `You're currently in ${ev.title}.`;
   } else if (todayEvs.length === 0) {
-    section4 = "Your calendar is clear today.";
+    slotCalendar = "Your calendar is clear today.";
   } else if (todayEvs.length === 1) {
     const ev = todayEvs[0];
     const t  = evTime(ev);
-    section4 = t
+    slotCalendar = t
       ? `You have one event today — ${ev.title} at ${t}.`
       : `You have one event today — ${ev.title}.`;
   } else {
-    section4 = `You have ${spokenCount(todayEvs.length)} events on the calendar today.`;
+    slotCalendar = `You have ${spokenCount(todayEvs.length)} events on the calendar today.`;
   }
 
-  // ── SECTION 5: STATUS CLOSE ────────────────────────────────────────────────
-  // If section 3 already named the risk, close warmly. Only raise a NEW risk
-  // here if something wasn't covered above. Never repeat what section 3 said.
-  let section5: string;
-  const riskNamedInSection3 = riskItem != null && section3.length > 0;
-
-  if (riskNamedInSection3) {
-    // Section 3 already surfaced the worst problem — close warmly.
-    section5 = "Everything else is on track.";
-  } else if (brief.waitingOn.length > 0) {
-    // Fresh waiting items but no stale/escalated — honest but calm.
-    section5 = "Everything else is on track.";
-  } else if (overdueReminder) {
-    section5 = "That reminder needs your attention before anything else.";
-  } else if (brief.needsAttention.length > 0) {
-    section5 = "Everything else is on track.";
-  } else {
-    section5 = "Nothing is waiting — your day is under control.";
-  }
-
-  // ── Automation signal (appended only when there is room) ──────────────────
-  // Automation loops are low-priority relative to urgent human tasks.
-  // Only surfaces when the main body has fewer than 5 sentences, so it never
-  // displaces a more important section. Max 1 sentence.
-  const automationSentence = automationDigest
+  // ── AUTOMATION STATUS (guaranteed slot) ───────────────────────────────────
+  const slotAutomation = automationDigest
     ? formatAutomationForMorning(automationDigest)
     : "";
 
-  // ── Assemble ───────────────────────────────────────────────────────────────
-  const coreSentences = [section1, section2, section3, section4, section5].filter(Boolean);
-  const allSentences =
-    automationSentence && coreSentences.length < 5
-      ? [...coreSentences, automationSentence]
-      : coreSentences;
+  // ── CLOSE ─────────────────────────────────────────────────────────────────
+  const hasOpen = brief.waitingOn.length > 0 || brief.needsAttention.length > 0 || brief.overdueItems.length > 0;
+  const slotClose = hasOpen
+    ? "Everything else is on track."
+    : "Nothing is waiting — your day is under control.";
 
-  return allSentences.slice(0, 5).join(" ");
+  // ── PRIORITY SLOT SELECTION ───────────────────────────────────────────────
+  // Collect all candidate sentences with priority and speech-order weights.
+  // Select top 6 by priority, then re-sort by speech order for natural delivery.
+  //
+  // Priority (lower = must include):
+  //   0 greeting  1 urgent  2 waiting  3 automation  4 calendar  5 close  6 completions
+  //
+  // Speech order (lower = spoken first):
+  //   greeting(0) urgent(1) completions(2) waiting(3) calendar(4) automation(5) close(6)
+
+  interface PriSlot { s: string; pri: number; ord: number; }
+  const candidates: PriSlot[] = [
+    { s: slotGreeting,    pri: 0, ord: 0 },
+    { s: slotUrgent,      pri: 1, ord: 1 },
+    { s: slotWaiting,     pri: 2, ord: 3 },
+    { s: slotAutomation,  pri: 3, ord: 5 },
+    { s: slotCalendar,    pri: 4, ord: 4 },
+    { s: slotClose,       pri: 5, ord: 6 },
+    { s: slotCompletions, pri: 6, ord: 2 },
+  ].filter(c => c.s);
+
+  const selected = candidates
+    .sort((a, b) => a.pri - b.pri)
+    .slice(0, 6)
+    .sort((a, b) => a.ord - b.ord);
+
+  return selected.map(c => c.s).join(" ");
 }
 
 // ---------------------------------------------------------------------------
