@@ -1318,6 +1318,21 @@ export default function ElevenLabsAgentWidget({
         }
       }
 
+      // ── Store wall-clock time in cadence_value so runner can snap back ──
+      // Extract HH:MM from the resolved first-run timestamp in the user's timezone.
+      if (cadenceType !== "once") {
+        const firstRunDate = new Date(nextRunAt);
+        const timeParts = new Intl.DateTimeFormat("en-US", {
+          timeZone: timezone,
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        }).formatToParts(firstRunDate);
+        const hh = timeParts.find((p) => p.type === "hour")?.value ?? "09";
+        const mm = timeParts.find((p) => p.type === "minute")?.value ?? "00";
+        cadenceValue = { ...cadenceValue, time: `${hh}:${mm}` };
+      }
+
       // ── Resolve optional assignee ───────────────────────────────────────
       let assigneeId: string | null = null;
       if (assignee_name?.trim()) {

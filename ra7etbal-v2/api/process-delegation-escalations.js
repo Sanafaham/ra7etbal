@@ -1525,17 +1525,20 @@ async function advanceNextRunAt(supabaseUrl, serviceKey, automation, now) {
  */
 function computeNextRunAt(automation) {
   const base = new Date(automation.next_run_at);
-  const { cadence_type: type, cadence_value: val = {} } = automation;
+  const { cadence_type: type, cadence_value: val = {}, timezone } = automation;
+  const timeStr = typeof val?.time === 'string' ? val.time : null; // e.g. "09:00"
 
   if (type === 'once') return null;
 
   if (type === 'daily') {
+    if (timeStr && timezone) return nextRunAtWithTime(base, 1, timeStr, timezone);
     const next = new Date(base);
     next.setUTCDate(next.getUTCDate() + 1);
     return next.toISOString();
   }
 
   if (type === 'weekly') {
+    if (timeStr && timezone) return nextRunAtWithTime(base, 7, timeStr, timezone);
     const next = new Date(base);
     next.setUTCDate(next.getUTCDate() + 7);
     return next.toISOString();
@@ -1544,6 +1547,7 @@ function computeNextRunAt(automation) {
   if (type === 'every_n_days') {
     const n = Number(val?.n);
     if (!Number.isInteger(n) || n < 1) return 'invalid';
+    if (timeStr && timezone) return nextRunAtWithTime(base, n, timeStr, timezone);
     const next = new Date(base);
     next.setUTCDate(next.getUTCDate() + n);
     return next.toISOString();
@@ -1551,12 +1555,75 @@ function computeNextRunAt(automation) {
 
   if (type === 'monthly') {
     const next = new Date(base);
-    // Advance by one calendar month; setUTCMonth handles year rollovers.
     next.setUTCMonth(next.getUTCMonth() + 1);
+    if (timeStr && timezone) {
+      const dateParts = getDatePartsInTz(next, timezone);
+      return localTimeToUTC(dateParts, timeStr, timezone);
+    }
     return next.toISOString();
   }
 
   return 'invalid';
+}
+
+/**
+ * Returns the UTC ISO string for N days after `base`, at wall-clock `timeStr`
+ * (HH:MM) in the given IANA `timezone`.
+ *
+ * Strategy: treat HH:MM as UTC first (approxUTC), format in the target timezone
+ * to measure the actual UTC offset, then subtract that offset.
+ * Accurate for all fixed-offset and DST timezones via Intl.DateTimeFormat.
+ */
+function nextRunAtWithTime(base, daysToAdd, timeStr, timezone) {
+  const next = new Date(base);
+  next.setUTCDate(next.getUTCDate() + daysToAdd);
+  const dateParts = getDatePartsInTz(next, timezone);
+  return localTimeToUTC(dateParts, timeStr, timezone);
+}
+
+/** Returns { year, month, day } as the date appears in `timezone`. */
+function getDatePartsInTz(utcDate, timezone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(utcDate).split('-');
+  return {
+    year:  parseInt(parts[0], 10),
+    month: parseInt(parts[1], 10),
+    day:   parseInt(parts[2], 10),
+  };
+}
+
+/**
+ * Converts { year, month, day } + "HH:MM" in a named timezone to a UTC ISO string.
+ *
+ * Example: { year:2026, month:6, day:21 }, "09:00", "Europe/Istanbul"
+ *   Istanbul = UTC+3 → result is "2026-06-21T06:00:00.000Z"
+ */
+function localTimeToUTC(dateParts, timeStr, timezone) {
+  const { year, month, day } = dateParts;
+  const [hh, mm] = timeStr.split(':').map(Number);
+
+  // Build a UTC date treating the wall-clock digits as UTC (off by the tz offset)
+  const approxUTC = new Date(Date.UTC(year, month - 1, day, hh, mm, 0));
+
+  // See what time approxUTC renders as in the target timezone
+  const localParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    hour:     '2-digit',
+    minute:   '2-digit',
+    hour12:   false,
+  }).formatToParts(approxUTC);
+
+  const localH = parseInt(localParts.find(p => p.type === 'hour').value,   10);
+  const localM = parseInt(localParts.find(p => p.type === 'minute').value, 10);
+
+  // Offset: positive means local is ahead of UTC (e.g. UTC+3 → diffMs = +3h)
+  const diffMs = ((localH - hh) * 60 + (localM - mm)) * 60 * 1000;
+
+  return new Date(approxUTC.getTime() - diffMs).toISOString();
 }
 
 // ── Automation-specific DB helpers ─────────────────────────────────────────────
