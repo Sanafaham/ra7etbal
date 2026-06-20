@@ -342,6 +342,46 @@ export default async function handler(req, res) {
         usedTemplateName,
         usedAttempt,
       });
+
+      // ── SMS fallback via Twilio ───────────────────────────────────────────
+      const smsFallbackEnabled = process.env.SMS_FALLBACK_ENABLED === 'true';
+      const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
+      const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
+      const twilioFromNumber = process.env.TWILIO_FROM_NUMBER;
+
+      if (smsFallbackEnabled && twilioAccountSid && twilioAuthToken && twilioFromNumber && normalizedTo) {
+        console.log('[send-whatsapp-task] WhatsApp failed — attempting SMS fallback', { to: normalizedTo });
+        const smsBody = buildSmsBody({ ownerName: cleanOwnerName, messageText: cleanMessage, confirmationLink: cleanLink });
+        const smsResult = await sendTwilioSms({
+          to: normalizedTo,
+          body: smsBody,
+          accountSid: twilioAccountSid,
+          authToken: twilioAuthToken,
+          fromNumber: twilioFromNumber,
+        });
+
+        if (smsResult.ok) {
+          console.log('[send-whatsapp-task] SMS fallback accepted', { sid: smsResult.sid });
+          await markMessageAccepted({ supabaseUrl, serviceKey, messageRecordId, messageId: smsResult.sid, channel: 'sms' });
+          return res.status(200).json({
+            success: true,
+            sendMode: 'sms',
+            sendType: 'sms',
+            channel: 'sms',
+            messageId: smsResult.sid,
+            to: normalizedTo,
+            acceptedAt: new Date().toISOString(),
+          });
+        }
+
+        console.error('[send-whatsapp-task] SMS fallback also failed', { error: smsResult.error });
+        return res.status(502).json({
+          success: false,
+          error: 'I saved the task, but I could not send it by WhatsApp or SMS.',
+          errorMessage: 'I saved the task, but I could not send it by WhatsApp or SMS.',
+        });
+      }
+
       return sendFailure(res, templateResult);
     }
 
@@ -367,6 +407,7 @@ export default async function handler(req, res) {
       success: true,
       sendMode: 'template',
       sendType: 'template',
+      channel: 'whatsapp',
       messageId: templateResult.messageId,
       to: normalizedTo,
       acceptedAt: new Date().toISOString(),
@@ -546,6 +587,7 @@ async function markMessageAccepted({
   serviceKey,
   messageRecordId,
   messageId,
+  channel = 'whatsapp',
 }) {
   if (!supabaseUrl || !serviceKey || !messageRecordId || !messageId) return;
 
@@ -561,7 +603,7 @@ async function markMessageAccepted({
       },
       body: JSON.stringify({
         whatsapp_message_id: messageId,
-        whatsapp_delivery_status: 'sent',
+        whatsapp_delivery_status: channel === 'sms' ? 'sms_sent' : 'sent',
         whatsapp_status_updated_at: new Date().toISOString(),
         whatsapp_failure_reason: null,
       }),
@@ -677,5 +719,32 @@ async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath })
     return `${supabaseUrl}/storage/v1${data.signedURL}`;
   } catch {
     return null;
+  }
+}
+
+function buildSmsBody({ ownerName, messageText, confirmationLink }) {
+  const parts = [];
+  if (ownerName) parts.push(`From ${ownerName}:`);
+  parts.push(String(messageText || '').trim());
+  if (confirmationLink) parts.push(`\nWhen done, tap here:\n${confirmationLink}`);
+  return parts.join('\n');
+}
+
+async function sendTwilioSms({ to, body, accountSid, authToken, fromNumber }) {
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+  const params = new URLSearchParams({ From: fromNumber, To: `+${to}`, Body: body });
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
+    });
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok, sid: data?.sid ?? null, error: data?.message ?? null };
+  } catch (err) {
+    return { ok: false, sid: null, error: err?.message ?? String(err) };
   }
 }

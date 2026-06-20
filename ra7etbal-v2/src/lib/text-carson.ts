@@ -357,6 +357,8 @@ export async function executeDelegationFromText(
 
   // Split into succeeded vs failed sends for honest summary reporting.
   const sentNames: string[] = [];
+  const sentWhatsAppNames: string[] = [];
+  const sentSmsNames: string[] = [];
   const failedSends: Array<{ recipient: string; reason: string }> = [];
 
   // Pre-populate with consent-blocked recipients.
@@ -368,9 +370,13 @@ export async function executeDelegationFromText(
     const result = sendResults[i];
     if (result.status === "fulfilled" && result.value.success) {
       const channel = result.value.channel;
-      sentNames.push(sendableMessages[i].recipient);
+      const name = sendableMessages[i].recipient;
+      sentNames.push(name);
       if (channel === "sms") {
-        console.log(`[executeDelegationFromText] delivered via SMS fallback for ${sendableMessages[i].recipient}`);
+        sentSmsNames.push(name);
+        console.log(`[executeDelegationFromText] delivered via SMS fallback for ${name}`);
+      } else {
+        sentWhatsAppNames.push(name);
       }
     } else {
       const reason =
@@ -398,9 +404,13 @@ export async function executeDelegationFromText(
 
   const parts: string[] = [];
 
-  if (sentNames.length > 0) {
-    const names = sentNames.join(", ");
-    parts.push(`${names} ${sentNames.length === 1 ? "has been" : "have been"} messaged via WhatsApp`);
+  if (sentWhatsAppNames.length > 0) {
+    const names = sentWhatsAppNames.join(", ");
+    parts.push(`${names} ${sentWhatsAppNames.length === 1 ? "has been" : "have been"} messaged via WhatsApp`);
+  }
+  if (sentSmsNames.length > 0) {
+    const names = sentSmsNames.join(", ");
+    parts.push(`WhatsApp was unavailable, so ${names} ${sentSmsNames.length === 1 ? "was" : "were"} sent the task by SMS`);
   }
   // Explicit failure report so Voice Carson must acknowledge send failures
   // rather than silently claiming success for all recipients.
