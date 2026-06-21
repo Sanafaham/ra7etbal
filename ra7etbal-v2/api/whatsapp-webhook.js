@@ -323,6 +323,16 @@ function verifyWebhook(req, res) {
   const token       = req.query?.['hub.verify_token'];
   const challenge   = req.query?.['hub.challenge'];
 
+  // Temporary diagnostic — lengths only, no secret values
+  console.log('WhatsApp webhook verify diagnostic', {
+    envTokenExists:    Boolean(verifyToken),
+    envTokenLength:    verifyToken ? verifyToken.length : 0,
+    incomingTokenLength: token ? token.length : 0,
+    tokensMatch:       token === verifyToken,
+    modeIsSubscribe:   mode === 'subscribe',
+    challengeExists:   Boolean(challenge),
+  });
+
   if (!verifyToken) {
     console.error('WhatsApp webhook verify token is not configured');
     return res.status(500).send('Webhook verify token is not configured.');
