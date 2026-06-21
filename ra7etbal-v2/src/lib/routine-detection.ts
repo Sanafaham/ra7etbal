@@ -248,6 +248,107 @@ export async function createVoiceRoutine(
   return buildRoutineSummary(person.name, message, schedule);
 }
 
+// ── Voice automation builder (Phase 1 — routes to automations table) ──────────
+
+export interface VoiceAutomationInput {
+  assigneeId: string;
+  personName: string;
+  cleanMessage: string;
+  cadenceType: 'daily' | 'weekly' | 'every_n_days';
+  cadenceValue: Record<string, unknown>;
+  title: string;
+  summary: string;
+}
+
+const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Builds a structured automation payload from a voice instruction.
+ * Returns null when no person is found (e.g. personal message — Phase 2).
+ *
+ * Pass `resolvedPerson` when the caller already knows the person (e.g. sendDelegation).
+ */
+export function buildVoiceAutomationInput(
+  rawInstruction: string,
+  schedule: RecurringSchedule,
+  people: Person[],
+  resolvedPerson?: Person,
+): VoiceAutomationInput | null {
+  const person = resolvedPerson ?? findPersonInInstruction(rawInstruction, people);
+  if (!person) return null;
+
+  const cleanMessage = extractCleanTaskMessage(rawInstruction, person.name);
+  if (!cleanMessage) return null;
+
+  const scheduleTime = extractTimeFromInstruction(rawInstruction) ?? '09:00';
+
+  type CadenceType = 'daily' | 'weekly' | 'every_n_days';
+  let cadenceType: CadenceType;
+  let cadenceValue: Record<string, unknown> = { time: scheduleTime };
+
+  if (schedule.schedule === 'every_n_days' && schedule.intervalDays) {
+    cadenceType = 'every_n_days';
+    cadenceValue = { n: schedule.intervalDays, time: scheduleTime };
+  } else if (schedule.schedule === 'weekly') {
+    cadenceType = 'weekly';
+  } else {
+    cadenceType = 'daily';
+  }
+
+  const shortMsg =
+    cleanMessage.length > 40 ? cleanMessage.slice(0, 40).trimEnd() + '…' : cleanMessage;
+  const cadenceLabel =
+    cadenceType === 'every_n_days' && schedule.intervalDays
+      ? `Every ${schedule.intervalDays}d`
+      : cadenceType === 'weekly' && schedule.scheduleDay != null
+        ? `Every ${WEEKDAY_SHORT[schedule.scheduleDay]}`
+        : 'Daily';
+  const title = `${cadenceLabel}: ${shortMsg}`;
+
+  const summaryBase = buildAutomationSummary(person.name, cleanMessage, schedule);
+
+  return {
+    assigneeId: person.id,
+    personName: person.name,
+    cleanMessage,
+    cadenceType,
+    cadenceValue,
+    title,
+    summary: summaryBase,
+  };
+}
+
+function buildAutomationSummary(
+  personName: string,
+  message: string,
+  schedule: RecurringSchedule,
+): string {
+  const shortMsg = message.length > 60 ? message.slice(0, 60).trimEnd() + '…' : message;
+
+  if (schedule.schedule === 'every_n_days' && schedule.intervalDays) {
+    const unit = schedule.intervalDays === 1 ? 'day' : 'days';
+    return (
+      `Automation set. I'll ask ${personName} every ${schedule.intervalDays} ${unit}: ` +
+      `"${shortMsg}". You can manage it in Automations.`
+    );
+  }
+  if (schedule.schedule === 'daily') {
+    return (
+      `Automation set. I'll ask ${personName} daily: "${shortMsg}". ` +
+      `You can manage it in Automations.`
+    );
+  }
+  const dayName =
+    schedule.scheduleDay != null
+      ? WEEKDAY_NAMES[schedule.scheduleDay].charAt(0).toUpperCase() +
+        WEEKDAY_NAMES[schedule.scheduleDay].slice(1)
+      : 'weekly';
+  return (
+    `Automation set. I'll ask ${personName} every ${dayName}: "${shortMsg}". ` +
+    `You can manage it in Automations.`
+  );
+}
+
 // ── Display helpers ────────────────────────────────────────────────────────────
 
 function scheduleDisplayLabel(s: RecurringSchedule): string {

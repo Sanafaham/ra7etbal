@@ -16,7 +16,7 @@ import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
-import { detectAllRecurringSchedules, createVoiceRoutine, normalizeCadenceText } from "../../lib/routine-detection";
+import { detectAllRecurringSchedules, buildVoiceAutomationInput, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
@@ -1053,18 +1053,50 @@ export default function ElevenLabsAgentWidget({
           ? recurringSource
           : `${recurringSource} ask ${person.name} to ${taskText}`;
 
+        // ── Get JWT once for all automation POSTs ──────────────────────────
+        const { data: delSessionData } = await supabase.auth.getSession();
+        const delJwt = delSessionData?.session?.access_token;
+        if (!delJwt) return "You are not signed in. Please sign in and try again.";
+
         const results = await Promise.all(
           recurringSchedules.map(async (sched) => {
             try {
-              return await createVoiceRoutine({
-                rawInstruction: routineInstruction,
-                schedule: sched,
-                people,
-                userId: authUserId,
-                displayName: displayName ?? null,
+              // Person is already resolved by sendDelegation — pass it directly.
+              const input = buildVoiceAutomationInput(routineInstruction, sched, people, person);
+              if (!input) {
+                console.warn("[automation:SEND_DELEGATION_NO_INPUT]", { routineInstruction });
+                return null;
+              }
+              const { assigneeId, cleanMessage, cadenceType, cadenceValue, title, summary } = input;
+
+              const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+              const [hh, mm] = (cadenceValue.time as string).split(":").map(Number);
+              const todayAt = new Date();
+              todayAt.setHours(hh, mm, 0, 0);
+              const nextRunAt = todayAt > new Date()
+                ? todayAt.toISOString()
+                : new Date(todayAt.getTime() + 86_400_000).toISOString();
+
+              const res = await fetch("/api/automations", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${delJwt}` },
+                body: JSON.stringify({
+                  title, instruction: cleanMessage, cadence_type: cadenceType,
+                  cadence_value: cadenceValue, next_run_at: nextRunAt, timezone: tz,
+                  assignee_id: assigneeId, created_by: "carson",
+                  proof_required: false, proof_type: null,
+                }),
               });
+              if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                console.error("[automation:SEND_DELEGATION_FAILED]", err);
+                return null;
+              }
+              const result = await res.json();
+              console.log("[automation:SEND_DELEGATION_CREATED]", { id: result.automation?.id, title, cadenceType });
+              return summary;
             } catch (err) {
-              console.error("[routine:LEGACY_CREATE_ROUTINE_ERROR]", err);
+              console.error("[automation:SEND_DELEGATION_ERROR]", err);
               return null;
             }
           }),
@@ -1072,13 +1104,13 @@ export default function ElevenLabsAgentWidget({
 
         const successes = results.filter(Boolean) as string[];
         if (successes.length > 0) {
-          sessionActionsRef.current.push(`Routine(s) created: ${routineInstruction}`);
-          console.log("[routine:ROUTINES_REFRESH] dispatching ra7etbal:routine-created");
+          sessionActionsRef.current.push(`Automation(s) created: ${routineInstruction}`);
+          console.log("[automation:DISPATCH_REFRESH] dispatching ra7etbal:routine-created");
           window.dispatchEvent(new CustomEvent("ra7etbal:routine-created"));
           return successes.join(" ");
         }
 
-        return "I detected this is a recurring instruction, but I couldn't create the routine. I did not create a waiting item or send a WhatsApp message.";
+        return "I detected this is a recurring instruction, but I could not create the automation. I did not create a waiting item or send a WhatsApp message.";
       }
 
       if (!person.phone) {
@@ -2197,28 +2229,56 @@ export default function ElevenLabsAgentWidget({
           const routineInstruction = recurringSource;
           console.log("[routine:VOICE_INPUT]", routineInstruction);
 
-          // Create one routine per detected schedule (handles "every Monday and Thursday").
+          // ── Get JWT once for all automation POSTs ────────────────────────
+          const { data: execSessionData } = await supabase.auth.getSession();
+          const execJwt = execSessionData?.session?.access_token;
+          if (!execJwt) return "You are not signed in. Please sign in and try again.";
+
+          // Create one automation per detected schedule (handles "every Monday and Thursday").
           const results = await Promise.all(
             recurringSchedules.map(async (sched) => {
               try {
-                console.log("[routine:CREATE_ROUTINE]", { sched, peopleCount: people.length });
-                const summary = await createVoiceRoutine({
-                  rawInstruction: routineInstruction,
-                  schedule: sched,
-                  people,
-                  userId: authUserId,
-                  displayName: displayName ?? null,
-                });
-                if (summary) {
-                  console.log("[routine:CREATE_ROUTINE_SUCCESS]", summary);
+                console.log("[automation:CREATE]", { sched, peopleCount: people.length });
+                const input = buildVoiceAutomationInput(routineInstruction, sched, people);
+
+                if (!input) {
+                  // No person matched — likely a personal message automation (Phase 2).
+                  console.warn("[automation:NO_PERSON] message-only automation not yet supported", { routineInstruction });
+                  return "I understood this as a recurring message, but I could not find a staff member in your contacts to assign it to. Personal message automations will be supported in a future update. Check the person's name in People and try again.";
                 }
+
+                const { assigneeId, cleanMessage, cadenceType, cadenceValue, title, summary } = input;
+
+                const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                const [hh, mm] = (cadenceValue.time as string).split(":").map(Number);
+                const todayAt = new Date();
+                todayAt.setHours(hh, mm, 0, 0);
+                const nextRunAt = todayAt > new Date()
+                  ? todayAt.toISOString()
+                  : new Date(todayAt.getTime() + 86_400_000).toISOString();
+
+                const res = await fetch("/api/automations", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${execJwt}` },
+                  body: JSON.stringify({
+                    title, instruction: cleanMessage, cadence_type: cadenceType,
+                    cadence_value: cadenceValue, next_run_at: nextRunAt, timezone: tz,
+                    assignee_id: assigneeId, created_by: "carson",
+                    proof_required: false, proof_type: null,
+                  }),
+                });
+
+                if (!res.ok) {
+                  const err = await res.json().catch(() => ({}));
+                  console.error("[automation:CREATE_FAILED]", err);
+                  return null;
+                }
+
+                const result = await res.json();
+                console.log("[automation:CREATED]", { id: result.automation?.id, title, cadenceType });
                 return summary;
               } catch (err) {
-                console.error("[executeInstruction:catch]", err);
-                console.error("[routine:CREATE_ROUTINE_ERROR]", {
-                  sched,
-                  error: (err as Error).message,
-                });
+                console.error("[automation:CREATE_ERROR]", err);
                 return null;
               }
             }),
@@ -2226,17 +2286,17 @@ export default function ElevenLabsAgentWidget({
 
           const successes = results.filter(Boolean) as string[];
           if (successes.length > 0) {
-            sessionActionsRef.current.push(`Routine(s) created: ${rawInstruction}`);
-            // Signal Routines.tsx to refresh its list.
-            console.log("[routine:ROUTINES_REFRESH] dispatching ra7etbal:routine-created");
+            sessionActionsRef.current.push(`Automation(s) created: ${rawInstruction}`);
+            // Signal Automations list to refresh.
+            console.log("[automation:DISPATCH_REFRESH] dispatching ra7etbal:routine-created");
             window.dispatchEvent(new CustomEvent("ra7etbal:routine-created"));
             return successes.join(" ");
           }
 
-          // Hard-block: recurring language detected but routine creation failed.
+          // Hard-block: recurring language detected but automation creation failed.
           // Never fall through to a one-time WhatsApp send.
-          console.warn("[routine:HARD_BLOCK] all schedules failed — not sending as one-time", { rawInstruction });
-          return "I couldn't create that routine — I may not have found the person in your contacts. Check their name in People and try again.";
+          console.warn("[automation:HARD_BLOCK] all schedules failed — not sending as one-time", { rawInstruction });
+          return "I could not create that automation. I may not have found the person in your contacts. Check their name in People and try again.";
         }
 
         // ── FINAL SAFETY BLOCK ────────────────────────────────────────────
