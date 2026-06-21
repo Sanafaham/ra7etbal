@@ -250,6 +250,8 @@ export async function createVoiceRoutine(
 
 // ── Voice automation builder (Phase 1 — routes to automations table) ──────────
 
+export type AutomationType = 'delegation' | 'message';
+
 export interface VoiceAutomationInput {
   assigneeId: string;
   personName: string;
@@ -258,6 +260,29 @@ export interface VoiceAutomationInput {
   cadenceValue: Record<string, unknown>;
   title: string;
   summary: string;
+  automationType: AutomationType;
+}
+
+/**
+ * Returns 'message' only for explicit phrasing where the user is clearly sending
+ * a personal message rather than delegating a task.
+ *
+ * Triggers on: "message X", "send X a message", "tell X", "text X"
+ * Does NOT trigger on: "ask X to", "have X", "get X to", "remind X", soft emotional language alone.
+ */
+export function detectAutomationType(instruction: string): AutomationType {
+  const lower = instruction.toLowerCase();
+  // Must match at the start of the meaningful phrase, not buried in a task description.
+  // "message Grace every morning" / "send Grace a message" / "tell Grace" / "text Grace"
+  if (
+    /^\s*(message|msg)\s+\w/i.test(lower) ||
+    /\bsend\s+\w[\w\s]*\s+a\s+message\b/i.test(lower) ||
+    /^\s*tell\s+\w/i.test(lower) ||
+    /^\s*text\s+\w/i.test(lower)
+  ) {
+    return 'message';
+  }
+  return 'delegation';
 }
 
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -305,7 +330,8 @@ export function buildVoiceAutomationInput(
         : 'Daily';
   const title = `${cadenceLabel}: ${shortMsg}`;
 
-  const summaryBase = buildAutomationSummary(person.name, cleanMessage, schedule);
+  const automationType = detectAutomationType(rawInstruction);
+  const summaryBase = buildAutomationSummary(person.name, cleanMessage, schedule, automationType);
 
   return {
     assigneeId: person.id,
@@ -315,6 +341,7 @@ export function buildVoiceAutomationInput(
     cadenceValue,
     title,
     summary: summaryBase,
+    automationType,
   };
 }
 
@@ -322,19 +349,21 @@ function buildAutomationSummary(
   personName: string,
   message: string,
   schedule: RecurringSchedule,
+  automationType: AutomationType = 'delegation',
 ): string {
   const shortMsg = message.length > 60 ? message.slice(0, 60).trimEnd() + '…' : message;
+  const verb = automationType === 'message' ? "I'll message" : "I'll ask";
 
   if (schedule.schedule === 'every_n_days' && schedule.intervalDays) {
     const unit = schedule.intervalDays === 1 ? 'day' : 'days';
     return (
-      `Automation set. I'll ask ${personName} every ${schedule.intervalDays} ${unit}: ` +
+      `Automation set. ${verb} ${personName} every ${schedule.intervalDays} ${unit}: ` +
       `"${shortMsg}". You can manage it in Automations.`
     );
   }
   if (schedule.schedule === 'daily') {
     return (
-      `Automation set. I'll ask ${personName} daily: "${shortMsg}". ` +
+      `Automation set. ${verb} ${personName} daily: "${shortMsg}". ` +
       `You can manage it in Automations.`
     );
   }
@@ -344,7 +373,7 @@ function buildAutomationSummary(
         WEEKDAY_NAMES[schedule.scheduleDay].slice(1)
       : 'weekly';
   return (
-    `Automation set. I'll ask ${personName} every ${dayName}: "${shortMsg}". ` +
+    `Automation set. ${verb} ${personName} every ${dayName}: "${shortMsg}". ` +
     `You can manage it in Automations.`
   );
 }

@@ -19,6 +19,7 @@ interface AutomationRow {
   title: string;
   instruction: string;
   assignee_id: string | null;
+  automation_type: "delegation" | "message";
   cadence_type: "daily" | "weekly" | "every_n_days" | "monthly" | "once";
   cadence_value: { n?: number } | null;
   next_run_at: string | null;
@@ -966,12 +967,18 @@ function AutomationCard({
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1 space-y-1">
 
-          {/* Title + Automation badge */}
+          {/* Title + type badge + paused badge */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-ink leading-snug">{automation.title}</span>
-            <span className="rounded-full bg-sage/15 px-2 py-0.5 text-[11px] font-medium text-sage">
-              Automation
-            </span>
+            {automation.automation_type === "message" ? (
+              <span className="rounded-full bg-blush/20 px-2 py-0.5 text-[11px] font-medium text-blush">
+                Message
+              </span>
+            ) : (
+              <span className="rounded-full bg-sage/15 px-2 py-0.5 text-[11px] font-medium text-sage">
+                Automation
+              </span>
+            )}
             {isPaused && (
               <span className="rounded-full bg-stone/40 px-2 py-0.5 text-[11px] font-medium text-ink/50">
                 Paused

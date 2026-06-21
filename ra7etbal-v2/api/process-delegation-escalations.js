@@ -1348,6 +1348,13 @@ async function processAutomation({ automation, supabaseUrl, serviceKey, appBaseU
 
   const runId = run.id;
 
+  // ── Message automation branch ─────────────────────────────────────────────
+  // No task, no confirmation link, no follow-up. Send ra7etbal_routine_message
+  // directly and advance. Delegation path continues below.
+  if (automation.automation_type === 'message') {
+    return await processMessageAutomation({ automation, supabaseUrl, serviceKey, runId, now });
+  }
+
   // ── Step 2: Resolve assignee ──────────────────────────────────────────────
   let assignee = null;
   if (automation.assignee_id) {
@@ -1466,6 +1473,132 @@ async function processAutomation({ automation, supabaseUrl, serviceKey, appBaseU
   // ── Step 6: Advance next_run_at / stop ────────────────────────────────────
   await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
 
+  return 'ok';
+}
+
+/**
+ * Process a message-type automation.
+ * Sends ra7etbal_routine_message directly to the assignee — no task, no confirmation link.
+ */
+async function processMessageAutomation({ automation, supabaseUrl, serviceKey, runId, now }) {
+  const accessToken      = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId    = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const templateName     = (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || '').trim();
+  const templateLanguage = (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
+
+  if (!templateName || !accessToken || !phoneNumberId) {
+    console.warn('[automations] message: WhatsApp or template not configured — skipping', {
+      automationId: automation.id,
+      hasTemplate: Boolean(templateName),
+    });
+    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+      current_state:  'failed',
+      failure_reason: 'WHATSAPP_ROUTINE_MESSAGE_TEMPLATE or WhatsApp credentials not set.',
+    });
+    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+    return 'failed';
+  }
+
+  if (!automation.assignee_id) {
+    console.warn('[automations] message: no assignee_id — cannot send', { automationId: automation.id });
+    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+      current_state:  'failed',
+      failure_reason: 'Message automation has no assignee.',
+    });
+    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+    return 'failed';
+  }
+
+  const person = await resolvePersonById(supabaseUrl, serviceKey, automation.user_id, automation.assignee_id);
+  if (!person?.phone) {
+    console.warn('[automations] message: person not found or no phone', {
+      automationId: automation.id,
+      assigneeId:   automation.assignee_id,
+    });
+    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+      current_state:  'failed',
+      failure_reason: 'Assignee not found or has no phone number.',
+    });
+    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+    return 'failed';
+  }
+
+  let digits = String(person.phone).replace(/[^\d]/g, '');
+  if (digits.startsWith('00')) digits = digits.slice(2);
+  if (digits.length < 7) {
+    console.warn('[automations] message: phone could not be normalised', { automationId: automation.id });
+    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+      current_state:  'failed',
+      failure_reason: 'Phone number could not be normalised.',
+    });
+    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+    return 'failed';
+  }
+
+  const metaUrl = `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`;
+  const metaPayload = {
+    messaging_product: 'whatsapp',
+    recipient_type:    'individual',
+    to:                digits,
+    type:              'template',
+    template: {
+      name:     templateName,
+      language: { code: templateLanguage },
+      components: [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: automation.instruction },
+          ],
+        },
+      ],
+    },
+  };
+
+  console.log('[automations] message: sending', {
+    automationId:  automation.id,
+    templateName,
+    recipientName: person.name,
+    messageLength: automation.instruction.length,
+  });
+
+  try {
+    const metaRes = await fetch(metaUrl, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(metaPayload),
+    });
+
+    if (metaRes.ok) {
+      await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+        current_state: 'sent',
+        sent_at:       now.toISOString(),
+      });
+      console.log('[automations] message: sent', { automationId: automation.id, recipient: person.name });
+    } else {
+      const errBody = await metaRes.json().catch(() => ({}));
+      console.error('[automations] message: Meta API error', {
+        automationId: automation.id,
+        status:       metaRes.status,
+        error:        errBody?.error?.message,
+      });
+      await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+        current_state:  'failed',
+        failure_reason: `Meta API error (${metaRes.status}): ${errBody?.error?.message ?? 'unknown'}`,
+      });
+    }
+  } catch (err) {
+    console.error('[automations] message: fetch threw', { automationId: automation.id, error: err?.message });
+    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+      current_state:  'failed',
+      failure_reason: `Fetch threw: ${err?.message ?? 'unknown'}`,
+    });
+  }
+
+  await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
   return 'ok';
 }
 

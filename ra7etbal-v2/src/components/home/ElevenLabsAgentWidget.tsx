@@ -1067,7 +1067,7 @@ export default function ElevenLabsAgentWidget({
                 console.warn("[automation:SEND_DELEGATION_NO_INPUT]", { routineInstruction });
                 return null;
               }
-              const { assigneeId, cleanMessage, cadenceType, cadenceValue, title, summary } = input;
+              const { assigneeId, cleanMessage, cadenceType, cadenceValue, title, summary, automationType } = input;
 
               const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
               const [hh, mm] = (cadenceValue.time as string).split(":").map(Number);
@@ -1085,6 +1085,7 @@ export default function ElevenLabsAgentWidget({
                   cadence_value: cadenceValue, next_run_at: nextRunAt, timezone: tz,
                   assignee_id: assigneeId, created_by: "carson",
                   proof_required: false, proof_type: null,
+                  automation_type: automationType,
                 }),
               });
               if (!res.ok) {
@@ -2242,12 +2243,13 @@ export default function ElevenLabsAgentWidget({
                 const input = buildVoiceAutomationInput(routineInstruction, sched, people);
 
                 if (!input) {
-                  // No person matched — likely a personal message automation (Phase 2).
-                  console.warn("[automation:NO_PERSON] message-only automation not yet supported", { routineInstruction });
-                  return "I understood this as a recurring message, but I could not find a staff member in your contacts to assign it to. Personal message automations will be supported in a future update. Check the person's name in People and try again.";
+                  // No person matched — cannot send WhatsApp without a recipient.
+                  console.warn("[automation:NO_PERSON] no person found in instruction", { routineInstruction });
+                  return "I could not find a person in your contacts for that recurring instruction. Check their name in People and try again.";
                 }
 
-                const { assigneeId, cleanMessage, cadenceType, cadenceValue, title, summary } = input;
+                const { assigneeId, cleanMessage, cadenceType, cadenceValue, title, summary, automationType } = input;
+                console.log("[automation:TYPE]", { automationType, title });
 
                 const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
                 const [hh, mm] = (cadenceValue.time as string).split(":").map(Number);
@@ -2265,6 +2267,7 @@ export default function ElevenLabsAgentWidget({
                     cadence_value: cadenceValue, next_run_at: nextRunAt, timezone: tz,
                     assignee_id: assigneeId, created_by: "carson",
                     proof_required: false, proof_type: null,
+                    automation_type: automationType,
                   }),
                 });
 

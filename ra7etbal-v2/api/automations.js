@@ -21,12 +21,14 @@ const VALID_CADENCE_TYPES = ['once', 'daily', 'weekly', 'every_n_days', 'monthly
 const VALID_PROOF_TYPES   = ['photo', 'confirmation', 'text'];
 const VALID_STATUSES      = ['active', 'paused', 'stopped', 'archived'];
 
+const VALID_AUTOMATION_TYPES = ['delegation', 'message'];
+
 const ALLOWED_UPDATE_FIELDS = new Set([
   'title', 'instruction', 'assignee_id',
   'cadence_type', 'cadence_value', 'timezone', 'next_run_at',
   'proof_required', 'proof_type',
   'followup_after_min', 'escalate_after_min',
-  'status', 'paused_reason',
+  'status', 'paused_reason', 'automation_type',
 ]);
 
 // Sort order: active → paused → stopped → archived
@@ -165,6 +167,13 @@ async function handlePost(req, res) {
     });
   }
 
+  const automation_type = body.automation_type ?? 'delegation';
+  if (!VALID_AUTOMATION_TYPES.includes(automation_type)) {
+    return res.status(400).json({
+      error: `automation_type must be one of: ${VALID_AUTOMATION_TYPES.join(', ')}.`,
+    });
+  }
+
   const followup_after_min  = body.followup_after_min  ?? 120;
   const escalate_after_min  = body.escalate_after_min  ?? 360;
 
@@ -196,6 +205,7 @@ async function handlePost(req, res) {
     escalate_after_min,
     status:             'active',
     created_by:         body.created_by ?? 'carson',
+    automation_type,
   };
 
   const insertRes = await sbFetch(
