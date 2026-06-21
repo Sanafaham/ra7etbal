@@ -287,22 +287,89 @@ export function detectAutomationType(instruction: string): AutomationType {
 
 const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// ── Message content extraction ────────────────────────────────────────────────
+// Used for automation_type=message automations — strips routing prefix, cadence,
+// time expression, and "and tell me/her" connectors to leave only the message body.
+
+function buildMessageRoutingRe(personName: string): RegExp {
+  const escaped = personName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Matches: "text Grace", "message Grace", "tell Grace", "send Grace a message"
+  return new RegExp(
+    `^\\s*(?:text|message|msg|tell)\\s+${escaped}\\b[,\\s]*` +
+      `|^\\s*send\\s+${escaped}\\s+a\\s+message\\b[,\\s]*`,
+    'i',
+  );
+}
+
+const TIME_PHRASE_RE = /\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/gi;
+const AND_TELL_RE = /\band\s+(?:tell|say(?:\s+to)?)\s+(?:me|her|him|them|us|you)\b[,\s]*/gi;
+
+/**
+ * Strips routing prefix ("Text Grace"), cadence language, time expressions,
+ * and "and tell her/me" connectors to extract only the message body text.
+ *
+ * Example:
+ *   "Text Sana every day at 5:30 PM and tell me, 'This is a test.'"
+ *   → "This is a test."
+ */
+function extractMessageContent(rawInstruction: string, personName: string): string {
+  let msg = rawInstruction;
+
+  // 1. Strip routing prefix ("Text Grace", "Message Loulya", etc.)
+  msg = msg.replace(buildMessageRoutingRe(personName), '');
+
+  // 2. Strip cadence language ("every day", "daily", "every morning", etc.)
+  msg = msg.replace(RECURRING_CLEAN_RE, '');
+
+  // 3. Strip time expressions ("at 5:30 PM", "at 9 AM")
+  msg = msg.replace(TIME_PHRASE_RE, '');
+
+  // 4. Strip "and tell me/her/him" connectors
+  msg = msg.replace(AND_TELL_RE, '');
+
+  // 5. Strip surrounding quotes, leading commas/connectors
+  msg = msg.replace(/^[,\s"']+|[,\s"']+$/g, '').trim();
+  msg = msg.replace(/^(and|that|,)\s+/i, '').trim();
+
+  // 6. Capitalise first letter
+  if (msg.length > 0) {
+    msg = msg.charAt(0).toUpperCase() + msg.slice(1);
+  }
+
+  return msg;
+}
+
 /**
  * Builds a structured automation payload from a voice instruction.
  * Returns null when no person is found (e.g. personal message — Phase 2).
  *
- * Pass `resolvedPerson` when the caller already knows the person (e.g. sendDelegation).
+ * @param rawInstruction   The cadence-matched source (used for person + time extraction).
+ * @param schedule         Detected recurring schedule.
+ * @param people           Full people list for person lookup.
+ * @param resolvedPerson   Pre-resolved person (sendDelegation already knows them).
+ * @param originalInstruction  Full original user utterance — used for automation_type
+ *                             detection so a cadence fragment does not strip the trigger word.
  */
 export function buildVoiceAutomationInput(
   rawInstruction: string,
   schedule: RecurringSchedule,
   people: Person[],
   resolvedPerson?: Person,
+  originalInstruction?: string,
 ): VoiceAutomationInput | null {
   const person = resolvedPerson ?? findPersonInInstruction(rawInstruction, people);
   if (!person) return null;
 
-  const cleanMessage = extractCleanTaskMessage(rawInstruction, person.name);
+  // Detect type from the full original utterance so a cadence-only fragment does not
+  // strip the trigger word ("text", "message", "tell") before detection runs.
+  const automationType = detectAutomationType(originalInstruction ?? rawInstruction);
+
+  // Message automations extract the message body from the original utterance;
+  // delegation automations strip cadence + routing prefix from the cadence source.
+  const cleanMessage =
+    automationType === 'message'
+      ? extractMessageContent(originalInstruction ?? rawInstruction, person.name)
+      : extractCleanTaskMessage(rawInstruction, person.name);
   if (!cleanMessage) return null;
 
   const scheduleTime = extractTimeFromInstruction(rawInstruction) ?? '09:00';
@@ -330,7 +397,6 @@ export function buildVoiceAutomationInput(
         : 'Daily';
   const title = `${cadenceLabel}: ${shortMsg}`;
 
-  const automationType = detectAutomationType(rawInstruction);
   const summaryBase = buildAutomationSummary(person.name, cleanMessage, schedule, automationType);
 
   return {

@@ -1062,7 +1062,8 @@ export default function ElevenLabsAgentWidget({
           recurringSchedules.map(async (sched) => {
             try {
               // Person is already resolved by sendDelegation — pass it directly.
-              const input = buildVoiceAutomationInput(routineInstruction, sched, people, person);
+              // routineInstruction IS the verbatim cadence source here; use it for type detection too.
+              const input = buildVoiceAutomationInput(routineInstruction, sched, people, person, routineInstruction);
               if (!input) {
                 console.warn("[automation:SEND_DELEGATION_NO_INPUT]", { routineInstruction });
                 return null;
@@ -2240,7 +2241,10 @@ export default function ElevenLabsAgentWidget({
             recurringSchedules.map(async (sched) => {
               try {
                 console.log("[automation:CREATE]", { sched, peopleCount: people.length });
-                const input = buildVoiceAutomationInput(routineInstruction, sched, people);
+                // Pass the full Carson tool param as originalInstruction so detectAutomationType
+                // sees "message Loulya every morning…" rather than a cadence-only fragment.
+                const originalInstr = instruction?.trim() || routineInstruction;
+                const input = buildVoiceAutomationInput(routineInstruction, sched, people, undefined, originalInstr);
 
                 if (!input) {
                   // No person matched — cannot send WhatsApp without a recipient.
