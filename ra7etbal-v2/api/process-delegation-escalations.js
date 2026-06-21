@@ -1337,10 +1337,12 @@ async function processAutomation({ automation, supabaseUrl, serviceKey, appBaseU
   const run = Array.isArray(insertedRuns) && insertedRuns.length > 0 ? insertedRuns[0] : null;
   if (!run) {
     // Empty array = duplicate — this cycle was already handled.
-    console.log('[automations] duplicate run detected, skipping', {
+    // Advance next_run_at so the stale run_for value does not block every future tick.
+    console.log('[automations] duplicate run detected — advancing next_run_at to unblock', {
       automationId: automation.id,
       runFor,
     });
+    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
     return 'skipped';
   }
 
