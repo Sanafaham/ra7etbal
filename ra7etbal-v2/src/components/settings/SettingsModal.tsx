@@ -251,6 +251,14 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
           setView("confirm-clear");
         }}
         onClickDelegationRules={() => setView("delegation-rules")}
+        onClickPrivacy={() => {
+          onClose();
+          navigate("/privacy");
+        }}
+        onClickTerms={() => {
+          onClose();
+          navigate("/terms");
+        }}
         onClickDebug={() => {
           onClose();
           navigate("/debug");
@@ -276,6 +284,8 @@ function SettingsList({
   onClickArchive,
   onClickClear,
   onClickDelegationRules,
+  onClickPrivacy,
+  onClickTerms,
   onClickDebug,
 }: {
   userId: string | null;
@@ -291,6 +301,8 @@ function SettingsList({
   onClickArchive: () => void;
   onClickClear: () => void;
   onClickDelegationRules: () => void;
+  onClickPrivacy: () => void;
+  onClickTerms: () => void;
   onClickDebug: () => void;
 }) {
   return (
@@ -336,6 +348,11 @@ function SettingsList({
           </span>
           <span aria-hidden className="text-ink/30">›</span>
         </button>
+      </Group>
+
+      <Group label="Legal">
+        <ActionRow label="Privacy Policy" onClick={onClickPrivacy} />
+        <ActionRow label="Terms of Service" onClick={onClickTerms} />
       </Group>
 
       <Group label="Dev">
