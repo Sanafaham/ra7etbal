@@ -135,7 +135,7 @@ async function findPersonByPhone({ supabaseUrl, serviceKey, rawPhone }) {
   const suffix = digits.slice(-9); // last 9 digits are unique enough
 
   const response = await fetch(
-    `${supabaseUrl}/rest/v1/people?select=id,user_id,name,phone&whatsapp_opted_in=neq.null`,
+    `${supabaseUrl}/rest/v1/people?select=id,user_id,name,phone`,
     {
       headers: {
         apikey:        serviceKey,
@@ -322,16 +322,6 @@ function verifyWebhook(req, res) {
   const mode        = req.query?.['hub.mode'];
   const token       = req.query?.['hub.verify_token'];
   const challenge   = req.query?.['hub.challenge'];
-
-  // Temporary diagnostic — lengths only, no secret values
-  console.log('WhatsApp webhook verify diagnostic', {
-    envTokenExists:    Boolean(verifyToken),
-    envTokenLength:    verifyToken ? verifyToken.length : 0,
-    incomingTokenLength: token ? token.length : 0,
-    tokensMatch:       token === verifyToken,
-    modeIsSubscribe:   mode === 'subscribe',
-    challengeExists:   Boolean(challenge),
-  });
 
   if (!verifyToken) {
     console.error('WhatsApp webhook verify token is not configured');
