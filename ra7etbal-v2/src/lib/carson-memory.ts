@@ -70,12 +70,21 @@ export async function loadRecentMemory(limit = 20): Promise<string> {
     return "No previous sessions.";
   }
 
-  // data arrives newest-first from the query; keep that order so we can label
-  // the first row (index 0) as "Most recent session" before reversing.
-  const labeled = data.map((row, idx) => {
+  // Two kinds of rows live here:
+  //   • "Session recap" rows (prefix below) = the ACTUAL previous session,
+  //     saved every disconnect regardless of durability.
+  //   • Durable memory rows (Routine/Correction/Preference/Person/…) = stable
+  //     facts, saved only when the durable gate passes.
+  // Label them distinctly so Carson never mistakes a 2-day-old durable fact
+  // for "our last conversation". The newest recap row owns "Most recent
+  // session"; everything else is labelled by kind.
+  const RECAP_PREFIX = "• Session recap:";
+  const isRecap = (s: string) => s.trimStart().startsWith(RECAP_PREFIX);
+  // data arrives newest-first; the first recap row is the true latest session.
+  const newestRecapAt = data.find((r) => isRecap(r.summary))?.created_at ?? null;
+
+  const labeled = data.map((row) => {
     // Local date AND time so Carson can answer "what time was that session?".
-    // Previously only month+day was shown, so the clock time — though stored
-    // in created_at — never reached Carson.
     const when = new Date(row.created_at).toLocaleString(undefined, {
       month: "short",
       day: "numeric",
@@ -83,7 +92,15 @@ export async function loadRecentMemory(limit = 20): Promise<string> {
       minute: "2-digit",
     });
     const summary = row.summary.trim().replace(/\n{3,}/g, "\n");
-    const label = idx === 0 ? `[Most recent session — ${when}]` : `[Earlier session — ${when}]`;
+    let label: string;
+    if (isRecap(row.summary)) {
+      label =
+        row.created_at === newestRecapAt
+          ? `[Most recent session — ${when}]`
+          : `[Earlier session — ${when}]`;
+    } else {
+      label = `[Durable memory — ${when}]`;
+    }
     return `${label}\n${summary}`;
   });
 

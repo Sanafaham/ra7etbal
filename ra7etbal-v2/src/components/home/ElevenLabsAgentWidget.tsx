@@ -11,7 +11,7 @@ import { saveCarsonNote, loadRecentNotes, type CarsonNote } from "../../lib/cars
 import { filterCalendarEventsByRange } from "../../lib/calendar";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
-import { summarizeConversation, isSummaryWorthSaving, type TranscriptMessage } from "../../lib/carson-summarize";
+import { summarizeConversation, summarizeSessionRecap, isSummaryWorthSaving, SESSION_RECAP_PREFIX, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
@@ -2716,6 +2716,20 @@ export default function ElevenLabsAgentWidget({
               saveSessionMemory(conversationSummary).catch(() => {
                 // Non-fatal — don't surface to user.
               });
+            }
+
+            // Always save a lightweight session-recap row (prefixed so it's
+            // distinct from durable memory) so Carson knows the ACTUAL most
+            // recent session even when nothing durable was saved. Saved AFTER
+            // the durable row so its timestamp is the newest. Does not weaken
+            // the durable gate above.
+            try {
+              const recap = await summarizeSessionRecap(transcript);
+              if (recap) {
+                await saveSessionMemory(`${SESSION_RECAP_PREFIX} ${recap}`);
+              }
+            } catch {
+              // Non-fatal — don't surface to user.
             }
           })();
         },

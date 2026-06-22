@@ -62,6 +62,71 @@ export function isSummaryWorthSaving(summary: string): boolean {
   return durableSingleBullet;
 }
 
+/** Prefix that marks a carson_memory row as a session recap (not durable fact). */
+export const SESSION_RECAP_PREFIX = "• Session recap:";
+
+/**
+ * Produce a single-sentence topical recap of a session — saved on EVERY voice
+ * disconnect (with enough turns) regardless of whether anything durable was
+ * found. This is what lets Carson answer "what did we talk about last session?"
+ * even when the durable-memory gate correctly saves nothing.
+ *
+ * Does NOT touch the durable gate. Returns one short sentence (no prefix), or
+ * null when the session was too short. Falls back to the first user utterance
+ * if the LLM call fails, so a real session always yields a recap.
+ */
+export async function summarizeSessionRecap(
+  transcript: TranscriptMessage[],
+): Promise<string | null> {
+  const userTurns = transcript.filter((m) => m.role === "user");
+  if (userTurns.length < MIN_USER_TURNS) return null;
+
+  // Heuristic fallback: first user utterance, trimmed to a short topic line.
+  const fallback = (() => {
+    const first = userTurns[0]?.message?.trim();
+    if (!first) return null;
+    const oneLine = first.replace(/\s+/g, " ");
+    return oneLine.length > 120 ? `${oneLine.slice(0, 117)}…` : oneLine;
+  })();
+
+  const transcriptText = transcript
+    .map((m) => `${m.role === "user" ? "User" : "Carson"}: ${m.message}`)
+    .join("\n");
+
+  const prompt = `Summarize what this conversation was about in ONE short sentence.
+Topic only — what the user and Carson discussed or did. Max 18 words.
+No preamble, no "the user", no quotes. Just the sentence.
+
+Transcript:
+${transcriptText}`;
+
+  let res: Response;
+  try {
+    res = await fetch("/api/anthropic", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5",
+        max_tokens: 60,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+  } catch {
+    return fallback;
+  }
+  if (!res.ok) return fallback;
+
+  let body: { content?: Array<{ type?: string; text?: string }> };
+  try {
+    body = await res.json();
+  } catch {
+    return fallback;
+  }
+
+  const text = body?.content?.[0]?.text?.trim();
+  return text && text !== NOTHING ? text.replace(/\s+/g, " ") : fallback;
+}
+
 /**
  * Summarise a conversation transcript into 3–7 short memory bullets.
  *
