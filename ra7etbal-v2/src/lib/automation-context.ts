@@ -79,7 +79,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   // ── Open runs (pending + escalated, last 48 h) ────────────────────────────
   const { data: openRuns } = await supabase
     .from("automation_runs")
-    .select("automation_id, current_state, sent_at, confirmed_at, escalated_at, automations!inner(title)")
+    .select("automation_id, current_state, sent_at, confirmed_at, escalated_at, automations!inner(title, automation_type)")
     .in("current_state", ["sent", "followup_sent", "escalated"])
     .gte("sent_at", window48hAgo)
     .order("sent_at", { ascending: false })
@@ -160,7 +160,13 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   const openRunsTyped = (openRuns ?? []) as Record<string, unknown>[];
 
   const pending = openRunsTyped
-    .filter((r) => r.current_state === "sent" || r.current_state === "followup_sent")
+    .filter((r) => {
+      const automation = r.automations as { automation_type?: string } | null;
+      return (
+        automation?.automation_type !== "message" &&
+        (r.current_state === "sent" || r.current_state === "followup_sent")
+      );
+    })
     .map((r) => toRunSummary(r));
 
   const escalated = openRunsTyped

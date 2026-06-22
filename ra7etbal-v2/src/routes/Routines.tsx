@@ -886,9 +886,26 @@ type StateConfig = {
   border: string;     // card left-border accent class
 };
 
-function resolveStateConfig(state: string | null): StateConfig {
+function resolveStateConfig(
+  state: string | null,
+  automationType: AutomationRow["automation_type"],
+): StateConfig {
   switch (state) {
     case "sent":
+      if (automationType === "message") {
+        return {
+          label: "Sent",
+          dot:   "bg-sage",
+          text:  "text-sage",
+          border: "border-l-sage/40",
+        };
+      }
+      return {
+        label: "Waiting for confirmation",
+        dot:   "bg-amber-400",
+        text:  "text-amber-600",
+        border: "border-l-amber-300",
+      };
     case "task_created":
       return {
         label: "Waiting for confirmation",
@@ -958,7 +975,7 @@ function AutomationCard({
       })
     : null;
 
-  const state = resolveStateConfig(latestState);
+  const state = resolveStateConfig(latestState, automation.automation_type);
   const isActive = automation.status === "active";
   const isPaused = automation.status === "paused";
 
