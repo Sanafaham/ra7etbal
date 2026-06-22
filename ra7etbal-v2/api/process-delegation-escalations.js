@@ -367,6 +367,7 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
         messageText,
         confirmationLink: confirmation_url,
         taskId,
+        sourceType: 'followup',
         recipientName: assigned_to,
         ownerName,
       }),
@@ -658,7 +659,12 @@ async function runRoutinesCore({ supabaseUrl, serviceKey, appBaseUrl }) {
         executed = result === true;
 
       } else if (routine.type === 'message') {
-        const result = await executeMessageRoutine({ routine, supabaseUrl, serviceKey });
+        const result = await executeMessageRoutine({
+          routine,
+          supabaseUrl,
+          serviceKey,
+          appBaseUrl,
+        });
         if (result === 'missing_person') {
           // Don't disable — person might get a phone added later; just skip this tick.
           console.warn('[routines] message routine skipped (missing person or phone)', { routineId: routine.id });
@@ -907,6 +913,8 @@ async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appB
         messageText: message,
         confirmationLink: confirmationUrl,
         taskId,
+        routineId: routine.id,
+        sourceType: 'routine_delegation',
         recipientName: person.name,
         ownerName,
       }),
@@ -938,30 +946,15 @@ async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appB
  * Execute a message routine:
  *   1. Validate template config (WHATSAPP_ROUTINE_MESSAGE_TEMPLATE env var).
  *   2. Resolve person — skip (not disable) if person or phone missing.
- *   3. Call Meta Graph API directly with the routine message template.
+ *   3. Call the shared WhatsApp boundary with the routine message mode.
  *   4. NO task creation. NO confirmation link. Message sent verbatim.
  *
  * Returns true on successful Meta acceptance,
  *         'missing_person' if person/phone cannot be resolved,
  *         false on other failures (template missing, Meta error, etc).
  */
-async function executeMessageRoutine({ routine, supabaseUrl, serviceKey }) {
+async function executeMessageRoutine({ routine, supabaseUrl, serviceKey, appBaseUrl }) {
   const { user_id, payload, id: routineId, name: routineName } = routine;
-
-  // ── Guard: template must be configured ───────────────────────────────────
-  const accessToken      = process.env.WHATSAPP_ACCESS_TOKEN;
-  const phoneNumberId    = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  const templateName     = (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || '').trim();
-  const templateLanguage = (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
-
-  if (!templateName) {
-    console.warn('[routines] message: WHATSAPP_ROUTINE_MESSAGE_TEMPLATE not set — skipping', { routineId, routineName });
-    return false;
-  }
-  if (!accessToken || !phoneNumberId) {
-    console.warn('[routines] message: WhatsApp not configured (missing ACCESS_TOKEN or PHONE_NUMBER_ID) — skipping', { routineId });
-    return false;
-  }
 
   // ── Guard: payload must have person_id and non-empty message ─────────────
   const { person_id, message } = payload || {};
@@ -987,72 +980,57 @@ async function executeMessageRoutine({ routine, supabaseUrl, serviceKey }) {
     return 'missing_person';
   }
 
-  // ── Normalise phone (strip non-digits, remove leading 00) ────────────────
-  let digits = String(person.phone).replace(/[^\d]/g, '');
-  if (digits.startsWith('00')) digits = digits.slice(2);
-  const normalizedPhone = digits.length >= 7 ? digits : null;
-  if (!normalizedPhone) {
-    console.warn('[routines] message: phone number could not be normalised', { routineId, personName: person.name });
+  // Preserve the existing routine behavior: malformed phone numbers count as
+  // a missing recipient and skip this tick rather than becoming a send failure.
+  let normalizedPhone = String(person.phone).replace(/[^\d]/g, '');
+  if (normalizedPhone.startsWith('00')) normalizedPhone = normalizedPhone.slice(2);
+  if (normalizedPhone.length < 7) {
+    console.warn('[routines] message: phone number could not be normalised', {
+      routineId,
+      personName: person.name,
+    });
     return 'missing_person';
   }
-
-  // ── Send via Meta Graph API ───────────────────────────────────────────────
-  const metaUrl = `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`;
-  const metaPayload = {
-    messaging_product: 'whatsapp',
-    recipient_type: 'individual',
-    to: normalizedPhone,
-    type: 'template',
-    template: {
-      name: templateName,
-      language: { code: templateLanguage },
-      components: [
-        {
-          type: 'body',
-          parameters: [
-            { type: 'text', text: cleanMessage }, // {{1}} = message body
-          ],
-        },
-      ],
-    },
-  };
 
   console.log('[routines] message: sending', {
     routineId,
     routineName,
-    templateName,
-    templateLanguage,
     recipientName: person.name,
     messageLength: cleanMessage.length,
   });
 
   try {
-    const metaRes = await fetch(metaUrl, {
+    const messageRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
+        'x-ra7etbal-internal-secret': process.env.CRON_SECRET,
       },
-      body: JSON.stringify(metaPayload),
+      body: JSON.stringify({
+        to: normalizedPhone,
+        messageText: cleanMessage,
+        routineId,
+        sourceType: 'routine_message',
+        sendMode: 'routine_message',
+        recipientName: person.name,
+      }),
     });
+    const messageBody = await messageRes.json().catch(() => null);
 
-    const metaBody = await metaRes.json().catch(() => null);
-
-    if (!metaRes.ok) {
-      const rejection = {
-        status: metaRes.status,
-        metaCode: metaBody?.error?.code ?? null,
-        metaMessage: metaBody?.error?.message ?? null,
-        templateName,
-      };
-      console.error('[routines] message: Meta rejected the message', { routineId, ...rejection });
+    if (!messageRes.ok) {
+      console.error('[routines] message: shared boundary rejected the message', {
+        routineId,
+        status: messageRes.status,
+        error: messageBody?.errorMessage ?? messageBody?.error ?? null,
+        deliveryId: messageBody?.delivery_id ?? null,
+      });
       return false;
     }
 
-    const metaMessageId = Array.isArray(metaBody?.messages) ? metaBody.messages[0]?.id ?? null : null;
-    console.log('[routines] message: Meta accepted', {
+    console.log('[routines] message: shared boundary accepted', {
       routineId,
-      metaMessageId,
+      metaMessageId: messageBody?.messageId ?? null,
+      deliveryId: messageBody?.delivery_id ?? null,
       recipientName: person.name,
     });
 
@@ -1071,7 +1049,7 @@ async function executeMessageRoutine({ routine, supabaseUrl, serviceKey }) {
     return true;
 
   } catch (err) {
-    console.error('[routines] message: fetch to Meta threw', {
+    console.error('[routines] message: shared boundary fetch threw', {
       routineId,
       error: err?.message ?? String(err),
     });
@@ -1352,7 +1330,14 @@ async function processAutomation({ automation, supabaseUrl, serviceKey, appBaseU
   // No task, no confirmation link, no follow-up. Send ra7etbal_routine_message
   // directly and advance. Delegation path continues below.
   if (automation.automation_type === 'message') {
-    return await processMessageAutomation({ automation, supabaseUrl, serviceKey, runId, now });
+    return await processMessageAutomation({
+      automation,
+      supabaseUrl,
+      serviceKey,
+      appBaseUrl,
+      runId,
+      now,
+    });
   }
 
   // ── Step 2: Resolve assignee ──────────────────────────────────────────────
@@ -1415,6 +1400,8 @@ async function processAutomation({ automation, supabaseUrl, serviceKey, appBaseU
           messageText:     automation.instruction,
           confirmationLink: confirmationUrl,
           taskId,
+          automationRunId: runId,
+          sourceType:      'automation_delegation',
           recipientName:   assignee.name,
           ownerName,
         }),
@@ -1478,27 +1465,17 @@ async function processAutomation({ automation, supabaseUrl, serviceKey, appBaseU
 
 /**
  * Process a message-type automation.
- * Sends ra7etbal_routine_message directly to the assignee — no task, no confirmation link.
+ * Sends ra7etbal_routine_message through the shared boundary — no task,
+ * no confirmation link.
  */
-async function processMessageAutomation({ automation, supabaseUrl, serviceKey, runId, now }) {
-  const accessToken      = process.env.WHATSAPP_ACCESS_TOKEN;
-  const phoneNumberId    = process.env.WHATSAPP_PHONE_NUMBER_ID;
-  const templateName     = (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || '').trim();
-  const templateLanguage = (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
-
-  if (!templateName || !accessToken || !phoneNumberId) {
-    console.warn('[automations] message: WhatsApp or template not configured — skipping', {
-      automationId: automation.id,
-      hasTemplate: Boolean(templateName),
-    });
-    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
-      current_state:  'failed',
-      failure_reason: 'WHATSAPP_ROUTINE_MESSAGE_TEMPLATE or WhatsApp credentials not set.',
-    });
-    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
-    return 'failed';
-  }
-
+async function processMessageAutomation({
+  automation,
+  supabaseUrl,
+  serviceKey,
+  appBaseUrl,
+  runId,
+  now,
+}) {
   if (!automation.assignee_id) {
     console.warn('[automations] message: no assignee_id — cannot send', { automationId: automation.id });
     await patchAutomationRun(supabaseUrl, serviceKey, runId, {
@@ -1523,75 +1500,58 @@ async function processMessageAutomation({ automation, supabaseUrl, serviceKey, r
     return 'failed';
   }
 
-  let digits = String(person.phone).replace(/[^\d]/g, '');
-  if (digits.startsWith('00')) digits = digits.slice(2);
-  if (digits.length < 7) {
-    console.warn('[automations] message: phone could not be normalised', { automationId: automation.id });
-    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
-      current_state:  'failed',
-      failure_reason: 'Phone number could not be normalised.',
-    });
-    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
-    return 'failed';
-  }
-
-  const metaUrl = `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`;
-  const metaPayload = {
-    messaging_product: 'whatsapp',
-    recipient_type:    'individual',
-    to:                digits,
-    type:              'template',
-    template: {
-      name:     templateName,
-      language: { code: templateLanguage },
-      components: [
-        {
-          type: 'body',
-          parameters: [
-            { type: 'text', text: automation.instruction },
-          ],
-        },
-      ],
-    },
-  };
-
   console.log('[automations] message: sending', {
     automationId:  automation.id,
-    templateName,
     recipientName: person.name,
     messageLength: automation.instruction.length,
   });
 
   try {
-    const metaRes = await fetch(metaUrl, {
+    const messageRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
       method:  'POST',
       headers: {
-        'Content-Type':  'application/json',
-        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'x-ra7etbal-internal-secret': process.env.CRON_SECRET,
       },
-      body: JSON.stringify(metaPayload),
+      body: JSON.stringify({
+        to: person.phone,
+        messageText: automation.instruction,
+        automationRunId: runId,
+        sourceType: 'automation_message',
+        sendMode: 'routine_message',
+        recipientName: person.name,
+      }),
     });
+    const messageBody = await messageRes.json().catch(() => ({}));
 
-    if (metaRes.ok) {
+    if (messageRes.ok) {
       await patchAutomationRun(supabaseUrl, serviceKey, runId, {
         current_state: 'sent',
         sent_at:       now.toISOString(),
       });
-      console.log('[automations] message: sent', { automationId: automation.id, recipient: person.name });
-    } else {
-      const errBody = await metaRes.json().catch(() => ({}));
-      console.error('[automations] message: Meta API error', {
+      console.log('[automations] message: sent', {
         automationId: automation.id,
-        status:       metaRes.status,
-        error:        errBody?.error?.message,
+        recipient: person.name,
+        messageId: messageBody?.messageId ?? null,
+        deliveryId: messageBody?.delivery_id ?? null,
+      });
+    } else {
+      console.error('[automations] message: shared boundary error', {
+        automationId: automation.id,
+        status:       messageRes.status,
+        error:        messageBody?.errorMessage ?? messageBody?.error,
+        deliveryId:   messageBody?.delivery_id ?? null,
       });
       await patchAutomationRun(supabaseUrl, serviceKey, runId, {
         current_state:  'failed',
-        failure_reason: `Meta API error (${metaRes.status}): ${errBody?.error?.message ?? 'unknown'}`,
+        failure_reason: `WhatsApp send failed (${messageRes.status}): ${messageBody?.errorMessage ?? messageBody?.error ?? 'unknown'}`,
       });
     }
   } catch (err) {
-    console.error('[automations] message: fetch threw', { automationId: automation.id, error: err?.message });
+    console.error('[automations] message: shared boundary fetch threw', {
+      automationId: automation.id,
+      error: err?.message,
+    });
     await patchAutomationRun(supabaseUrl, serviceKey, runId, {
       current_state:  'failed',
       failure_reason: `Fetch threw: ${err?.message ?? 'unknown'}`,

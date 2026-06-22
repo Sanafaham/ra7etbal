@@ -35,9 +35,6 @@ export default async function handler(req, res) {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  // Task templates are approved in 'en' — independent of the global
-  // WHATSAPP_TEMPLATE_LANGUAGE env var (which is en_US for routine messages).
-  const templateLanguage = DEFAULT_TEMPLATE_LANGUAGE;
 
   const {
     to,
@@ -48,12 +45,30 @@ export default async function handler(req, res) {
     routineId,
     automationRunId,
     sourceType,
+    sendMode,
     recipientName,
     ownerName,
     imagePath,
     attachmentCount,
   } = req.body || {};
 
+  const isRoutineMessage = sendMode === 'routine_message';
+  if (isRoutineMessage) {
+    const expectedSecret = process.env.CRON_SECRET;
+    const providedSecret = req.headers?.['x-ra7etbal-internal-secret'];
+    if (!expectedSecret || providedSecret !== expectedSecret) {
+      return res.status(401).json({
+        success: false,
+        error: 'Unauthorized routine message request.',
+      });
+    }
+  }
+
+  // Task templates are approved in 'en'. Routine messages preserve their
+  // existing independently-approved language configuration.
+  const templateLanguage = isRoutineMessage
+    ? (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim()
+    : DEFAULT_TEMPLATE_LANGUAGE;
   const normalizedTo = normalizeWhatsAppPhone(to);
   const cleanOwnerName = String(ownerName || '').trim() || FALLBACK_OWNER_NAME;
   const attachmentCountN = typeof attachmentCount === 'number' ? attachmentCount : 0;
@@ -150,7 +165,7 @@ export default async function handler(req, res) {
   }
 
   const url = `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`;
-  if (!cleanLink) {
+  if (!isRoutineMessage && !cleanLink) {
     await markWhatsappDeliveryFailed({
       supabaseUrl,
       serviceKey,
@@ -165,6 +180,97 @@ export default async function handler(req, res) {
       errorMessage: 'Confirmation link is missing.',
       details: 'WhatsApp task templates require a confirmation link.',
     });
+  }
+
+  // ── Plain recurring message boundary ──────────────────────────────────────
+  // Preserves the existing ra7etbal_routine_message payload exactly:
+  // one body parameter, no task, no confirmation link, no SMS fallback.
+  if (isRoutineMessage) {
+    const routineTemplateName = (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || '').trim();
+    if (!routineTemplateName) {
+      await markWhatsappDeliveryFailed({
+        supabaseUrl,
+        serviceKey,
+        deliveryId,
+        failureStage: 'configuration',
+        reason: 'WHATSAPP_ROUTINE_MESSAGE_TEMPLATE is not configured.',
+      });
+      return res.status(500).json({
+        success: false,
+        delivery_id: deliveryId,
+        error: 'WhatsApp routine message template is not configured.',
+        errorMessage: 'WhatsApp routine message template is not configured.',
+      });
+    }
+
+    const routinePayload = buildRoutineMessagePayload({
+      to: normalizedTo,
+      message: cleanMessage,
+      templateName: routineTemplateName,
+      templateLanguage,
+    });
+
+    try {
+      const result = await sendMetaMessage({
+        url,
+        accessToken,
+        payload: routinePayload,
+      });
+
+      if (!result.ok) {
+        const failure = getMetaFailure(result);
+        await markWhatsappDeliveryFailed({
+          supabaseUrl,
+          serviceKey,
+          deliveryId,
+          failureStage: 'meta_api',
+          ...failure,
+          templateName: routineTemplateName,
+          metadata: { template_language: templateLanguage },
+        });
+        return sendFailure(res, result, null, deliveryId);
+      }
+
+      await markWhatsappDeliveryAccepted({
+        supabaseUrl,
+        serviceKey,
+        deliveryId,
+        metaMessageId: result.messageId,
+        templateName: routineTemplateName,
+        metadata: { template_language: templateLanguage },
+      });
+
+      return res.status(200).json({
+        success: true,
+        delivery_id: deliveryId,
+        sendMode: 'template',
+        sendType: 'template',
+        channel: 'whatsapp',
+        messageId: result.messageId,
+        to: normalizedTo,
+        acceptedAt: new Date().toISOString(),
+        phoneNumberIdLast4,
+        templateName: routineTemplateName,
+        templateLanguage,
+      });
+    } catch (err) {
+      await markWhatsappDeliveryFailed({
+        supabaseUrl,
+        serviceKey,
+        deliveryId,
+        failureStage: 'network',
+        reason: err instanceof Error ? err.message : String(err),
+        templateName: routineTemplateName,
+        metadata: { template_language: templateLanguage },
+      });
+      return res.status(500).json({
+        success: false,
+        delivery_id: deliveryId,
+        error: 'Could not send WhatsApp message.',
+        errorMessage: 'Could not send WhatsApp message.',
+        details: err instanceof Error ? err.message : 'Unexpected server error.',
+      });
+    }
   }
 
   // ── Template selection ────────────────────────────────────────────────────
@@ -593,6 +699,30 @@ export default async function handler(req, res) {
       details: err instanceof Error ? err.message : 'Unexpected server error.',
     });
   }
+}
+
+export function buildRoutineMessagePayload({
+  to,
+  message,
+  templateName,
+  templateLanguage,
+}) {
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: templateLanguage },
+      components: [
+        {
+          type: 'body',
+          parameters: [{ type: 'text', text: message }],
+        },
+      ],
+    },
+  };
 }
 
 async function sendMetaMessage({ url, accessToken, payload }) {
