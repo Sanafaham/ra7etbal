@@ -35,6 +35,7 @@ import { composeMergedMessage } from "../../lib/ai/compose-message";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
+import { recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { useAuthStore } from "../../stores/auth";
 import type { Person } from "../../types/person";
 import { usePeopleStore } from "../../stores/people";
@@ -2723,13 +2724,15 @@ export default function ElevenLabsAgentWidget({
         }) => {
           // Diagnostic: surface WHY the session ended (SDK reason: user | agent |
           // error) and whether a client tool was mid-flight at disconnect time.
-          console.warn("[carson-disconnect]", {
+          const disconnectInfo = {
             reason: details?.reason ?? "unknown",
             message: details?.message ?? null,
             context: details?.context ?? null,
             toolInFlight: toolInFlightRef.current,
             at: new Date().toISOString(),
-          });
+          };
+          console.warn("[carson-disconnect]", disconnectInfo);
+          recordCarsonDiagnostic("carson-disconnect", disconnectInfo);
 
           // Capture refs before any async work so they can be reset immediately.
           const userId = useAuthStore.getState().user?.id ?? null;
@@ -2832,12 +2835,14 @@ export default function ElevenLabsAgentWidget({
         onError: (msg, context?: unknown) => {
           // Diagnostic: log the error message + context before it is reduced to
           // UI state (which only shows when status flips to "error").
-          console.error("[carson-error]", {
+          const errorInfo = {
             message: msg ?? null,
             context: context ?? null,
             toolInFlight: toolInFlightRef.current,
             at: new Date().toISOString(),
-          });
+          };
+          console.error("[carson-error]", errorInfo);
+          recordCarsonDiagnostic("carson-error", errorInfo);
 
           // Keep error visible — user must tap to retry. No silent auto-dismiss.
           conversationRef.current = null;
@@ -2869,10 +2874,12 @@ export default function ElevenLabsAgentWidget({
         // registered (e.g. a dashboard tool name that doesn't match any client
         // tool). Directly surfaces tool-registration regressions.
         onUnhandledClientToolCall: (params?: unknown) => {
-          console.warn("[carson-unhandled-tool]", {
+          const unhandledInfo = {
             params: params ?? null,
             at: new Date().toISOString(),
-          });
+          };
+          console.warn("[carson-unhandled-tool]", unhandledInfo);
+          recordCarsonDiagnostic("carson-unhandled-tool", unhandledInfo);
         },
       });
       conversationRef.current = conv;
@@ -2900,11 +2907,13 @@ export default function ElevenLabsAgentWidget({
     // Diagnostic: attribute which client-side path tore the session down. Only
     // logs when an active session actually existed.
     if (conversationRef.current) {
-      console.warn("[carson-teardown]", {
+      const teardownInfo = {
         cause: teardownReason,
         toolInFlight: toolInFlightRef.current,
         at: new Date().toISOString(),
-      });
+      };
+      console.warn("[carson-teardown]", teardownInfo);
+      recordCarsonDiagnostic("carson-teardown", teardownInfo);
       conversationRef.current.endSession();
       conversationRef.current = null;
     }

@@ -8,6 +8,7 @@ import Updates from "./routes/Updates";
 import Auth from "./routes/Auth";
 import Confirm from "./routes/Confirm";
 import Debug from "./routes/Debug";
+import CarsonDebugOverlay from "./routes/CarsonDebug";
 import FollowUps from "./routes/FollowUps";
 import History from "./routes/History";
 import Home from "./routes/Home";
@@ -371,6 +372,11 @@ export default function App() {
       {/* ── Main content ────────────────────────────────────────────────── */}
       <main className="mx-auto mt-3 max-w-3xl px-5" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 80px)" }}>
         <ConfirmationNotices />
+
+        {/* Hidden Carson diagnostics — self-gates on /debug/carson or
+            ?carsonDebug=1; returns null for all normal users. Remove with
+            carson-diagnostics.ts when no longer needed. */}
+        <CarsonDebugOverlay />
 
         <Routes>
           <Route path="/" element={<HomeRoute />} />
