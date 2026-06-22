@@ -3,6 +3,7 @@ import {
   formatRecentMemory,
   isRecapRow,
   RECAP_PREFIX,
+  SESSION_HISTORY_HEADER,
 } from "./carson-memory-format";
 
 /**
@@ -13,8 +14,20 @@ import {
  * of Carson silently reporting a stale durable fact as "our last session".
  */
 describe("carson-memory recap labelling", () => {
-  it("empty list yields the safe fallback string", () => {
-    expect(formatRecentMemory([])).toBe("No previous sessions.");
+  it("empty list yields the routing rule and safe fallback string", () => {
+    expect(formatRecentMemory([])).toBe(
+      `${SESSION_HISTORY_HEADER}\n\nNo previous sessions.`,
+    );
+  });
+
+  it("always tells Carson to use recaps only for session-history questions", () => {
+    const out = formatRecentMemory([
+      { created_at: "2026-06-22T02:32:14Z", summary: `${RECAP_PREFIX} tested memory recall` },
+    ]);
+    expect(out).toContain("SESSION HISTORY ONLY:");
+    expect(out).toContain(
+      "Never use durable memory, saved notes, people, tasks, routines, or completions as session history.",
+    );
   });
 
   it("recognises a recap row by prefix", () => {
@@ -33,19 +46,17 @@ describe("carson-memory recap labelling", () => {
     // The recap text must be present and attached to the Most-recent label.
     const block = out.split("\n\n").find((b) => b.includes("[Most recent session"));
     expect(block).toContain("tested memory recall");
+    expect(out).not.toContain("Grace photographs the fridge");
   });
 
-  it("never labels a durable row as a session, even when it is the globally newest row", () => {
-    // Durable fact saved AFTER the recap (later timestamp) must still be
-    // "Durable memory", and the older recap must still own "Most recent session".
+  it("excludes durable rows even when they are globally newer than the latest recap", () => {
     const out = formatRecentMemory([
       { created_at: "2026-06-22T10:00:00Z", summary: "• Routine: newest durable fact" },
       { created_at: "2026-06-22T02:32:14Z", summary: `${RECAP_PREFIX} the real last conversation` },
     ]);
-    const durableBlock = out.split("\n\n").find((b) => b.includes("newest durable fact"));
     const recapBlock = out.split("\n\n").find((b) => b.includes("the real last conversation"));
-    expect(durableBlock).toContain("[Durable memory —");
-    expect(durableBlock).not.toContain("Most recent session");
+    expect(out).not.toContain("newest durable fact");
+    expect(out).not.toContain("[Durable memory —");
     expect(recapBlock).toContain("[Most recent session —");
   });
 
@@ -64,7 +75,7 @@ describe("carson-memory recap labelling", () => {
     ]);
     // Time component renders as h:mm with an AM/PM or a colon — assert a colon
     // is present inside the label so the date-only regression can't return.
-    const label = out.split("\n")[0];
+    const label = out.split("\n").find((line) => line.startsWith("[Most recent session"));
     expect(label).toMatch(/\d:\d{2}/);
   });
 });

@@ -15,6 +15,7 @@
 import { supabase } from "./supabase";
 import {
   formatRecentMemory,
+  RECAP_PREFIX,
   type CarsonMemoryRow,
 } from "./carson-memory-format";
 
@@ -52,26 +53,27 @@ export async function saveSessionMemory(summary: string): Promise<void> {
  * Load the last N session summaries for the signed-in user, formatted as a
  * ready-to-inject string for the `recent_memory` dynamic variable.
  *
- * Returns "No previous sessions." when the table is empty or on error so
- * the dynamic variable always has a safe value.
+ * Only session-recap rows are loaded. Durable rows remain in the database and
+ * continue to be available through their dedicated memory paths.
  */
 export async function loadRecentMemory(limit = 20): Promise<string> {
   const { data, error } = await supabase
     .from("carson_memory")
     .select("created_at, summary")
+    .like("summary", `${RECAP_PREFIX}%`)
     .order("created_at", { ascending: false })
     .limit(limit);
 
   if (error) {
     console.error("[carson-memory] loadRecentMemory failed:", error.message);
-    return "No previous sessions.";
+    return formatRecentMemory([]);
   }
 
   if (!data || data.length === 0) {
     if (import.meta.env.DEV) {
       console.info("[carson-memory] loaded rows=0 textLength=0");
     }
-    return "No previous sessions.";
+    return formatRecentMemory([]);
   }
 
   const memoryText = formatRecentMemory(data as CarsonMemoryRow[]);
