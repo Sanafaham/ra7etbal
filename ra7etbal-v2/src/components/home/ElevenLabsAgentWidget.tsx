@@ -2,6 +2,7 @@ import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { resizeImage, uploadTaskImage } from "../../lib/image-upload";
+import { saveTaskAttachments } from "../../lib/save";
 import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
@@ -197,6 +198,13 @@ interface DelegationSendOptions {
    * When non-null, send-whatsapp-task uses ra7etbal_task_image automatically.
    */
   imageFile?: File | null;
+  /**
+   * All photos attached to this delegation (up to 5). When length > 1 the
+   * extras are uploaded to task_attachments, attachment_count is set, and the
+   * WhatsApp send switches to the ra7etbal_task_v3 text template with an
+   * inline attachment note (no image header). imageFiles[0] mirrors imageFile.
+   */
+  imageFiles?: File[] | null;
 }
 
 /**
@@ -245,6 +253,7 @@ async function createAndSendDelegation({
   personalNote,
   ownerName,
   imageFile,
+  imageFiles,
 }: DelegationSendOptions): Promise<DelegationSendResult> {
   // Always build the base message with buildDelegationMessage so personality
   // notes (bossy, reliable, etc.) are applied consistently — never skip this
@@ -310,12 +319,20 @@ async function createAndSendDelegation({
   const taskRowId = crypto.randomUUID();
   const confirmationUrl = `${window.location.origin}/confirm?task=${taskRowId}`;
 
-  // Upload image before createTask so image_path is set atomically on insert.
-  // Non-fatal: if upload fails, delegation still sends without image.
+  // Resolve the canonical photo list. imageFiles (multi) takes precedence;
+  // fall back to the legacy single imageFile field.
+  const resolvedFiles: File[] = imageFiles?.length
+    ? imageFiles
+    : imageFile
+      ? [imageFile]
+      : [];
+
+  // Upload the first photo before createTask so image_path is set atomically on
+  // insert. Non-fatal: if upload fails, delegation still sends without image.
   let imagePath: string | null = null;
-  if (imageFile) {
+  if (resolvedFiles.length > 0) {
     try {
-      const blob = await resizeImage(imageFile);
+      const blob = await resizeImage(resolvedFiles[0]);
       imagePath = await uploadTaskImage(userId, taskRowId, blob);
     } catch (err) {
       console.error("[send_delegation] image upload failed, sending without image:", err);
@@ -335,6 +352,21 @@ async function createAndSendDelegation({
     due_at: null,
     image_path: imagePath,
   });
+
+  // Multi-attachment: when >1 photo is attached, upload ALL photos to
+  // task_attachments and set attachment_count. This forces the WhatsApp send
+  // onto ra7etbal_task_v3 (text + inline attachment note, no image header) and
+  // makes the confirmation page render the full "Reference Photos (N)" grid.
+  // Non-fatal: a failure here leaves the single-image fallback intact.
+  let attachmentCount: number | null = null;
+  if (resolvedFiles.length > 1) {
+    try {
+      attachmentCount = await saveTaskAttachments(taskRow.id, userId, resolvedFiles);
+    } catch (err) {
+      console.error("[send_delegation] saveTaskAttachments failed (non-fatal):", err);
+      attachmentCount = null;
+    }
+  }
 
   let messageRecord;
   try {
@@ -358,6 +390,7 @@ async function createAndSendDelegation({
     recipientName: person.name,
     ownerName: ownerName ?? null,
     imagePath,
+    attachmentCount,
   });
 
   if (taskRow.created_at) {
@@ -1139,6 +1172,7 @@ export default function ElevenLabsAgentWidget({
           ? pendingPhotosRef.current
           : sessionPhotosRef.current;
       const delegationImageFile = delegationPhotos[0]?.file ?? null;
+      const delegationImageFiles = delegationPhotos.map((p) => p.file);
 
       let result: DelegationSendResult;
       try {
@@ -1150,6 +1184,7 @@ export default function ElevenLabsAgentWidget({
           personalNote: note ?? null,
           ownerName: displayName,
           imageFile: delegationImageFile,
+          imageFiles: delegationImageFiles,
         });
       } catch (err) {
         const detail = err instanceof Error ? err.message : "Please try again.";
