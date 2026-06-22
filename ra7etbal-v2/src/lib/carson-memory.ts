@@ -13,6 +13,10 @@
  */
 
 import { supabase } from "./supabase";
+import {
+  formatRecentMemory,
+  type CarsonMemoryRow,
+} from "./carson-memory-format";
 
 // ---------------------------------------------------------------------------
 // Save
@@ -70,43 +74,7 @@ export async function loadRecentMemory(limit = 20): Promise<string> {
     return "No previous sessions.";
   }
 
-  // Two kinds of rows live here:
-  //   • "Session recap" rows (prefix below) = the ACTUAL previous session,
-  //     saved every disconnect regardless of durability.
-  //   • Durable memory rows (Routine/Correction/Preference/Person/…) = stable
-  //     facts, saved only when the durable gate passes.
-  // Label them distinctly so Carson never mistakes a 2-day-old durable fact
-  // for "our last conversation". The newest recap row owns "Most recent
-  // session"; everything else is labelled by kind.
-  const RECAP_PREFIX = "• Session recap:";
-  const isRecap = (s: string) => s.trimStart().startsWith(RECAP_PREFIX);
-  // data arrives newest-first; the first recap row is the true latest session.
-  const newestRecapAt = data.find((r) => isRecap(r.summary))?.created_at ?? null;
-
-  const labeled = data.map((row) => {
-    // Local date AND time so Carson can answer "what time was that session?".
-    const when = new Date(row.created_at).toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-    const summary = row.summary.trim().replace(/\n{3,}/g, "\n");
-    let label: string;
-    if (isRecap(row.summary)) {
-      label =
-        row.created_at === newestRecapAt
-          ? `[Most recent session — ${when}]`
-          : `[Earlier session — ${when}]`;
-    } else {
-      label = `[Durable memory — ${when}]`;
-    }
-    return `${label}\n${summary}`;
-  });
-
-  // Reverse so Carson reads chronologically (oldest first), but the label
-  // "Most recent session" still clearly identifies the latest entry at the end.
-  const memoryText = labeled.reverse().join("\n\n");
+  const memoryText = formatRecentMemory(data as CarsonMemoryRow[]);
 
   if (import.meta.env.DEV) {
     console.info(
