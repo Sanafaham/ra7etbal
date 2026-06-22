@@ -54,8 +54,13 @@ export default async function handler(req, res) {
   // ra7etbal_task_v3 — no template change needed.
   let cleanMessage = String(messageText || '').trim();
   if (attachmentCountN > 1) {
-    cleanMessage = `${cleanMessage}\n\n${cleanOwnerName} attached ${attachmentCountN} photos. Open the task link to view them.`;
+    cleanMessage = `${cleanMessage} — ${cleanOwnerName} attached ${attachmentCountN} photos. Open the task link to view them.`;
   }
+
+  // Meta rejects newline/tab characters inside body template parameters
+  // (error #132018). Collapse any whitespace runs — from the appended note or
+  // from a multi-line message the user typed — into single spaces.
+  cleanMessage = cleanMessage.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
 
   const cleanLink = String(confirmationLink || '').trim();
   const phoneNumberIdLast4 = phoneNumberId ? phoneNumberId.slice(-4) : null;
