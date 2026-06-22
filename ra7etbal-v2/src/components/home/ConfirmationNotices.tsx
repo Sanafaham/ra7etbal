@@ -7,6 +7,21 @@ import { useTasksStore } from "../../stores/tasks";
 
 /** Cap surfaced notices so a long-untouched account doesn't flood Home. */
 const MAX_NOTICES = 5;
+const MAX_SUMMARY_LENGTH = 110;
+
+function confirmationSummary(description: string): string {
+  const normalized = description.replace(/\s+/g, " ").trim();
+  if (normalized.length <= MAX_SUMMARY_LENGTH) return normalized;
+
+  const clipped = normalized.slice(0, MAX_SUMMARY_LENGTH + 1);
+  const lastWordBreak = clipped.lastIndexOf(" ");
+  const summary =
+    lastWordBreak > MAX_SUMMARY_LENGTH * 0.7
+      ? clipped.slice(0, lastWordBreak)
+      : normalized.slice(0, MAX_SUMMARY_LENGTH);
+
+  return `${summary.trimEnd()}…`;
+}
 
 /**
  * Owner-facing confirmation banners.
@@ -57,6 +72,7 @@ export default function ConfirmationNotices() {
     <div data-testid="confirmation-notices" className="mb-4 space-y-2.5" aria-live="polite">
       {visible.map((task) => {
         const who = task.assigned_to ?? "Someone";
+        const summary = confirmationSummary(task.description);
         return (
           <div
             key={task.id}
@@ -78,9 +94,11 @@ export default function ConfirmationNotices() {
                 />
               </svg>
             </span>
-            <div className="flex-1 text-sm leading-snug text-text">
-              <span className="font-semibold text-ink">{who} confirmed:</span>{" "}
-              {task.description}
+            <div className="min-w-0 flex-1 text-sm leading-snug text-text">
+              <p className="line-clamp-2">
+                <span className="font-semibold text-ink">{who} confirmed:</span>{" "}
+                {summary}
+              </p>
               {task.proof_image_path && (
                 <span data-testid={`confirmation-notice-proof-${task.id}`} className="mt-1 flex items-center gap-1 text-[11px] font-medium text-sage">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
