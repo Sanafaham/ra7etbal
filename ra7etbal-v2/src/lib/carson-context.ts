@@ -82,6 +82,19 @@ export function buildCarsonContext(input: CarsonContextInput): string {
           ? ` | ${p.delegation_guidance.trim().slice(0, 200)}`
           : "";
         lines.push(`${name}${role ? ` (${role})` : ""}${rel} [FAMILY — do not treat as staff${guidance}]`);
+        // Family members still carry descriptive memory — personality, preferences,
+        // history. Carson Intelligence fields AUGMENT these notes; they must not
+        // replace them. Emit the descriptive sub-fields so Carson can answer
+        // general questions about a person even when intelligence fields are empty.
+        if (p.responsibilities?.trim()) {
+          lines.push(`  Responsibilities: ${p.responsibilities.trim().slice(0, 250)}`);
+        }
+        if (p.communication_style?.trim()) {
+          lines.push(`  Communication style: ${p.communication_style.trim().slice(0, 150)}`);
+        }
+        if (p.notes?.trim()) {
+          lines.push(`  Notes: ${p.notes.trim().slice(0, 300)}`);
+        }
         continue;
       }
 
