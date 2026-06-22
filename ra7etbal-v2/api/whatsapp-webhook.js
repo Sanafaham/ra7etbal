@@ -1,4 +1,11 @@
 const ALLOWED_STATUSES = new Set(['sent', 'delivered', 'read', 'failed']);
+const DELIVERY_STATUS_RANK = {
+  pending: 0,
+  accepted: 1,
+  sent: 2,
+  delivered: 3,
+  read: 4,
+};
 
 // Normalised bodies that mean opt-in or opt-out.
 const OPT_IN_REPLIES  = new Set(['yes', 'y', 'ok', 'okay', 'sure', 'start']);
@@ -18,6 +25,8 @@ export default async function handler(req, res) {
 
   const statuses        = extractStatuses(req.body);
   const inboundMessages = extractInboundMessages(req.body);
+  const phoneNumberIds  = extractPhoneNumberIds(req.body);
+  const webhookReceivedAt = new Date().toISOString();
 
   console.log('WhatsApp webhook POST received', {
     entries:         Array.isArray(req.body?.entry) ? req.body.entry.length : 0,
@@ -33,20 +42,45 @@ export default async function handler(req, res) {
     });
   }
 
+  // Best-effort account heartbeat. Delivery logging must never interrupt
+  // Meta's existing webhook handling or consent processing.
+  await recordWebhookHeartbeat({
+    supabaseUrl,
+    serviceKey,
+    phoneNumberIds,
+    webhookReceivedAt,
+    hasStatuses: statuses.length > 0,
+  });
+
   // --- Process delivery status updates ---
   const statusResults = [];
+  const deliveryResults = [];
   for (const item of statuses) {
     if (!ALLOWED_STATUSES.has(item.status)) {
       console.log('WhatsApp webhook ignored status', { messageId: item.messageId, status: item.status });
       continue;
     }
-    const result = await updateMessageStatus({ supabaseUrl, serviceKey, ...item });
-    statusResults.push(result);
+    const [messageResult, deliveryResult] = await Promise.all([
+      updateMessageStatus({ supabaseUrl, serviceKey, ...item }),
+      updateWhatsappDeliveryStatus({
+        supabaseUrl,
+        serviceKey,
+        webhookReceivedAt,
+        ...item,
+      }),
+    ]);
+    statusResults.push(messageResult);
+    deliveryResults.push(deliveryResult);
   }
 
   const failedStatuses = statusResults.filter((r) => !r.updated);
   if (failedStatuses.length > 0) {
     console.warn('WhatsApp webhook status update warnings', { failed: failedStatuses });
+  }
+
+  const failedDeliveryUpdates = deliveryResults.filter((r) => r.error);
+  if (failedDeliveryUpdates.length > 0) {
+    console.warn('WhatsApp delivery persistence warnings', { failed: failedDeliveryUpdates });
   }
 
   // --- Process inbound messages (consent replies) ---
@@ -60,6 +94,8 @@ export default async function handler(req, res) {
     success:         true,
     statusProcessed: statusResults.length,
     statusUpdated:   statusResults.filter((r) => r.updated).length,
+    deliveryMatched: deliveryResults.filter((r) => r.matched).length,
+    deliveryUpdated: deliveryResults.filter((r) => r.updated).length,
     consentHandled:  consentResults.filter((r) => r.handled).length,
   });
 }
@@ -259,6 +295,351 @@ async function updateMessageStatus({
   return { updated: true, messageId, status, appMessageId: rows[0]?.id || null };
 }
 
+/**
+ * Match a Meta status against the canonical delivery row and update it without
+ * allowing out-of-order webhooks to regress delivery state.
+ *
+ * failed is terminal. Later sent/delivered/read events are ignored once failed.
+ * Duplicate statuses may refresh last_status_at but never clear evidence.
+ */
+export async function updateWhatsappDeliveryStatus({
+  supabaseUrl,
+  serviceKey,
+  messageId,
+  status,
+  updatedAt,
+  failureReason,
+  phoneNumberId,
+  webhookReceivedAt = new Date().toISOString(),
+  retryCount = 0,
+}) {
+  try {
+    const lookupRes = await fetch(
+      `${supabaseUrl}/rest/v1/whatsapp_deliveries` +
+        `?meta_message_id=eq.${encodeURIComponent(messageId)}` +
+        `&select=id,user_id,delivery_status,last_status_at` +
+        `&limit=1`,
+      { headers: serviceHeaders(serviceKey) },
+    );
+    if (!lookupRes.ok) {
+      const details = await lookupRes.text().catch(() => '');
+      return { matched: false, updated: false, error: 'lookup_failed', details };
+    }
+
+    const rows = await lookupRes.json().catch(() => []);
+    const delivery = Array.isArray(rows) ? rows[0] ?? null : null;
+    if (!delivery) {
+      return { matched: false, updated: false, messageId, status };
+    }
+
+    await updateMatchedHealthState({
+      supabaseUrl,
+      serviceKey,
+      userId: delivery.user_id,
+      phoneNumberId,
+      webhookReceivedAt,
+      status,
+    });
+
+    const patch = buildDeliveryStatusPatch({
+      currentStatus: delivery.delivery_status,
+      incomingStatus: status,
+      updatedAt,
+      currentLastStatusAt: delivery.last_status_at,
+      failureReason,
+    });
+
+    let updated = false;
+    if (patch) {
+      // Compare-and-swap prevents two concurrent webhook requests from
+      // overwriting a state that changed after the lookup.
+      const patchRes = await fetch(
+        `${supabaseUrl}/rest/v1/whatsapp_deliveries` +
+          `?id=eq.${encodeURIComponent(delivery.id)}` +
+          `&delivery_status=eq.${encodeURIComponent(delivery.delivery_status)}` +
+          `&select=id`,
+        {
+          method: 'PATCH',
+          headers: {
+            ...serviceHeaders(serviceKey),
+            Prefer: 'return=representation',
+          },
+          body: JSON.stringify(patch),
+        },
+      );
+      if (!patchRes.ok) {
+        const details = await patchRes.text().catch(() => '');
+        return {
+          matched: true,
+          updated: false,
+          error: 'patch_failed',
+          messageId,
+          status,
+          details,
+        };
+      }
+      const updatedRows = await patchRes.json().catch(() => []);
+      updated = Array.isArray(updatedRows) && updatedRows.length > 0;
+      if (!updated && retryCount < 1) {
+        // Another webhook advanced the row between lookup and patch. Re-read
+        // once so the higher monotonic state wins rather than being dropped.
+        return updateWhatsappDeliveryStatus({
+          supabaseUrl,
+          serviceKey,
+          messageId,
+          status,
+          updatedAt,
+          failureReason,
+          phoneNumberId,
+          webhookReceivedAt,
+          retryCount: retryCount + 1,
+        });
+      }
+    }
+
+    console.log('Canonical WhatsApp delivery status processed', {
+      deliveryId: delivery.id,
+      messageId,
+      incomingStatus: status,
+      previousStatus: delivery.delivery_status,
+      updated,
+    });
+
+    return {
+      matched: true,
+      updated,
+      deliveryId: delivery.id,
+      messageId,
+      status,
+    };
+  } catch (err) {
+    return {
+      matched: false,
+      updated: false,
+      error: 'unexpected_error',
+      messageId,
+      status,
+      details: err?.message ?? String(err),
+    };
+  }
+}
+
+export function buildDeliveryStatusPatch({
+  currentStatus,
+  incomingStatus,
+  updatedAt,
+  currentLastStatusAt,
+  failureReason,
+}) {
+  if (currentStatus === 'failed') return null;
+
+  const eventAt = validIsoOrNow(updatedAt);
+  const lastStatusAt = laterIso(currentLastStatusAt, eventAt);
+
+  if (incomingStatus === 'failed') {
+    return {
+      delivery_status: 'failed',
+      failed_at: eventAt,
+      last_status_at: lastStatusAt,
+      failure_stage: 'meta_api',
+      failure_reason: failureReason || 'WhatsApp delivery failed.',
+    };
+  }
+
+  const currentRank = DELIVERY_STATUS_RANK[currentStatus];
+  const incomingRank = DELIVERY_STATUS_RANK[incomingStatus];
+  if (currentRank == null || incomingRank == null) return null;
+
+  // Ignore state regressions. A duplicate status only updates last_status_at
+  // when this webhook carries a newer event timestamp.
+  if (incomingRank < currentRank) {
+    return lastStatusAt !== currentLastStatusAt
+      ? { last_status_at: lastStatusAt }
+      : null;
+  }
+
+  const patch = { last_status_at: lastStatusAt };
+  if (incomingRank > currentRank) {
+    patch.delivery_status = incomingStatus;
+    if (incomingStatus === 'sent') patch.sent_at = eventAt;
+    if (incomingStatus === 'delivered') patch.delivered_at = eventAt;
+    if (incomingStatus === 'read') patch.read_at = eventAt;
+  }
+  return patch;
+}
+
+async function recordWebhookHeartbeat({
+  supabaseUrl,
+  serviceKey,
+  phoneNumberIds,
+  webhookReceivedAt,
+  hasStatuses,
+}) {
+  const ids = phoneNumberIds.length > 0
+    ? phoneNumberIds
+    : [String(process.env.WHATSAPP_PHONE_NUMBER_ID || '').trim()].filter(Boolean);
+
+  for (const phoneNumberId of ids) {
+    try {
+      // Update any existing rows even when no delivery owner can be resolved
+      // from this particular payload.
+      await patchHealthRowsForPhoneNumber({
+        supabaseUrl,
+        serviceKey,
+        phoneNumberId,
+        fields: {
+          last_webhook_received_at: webhookReceivedAt,
+          ...(hasStatuses ? { last_status_webhook_at: webhookReceivedAt } : {}),
+        },
+      });
+
+      const ownersRes = await fetch(
+        `${supabaseUrl}/rest/v1/whatsapp_deliveries` +
+          `?select=user_id` +
+          `&order=created_at.desc` +
+          `&limit=100`,
+        { headers: serviceHeaders(serviceKey) },
+      );
+      if (!ownersRes.ok) continue;
+      const rows = await ownersRes.json().catch(() => []);
+      const userIds = [
+        ...new Set(
+          (Array.isArray(rows) ? rows : [])
+            .map((row) => row.user_id)
+            .filter(Boolean),
+        ),
+      ];
+      for (const userId of userIds) {
+        await upsertHealthState({
+          supabaseUrl,
+          serviceKey,
+          userId,
+          phoneNumberId,
+          fields: {
+            last_webhook_received_at: webhookReceivedAt,
+            ...(hasStatuses ? { last_status_webhook_at: webhookReceivedAt } : {}),
+          },
+        });
+      }
+    } catch (err) {
+      console.warn('WhatsApp webhook heartbeat update failed open', {
+        phoneNumberId,
+        error: err?.message ?? String(err),
+      });
+    }
+  }
+}
+
+async function patchHealthRowsForPhoneNumber({
+  supabaseUrl,
+  serviceKey,
+  phoneNumberId,
+  fields,
+}) {
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/whatsapp_health_state` +
+        `?phone_number_id=eq.${encodeURIComponent(phoneNumberId)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          ...serviceHeaders(serviceKey),
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify(fields),
+      },
+    );
+    if (!response.ok) {
+      const details = await response.text().catch(() => '');
+      console.warn('WhatsApp health heartbeat patch failed open', {
+        phoneNumberId,
+        status: response.status,
+        details,
+      });
+    }
+  } catch (err) {
+    console.warn('WhatsApp health heartbeat patch threw open', {
+      phoneNumberId,
+      error: err?.message ?? String(err),
+    });
+  }
+}
+
+async function updateMatchedHealthState({
+  supabaseUrl,
+  serviceKey,
+  userId,
+  phoneNumberId,
+  webhookReceivedAt,
+  status,
+}) {
+  const resolvedPhoneNumberId =
+    String(phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || '').trim();
+  if (!userId || !resolvedPhoneNumberId) return;
+
+  const fields = {
+    last_webhook_received_at: webhookReceivedAt,
+    last_status_webhook_at: webhookReceivedAt,
+    last_matched_status_at: webhookReceivedAt,
+  };
+  if (status === 'delivered' || status === 'read') {
+    fields.last_delivered_at = webhookReceivedAt;
+  }
+  if (status === 'failed') {
+    fields.last_failed_at = webhookReceivedAt;
+  }
+
+  await upsertHealthState({
+    supabaseUrl,
+    serviceKey,
+    userId,
+    phoneNumberId: resolvedPhoneNumberId,
+    fields,
+  });
+}
+
+async function upsertHealthState({
+  supabaseUrl,
+  serviceKey,
+  userId,
+  phoneNumberId,
+  fields,
+}) {
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/whatsapp_health_state` +
+        `?on_conflict=user_id,phone_number_id`,
+      {
+        method: 'POST',
+        headers: {
+          ...serviceHeaders(serviceKey),
+          Prefer: 'resolution=merge-duplicates,return=minimal',
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          phone_number_id: phoneNumberId,
+          ...fields,
+        }),
+      },
+    );
+    if (!response.ok) {
+      const details = await response.text().catch(() => '');
+      console.warn('WhatsApp health state update failed open', {
+        userId,
+        phoneNumberId,
+        status: response.status,
+        details,
+      });
+    }
+  } catch (err) {
+    console.warn('WhatsApp health state update threw open', {
+      userId,
+      phoneNumberId,
+      error: err?.message ?? String(err),
+    });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Payload extractors
 // ---------------------------------------------------------------------------
@@ -305,12 +686,26 @@ function extractStatuses(body) {
           status,
           updatedAt:     timestampToIso(raw?.timestamp),
           failureReason: getFailureReason(raw),
+          phoneNumberId: String(value?.metadata?.phone_number_id || '').trim() || null,
         });
       }
     }
   }
 
   return statuses;
+}
+
+function extractPhoneNumberIds(body) {
+  const entries = Array.isArray(body?.entry) ? body.entry : [];
+  const ids = new Set();
+  for (const entry of entries) {
+    const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+    for (const change of changes) {
+      const id = String(change?.value?.metadata?.phone_number_id || '').trim();
+      if (id) ids.add(id);
+    }
+  }
+  return [...ids];
 }
 
 // ---------------------------------------------------------------------------
@@ -357,4 +752,26 @@ function getFailureReason(status) {
     first.code?.toString() ||
     'WhatsApp delivery failed.'
   );
+}
+
+function serviceHeaders(serviceKey) {
+  return {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+function validIsoOrNow(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+}
+
+function laterIso(left, right) {
+  if (!left) return right;
+  const leftMs = new Date(left).getTime();
+  const rightMs = new Date(right).getTime();
+  if (Number.isNaN(leftMs)) return right;
+  if (Number.isNaN(rightMs)) return left;
+  return rightMs > leftMs ? new Date(rightMs).toISOString() : new Date(leftMs).toISOString();
 }
