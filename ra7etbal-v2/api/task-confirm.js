@@ -40,7 +40,7 @@ async function handleGet(req, res) {
   try {
     const response = await fetch(
       supabaseUrl + '/rest/v1/tasks?id=eq.' + taskId +
-        '&select=id,user_id,description,assigned_to,status,confirmed_at,image_path,proof_image_path',
+        '&select=id,user_id,description,assigned_to,status,confirmed_at,image_path,proof_image_path,attachment_count',
       {
         headers: {
           apikey: serviceKey,
@@ -69,6 +69,31 @@ async function handleGet(req, res) {
       proofImageUrl = await getSignedImageUrl({ supabaseUrl, serviceKey, imagePath: task.proof_image_path });
     }
 
+    // Load task_attachments for multi-photo tasks, sorted by sort_order.
+    let attachmentUrls = [];
+    if (task.attachment_count > 0) {
+      const attachRes = await fetch(
+        supabaseUrl + '/rest/v1/task_attachments?task_id=eq.' + encodeURIComponent(task.id) +
+          '&order=sort_order.asc&select=storage_path',
+        {
+          headers: {
+            apikey: serviceKey,
+            Authorization: 'Bearer ' + serviceKey,
+            'Content-Type': 'application/json',
+          },
+        },
+      );
+      if (attachRes.ok) {
+        const attachRows = await attachRes.json().catch(() => []);
+        attachmentUrls = await Promise.all(
+          (Array.isArray(attachRows) ? attachRows : []).map((row) =>
+            getSignedImageUrl({ supabaseUrl, serviceKey, imagePath: row.storage_path }),
+          ),
+        );
+        attachmentUrls = attachmentUrls.filter(Boolean);
+      }
+    }
+
     let proofUploadUrl = null;
     let proofUploadPath = null;
     if (task.status !== 'done' && task.user_id) {
@@ -90,6 +115,7 @@ async function handleGet(req, res) {
       confirmedAt: task.confirmed_at,
       ownerPhone,
       imageUrl,
+      attachmentUrls,
       proofImageUrl,
       proofUploadUrl,
       proofUploadPath,

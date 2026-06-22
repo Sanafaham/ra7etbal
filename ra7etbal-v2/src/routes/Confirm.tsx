@@ -26,8 +26,10 @@ interface TaskInfo {
   status: "pending" | "done" | "cancelled" | string;
   confirmedAt: string | null;
   ownerPhone: string | null;
-  /** Signed URL for the owner's reference image. Null when none. */
+  /** Signed URL for the owner's reference image (single-photo tasks). Null when none. */
   imageUrl: string | null;
+  /** Signed URLs for all attached photos (multi-photo tasks). Empty for single/no photo tasks. */
+  attachmentUrls: string[];
   /** Signed URL for an already-uploaded proof photo. Null until recipient uploads. */
   proofImageUrl: string | null;
   /** Signed upload URL for the recipient to PUT a proof photo. Null when already done. */
@@ -88,6 +90,7 @@ export default function Confirm() {
           confirmedAt: data.confirmedAt ?? null,
           ownerPhone: data.ownerPhone ?? null,
           imageUrl: data.imageUrl ?? null,
+          attachmentUrls: Array.isArray(data.attachmentUrls) ? data.attachmentUrls : [],
           proofImageUrl: data.proofImageUrl ?? null,
           proofUploadUrl: data.proofUploadUrl ?? null,
           proofUploadPath: data.proofUploadPath ?? null,
@@ -233,8 +236,24 @@ export default function Confirm() {
               )}
             </div>
 
-            {/* Reference image — attached by the owner at task creation */}
-            {info.imageUrl && (
+            {/* Reference photos — multi-photo grid or single image */}
+            {info.attachmentUrls.length > 0 ? (
+              <div className="space-y-1">
+                <p className="text-xs font-medium uppercase tracking-wide text-ink/45">
+                  Reference photos ({info.attachmentUrls.length})
+                </p>
+                <div className={info.attachmentUrls.length === 1 ? "" : "grid grid-cols-2 gap-2"}>
+                  {info.attachmentUrls.map((url, i) => (
+                    <img
+                      key={i}
+                      src={url}
+                      alt={`Reference photo ${i + 1}`}
+                      className="w-full rounded-xl border border-sage/20 object-cover shadow-sm aspect-square"
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : info.imageUrl ? (
               <div className="space-y-1">
                 <p className="text-xs font-medium uppercase tracking-wide text-ink/45">
                   Reference image
@@ -245,7 +264,7 @@ export default function Confirm() {
                   className="max-h-56 w-full rounded-xl border border-sage/20 object-cover shadow-sm"
                 />
               </div>
-            )}
+            ) : null}
 
             {/* Proof photo — uploaded by recipient, shown after confirmation */}
             {info.status === "done" && info.proofImageUrl && (

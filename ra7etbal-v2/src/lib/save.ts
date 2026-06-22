@@ -2,7 +2,7 @@ import { createMessage } from "./messages";
 import { buildDelegationMessage } from "./delegation-message";
 import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "./personal-note";
 import { composeMergedMessage } from "./ai/compose-message";
-import { resizeImage, uploadTaskImage } from "./image-upload";
+import { resizeImage, uploadTaskImage, uploadTaskAttachment } from "./image-upload";
 import { scheduleReminderPush } from "./qstash-reminder";
 import { scheduleEscalationMessages } from "./qstash-escalation";
 import { supabase } from "./supabase";
@@ -349,6 +349,50 @@ export async function savePending(
   }
 
   return { tasks, messages, skipped, imagePathsByTaskId };
+}
+
+/**
+ * Upload all provided files as task_attachments and update attachment_count.
+ * All files (including the first) are uploaded so the confirmation page
+ * can render a complete grid.
+ *
+ * Returns the total attachment count on success. Throws on any upload failure
+ * so the caller can decide whether to surface the error.
+ */
+export async function saveTaskAttachments(
+  taskId: string,
+  userId: string,
+  files: File[],
+): Promise<number> {
+  if (files.length === 0) return 0;
+
+  const paths: string[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const blob = await resizeImage(files[i]);
+    const path = await uploadTaskAttachment(userId, taskId, i, blob);
+    paths.push(path);
+  }
+
+  const rows = paths.map((storagePath, i) => ({
+    task_id: taskId,
+    user_id: userId,
+    storage_path: storagePath,
+    content_type: "image/jpeg",
+    sort_order: i,
+  }));
+
+  const { error: insertError } = await supabase
+    .from("task_attachments")
+    .insert(rows);
+  if (insertError) throw insertError;
+
+  const { error: updateError } = await supabase
+    .from("tasks")
+    .update({ attachment_count: files.length })
+    .eq("id", taskId);
+  if (updateError) throw updateError;
+
+  return files.length;
 }
 
 async function updateTaskUrl(id: string, url: string): Promise<Task> {

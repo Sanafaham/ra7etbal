@@ -69,6 +69,36 @@ export async function resizeImage(file: File): Promise<Blob> {
 }
 
 /**
+ * Upload a resized image blob to Supabase Storage as a numbered attachment.
+ *
+ * Returns the durable storage path (not a signed URL).
+ * Path format: task-images/{userId}/{taskId}/attachments/{index}.jpg
+ *
+ * Throws if the upload fails.
+ */
+export async function uploadTaskAttachment(
+  userId: string,
+  taskId: string,
+  index: number,
+  blob: Blob,
+): Promise<string> {
+  const path = `${userId}/${taskId}/attachments/${index}.jpg`;
+
+  const { error } = await supabase.storage
+    .from(BUCKET)
+    .upload(path, blob, {
+      contentType: "image/jpeg",
+      upsert: false,
+    });
+
+  if (error) {
+    throw new Error(`Attachment upload failed: ${error.message}`);
+  }
+
+  return `${BUCKET}/${path}`;
+}
+
+/**
  * Upload a resized image blob to Supabase Storage.
  *
  * Returns the durable storage path (not a signed URL).

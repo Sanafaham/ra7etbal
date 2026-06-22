@@ -659,21 +659,24 @@ export default function ElevenLabsAgentWidget({
   }, [clearPendingPhotoPreviews]);
 
   function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = Array.from(e.target.files ?? [])[0];
-    e.target.value = ""; // allow reselecting same file
-    if (!file) return;
+    const newFiles = Array.from(e.target.files ?? []);
+    e.target.value = ""; // allow reselecting same files
+    if (newFiles.length === 0) return;
 
-    // Revoke previous preview URL before replacing
-    for (const photo of pendingPhotosRef.current) {
-      URL.revokeObjectURL(photo.previewUrl);
-    }
+    const existing = pendingPhotosRef.current;
+    const remaining = Math.max(0, 5 - existing.length);
+    const toAdd = newFiles.slice(0, remaining);
 
-    syncPendingPhotoState([{
+    if (toAdd.length === 0) return;
+
+    const newPhotos = toAdd.map((file) => ({
       id: crypto.randomUUID(),
       file,
       previewUrl: URL.createObjectURL(file),
       name: file.name,
-    }]);
+    }));
+
+    syncPendingPhotoState([...existing, ...newPhotos]);
   }
 
   function removePendingPhoto(id: string) {
@@ -2339,10 +2342,11 @@ export default function ElevenLabsAgentWidget({
           dailyBrief: "",
           people,
           tasks,
-          // Pass the first pending image so savePending uploads it and sets image_path.
-          // ra7etbal_task_image template fires automatically when imagePath is set.
-          // Multiple photos are represented through imageDescription context.
+          // Pass all pending images. The first sets image_path; all are stored in
+          // task_attachments when count > 1. WhatsApp switches to text template with
+          // an attachment note when multiple photos are attached.
           imageFile: firstImageFile,
+          allImageFiles: imagePhotos.map((p) => p.file),
           imageDescription: photoContext,
         });
 
@@ -2758,6 +2762,7 @@ export default function ElevenLabsAgentWidget({
         ref={imageFileInputRef}
         type="file"
         accept="image/*"
+        multiple
         onChange={handleImageFileChange}
         className="sr-only"
         aria-label="Attach photos"
@@ -2795,7 +2800,9 @@ export default function ElevenLabsAgentWidget({
             ))}
           </div>
           <span className="mt-1 block text-[11px] text-ink/55">
-            {status === "idle" ? "Photo ready" : "Photo attached"}
+            {status === "idle"
+              ? `${pendingPhotoPreviews.length} photo${pendingPhotoPreviews.length !== 1 ? "s" : ""} ready`
+              : `${pendingPhotoPreviews.length} photo${pendingPhotoPreviews.length !== 1 ? "s" : ""} attached`}
           </span>
         </div>
       )}
@@ -2812,7 +2819,7 @@ export default function ElevenLabsAgentWidget({
             onClick={() => imageFileInputRef.current?.click()}
             aria-label="Attach photos for Carson"
             title="Attach photos"
-            disabled={pendingPhotoPreviews.length >= 1}
+            disabled={pendingPhotoPreviews.length >= 5}
             className={
               "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
               (pendingPhotoPreviews.length > 0

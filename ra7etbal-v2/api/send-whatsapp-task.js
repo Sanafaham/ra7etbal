@@ -41,12 +41,23 @@ export default async function handler(req, res) {
     recipientName,
     ownerName,
     imagePath,
+    attachmentCount,
   } = req.body || {};
 
   const normalizedTo = normalizeWhatsAppPhone(to);
-  let cleanMessage = String(messageText || '').trim();
-  const cleanLink = String(confirmationLink || '').trim();
   const cleanOwnerName = String(ownerName || '').trim() || FALLBACK_OWNER_NAME;
+  const attachmentCountN = typeof attachmentCount === 'number' ? attachmentCount : 0;
+
+  // When multiple photos are attached, append a note to the message body so
+  // the recipient knows to open the confirmation link to view all photos.
+  // The note is appended into the existing {{2}} body parameter of
+  // ra7etbal_task_v3 — no template change needed.
+  let cleanMessage = String(messageText || '').trim();
+  if (attachmentCountN > 1) {
+    cleanMessage = `${cleanMessage}\n\n${cleanOwnerName} attached ${attachmentCountN} photos. Open the task link to view them.`;
+  }
+
+  const cleanLink = String(confirmationLink || '').trim();
   const phoneNumberIdLast4 = phoneNumberId ? phoneNumberId.slice(-4) : null;
 
   if (!accessToken || !phoneNumberId) {
@@ -91,10 +102,15 @@ export default async function handler(req, res) {
   //   PRIMARY:  ra7etbal_task_v3    (3 params: owner, message, link)
   //   FALLBACK: ra7etbal_task_v3    (same template, different link placement variants)
   //
-  // Image tasks (imagePath present):
+  // Single-image tasks (imagePath present, attachmentCount <= 1):
   //   PRIMARY:  ra7etbal_task_image (image header + 3 body params: owner, message, link)
   //   FALLBACK: ra7etbal_task_v3   + separate image media message (if Meta upload fails)
-  const primaryTemplateName = imagePath ? 'ra7etbal_task_image' : 'ra7etbal_task_v3';
+  //
+  // Multi-image tasks (attachmentCount > 1):
+  //   PRIMARY:  ra7etbal_task_v3   (attachment note already appended to cleanMessage above)
+  //   No image header — Meta only supports one media header per template.
+  const isMultiAttachment = attachmentCountN > 1;
+  const primaryTemplateName = (imagePath && !isMultiAttachment) ? 'ra7etbal_task_image' : 'ra7etbal_task_v3';
   const fallbackTemplateName = 'ra7etbal_task_v3';
 
   // ── Image upload for ra7etbal_task_image ──────────────────────────────────
@@ -105,7 +121,7 @@ export default async function handler(req, res) {
   let imageSignedUrl = null;  // set if signed URL generation succeeds
   let imageSendStatus = 'skipped'; // skipped | uploaded | sent | failed | no_signed_url
 
-  if (imagePath) {
+  if (imagePath && !isMultiAttachment) {
     imageSignedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
     if (!imageSignedUrl) {
       imageSendStatus = 'no_signed_url';
@@ -132,7 +148,7 @@ export default async function handler(req, res) {
 
   // If image upload failed, revert to legacy path:
   // send as separate media message + ra7etbal_task_v3
-  const useImageTemplate = imagePath && metaMediaId !== null;
+  const useImageTemplate = imagePath && metaMediaId !== null && !isMultiAttachment;
   const effectivePrimaryTemplate = useImageTemplate ? primaryTemplateName : (imagePath ? 'ra7etbal_task_v3' : primaryTemplateName);
 
   console.log('[send-whatsapp-task] route config', {

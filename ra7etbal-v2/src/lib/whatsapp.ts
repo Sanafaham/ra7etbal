@@ -19,6 +19,11 @@ export interface WhatsAppCloudTaskPayload {
    * so the recipient sees the reference image directly in WhatsApp before acting.
    */
   imagePath?: string | null;
+  /**
+   * Total number of photos attached to this task (from task_attachments).
+   * When > 1 the server switches to the text template and appends an attachment note.
+   */
+  attachmentCount?: number | null;
 }
 
 export function buildDelegationMessage(payload: WhatsAppPayload): string {
@@ -64,6 +69,7 @@ export async function sendWhatsAppTask(
       recipientName: payload.recipientName ?? null,
       ownerName: payload.ownerName ?? null,
       imagePath: payload.imagePath ?? null,
+      attachmentCount: payload.attachmentCount ?? null,
     }),
   });
 

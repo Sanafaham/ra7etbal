@@ -7,7 +7,7 @@ import { saveInboxItem } from "./inbox";
 import { buildCarsonContext } from "./carson-context";
 import { CARSON_STATUS_POLICY } from "./carson-status-policy";
 import { extractItems } from "./ai/extract";
-import { savePending } from "./save";
+import { savePending, saveTaskAttachments } from "./save";
 import { detectAllRecurringSchedules } from "./routine-detection";
 import { deliverTaskMessage } from "./delivery";
 import { useTasksStore } from "../stores/tasks";
@@ -70,10 +70,14 @@ export interface TextCarsonContext {
   tasks: Task[];
   /**
    * Optional image to attach to the first delegation item.
-   * V1: one image per instruction, applied to the first delegation/message only.
-   * Carson does not analyse the image — attach-and-send only.
+   * V1: first image sets image_path; all images stored in task_attachments.
    */
   imageFile?: File | null;
+  /**
+   * All attached image files (including the first). When length > 1 the task
+   * is sent as a text template with an attachment note in the message body.
+   */
+  allImageFiles?: File[] | null;
   /**
    * Optional visual context to include in outgoing delegation messages when
    * the caller has already described attached photos.
@@ -287,14 +291,21 @@ export async function executeDelegationFromText(
     throw new Error("Couldn't understand that. Try rephrasing.");
   }
 
-  // If the user attached an image, assign it to the first delegation/message
-  // item only. V1: one image per instruction. Carson never analyses the image.
+  // Resolve the canonical file list. allImageFiles takes precedence when
+  // provided (multi-photo path). Otherwise fall back to the legacy single-file field.
+  const resolvedFiles: File[] = context.allImageFiles?.length
+    ? context.allImageFiles
+    : context.imageFile
+      ? [context.imageFile]
+      : [];
+
+  // Assign the first image to the first delegation/message item for image_path.
   const imageFiles = new Map<string, File>();
-  if (context.imageFile) {
+  if (resolvedFiles.length > 0) {
     const firstDelegation = allItems.find(
       (i) => i.type === "delegation" || i.type === "message",
     );
-    if (firstDelegation) imageFiles.set(firstDelegation.id, context.imageFile);
+    if (firstDelegation) imageFiles.set(firstDelegation.id, resolvedFiles[0]);
   }
 
   // Save every extracted item (reminders, delegations, actions, follow-ups…)
@@ -305,6 +316,27 @@ export async function executeDelegationFromText(
     context.people,
     imageFiles.size > 0 ? imageFiles : undefined,
   );
+
+  // Multi-attachment: upload all photos to task_attachments when > 1 photo.
+  // Track attachment count per task so the WhatsApp send can append the note.
+  const attachmentCountByTaskId = new Map<string, number>();
+  if (resolvedFiles.length > 1) {
+    const firstDelegationTask = saved.tasks.find(
+      (t) => t.type === "delegation" || t.type === "followup",
+    );
+    if (firstDelegationTask && context.userId) {
+      try {
+        const count = await saveTaskAttachments(
+          firstDelegationTask.id,
+          context.userId,
+          resolvedFiles,
+        );
+        attachmentCountByTaskId.set(firstDelegationTask.id, count);
+      } catch (err) {
+        console.error("[executeDelegationFromText] saveTaskAttachments failed (non-fatal):", err);
+      }
+    }
+  }
 
   const phoneByName = new Map<string, string>();
   const noConsentNames = new Set<string>();
@@ -349,6 +381,9 @@ export async function executeDelegationFromText(
               ownerName: context.displayName ?? null,
               imagePath: message.task_id
                 ? (saved.imagePathsByTaskId.get(message.task_id) ?? null)
+                : null,
+              attachmentCount: message.task_id
+                ? (attachmentCountByTaskId.get(message.task_id) ?? null)
                 : null,
             }),
           ),
