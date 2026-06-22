@@ -2635,6 +2635,11 @@ export default function ElevenLabsAgentWidget({
           },
         },
         onModeChange: ({ mode: m }) => {
+          try {
+            conversationRef.current?.setMicMuted(m === "speaking");
+          } catch (err) {
+            console.warn("[carson-audio] failed to update microphone mute state:", err);
+          }
           setMode(m === "speaking" ? "speaking" : "listening");
         },
         onMessage: ({ role, message }) => {
