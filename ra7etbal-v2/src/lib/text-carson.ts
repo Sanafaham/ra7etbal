@@ -1,5 +1,6 @@
 import type { Person } from "../types/person";
 import type { Task } from "../types/task";
+import type { ExtractionResult } from "../types/extraction";
 import { loadUserMemory, upsertUserFacts } from "./carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "./carson-memory";
 import { listTasks } from "./tasks";
@@ -9,7 +10,7 @@ import { CARSON_STATUS_POLICY } from "./carson-status-policy";
 import { extractItems } from "./ai/extract";
 import { savePending, saveTaskAttachments } from "./save";
 import { detectAllRecurringSchedules } from "./routine-detection";
-import { deliverTaskMessage } from "./delivery";
+import { deliverTaskMessage, type DeliveryResult } from "./delivery";
 import { useTasksStore } from "../stores/tasks";
 import { summarizeConversation } from "./carson-summarize";
 import { extractDurableFacts } from "./carson-fact-extract";
@@ -83,6 +84,13 @@ export interface TextCarsonContext {
    * the caller has already described attached photos.
    */
   imageDescription?: string | null;
+  /** Optional diagnostic-only timing observer. Does not alter execution. */
+  latencyObserver?: {
+    addDuration(
+      stage: "claude_extraction_ms" | "supabase_operations_ms" | "whatsapp_send_flow_ms",
+      durationMs: number,
+    ): void;
+  };
 }
 
 interface AnthropicResponse {
@@ -284,7 +292,16 @@ export async function executeDelegationFromText(
     );
   }
 
-  const result = await extractItems(input, context.people, context.displayName ?? undefined);
+  const extractionStartedAt = performance.now();
+  let result: ExtractionResult;
+  try {
+    result = await extractItems(input, context.people, context.displayName ?? undefined);
+  } finally {
+    context.latencyObserver?.addDuration(
+      "claude_extraction_ms",
+      performance.now() - extractionStartedAt,
+    );
+  }
 
   const allItems = result.extracted;
   if (allItems.length === 0) {
@@ -315,6 +332,12 @@ export async function executeDelegationFromText(
     context.displayName ?? null,
     context.people,
     imageFiles.size > 0 ? imageFiles : undefined,
+    context.latencyObserver
+      ? {
+          addSupabaseDuration: (durationMs) =>
+            context.latencyObserver?.addDuration("supabase_operations_ms", durationMs),
+        }
+      : undefined,
   );
 
   // Multi-attachment: upload all photos to task_attachments when > 1 photo.
@@ -330,6 +353,12 @@ export async function executeDelegationFromText(
           firstDelegationTask.id,
           context.userId,
           resolvedFiles,
+          context.latencyObserver
+            ? {
+                addSupabaseDuration: (durationMs) =>
+                  context.latencyObserver?.addDuration("supabase_operations_ms", durationMs),
+              }
+            : undefined,
         );
         attachmentCountByTaskId.set(firstDelegationTask.id, count);
       } catch (err) {
@@ -367,11 +396,14 @@ export async function executeDelegationFromText(
     (m) => noConsentNames.has(m.recipient.trim().toLowerCase()),
   );
 
-  const sendResults =
-    sendableMessages.length > 0
-      ? await Promise.allSettled(
-          sendableMessages.map((message) =>
-            deliverTaskMessage({
+  const whatsappStartedAt = performance.now();
+  let sendResults: PromiseSettledResult<DeliveryResult>[] = [];
+  try {
+    sendResults =
+      sendableMessages.length > 0
+        ? await Promise.allSettled(
+            sendableMessages.map((message) =>
+              deliverTaskMessage({
               to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
               messageText: withImageContext(message.content, context.imageDescription),
               confirmationLink: message.confirmation_url ?? null,
@@ -385,10 +417,16 @@ export async function executeDelegationFromText(
               attachmentCount: message.task_id
                 ? (attachmentCountByTaskId.get(message.task_id) ?? null)
                 : null,
-            }),
-          ),
-        )
-      : [];
+              }),
+            ),
+          )
+        : [];
+  } finally {
+    context.latencyObserver?.addDuration(
+      "whatsapp_send_flow_ms",
+      performance.now() - whatsappStartedAt,
+    );
+  }
 
   // Split into succeeded vs failed sends for honest summary reporting.
   const sentNames: string[] = [];

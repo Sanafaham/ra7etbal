@@ -18,7 +18,8 @@ export interface CarsonDiagnosticEvent {
     | "carson-disconnect"
     | "carson-teardown"
     | "carson-error"
-    | "carson-unhandled-tool";
+    | "carson-unhandled-tool"
+    | "carson-latency";
   at: string;
   data: unknown;
 }

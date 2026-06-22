@@ -114,12 +114,29 @@ export interface SaveResult {
   imagePathsByTaskId: Map<string, string | null>;
 }
 
+export interface SaveTimingObserver {
+  addSupabaseDuration(durationMs: number): void;
+}
+
+async function measureSupabaseOperation<T>(
+  observer: SaveTimingObserver | undefined,
+  operation: () => PromiseLike<T>,
+): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    observer?.addSupabaseDuration(performance.now() - startedAt);
+  }
+}
+
 export async function savePending(
   items: ExtractedItem[],
   userId: string,
   ownerName?: string | null,
   people: Person[] = [],
   imageFiles?: Map<string, File>,
+  timingObserver?: SaveTimingObserver,
 ): Promise<SaveResult> {
   if (!userId) throw new Error("Not signed in.");
 
@@ -163,13 +180,15 @@ export async function savePending(
         skipped += 1;
         continue;
       }
-      const row = await createMessage({
-        user_id: userId,
-        task_id: null,
-        recipient,
-        content,
-        confirmation_url: null,
-      });
+      const row = await measureSupabaseOperation(timingObserver, () =>
+        createMessage({
+          user_id: userId,
+          task_id: null,
+          recipient,
+          content,
+          confirmation_url: null,
+        }),
+      );
       messages.push(row);
       continue;
     }
@@ -189,23 +208,27 @@ export async function savePending(
       // Pre-generate the taskId so the upload path matches the task row.
       const pregenId = crypto.randomUUID();
       const blob = await resizeImage(imageFile);
-      imagePath = await uploadTaskImage(userId, pregenId, blob);
+      imagePath = await measureSupabaseOperation(timingObserver, () =>
+        uploadTaskImage(userId, pregenId, blob),
+      );
       // Record at upload time — before any DB round-trip — so callers can
       // reliably retrieve imagePath without depending on SELECT responses.
       imagePathsByTaskId.set(pregenId, imagePath);
       // createTask will use this pre-generated id so paths stay in sync.
-      let task = await createTask({
-        id: pregenId,
-        user_id: userId,
-        description: item.description.trim(),
-        type: item.type,
-        assigned_to: assignedTo,
-        status: "pending",
-        needs_follow_up: needsFollowUp,
-        confirmation_url: null,
-        due_at: item.dueAt,
-        image_path: imagePath,
-      });
+      let task = await measureSupabaseOperation(timingObserver, () =>
+        createTask({
+          id: pregenId,
+          user_id: userId,
+          description: item.description.trim(),
+          type: item.type as Task["type"],
+          assigned_to: assignedTo,
+          status: "pending",
+          needs_follow_up: needsFollowUp,
+          confirmation_url: null,
+          due_at: item.dueAt,
+          image_path: imagePath,
+        }),
+      );
 
       // Defensive status check
       if (task.status !== "pending") {
@@ -213,21 +236,27 @@ export async function savePending(
           "savePending: task came back with unexpected status; correcting to pending",
           { id: task.id, returned: task.status },
         );
-        const { data, error } = await supabase
-          .from("tasks")
-          .update({ status: "pending", confirmed_at: null })
-          .eq("id", task.id)
-          .select(
-            "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path",
-          )
-          .single();
+        const { data, error } = await measureSupabaseOperation(
+          timingObserver,
+          () =>
+            supabase
+              .from("tasks")
+              .update({ status: "pending", confirmed_at: null })
+              .eq("id", task.id)
+              .select(
+                "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path",
+              )
+              .single(),
+        );
         if (error) throw error;
         task = data as Task;
       }
 
       if (isDelegation) {
         const confirmationUrl = `${window.location.origin}/confirm?task=${task.id}`;
-        task = await updateTaskUrl(task.id, confirmationUrl);
+        task = await measureSupabaseOperation(timingObserver, () =>
+          updateTaskUrl(task.id, confirmationUrl),
+        );
         const assignedPerson = people.find(
           (person) => person.name.trim().toLowerCase() === assignedTo!.toLowerCase(),
         );
@@ -239,13 +268,15 @@ export async function savePending(
           ownerName,
         });
         if (content && assignedTo) {
-          const msg = await createMessage({
-            user_id: userId,
-            task_id: task.id,
-            recipient: assignedTo,
-            content,
-            confirmation_url: confirmationUrl,
-          });
+          const msg = await measureSupabaseOperation(timingObserver, () =>
+            createMessage({
+              user_id: userId,
+              task_id: task.id,
+              recipient: assignedTo,
+              content,
+              confirmation_url: confirmationUrl,
+            }),
+          );
           messages.push(msg);
         }
       }
@@ -267,16 +298,18 @@ export async function savePending(
     }
 
     // No image — original path
-    let task = await createTask({
-      user_id: userId,
-      description: item.description.trim(),
-      type: item.type,
-      assigned_to: assignedTo,
-      status: "pending",
-      needs_follow_up: needsFollowUp,
-      confirmation_url: null,
-      due_at: item.dueAt,
-    });
+    let task = await measureSupabaseOperation(timingObserver, () =>
+      createTask({
+        user_id: userId,
+        description: item.description.trim(),
+        type: item.type as Task["type"],
+        assigned_to: assignedTo,
+        status: "pending",
+        needs_follow_up: needsFollowUp,
+        confirmation_url: null,
+        due_at: item.dueAt,
+      }),
+    );
 
     // Defensive: if any column-level default or trigger flipped the row to
     // done, immediately correct it. New saves must always start as pending —
@@ -287,14 +320,18 @@ export async function savePending(
         "savePending: task came back with unexpected status; correcting to pending",
         { id: task.id, returned: task.status },
       );
-      const { data, error } = await supabase
-        .from("tasks")
-        .update({ status: "pending", confirmed_at: null })
-        .eq("id", task.id)
-        .select(
-          "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path",
-        )
-        .single();
+      const { data, error } = await measureSupabaseOperation(
+        timingObserver,
+        () =>
+          supabase
+            .from("tasks")
+            .update({ status: "pending", confirmed_at: null })
+            .eq("id", task.id)
+            .select(
+              "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path",
+            )
+            .single(),
+      );
       if (error) throw error;
       task = data as Task;
     }
@@ -303,7 +340,9 @@ export async function savePending(
       const confirmationUrl = `${window.location.origin}/confirm?task=${task.id}`;
       // Persist the URL on the task now that we know its id. confirmation_url
       // is intentionally not in TaskPatch — it's write-once at save time.
-      task = await updateTaskUrl(task.id, confirmationUrl);
+      task = await measureSupabaseOperation(timingObserver, () =>
+        updateTaskUrl(task.id, confirmationUrl),
+      );
 
       // Pair message row for the host to copy and send.
       // Rewrite any owner first-person pronouns ("me" → "Sana", etc.) so the
@@ -320,13 +359,15 @@ export async function savePending(
         ownerName,
       });
       if (content && assignedTo) {
-        const msg = await createMessage({
-          user_id: userId,
-          task_id: task.id,
-          recipient: assignedTo,
-          content,
-          confirmation_url: confirmationUrl,
-        });
+        const msg = await measureSupabaseOperation(timingObserver, () =>
+          createMessage({
+            user_id: userId,
+            task_id: task.id,
+            recipient: assignedTo,
+            content,
+            confirmation_url: confirmationUrl,
+          }),
+        );
         messages.push(msg);
       }
     }
@@ -363,13 +404,16 @@ export async function saveTaskAttachments(
   taskId: string,
   userId: string,
   files: File[],
+  timingObserver?: SaveTimingObserver,
 ): Promise<number> {
   if (files.length === 0) return 0;
 
   const paths: string[] = [];
   for (let i = 0; i < files.length; i++) {
     const blob = await resizeImage(files[i]);
-    const path = await uploadTaskAttachment(userId, taskId, i, blob);
+    const path = await measureSupabaseOperation(timingObserver, () =>
+      uploadTaskAttachment(userId, taskId, i, blob),
+    );
     paths.push(path);
   }
 
@@ -381,15 +425,20 @@ export async function saveTaskAttachments(
     sort_order: i,
   }));
 
-  const { error: insertError } = await supabase
-    .from("task_attachments")
-    .insert(rows);
+  const { error: insertError } = await measureSupabaseOperation(
+    timingObserver,
+    () => supabase.from("task_attachments").insert(rows),
+  );
   if (insertError) throw insertError;
 
-  const { error: updateError } = await supabase
-    .from("tasks")
-    .update({ attachment_count: files.length })
-    .eq("id", taskId);
+  const { error: updateError } = await measureSupabaseOperation(
+    timingObserver,
+    () =>
+      supabase
+        .from("tasks")
+        .update({ attachment_count: files.length })
+        .eq("id", taskId),
+  );
   if (updateError) throw updateError;
 
   return files.length;

@@ -36,6 +36,12 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
+import {
+  addLatencyStageDuration,
+  createExecuteInstructionLatencyTrace,
+  roundDuration,
+  type ExecuteInstructionLatencyTrace,
+} from "../../lib/carson-latency";
 import { useAuthStore } from "../../stores/auth";
 import type { Person } from "../../types/person";
 import { usePeopleStore } from "../../stores/people";
@@ -794,6 +800,16 @@ export default function ElevenLabsAgentWidget({
   // onDisconnect log can report whether a disconnect landed before, during, or
   // after a tool call. Null when no tool is running. No behavioral effect.
   const toolInFlightRef = useRef<string | null>(null);
+  const lastUserTranscriptTimingRef = useRef<{
+    eventId: number | null;
+    receivedAt: string;
+    receivedPerf: number;
+  } | null>(null);
+  const activeExecuteLatencyRef = useRef<{
+    trace: ExecuteInstructionLatencyTrace;
+    toolStartedPerf: number;
+    toolCompletedPerf: number | null;
+  } | null>(null);
 
   /** Accumulates finalized transcript messages (both user and agent) for
    *  this session. Summarised by Haiku at disconnect for conversational memory. */
@@ -2178,11 +2194,35 @@ export default function ElevenLabsAgentWidget({
       // Ensure stores are fresh before extraction so person data is current.
       const peopleState = usePeopleStore.getState();
       if (peopleState.status === "idle" || peopleState.items.length === 0) {
-        await usePeopleStore.getState().loadFor(authUserId, { force: true });
+        const startedAt = performance.now();
+        try {
+          await usePeopleStore.getState().loadFor(authUserId, { force: true });
+        } finally {
+          const active = activeExecuteLatencyRef.current;
+          if (active) {
+            addLatencyStageDuration(
+              active.trace,
+              "supabase_operations_ms",
+              performance.now() - startedAt,
+            );
+          }
+        }
       }
       const tasksState = useTasksStore.getState();
       if (tasksState.status === "idle" || tasksState.items.length === 0) {
-        await useTasksStore.getState().loadFor(authUserId);
+        const startedAt = performance.now();
+        try {
+          await useTasksStore.getState().loadFor(authUserId);
+        } finally {
+          const active = activeExecuteLatencyRef.current;
+          if (active) {
+            addLatencyStageDuration(
+              active.trace,
+              "supabase_operations_ms",
+              performance.now() - startedAt,
+            );
+          }
+        }
       }
 
       const people = usePeopleStore.getState().items;
@@ -2219,7 +2259,19 @@ export default function ElevenLabsAgentWidget({
         // back to the DB (survives a disconnect/reconnect between turns).
         let activePlan = pendingPlanRef.current;
         if (!activePlan && (isConfirmation(rawInstruction) || isRejection(rawInstruction))) {
-          activePlan = await loadLatestPendingPlan().catch(() => null);
+          const startedAt = performance.now();
+          try {
+            activePlan = await loadLatestPendingPlan().catch(() => null);
+          } finally {
+            const active = activeExecuteLatencyRef.current;
+            if (active) {
+              addLatencyStageDuration(
+                active.trace,
+                "supabase_operations_ms",
+                performance.now() - startedAt,
+              );
+            }
+          }
           if (activePlan) pendingPlanRef.current = activePlan;
         }
 
@@ -2422,6 +2474,13 @@ export default function ElevenLabsAgentWidget({
           imageFile: firstImageFile,
           allImageFiles: imagePhotos.map((p) => p.file),
           imageDescription: photoContext,
+          latencyObserver: {
+            addDuration: (stage, durationMs) => {
+              const active = activeExecuteLatencyRef.current;
+              if (!active) return;
+              addLatencyStageDuration(active.trace, stage, durationMs);
+            },
+          },
         });
 
         // Capture photo descriptions before clearPendingImages wipes them.
@@ -2614,13 +2673,39 @@ export default function ElevenLabsAgentWidget({
           // compound instructions, personal notes, and ambiguous cases.
           execute_instruction: async (params: ExecuteInstructionParams) => {
             toolInFlightRef.current = "execute_instruction";
+            const toolStartedPerf = performance.now();
+            const toolStartedAt = new Date().toISOString();
+            const transcriptTiming = lastUserTranscriptTimingRef.current;
+            const trace = createExecuteInstructionLatencyTrace({
+              transcriptEventId: transcriptTiming?.eventId ?? null,
+              transcriptReceivedAt: transcriptTiming?.receivedAt ?? null,
+              transcriptReceivedPerf: transcriptTiming?.receivedPerf ?? null,
+              toolStartedAt,
+              toolStartedPerf,
+            });
+            activeExecuteLatencyRef.current = {
+              trace,
+              toolStartedPerf,
+              toolCompletedPerf: null,
+            };
             try {
-              return await executeInstruction(params);
+              const result = await executeInstruction(params);
+              trace.outcome = "success";
+              return result;
             } catch (err) {
+              trace.outcome = "error";
               console.error("[executeInstruction:catch]", err);
               const detail = err instanceof Error ? err.message : "Please try again.";
               return `Could not process that. ${detail}`;
             } finally {
+              const toolCompletedPerf = performance.now();
+              trace.tool_completed_at = new Date().toISOString();
+              trace.stages.execute_instruction_ms = roundDuration(
+                toolCompletedPerf - toolStartedPerf,
+              );
+              if (activeExecuteLatencyRef.current?.trace.trace_id === trace.trace_id) {
+                activeExecuteLatencyRef.current.toolCompletedPerf = toolCompletedPerf;
+              }
               toolInFlightRef.current = null;
             }
           },
@@ -2671,6 +2756,18 @@ export default function ElevenLabsAgentWidget({
           },
         },
         onModeChange: ({ mode: m }) => {
+          if (m === "speaking") {
+            const active = activeExecuteLatencyRef.current;
+            if (active?.toolCompletedPerf != null) {
+              active.trace.first_response_at = new Date().toISOString();
+              active.trace.stages.tool_completion_to_first_response_ms = roundDuration(
+                performance.now() - active.toolCompletedPerf,
+              );
+              console.info("[carson-latency]", active.trace);
+              recordCarsonDiagnostic("carson-latency", active.trace);
+              activeExecuteLatencyRef.current = null;
+            }
+          }
           try {
             conversationRef.current?.setMicMuted(m === "speaking");
           } catch (err) {
@@ -2683,9 +2780,15 @@ export default function ElevenLabsAgentWidget({
           // summarisation. Only finalized messages arrive here.
           sessionTranscriptRef.current.push({ role, message });
           if (role === "user") {
+            const receivedAt = new Date().toISOString();
+            lastUserTranscriptTimingRef.current = {
+              eventId: event_id ?? null,
+              receivedAt,
+              receivedPerf: performance.now(),
+            };
             console.log("[voice-transcript:user]", {
               eventId: event_id ?? null,
-              timestamp: new Date().toISOString(),
+              timestamp: receivedAt,
               message,
             });
             setLastUserTranscript(message);

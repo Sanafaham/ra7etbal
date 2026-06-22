@@ -25,6 +25,7 @@ const KIND_COLORS: Record<CarsonDiagnosticEvent["kind"], string> = {
   "carson-teardown": "#0369a1",
   "carson-error": "#b91c1c",
   "carson-unhandled-tool": "#7c3aed",
+  "carson-latency": "#15803d",
 };
 
 export default function CarsonDebugOverlay() {
