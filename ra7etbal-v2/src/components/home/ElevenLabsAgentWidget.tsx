@@ -402,6 +402,33 @@ async function createAndSendDelegation({
   return { taskId: taskRow.id, messageText };
 }
 
+/**
+ * Builds the `current_time` dynamic variable as a human-readable LOCAL date/time
+ * with a timezone label, followed by the UTC ISO string for unambiguous machine
+ * reference. Previously only the raw UTC ISO was injected, so Carson had no
+ * local anchor and couldn't reason about how long ago a session happened.
+ *
+ *   "Sunday, Jun 22, 2026, 4:14 AM (Europe/Istanbul) [UTC 2026-06-22T01:14:00.000Z]"
+ */
+function buildCurrentTimeLabel(now: Date = new Date()): string {
+  const local = now.toLocaleString(undefined, {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  let tz = "";
+  try {
+    tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+  } catch {
+    tz = "";
+  }
+  const tzLabel = tz ? ` (${tz})` : "";
+  return `${local}${tzLabel} [UTC ${now.toISOString()}]`;
+}
+
 function normalizeDelegationKey(value: string): string {
   return value
     .toLowerCase()
@@ -2554,7 +2581,10 @@ export default function ElevenLabsAgentWidget({
           ra7etbal_state: sanitizeForCarsonSpeech(carsonStateText),
           daily_brief: sanitizeForCarsonSpeech(liveSpokenBrief),
           opening_line: openingLine,
-          current_time: new Date().toISOString(),
+          // Local date/time + timezone label so Carson anchors "now" to the
+          // user's actual clock and can reason about how long ago a session
+          // was. UTC ISO is kept at the end for unambiguous machine reference.
+          current_time: buildCurrentTimeLabel(),
           user_name: displayName ?? "",
           recent_memory: sanitizeForCarsonSpeech(recentMemory),
           current_weather: currentWeather,

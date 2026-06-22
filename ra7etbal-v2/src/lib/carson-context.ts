@@ -210,7 +210,16 @@ export function buildCarsonContext(input: CarsonContextInput): string {
       const assigned = t.assigned_to ? `, assigned to ${t.assigned_to}` : "";
       const dueLabel = t.due_at ? formatReminderDue(t.due_at, now) : null;
       const due = dueLabel ? `, due ${dueLabel}` : "";
-      lines.push(`- ${t.type}, ${t.status}${assigned}${due}: ${t.description.trim()}`);
+      // Local creation time so Carson can answer "when did I create this?".
+      const created = t.created_at
+        ? `, created ${new Date(t.created_at).toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })}`
+        : "";
+      lines.push(`- ${t.type}, ${t.status}${assigned}${due}${created}: ${t.description.trim()}`);
     }
   }
 

@@ -73,12 +73,17 @@ export async function loadRecentMemory(limit = 20): Promise<string> {
   // data arrives newest-first from the query; keep that order so we can label
   // the first row (index 0) as "Most recent session" before reversing.
   const labeled = data.map((row, idx) => {
-    const date = new Date(row.created_at).toLocaleDateString(undefined, {
+    // Local date AND time so Carson can answer "what time was that session?".
+    // Previously only month+day was shown, so the clock time — though stored
+    // in created_at — never reached Carson.
+    const when = new Date(row.created_at).toLocaleString(undefined, {
       month: "short",
       day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
     });
     const summary = row.summary.trim().replace(/\n{3,}/g, "\n");
-    const label = idx === 0 ? `[Most recent session — ${date}]` : `[Earlier session — ${date}]`;
+    const label = idx === 0 ? `[Most recent session — ${when}]` : `[Earlier session — ${when}]`;
     return `${label}\n${summary}`;
   });
 
