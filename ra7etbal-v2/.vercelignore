@@ -1,0 +1,4 @@
+# Keep test files out of the Vercel deploy. Every api/*.js becomes a
+# serverless function; *.test.js files would count against the Hobby
+# 12-function cap and fail the deploy at the output stage.
+api/**/*.test.js
