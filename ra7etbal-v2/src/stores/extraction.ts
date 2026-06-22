@@ -28,6 +28,7 @@ export interface ExtractionState {
   setDescription: (itemId: string, description: string) => void;
   setSuggestedMessage: (itemId: string, suggestedMessage: string | null) => void;
   setImageFile: (itemId: string, file: File | null) => void;
+  setImageFiles: (itemId: string, files: File[] | null) => void;
   clear: () => void;
 }
 
@@ -112,9 +113,24 @@ export const useExtractionStore = create<ExtractionState>((set, get) => ({
   },
 
   setImageFile(itemId, file) {
+    // Keep imageFiles in sync: a single set/replace collapses to [file];
+    // clearing removes all attachments so stale multi-photo state can't persist.
     set({
       items: get().items.map((it) =>
-        it.id === itemId ? { ...it, imageFile: file ?? null } : it,
+        it.id === itemId
+          ? { ...it, imageFile: file ?? null, imageFiles: file ? [file] : null }
+          : it,
+      ),
+    });
+  },
+
+  setImageFiles(itemId, files) {
+    const list = files && files.length > 0 ? files : null;
+    set({
+      items: get().items.map((it) =>
+        it.id === itemId
+          ? { ...it, imageFiles: list, imageFile: list ? list[0] : null }
+          : it,
       ),
     });
   },

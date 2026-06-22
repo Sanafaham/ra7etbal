@@ -177,6 +177,11 @@ export default function ItemCard({
               alt="Attached"
               className="h-20 w-20 rounded-xl object-cover shadow-sm border border-sage/20"
             />
+            {(item.imageFiles?.length ?? 0) > 1 && (
+              <span className="absolute bottom-1 right-1 rounded-full bg-ink/75 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow">
+                {item.imageFiles!.length} photos
+              </span>
+            )}
             <button
               type="button"
               aria-label="Remove image"

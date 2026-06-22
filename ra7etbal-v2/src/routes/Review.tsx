@@ -7,7 +7,7 @@ import Spinner from "../components/Spinner";
 import AuthNotice from "../components/auth/AuthNotice";
 import { useAuth } from "../hooks/useAuth";
 import { addImpliedOperationalResponsibilities } from "../lib/ai/role-precedence";
-import { savePending } from "../lib/save";
+import { savePending, saveTaskAttachments } from "../lib/save";
 import { sendWhatsAppTask } from "../lib/whatsapp";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
@@ -218,6 +218,32 @@ export default function Review() {
         if (item.imageFile) imageFiles.set(item.id, item.imageFile);
       }
       const result = await savePending(itemsToSave, userId, displayName, people, imageFiles.size > 0 ? imageFiles : undefined);
+
+      // Multi-attachment: when an item carries more than one photo, upload all of
+      // them to task_attachments and track the count per task so the WhatsApp send
+      // appends the attachment note and uses the text template (no image header).
+      const attachmentCountByTaskId = new Map<string, number>();
+      const multiPhotoItem = itemsToSave.find(
+        (it) => (it.imageFiles?.length ?? 0) > 1,
+      );
+      if (multiPhotoItem?.imageFiles && multiPhotoItem.imageFiles.length > 1) {
+        const firstDelegationTask = result.tasks.find(
+          (t) => t.type === "delegation" || t.type === "followup",
+        );
+        if (firstDelegationTask) {
+          try {
+            const count = await saveTaskAttachments(
+              firstDelegationTask.id,
+              userId,
+              multiPhotoItem.imageFiles,
+            );
+            attachmentCountByTaskId.set(firstDelegationTask.id, count);
+          } catch (err) {
+            console.error("Review saveTaskAttachments failed (non-fatal):", err);
+          }
+        }
+      }
+
       const savedMessages = result.messages.filter(
         (message) =>
           !!message.recipient.trim() &&
@@ -259,6 +285,7 @@ export default function Review() {
                 recipientName: message.recipient,
                 ownerName: displayName ?? null,
                 imagePath: message.task_id ? (taskImagePathById.get(message.task_id) ?? null) : null,
+                attachmentCount: message.task_id ? (attachmentCountByTaskId.get(message.task_id) ?? null) : null,
               }),
             ),
           );

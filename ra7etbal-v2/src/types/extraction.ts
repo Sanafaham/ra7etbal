@@ -51,8 +51,14 @@ export interface ExtractedItem {
   needsPerson: boolean;
   needsClarification: boolean;
   clarificationQuestion: string | null;
-  /** In-memory only. File selected by user in Review. Never persisted to Supabase. */
+  /** In-memory only. First/primary file — sets tasks.image_path. Never persisted directly. */
   imageFile?: File | null;
+  /**
+   * In-memory only. All photos attached to this item (up to 5). When length > 1
+   * they are uploaded to task_attachments and the WhatsApp send switches to the
+   * text template with an attachment note. imageFiles[0] mirrors imageFile.
+   */
+  imageFiles?: File[] | null;
 }
 
 export interface ExtractionResult {

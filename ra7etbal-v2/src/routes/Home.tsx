@@ -53,18 +53,32 @@ export default function Home() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const submittingRef = useRef(false);
 
-  // Photo attachment for Clear My Head — described before extraction so the
-  // AI sees the image context when generating tasks.
+  // Photo attachment for Clear My Head — up to 5 photos. The first is described
+  // before extraction so the AI sees image context; all are carried to the first
+  // delegation item and uploaded as task_attachments on save.
+  const MAX_PHOTOS = 5;
   const imageFileInputRef = useRef<HTMLInputElement>(null);
-  const [draftImageFile, setDraftImageFile] = useState<File | null>(null);
-  const [draftImagePreviewUrl, setDraftImagePreviewUrl] = useState<string | null>(null);
+  const [draftImageFiles, setDraftImageFiles] = useState<File[]>([]);
+  const [draftImagePreviewUrls, setDraftImagePreviewUrls] = useState<string[]>([]);
 
   useEffect(() => {
-    if (!draftImageFile) { setDraftImagePreviewUrl(null); return; }
-    const url = URL.createObjectURL(draftImageFile);
-    setDraftImagePreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [draftImageFile]);
+    if (draftImageFiles.length === 0) { setDraftImagePreviewUrls([]); return; }
+    const urls = draftImageFiles.map((f) => URL.createObjectURL(f));
+    setDraftImagePreviewUrls(urls);
+    return () => urls.forEach((u) => URL.revokeObjectURL(u));
+  }, [draftImageFiles]);
+
+  function addDraftPhotos(files: File[]) {
+    if (files.length === 0) return;
+    setDraftImageFiles((prev) => {
+      const remaining = Math.max(0, MAX_PHOTOS - prev.length);
+      return remaining === 0 ? prev : [...prev, ...files.slice(0, remaining)];
+    });
+  }
+
+  function removeDraftPhoto(index: number) {
+    setDraftImageFiles((prev) => prev.filter((_, i) => i !== index));
+  }
 
   useEffect(() => {
     if (!userId) return;
@@ -133,7 +147,7 @@ export default function Home() {
   const briefSentence = useMemo(() => buildBriefSentence(brief, now), [brief, now]);
 
   const trimmed = text.trim();
-  const canSubmit = !submitting && (trimmed.length > 0 || !!draftImageFile) && !!userId;
+  const canSubmit = !submitting && (trimmed.length > 0 || draftImageFiles.length > 0) && !!userId;
   const keyboardOpen = textareaFocused || viewportShrunk;
 
   async function handleNext() {
@@ -157,17 +171,18 @@ export default function Home() {
       await loadPeople(userId);
       const peopleNow = usePeopleStore.getState().items;
 
-      const imageForExtraction = draftImageFile;
+      const filesForExtraction = draftImageFiles;
+      const imageForExtraction = filesForExtraction[0] ?? null;
 
       if (!trimmed && imageForExtraction) {
-        // Image-only submission: extract directly from the photo via vision API.
+        // Image-only submission: extract directly from the first photo via vision API.
         await useExtractionStore.getState().runFromPhoto(
           imageForExtraction,
           peopleNow,
           displayName ?? undefined,
         );
       } else {
-        // Text (+ optional image) submission: describe image for context, then extract from text.
+        // Text (+ optional image) submission: describe first image for context, then extract from text.
         let extractionText = trimmed;
         if (imageForExtraction) {
           const description = await describeImageForTextCarson(imageForExtraction).catch(() => null);
@@ -178,19 +193,19 @@ export default function Home() {
         await runExtraction(extractionText, peopleNow, displayName ?? undefined);
       }
 
-      // Auto-attach the image to the first delegation item so Review shows it
-      // pre-loaded and savePending uploads it without the user having to re-attach.
-      if (imageForExtraction) {
+      // Auto-attach all photos to the first delegation item so Review shows them
+      // pre-loaded and save uploads them without the user having to re-attach.
+      if (filesForExtraction.length > 0) {
         const extractedItems = useExtractionStore.getState().items;
         const firstDelegation = extractedItems.find(
           (i) => i.type === "delegation" || i.type === "message",
         );
         if (firstDelegation) {
-          useExtractionStore.getState().setImageFile(firstDelegation.id, imageForExtraction);
+          useExtractionStore.getState().setImageFiles(firstDelegation.id, filesForExtraction);
         }
       }
 
-      setDraftImageFile(null);
+      setDraftImageFiles([]);
       navigate("/review");
     } catch (err) {
       setError(
@@ -311,38 +326,43 @@ export default function Home() {
           ref={imageFileInputRef}
           type="file"
           accept="image/*"
+          multiple
           onChange={(e) => {
-            const file = e.target.files?.[0] ?? null;
-            setDraftImageFile(file);
+            addDraftPhotos(Array.from(e.target.files ?? []));
             e.target.value = "";
           }}
           className="sr-only"
-          aria-label="Attach photo to extraction"
+          aria-label="Attach photos to extraction"
         />
 
-        {draftImagePreviewUrl && (
-          <div data-testid="home-attach-preview" className="mt-3 flex items-center gap-2.5">
-            <div className="relative inline-block shrink-0">
-              <img
-                src={draftImagePreviewUrl}
-                alt="Attached photo"
-                className="h-12 w-12 rounded-xl border border-border object-cover shadow-sm"
-              />
-              <button
-                data-testid="home-attach-preview-remove"
-                type="button"
-                onClick={() => setDraftImageFile(null)}
-                disabled={submitting}
-                aria-label="Remove attached photo"
-                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink disabled:opacity-50"
-              >
-                <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                  <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
-                </svg>
-              </button>
+        {draftImagePreviewUrls.length > 0 && (
+          <div data-testid="home-attach-preview" className="mt-3 space-y-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              {draftImagePreviewUrls.map((url, index) => (
+                <div key={index} className="relative inline-block shrink-0">
+                  <img
+                    src={url}
+                    alt={`Attached photo ${index + 1}`}
+                    className="h-12 w-12 rounded-xl border border-border object-cover shadow-sm"
+                  />
+                  <button
+                    data-testid="home-attach-preview-remove"
+                    type="button"
+                    onClick={() => removeDraftPhoto(index)}
+                    disabled={submitting}
+                    aria-label={`Remove attached photo ${index + 1}`}
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink disabled:opacity-50"
+                  >
+                    <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                      <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
             </div>
             <p className="text-[11px] leading-snug text-text-muted">
-              Photo ready — Carson will describe it before organizing.
+              {draftImageFiles.length} photo{draftImageFiles.length !== 1 ? "s" : ""} ready
+              {draftImageFiles.length < MAX_PHOTOS ? " — tap the photo button to add more." : " — maximum reached."}
             </p>
           </div>
         )}
@@ -353,12 +373,12 @@ export default function Home() {
               data-testid="home-attach-button"
               type="button"
               onClick={() => imageFileInputRef.current?.click()}
-              disabled={submitting}
-              aria-label="Attach photo"
-              title="Attach photo"
+              disabled={submitting || draftImageFiles.length >= MAX_PHOTOS}
+              aria-label="Attach photos"
+              title={draftImageFiles.length >= MAX_PHOTOS ? "Maximum 5 photos" : "Attach photos"}
               className={
                 "flex h-10 w-10 shrink-0 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
-                (draftImageFile
+                (draftImageFiles.length > 0
                   ? "border-sage bg-sage/10 text-sage"
                   : "border-border bg-warm-white text-text-soft hover:border-sage hover:text-text")
               }
