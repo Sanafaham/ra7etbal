@@ -2672,12 +2672,47 @@ export default function ElevenLabsAgentWidget({
           setSessionEndedMsg("Session ended. Tap to talk again.");
           clearPendingPhotoPreviews();
 
+          // ── Session recap — fully independent, runs FIRST ─────────────────
+          // Saved in its own async block so nothing in the durable-memory chain
+          // (dinner check, people memory, fact extraction) can abort it. This is
+          // what lets Carson know the ACTUAL most recent session even when the
+          // durable gate correctly saves nothing. Uses the captured transcript
+          // snapshot, so it is safe regardless of the ref resets below.
+          if (userId) {
+            (async () => {
+              const recap = await summarizeSessionRecap(transcript);
+              if (recap) {
+                await saveSessionMemory(`${SESSION_RECAP_PREFIX} ${recap}`);
+              }
+            })().catch((err) => {
+              console.error(
+                "[carson-memory] session recap save failed:",
+                err instanceof Error ? err.message : err,
+              );
+            });
+          }
+
           // Build and save session memory asynchronously — non-blocking.
           // The UI is already back to idle while this runs in the background.
           (async () => {
             if (userId) {
-              await maybeSendImpliedDinnerDelegation(userId);
-              await savePeopleMemoryFromTranscript(userId, transcript);
+              // Guarded so a throw here cannot abort the durable-memory save below.
+              try {
+                await maybeSendImpliedDinnerDelegation(userId);
+              } catch (err) {
+                console.error(
+                  "[carson] maybeSendImpliedDinnerDelegation failed:",
+                  err instanceof Error ? err.message : err,
+                );
+              }
+              try {
+                await savePeopleMemoryFromTranscript(userId, transcript);
+              } catch (err) {
+                console.error(
+                  "[carson] savePeopleMemoryFromTranscript failed:",
+                  err instanceof Error ? err.message : err,
+                );
+              }
               // Behavioral insight: update people.notes based on task history.
               // Uses the full transcript as the "input text" for name detection.
               const transcriptText = transcript.map((m) => m.message).join(" ");
@@ -2717,20 +2752,8 @@ export default function ElevenLabsAgentWidget({
                 // Non-fatal — don't surface to user.
               });
             }
-
-            // Always save a lightweight session-recap row (prefixed so it's
-            // distinct from durable memory) so Carson knows the ACTUAL most
-            // recent session even when nothing durable was saved. Saved AFTER
-            // the durable row so its timestamp is the newest. Does not weaken
-            // the durable gate above.
-            try {
-              const recap = await summarizeSessionRecap(transcript);
-              if (recap) {
-                await saveSessionMemory(`${SESSION_RECAP_PREFIX} ${recap}`);
-              }
-            } catch {
-              // Non-fatal — don't surface to user.
-            }
+            // Session recap is saved in its own independent block above so it
+            // cannot be blocked by anything in this durable-memory chain.
           })();
         },
         onError: (msg) => {

@@ -78,8 +78,11 @@ export const SESSION_RECAP_PREFIX = "• Session recap:";
 export async function summarizeSessionRecap(
   transcript: TranscriptMessage[],
 ): Promise<string | null> {
+  // Recap saves with >= 1 user turn — the whole point is that Carson knows the
+  // ACTUAL last session even when it was trivial. Durable memory keeps its own
+  // higher MIN_USER_TURNS floor; this is intentionally lower.
   const userTurns = transcript.filter((m) => m.role === "user");
-  if (userTurns.length < MIN_USER_TURNS) return null;
+  if (userTurns.length < 1) return null;
 
   // Heuristic fallback: first user utterance, trimmed to a short topic line.
   const fallback = (() => {
