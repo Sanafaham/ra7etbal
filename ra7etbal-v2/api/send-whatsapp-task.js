@@ -1,3 +1,10 @@
+import {
+  beginWhatsappDelivery,
+  getMetaFailure,
+  markWhatsappDeliveryAccepted,
+  markWhatsappDeliveryFailed,
+} from './_whatsapp-delivery.js';
+
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
 const TEMPLATE_SPECS = {
@@ -38,6 +45,9 @@ export default async function handler(req, res) {
     confirmationLink,
     messageRecordId,
     taskId,
+    routineId,
+    automationRunId,
+    sourceType,
     recipientName,
     ownerName,
     imagePath,
@@ -64,10 +74,41 @@ export default async function handler(req, res) {
 
   const cleanLink = String(confirmationLink || '').trim();
   const phoneNumberIdLast4 = phoneNumberId ? phoneNumberId.slice(-4) : null;
+  const deliverySourceType =
+    typeof sourceType === 'string' && sourceType.trim()
+      ? sourceType.trim()
+      : taskId
+        ? 'delegation'
+        : 'message';
+
+  const deliveryId = await beginWhatsappDelivery({
+    supabaseUrl,
+    serviceKey,
+    messageRecordId,
+    taskId,
+    routineId,
+    automationRunId,
+    sourceType: deliverySourceType,
+    recipientPhone: normalizedTo,
+    recipientName: String(recipientName || '').trim() || null,
+    metadata: {
+      has_confirmation_link: Boolean(cleanLink),
+      has_image: Boolean(imagePath),
+      attachment_count: attachmentCountN,
+    },
+  });
 
   if (!accessToken || !phoneNumberId) {
+    await markWhatsappDeliveryFailed({
+      supabaseUrl,
+      serviceKey,
+      deliveryId,
+      failureStage: 'configuration',
+      reason: 'Missing WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID.',
+    });
     return res.status(500).json({
       success: false,
+      delivery_id: deliveryId,
       error: 'WhatsApp is not configured.',
       errorMessage: 'WhatsApp is not configured.',
       details: 'Missing WHATSAPP_ACCESS_TOKEN or WHATSAPP_PHONE_NUMBER_ID.',
@@ -75,8 +116,16 @@ export default async function handler(req, res) {
   }
 
   if (!normalizedTo) {
+    await markWhatsappDeliveryFailed({
+      supabaseUrl,
+      serviceKey,
+      deliveryId,
+      failureStage: 'validation',
+      reason: 'Recipient phone number is missing or invalid.',
+    });
     return res.status(400).json({
       success: false,
+      delivery_id: deliveryId,
       error: 'Recipient phone number is missing.',
       errorMessage: 'Recipient phone number is missing.',
       details: 'Add a WhatsApp phone number for this person, then retry.',
@@ -84,8 +133,16 @@ export default async function handler(req, res) {
   }
 
   if (!cleanMessage) {
+    await markWhatsappDeliveryFailed({
+      supabaseUrl,
+      serviceKey,
+      deliveryId,
+      failureStage: 'validation',
+      reason: 'Message text is missing.',
+    });
     return res.status(400).json({
       success: false,
+      delivery_id: deliveryId,
       error: 'Message text is missing.',
       errorMessage: 'Message text is missing.',
       details: 'Could not send an empty WhatsApp message.',
@@ -94,8 +151,16 @@ export default async function handler(req, res) {
 
   const url = `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`;
   if (!cleanLink) {
+    await markWhatsappDeliveryFailed({
+      supabaseUrl,
+      serviceKey,
+      deliveryId,
+      failureStage: 'validation',
+      reason: 'Confirmation link is missing.',
+    });
     return res.status(400).json({
       success: false,
+      delivery_id: deliveryId,
       error: 'Confirmation link is missing.',
       errorMessage: 'Confirmation link is missing.',
       details: 'WhatsApp task templates require a confirmation link.',
@@ -179,6 +244,20 @@ export default async function handler(req, res) {
   // Send image as a separate media message BEFORE the template.
   if (imagePath && !metaMediaId) {
     if (imageSignedUrl) {
+      const imageDeliveryId = await beginWhatsappDelivery({
+        supabaseUrl,
+        serviceKey,
+        messageRecordId,
+        taskId,
+        routineId,
+        automationRunId,
+        parentDeliveryId: deliveryId,
+        sourceType: 'image',
+        messageKind: 'image',
+        recipientPhone: normalizedTo,
+        recipientName: String(recipientName || '').trim() || null,
+        metadata: { fallback_for_template_delivery: true },
+      });
       const imagePayload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -190,8 +269,24 @@ export default async function handler(req, res) {
         const imageResult = await sendMetaMessage({ url, accessToken, payload: imagePayload });
         if (imageResult.ok) {
           imageSendStatus = 'sent';
+          await markWhatsappDeliveryAccepted({
+            supabaseUrl,
+            serviceKey,
+            deliveryId: imageDeliveryId,
+            metaMessageId: imageResult.messageId,
+            metadata: { fallback_for_template_delivery: true },
+          });
         } else {
           imageSendStatus = 'failed';
+          const imageFailure = getMetaFailure(imageResult);
+          await markWhatsappDeliveryFailed({
+            supabaseUrl,
+            serviceKey,
+            deliveryId: imageDeliveryId,
+            failureStage: 'meta_api',
+            ...imageFailure,
+            metadata: { fallback_for_template_delivery: true },
+          });
           console.warn('[send-whatsapp-task] legacy image send failed (non-fatal), adding fallback link', {
             status: imageResult.status,
             errorCode: imageResult.metaError?.code ?? null,
@@ -204,6 +299,14 @@ export default async function handler(req, res) {
         }
       } catch (err) {
         imageSendStatus = 'failed';
+        await markWhatsappDeliveryFailed({
+          supabaseUrl,
+          serviceKey,
+          deliveryId: imageDeliveryId,
+          failureStage: 'network',
+          reason: err?.message ?? String(err),
+          metadata: { fallback_for_template_delivery: true },
+        });
         console.warn('[send-whatsapp-task] legacy image send threw (non-fatal), adding fallback link', {
           message: err?.message ?? String(err),
         });
@@ -363,6 +466,19 @@ export default async function handler(req, res) {
         usedTemplateName,
         usedAttempt,
       });
+      const failure = getMetaFailure(templateResult);
+      await markWhatsappDeliveryFailed({
+        supabaseUrl,
+        serviceKey,
+        deliveryId,
+        failureStage: 'meta_api',
+        ...failure,
+        templateName: usedTemplateName,
+        metadata: {
+          attempt_count: attempts.indexOf(usedAttempt) + 1,
+          last_attempt: usedAttempt?.label ?? null,
+        },
+      });
 
       // ── SMS fallback via Twilio ───────────────────────────────────────────
       const smsFallbackEnabled = process.env.SMS_FALLBACK_ENABLED === 'true';
@@ -386,6 +502,7 @@ export default async function handler(req, res) {
           await markMessageAccepted({ supabaseUrl, serviceKey, messageRecordId, messageId: smsResult.sid, channel: 'sms' });
           return res.status(200).json({
             success: true,
+            delivery_id: deliveryId,
             sendMode: 'sms',
             sendType: 'sms',
             channel: 'sms',
@@ -398,12 +515,13 @@ export default async function handler(req, res) {
         console.error('[send-whatsapp-task] SMS fallback also failed', { error: smsResult.error });
         return res.status(502).json({
           success: false,
+          delivery_id: deliveryId,
           error: 'I saved the task, but I could not send it by WhatsApp or SMS.',
           errorMessage: 'I saved the task, but I could not send it by WhatsApp or SMS.',
         });
       }
 
-      return sendFailure(res, templateResult);
+      return sendFailure(res, templateResult, null, deliveryId);
     }
 
     console.log('[send-whatsapp-task] send accepted', {
@@ -423,9 +541,23 @@ export default async function handler(req, res) {
       messageRecordId,
       messageId: templateResult.messageId,
     });
+    await markWhatsappDeliveryAccepted({
+      supabaseUrl,
+      serviceKey,
+      deliveryId,
+      metaMessageId: templateResult.messageId,
+      templateName: usedTemplateName,
+      metadata: {
+        attempt_count: attempts.indexOf(usedAttempt) + 1,
+        accepted_attempt: usedAttempt?.label ?? null,
+        template_language: templateLanguage,
+        image_send_status: imageSendStatus,
+      },
+    });
 
     return res.status(200).json({
       success: true,
+      delivery_id: deliveryId,
       sendMode: 'template',
       sendType: 'template',
       channel: 'whatsapp',
@@ -446,8 +578,16 @@ export default async function handler(req, res) {
       to: normalizedTo,
       phoneNumberIdLast4,
     });
+    await markWhatsappDeliveryFailed({
+      supabaseUrl,
+      serviceKey,
+      deliveryId,
+      failureStage: 'network',
+      reason: err instanceof Error ? err.message : String(err),
+    });
     return res.status(500).json({
       success: false,
+      delivery_id: deliveryId,
       error: 'Could not send WhatsApp message.',
       errorMessage: 'Could not send WhatsApp message.',
       details: err instanceof Error ? err.message : 'Unexpected server error.',
@@ -509,10 +649,11 @@ async function readMetaResponse(response) {
   }
 }
 
-function sendFailure(res, result, freeFormError = null) {
+function sendFailure(res, result, freeFormError = null, deliveryId = null) {
   const errorMessage = safeMetaMessage(result.metaError);
   return res.status(result.status || 502).json({
     success: false,
+    delivery_id: deliveryId,
     status: result.status || 502,
     error: 'Could not send WhatsApp message.',
     errorMessage,

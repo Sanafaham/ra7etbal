@@ -14,6 +14,7 @@ export type DeliveryChannel = "whatsapp" | "sms" | "failed";
 export interface DeliveryResult {
   success: boolean;
   channel: DeliveryChannel;
+  deliveryId?: string | null;
   messageId?: string | null;
   error?: string;
 }
@@ -26,6 +27,7 @@ export async function deliverTaskMessage(
     return {
       success: true,
       channel: result.channel ?? "whatsapp",
+      deliveryId: result.deliveryId,
       messageId: result.messageId,
     };
   } catch (err) {

@@ -10,6 +10,9 @@ export interface WhatsAppCloudTaskPayload {
   confirmationLink?: string | null;
   messageRecordId?: string | null;
   taskId?: string | null;
+  routineId?: string | null;
+  automationRunId?: string | null;
+  sourceType?: string | null;
   recipientName?: string | null;
   /** Owner display name — becomes {{1}} in ra7etbal_task_v3 (and ra7etbal_task_image header replaces this). Falls back to "Rahet Bal" on the server if omitted. */
   ownerName?: string | null;
@@ -56,7 +59,7 @@ export function openWhatsAppMessage(payload: WhatsAppPayload): boolean {
 
 export async function sendWhatsAppTask(
   payload: WhatsAppCloudTaskPayload,
-): Promise<{ success: true; messageId?: string | null; sendType?: string | null; channel?: 'whatsapp' | 'sms' }> {
+): Promise<{ success: true; deliveryId?: string | null; messageId?: string | null; sendType?: string | null; channel?: 'whatsapp' | 'sms' }> {
   const res = await fetch("/api/send-whatsapp-task", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -66,6 +69,9 @@ export async function sendWhatsAppTask(
       confirmationLink: payload.confirmationLink ?? null,
       messageRecordId: payload.messageRecordId ?? null,
       taskId: payload.taskId ?? null,
+      routineId: payload.routineId ?? null,
+      automationRunId: payload.automationRunId ?? null,
+      sourceType: payload.sourceType ?? null,
       recipientName: payload.recipientName ?? null,
       ownerName: payload.ownerName ?? null,
       imagePath: payload.imagePath ?? null,
@@ -92,6 +98,7 @@ export async function sendWhatsAppTask(
 
   return {
     success: true,
+    deliveryId: typeof data?.delivery_id === "string" ? data.delivery_id : null,
     messageId: typeof data?.messageId === "string" ? data.messageId : null,
     sendType: typeof data?.sendType === "string" ? data.sendType : null,
     channel: data?.channel === "sms" ? "sms" : "whatsapp",
