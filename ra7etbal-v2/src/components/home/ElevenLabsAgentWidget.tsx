@@ -789,6 +789,11 @@ export default function ElevenLabsAgentWidget({
    */
   const recurringRawRef = useRef<string | null>(null);
 
+  // Diagnostic only: tracks which client tool (if any) is mid-execution, so the
+  // onDisconnect log can report whether a disconnect landed before, during, or
+  // after a tool call. Null when no tool is running. No behavioral effect.
+  const toolInFlightRef = useRef<string | null>(null);
+
   /** Accumulates finalized transcript messages (both user and agent) for
    *  this session. Summarised by Haiku at disconnect for conversational memory. */
   const sessionTranscriptRef = useRef<TranscriptMessage[]>([]);
@@ -2607,20 +2612,39 @@ export default function ElevenLabsAgentWidget({
           // through the same shared pipeline as Text Carson. Use this for all
           // compound instructions, personal notes, and ambiguous cases.
           execute_instruction: async (params: ExecuteInstructionParams) => {
+            toolInFlightRef.current = "execute_instruction";
             try {
               return await executeInstruction(params);
             } catch (err) {
               console.error("[executeInstruction:catch]", err);
               const detail = err instanceof Error ? err.message : "Please try again.";
               return `Could not process that. ${detail}`;
+            } finally {
+              toolInFlightRef.current = null;
             }
           },
           // ── Legacy/simple fallbacks ──────────────────────────────────────
           // send_delegation and send_followup are kept for backward compat with
           // existing ElevenLabs dashboard prompts that call them directly.
           // For new dashboard prompt versions, prefer execute_instruction.
-          send_followup: sendFollowup,
-          send_delegation: sendDelegation,
+          // Diagnostic wrappers only set/clear toolInFlightRef — behavior is
+          // identical to calling sendFollowup / sendDelegation directly.
+          send_followup: async (params: Parameters<typeof sendFollowup>[0]) => {
+            toolInFlightRef.current = "send_followup";
+            try {
+              return await sendFollowup(params);
+            } finally {
+              toolInFlightRef.current = null;
+            }
+          },
+          send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {
+            toolInFlightRef.current = "send_delegation";
+            try {
+              return await sendDelegation(params);
+            } finally {
+              toolInFlightRef.current = null;
+            }
+          },
           create_reminder: createReminder,
           create_automation: createAutomation,
           save_city: saveCity,
@@ -2692,7 +2716,21 @@ export default function ElevenLabsAgentWidget({
             console.warn("[transcript] unexpected onMessage role:", role);
           }
         },
-        onDisconnect: () => {
+        onDisconnect: (details?: {
+          reason?: string;
+          message?: string;
+          context?: unknown;
+        }) => {
+          // Diagnostic: surface WHY the session ended (SDK reason: user | agent |
+          // error) and whether a client tool was mid-flight at disconnect time.
+          console.warn("[carson-disconnect]", {
+            reason: details?.reason ?? "unknown",
+            message: details?.message ?? null,
+            context: details?.context ?? null,
+            toolInFlight: toolInFlightRef.current,
+            at: new Date().toISOString(),
+          });
+
           // Capture refs before any async work so they can be reset immediately.
           const userId = useAuthStore.getState().user?.id ?? null;
           const transcript = [...sessionTranscriptRef.current];
@@ -2791,7 +2829,16 @@ export default function ElevenLabsAgentWidget({
             // cannot be blocked by anything in this durable-memory chain.
           })();
         },
-        onError: (msg) => {
+        onError: (msg, context?: unknown) => {
+          // Diagnostic: log the error message + context before it is reduced to
+          // UI state (which only shows when status flips to "error").
+          console.error("[carson-error]", {
+            message: msg ?? null,
+            context: context ?? null,
+            toolInFlight: toolInFlightRef.current,
+            at: new Date().toISOString(),
+          });
+
           // Keep error visible — user must tap to retry. No silent auto-dismiss.
           conversationRef.current = null;
           setStatus("error");
@@ -2818,6 +2865,15 @@ export default function ElevenLabsAgentWidget({
         onConnect: () => {
           setStatus("connected");
         },
+        // Diagnostic: fires when the agent invokes a tool the client has NOT
+        // registered (e.g. a dashboard tool name that doesn't match any client
+        // tool). Directly surfaces tool-registration regressions.
+        onUnhandledClientToolCall: (params?: unknown) => {
+          console.warn("[carson-unhandled-tool]", {
+            params: params ?? null,
+            at: new Date().toISOString(),
+          });
+        },
       });
       conversationRef.current = conv;
 
@@ -2840,8 +2896,15 @@ export default function ElevenLabsAgentWidget({
   // ------------------------------------------------------------------
   // Session teardown
   // ------------------------------------------------------------------
-  const stopSession = useCallback(() => {
+  const stopSession = useCallback((teardownReason: string = "manual-end") => {
+    // Diagnostic: attribute which client-side path tore the session down. Only
+    // logs when an active session actually existed.
     if (conversationRef.current) {
+      console.warn("[carson-teardown]", {
+        cause: teardownReason,
+        toolInFlight: toolInFlightRef.current,
+        at: new Date().toISOString(),
+      });
       conversationRef.current.endSession();
       conversationRef.current = null;
     }
@@ -2850,7 +2913,8 @@ export default function ElevenLabsAgentWidget({
     setMode("listening");
   }, [clearPendingPhotoPreviews]);
 
-  const endCall = stopSession;
+  // Wrap so the button's click event is never passed as the teardown reason.
+  const endCall = useCallback(() => stopSession("manual-end-button"), [stopSession]);
   const visibilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ------------------------------------------------------------------
@@ -2859,7 +2923,7 @@ export default function ElevenLabsAgentWidget({
   useEffect(() => {
     function handleVisibilityChange() {
       if (document.visibilityState === "hidden") {
-        visibilityTimerRef.current = setTimeout(() => stopSession(), 30_000);
+        visibilityTimerRef.current = setTimeout(() => stopSession("visibility-hidden-30s"), 30_000);
       } else {
         if (visibilityTimerRef.current !== null) {
           clearTimeout(visibilityTimerRef.current);
@@ -2867,8 +2931,8 @@ export default function ElevenLabsAgentWidget({
         }
       }
     }
-    function handlePageHide() { stopSession(); }
-    function handleBeforeUnload() { stopSession(); }
+    function handlePageHide() { stopSession("pagehide"); }
+    function handleBeforeUnload() { stopSession("beforeunload"); }
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("pagehide", handlePageHide);
@@ -2876,7 +2940,7 @@ export default function ElevenLabsAgentWidget({
 
     return () => {
       if (visibilityTimerRef.current !== null) clearTimeout(visibilityTimerRef.current);
-      stopSession();
+      stopSession("effect-cleanup-unmount");
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("pagehide", handlePageHide);
       window.removeEventListener("beforeunload", handleBeforeUnload);
