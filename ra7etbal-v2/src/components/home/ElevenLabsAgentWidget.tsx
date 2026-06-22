@@ -672,6 +672,9 @@ export default function ElevenLabsAgentWidget({
   useEffect(() => { onCallStatusChange?.(status); }, [status, onCallStatusChange]);
   /** Latest finalized spoken response from Carson. Cleared at session start, persists after disconnect. */
   const [lastCarsonMessage, setLastCarsonMessage] = useState<string | null>(null);
+  /** Latest finalized user transcript, shown briefly for local voice diagnostics only. */
+  const [lastUserTranscript, setLastUserTranscript] = useState<string | null>(null);
+  const userTranscriptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationRef = useRef<Awaited<
     ReturnType<typeof Conversation.startSession>
   > | null>(null);
@@ -751,6 +754,9 @@ export default function ElevenLabsAgentWidget({
     return () => {
       for (const photo of pendingPhotosRef.current) {
         URL.revokeObjectURL(photo.previewUrl);
+      }
+      if (userTranscriptTimerRef.current) {
+        clearTimeout(userTranscriptTimerRef.current);
       }
     };
   }, []);
@@ -2468,6 +2474,11 @@ export default function ElevenLabsAgentWidget({
     sentDelegationsRef.current = [];
     recurringRawRef.current = null;
     setLastCarsonMessage(null);
+    setLastUserTranscript(null);
+    if (userTranscriptTimerRef.current) {
+      clearTimeout(userTranscriptTimerRef.current);
+      userTranscriptTimerRef.current = null;
+    }
 
     // Load structured user memory and recent session summaries before opening
     // the ElevenLabs connection. Failures are non-fatal.
@@ -2642,11 +2653,25 @@ export default function ElevenLabsAgentWidget({
           }
           setMode(m === "speaking" ? "speaking" : "listening");
         },
-        onMessage: ({ role, message }) => {
+        onMessage: ({ role, message, event_id }) => {
           // Accumulate both sides of the conversation for end-of-session
           // summarisation. Only finalized messages arrive here.
           sessionTranscriptRef.current.push({ role, message });
           if (role === "user") {
+            console.log("[voice-transcript:user]", {
+              eventId: event_id ?? null,
+              timestamp: new Date().toISOString(),
+              message,
+            });
+            setLastUserTranscript(message);
+            if (userTranscriptTimerRef.current) {
+              clearTimeout(userTranscriptTimerRef.current);
+            }
+            userTranscriptTimerRef.current = setTimeout(() => {
+              setLastUserTranscript(null);
+              userTranscriptTimerRef.current = null;
+            }, 8_000);
+
             // Capture recurring language from the raw user utterance BEFORE the
             // LLM processes it. The ElevenLabs dashboard LLM often strips recurring
             // language ("every Saturday", "weekly", etc.) when it rewrites the
@@ -2675,6 +2700,11 @@ export default function ElevenLabsAgentWidget({
           setStatus("idle");
           setMode("listening");
           setSessionEndedMsg("Session ended. Tap to talk again.");
+          setLastUserTranscript(null);
+          if (userTranscriptTimerRef.current) {
+            clearTimeout(userTranscriptTimerRef.current);
+            userTranscriptTimerRef.current = null;
+          }
           clearPendingPhotoPreviews();
 
           // ── Session recap — fully independent, runs FIRST ─────────────────
@@ -2996,6 +3026,12 @@ export default function ElevenLabsAgentWidget({
             {errorMsg ?? "Couldn't connect — tap to retry"}
           </span>
         </button>
+      )}
+
+      {lastUserTranscript && (
+        <p className="mt-1 max-w-[280px] truncate px-2 text-[11px] text-ink/45">
+          Carson heard: “{lastUserTranscript}”
+        </p>
       )}
 
       {/* Latest Carson response — persists after session ends, clears on next session start */}
