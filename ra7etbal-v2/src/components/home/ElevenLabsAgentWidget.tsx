@@ -17,7 +17,7 @@ import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
-import { executeDirectMessageFastPath } from "../../lib/direct-message-fast-path";
+import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
@@ -2229,6 +2229,34 @@ export default function ElevenLabsAgentWidget({
       const people = usePeopleStore.getState().items;
       const tasks = useTasksStore.getState().items;
       const userEmail = useAuthStore.getState().user?.email ?? null;
+
+      // ── Parser diagnostic gate ─────────────────────────────────────────────
+      // Activated by saying a phrase containing "parser diagnostic only" or
+      // "diagnose direct message parser". Returns immediately with zero side
+      // effects — no Anthropic call, no DB writes, no WhatsApp sends.
+      const DIAG_PHRASES = ["parser diagnostic only", "diagnose direct message parser"];
+      const isDiagnosticRun = DIAG_PHRASES.some((p) =>
+        rawInstruction.toLowerCase().includes(p),
+      );
+      if (isDiagnosticRun) {
+        const parseResult = parseSimpleDirectMessage(rawInstruction, people);
+        const fastPathResult = parseResult
+          ? { matched: true, recipientName: parseResult.recipientName, messageText: parseResult.messageText }
+          : { matched: false, reason: "no_match" };
+        console.log("[execute_instruction_raw_instruction]", instruction?.trim() ?? null);
+        console.log("[execute_instruction_transcript_value]", lastUserMessage ?? null);
+        console.log("[execute_instruction_fast_path_input]", rawInstruction);
+        console.log("[execute_instruction_fast_path_result]", fastPathResult);
+        console.log("[execute_instruction_diagnostic_full]", {
+          execute_instruction_raw_instruction: instruction?.trim() ?? null,
+          execute_instruction_transcript_value: lastUserMessage ?? null,
+          execute_instruction_fast_path_input: rawInstruction,
+          execute_instruction_fast_path_result: fastPathResult,
+          people_count: people.length,
+          people_names: people.map((p) => p.name),
+        });
+        return "Diagnostic captured. No message was sent.";
+      }
 
       // Snapshot the pending photos — prefer live ref, fall back to the session
       // snapshot captured at startCall time (before the idle UI unmounted the
