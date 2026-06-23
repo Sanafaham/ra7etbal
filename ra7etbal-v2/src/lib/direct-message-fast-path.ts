@@ -66,7 +66,7 @@ export async function executeDirectMessageFastPath(
       reason: "missing_person",
       recipientName: parsed.recipientName,
       messageText: parsed.messageText,
-      response: `I don’t have ${parsed.recipientName} in People yet.`,
+      response: `I don't have ${parsed.recipientName} in People yet.`,
     };
   }
 
@@ -81,7 +81,7 @@ export async function executeDirectMessageFastPath(
       reason: "missing_phone",
       recipientName: person.name,
       messageText: parsed.messageText,
-      response: `I don’t have a phone number for ${person.name}.`,
+      response: `I don�'have a phone number for ${person.name}.`,
     };
   }
 
@@ -124,7 +124,7 @@ export async function executeDirectMessageFastPath(
       reason: "delivery_failed",
       recipientName: person.name,
       messageText: parsed.messageText,
-      response: `I couldn’t send ${person.name} the message. Please try again.`,
+      response: `I couldn’t'nd ${person.name} the message. Please try again.`,
     };
   }
 
@@ -152,7 +152,7 @@ export async function executeDirectMessageFastPath(
       reason: "delivery_failed",
       recipientName: person.name,
       messageText: parsed.messageText,
-      response: `I couldn’t send ${person.name} the message. Please try again.`,
+      response: `I couldn’t s' ${person.name} the message. Please try again.`,
     };
   }
 
@@ -169,7 +169,7 @@ export async function executeDirectMessageFastPath(
       reason: "delivery_failed",
       recipientName: person.name,
       messageText: parsed.messageText,
-      response: `I couldn’t send ${person.name} the message. Please try again.`,
+      response: `I couldn’t sen'{person.name} the message. Please try again.`,
     };
   }
 
@@ -197,22 +197,36 @@ export function parseSimpleDirectMessage(
   const prefixMatch = normalized.match(COMMAND_PREFIX);
   if (!prefixMatch) return null;
 
+  const verb = prefixMatch[1];
   const afterCommand = normalized.slice(prefixMatch[0].length).trim();
   if (!afterCommand || UNSAFE_OPERATIONAL_LANGUAGE.test(afterCommand)) return null;
 
-  const person = findPersonAtStart(afterCommand, people);
-  if (!person) {
-    const unknownRecipient = extractUnknownRecipientName(afterCommand);
-    if (!unknownRecipient) return null;
-    const body = extractMessageBody(afterCommand.slice(unknownRecipient.length).trim(), prefixMatch[1]);
+  // Fast path: person name directly after verb ("send Sana ...", "tell Sana ...")
+  const personAtStart = findPersonAtStart(afterCommand, people);
+  if (personAtStart) {
+    const body = extractMessageBody(afterCommand.slice(personAtStart.name.length).trim(), verb);
     if (!body || isUnsafeBody(body)) return null;
-    return { recipientName: unknownRecipient, messageText: body };
+    return { recipientName: personAtStart.name, messageText: body };
   }
 
-  const body = extractMessageBody(afterCommand.slice(person.name.length).trim(), prefixMatch[1]);
-  if (!body || isUnsafeBody(body)) return null;
+  // "send a WhatsApp message to Sana saying X" — person comes after "to"
+  const toResult = findPersonAfterToWithIndex(afterCommand, people);
+  if (toResult) {
+    const body = extractMessageBody(afterCommand.slice(toResult.afterNameIndex).trim(), verb);
+    if (body && !isUnsafeBody(body)) {
+      return { recipientName: toResult.person.name, messageText: body };
+    }
+  }
 
-  return { recipientName: person.name, messageText: body };
+  // Unknown recipient path — fires for both "Sana X" (at start) and
+  // "send a WhatsApp message to Sana saying X" (after "to") when the name
+  // is not found in People, so the fast path can return the "not in People" error.
+  const unknownResult = extractUnknownRecipientName(afterCommand);
+  if (!unknownResult) return null;
+  const bodyText = afterCommand.slice(unknownResult.endIndex).trim();
+  const body = extractMessageBody(bodyText, verb);
+  if (!body || isUnsafeBody(body)) return null;
+  return { recipientName: unknownResult.name, messageText: body };
 }
 
 function extractMessageBody(restAfterRecipient: string, verb: string): string | null {
@@ -256,15 +270,51 @@ function findPersonByName(name: string, people: Person[]): Person | null {
   return people.find((person) => person.name.trim().toLowerCase() === key) ?? null;
 }
 
-function extractUnknownRecipientName(text: string): string | null {
+function findPersonAfterToWithIndex(
+  text: string,
+  people: Person[],
+): { person: Person; afterNameIndex: number } | null {
+  const sorted = [...people].sort((a, b) => b.name.length - a.name.length);
+  for (const person of sorted) {
+    const name = person.name.trim();
+    if (!name) continue;
+    const pattern = new RegExp(`\\bto\\s+${escapeRegExp(name)}(?=\\b|\\s|,|:|\\.|$)`, "i");
+    const match = text.match(pattern);
+    if (match && match.index !== undefined) {
+      return { person, afterNameIndex: match.index + match[0].length };
+    }
+  }
+  return null;
+}
+
+function extractUnknownRecipientName(
+  text: string,
+): { name: string; endIndex: number } | null {
+  // "to NAME" pattern — "send a WhatsApp message to John saying X"
+  // where John is not (yet) in People.
+  const toNameMatch = text.match(/\bto\s+([A-Za-z][a-zA-Z]*)(?:\b|$)/i);
+  if (toNameMatch && toNameMatch.index !== undefined) {
+    const candidate = toNameMatch[1].replace(/[,:.]+$/, "").trim();
+    // Skip body-marker words that look like "to say" / "to saying"
+    if (candidate && !/^(?:say|saying|that|the|a|an)$/i.test(candidate)) {
+      return {
+        name: titleCase(candidate),
+        endIndex: toNameMatch.index + toNameMatch[0].length,
+      };
+    }
+  }
+
+  // Original logic: name before body marker, or just the first word
   const marker = text.match(BODY_MARKER);
-  const beforeMarker = marker ? text.slice(0, marker.index).trim() : text.trim().split(/\s+/).slice(0, 1).join(" ");
+  const beforeMarker = marker
+    ? text.slice(0, marker.index).trim()
+    : text.trim().split(/\s+/).slice(0, 1).join(" ");
   const cleaned = beforeMarker
     .replace(/^(?:a\s+)?(?:whatsapp\s+)?(?:test\s+)?message\b.*$/i, "")
     .replace(/[,:.]+$/g, "")
     .trim();
   if (!cleaned || cleaned.split(/\s+/).length > 2) return null;
-  return titleCase(cleaned);
+  return { name: titleCase(cleaned), endIndex: cleaned.length };
 }
 
 function normalizeSpeechText(input: string): string {

@@ -101,6 +101,88 @@ describe("Voice Carson direct message fast path", () => {
     });
   });
 
+  // ── Recipient after "to" ─────────────────────────────────────────────────
+  // ElevenLabs agent paraphrases spoken intent as "send a WhatsApp message to
+  // Sana saying X" rather than forwarding the verbatim user transcript. The
+  // fast path must match this form so it never falls through to /api/anthropic.
+
+  it("matches 'send a WhatsApp message to Sana saying X' (recipient after to)", () => {
+    expect(
+      parseSimpleDirectMessage(
+        "send a WhatsApp message to Sana saying Ra7etBal notification test",
+        [person()],
+      ),
+    ).toEqual({
+      recipientName: "Sana",
+      messageText: "Ra7etBal notification test",
+    });
+  });
+
+  it("matches 'send a WhatsApp message to Sana. Say: X'", () => {
+    expect(
+      parseSimpleDirectMessage(
+        "send a WhatsApp message to Sana. Say: Ra7etBal notification test",
+        [person()],
+      ),
+    ).toEqual({
+      recipientName: "Sana",
+      messageText: "Ra7etBal notification test",
+    });
+  });
+
+  it("returns missing_person when recipient in 'to NAME' is not in People", async () => {
+    const createMessageFn = vi.fn();
+    const deliverTaskMessageFn = vi.fn();
+
+    const result = await executeDirectMessageFastPath(
+      "send a WhatsApp message to Grace saying hello",
+      {
+        userId: "user-1",
+        displayName: "Sana",
+        people: [person()], // only Sana, not Grace
+      },
+      { createMessageFn, deliverTaskMessageFn },
+    );
+
+    expect(result).toMatchObject({
+      handled: true,
+      status: "blocked",
+      reason: "missing_person",
+      response: "I don't have Grace in People yet.",
+    });
+    expect(createMessageFn).not.toHaveBeenCalled();
+    expect(deliverTaskMessageFn).not.toHaveBeenCalled();
+  });
+
+  // ── Other required patterns ──────────────────────────────────────────────
+
+  it("matches 'text Sana X'", () => {
+    expect(
+      parseSimpleDirectMessage("text Sana Ra7etBal notification test", [person()]),
+    ).toEqual({
+      recipientName: "Sana",
+      messageText: "Ra7etBal notification test",
+    });
+  });
+
+  it("matches 'send Sana X' (no WhatsApp filler words)", () => {
+    expect(
+      parseSimpleDirectMessage("send Sana Ra7etBal notification test", [person()]),
+    ).toEqual({
+      recipientName: "Sana",
+      messageText: "Ra7etBal notification test",
+    });
+  });
+
+  it("matches 'tell Sana X'", () => {
+    expect(
+      parseSimpleDirectMessage("tell Sana Ra7etBal notification test", [person()]),
+    ).toEqual({
+      recipientName: "Sana",
+      messageText: "Ra7etBal notification test",
+    });
+  });
+
   it("blocks non-consented recipients before message creation or send", async () => {
     const createMessageFn = vi.fn();
     const deliverTaskMessageFn = vi.fn();
