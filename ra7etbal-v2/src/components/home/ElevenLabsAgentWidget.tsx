@@ -1543,6 +1543,120 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Client tool: send_direct_whatsapp_message
+  // Dedicated structured tool for sending a WhatsApp message directly to a
+  // specific person. ElevenLabs fills recipient_name and message as typed
+  // fields — no parsing, no Anthropic call, no regex. Runs entirely
+  // browser-side and calls the existing /api/send-whatsapp-task route.
+  // ------------------------------------------------------------------
+  const sendDirectWhatsAppMessage = useCallback(
+    async ({
+      recipient_name,
+      message,
+    }: {
+      recipient_name: string;
+      message: string;
+    }): Promise<string> => {
+      const name = (recipient_name ?? "").trim();
+      const text = (message ?? "").trim();
+
+      console.log("[direct_whatsapp_tool_called]", {
+        recipient_name: name,
+        message_length: text.length,
+      });
+
+      if (!name || !text) {
+        return "I need both a recipient name and a message to send.";
+      }
+
+      const people = usePeopleStore.getState().items;
+      const person = people.find(
+        (p) => p.name.trim().toLowerCase() === name.toLowerCase(),
+      );
+
+      if (!person) {
+        console.warn("[direct_whatsapp_tool_failed]", {
+          reason: "missing_person",
+          recipient_name: name,
+        });
+        return `I couldn't find ${name} in your contacts.`;
+      }
+
+      console.log("[direct_whatsapp_tool_recipient_resolved]", {
+        recipient_name: person.name,
+        has_phone: !!person.phone?.trim(),
+        opted_in: person.whatsapp_opted_in,
+      });
+
+      if (!person.phone?.trim()) {
+        return `I don't have a phone number for ${person.name}.`;
+      }
+
+      if (person.whatsapp_opted_in !== true) {
+        return `WhatsApp consent is not recorded for ${person.name}.`;
+      }
+
+      const userId = useAuthStore.getState().user?.id;
+      if (!userId) {
+        return "I couldn't verify your identity. Please try again.";
+      }
+
+      let messageRow: Awaited<ReturnType<typeof createMessage>>;
+      try {
+        messageRow = await createMessage({
+          user_id: userId,
+          task_id: null,
+          recipient: person.name,
+          content: text,
+          confirmation_url: null,
+        });
+      } catch (err) {
+        console.error("[direct_whatsapp_tool_failed]", {
+          stage: "create_message",
+          recipient: person.name,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return `I couldn't send ${person.name} the message. Please try again.`;
+      }
+
+      console.log("[direct_whatsapp_tool_saved]", {
+        messageRecordId: messageRow.id,
+        recipient: person.name,
+      });
+
+      const ownerName = useProfileStore.getState().displayName ?? null;
+
+      try {
+        const result = await sendWhatsAppTask({
+          to: person.phone,
+          messageText: messageRow.content,
+          confirmationLink: null,
+          messageRecordId: messageRow.id,
+          taskId: null,
+          sendMode: "direct_message",
+          recipientName: person.name,
+          ownerName,
+        });
+        console.log("[direct_whatsapp_tool_delivery_result]", {
+          success: true,
+          channel: result.channel,
+          deliveryId: result.deliveryId,
+        });
+        return `Done. I sent ${person.name} the message.`;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.error("[direct_whatsapp_tool_failed]", {
+          stage: "deliver_message",
+          recipient: person.name,
+          error: errMsg,
+        });
+        return `I couldn't send ${person.name} the message. Please try again.`;
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
   // Client tool: save_city
   // Carson calls this when the user tells it their city for the first time.
   // Persists to profiles.weather_city so future sessions have weather.
@@ -2771,6 +2885,14 @@ export default function ElevenLabsAgentWidget({
           },
           create_reminder: createReminder,
           create_automation: createAutomation,
+          send_direct_whatsapp_message: async (params: { recipient_name: string; message: string }) => {
+            toolInFlightRef.current = "send_direct_whatsapp_message";
+            try {
+              return await sendDirectWhatsAppMessage(params);
+            } finally {
+              toolInFlightRef.current = null;
+            }
+          },
           save_city: saveCity,
           save_note: saveNote,
           act_on_note: actOnNote,
