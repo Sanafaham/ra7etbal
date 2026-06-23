@@ -342,6 +342,7 @@ export async function executeProposedPlan(
         confirmationLink: msg.confirmation_url ?? null,
         messageRecordId: msg.id,
         taskId: msg.task_id,
+        sendMode: !msg.task_id && !msg.confirmation_url ? "direct_message" : null,
         recipientName: msg.recipient,
         ownerName: displayName,
         imagePath: null,

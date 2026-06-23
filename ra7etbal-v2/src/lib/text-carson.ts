@@ -409,6 +409,7 @@ export async function executeDelegationFromText(
               confirmationLink: message.confirmation_url ?? null,
               messageRecordId: message.id,
               taskId: message.task_id,
+              sendMode: !message.task_id && !message.confirmation_url ? "direct_message" : null,
               recipientName: message.recipient,
               ownerName: context.displayName ?? null,
               imagePath: message.task_id

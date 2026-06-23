@@ -53,6 +53,8 @@ export default async function handler(req, res) {
   } = req.body || {};
 
   const isRoutineMessage = sendMode === 'routine_message';
+  const isDirectMessage = sendMode === 'direct_message';
+  const usesPlainMessageTemplate = isRoutineMessage || isDirectMessage;
   if (isRoutineMessage) {
     const expectedSecret = process.env.CRON_SECRET;
     const providedSecret = req.headers?.['x-ra7etbal-internal-secret'];
@@ -66,7 +68,7 @@ export default async function handler(req, res) {
 
   // Task templates are approved in 'en'. Routine messages preserve their
   // existing independently-approved language configuration.
-  const templateLanguage = isRoutineMessage
+  const templateLanguage = usesPlainMessageTemplate
     ? (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim()
     : DEFAULT_TEMPLATE_LANGUAGE;
   const normalizedTo = normalizeWhatsAppPhone(to);
@@ -110,6 +112,8 @@ export default async function handler(req, res) {
       has_confirmation_link: Boolean(cleanLink),
       has_image: Boolean(imagePath),
       attachment_count: attachmentCountN,
+      send_mode: isDirectMessage ? 'direct_message' : isRoutineMessage ? 'routine_message' : 'task_template',
+      direct_message: isDirectMessage,
     },
   });
 
@@ -165,7 +169,41 @@ export default async function handler(req, res) {
   }
 
   const url = `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`;
-  if (!isRoutineMessage && !cleanLink) {
+  if (isDirectMessage && !messageRecordId) {
+    await markWhatsappDeliveryFailed({
+      supabaseUrl,
+      serviceKey,
+      deliveryId,
+      failureStage: 'validation',
+      reason: 'Direct message requires a saved message record.',
+    });
+    return res.status(400).json({
+      success: false,
+      delivery_id: deliveryId,
+      error: 'Direct message requires a saved message record.',
+      errorMessage: 'Direct message requires a saved message record.',
+      details: 'Save the message first so delivery ownership can be recorded.',
+    });
+  }
+
+  if (isDirectMessage && taskId) {
+    await markWhatsappDeliveryFailed({
+      supabaseUrl,
+      serviceKey,
+      deliveryId,
+      failureStage: 'validation',
+      reason: 'Direct messages cannot include a task.',
+    });
+    return res.status(400).json({
+      success: false,
+      delivery_id: deliveryId,
+      error: 'Direct messages cannot include a task.',
+      errorMessage: 'Direct messages cannot include a task.',
+      details: 'Task and delegation WhatsApp messages require a confirmation link.',
+    });
+  }
+
+  if (!usesPlainMessageTemplate && !cleanLink) {
     await markWhatsappDeliveryFailed({
       supabaseUrl,
       serviceKey,
@@ -182,12 +220,13 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── Plain recurring message boundary ──────────────────────────────────────
-  // Preserves the existing ra7etbal_routine_message payload exactly:
+  // ── Plain message boundary ────────────────────────────────────────────────
+  // Preserves the existing approved plain-message template payload exactly:
   // one body parameter, no task, no confirmation link, no SMS fallback.
-  if (isRoutineMessage) {
-    const routineTemplateName = (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || '').trim();
-    if (!routineTemplateName) {
+  // Used by recurring automations and Voice Carson direct messages.
+  if (usesPlainMessageTemplate) {
+    const plainTemplateName = (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || '').trim();
+    if (!plainTemplateName) {
       await markWhatsappDeliveryFailed({
         supabaseUrl,
         serviceKey,
@@ -206,7 +245,7 @@ export default async function handler(req, res) {
     const routinePayload = buildRoutineMessagePayload({
       to: normalizedTo,
       message: cleanMessage,
-      templateName: routineTemplateName,
+      templateName: plainTemplateName,
       templateLanguage,
     });
 
@@ -225,32 +264,44 @@ export default async function handler(req, res) {
           deliveryId,
           failureStage: 'meta_api',
           ...failure,
-          templateName: routineTemplateName,
-          metadata: { template_language: templateLanguage },
+          templateName: plainTemplateName,
+          metadata: { template_language: templateLanguage, send_mode: sendMode },
         });
         return sendFailure(res, result, null, deliveryId);
       }
 
+      if (isDirectMessage) {
+        await markMessageAccepted({
+          supabaseUrl,
+          serviceKey,
+          messageRecordId,
+          messageId: result.messageId,
+        });
+      }
       await markWhatsappDeliveryAccepted({
         supabaseUrl,
         serviceKey,
         deliveryId,
         metaMessageId: result.messageId,
-        templateName: routineTemplateName,
-        metadata: { template_language: templateLanguage },
+        templateName: plainTemplateName,
+        metadata: {
+          template_language: templateLanguage,
+          send_mode: isDirectMessage ? 'direct_message' : 'routine_message',
+          direct_message: isDirectMessage,
+        },
       });
 
       return res.status(200).json({
         success: true,
         delivery_id: deliveryId,
-        sendMode: 'template',
+        sendMode: isDirectMessage ? 'direct_message' : 'template',
         sendType: 'template',
         channel: 'whatsapp',
         messageId: result.messageId,
         to: normalizedTo,
         acceptedAt: new Date().toISOString(),
         phoneNumberIdLast4,
-        templateName: routineTemplateName,
+        templateName: plainTemplateName,
         templateLanguage,
       });
     } catch (err) {
@@ -260,8 +311,8 @@ export default async function handler(req, res) {
         deliveryId,
         failureStage: 'network',
         reason: err instanceof Error ? err.message : String(err),
-        templateName: routineTemplateName,
-        metadata: { template_language: templateLanguage },
+        templateName: plainTemplateName,
+        metadata: { template_language: templateLanguage, send_mode: sendMode },
       });
       return res.status(500).json({
         success: false,

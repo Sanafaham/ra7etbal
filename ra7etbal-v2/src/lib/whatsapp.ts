@@ -13,6 +13,7 @@ export interface WhatsAppCloudTaskPayload {
   routineId?: string | null;
   automationRunId?: string | null;
   sourceType?: string | null;
+  sendMode?: "direct_message" | "routine_message" | null;
   recipientName?: string | null;
   /** Owner display name — becomes {{1}} in ra7etbal_task_v3 (and ra7etbal_task_image header replaces this). Falls back to "Rahet Bal" on the server if omitted. */
   ownerName?: string | null;
@@ -72,6 +73,7 @@ export async function sendWhatsAppTask(
       routineId: payload.routineId ?? null,
       automationRunId: payload.automationRunId ?? null,
       sourceType: payload.sourceType ?? null,
+      sendMode: payload.sendMode ?? null,
       recipientName: payload.recipientName ?? null,
       ownerName: payload.ownerName ?? null,
       imagePath: payload.imagePath ?? null,
