@@ -286,6 +286,7 @@ export default function Review() {
                 ownerName: displayName ?? null,
                 imagePath: message.task_id ? (taskImagePathById.get(message.task_id) ?? null) : null,
                 attachmentCount: message.task_id ? (attachmentCountByTaskId.get(message.task_id) ?? null) : null,
+                sendMode: !message.task_id && !message.confirmation_url ? "direct_message" : null,
               }),
             ),
           );

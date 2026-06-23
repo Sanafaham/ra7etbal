@@ -81,7 +81,7 @@ export async function executeDirectMessageFastPath(
       reason: "missing_phone",
       recipientName: person.name,
       messageText: parsed.messageText,
-      response: `I don�'have a phone number for ${person.name}.`,
+      response: `I don't have a phone number for ${person.name}.`,
     };
   }
 
@@ -124,7 +124,7 @@ export async function executeDirectMessageFastPath(
       reason: "delivery_failed",
       recipientName: person.name,
       messageText: parsed.messageText,
-      response: `I couldn’t'nd ${person.name} the message. Please try again.`,
+      response: `I couldn't send ${person.name} the message. Please try again.`,
     };
   }
 
@@ -152,7 +152,7 @@ export async function executeDirectMessageFastPath(
       reason: "delivery_failed",
       recipientName: person.name,
       messageText: parsed.messageText,
-      response: `I couldn’t s' ${person.name} the message. Please try again.`,
+      response: `I couldn't send ${person.name} the message. Please try again.`,
     };
   }
 
@@ -169,7 +169,7 @@ export async function executeDirectMessageFastPath(
       reason: "delivery_failed",
       recipientName: person.name,
       messageText: parsed.messageText,
-      response: `I couldn’t sen'{person.name} the message. Please try again.`,
+      response: `I couldn't send ${person.name} the message. Please try again.`,
     };
   }
 
