@@ -17,6 +17,7 @@ import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
+import { executeDirectMessageFastPath } from "../../lib/direct-message-fast-path";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
@@ -2448,6 +2449,15 @@ export default function ElevenLabsAgentWidget({
             { candidateSources: candidateSources.map((s) => s.slice(0, 80)) },
           );
           return "I detected recurring language but couldn't create the routine. Check your contacts in People and try again.";
+        }
+
+        const directMessageFastPath = await executeDirectMessageFastPath(rawInstruction, {
+          displayName,
+          userId: authUserId,
+          people,
+        });
+        if (directMessageFastPath.handled) {
+          return directMessageFastPath.response;
         }
 
         console.log("[routine:TRACE] executeDelegationFromText called →", rawInstruction.slice(0, 100));
