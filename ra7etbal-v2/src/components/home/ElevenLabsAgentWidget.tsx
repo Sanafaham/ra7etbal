@@ -18,6 +18,7 @@ import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
+import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
@@ -2602,6 +2603,26 @@ export default function ElevenLabsAgentWidget({
           return directMessageFastPath.response;
         }
 
+        // ── Single-person delegation fast-path ─────────────────────────────
+        // Matches: "ask/tell/get [name] to [task]" | "have [name] [task]"
+        // Calls sendDelegation directly — no Anthropic call, returns in ~2-4s.
+        // Falls through to executeDelegationFromText for multi-person, personal
+        // notes, recurring, compound, or ambiguous instructions.
+        const delegationFastPath = await executeDelegationFastPath(
+          rawInstruction,
+          { people, userId: authUserId, displayName },
+          { sendDelegationFn: sendDelegation },
+        );
+        if (delegationFastPath.handled) {
+          if (delegationFastPath.status === "sent") {
+            sessionActionsRef.current.push(
+              `Delegated to ${delegationFastPath.personName}: ${delegationFastPath.taskText}`,
+            );
+            useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+          }
+          return delegationFastPath.response;
+        }
+
         console.log("[routine:TRACE] executeDelegationFromText called →", rawInstruction.slice(0, 100));
 
         // Belt-and-suspenders: if the session-start injection somehow missed
@@ -2657,7 +2678,7 @@ export default function ElevenLabsAgentWidget({
         return `Could not process that. ${detail}`;
       }
     },
-    [displayName, clearPendingImages],
+    [displayName, clearPendingImages, sendDelegation],
   );
 
   // ------------------------------------------------------------------
