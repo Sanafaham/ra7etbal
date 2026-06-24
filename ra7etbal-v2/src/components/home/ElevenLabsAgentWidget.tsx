@@ -19,6 +19,7 @@ import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
+import { classifyCarsonInstruction } from "../../lib/carson-router";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
@@ -2303,6 +2304,14 @@ export default function ElevenLabsAgentWidget({
       if (!rawInstruction) {
         return "I did not receive an instruction. Ask the user what they want to do.";
       }
+
+      // ── Carson supervisor router — Phase 1: classify and log ─────────────
+      // Read-only. Classifies the instruction for future routing but does not
+      // change execution behavior yet. Inspect [carson_router] in the console.
+      classifyCarsonInstruction({
+        transcript: rawInstruction,
+        people: usePeopleStore.getState().items,
+      });
 
       const authUserId = useAuthStore.getState().user?.id;
       if (!authUserId) return "You are not signed in. Please sign in and try again.";
