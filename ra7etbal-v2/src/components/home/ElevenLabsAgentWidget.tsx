@@ -21,6 +21,10 @@ import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../li
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
 import { planCarsonInstruction } from "../../lib/carson-planner";
 import { auditCarsonExecution } from "../../lib/carson-audit";
+import {
+  summarizeCarsonAuditDiagnostic,
+  summarizeCarsonPlanDiagnostic,
+} from "../../lib/carson-planner-diagnostics";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
@@ -2317,6 +2321,14 @@ export default function ElevenLabsAgentWidget({
           people: usePeopleStore.getState().items,
         });
         console.log("[carson_plan]", carsonPlan);
+        try {
+          recordCarsonDiagnostic(
+            "carson-plan",
+            summarizeCarsonPlanDiagnostic(rawInstruction, carsonPlan),
+          );
+        } catch (diagnosticErr) {
+          console.warn("[carson_plan:DIAGNOSTIC_ERROR]", diagnosticErr);
+        }
       } catch (planErr) {
         console.warn("[carson_plan:ERROR]", planErr);
       }
@@ -2710,6 +2722,14 @@ export default function ElevenLabsAgentWidget({
             productionResult,
           });
           console.log("[carson_plan_audit]", audit);
+          try {
+            recordCarsonDiagnostic(
+              "carson-plan-audit",
+              summarizeCarsonAuditDiagnostic(audit),
+            );
+          } catch (diagnosticErr) {
+            console.warn("[carson_plan_audit:DIAGNOSTIC_ERROR]", diagnosticErr);
+          }
         } catch (auditErr) {
           console.warn("[carson_plan_audit:ERROR]", auditErr);
         }

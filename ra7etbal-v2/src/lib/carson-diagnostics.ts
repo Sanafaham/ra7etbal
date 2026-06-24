@@ -19,7 +19,9 @@ export interface CarsonDiagnosticEvent {
     | "carson-teardown"
     | "carson-error"
     | "carson-unhandled-tool"
-    | "carson-latency";
+    | "carson-latency"
+    | "carson-plan"
+    | "carson-plan-audit";
   at: string;
   data: unknown;
 }

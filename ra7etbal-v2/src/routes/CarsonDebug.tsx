@@ -6,7 +6,8 @@
  * every normal user/route, so it never appears in normal navigation or Settings.
  *
  * Shows the latest [carson-disconnect] / [carson-teardown] / [carson-error] /
- * [carson-unhandled-tool] events captured by carson-diagnostics.ts.
+ * [carson-unhandled-tool] / planner audit events captured by
+ * carson-diagnostics.ts.
  *
  * EASY REMOVAL: delete this file, remove the <CarsonDebugOverlay/> mount and its
  * import in App.tsx, and delete src/lib/carson-diagnostics.ts plus the
@@ -26,6 +27,8 @@ const KIND_COLORS: Record<CarsonDiagnosticEvent["kind"], string> = {
   "carson-error": "#b91c1c",
   "carson-unhandled-tool": "#7c3aed",
   "carson-latency": "#15803d",
+  "carson-plan": "#2563eb",
+  "carson-plan-audit": "#0f766e",
 };
 
 export default function CarsonDebugOverlay() {
