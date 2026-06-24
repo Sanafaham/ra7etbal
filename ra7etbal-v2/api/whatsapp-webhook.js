@@ -317,7 +317,7 @@ export async function updateWhatsappDeliveryStatus({
     const lookupRes = await fetch(
       `${supabaseUrl}/rest/v1/whatsapp_deliveries` +
         `?meta_message_id=eq.${encodeURIComponent(messageId)}` +
-        `&select=id,user_id,delivery_status,last_status_at` +
+        `&select=id,user_id,delivery_status,last_status_at,automation_run_id,source_type` +
         `&limit=1`,
       { headers: serviceHeaders(serviceKey) },
     );
@@ -393,6 +393,33 @@ export async function updateWhatsappDeliveryStatus({
           phoneNumberId,
           webhookReceivedAt,
           retryCount: retryCount + 1,
+        });
+      }
+    }
+
+    // Propagate failure to automation_runs so the UI shows "Failed" instead of "Sent"
+    if (updated && status === 'failed' && delivery.automation_run_id &&
+        typeof delivery.source_type === 'string' && delivery.source_type.startsWith('automation_')) {
+      try {
+        await fetch(
+          `${supabaseUrl}/rest/v1/automation_runs` +
+          `?id=eq.${encodeURIComponent(delivery.automation_run_id)}`,
+          {
+            method: 'PATCH',
+            headers: { ...serviceHeaders(serviceKey), Prefer: 'return=minimal' },
+            body: JSON.stringify({
+              current_state: 'failed',
+              failure_reason: patch?.failure_reason ?? failureReason ?? 'WhatsApp delivery failed.',
+            }),
+          },
+        );
+        console.log('[whatsapp-webhook] automation_run marked failed', {
+          automationRunId: delivery.automation_run_id,
+        });
+      } catch (err) {
+        console.warn('[whatsapp-webhook] automation_run failure propagation threw', {
+          automationRunId: delivery.automation_run_id,
+          error: err?.message ?? String(err),
         });
       }
     }
