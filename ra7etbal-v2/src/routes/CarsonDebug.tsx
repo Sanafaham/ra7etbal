@@ -29,6 +29,7 @@ const KIND_COLORS: Record<CarsonDiagnosticEvent["kind"], string> = {
   "carson-latency": "#15803d",
   "carson-plan": "#2563eb",
   "carson-plan-audit": "#0f766e",
+  "carson-direct-tool": "#9333ea",
 };
 
 export default function CarsonDebugOverlay() {

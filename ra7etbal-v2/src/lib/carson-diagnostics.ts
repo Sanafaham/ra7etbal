@@ -21,7 +21,8 @@ export interface CarsonDiagnosticEvent {
     | "carson-unhandled-tool"
     | "carson-latency"
     | "carson-plan"
-    | "carson-plan-audit";
+    | "carson-plan-audit"
+    | "carson-direct-tool";
   at: string;
   data: unknown;
 }

@@ -25,6 +25,7 @@ import {
   summarizeCarsonAuditDiagnostic,
   summarizeCarsonPlanDiagnostic,
 } from "../../lib/carson-planner-diagnostics";
+import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-tool-diagnostics";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
@@ -2262,6 +2263,54 @@ export default function ElevenLabsAgentWidget({
     [displayName, createCalendarEvent],
   );
 
+  const runDirectToolWithDiagnostic = useCallback(
+    async <TResult,>(
+      toolName: string,
+      input: unknown,
+      runTool: () => Promise<TResult>,
+    ): Promise<TResult> => {
+      const startedAt = new Date().toISOString();
+      const startedPerf = performance.now();
+      try {
+        const result = await runTool();
+        try {
+          recordCarsonDiagnostic(
+            "carson-direct-tool",
+            buildCarsonDirectToolDiagnosticEvent({
+              toolName,
+              startedAt,
+              durationMs: performance.now() - startedPerf,
+              success: true,
+              result,
+              input,
+            }),
+          );
+        } catch (diagnosticErr) {
+          console.warn("[carson_direct_tool:DIAGNOSTIC_ERROR]", diagnosticErr);
+        }
+        return result;
+      } catch (err) {
+        try {
+          recordCarsonDiagnostic(
+            "carson-direct-tool",
+            buildCarsonDirectToolDiagnosticEvent({
+              toolName,
+              startedAt,
+              durationMs: performance.now() - startedPerf,
+              success: false,
+              input,
+              error: err,
+            }),
+          );
+        } catch (diagnosticErr) {
+          console.warn("[carson_direct_tool:DIAGNOSTIC_ERROR]", diagnosticErr);
+        }
+        throw err;
+      }
+    },
+    [],
+  );
+
   // ------------------------------------------------------------------
   // Shared delegation/message pipeline
   //
@@ -2949,7 +2998,9 @@ export default function ElevenLabsAgentWidget({
           send_followup: async (params: Parameters<typeof sendFollowup>[0]) => {
             toolInFlightRef.current = "send_followup";
             try {
-              return await sendFollowup(params);
+              return await runDirectToolWithDiagnostic("send_followup", params, () =>
+                sendFollowup(params),
+              );
             } finally {
               toolInFlightRef.current = null;
             }
@@ -2957,42 +3008,69 @@ export default function ElevenLabsAgentWidget({
           send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {
             toolInFlightRef.current = "send_delegation";
             try {
-              return await sendDelegation(params);
+              return await runDirectToolWithDiagnostic("send_delegation", params, () =>
+                sendDelegation(params),
+              );
             } finally {
               toolInFlightRef.current = null;
             }
           },
-          create_reminder: createReminder,
+          create_reminder: (params: Parameters<typeof createReminder>[0]) =>
+            runDirectToolWithDiagnostic("create_reminder", params, () =>
+              createReminder(params),
+            ),
           create_automation: createAutomation,
           send_direct_whatsapp_message: async (params: { recipient_name: string; message: string }) => {
             toolInFlightRef.current = "send_direct_whatsapp_message";
             try {
-              return await sendDirectWhatsAppMessage(params);
+              return await runDirectToolWithDiagnostic("send_direct_whatsapp_message", params, () =>
+                sendDirectWhatsAppMessage(params),
+              );
             } finally {
               toolInFlightRef.current = null;
             }
           },
-          save_city: saveCity,
-          save_note: saveNote,
-          act_on_note: actOnNote,
-          get_calendar_events: getCalendarEvents,
-          create_calendar_event: createCalendarEvent,
-          update_calendar_event: updateCalendarEventTool,
-          delete_calendar_event: deleteCalendarEventTool,
+          save_city: (params: Parameters<typeof saveCity>[0]) =>
+            runDirectToolWithDiagnostic("save_city", params, () => saveCity(params)),
+          save_note: (params: Parameters<typeof saveNote>[0]) =>
+            runDirectToolWithDiagnostic("save_note", params, () => saveNote(params)),
+          act_on_note: (params: Parameters<typeof actOnNote>[0]) =>
+            runDirectToolWithDiagnostic("act_on_note", params, () => actOnNote(params)),
+          get_calendar_events: (params: Parameters<typeof getCalendarEvents>[0]) =>
+            runDirectToolWithDiagnostic("get_calendar_events", params, () =>
+              getCalendarEvents(params),
+            ),
+          create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) =>
+            runDirectToolWithDiagnostic("create_calendar_event", params, () =>
+              createCalendarEvent(params),
+            ),
+          update_calendar_event: (params: Parameters<typeof updateCalendarEventTool>[0]) =>
+            runDirectToolWithDiagnostic("update_calendar_event", params, () =>
+              updateCalendarEventTool(params),
+            ),
+          delete_calendar_event: (params: Parameters<typeof deleteCalendarEventTool>[0]) =>
+            runDirectToolWithDiagnostic("delete_calendar_event", params, () =>
+              deleteCalendarEventTool(params),
+            ),
           save_instruction: async ({
             instruction,
             category,
           }: {
             instruction: string;
             category?: string;
-          }) => {
-            try {
-              await savePersistentInstruction(category ?? "general", instruction);
-              return "Got it. I'll remember that from now on.";
-            } catch {
-              return "I couldn't save that instruction right now. Please try again.";
-            }
-          },
+          }) =>
+            runDirectToolWithDiagnostic(
+              "save_instruction",
+              { instruction, category },
+              async () => {
+                try {
+                  await savePersistentInstruction(category ?? "general", instruction);
+                  return "Got it. I'll remember that from now on.";
+                } catch {
+                  return "I couldn't save that instruction right now. Please try again.";
+                }
+              },
+            ),
         },
         onModeChange: ({ mode: m }) => {
           if (m === "speaking") {
@@ -3240,7 +3318,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Couldn't connect. Tap to retry.");
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, clearPendingPhotoPreviews, onBeforeCallStart, status]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, clearPendingPhotoPreviews, onBeforeCallStart, status, runDirectToolWithDiagnostic]);
 
   // ------------------------------------------------------------------
   // Session teardown
