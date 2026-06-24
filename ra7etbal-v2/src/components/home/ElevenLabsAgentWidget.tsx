@@ -20,6 +20,7 @@ import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
 import { planCarsonInstruction } from "../../lib/carson-planner";
+import { auditCarsonExecution } from "../../lib/carson-audit";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
@@ -2306,14 +2307,19 @@ export default function ElevenLabsAgentWidget({
       }
 
       // ── Carson supervisor — Phase 1+2: classify, plan, and log ──────────
-      // planCarsonInstruction calls classifyCarsonInstruction internally
-      // (logs [carson_router]). This is read-only and does not change
-      // execution behavior. Inspect [carson_plan] in the console.
-      const carsonPlan = planCarsonInstruction({
-        transcript: rawInstruction,
-        people: usePeopleStore.getState().items,
-      });
-      console.log("[carson_plan]", carsonPlan);
+      // Non-blocking. planCarsonInstruction calls classifyCarsonInstruction
+      // internally (logs [carson_router]). Phase 3 audit runs after production.
+      // Inspect [carson_plan] and [carson_plan_audit] in the console.
+      let carsonPlan: ReturnType<typeof planCarsonInstruction> | null = null;
+      try {
+        carsonPlan = planCarsonInstruction({
+          transcript: rawInstruction,
+          people: usePeopleStore.getState().items,
+        });
+        console.log("[carson_plan]", carsonPlan);
+      } catch (planErr) {
+        console.warn("[carson_plan:ERROR]", planErr);
+      }
 
       const authUserId = useAuthStore.getState().user?.id;
       if (!authUserId) return "You are not signed in. Please sign in and try again.";
@@ -2394,6 +2400,10 @@ export default function ElevenLabsAgentWidget({
       const firstImageFile = imagePhotos[0]?.file ?? null;
       const photoContext = sessionPhotoContextRef.current;
 
+      // ── Phase 3: wrap production in _runProductionExec for audit ─────────
+      // All production logic is unchanged — the async closure captures the same
+      // scope. _runProductionExec never throws: its inner catch returns a string.
+      const _runProductionExec = async (): Promise<string> => {
       try {
         // Validate the first image synchronously before starting the voice pipeline.
         // WhatsApp V1 sends only the first image; all photos still reach Carson
@@ -2688,6 +2698,23 @@ export default function ElevenLabsAgentWidget({
         const detail = err instanceof Error ? err.message : "Please try again.";
         return `Could not process that. ${detail}`;
       }
+      }; // close _runProductionExec
+
+      // Run production — audit is passive and must never block or throw.
+      const productionResult = await _runProductionExec();
+      if (carsonPlan) {
+        try {
+          const audit = auditCarsonExecution({
+            transcript: rawInstruction,
+            plan: carsonPlan,
+            productionResult,
+          });
+          console.log("[carson_plan_audit]", audit);
+        } catch (auditErr) {
+          console.warn("[carson_plan_audit:ERROR]", auditErr);
+        }
+      }
+      return productionResult;
     },
     [displayName, clearPendingImages, sendDelegation],
   );
