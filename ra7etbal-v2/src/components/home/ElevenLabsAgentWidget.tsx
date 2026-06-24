@@ -19,7 +19,7 @@ import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
-import { classifyCarsonInstruction } from "../../lib/carson-router";
+import { planCarsonInstruction } from "../../lib/carson-planner";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
@@ -2305,13 +2305,15 @@ export default function ElevenLabsAgentWidget({
         return "I did not receive an instruction. Ask the user what they want to do.";
       }
 
-      // ── Carson supervisor router — Phase 1: classify and log ─────────────
-      // Read-only. Classifies the instruction for future routing but does not
-      // change execution behavior yet. Inspect [carson_router] in the console.
-      classifyCarsonInstruction({
+      // ── Carson supervisor — Phase 1+2: classify, plan, and log ──────────
+      // planCarsonInstruction calls classifyCarsonInstruction internally
+      // (logs [carson_router]). This is read-only and does not change
+      // execution behavior. Inspect [carson_plan] in the console.
+      const carsonPlan = planCarsonInstruction({
         transcript: rawInstruction,
         people: usePeopleStore.getState().items,
       });
+      console.log("[carson_plan]", carsonPlan);
 
       const authUserId = useAuthStore.getState().user?.id;
       if (!authUserId) return "You are not signed in. Please sign in and try again.";
