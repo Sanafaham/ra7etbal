@@ -16,6 +16,7 @@ export type ProductionActionType =
   | "task"
   | "ops_plan"
   | "general_answer"
+  | "social_ack"
   | "clarification"
   | "error"
   | "diagnostic"
@@ -110,6 +111,8 @@ export function classifyProductionResult(result: string): ProductionClassificati
     action_type = "memory";
   } else if (/Proposed plan|operations plan|I propose (to|a|that)/i.test(r)) {
     action_type = "ops_plan";
+  } else if (/^(You're welcome\.?|Of course\.?|Anytime\.?)$/i.test(r)) {
+    action_type = "social_ack";
   } else if (r.length > 40) {
     // Long result with no match → likely a general answer
     action_type = "general_answer";
@@ -127,6 +130,7 @@ const DOMAIN_TO_PRODUCTION: Record<string, ProductionActionType[]> = {
   calendar: ["calendar_query", "calendar_create", "calendar_update", "calendar_delete"],
   memory: ["memory"],
   general_answer: ["general_answer"],
+  social_ack: ["social_ack"],
   task: ["task", "delegation"],
   unknown: [],
 };
@@ -187,7 +191,8 @@ export function auditCarsonExecution(input: CarsonAuditInput): CarsonAuditResult
   const clarificationMismatch =
     (safe_to_execute && production.clarification_requested) ||
     (!safe_to_execute && !production.clarification_requested && !production.failed &&
-     production.action_type !== "unknown");
+     production.action_type !== "unknown" &&
+     production.action_type !== "social_ack");
 
   if (production.failed) {
     errors.push(`production_error: ${production.raw.slice(0, 80)}`);

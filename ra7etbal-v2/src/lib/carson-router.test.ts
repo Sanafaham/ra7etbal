@@ -210,6 +210,28 @@ describe("Carson router — general_answer patterns", () => {
   });
 });
 
+// ── Social acknowledgement ───────────────────────────────────────────────────
+
+describe("Carson router — social acknowledgement", () => {
+  it.each([
+    "thank you",
+    "thanks",
+    "okay thanks",
+    "perfect thanks",
+    "thank you Carson",
+  ])("'%s' → social_ack, not work", (transcript) => {
+    const result = classify(transcript);
+    expect(result.primary_domain).toBe("social_ack");
+    expect(result.domains).toEqual(["social_ack"]);
+    expect(result.needs_clarification).toBe(false);
+  });
+
+  it("keeps thank-you message content routed as WhatsApp when there is a recipient", () => {
+    const result = classify("Text Christopher saying thank you");
+    expect(result.primary_domain).toBe("whatsapp");
+  });
+});
+
 // ── Disambiguation: reminder vs memory ───────────────────────────────────────
 
 describe("Carson router — reminder vs memory disambiguation", () => {

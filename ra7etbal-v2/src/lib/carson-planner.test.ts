@@ -221,6 +221,26 @@ describe("planCarsonInstruction — general answer", () => {
   });
 });
 
+// ── Social acknowledgement ───────────────────────────────────────────────────
+
+describe("planCarsonInstruction — social acknowledgement", () => {
+  it.each([
+    "thank you",
+    "thanks",
+    "okay thanks",
+    "perfect thanks",
+    "thank you Carson",
+  ])("'%s' produces no executable agent plans", (transcript) => {
+    const result = plan(transcript);
+    expect(result.router_result.primary_domain).toBe("social_ack");
+    expect(result.agent_plans).toHaveLength(0);
+    expect(result.blockers).toHaveLength(0);
+    expect(result.safe_to_execute).toBe(false);
+    expect(result.requires_human_approval).toBe(false);
+    expect(result.combined_summary).toMatch(/Social acknowledgement/i);
+  });
+});
+
 // ── Unknown instruction ────────────────────────────────────────────────────────
 
 describe("planCarsonInstruction — unknown instruction", () => {

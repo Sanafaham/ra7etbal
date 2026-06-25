@@ -1,4 +1,5 @@
 import type { Person } from "../types/person";
+import { isSocialAcknowledgement } from "./carson-social";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -10,6 +11,7 @@ export type CarsonDomain =
   | "calendar"
   | "memory"
   | "general_answer"
+  | "social_ack"
   | "unknown";
 
 export interface CarsonRoutingResult {
@@ -57,6 +59,26 @@ export function classifyCarsonInstruction(
   const { transcript, people = [] } = input;
   const text = transcript.trim();
   const peopleNames = new Set(people.map((p) => p.name.trim().toLowerCase()));
+
+  if (isSocialAcknowledgement(text)) {
+    const result: CarsonRoutingResult = {
+      domains: ["social_ack"],
+      primary_domain: "social_ack",
+      confidence: 0.99,
+      reason: "Pure social acknowledgement; no work requested.",
+      needs_clarification: false,
+      clarification_question: null,
+    };
+    console.log("[carson_router]", {
+      transcript: text.slice(0, 120),
+      primary_domain: result.primary_domain,
+      confidence: result.confidence,
+      domains: result.domains,
+      reason: result.reason,
+      needs_clarification: result.needs_clarification,
+    });
+    return result;
+  }
 
   const candidates: CandidateMatch[] = [
     matchReminder(text),

@@ -531,6 +531,17 @@ export function planCarsonInstruction(input: CarsonPlanInput): CarsonPlanResult 
     people: input.people,
   });
 
+  if (routerResult.primary_domain === "social_ack") {
+    return {
+      router_result: routerResult,
+      agent_plans: [],
+      combined_summary: "Social acknowledgement only; reply naturally without executing anything.",
+      blockers: [],
+      safe_to_execute: false,
+      requires_human_approval: false,
+    };
+  }
+
   const agentPlans: AgentPlan[] = [];
   for (const domain of routerResult.domains) {
     const agent = AGENT_MAP[domain];

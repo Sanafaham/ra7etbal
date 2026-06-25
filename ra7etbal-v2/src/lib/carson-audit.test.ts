@@ -75,6 +75,13 @@ describe("classifyProductionResult", () => {
     expect(r.action_type).toBe("general_answer");
   });
 
+  it("classifies social acknowledgement result", () => {
+    const r = classifyProductionResult("You're welcome.");
+    expect(r.action_type).toBe("social_ack");
+    expect(r.failed).toBe(false);
+    expect(r.clarification_requested).toBe(false);
+  });
+
   it("classifies automation result", () => {
     const r = classifyProductionResult("CREATED: \"Morning check\" automation is set — runs every morning, first on Thursday at 8:00 AM.");
     expect(r.action_type).toBe("automation");
@@ -82,6 +89,17 @@ describe("classifyProductionResult", () => {
 });
 
 // ── Required test cases ───────────────────────────────────────────────────────
+
+describe("auditCarsonExecution — social acknowledgement", () => {
+  it("matches social_ack without missing or unexpected work actions", () => {
+    const audit = auditCarsonExecution(buildAuditInput("thank you", "You're welcome."));
+    expect(audit.router_result.primary_domain).toBe("social_ack");
+    expect(audit.matched_domains).toEqual(["social_ack"]);
+    expect(audit.missing_expected_actions).toHaveLength(0);
+    expect(audit.unexpected_actions).toHaveLength(0);
+    expect(audit.clarification_mismatch).toBe(false);
+  });
+});
 
 describe("auditCarsonExecution — delegation expected, production matches", () => {
   const TRANSCRIPT = "Ask Grace to prepare dinner";

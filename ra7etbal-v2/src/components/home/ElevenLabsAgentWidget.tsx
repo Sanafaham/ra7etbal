@@ -19,6 +19,7 @@ import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
+import { getSocialAcknowledgementReply, isSocialAcknowledgement } from "../../lib/carson-social";
 import { planCarsonInstruction } from "../../lib/carson-planner";
 import { auditCarsonExecution } from "../../lib/carson-audit";
 import {
@@ -2389,6 +2390,13 @@ export default function ElevenLabsAgentWidget({
         }
       } catch (planErr) {
         console.warn("[carson_plan:ERROR]", planErr);
+      }
+
+      // Social turns are not work. If the dashboard accidentally calls
+      // execute_instruction for "thank you" / "thanks", return naturally before
+      // auth checks, store refreshes, extraction, Supabase, or WhatsApp.
+      if (isSocialAcknowledgement(rawInstruction)) {
+        return getSocialAcknowledgementReply(rawInstruction);
       }
 
       const authUserId = useAuthStore.getState().user?.id;
