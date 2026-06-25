@@ -944,7 +944,7 @@ async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appB
 
 /**
  * Execute a message routine:
- *   1. Validate template config (WHATSAPP_ROUTINE_MESSAGE_TEMPLATE env var).
+ *   1. Use the approved plain-message WhatsApp template.
  *   2. Resolve person — skip (not disable) if person or phone missing.
  *   3. Call the shared WhatsApp boundary with the routine message mode.
  *   4. NO task creation. NO confirmation link. Message sent verbatim.

@@ -125,6 +125,62 @@ describe('routine message shared boundary', () => {
     );
   });
 
+  it('sends automation message runs with the default approved plain-message template when env is missing', async () => {
+    vi.stubEnv('WHATSAPP_ROUTINE_MESSAGE_TEMPLATE', '');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-automation-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.automation' }] }))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq(
+        {
+          to: '+971 50 000 0000',
+          messageText: 'Recurring automation test.',
+          automationRunId: 'run-1',
+          sourceType: 'automation_message',
+          sendMode: 'routine_message',
+          recipientName: 'Sana',
+        },
+        { 'x-ra7etbal-internal-secret': 'cron-secret' },
+      ),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        templateName: 'ra7etbal_routine_message',
+        messageId: 'wamid.automation',
+      }),
+    );
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/rest/v1/automation_runs');
+
+    const insertedDelivery = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(insertedDelivery).toMatchObject({
+      user_id: 'user-1',
+      automation_run_id: 'run-1',
+      source_type: 'automation_message',
+      delivery_status: 'pending',
+      recipient_name: 'Sana',
+    });
+
+    const metaPayload = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(metaPayload).toEqual(
+      buildRoutineMessagePayload({
+        to: '971500000000',
+        message: 'Recurring automation test.',
+        templateName: 'ra7etbal_routine_message',
+        templateLanguage: 'en_US',
+      }),
+    );
+  });
+
   it('accepts a direct message without a confirmation link using the approved plain-message template', async () => {
     const fetchMock = vi
       .fn()

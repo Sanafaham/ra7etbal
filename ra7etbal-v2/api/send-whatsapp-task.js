@@ -7,6 +7,7 @@ import {
 
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
+const DEFAULT_PLAIN_MESSAGE_TEMPLATE = 'ra7etbal_routine_message';
 const TEMPLATE_SPECS = {
   ra7etbal_task_v3: {
     bodyParams: ['owner', 'message'],
@@ -225,22 +226,8 @@ export default async function handler(req, res) {
   // one body parameter, no task, no confirmation link, no SMS fallback.
   // Used by recurring automations and Voice Carson direct messages.
   if (usesPlainMessageTemplate) {
-    const plainTemplateName = (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || '').trim();
-    if (!plainTemplateName) {
-      await markWhatsappDeliveryFailed({
-        supabaseUrl,
-        serviceKey,
-        deliveryId,
-        failureStage: 'configuration',
-        reason: 'WHATSAPP_ROUTINE_MESSAGE_TEMPLATE is not configured.',
-      });
-      return res.status(500).json({
-        success: false,
-        delivery_id: deliveryId,
-        error: 'WhatsApp routine message template is not configured.',
-        errorMessage: 'WhatsApp routine message template is not configured.',
-      });
-    }
+    const plainTemplateName =
+      (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || DEFAULT_PLAIN_MESSAGE_TEMPLATE).trim();
 
     const routinePayload = buildRoutineMessagePayload({
       to: normalizedTo,
