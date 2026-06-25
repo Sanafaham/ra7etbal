@@ -22,7 +22,9 @@ import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
 import {
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
+  sanitizeCarsonReplyText,
   sanitizeSocialAcknowledgementReply,
+  shouldSuppressCarsonIdlePrompt,
 } from "../../lib/carson-social";
 import { planCarsonInstruction } from "../../lib/carson-planner";
 import { auditCarsonExecution } from "../../lib/carson-audit";
@@ -2305,7 +2307,7 @@ export default function ElevenLabsAgentWidget({
         } catch (diagnosticErr) {
           console.warn("[carson_direct_tool:DIAGNOSTIC_ERROR]", diagnosticErr);
         }
-        return result;
+        return typeof result === "string" ? (sanitizeCarsonReplyText(result) as TResult) : result;
       } catch (err) {
         try {
           recordCarsonDiagnostic(
@@ -3372,15 +3374,24 @@ export default function ElevenLabsAgentWidget({
                 .slice(0, -1)
                 .reverse()
                 .find((entry) => entry.role === "user")?.message ?? "";
-            const displayMessage = isSocialAcknowledgement(previousUserMessage)
-              ? sanitizeSocialAcknowledgementReply(message)
-              : message;
+            const displayMessage = sanitizeCarsonReplyText(
+              isSocialAcknowledgement(previousUserMessage)
+                ? sanitizeSocialAcknowledgementReply(message)
+                : message,
+            );
+            if (shouldSuppressCarsonIdlePrompt(displayMessage)) {
+              sessionTranscriptRef.current.pop();
+              console.log("[carson-idle] suppressed idle prompt", {
+                eventId: event_id ?? null,
+              });
+              return;
+            }
             if (displayMessage !== message) {
               sessionTranscriptRef.current[sessionTranscriptRef.current.length - 1] = {
                 role,
                 message: displayMessage,
               };
-              console.log("[carson-social] stripped execution filler from social reply", {
+              console.log("[carson-text] sanitized Carson reply text", {
                 eventId: event_id ?? null,
               });
             }

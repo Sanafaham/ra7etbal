@@ -4,7 +4,10 @@ const SOCIAL_ACKNOWLEDGEMENT_RESPONSES = [
   "Anytime.",
 ] as const;
 
-const SOCIAL_REPLY_FILLER_PATTERN = /\b(?:one moment|got it|hold on)\b[\s.,!?;:—-]*/gi;
+const CARSON_FILLER_PREFIX_PATTERN =
+  /^(?:(?:one moment|got it|hold on|just a second)[\s.,!?;:—-]*)+/i;
+
+const CARSON_IDLE_PROMPT_PATTERN = /\b(?:still there|are you there|are you still there)\b/i;
 
 function normalizeSocialText(text: string): string {
   return text
@@ -30,11 +33,26 @@ export function getSocialAcknowledgementReply(text: string): string {
   return SOCIAL_ACKNOWLEDGEMENT_RESPONSES[index] ?? "You're welcome.";
 }
 
-export function sanitizeSocialAcknowledgementReply(text: string): string {
-  const withoutFiller = text
-    .replace(SOCIAL_REPLY_FILLER_PATTERN, "")
+export function sanitizeCarsonReplyText(text: string): string {
+  let sanitized = text.trim();
+  let previous = "";
+
+  while (sanitized && sanitized !== previous) {
+    previous = sanitized;
+    sanitized = sanitized.replace(CARSON_FILLER_PREFIX_PATTERN, "").trim();
+  }
+
+  return sanitized
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function shouldSuppressCarsonIdlePrompt(text: string): boolean {
+  return CARSON_IDLE_PROMPT_PATTERN.test(sanitizeCarsonReplyText(text));
+}
+
+export function sanitizeSocialAcknowledgementReply(text: string): string {
+  const withoutFiller = sanitizeCarsonReplyText(text);
 
   return withoutFiller || "Anytime.";
 }

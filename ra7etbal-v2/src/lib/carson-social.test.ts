@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
+  sanitizeCarsonReplyText,
   sanitizeSocialAcknowledgementReply,
+  shouldSuppressCarsonIdlePrompt,
 } from "./carson-social";
 
 describe("Carson social acknowledgement detection", () => {
@@ -36,6 +38,7 @@ describe("Carson social acknowledgement detection", () => {
     ["One moment. Anytime.", "Anytime."],
     ["Got it. You're welcome.", "You're welcome."],
     ["Hold on. Of course.", "Of course."],
+    ["Just a second. Of course.", "Of course."],
     ["One moment, got it — Anytime.", "Anytime."],
   ])("strips execution filler from social replies: '%s'", (input, expected) => {
     const reply = sanitizeSocialAcknowledgementReply(input);
@@ -45,5 +48,31 @@ describe("Carson social acknowledgement detection", () => {
 
   it("falls back to a natural social reply if a social reply is only filler", () => {
     expect(sanitizeSocialAcknowledgementReply("One moment.")).toBe("Anytime.");
+  });
+});
+
+describe("Carson global reply text sanitation", () => {
+  it.each([
+    ["One moment. Anytime.", "Anytime."],
+    ["One moment. Still there?", "Still there?"],
+    ["Got it. Done.", "Done."],
+    ["Hold on. Done.", "Done."],
+    ["Just a second. Done.", "Done."],
+  ])("strips filler prefixes globally: '%s'", (input, expected) => {
+    expect(sanitizeCarsonReplyText(input)).toBe(expected);
+  });
+
+  it("leaves normal Carson sentences unchanged", () => {
+    expect(sanitizeCarsonReplyText("Done. I asked Grace to send the photos.")).toBe(
+      "Done. I asked Grace to send the photos.",
+    );
+  });
+
+  it.each([
+    "One moment. Still there?",
+    "Still there, سيدتي الجميلة?",
+    "Are you there?",
+  ])("detects idle nag prompts for suppression: '%s'", (text) => {
+    expect(shouldSuppressCarsonIdlePrompt(text)).toBe(true);
   });
 });
