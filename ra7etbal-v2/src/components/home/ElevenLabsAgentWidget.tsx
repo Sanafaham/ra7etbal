@@ -694,6 +694,15 @@ export default function ElevenLabsAgentWidget({
   const conversationRef = useRef<Awaited<
     ReturnType<typeof Conversation.startSession>
   > | null>(null);
+  const statusRef = useRef<CallStatus>("idle");
+  const sessionGenerationRef = useRef(0);
+  const startInFlightRef = useRef(false);
+  const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const visibilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   // Pending photos for the next voice delegation.
   // Stored in a ref (not state) to avoid triggering re-renders and to ensure
@@ -2788,11 +2797,206 @@ export default function ElevenLabsAgentWidget({
     [displayName, clearPendingImages, sendDelegation],
   );
 
+  const clearCarsonSessionTimers = useCallback(() => {
+    if (userTranscriptTimerRef.current) {
+      clearTimeout(userTranscriptTimerRef.current);
+      userTranscriptTimerRef.current = null;
+    }
+    if (connectTimeoutRef.current) {
+      clearTimeout(connectTimeoutRef.current);
+      connectTimeoutRef.current = null;
+    }
+    if (visibilityTimerRef.current) {
+      clearTimeout(visibilityTimerRef.current);
+      visibilityTimerRef.current = null;
+    }
+  }, []);
+
+  const stopLocalAudioPlayback = useCallback(() => {
+    if (typeof document === "undefined") return;
+    document.querySelectorAll("audio, video").forEach((element) => {
+      const media = element as HTMLMediaElement;
+      try {
+        media.pause();
+        media.currentTime = 0;
+      } catch {
+        // Best-effort belt-and-suspenders cleanup only.
+      }
+    });
+  }, []);
+
+  const saveVoiceSessionSnapshot = useCallback(
+    (userId: string | null, transcript: TranscriptMessage[]) => {
+      if (userId) {
+        (async () => {
+          const recap = await summarizeSessionRecap(transcript);
+          if (recap) {
+            await saveSessionMemory(`${SESSION_RECAP_PREFIX} ${recap}`);
+          }
+        })().catch((err) => {
+          console.error(
+            "[carson-memory] session recap save failed:",
+            err instanceof Error ? err.message : err,
+          );
+        });
+      }
+
+      (async () => {
+        if (userId) {
+          try {
+            await maybeSendImpliedDinnerDelegation(userId);
+          } catch (err) {
+            console.error(
+              "[carson] maybeSendImpliedDinnerDelegation failed:",
+              err instanceof Error ? err.message : err,
+            );
+          }
+          try {
+            await savePeopleMemoryFromTranscript(userId, transcript);
+          } catch (err) {
+            console.error(
+              "[carson] savePeopleMemoryFromTranscript failed:",
+              err instanceof Error ? err.message : err,
+            );
+          }
+          const transcriptText = transcript.map((m) => m.message).join(" ");
+          const peopleNow = usePeopleStore.getState().items;
+          const tasksNow = useTasksStore.getState().items;
+          updatePeopleInsightsFromTasks(transcriptText, peopleNow, tasksNow).catch(() => {});
+          try {
+            const facts = await extractDurableFacts(transcript);
+            await upsertUserFacts(userId, facts);
+          } catch (err) {
+            console.error(
+              "[carson-facts] voice fact extraction failed",
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
+
+        sessionActionsRef.current = [];
+        sessionTranscriptRef.current = [];
+        sentDelegationsRef.current = [];
+
+        let conversationSummary: string | null = null;
+        try {
+          conversationSummary = await summarizeConversation(transcript);
+        } catch {
+          // Non-fatal — fall back to tool actions only.
+        }
+
+        if (conversationSummary && isSummaryWorthSaving(conversationSummary)) {
+          saveSessionMemory(conversationSummary).catch(() => {
+            // Non-fatal — don't surface to user.
+          });
+        }
+      })();
+    },
+    [maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript],
+  );
+
+  const forceCleanupSession = useCallback(
+    (teardownReason: string, options?: { showEndedMessage?: boolean; clearError?: boolean }) => {
+      const previousGeneration = sessionGenerationRef.current;
+      sessionGenerationRef.current = previousGeneration + 1;
+      startInFlightRef.current = false;
+
+      const teardownInfo = {
+        cause: teardownReason,
+        previousGeneration,
+        nextGeneration: sessionGenerationRef.current,
+        status: statusRef.current,
+        toolInFlight: toolInFlightRef.current,
+        hadConversation: Boolean(conversationRef.current),
+        at: new Date().toISOString(),
+      };
+      console.warn("[carson-lifecycle] forced cleanup", teardownInfo);
+      console.warn("[carson-teardown]", teardownInfo);
+      recordCarsonDiagnostic("carson-teardown", teardownInfo);
+
+      const userId = useAuthStore.getState().user?.id ?? null;
+      const transcript = [...sessionTranscriptRef.current];
+      const conv = conversationRef.current;
+      conversationRef.current = null;
+
+      clearCarsonSessionTimers();
+      toolInFlightRef.current = null;
+      activeExecuteLatencyRef.current = null;
+      lastUserTranscriptTimingRef.current = null;
+      recurringRawRef.current = null;
+
+      if (conv) {
+        try {
+          conv.setMicMuted(true);
+        } catch (err) {
+          console.warn("[carson-lifecycle] microphone mute during cleanup failed", err);
+        }
+        void conv.endSession().catch((err) => {
+          console.warn("[carson-lifecycle] endSession during cleanup failed", err);
+        });
+      }
+
+      stopLocalAudioPlayback();
+      clearPendingPhotoPreviews();
+
+      setStatus("idle");
+      setMode("listening");
+      setLastUserTranscript(null);
+      if (options?.clearError !== false) setErrorMsg(null);
+      if (options?.showEndedMessage) {
+        setSessionEndedMsg("Session ended. Tap to talk again.");
+      }
+
+      if (transcript.length > 0) {
+        saveVoiceSessionSnapshot(userId, transcript);
+      } else {
+        sessionActionsRef.current = [];
+        sessionTranscriptRef.current = [];
+        sentDelegationsRef.current = [];
+      }
+    },
+    [
+      clearCarsonSessionTimers,
+      clearPendingPhotoPreviews,
+      saveVoiceSessionSnapshot,
+      stopLocalAudioPlayback,
+    ],
+  );
+
   // ------------------------------------------------------------------
   // Call management
   // ------------------------------------------------------------------
   const startCall = useCallback(async () => {
-    if (!agentId || status !== "idle") return;
+    if (!agentId) return;
+    if (startInFlightRef.current || statusRef.current !== "idle" || conversationRef.current) {
+      console.warn("[carson-lifecycle] reconnect attempt blocked", {
+        status: statusRef.current,
+        startInFlight: startInFlightRef.current,
+        hasConversation: Boolean(conversationRef.current),
+        at: new Date().toISOString(),
+      });
+      return;
+    }
+
+    startInFlightRef.current = true;
+    const sessionGeneration = sessionGenerationRef.current + 1;
+    sessionGenerationRef.current = sessionGeneration;
+    const isCurrentSession = () => sessionGenerationRef.current === sessionGeneration;
+    const ignoreStaleCallback = (callbackName: string) => {
+      if (isCurrentSession()) return false;
+      console.info("[carson-lifecycle] stale callback ignored", {
+        callbackName,
+        callbackGeneration: sessionGeneration,
+        activeGeneration: sessionGenerationRef.current,
+        at: new Date().toISOString(),
+      });
+      return true;
+    };
+
+    console.info("[carson-lifecycle] connect attempt", {
+      sessionGeneration,
+      at: new Date().toISOString(),
+    });
 
     // Snapshot pending photos NOW — before setStatus("connecting") causes any
     // potential DOM changes. On iOS Safari, a File from <input type="file"> can
@@ -2812,6 +3016,15 @@ export default function ElevenLabsAgentWidget({
     setStatus("connecting");
     setErrorMsg(null);
     setSessionEndedMsg(null);
+    connectTimeoutRef.current = setTimeout(() => {
+      if (!isCurrentSession()) return;
+      console.warn("[carson-lifecycle] timeout", {
+        sessionGeneration,
+        status: statusRef.current,
+        at: new Date().toISOString(),
+      });
+      forceCleanupSession("connect-timeout", { showEndedMessage: true });
+    }, 20_000);
 
     // Reset session state for this new session.
     sessionActionsRef.current = [];
@@ -2833,6 +3046,7 @@ export default function ElevenLabsAgentWidget({
     } catch {
       // Non-fatal — Carson simply starts without structured memory.
     }
+    if (!isCurrentSession()) return;
 
     let recentMemory = "No previous sessions.";
     try {
@@ -2840,6 +3054,7 @@ export default function ElevenLabsAgentWidget({
     } catch {
       // Non-fatal — Carson simply starts without prior memory.
     }
+    if (!isCurrentSession()) return;
 
     let persistentInstructions = "";
     try {
@@ -2847,6 +3062,7 @@ export default function ElevenLabsAgentWidget({
     } catch {
       // Non-fatal — Carson starts without persistent instructions.
     }
+    if (!isCurrentSession()) return;
 
     // Load saved notes into ref for in-call act_on_note lookups — non-fatal.
     try {
@@ -2854,6 +3070,7 @@ export default function ElevenLabsAgentWidget({
     } catch {
       notesRef.current = [];
     }
+    if (!isCurrentSession()) return;
 
     // Fetch live weather for the user's saved city — non-fatal.
     // If city is not set, current_weather is "" and Carson will ask.
@@ -2872,9 +3089,11 @@ export default function ElevenLabsAgentWidget({
         // Non-fatal: Carson can continue without live weather.
       }
     }
+    if (!isCurrentSession()) return;
 
     // Fetch live task/message state from Supabase before opening the session.
     const freshVars = onBeforeCallStart ? await onBeforeCallStart() : null;
+    if (!isCurrentSession()) return;
     const liveBriefStateText = freshVars?.briefStateText ?? briefStateText;
     const liveSpokenBrief = freshVars?.spokenBrief ?? (spokenBrief ?? "");
 
@@ -2909,6 +3128,7 @@ export default function ElevenLabsAgentWidget({
     // Await the photo descriptions now — they have been running concurrently with
     // the memory/weather loads above, so in most cases it is already resolved.
     sessionPhotoContextRef.current = await photoContextPromise;
+    if (!isCurrentSession()) return;
 
     // Build state text. If photos are attached and described, append their
     // context here so Carson's LLM receives it at the system-variable level —
@@ -3073,6 +3293,7 @@ export default function ElevenLabsAgentWidget({
             ),
         },
         onModeChange: ({ mode: m }) => {
+          if (ignoreStaleCallback("mode-change")) return;
           if (m === "speaking") {
             const active = activeExecuteLatencyRef.current;
             if (active?.toolCompletedPerf != null) {
@@ -3093,6 +3314,7 @@ export default function ElevenLabsAgentWidget({
           setMode(m === "speaking" ? "speaking" : "listening");
         },
         onMessage: ({ role, message, event_id }) => {
+          if (ignoreStaleCallback("message")) return;
           // Accumulate both sides of the conversation for end-of-session
           // summarisation. Only finalized messages arrive here.
           sessionTranscriptRef.current.push({ role, message });
@@ -3142,6 +3364,7 @@ export default function ElevenLabsAgentWidget({
           message?: string;
           context?: unknown;
         }) => {
+          if (ignoreStaleCallback("disconnect")) return;
           // Diagnostic: surface WHY the session ended (SDK reason: user | agent |
           // error) and whether a client tool was mid-flight at disconnect time.
           const disconnectInfo = {
@@ -3152,107 +3375,25 @@ export default function ElevenLabsAgentWidget({
             at: new Date().toISOString(),
           };
           console.warn("[carson-disconnect]", disconnectInfo);
+          console.info("[carson-lifecycle] disconnect", disconnectInfo);
           recordCarsonDiagnostic("carson-disconnect", disconnectInfo);
 
           // Capture refs before any async work so they can be reset immediately.
           const userId = useAuthStore.getState().user?.id ?? null;
           const transcript = [...sessionTranscriptRef.current];
+          sessionGenerationRef.current += 1;
           conversationRef.current = null;
+          startInFlightRef.current = false;
+          clearCarsonSessionTimers();
           setStatus("idle");
           setMode("listening");
           setSessionEndedMsg("Session ended. Tap to talk again.");
           setLastUserTranscript(null);
-          if (userTranscriptTimerRef.current) {
-            clearTimeout(userTranscriptTimerRef.current);
-            userTranscriptTimerRef.current = null;
-          }
           clearPendingPhotoPreviews();
-
-          // ── Session recap — fully independent, runs FIRST ─────────────────
-          // Saved in its own async block so nothing in the durable-memory chain
-          // (dinner check, people memory, fact extraction) can abort it. This is
-          // what lets Carson know the ACTUAL most recent session even when the
-          // durable gate correctly saves nothing. Uses the captured transcript
-          // snapshot, so it is safe regardless of the ref resets below.
-          if (userId) {
-            (async () => {
-              const recap = await summarizeSessionRecap(transcript);
-              if (recap) {
-                await saveSessionMemory(`${SESSION_RECAP_PREFIX} ${recap}`);
-              }
-            })().catch((err) => {
-              console.error(
-                "[carson-memory] session recap save failed:",
-                err instanceof Error ? err.message : err,
-              );
-            });
-          }
-
-          // Build and save session memory asynchronously — non-blocking.
-          // The UI is already back to idle while this runs in the background.
-          (async () => {
-            if (userId) {
-              // Guarded so a throw here cannot abort the durable-memory save below.
-              try {
-                await maybeSendImpliedDinnerDelegation(userId);
-              } catch (err) {
-                console.error(
-                  "[carson] maybeSendImpliedDinnerDelegation failed:",
-                  err instanceof Error ? err.message : err,
-                );
-              }
-              try {
-                await savePeopleMemoryFromTranscript(userId, transcript);
-              } catch (err) {
-                console.error(
-                  "[carson] savePeopleMemoryFromTranscript failed:",
-                  err instanceof Error ? err.message : err,
-                );
-              }
-              // Behavioral insight: update people.notes based on task history.
-              // Uses the full transcript as the "input text" for name detection.
-              const transcriptText = transcript.map((m) => m.message).join(" ");
-              const peopleNow = usePeopleStore.getState().items;
-              const tasksNow = useTasksStore.getState().items;
-              updatePeopleInsightsFromTasks(transcriptText, peopleNow, tasksNow).catch(() => {});
-              try {
-                const facts = await extractDurableFacts(transcript);
-                await upsertUserFacts(userId, facts);
-              } catch (err) {
-                console.error(
-                  "[carson-facts] voice fact extraction failed",
-                  err instanceof Error ? err.message : err,
-                );
-              }
-            }
-
-            sessionActionsRef.current = [];
-            sessionTranscriptRef.current = [];
-            sentDelegationsRef.current = [];
-
-            // Try LLM summarisation of the conversational content.
-            let conversationSummary: string | null = null;
-            try {
-              conversationSummary = await summarizeConversation(transcript);
-            } catch {
-              // Non-fatal — fall back to tool actions only.
-            }
-
-            // Save only durable conversational memory — and only when the
-            // summary meets the quality threshold (≥2 bullets, or a single
-            // Correction/preference bullet). Thin housekeeping rows would
-            // otherwise become the [Most recent session] label and displace
-            // meaningful memory from previous sessions.
-            if (conversationSummary && isSummaryWorthSaving(conversationSummary)) {
-              saveSessionMemory(conversationSummary).catch(() => {
-                // Non-fatal — don't surface to user.
-              });
-            }
-            // Session recap is saved in its own independent block above so it
-            // cannot be blocked by anything in this durable-memory chain.
-          })();
+          saveVoiceSessionSnapshot(userId, transcript);
         },
         onError: (msg, context?: unknown) => {
+          if (ignoreStaleCallback("error")) return;
           // Diagnostic: log the error message + context before it is reduced to
           // UI state (which only shows when status flips to "error").
           const errorInfo = {
@@ -3262,10 +3403,14 @@ export default function ElevenLabsAgentWidget({
             at: new Date().toISOString(),
           };
           console.error("[carson-error]", errorInfo);
+          console.info("[carson-lifecycle] disconnect", errorInfo);
           recordCarsonDiagnostic("carson-error", errorInfo);
 
           // Keep error visible — user must tap to retry. No silent auto-dismiss.
+          sessionGenerationRef.current += 1;
           conversationRef.current = null;
+          startInFlightRef.current = false;
+          clearCarsonSessionTimers();
           setStatus("error");
           setErrorMsg(msg || "Connection lost. Tap to retry.");
 
@@ -3274,26 +3419,27 @@ export default function ElevenLabsAgentWidget({
           const userId = useAuthStore.getState().user?.id ?? null;
           const transcript = [...sessionTranscriptRef.current];
           if (userId && transcript.length > 0) {
-            (async () => {
-              try {
-                await savePeopleMemoryFromTranscript(userId, transcript);
-              } catch { /* non-fatal */ }
-              try {
-                const conversationSummary = await summarizeConversation(transcript);
-                if (conversationSummary && isSummaryWorthSaving(conversationSummary)) {
-                  await saveSessionMemory(conversationSummary);
-                }
-              } catch { /* non-fatal */ }
-            })();
+            saveVoiceSessionSnapshot(userId, transcript);
           }
         },
         onConnect: () => {
+          if (ignoreStaleCallback("connect")) return;
+          startInFlightRef.current = false;
+          if (connectTimeoutRef.current) {
+            clearTimeout(connectTimeoutRef.current);
+            connectTimeoutRef.current = null;
+          }
+          console.info("[carson-lifecycle] connect", {
+            sessionGeneration,
+            at: new Date().toISOString(),
+          });
           setStatus("connected");
         },
         // Diagnostic: fires when the agent invokes a tool the client has NOT
         // registered (e.g. a dashboard tool name that doesn't match any client
         // tool). Directly surfaces tool-registration regressions.
         onUnhandledClientToolCall: (params?: unknown) => {
+          if (ignoreStaleCallback("unhandled-tool")) return;
           const unhandledInfo = {
             params: params ?? null,
             at: new Date().toISOString(),
@@ -3302,6 +3448,23 @@ export default function ElevenLabsAgentWidget({
           recordCarsonDiagnostic("carson-unhandled-tool", unhandledInfo);
         },
       });
+      if (!isCurrentSession()) {
+        console.info("[carson-lifecycle] stale connection cleaned up", {
+          sessionGeneration,
+          activeGeneration: sessionGenerationRef.current,
+          at: new Date().toISOString(),
+        });
+        try {
+          conv.setMicMuted(true);
+        } catch {
+          // Best-effort stale connection cleanup.
+        }
+        void conv.endSession().catch((err) => {
+          console.warn("[carson-lifecycle] stale endSession failed", err);
+        });
+        return;
+      }
+
       conversationRef.current = conv;
 
       // Inject photo descriptions immediately after session opens — before the
@@ -3313,38 +3476,36 @@ export default function ElevenLabsAgentWidget({
         );
       }
     } catch (err) {
+      if (!isCurrentSession()) return;
+      startInFlightRef.current = false;
+      clearCarsonSessionTimers();
       // Show the real error message so the user knows what went wrong.
       // Do not auto-dismiss — the error persists until the user taps to retry.
       setStatus("error");
       setErrorMsg(err instanceof Error ? err.message : "Couldn't connect. Tap to retry.");
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript, clearPendingPhotoPreviews, onBeforeCallStart, status, runDirectToolWithDiagnostic]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot]);
 
   // ------------------------------------------------------------------
   // Session teardown
   // ------------------------------------------------------------------
   const stopSession = useCallback((teardownReason: string = "manual-end") => {
-    // Diagnostic: attribute which client-side path tore the session down. Only
-    // logs when an active session actually existed.
-    if (conversationRef.current) {
-      const teardownInfo = {
-        cause: teardownReason,
-        toolInFlight: toolInFlightRef.current,
-        at: new Date().toISOString(),
-      };
-      console.warn("[carson-teardown]", teardownInfo);
-      recordCarsonDiagnostic("carson-teardown", teardownInfo);
-      conversationRef.current.endSession();
-      conversationRef.current = null;
-    }
-    clearPendingPhotoPreviews();
-    setStatus("idle");
-    setMode("listening");
-  }, [clearPendingPhotoPreviews]);
+    forceCleanupSession(teardownReason);
+  }, [forceCleanupSession]);
 
   // Wrap so the button's click event is never passed as the teardown reason.
   const endCall = useCallback(() => stopSession("manual-end-button"), [stopSession]);
-  const visibilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if ((status === "idle" || status === "error") && conversationRef.current) {
+      console.warn("[carson-lifecycle] invalid state detected", {
+        status,
+        hasConversation: true,
+        at: new Date().toISOString(),
+      });
+      forceCleanupSession(`invalid-${status}-with-active-session`);
+    }
+  }, [forceCleanupSession, status]);
 
   // ------------------------------------------------------------------
   // Lifecycle cleanup
@@ -3510,7 +3671,7 @@ export default function ElevenLabsAgentWidget({
       {status === "error" && (
         <button
           type="button"
-          onClick={() => { setStatus("idle"); setErrorMsg(null); onRequestClose?.(); }}
+          onClick={() => { stopSession("error-dismiss-button"); onRequestClose?.(); }}
           aria-label="Connection failed — tap to retry"
           className="flex items-center gap-2 rounded-full border border-danger/30 bg-warm-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm transition hover:bg-white active:scale-95"
         >
