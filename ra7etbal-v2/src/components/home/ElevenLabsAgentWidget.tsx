@@ -19,7 +19,11 @@ import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
-import { getSocialAcknowledgementReply, isSocialAcknowledgement } from "../../lib/carson-social";
+import {
+  getSocialAcknowledgementReply,
+  isSocialAcknowledgement,
+  sanitizeSocialAcknowledgementReply,
+} from "../../lib/carson-social";
 import { planCarsonInstruction } from "../../lib/carson-planner";
 import { auditCarsonExecution } from "../../lib/carson-audit";
 import {
@@ -2399,7 +2403,7 @@ export default function ElevenLabsAgentWidget({
       // execute_instruction for "thank you" / "thanks", return naturally before
       // auth checks, store refreshes, extraction, Supabase, or WhatsApp.
       if (isSocialAcknowledgement(rawInstruction)) {
-        return getSocialAcknowledgementReply(rawInstruction);
+        return sanitizeSocialAcknowledgementReply(getSocialAcknowledgementReply(rawInstruction));
       }
 
       const authUserId = useAuthStore.getState().user?.id;
@@ -3363,8 +3367,25 @@ export default function ElevenLabsAgentWidget({
             // "agent" is the ElevenLabs SDK role for Carson's spoken turns.
             // If the role value ever changes, this silently stops updating — check
             // the console log below if the transcript bubble stops appearing.
-            console.log("[transcript] agent role confirmed, message len=%d", message.length);
-            setLastCarsonMessage(message);
+            const previousUserMessage =
+              [...sessionTranscriptRef.current]
+                .slice(0, -1)
+                .reverse()
+                .find((entry) => entry.role === "user")?.message ?? "";
+            const displayMessage = isSocialAcknowledgement(previousUserMessage)
+              ? sanitizeSocialAcknowledgementReply(message)
+              : message;
+            if (displayMessage !== message) {
+              sessionTranscriptRef.current[sessionTranscriptRef.current.length - 1] = {
+                role,
+                message: displayMessage,
+              };
+              console.log("[carson-social] stripped execution filler from social reply", {
+                eventId: event_id ?? null,
+              });
+            }
+            console.log("[transcript] agent role confirmed, message len=%d", displayMessage.length);
+            setLastCarsonMessage(displayMessage);
           } else {
             // Unexpected role — surface in dev console so it can be caught.
             console.warn("[transcript] unexpected onMessage role:", role);

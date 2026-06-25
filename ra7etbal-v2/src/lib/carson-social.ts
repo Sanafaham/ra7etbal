@@ -4,6 +4,8 @@ const SOCIAL_ACKNOWLEDGEMENT_RESPONSES = [
   "Anytime.",
 ] as const;
 
+const SOCIAL_REPLY_FILLER_PATTERN = /\b(?:one moment|got it|hold on)\b[\s.,!?;:—-]*/gi;
+
 function normalizeSocialText(text: string): string {
   return text
     .trim()
@@ -26,4 +28,13 @@ export function getSocialAcknowledgementReply(text: string): string {
   const normalized = normalizeSocialText(text);
   const index = normalized.length % SOCIAL_ACKNOWLEDGEMENT_RESPONSES.length;
   return SOCIAL_ACKNOWLEDGEMENT_RESPONSES[index] ?? "You're welcome.";
+}
+
+export function sanitizeSocialAcknowledgementReply(text: string): string {
+  const withoutFiller = text
+    .replace(SOCIAL_REPLY_FILLER_PATTERN, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return withoutFiller || "Anytime.";
 }
