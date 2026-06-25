@@ -98,7 +98,12 @@ function extractInstructionParam(params: ExecuteInstructionParams): string {
 async function describeImageForCarson(file: File): Promise<string | null> {
   console.log("[img-diag] describeImageForCarson called — file:", file?.name, file?.size, file?.type);
   try {
-    const arrayBuffer = await file.arrayBuffer();
+    // Use the same browser JPEG-normalization path as task uploads. Phone
+    // camera files can arrive as HEIC/large originals; Anthropic vision expects
+    // common web image types, and raw unsupported files made Carson think no
+    // photo was attached.
+    const blob = await resizeImage(file);
+    const arrayBuffer = await blob.arrayBuffer();
     console.log("[img-diag] arrayBuffer size:", arrayBuffer.byteLength);
     if (arrayBuffer.byteLength === 0) {
       console.warn("[img-diag] arrayBuffer is empty — File object may have been invalidated by iOS");
@@ -107,11 +112,7 @@ async function describeImageForCarson(file: File): Promise<string | null> {
     const base64 = btoa(
       new Uint8Array(arrayBuffer).reduce((acc, byte) => acc + String.fromCharCode(byte), ""),
     );
-    const mediaType = (file.type || "image/jpeg") as
-      | "image/jpeg"
-      | "image/png"
-      | "image/gif"
-      | "image/webp";
+    const mediaType = "image/jpeg";
 
     const payload = {
       model: "claude-haiku-4-5-20251001",
@@ -162,8 +163,9 @@ async function describePhotosForCarson(photos: PendingPhoto[]): Promise<string |
   const descriptions = await Promise.all(
     photos.map(async (photo, index) => {
       const description = await describeImageForCarson(photo.file).catch(() => null);
-      if (!description) return null;
-      return `Photo ${index + 1}${photo.name ? ` (${photo.name})` : ""}: ${description}`;
+      return `Photo ${index + 1}${photo.name ? ` (${photo.name})` : ""}: ${
+        description || "An attached photo is present, but the visual description could not be generated."
+      }`;
     }),
   );
 
@@ -352,8 +354,9 @@ async function createAndSendDelegation({
       const blob = await resizeImage(resolvedFiles[0]);
       imagePath = await uploadTaskImage(userId, taskRowId, blob);
     } catch (err) {
-      console.error("[send_delegation] image upload failed, sending without image:", err);
-      imagePath = null;
+      console.error("[send_delegation] image upload failed; blocking text-only send:", err);
+      const detail = err instanceof Error ? err.message : "Please try a different photo.";
+      throw new Error(`Could not attach the image. ${detail}`);
     }
   }
 

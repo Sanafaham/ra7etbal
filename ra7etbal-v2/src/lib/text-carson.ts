@@ -9,6 +9,7 @@ import { buildCarsonContext } from "./carson-context";
 import { CARSON_STATUS_POLICY } from "./carson-status-policy";
 import { extractItems } from "./ai/extract";
 import { savePending, saveTaskAttachments } from "./save";
+import { resizeImage } from "./image-upload";
 import { detectAllRecurringSchedules } from "./routine-detection";
 import { deliverTaskMessage, type DeliveryResult } from "./delivery";
 import { useTasksStore } from "../stores/tasks";
@@ -21,16 +22,15 @@ const MAX_TOKENS = 500;
 
 export async function describeImageForTextCarson(file: File): Promise<string | null> {
   try {
-    const arrayBuffer = await file.arrayBuffer();
+    // Normalize phone camera uploads to JPEG before vision. Raw iPhone/large
+    // files can have unsupported media types; the task upload path already
+    // uses resizeImage, so keep description generation on the same path.
+    const blob = await resizeImage(file);
+    const arrayBuffer = await blob.arrayBuffer();
     if (arrayBuffer.byteLength === 0) return null;
     const base64 = btoa(
       new Uint8Array(arrayBuffer).reduce((acc, byte) => acc + String.fromCharCode(byte), ""),
     );
-    const mediaType = (file.type || "image/jpeg") as
-      | "image/jpeg"
-      | "image/png"
-      | "image/gif"
-      | "image/webp";
     const payload = {
       model: "claude-haiku-4-5-20251001",
       max_tokens: 120,
@@ -38,7 +38,7 @@ export async function describeImageForTextCarson(file: File): Promise<string | n
         {
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+            { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } },
             {
               type: "text",
               text: "Describe this image in one sentence, focusing on the main subject and any actionable details relevant to a task or delegation. Be concise.",

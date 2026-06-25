@@ -186,9 +186,9 @@ export default function Home() {
         let extractionText = trimmed;
         if (imageForExtraction) {
           const description = await describeImageForTextCarson(imageForExtraction).catch(() => null);
-          if (description) {
-            extractionText = `${trimmed}\n\nAttached image:\n${description}`;
-          }
+          extractionText = `${trimmed}\n\nAttached image:\n${
+            description || "A photo is attached. Use it as reference for this item."
+          }`;
         }
         await runExtraction(extractionText, peopleNow, displayName ?? undefined);
       }
