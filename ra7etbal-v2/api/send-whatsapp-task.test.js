@@ -274,6 +274,49 @@ describe('routine message shared boundary', () => {
       }),
     });
   });
+
+  it('tries the accepted body-link task template before button variants', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-task-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.task' }] }))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'Please confirm the documents.',
+        confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
+        taskId: 'task-1',
+        sourceType: 'delegation',
+        recipientName: 'Grace',
+        ownerName: 'Sana',
+      }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        messageId: 'wamid.task',
+        attempt: 'primary-body-link',
+        linkPlacement: 'body',
+      }),
+    );
+
+    const graphCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('graph.facebook.com'),
+    );
+    expect(graphCalls).toHaveLength(1);
+    const metaPayload = JSON.parse(graphCalls[0][1].body);
+    expect(metaPayload.template.components).toHaveLength(1);
+    expect(metaPayload.template.components[0].type).toBe('body');
+    expect(metaPayload.template.components[0].parameters).toHaveLength(3);
+  });
 });
 
 function createReq(body, headers = {}) {

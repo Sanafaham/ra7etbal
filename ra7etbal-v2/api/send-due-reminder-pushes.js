@@ -117,6 +117,22 @@ export default async function handler(req, res) {
         continue;
       }
 
+      const claimed = await claimTaskForPush(config.values, task.id, runStartedAt);
+      if (!claimed) {
+        skipped += 1;
+        debugTasks.push({
+          id: task.id,
+          description: task.description,
+          due_at: task.due_at,
+          user_id: task.user_id,
+          status: task.status,
+          last_push_sent_at: task.last_push_sent_at ?? null,
+          subscriptionsFound: subscriptions.length,
+          reason: 'skipped: already claimed or sent',
+        });
+        continue;
+      }
+
       const overdueMs = new Date(runStartedAt).getTime() - new Date(task.due_at).getTime();
       const overdueSec = Math.round(overdueMs / 1000);
       console.log(`[safety-net] sending overdue reminder push after 30s grace — taskId=${task.id} overdue=${overdueSec}s due_at=${task.due_at}`);
@@ -134,6 +150,8 @@ export default async function handler(req, res) {
           markError = getErrorMessage(err);
           errors.push(`markTaskPushSent failed for task ${task.id}: ${markError}`);
         }
+      } else {
+        await clearTaskPushClaim(config.values, task.id, runStartedAt);
       }
 
       debugTasks.push({
@@ -304,6 +322,14 @@ async function fetchSubscriptionsByUser(config, tasks) {
     subscriptionsByUser.set(subscription.user_id, list);
   }
 
+  for (const [userId, subscriptions] of subscriptionsByUser.entries()) {
+    const deduped = dedupeSubscriptionsByEndpoint(subscriptions);
+    if (deduped.length !== subscriptions.length) {
+      console.log(`[safety-net] deduped subscriptions by endpoint — userId=${userId} raw=${subscriptions.length} unique=${deduped.length}`);
+    }
+    subscriptionsByUser.set(userId, deduped);
+  }
+
   return subscriptionsByUser;
 }
 
@@ -383,8 +409,7 @@ async function sendTaskReminder(task, subscriptions, config) {
 async function markTaskPushSent(config, taskId, sentAt) {
   const url =
     `${config.supabaseUrl}/rest/v1/tasks` +
-    `?id=eq.${encodeURIComponent(taskId)}` +
-    '&last_push_sent_at=is.null';
+    `?id=eq.${encodeURIComponent(taskId)}`;
 
   const response = await fetch(url, {
     method: 'PATCH',
@@ -392,13 +417,74 @@ async function markTaskPushSent(config, taskId, sentAt) {
       ...supabaseHeaders(config),
       Prefer: 'return=minimal',
     },
-    body: JSON.stringify({ last_push_sent_at: sentAt }),
+    body: JSON.stringify({
+      last_push_sent_at: sentAt,
+      status: 'done',
+      confirmed_at: sentAt,
+    }),
   });
 
   if (!response.ok) {
     const data = await readJson(response);
     throw new Error(data?.message || 'Could not mark reminder push as sent.');
   }
+}
+
+async function claimTaskForPush(config, taskId, sentAt) {
+  const url =
+    `${config.supabaseUrl}/rest/v1/tasks` +
+    `?id=eq.${encodeURIComponent(taskId)}` +
+    '&type=eq.reminder' +
+    '&status=eq.pending' +
+    '&archived_at=is.null' +
+    '&last_push_sent_at=is.null' +
+    '&select=id';
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      ...supabaseHeaders(config),
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify({ last_push_sent_at: sentAt }),
+  });
+
+  if (!response.ok) {
+    const data = await readJson(response);
+    throw new Error(data?.message || 'Could not claim reminder push.');
+  }
+
+  const rows = await readJson(response);
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+async function clearTaskPushClaim(config, taskId, sentAt) {
+  try {
+    await fetch(
+      `${config.supabaseUrl}/rest/v1/tasks` +
+        `?id=eq.${encodeURIComponent(taskId)}` +
+        `&last_push_sent_at=eq.${encodeURIComponent(sentAt)}`,
+      {
+        method: 'PATCH',
+        headers: { ...supabaseHeaders(config), Prefer: 'return=minimal' },
+        body: JSON.stringify({ last_push_sent_at: null }),
+      },
+    );
+  } catch {
+    // Best effort. The next normal reminder mutation can re-arm the job.
+  }
+}
+
+export function dedupeSubscriptionsByEndpoint(subscriptions) {
+  const seen = new Set();
+  const unique = [];
+  for (const subscription of subscriptions) {
+    const endpoint = typeof subscription?.endpoint === 'string' ? subscription.endpoint.trim() : '';
+    if (!endpoint || seen.has(endpoint)) continue;
+    seen.add(endpoint);
+    unique.push(subscription);
+  }
+  return unique;
 }
 
 function supabaseHeaders(config) {

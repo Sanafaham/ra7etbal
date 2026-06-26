@@ -470,6 +470,10 @@ function normalizeMemoryText(value: string): string {
     .trim();
 }
 
+function normalizeReminderKey(description: string, dueAt: string): string {
+  return `${description.toLowerCase().replace(/\s+/g, " ").trim()}|${new Date(dueAt).toISOString()}`;
+}
+
 function splitIntoSentences(value: string): string[] {
   return value
     .split(/(?<=[.!?])\s+|\n+/)
@@ -807,6 +811,7 @@ export default function ElevenLabsAgentWidget({
   /** Accumulates successful tool-call descriptions for this session.
    *  Flushed to carson_memory on disconnect. */
   const sessionActionsRef = useRef<string[]>([]);
+  const createdReminderKeysRef = useRef<Map<string, string>>(new Map());
 
   /** Holds an unconfirmed operational plan proposed by Operations Intelligence.
    *  Cleared on execution or when a new instruction doesn't confirm it. */
@@ -1345,6 +1350,16 @@ export default function ElevenLabsAgentWidget({
       const userId = useAuthStore.getState().user?.id;
       if (!userId) return "You are not signed in. Please sign in and try again.";
 
+      const reminderKey = normalizeReminderKey(text, resolvedDueAt);
+      const existingReminderReply = createdReminderKeysRef.current.get(reminderKey);
+      if (existingReminderReply) {
+        console.info("[create_reminder] duplicate tool call suppressed", {
+          description: text,
+          dueAt: resolvedDueAt,
+        });
+        return existingReminderReply;
+      }
+
       // Create the task through the store — identical to the UI save path.
       let task;
       try {
@@ -1383,8 +1398,10 @@ export default function ElevenLabsAgentWidget({
 
       // Prefix with CREATED: so the agent system prompt can pattern-match
       // success vs error without ambiguity.
+      const reply = `I'll remind you ${dateLabel} at ${timeStr}.`;
+      createdReminderKeysRef.current.set(reminderKey, reply);
       sessionActionsRef.current.push(`Created reminder: ${text} (${dateLabel} at ${timeStr})`);
-      return `I'll remind you ${dateLabel} at ${timeStr}.`;
+      return reply;
     },
     [],
   );
@@ -2908,6 +2925,7 @@ export default function ElevenLabsAgentWidget({
         sessionActionsRef.current = [];
         sessionTranscriptRef.current = [];
         sentDelegationsRef.current = [];
+        createdReminderKeysRef.current.clear();
 
         let conversationSummary: string | null = null;
         try {
@@ -2984,6 +3002,7 @@ export default function ElevenLabsAgentWidget({
         sessionActionsRef.current = [];
         sessionTranscriptRef.current = [];
         sentDelegationsRef.current = [];
+        createdReminderKeysRef.current.clear();
       }
     },
     [
@@ -3061,6 +3080,7 @@ export default function ElevenLabsAgentWidget({
     sessionActionsRef.current = [];
     sessionTranscriptRef.current = [];
     sentDelegationsRef.current = [];
+    createdReminderKeysRef.current.clear();
     recurringRawRef.current = null;
     setLastCarsonMessage(null);
     setLastUserTranscript(null);

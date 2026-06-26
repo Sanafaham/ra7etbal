@@ -537,14 +537,14 @@ export default async function handler(req, res) {
 
   try {
     const attempts = [
+      { label: 'primary-body-link', templateName: effectivePrimaryTemplate, isFallback: false, linkPlacement: 'body', mediaId: metaMediaId },
+      { label: 'fallback-body-link', templateName: fallbackTemplateName, isFallback: true, linkPlacement: 'body', mediaId: null },
       { label: 'primary-button-full', templateName: effectivePrimaryTemplate, isFallback: false, linkPlacement: 'button', buttonValueMode: 'full', mediaId: metaMediaId },
       { label: 'primary-button-path', templateName: effectivePrimaryTemplate, isFallback: false, linkPlacement: 'button', buttonValueMode: 'path', mediaId: metaMediaId },
       { label: 'primary-button-task', templateName: effectivePrimaryTemplate, isFallback: false, linkPlacement: 'button', buttonValueMode: 'task', mediaId: metaMediaId },
-      { label: 'primary-body-link', templateName: effectivePrimaryTemplate, isFallback: false, linkPlacement: 'body', mediaId: metaMediaId },
       { label: 'fallback-button-full', templateName: fallbackTemplateName, isFallback: true, linkPlacement: 'button', buttonValueMode: 'full', mediaId: null },
       { label: 'fallback-button-path', templateName: fallbackTemplateName, isFallback: true, linkPlacement: 'button', buttonValueMode: 'path', mediaId: null },
       { label: 'fallback-button-task', templateName: fallbackTemplateName, isFallback: true, linkPlacement: 'button', buttonValueMode: 'task', mediaId: null },
-      { label: 'fallback-body-link', templateName: fallbackTemplateName, isFallback: true, linkPlacement: 'body', mediaId: null },
     ];
 
     let templateResult = null;
@@ -670,7 +670,7 @@ export default async function handler(req, res) {
 
     console.log('[send-whatsapp-task] send accepted', {
       templateName: usedTemplateName,
-      isFallback: usedTemplateName === fallbackTemplateName,
+      isFallback: Boolean(usedAttempt?.isFallback),
       attempt: usedAttempt?.label ?? null,
       linkPlacement: usedAttempt?.linkPlacement ?? null,
       buttonValueMode: usedAttempt?.buttonValueMode ?? null,

@@ -76,6 +76,10 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: false, skipped: true, reason: 'Task not found.' });
   }
   console.log(`[send-push-for-task] task loaded — userId=${task.user_id} status=${task.status} archived=${!!task.archived_at} last_push_sent_at=${task.last_push_sent_at}`);
+  if (task.type !== 'reminder') {
+    console.log(`[send-push-for-task] skipping — type=${task.type}`);
+    return res.status(200).json({ success: false, skipped: true, reason: `Task type is ${task.type}.` });
+  }
   if (task.status !== 'pending') {
     console.log(`[send-push-for-task] skipping — status=${task.status}`);
     return res.status(200).json({ success: false, skipped: true, reason: `Task status is ${task.status}.` });
@@ -98,11 +102,15 @@ export default async function handler(req, res) {
     { headers: supabaseHeaders(serviceRoleKey) },
   );
   const subscriptions = await subsRes.json().catch(() => []);
+  const uniqueSubscriptions = dedupeSubscriptionsByEndpoint(Array.isArray(subscriptions) ? subscriptions : []);
 
   console.log(`[send-push-for-task] userId=${task.user_id} subscriptions found=${Array.isArray(subscriptions) ? subscriptions.length : 0}`);
   if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
     console.log(`[send-push-for-task] skipping — no enabled push subscriptions for userId=${task.user_id}`);
     return res.status(200).json({ success: false, skipped: true, reason: 'No enabled push subscriptions.' });
+  }
+  if (uniqueSubscriptions.length !== subscriptions.length) {
+    console.log(`[send-push-for-task] deduped subscriptions by endpoint — raw=${subscriptions.length} unique=${uniqueSubscriptions.length}`);
   }
 
   // ── 5. Send push ────────────────────────────────────────────────────────
@@ -125,12 +133,23 @@ export default async function handler(req, res) {
     body: task.description,
   });
 
+  const sentAt = new Date().toISOString();
+  const claimed = await claimTaskForPush(supabaseUrl, serviceRoleKey, taskId, sentAt);
+  if (!claimed) {
+    console.log(`[send-push-for-task] skipping — reminder already claimed or sent by another worker`);
+    return res.status(200).json({
+      success: false,
+      skipped: true,
+      reason: 'Reminder push already claimed or sent.',
+    });
+  }
+
   let sent = 0;
   let failed = 0;
   const errors = [];
   const perSubscription = [];
 
-  for (const sub of subscriptions) {
+  for (const sub of uniqueSubscriptions) {
     const endpointTail = sub.endpoint ? sub.endpoint.slice(-40) : '(missing)';
     console.log(`[send-push-for-task] sending to sub=${sub.id} endpoint=...${endpointTail}`);
     try {
@@ -174,19 +193,17 @@ export default async function handler(req, res) {
   let markedSent = false;
   let markError = null;
 
-  console.log(`[send-push-for-task] result: sent=${sent} failed=${failed} — ${sent > 0 ? 'writing last_push_sent_at + marking done' : 'no successful sends, skipping stamp'}`);
+  console.log(`[send-push-for-task] result: sent=${sent} failed=${failed} — ${sent > 0 ? 'marking done' : 'no successful sends, clearing claim'}`);
   if (sent > 0) {
-    const sentAt = new Date().toISOString();
-    console.log(`[send-push-for-task] stamping last_push_sent_at=${sentAt} and status=done on taskId=${taskId}`);
+    console.log(`[send-push-for-task] marking status=done on taskId=${taskId}`);
     const patchRes = await fetch(
       `${supabaseUrl}/rest/v1/tasks` +
       `?id=eq.${encodeURIComponent(taskId)}` +
-      `&last_push_sent_at=is.null`,
+      `&last_push_sent_at=eq.${encodeURIComponent(sentAt)}`,
       {
         method: 'PATCH',
         headers: { ...supabaseHeaders(serviceRoleKey), Prefer: 'return=minimal' },
         body: JSON.stringify({
-          last_push_sent_at: sentAt,
           status: 'done',
           confirmed_at: sentAt,
         }),
@@ -200,6 +217,8 @@ export default async function handler(req, res) {
       markError = patchData?.message || `PATCH failed (${patchRes.status})`;
       console.error(`[send-push-for-task] ✗ task done stamp FAILED: ${markError}`);
     }
+  } else {
+    await clearTaskPushClaim(supabaseUrl, serviceRoleKey, taskId, sentAt);
   }
 
   console.log(`[send-push-for-task] done — success=${sent > 0} sent=${sent} failed=${failed} markedSent=${markedSent}`);
@@ -227,6 +246,59 @@ async function removeExpiredSubscription(supabaseUrl, serviceRoleKey, subId) {
     console.log(`[send-push-for-task] removed expired subscription sub=${subId}`);
   } catch (err) {
     console.error(`[send-push-for-task] failed to remove expired subscription sub=${subId}: ${getErrorMessage(err)}`);
+  }
+}
+
+export function dedupeSubscriptionsByEndpoint(subscriptions) {
+  const seen = new Set();
+  const unique = [];
+  for (const subscription of subscriptions) {
+    const endpoint = typeof subscription?.endpoint === 'string' ? subscription.endpoint.trim() : '';
+    if (!endpoint || seen.has(endpoint)) continue;
+    seen.add(endpoint);
+    unique.push(subscription);
+  }
+  return unique;
+}
+
+async function claimTaskForPush(supabaseUrl, serviceRoleKey, taskId, sentAt) {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/tasks` +
+      `?id=eq.${encodeURIComponent(taskId)}` +
+      '&type=eq.reminder' +
+      '&status=eq.pending' +
+      '&archived_at=is.null' +
+      '&last_push_sent_at=is.null' +
+      '&select=id',
+    {
+      method: 'PATCH',
+      headers: { ...supabaseHeaders(serviceRoleKey), Prefer: 'return=representation' },
+      body: JSON.stringify({ last_push_sent_at: sentAt }),
+    },
+  );
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    console.error(`[send-push-for-task] claim failed taskId=${taskId} status=${response.status} body=${body}`);
+    throw new Error('Could not claim reminder push.');
+  }
+  const rows = await response.json().catch(() => []);
+  return Array.isArray(rows) && rows.length > 0;
+}
+
+async function clearTaskPushClaim(supabaseUrl, serviceRoleKey, taskId, sentAt) {
+  try {
+    await fetch(
+      `${supabaseUrl}/rest/v1/tasks` +
+        `?id=eq.${encodeURIComponent(taskId)}` +
+        `&last_push_sent_at=eq.${encodeURIComponent(sentAt)}`,
+      {
+        method: 'PATCH',
+        headers: { ...supabaseHeaders(serviceRoleKey), Prefer: 'return=minimal' },
+        body: JSON.stringify({ last_push_sent_at: null }),
+      },
+    );
+  } catch (err) {
+    console.error(`[send-push-for-task] failed to clear push claim taskId=${taskId}: ${getErrorMessage(err)}`);
   }
 }
 
