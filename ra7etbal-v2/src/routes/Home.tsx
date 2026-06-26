@@ -193,15 +193,21 @@ export default function Home() {
         await runExtraction(extractionText, peopleNow, displayName ?? undefined);
       }
 
-      // Auto-attach all photos to the first delegation item so Review shows them
-      // pre-loaded and save uploads them without the user having to re-attach.
+      // Auto-attach all photos to the first item that can actually carry one,
+      // so Review shows them pre-loaded and save uploads them without the
+      // user having to re-attach. Only the task branch in save.ts persists
+      // image_path ("message" writes to the messages table, which has no
+      // image column, and "parked" items are skipped entirely) — so picking
+      // a "message"/"parked" item here silently dropped the photo even
+      // though Review showed it attached. Any other type (delegation,
+      // action, reminder, followup, errand, decision) supports it.
       if (filesForExtraction.length > 0) {
         const extractedItems = useExtractionStore.getState().items;
-        const firstDelegation = extractedItems.find(
-          (i) => i.type === "delegation" || i.type === "message",
+        const firstImageCapableItem = extractedItems.find(
+          (i) => i.type !== "message" && i.type !== "parked",
         );
-        if (firstDelegation) {
-          useExtractionStore.getState().setImageFiles(firstDelegation.id, filesForExtraction);
+        if (firstImageCapableItem) {
+          useExtractionStore.getState().setImageFiles(firstImageCapableItem.id, filesForExtraction);
         }
       }
 

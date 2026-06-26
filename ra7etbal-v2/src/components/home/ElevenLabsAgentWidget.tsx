@@ -1596,6 +1596,17 @@ export default function ElevenLabsAgentWidget({
         return "I need both a recipient name and a message to send.";
       }
 
+      // This tool sends a plain `messages` row with no image column and no
+      // taskId to scope an upload under — it cannot carry a photo. If one is
+      // pending, decline so Carson retries via send_delegation, which can.
+      const pendingPhotos =
+        pendingPhotosRef.current.length > 0
+          ? pendingPhotosRef.current
+          : sessionPhotosRef.current;
+      if (pendingPhotos.length > 0) {
+        return "There's a photo attached, so use the delegation tool for this instead — it will include the photo. A plain message can't carry it.";
+      }
+
       const people = usePeopleStore.getState().items;
       const person = people.find(
         (p) => p.name.trim().toLowerCase() === name.toLowerCase(),
@@ -2702,11 +2713,19 @@ export default function ElevenLabsAgentWidget({
           return "I detected recurring language but couldn't create the routine. Check your contacts in People and try again.";
         }
 
-        const directMessageFastPath = await executeDirectMessageFastPath(rawInstruction, {
-          displayName,
-          userId: authUserId,
-          people,
-        });
+        // The direct-message fast path writes to `messages`, which has no
+        // image column and no taskId to scope a storage upload under — it
+        // cannot carry a photo. Skip it whenever a photo is pending so the
+        // request falls through to a path that can (sendDelegation below,
+        // or executeDelegationFromText), instead of silently sending text-only.
+        const directMessageFastPath =
+          imagePhotos.length > 0
+            ? { handled: false as const, reason: "no_match" as const }
+            : await executeDirectMessageFastPath(rawInstruction, {
+                displayName,
+                userId: authUserId,
+                people,
+              });
         if (directMessageFastPath.handled) {
           return directMessageFastPath.response;
         }
@@ -2714,6 +2733,8 @@ export default function ElevenLabsAgentWidget({
         // ── Single-person delegation fast-path ─────────────────────────────
         // Matches: "ask/tell/get [name] to [task]" | "have [name] [task]"
         // Calls sendDelegation directly — no Anthropic call, returns in ~2-4s.
+        // sendDelegation itself reads pendingPhotosRef/sessionPhotosRef and
+        // attaches an image when present (see createAndSendDelegation).
         // Falls through to executeDelegationFromText for multi-person, personal
         // notes, recurring, compound, or ambiguous instructions.
         const delegationFastPath = await executeDelegationFastPath(

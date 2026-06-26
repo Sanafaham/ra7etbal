@@ -189,4 +189,66 @@ describe("executeDelegationFromText image pipeline", () => {
       }),
     );
   });
+
+  it("attaches the photo to a delegation item, not an earlier message-type item in the same batch", async () => {
+    // Regression: when extraction returns a plain "message" item before the
+    // "delegation" item, the old code picked whichever matched first
+    // (type === "delegation" || "message"). A "message" row has task_id: null
+    // and save.ts never reads imageFiles for it, so the photo was silently
+    // dropped even though a real delegation existed in the same batch.
+    const { executeDelegationFromText } = await import("./text-carson");
+
+    const messageItem: ExtractedItem = {
+      id: "item-message",
+      type: "message",
+      description: "dinner is at 9",
+      assignedTo: "Grace",
+      dueAt: null,
+      dueText: null,
+      suggestedMessage: "Dinner is at 9.",
+      personalNote: null,
+      needsPerson: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+    };
+    const delegationItem: ExtractedItem = {
+      id: "item-delegation",
+      type: "delegation",
+      description: "prepare these",
+      assignedTo: "Christopher",
+      dueAt: null,
+      dueText: null,
+      suggestedMessage: "Please prepare these.",
+      personalNote: null,
+      needsPerson: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+    };
+    const file = new File(["image-bytes"], "photo.jpg", { type: "image/jpeg" });
+
+    extractItemsMock.mockResolvedValue({
+      extracted: [messageItem, delegationItem],
+      summary: "Found a message and a delegation.",
+    });
+    savePendingMock.mockResolvedValue({
+      tasks: [],
+      messages: [],
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    });
+
+    await executeDelegationFromText("Tell Grace dinner is at 9, and ask Christopher to prepare these", {
+      displayName: "Sana",
+      userId: "user-1",
+      dailyBrief: "",
+      people: [],
+      tasks: [],
+      imageFile: file,
+      imageDescription: "The photo shows items to prepare.",
+    });
+
+    const imageMap = savePendingMock.mock.calls[0][4] as Map<string, File>;
+    expect(imageMap.get("item-delegation")).toBe(file);
+    expect(imageMap.has("item-message")).toBe(false);
+  });
 });

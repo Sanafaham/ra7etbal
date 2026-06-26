@@ -316,12 +316,19 @@ export async function executeDelegationFromText(
       ? [context.imageFile]
       : [];
 
-  // Assign the first image to the first delegation/message item for image_path.
+  // Assign the first image to the item that can actually carry it through to
+  // WhatsApp. Only "delegation" items get a companion message row with a
+  // task_id (save.ts), which is what threads image_path into the send below —
+  // a "message" item's row has task_id: null and save.ts never even reads
+  // imageFiles for it, so picking one here silently dropped the photo even
+  // when a real delegation existed in the same batch. Prefer delegation;
+  // fall back to any other image-capable task type so the photo still shows
+  // on the task card even when there's nothing to send over WhatsApp.
   const imageFiles = new Map<string, File>();
   if (resolvedFiles.length > 0) {
-    const firstDelegation = allItems.find(
-      (i) => i.type === "delegation" || i.type === "message",
-    );
+    const firstDelegation =
+      allItems.find((i) => i.type === "delegation") ??
+      allItems.find((i) => i.type !== "message" && i.type !== "parked");
     if (firstDelegation) imageFiles.set(firstDelegation.id, resolvedFiles[0]);
   }
 
