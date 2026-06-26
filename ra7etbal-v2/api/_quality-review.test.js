@@ -177,6 +177,32 @@ describe('runQualityReview', () => {
     expect(images[0].source.data).toBe('ref-base64');
     expect(images[1].source.data).toBe('proof-base64');
   });
+
+  it('instructs the model that a clearly wrong/mismatched item is CORRECTION_REQUIRED, not UNCERTAIN', async () => {
+    // Regression guard: live tests showed the model inconsistently classified
+    // an obviously wrong item (visible, describable mismatch) as UNCERTAIN
+    // instead of CORRECTION_REQUIRED, which silently skipped notifying the
+    // assignee (UNCERTAIN only pushes the owner — see task-confirm.js). The
+    // prompt must explicitly steer the model away from that misclassification.
+    const fetchMock = vi.fn().mockResolvedValue(
+      anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'task',
+      delegationMessage: 'message',
+      referenceImageBase64: null,
+      proofImageBase64: 'proof-base64',
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
+    expect(promptText).toMatch(/entirely different\/mismatched item/i);
+    expect(promptText).toMatch(/is CORRECTION_REQUIRED, not UNCERTAIN/i);
+    expect(promptText).toMatch(/never UNCERTAIN/i);
+  });
 });
 
 describe('downloadImageAsBase64', () => {

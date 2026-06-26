@@ -52,8 +52,8 @@ ${
 
 Decide exactly one outcome:
 - APPROVED: the proof photo clearly satisfies the task as described.
-- CORRECTION_REQUIRED: the proof photo shows a clear, visible problem worth fixing (wrong placement, missing item, visibly incomplete, etc). Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible.
-- UNCERTAIN: you cannot tell confidently either way — for example the photo is unclear, the angle is ambiguous, or there's no reference image and the task description is too vague to judge against.
+- CORRECTION_REQUIRED: you can clearly see what's wrong and describe it specifically — wrong placement, missing item, visibly incomplete, or an entirely different/mismatched item than what was asked for (e.g. the wrong product, wrong color, wrong object altogether). A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible.
+- UNCERTAIN: reserve this only for genuine ambiguity where you cannot tell what's in the photo or whether it matches — for example the photo itself is blurry, too dark, or cropped so the relevant item isn't visible, the angle makes it impossible to judge, or there's no reference image and the task description is too vague to judge against. If you can clearly see the item and can clearly see that it does not match, that is CORRECTION_REQUIRED, never UNCERTAIN.
 
 If CORRECTION_REQUIRED, write a short, specific message addressed directly to the assignee by name, describing only the visible difference and what to do about it. One or two sentences, friendly but direct. Do not invent issues that are not visible in the photo.
 
