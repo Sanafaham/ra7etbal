@@ -228,17 +228,19 @@ async function handlePost(req, res) {
         return res.status(500).json({ error: 'Could not save the review. Please try again.' });
       }
 
+      let correctionDelivered = null;
       if (review.status === 'correction_required') {
-        await sendCorrectionWhatsApp({
+        correctionDelivered = await sendCorrectionWhatsApp({
           supabaseUrl,
           serviceKey,
           userId: task.user_id,
           taskId,
           assignedTo: task.assigned_to,
           correctionMessage: review.note,
-        }).catch((err) =>
-          console.error('[task-confirm] correction WhatsApp send failed (non-fatal):', err?.message || err),
-        );
+        }).catch((err) => {
+          console.error('[task-confirm] correction WhatsApp send failed (non-fatal):', err?.message || err);
+          return false;
+        });
       } else {
         await sendOwnerPush({
           supabaseUrl,
@@ -256,6 +258,10 @@ async function handlePost(req, res) {
         success: true,
         outcome: review.status,
         description: task.description,
+        // Only meaningful for outcome "correction_required" — whether the
+        // WhatsApp message describing the correction actually went out.
+        // null for "uncertain" (no WhatsApp send is attempted for that outcome).
+        correctionDelivered,
       });
     }
 
@@ -423,7 +429,7 @@ async function fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }
  * and passing both messageRecordId and taskId through.
  */
 async function sendCorrectionWhatsApp({ supabaseUrl, serviceKey, userId, taskId, assignedTo, correctionMessage }) {
-  if (!userId || !assignedTo || !correctionMessage) return;
+  if (!userId || !assignedTo || !correctionMessage) return false;
 
   const headers = {
     apikey: serviceKey,
@@ -436,24 +442,27 @@ async function sendCorrectionWhatsApp({ supabaseUrl, serviceKey, userId, taskId,
       '&select=name,phone,whatsapp_opted_in',
     { headers },
   );
-  if (!response.ok) return;
+  if (!response.ok) return false;
   const people = await response.json().catch(() => []);
-  if (!Array.isArray(people)) return;
+  if (!Array.isArray(people)) return false;
 
   const assignee = people.find(
     (person) => String(person.name || '').trim().toLowerCase() === assignedTo.trim().toLowerCase(),
   );
   if (!assignee?.phone || assignee.whatsapp_opted_in !== true) {
     console.warn('[task-confirm] correction message skipped — no phone or consent for', assignedTo);
-    return;
+    return false;
   }
 
   const appBaseUrl = process.env.APP_BASE_URL;
   if (!appBaseUrl) {
     console.warn('[task-confirm] APP_BASE_URL not configured — correction message skipped');
-    return;
+    return false;
   }
 
+  // task_id on the `messages` row itself is fine and expected — it's the
+  // separate top-level `taskId` request param below that send-whatsapp-task.js
+  // explicitly rejects for direct messages (see root-cause note below).
   const messageRes = await fetch(supabaseUrl + '/rest/v1/messages', {
     method: 'POST',
     headers: { ...headers, Prefer: 'return=representation' },
@@ -467,15 +476,23 @@ async function sendCorrectionWhatsApp({ supabaseUrl, serviceKey, userId, taskId,
   });
   if (!messageRes.ok) {
     console.error('[task-confirm] could not save correction message record — send aborted', messageRes.status);
-    return;
+    return false;
   }
   const savedMessages = await messageRes.json().catch(() => []);
   const messageRecordId = Array.isArray(savedMessages) ? savedMessages[0]?.id : null;
   if (!messageRecordId) {
     console.error('[task-confirm] correction message record had no id — send aborted');
-    return;
+    return false;
   }
 
+  // Root cause of the previous failure: send-whatsapp-task.js explicitly
+  // rejects any sendMode: "direct_message" request that also includes a
+  // top-level taskId — "Direct messages cannot include a task." (400,
+  // before any Meta call). Every other existing caller of direct_message
+  // (direct-message-fast-path.ts, the send_direct_whatsapp_message tool)
+  // passes taskId: null for exactly this reason; messageRecordId alone is
+  // enough for beginWhatsappDelivery to resolve ownership and the task link,
+  // since the messages row above already carries task_id.
   const sendRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -483,7 +500,7 @@ async function sendCorrectionWhatsApp({ supabaseUrl, serviceKey, userId, taskId,
       to: assignee.phone,
       messageText: correctionMessage,
       messageRecordId,
-      taskId: taskId || null,
+      taskId: null,
       sourceType: 'message',
       sendMode: 'direct_message',
       recipientName: assignee.name,
@@ -493,7 +510,9 @@ async function sendCorrectionWhatsApp({ supabaseUrl, serviceKey, userId, taskId,
   if (!sendRes.ok) {
     const errBody = await sendRes.text().catch(() => '');
     console.error('[task-confirm] correction WhatsApp send returned non-ok', sendRes.status, errBody.slice(0, 200));
+    return false;
   }
+  return true;
 }
 
 // ── Storage helpers (from get-confirm-task.js) ────────────────────────────────

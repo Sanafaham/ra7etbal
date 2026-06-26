@@ -123,7 +123,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     );
 
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ success: true, outcome: 'correction_required' }),
+      expect.objectContaining({ success: true, outcome: 'correction_required', correctionDelivered: true }),
     );
 
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -148,12 +148,17 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     expect(String(fetchMock.mock.calls[5][0])).toContain('https://ra7etbal.com/api/send-whatsapp-task');
     const sendBody = JSON.parse(fetchMock.mock.calls[5][1].body);
+    // Root-cause regression guard: send-whatsapp-task.js rejects ANY
+    // sendMode: "direct_message" request that also carries a top-level
+    // taskId ("Direct messages cannot include a task.", see its own
+    // validation). This taskId: null is the fix — task_id on the `messages`
+    // row above is what carries the task link, not this field.
     expect(sendBody).toEqual(
       expect.objectContaining({
         to: '971500000000',
         messageText: 'Christopher, please center the chicken and send another photo.',
         messageRecordId: 'message-correction-1',
-        taskId: 'task-1',
+        taskId: null,
         sourceType: 'message',
         sendMode: 'direct_message',
         recipientName: 'Christopher',
