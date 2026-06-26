@@ -5,15 +5,19 @@ const SOCIAL_ACKNOWLEDGEMENT_RESPONSES = [
 ] as const;
 
 const CARSON_FILLER_PREFIX_PATTERN =
-  /^(?:(?:one moment|done|got it|of course|hold on|give me a second|just a second|i understand|certainly|absolutely|processing|i(?:'|’)ll analyze(?: that)?|let me(?: check| take a look| look into that)?)[\s.,!?;:—-]*)+/i;
+  /^(?:(?:one moment(?:\s+while\s+i[^.?!]*)?|done|got it|of course|hold on|give me a second|just a second|i understand|certainly|absolutely|processing|i(?:'|’)ll analyze(?: that)?|let me(?: check| take a look| look into that)?)[\s.,!?;:—-]*)+/i;
 
 const CARSON_REASONING_PREFIX_PATTERN =
   /^(?:based on (?:your request|the attached (?:photo|image)|the information i have)[\s.,!?;:—-]*|according to (?:your )?(?:ra7etbal|rahet bal)? ?(?:data|context|information)?[\s.,!?;:—-]*|it (?:appears|seems)(?: that)?[\s.,!?;:—-]*|the attached (?:photo|image) (?:shows|is|was)[\s.,!?;:—-]*|the task delegated[\s.,!?;:—-]*)+/i;
 
-const CARSON_IDLE_PROMPT_PATTERN = /\b(?:still there|are you there|are you still there)\b/i;
+const CARSON_IDLE_SENTENCE_PATTERN =
+  /(?:^|[.?!]\s*)\b(?:still there|are you there|are you still there)\b[^.?!]*(?:[.?!]|$)/gi;
 
 const CARSON_INTERNAL_SENTENCE_PATTERN =
   /\b(?:photo context was available for this action|do not mention it unless the user asks|(?:analysis|extraction|attachment|prompt|processing|context|transcript|tools|database) (?:was|were|is|are|has|have|will|can|should|available|complete|completed)[^.?!]*(?:[.?!]|$))/gi;
+
+const CARSON_PERMISSION_QUESTION_PATTERN =
+  /^(?:would you like me to|do you want me to|should i|shall i)\b[^.?!]*(?:[.?!]|$)/i;
 
 function normalizeSocialText(text: string): string {
   return text
@@ -52,6 +56,8 @@ export function sanitizeCarsonReplyText(text: string): string {
   }
 
   return sanitized
+    .replace(CARSON_IDLE_SENTENCE_PATTERN, "")
+    .replace(CARSON_PERMISSION_QUESTION_PATTERN, "")
     .replace(CARSON_INTERNAL_SENTENCE_PATTERN, "")
     .replace(/\s+([.?!])/g, "$1")
     .replace(/(?:\s*[.?!]){2,}/g, ".")
@@ -60,7 +66,8 @@ export function sanitizeCarsonReplyText(text: string): string {
 }
 
 export function shouldSuppressCarsonIdlePrompt(text: string): boolean {
-  return CARSON_IDLE_PROMPT_PATTERN.test(sanitizeCarsonReplyText(text));
+  const sanitized = sanitizeCarsonReplyText(text);
+  return !sanitized && text.trim().length > 0;
 }
 
 export function sanitizeSocialAcknowledgementReply(text: string): string {

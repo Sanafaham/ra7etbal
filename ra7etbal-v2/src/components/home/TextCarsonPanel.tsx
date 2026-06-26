@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Spinner from "../Spinner";
 import { askTextCarson, executeDelegationFromText, type TextCarsonContext } from "../../lib/text-carson";
 import { saveInboxItem } from "../../lib/inbox";
+import { sanitizeCarsonReplyText } from "../../lib/carson-social";
 
 interface Props {
   context: TextCarsonContext;
@@ -55,14 +56,14 @@ export default function TextCarsonPanel({ context, hideHeading = false, embedded
           ...context,
           imageFile: imageFile ?? null,
         });
-        setAnswer(response);
+        setAnswer(sanitizeCarsonReplyText(response) || null);
         setInput("");
         setImageFile(null); // clear image after successful delegation send
         return;
       }
 
       const response = await askTextCarson(trimmed, { ...context, imageFile: imageFile ?? null });
-      setAnswer(response);
+      setAnswer(sanitizeCarsonReplyText(response) || null);
       setInput("");
     } catch (err) {
       setError(
@@ -190,7 +191,7 @@ export default function TextCarsonPanel({ context, hideHeading = false, embedded
           className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
         >
           {loading && <Spinner size={14} />}
-          <span>{loading ? "Thinking..." : "Send"}</span>
+          <span>{loading ? "Working..." : "Send"}</span>
         </button>
       </div>
 

@@ -2975,7 +2975,7 @@ export default function ElevenLabsAgentWidget({
       setLastUserTranscript(null);
       if (options?.clearError !== false) setErrorMsg(null);
       if (options?.showEndedMessage) {
-        setSessionEndedMsg("Session ended. Tap to talk again.");
+        setSessionEndedMsg("Session ended.");
       }
 
       if (transcript.length > 0) {
@@ -3140,7 +3140,7 @@ export default function ElevenLabsAgentWidget({
       localStorage.setItem("carson_brief_date", todayStr);
     }
     const openingLine = (() => {
-      if (!isFirstSessionToday) return "I'm here. What are we looking at?";
+      if (!isFirstSessionToday) return "I'm here.";
       const hour = new Date().getHours();
       const greeting =
         hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -3153,7 +3153,7 @@ export default function ElevenLabsAgentWidget({
       // don't say "Good morning" twice. The spoken brief always starts with a
       // greeting sentence ending in "." — remove it if present.
       const briefWithoutGreeting = briefBody.replace(/^(Good morning|Good afternoon|Good evening)[^.]*\.\s*/i, "");
-      return `${greeterPrefix} ${briefWithoutGreeting} Anything you want me to handle first?`;
+      return sanitizeCarsonReplyText(`${greeterPrefix} ${briefWithoutGreeting} I'm here if you want anything handled.`);
     })();
 
     // Await the photo descriptions now — they have been running concurrently with
@@ -3187,7 +3187,7 @@ export default function ElevenLabsAgentWidget({
           // Latin "Ra7etBal" string — it mispronounces it. Arabic is correct.
           ra7etbal_state: sanitizeForCarsonSpeech(carsonStateText),
           daily_brief: sanitizeForCarsonSpeech(liveSpokenBrief),
-          opening_line: openingLine,
+          opening_line: sanitizeForCarsonSpeech(openingLine),
           // Local date/time + timezone label so Carson anchors "now" to the
           // user's actual clock and can reason about how long ago a session
           // was. UTC ISO is kept at the end for unambiguous machine reference.
@@ -3395,7 +3395,7 @@ export default function ElevenLabsAgentWidget({
                 ? sanitizeSocialAcknowledgementReply(message)
                 : message,
             );
-            if (shouldSuppressCarsonIdlePrompt(displayMessage)) {
+            if (!displayMessage || shouldSuppressCarsonIdlePrompt(message)) {
               sessionTranscriptRef.current.pop();
               console.log("[carson-idle] suppressed idle prompt", {
                 eventId: event_id ?? null,
@@ -3446,7 +3446,7 @@ export default function ElevenLabsAgentWidget({
           clearCarsonSessionTimers();
           setStatus("idle");
           setMode("listening");
-          setSessionEndedMsg("Session ended. Tap to talk again.");
+          setSessionEndedMsg("Session ended.");
           setLastUserTranscript(null);
           clearPendingPhotoPreviews();
           saveVoiceSessionSnapshot(userId, transcript);
@@ -3465,13 +3465,13 @@ export default function ElevenLabsAgentWidget({
           console.info("[carson-lifecycle] disconnect", errorInfo);
           recordCarsonDiagnostic("carson-error", errorInfo);
 
-          // Keep error visible — user must tap to retry. No silent auto-dismiss.
+          // Keep error visible until the user closes it.
           sessionGenerationRef.current += 1;
           conversationRef.current = null;
           startInFlightRef.current = false;
           clearCarsonSessionTimers();
           setStatus("error");
-          setErrorMsg(msg || "Connection lost. Tap to retry.");
+          setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
           // Save whatever transcript we have so the session isn't lost.
           // Mirror the onDisconnect memory-save path but run fire-and-forget.
@@ -3539,9 +3539,12 @@ export default function ElevenLabsAgentWidget({
       startInFlightRef.current = false;
       clearCarsonSessionTimers();
       // Show the real error message so the user knows what went wrong.
-      // Do not auto-dismiss — the error persists until the user taps to retry.
+      // Do not auto-dismiss — the error persists until the user closes it.
       setStatus("error");
-      setErrorMsg(err instanceof Error ? err.message : "Couldn't connect. Tap to retry.");
+      setErrorMsg(
+        sanitizeCarsonReplyText(err instanceof Error ? err.message : "Couldn't connect.") ||
+          "Couldn't connect.",
+      );
     }
   }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot]);
 
@@ -3731,12 +3734,12 @@ export default function ElevenLabsAgentWidget({
         <button
           type="button"
           onClick={() => { stopSession("error-dismiss-button"); onRequestClose?.(); }}
-          aria-label="Connection failed — tap to retry"
+          aria-label="Connection failed"
           className="flex items-center gap-2 rounded-full border border-danger/30 bg-warm-white/95 px-4 py-2.5 shadow-sm backdrop-blur-sm transition hover:bg-white active:scale-95"
         >
           <span className="h-2 w-2 flex-shrink-0 rounded-full bg-danger" />
           <span className="max-w-[180px] truncate text-[12px] font-medium text-danger">
-            {errorMsg ?? "Couldn't connect — tap to retry"}
+            {errorMsg ?? "Couldn't connect."}
           </span>
         </button>
       )}

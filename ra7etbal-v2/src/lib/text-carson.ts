@@ -16,6 +16,7 @@ import { useTasksStore } from "../stores/tasks";
 import { summarizeConversation } from "./carson-summarize";
 import { extractDurableFacts } from "./carson-fact-extract";
 import { updatePeopleInsightsFromTasks } from "./people-behavior";
+import { sanitizeCarsonReplyText } from "./carson-social";
 
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 500;
@@ -116,7 +117,7 @@ export async function askTextCarson(
         content: captureContent,
         source: "text_carson",
       });
-      return `Got it — saved to your inbox. I'll keep that for you.`;
+      return sanitizeCarsonReplyText("Saved to your inbox. I'll keep that for you.");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[text-carson] inbox save failed:", msg);
@@ -175,7 +176,7 @@ export async function askTextCarson(
 
   const text = body.content?.[0]?.text?.trim();
   if (!text) throw new Error("Carson returned an empty response. Please try again.");
-  return text;
+  return sanitizeCarsonReplyText(text) || "I'm handling it.";
 }
 
 function buildTextCarsonPrompt(
@@ -545,7 +546,9 @@ export async function executeDelegationFromText(
 
   // Capitalise first word and end with a period.
   const summary = parts.join(", ");
-  return `${summary.charAt(0).toUpperCase() + summary.slice(1)}. I'll follow up if needed.`;
+  return sanitizeCarsonReplyText(
+    `${summary.charAt(0).toUpperCase() + summary.slice(1)}. I'll follow up if needed.`,
+  ) || "I'm handling it.";
 }
 
 function withImageContext(message: string, imageDescription?: string | null): string {

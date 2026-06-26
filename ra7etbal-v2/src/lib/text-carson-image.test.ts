@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtractedItem } from "../types/extraction";
 
 const extractItemsMock = vi.fn();
@@ -23,7 +23,7 @@ vi.mock("./inbox", () => ({
 }));
 
 vi.mock("./tasks", () => ({
-  listTasks: vi.fn(),
+  listTasks: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("./image-upload", () => ({
@@ -47,12 +47,12 @@ vi.mock("../stores/tasks", () => ({
 }));
 
 vi.mock("./carson-facts", () => ({
-  loadUserMemory: vi.fn(),
+  loadUserMemory: vi.fn().mockResolvedValue(""),
   upsertUserFacts: vi.fn(),
 }));
 
 vi.mock("./carson-memory", () => ({
-  loadRecentMemory: vi.fn(),
+  loadRecentMemory: vi.fn().mockResolvedValue("No previous sessions."),
   saveSessionMemory: vi.fn(),
 }));
 
@@ -71,6 +71,36 @@ vi.mock("./people-behavior", () => ({
 describe("executeDelegationFromText image pipeline", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("sanitizes text Carson answers before returning them to the bubble", async () => {
+    const { askTextCarson } = await import("./text-carson");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        content: [
+          {
+            text: "One moment. Grace has it. Are you still there?",
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await askTextCarson("status", {
+      displayName: "Sana",
+      userId: "user-1",
+      dailyBrief: "",
+      people: [],
+      tasks: [],
+    });
+
+    expect(response).toBe("Grace has it");
+    expect(response).not.toMatch(/one moment|are you still there|are you there|still there/i);
   });
 
   it("passes an attached photo through savePending and into WhatsApp delivery", async () => {
