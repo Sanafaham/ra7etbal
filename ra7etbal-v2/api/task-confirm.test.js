@@ -228,6 +228,55 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
   });
 
+  it('fraud_suspected review (reused reference image): keeps the task pending, notifies the owner only, never the assignee', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'fraud_suspected',
+      note: 'This is the same image as the reference photo, not a new photo of the completed task.',
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'look for this in the closet', assigned_to: 'Grace', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([])) // no messages row
+      .mockResolvedValueOnce(emptyResponse()); // PATCH tasks
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, outcome: 'fraud_suspected', correctionDelivered: null }),
+    );
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.quality_review_status).toBe('fraud_suspected');
+    expect(patchBody.status).toBeUndefined();
+    // Never sends a WhatsApp message to the assignee for fraud_suspected —
+    // only the owner is notified, and only the owner decides whether to
+    // follow up with the assignee.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+  });
+
+  it('fraud_suspected review (screenshot proof): same owner-only routing as a reused reference image', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'fraud_suspected',
+      note: 'This looks like a screenshot of a product listing, not a photo of the item.',
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-2', user_id: 'user-1', status: 'pending', description: 'buy the pearl bracelet shown', assigned_to: 'Grace', image_path: 'task-images/u/t2/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([])) // no messages row
+      .mockResolvedValueOnce(emptyResponse()); // PATCH tasks
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-2', proofImagePath: 'task-images/u/t2/proof.jpg' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, outcome: 'fraud_suspected', correctionDelivered: null }),
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+  });
+
   it('is idempotent — an already-done task short-circuits before any review runs', async () => {
     const fetchMock = vi
       .fn()

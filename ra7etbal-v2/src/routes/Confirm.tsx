@@ -49,7 +49,7 @@ export default function Confirm() {
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const confirmedRef = useRef(false);
-  const [outcome, setOutcome] = useState<"approved" | "correction_required" | "uncertain" | null>(null);
+  const [outcome, setOutcome] = useState<"approved" | "correction_required" | "uncertain" | "fraud_suspected" | null>(null);
   const [correctionDelivered, setCorrectionDelivered] = useState<boolean | null>(null);
 
   // Proof photo state
@@ -176,7 +176,7 @@ export default function Confirm() {
         success?: boolean;
         already_done?: boolean;
         error?: string;
-        outcome?: "approved" | "correction_required" | "uncertain";
+        outcome?: "approved" | "correction_required" | "uncertain" | "fraud_suspected";
         correctionDelivered?: boolean | null;
       };
       if (!res.ok || data.error) {
@@ -303,6 +303,12 @@ export default function Confirm() {
               <AuthNotice kind="success">Marked as done.</AuthNotice>
             </div>
           ) : outcome === "uncertain" ? (
+            <div className="space-y-3">
+              <AuthNotice kind="success">
+                Thanks — this has been sent to the owner for a quick review.
+              </AuthNotice>
+            </div>
+          ) : outcome === "fraud_suspected" ? (
             <div className="space-y-3">
               <AuthNotice kind="success">
                 Thanks — this has been sent to the owner for a quick review.

@@ -6,7 +6,7 @@ export type TaskType = Exclude<ItemType, "message">;
 export type TaskStatus = "pending" | "done" | "cancelled";
 
 /** Outcome of Carson's automated proof-photo review. Null = not yet reviewed. */
-export type QualityReviewStatus = "approved" | "correction_required" | "uncertain";
+export type QualityReviewStatus = "approved" | "correction_required" | "uncertain" | "fraud_suspected";
 
 export interface Task {
   id: string;

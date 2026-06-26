@@ -9,7 +9,7 @@
 const BUCKET = 'task-images';
 const QUALITY_MODEL = 'claude-sonnet-4-6';
 
-export const QUALITY_RESULTS = ['approved', 'correction_required', 'uncertain'];
+export const QUALITY_RESULTS = ['approved', 'correction_required', 'uncertain', 'fraud_suspected'];
 
 /**
  * Downloads a Supabase Storage object directly (service role bypasses RLS)
@@ -54,11 +54,14 @@ Decide exactly one outcome:
 - APPROVED: the proof photo clearly satisfies the task as described.
 - CORRECTION_REQUIRED: you can clearly see what's wrong and describe it specifically — wrong placement, missing item, visibly incomplete, or an entirely different/mismatched item than what was asked for (e.g. the wrong product, wrong color, wrong object altogether). A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible.
 - UNCERTAIN: reserve this only for genuine ambiguity where you cannot tell what's in the photo or whether it matches — for example the photo itself is blurry, too dark, or cropped so the relevant item isn't visible, the angle makes it impossible to judge, or there's no reference image and the task description is too vague to judge against. If you can clearly see the item and can clearly see that it does not match, that is CORRECTION_REQUIRED, never UNCERTAIN.
+- FRAUD_SUSPECTED: the proof photo itself is not a genuine, live photo of the completed task — it's not just wrong or unclear, it's not real proof at all. Use this when the photo is a screenshot (product listing, marketplace page, menu, app UI, etc.), is the exact same image as the reference image reused as if it were new proof, is a stock/web image rather than a photo taken of a real physical item, or otherwise shows clear signs of not being a live photo of the actual completed task. This is about the photo's authenticity as proof, not about whether the item looks right — a real photo of the wrong item is CORRECTION_REQUIRED; a screenshot, a reused reference image, or any non-live image presented as proof is FRAUD_SUSPECTED.
 
 If CORRECTION_REQUIRED, write a short, specific message addressed directly to the assignee by name, describing only the visible difference and what to do about it. One or two sentences, friendly but direct. Do not invent issues that are not visible in the photo.
 
+If FRAUD_SUSPECTED, write one short sentence in "reasoning" explaining specifically why the photo does not look like genuine proof (e.g. "this looks like a screenshot of a product listing, not a photo of the item" or "this is the same image as the reference photo, not a new photo of the completed task").
+
 Respond with ONLY this JSON and nothing else — no markdown fences, no commentary:
-{"result":"APPROVED"|"CORRECTION_REQUIRED"|"UNCERTAIN","correction_message":"string or null","reasoning":"one short sentence"}`;
+{"result":"APPROVED"|"CORRECTION_REQUIRED"|"UNCERTAIN"|"FRAUD_SUSPECTED","correction_message":"string or null","reasoning":"one short sentence"}`;
 }
 
 function parseReviewResponse(text) {

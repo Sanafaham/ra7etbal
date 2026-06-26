@@ -221,6 +221,13 @@ export default function TaskCard({
         </div>
       )}
 
+      {task.quality_review_status === "fraud_suspected" && (
+        <div className="rounded-lg border border-red-400 bg-red-50 px-3 py-2 text-sm text-red-900">
+          <p className="font-medium">Possible issue with this proof photo — needs your review</p>
+          {task.quality_review_note && <p className="mt-0.5">{task.quality_review_note}</p>}
+        </div>
+      )}
+
       {message?.content && (
         <p className="mt-2 whitespace-pre-wrap rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
           "{message.content}"

@@ -97,6 +97,94 @@ describe('runQualityReview', () => {
     expect(result).toEqual({ status: 'uncertain', note: 'Photo is too blurry to tell.' });
   });
 
+  it('returns fraud_suspected when the proof is a reused reference image', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"FRAUD_SUSPECTED","correction_message":null,"reasoning":"This is the same image as the reference photo, not a new photo of the completed task."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'look for this in the closet',
+      delegationMessage: 'Please find this and confirm.',
+      referenceImageBase64: 'ref-base64',
+      proofImageBase64: 'ref-base64',
+    });
+
+    expect(result).toEqual({
+      status: 'fraud_suspected',
+      note: 'This is the same image as the reference photo, not a new photo of the completed task.',
+    });
+  });
+
+  it('returns fraud_suspected when the proof is a screenshot rather than a live photo', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"FRAUD_SUSPECTED","correction_message":null,"reasoning":"This looks like a screenshot of an Amazon product listing, not a photo of the item."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'buy the pearl bracelet shown',
+      delegationMessage: 'Please buy this and send a photo.',
+      referenceImageBase64: 'ref-base64',
+      proofImageBase64: 'screenshot-base64',
+    });
+
+    expect(result.status).toBe('fraud_suspected');
+    expect(result.note).toBe('This looks like a screenshot of an Amazon product listing, not a photo of the item.');
+  });
+
+  it('returns fraud_suspected for proof that is clearly not a live photo (e.g. a menu screenshot)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"FRAUD_SUSPECTED","correction_message":null,"reasoning":"This is a menu screenshot, not a photo of a completed task."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'order dinner from the usual place',
+      delegationMessage: null,
+      referenceImageBase64: null,
+      proofImageBase64: 'menu-screenshot-base64',
+    });
+
+    expect(result.status).toBe('fraud_suspected');
+  });
+
+  it('instructs the model that screenshots and reused reference images are FRAUD_SUSPECTED', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'task',
+      delegationMessage: 'message',
+      referenceImageBase64: null,
+      proofImageBase64: 'proof-base64',
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
+    expect(promptText).toMatch(/FRAUD_SUSPECTED/);
+    expect(promptText).toMatch(/screenshot/i);
+    expect(promptText).toMatch(/reused as if it were new proof/i);
+  });
+
   it('falls back to uncertain when the Anthropic API call fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
 

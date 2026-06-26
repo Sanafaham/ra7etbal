@@ -19,6 +19,11 @@
  *       (sendMode: "direct_message", no new template).
  *     - uncertain: task stays pending; the owner gets pushed to review
  *       manually instead of a "confirmed" notification.
+ *     - fraud_suspected: task stays pending; the photo itself looks like it
+ *       isn't genuine proof (screenshot, reused reference image, etc). The
+ *       owner gets pushed to review — the assignee never receives an
+ *       automatic correction message for this outcome; only the owner can
+ *       decide to follow up.
  *   No proof photo, or a task with no assignee (assigned_to null) — review
  *   is skipped entirely and behavior is unchanged from before this stage
  *   existed.
@@ -207,9 +212,9 @@ async function handlePost(req, res) {
     }
 
     if (review && review.status !== 'approved') {
-      // CORRECTION_REQUIRED or UNCERTAIN — task stays open. Save the
-      // submitted photo and the review outcome; do not mark done, do not
-      // insert a confirmation record.
+      // CORRECTION_REQUIRED, UNCERTAIN, or FRAUD_SUSPECTED — task stays
+      // open. Save the submitted photo and the review outcome; do not mark
+      // done, do not insert a confirmation record.
       const patchRes = await fetch(
         supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId),
         {
@@ -242,15 +247,19 @@ async function handlePost(req, res) {
           return false;
         });
       } else {
+        // UNCERTAIN or FRAUD_SUSPECTED — owner-only notification, never an
+        // automatic message to the assignee. For fraud_suspected this is
+        // deliberate: the owner decides whether and how to follow up with
+        // the assignee, Carson does not accuse anyone automatically.
         await sendOwnerPush({
           supabaseUrl,
           serviceKey,
           userId: task.user_id,
           description: task.description,
           assignedTo: task.assigned_to,
-          variant: 'uncertain',
+          variant: review.status,
         }).catch((err) =>
-          console.error('[task-confirm] uncertain-review owner push failed (non-fatal):', err?.message || err),
+          console.error(`[task-confirm] ${review.status}-review owner push failed (non-fatal):`, err?.message || err),
         );
       }
 
@@ -260,7 +269,8 @@ async function handlePost(req, res) {
         description: task.description,
         // Only meaningful for outcome "correction_required" — whether the
         // WhatsApp message describing the correction actually went out.
-        // null for "uncertain" (no WhatsApp send is attempted for that outcome).
+        // null for "uncertain" / "fraud_suspected" (no WhatsApp send is
+        // attempted to the assignee for those outcomes).
         correctionDelivered,
       });
     }
@@ -358,9 +368,11 @@ async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, ass
   const notificationBody =
     variant === 'uncertain'
       ? `Carson is unsure about ${assignee ? `${assignee}'s` : 'the'} proof for: ${description}. Please check.`
-      : assignee
-        ? `${assignee} confirmed: ${description}`
-        : `Task confirmed: ${description}`;
+      : variant === 'fraud_suspected'
+        ? `Carson flagged ${assignee ? `${assignee}'s` : 'the'} proof for: ${description}. The photo doesn't look like genuine proof — please review.`
+        : assignee
+          ? `${assignee} confirmed: ${description}`
+          : `Task confirmed: ${description}`;
 
   const payload = JSON.stringify({ title: 'Ra7etBal', body: notificationBody });
 
