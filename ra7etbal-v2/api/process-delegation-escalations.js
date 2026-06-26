@@ -1200,7 +1200,7 @@ async function runAutomationsDispatch(req, res, { supabaseUrl, serviceKey, appBa
  * Core automations runner — no res dependency.
  * Returns { checked, fired, skipped, failed }.
  */
-async function runAutomationsCore({ supabaseUrl, serviceKey, appBaseUrl }) {
+export async function runAutomationsCore({ supabaseUrl, serviceKey, appBaseUrl }) {
   const startedAt = new Date();
   const now = startedAt;
   const stats = { checked: 0, fired: 0, skipped: 0, failed: 0 };
@@ -1271,7 +1271,7 @@ async function runAutomationsCore({ supabaseUrl, serviceKey, appBaseUrl }) {
  *
  * Returns: 'ok' | 'skipped' | 'failed'
  */
-async function processAutomation({ automation, supabaseUrl, serviceKey, appBaseUrl, now }) {
+export async function processAutomation({ automation, supabaseUrl, serviceKey, appBaseUrl, now }) {
   const runFor = automation.next_run_at;
 
   console.log('[automations] processing', {
@@ -1468,7 +1468,7 @@ async function processAutomation({ automation, supabaseUrl, serviceKey, appBaseU
  * Sends ra7etbal_routine_message through the shared boundary — no task,
  * no confirmation link.
  */
-async function processMessageAutomation({
+export async function processMessageAutomation({
   automation,
   supabaseUrl,
   serviceKey,
@@ -1506,12 +1506,14 @@ async function processMessageAutomation({
     messageLength: automation.instruction.length,
   });
 
+  let sent = false;
   try {
     const messageRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
       method:  'POST',
       headers: {
         'Content-Type': 'application/json',
         'x-ra7etbal-internal-secret': process.env.CRON_SECRET,
+        ...(process.env.CRON_SECRET ? { Authorization: `Bearer ${process.env.CRON_SECRET}` } : {}),
       },
       body: JSON.stringify({
         to: person.phone,
@@ -1535,6 +1537,7 @@ async function processMessageAutomation({
         messageId: messageBody?.messageId ?? null,
         deliveryId: messageBody?.delivery_id ?? null,
       });
+      sent = true;
     } else {
       console.error('[automations] message: shared boundary error', {
         automationId: automation.id,
@@ -1559,7 +1562,7 @@ async function processMessageAutomation({
   }
 
   await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
-  return 'ok';
+  return sent ? 'ok' : 'failed';
 }
 
 /**

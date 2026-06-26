@@ -32,6 +32,7 @@ interface AutomationRow {
 interface AutomationRunRow {
   automation_id: string;
   current_state: string;
+  failure_reason: string | null;
 }
 
 function automationCadenceLabel(row: AutomationRow): string {
@@ -158,7 +159,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
   // ── Automations list state ─────────────────────────────────────────────────
   const [automations, setAutomations] = useState<AutomationRow[]>([]);
-  const [automationRuns, setAutomationRuns] = useState<Record<string, string>>({});
+  const [automationRuns, setAutomationRuns] = useState<Record<string, AutomationRunRow>>({});
 
   // ── Automation action state ────────────────────────────────────────────────
   const [automationActioningId, setAutomationActioningId] = useState<string | null>(null);
@@ -262,15 +263,15 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
     if (ids.length === 0) return;
     const { data: runs } = await supabase
       .from("automation_runs")
-      .select("automation_id, current_state")
+      .select("automation_id, current_state, failure_reason")
       .in("automation_id", ids)
       .order("created_at", { ascending: false });
 
     if (!runs) return;
-    const stateMap: Record<string, string> = {};
+    const stateMap: Record<string, AutomationRunRow> = {};
     for (const run of runs as AutomationRunRow[]) {
       if (!stateMap[run.automation_id]) {
-        stateMap[run.automation_id] = run.current_state;
+        stateMap[run.automation_id] = run;
       }
     }
     setAutomationRuns(stateMap);
@@ -812,7 +813,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
             <AutomationCard
               key={a.id}
               automation={a}
-              latestState={automationRuns[a.id] ?? null}
+              latestRun={automationRuns[a.id] ?? null}
               actioning={automationActioningId === a.id}
               confirmingStop={automationConfirmStopId === a.id}
               onPause={() => handleAutomationAction(a.id, "pause")}
@@ -842,7 +843,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
             <AutomationCard
               key={a.id}
               automation={a}
-              latestState={automationRuns[a.id] ?? null}
+              latestRun={automationRuns[a.id] ?? null}
               actioning={automationActioningId === a.id}
               confirmingStop={automationConfirmStopId === a.id}
               onPause={() => handleAutomationAction(a.id, "pause")}
@@ -871,7 +872,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 
 interface AutomationCardProps {
   automation: AutomationRow;
-  latestState: string | null;
+  latestRun: AutomationRunRow | null;
   actioning: boolean;
   confirmingStop: boolean;
   onPause: () => void;
@@ -955,7 +956,7 @@ function resolveStateConfig(
 
 function AutomationCard({
   automation,
-  latestState,
+  latestRun,
   actioning,
   confirmingStop,
   onPause,
@@ -975,7 +976,8 @@ function AutomationCard({
       })
     : null;
 
-  const state = resolveStateConfig(latestState, automation.automation_type);
+  const state = resolveStateConfig(latestRun?.current_state ?? null, automation.automation_type);
+  const failureReason = latestRun?.current_state === "failed" ? latestRun.failure_reason : null;
   const isActive = automation.status === "active";
   const isPaused = automation.status === "paused";
 
@@ -1014,6 +1016,9 @@ function AutomationCard({
             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${state.dot}`} />
             <span className={`text-[11px] font-medium ${state.text}`}>{state.label}</span>
           </div>
+          {failureReason && (
+            <p className="text-[11px] leading-snug text-red-600/80">{failureReason}</p>
+          )}
 
           {/* Next run */}
           {nextRun && isActive && (
