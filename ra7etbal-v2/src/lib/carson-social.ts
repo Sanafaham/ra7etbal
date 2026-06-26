@@ -5,7 +5,10 @@ const SOCIAL_ACKNOWLEDGEMENT_RESPONSES = [
 ] as const;
 
 const CARSON_FILLER_PREFIX_PATTERN =
-  /^(?:(?:one moment|got it|hold on|just a second)[\s.,!?;:—-]*)+/i;
+  /^(?:(?:one moment|got it|hold on|give me a second|just a second|i understand|certainly|absolutely|processing|i(?:'|’)ll analyze(?: that)?|let me(?: check| take a look| look into that)?)[\s.,!?;:—-]*)+/i;
+
+const CARSON_REASONING_PREFIX_PATTERN =
+  /^(?:based on (?:your request|the attached (?:photo|image)|the information i have)[\s.,!?;:—-]*|according to (?:your )?(?:ra7etbal|rahet bal)? ?(?:data|context|information)?[\s.,!?;:—-]*|it (?:appears|seems)(?: that)?[\s.,!?;:—-]*|the attached (?:photo|image) (?:shows|is|was)[\s.,!?;:—-]*|the task delegated[\s.,!?;:—-]*)+/i;
 
 const CARSON_IDLE_PROMPT_PATTERN = /\b(?:still there|are you there|are you still there)\b/i;
 
@@ -39,7 +42,10 @@ export function sanitizeCarsonReplyText(text: string): string {
 
   while (sanitized && sanitized !== previous) {
     previous = sanitized;
-    sanitized = sanitized.replace(CARSON_FILLER_PREFIX_PATTERN, "").trim();
+    sanitized = sanitized
+      .replace(CARSON_FILLER_PREFIX_PATTERN, "")
+      .replace(CARSON_REASONING_PREFIX_PATTERN, "")
+      .trim();
   }
 
   return sanitized

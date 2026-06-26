@@ -228,7 +228,8 @@ Incorrect: "I don't have access to song lyrics."
 
 ATTACHED PHOTOS
 ${imageContext ? `The user has attached a photo. Description: ${context.imageDescription}
-Use this as visual context. Refer to it naturally: "Based on the attached photo...", "The image shows...", "From the photo..."
+Use this as silent visual context. Do not announce the photo or explain that you are using it.
+Do not say "based on the attached photo", "the attached image", or "the image shows".
 Do not say you cannot see images. Do not ask the user to describe the image.` : `No attached photo in this message. If the user refers to a photo, ask them to attach one.`}
 
 COMPLETED TASKS — HARD RULE

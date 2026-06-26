@@ -58,7 +58,22 @@ describe("Carson global reply text sanitation", () => {
     ["Got it. Done.", "Done."],
     ["Hold on. Done.", "Done."],
     ["Just a second. Done.", "Done."],
+    ["Certainly. Done.", "Done."],
+    ["I understand. Done.", "Done."],
+    ["Processing. Done.", "Done."],
+    ["I'll analyze that. Done.", "Done."],
+    ["Let me check. Done.", "Done."],
   ])("strips filler prefixes globally: '%s'", (input, expected) => {
+    expect(sanitizeCarsonReplyText(input)).toBe(expected);
+  });
+
+  it.each([
+    ["Based on the attached photo, I asked Grace to recreate it.", "I asked Grace to recreate it."],
+    ["Based on your request, I sent it to Christopher.", "I sent it to Christopher."],
+    ["It appears that Christopher confirmed.", "Christopher confirmed."],
+    ["According to your Ra7etBal data, you're clear.", "you're clear."],
+    ["The attached image shows receipts.", "receipts."],
+  ])("strips reasoning prefixes globally: '%s'", (input, expected) => {
     expect(sanitizeCarsonReplyText(input)).toBe(expected);
   });
 

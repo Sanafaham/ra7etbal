@@ -52,6 +52,7 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
+import { CARSON_STATUS_POLICY } from "../../lib/carson-status-policy";
 import {
   addLatencyStageDuration,
   createExecuteInstructionLatencyTrace,
@@ -2795,10 +2796,10 @@ export default function ElevenLabsAgentWidget({
         // Refresh task store so Voice Carson context reflects the new task.
         useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
 
-        // When photos were attached, prepend the descriptions to the return
-        // string so Carson speaks from it instead of saying he cannot see photos.
+        // When photos were attached, keep the photo context available without
+        // teaching Carson to narrate that it used an attachment.
         if (capturedPhotoContext) {
-          return `Based on the attached photos (${capturedPhotoContext}): ${summary}`;
+          return `${summary}\n\nPhoto context was available for this action. Do not mention it unless the user asks.`;
         }
         return summary;
       } catch (err) {
@@ -3202,7 +3203,9 @@ export default function ElevenLabsAgentWidget({
           user_name: displayName ?? "",
           recent_memory: sanitizeForCarsonSpeech(recentMemory),
           current_weather: currentWeather,
-          persistent_instructions: sanitizeForCarsonSpeech(persistentInstructions),
+          persistent_instructions: sanitizeForCarsonSpeech(
+            [CARSON_STATUS_POLICY, persistentInstructions].filter(Boolean).join("\n\n"),
+          ),
         },
         clientTools: {
           // ── Preferred path for delegation/messaging ──────────────────────
