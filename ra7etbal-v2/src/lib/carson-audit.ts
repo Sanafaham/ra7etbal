@@ -87,15 +87,15 @@ export function classifyProductionResult(result: string): ProductionClassificati
     action_type = "clarification";
   } else if (/Diagnostic captured/i.test(r)) {
     action_type = "diagnostic";
-  } else if (/CREATED:.*automation|automation is set/i.test(r)) {
+  } else if (/CREATED:.*automation|automation is set|got that running|First check is/i.test(r)) {
     action_type = "automation";
-  } else if (/CREATED: Reminder|Reminder saved/i.test(r)) {
+  } else if (/CREATED: Reminder|Reminder saved|I'll remind you/i.test(r)) {
     action_type = "reminder";
-  } else if (/Sent delegation|will ask|delegation to/i.test(r)) {
+  } else if (/Sent delegation|will ask|delegation to|has it\. I'll follow up|has the follow-up/i.test(r)) {
     action_type = "delegation";
   } else if (/Sent follow-up to/i.test(r)) {
     action_type = "delegation";
-  } else if (/sent.*message|WhatsApp.*sent|message.*sent/i.test(r) || /^Sent\b.*\bto\b/i.test(r)) {
+  } else if (/sent.*message|WhatsApp.*sent|message.*sent|It's with .*I'll watch for the reply/i.test(r) || /^Sent\b.*\bto\b/i.test(r)) {
     action_type = "whatsapp";
   } else if (/I'll send.*WhatsApp|send.*WhatsApp/i.test(r)) {
     action_type = "whatsapp";
@@ -103,7 +103,7 @@ export function classifyProductionResult(result: string): ProductionClassificati
     action_type = "calendar_create";
   } else if (/updated.*event|event.*updated/i.test(r)) {
     action_type = "calendar_update";
-  } else if (/deleted.*event|event.*deleted|removed.*calendar/i.test(r)) {
+  } else if (/deleted.*event|event.*deleted|removed.*calendar|off your calendar/i.test(r)) {
     action_type = "calendar_delete";
   } else if (/No (calendar events|events found)|events? (found|for|in)/i.test(r) || /on your calendar/i.test(r) || /calendar events/i.test(r)) {
     action_type = "calendar_query";

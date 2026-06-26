@@ -1,16 +1,19 @@
 const SOCIAL_ACKNOWLEDGEMENT_RESPONSES = [
   "You're welcome.",
-  "Of course.",
   "Anytime.",
+  "I've got you.",
 ] as const;
 
 const CARSON_FILLER_PREFIX_PATTERN =
-  /^(?:(?:one moment|got it|hold on|give me a second|just a second|i understand|certainly|absolutely|processing|i(?:'|’)ll analyze(?: that)?|let me(?: check| take a look| look into that)?)[\s.,!?;:—-]*)+/i;
+  /^(?:(?:one moment|done|got it|of course|hold on|give me a second|just a second|i understand|certainly|absolutely|processing|i(?:'|’)ll analyze(?: that)?|let me(?: check| take a look| look into that)?)[\s.,!?;:—-]*)+/i;
 
 const CARSON_REASONING_PREFIX_PATTERN =
   /^(?:based on (?:your request|the attached (?:photo|image)|the information i have)[\s.,!?;:—-]*|according to (?:your )?(?:ra7etbal|rahet bal)? ?(?:data|context|information)?[\s.,!?;:—-]*|it (?:appears|seems)(?: that)?[\s.,!?;:—-]*|the attached (?:photo|image) (?:shows|is|was)[\s.,!?;:—-]*|the task delegated[\s.,!?;:—-]*)+/i;
 
 const CARSON_IDLE_PROMPT_PATTERN = /\b(?:still there|are you there|are you still there)\b/i;
+
+const CARSON_INTERNAL_SENTENCE_PATTERN =
+  /\b(?:photo context was available for this action|do not mention it unless the user asks|(?:analysis|extraction|attachment|prompt|processing|context|transcript|tools|database) (?:was|were|is|are|has|have|will|can|should|available|complete|completed)[^.?!]*(?:[.?!]|$))/gi;
 
 function normalizeSocialText(text: string): string {
   return text
@@ -49,6 +52,9 @@ export function sanitizeCarsonReplyText(text: string): string {
   }
 
   return sanitized
+    .replace(CARSON_INTERNAL_SENTENCE_PATTERN, "")
+    .replace(/\s+([.?!])/g, "$1")
+    .replace(/(?:\s*[.?!]){2,}/g, ".")
     .replace(/\s+/g, " ")
     .trim();
 }

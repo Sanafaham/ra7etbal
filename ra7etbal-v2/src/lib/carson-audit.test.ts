@@ -21,19 +21,19 @@ function buildAuditInput(transcript: string, productionResult: string): CarsonAu
 
 describe("classifyProductionResult", () => {
   it("classifies delegation result", () => {
-    const r = classifyProductionResult("Sent delegation to Grace: prepare dinner.");
+    const r = classifyProductionResult("Grace has it. I'll follow up if needed.");
     expect(r.action_type).toBe("delegation");
     expect(r.failed).toBe(false);
     expect(r.clarification_requested).toBe(false);
   });
 
   it("classifies reminder result", () => {
-    const r = classifyProductionResult("CREATED: Reminder saved — \"call Grace\" on Thursday at 6:00 PM");
+    const r = classifyProductionResult("I'll remind you Thursday at 6:00 PM.");
     expect(r.action_type).toBe("reminder");
   });
 
   it("classifies WhatsApp result", () => {
-    const r = classifyProductionResult("Sent message to Nasira via WhatsApp.");
+    const r = classifyProductionResult("It's with Nasira. I'll watch for the reply.");
     expect(r.action_type).toBe("whatsapp");
   });
 
@@ -83,7 +83,7 @@ describe("classifyProductionResult", () => {
   });
 
   it("classifies automation result", () => {
-    const r = classifyProductionResult("CREATED: \"Morning check\" automation is set — runs every morning, first on Thursday at 8:00 AM.");
+    const r = classifyProductionResult("I've got that running for Grace. First check is Thursday at 8:00 AM.");
     expect(r.action_type).toBe("automation");
   });
 });
@@ -103,7 +103,7 @@ describe("auditCarsonExecution — social acknowledgement", () => {
 
 describe("auditCarsonExecution — delegation expected, production matches", () => {
   const TRANSCRIPT = "Ask Grace to prepare dinner";
-  const PROD_RESULT = "Sent delegation to Grace: prepare dinner.";
+  const PROD_RESULT = "Grace has it. I'll follow up if needed.";
 
   it("matched_domains includes delegation", () => {
     const audit = auditCarsonExecution(buildAuditInput(TRANSCRIPT, PROD_RESULT));
@@ -143,7 +143,7 @@ describe("auditCarsonExecution — delegation expected, production matches", () 
 
 describe("auditCarsonExecution — reminder expected, production matches", () => {
   const TRANSCRIPT = "Remind me to call Grace tomorrow";
-  const PROD_RESULT = "CREATED: Reminder saved — \"call Grace\" on Thursday at 9:00 AM.";
+  const PROD_RESULT = "I'll remind you tomorrow at 9:00 AM.";
 
   it("matched_domains includes reminder", () => {
     const audit = auditCarsonExecution(buildAuditInput(TRANSCRIPT, PROD_RESULT));
@@ -268,7 +268,7 @@ describe("auditCarsonExecution — planner failure does not block execution", ()
     const input = {
       transcript: "Ask Grace to do something",
       plan,
-      productionResult: "Sent delegation to Grace: do something.",
+      productionResult: "Grace has it. I'll follow up if needed.",
     };
     expect(() => auditCarsonExecution(input)).not.toThrow();
   });
@@ -280,7 +280,7 @@ describe("auditCarsonExecution — planner failure does not block execution", ()
       auditCarsonExecution({
         transcript: "test",
         plan: null as unknown as CarsonAuditInput["plan"],
-        productionResult: "Sent delegation.",
+        productionResult: "Grace has it. I'll follow up if needed.",
       });
     } catch {
       // caller catches it — production must still continue
@@ -359,7 +359,7 @@ describe("auditCarsonExecution — unexpected_actions", () => {
   it("flags unexpected action when production does whatsapp but planner expected delegation only", () => {
     const TRANSCRIPT = "Ask Grace to prepare dinner";
     // Production sent a WhatsApp even though planner only expected delegation
-    const PROD_RESULT = "Sent message to Grace via WhatsApp.";
+    const PROD_RESULT = "It's with Grace. I'll watch for the reply.";
     const audit = auditCarsonExecution(buildAuditInput(TRANSCRIPT, PROD_RESULT));
     // whatsapp is actually inside the delegation flow (sends via whatsapp), so may or may not flag
     // The key test is the field exists

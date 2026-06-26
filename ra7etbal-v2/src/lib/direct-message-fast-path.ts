@@ -185,7 +185,7 @@ export async function executeDirectMessageFastPath(
     status: "sent",
     recipientName: person.name,
     messageText: parsed.messageText,
-    response: `Done. I sent ${person.name} the message.`,
+    response: `It's with ${person.name}. I'll watch for the reply.`,
   };
 }
 

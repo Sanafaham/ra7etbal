@@ -356,7 +356,7 @@ export async function executeProposedPlan(
   }
 
   const names = plan.tasks.map((t) => t.personName).join(", ");
-  return `Done. I sent messages to ${names}.`;
+  return `${names} have the plan. I'll watch for confirmations.`;
 }
 
 /** Call when the user rejects a proposed plan. */

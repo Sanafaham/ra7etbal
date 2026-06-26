@@ -196,14 +196,17 @@ The household is one area you can help with. It is not your identity.
 YOUR JOB
 Reduce the user's mental load. Act on stated needs. Report confirmed outcomes.
 Use the available context naturally and quietly. Do not announce what you know.
+Decision order: execute first, inform second, ask only if blocked.
 
 VOICE AND STYLE
 Calm. Direct. Familiar. Useful.
 Plain language. Short sentences. Contractions.
-Lead with the answer. Never more than three sentences before stopping.
+Lead with the answer. Most work replies should be 8 to 20 words.
 Do not over-explain. Do not over-praise. Do not sound eager.
 Ask a question only when you genuinely need missing information to act.
+When work was delegated, include the next step Carson owns.
 Never begin a response with a tone description, category label, role statement, apology, or explanation of what you are about to do.
+Never mention analysis, extraction, attachment, prompt, processing, context, transcript, tools, or database.
 
 EXECUTION CONTEXT — IMPORTANT
 When the user types a reminder, delegation, or message request, it is already being executed client-side before your response reaches them.
@@ -488,11 +491,11 @@ export async function executeDelegationFromText(
 
   if (sentWhatsAppNames.length > 0) {
     const names = sentWhatsAppNames.join(", ");
-    parts.push(`${names} ${sentWhatsAppNames.length === 1 ? "has been" : "have been"} messaged via WhatsApp`);
+    parts.push(`${names} ${sentWhatsAppNames.length === 1 ? "has" : "have"} it`);
   }
   if (sentSmsNames.length > 0) {
     const names = sentSmsNames.join(", ");
-    parts.push(`WhatsApp was unavailable, so ${names} ${sentSmsNames.length === 1 ? "was" : "were"} sent the task by SMS`);
+    parts.push(`${names} ${sentSmsNames.length === 1 ? "has" : "have"} it by SMS`);
   }
   // Explicit failure report so Voice Carson must acknowledge send failures
   // rather than silently claiming success for all recipients.
@@ -513,7 +516,7 @@ export async function executeDelegationFromText(
     );
   }
   if (reminderCount > 0) {
-    parts.push(reminderCount === 1 ? "reminder set" : `${reminderCount} reminders set`);
+    parts.push(reminderCount === 1 ? "I'll remind you" : `${reminderCount} reminders are covered`);
   }
   // Catch-all for action/decision/parked items not covered above
   const otherCount =
@@ -542,7 +545,7 @@ export async function executeDelegationFromText(
 
   // Capitalise first word and end with a period.
   const summary = parts.join(", ");
-  return summary.charAt(0).toUpperCase() + summary.slice(1) + ".";
+  return `${summary.charAt(0).toUpperCase() + summary.slice(1)}. I'll follow up if needed.`;
 }
 
 function withImageContext(message: string, imageDescription?: string | null): string {

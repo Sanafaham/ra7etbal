@@ -1074,7 +1074,7 @@ export default function ElevenLabsAgentWidget({
 
       lastSentRef.current.set(cooldownKey, Date.now());
       sessionActionsRef.current.push(`Sent follow-up to ${person.name} about ${topicLabel}`);
-      return `Sent follow-up to ${person.name} about ${topicLabel}.`;
+      return `${person.name} has the follow-up. I'll watch for the reply.`;
     },
     [],
   );
@@ -1288,7 +1288,7 @@ export default function ElevenLabsAgentWidget({
 
       await maybeSendImpliedDinnerDelegation(userId);
 
-      return `Sent delegation to ${person.name}: ${taskText}.`;
+      return `${person.name} has it. I'll follow up if needed.`;
     },
     [displayName, maybeSendImpliedDinnerDelegation, clearPendingImages],
   );
@@ -1384,7 +1384,7 @@ export default function ElevenLabsAgentWidget({
       // Prefix with CREATED: so the agent system prompt can pattern-match
       // success vs error without ambiguity.
       sessionActionsRef.current.push(`Created reminder: ${text} (${dateLabel} at ${timeStr})`);
-      return `CREATED: Reminder saved — "${text}" on ${dateLabel} at ${timeStr}.`;
+      return `I'll remind you ${dateLabel} at ${timeStr}.`;
     },
     [],
   );
@@ -1565,7 +1565,7 @@ export default function ElevenLabsAgentWidget({
 
       sessionActionsRef.current.push(`Created automation: ${titleTrimmed} (${cadenceLabel[cadenceType]})`);
       console.log("[create_automation] created id=", result.automation?.id, "cadence=", cadenceType);
-      return `CREATED: "${titleTrimmed}" automation is set${assigneeLabel} — runs ${cadenceLabel[cadenceType]}, first on ${dateLabel} at ${timeStr}.`;
+      return `I've got that running${assigneeLabel}. First check is ${dateLabel} at ${timeStr}.`;
     },
     [],
   );
@@ -1681,7 +1681,7 @@ export default function ElevenLabsAgentWidget({
           channel: result.channel,
           deliveryId: result.deliveryId,
         });
-        return `Done. I sent ${person.name} the message.`;
+        return `It's with ${person.name}. I'll watch for the reply.`;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error("[direct_whatsapp_tool_failed]", {
@@ -2043,7 +2043,7 @@ export default function ElevenLabsAgentWidget({
         if (dateLabel) parts.push(`for ${dateLabel}`);
         if (timeLabel) parts.push(`at ${timeLabel}`);
 
-        return `Done. ${data.title} is now on your calendar${parts.length ? " " + parts.join(" ") : ""}.`;
+        return `${data.title} is on your calendar${parts.length ? " " + parts.join(" ") : ""}.`;
       } catch {
         return "I couldn't update that event right now. Please try again.";
       }
@@ -2098,7 +2098,7 @@ export default function ElevenLabsAgentWidget({
             planningCalendarEventsRef.current = planningCalendarEventsRef.current.filter(
               (ev) => ev.id !== eventId,
             );
-            return `Done. ${eventTitle} has been removed from your calendar.`;
+            return `${eventTitle} is off your calendar.`;
           }
           return "I couldn't delete that event. Please try again.";
         }
@@ -2108,7 +2108,7 @@ export default function ElevenLabsAgentWidget({
           (ev) => ev.id !== eventId,
         );
 
-        return `Done. ${eventTitle} has been removed from your calendar.`;
+        return `${eventTitle} is off your calendar.`;
       } catch {
         return "I couldn't delete that event right now. Please try again.";
       }
@@ -2180,7 +2180,7 @@ export default function ElevenLabsAgentWidget({
           useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
           sessionActionsRef.current.push(`Turned note into task: ${note.note}`);
           console.log("[act_on_note] task created from note:", task.id);
-          return `Done. I've turned that note into a task: "${note.note.slice(0, 60)}${note.note.length > 60 ? "…" : ""}".`;
+          return "I've got that on your list.";
         } catch (err) {
           return `Couldn't create the task. ${err instanceof Error ? err.message : "Please try again."}`;
         }
@@ -2223,7 +2223,7 @@ export default function ElevenLabsAgentWidget({
             ? "tomorrow"
             : d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
           console.log("[act_on_note] reminder created:", task.id, parsed.dueAt);
-          return `Reminder set for "${note.note.slice(0, 50)}${note.note.length > 50 ? "…" : ""}" — ${dateLabel} at ${timeStr}.`;
+          return `I'll remind you ${dateLabel} at ${timeStr}.`;
         } catch (err) {
           return `Couldn't set the reminder. ${err instanceof Error ? err.message : "Please try again."}`;
         }
@@ -2262,7 +2262,7 @@ export default function ElevenLabsAgentWidget({
           useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
           sessionActionsRef.current.push(`Delegated note to ${person.name}: ${note.note}`);
           console.log("[act_on_note] delegation sent:", result.taskId, "→", person.name);
-          return `Done. Sent to ${person.name}: "${note.note.slice(0, 50)}${note.note.length > 50 ? "…" : ""}".`;
+          return `${person.name} has it. I'll follow up if needed.`;
         } catch (err) {
           return `Couldn't send the delegation. ${err instanceof Error ? err.message : "Please try again."}`;
         }
@@ -2486,7 +2486,7 @@ export default function ElevenLabsAgentWidget({
           people_count: people.length,
           people_names: people.map((p) => p.name),
         });
-        return "Diagnostic captured. No message was sent.";
+        return "Captured. Nothing was sent.";
       }
 
       // Snapshot the pending photos — prefer live ref, fall back to the session
@@ -2786,9 +2786,6 @@ export default function ElevenLabsAgentWidget({
           },
         });
 
-        // Capture photo descriptions before clearPendingImages wipes them.
-        const capturedPhotoContext = sessionPhotoContextRef.current;
-
         // Clear pending photos after a successful delegation send.
         if (imagePhotos.length > 0) clearPendingImages();
 
@@ -2796,11 +2793,6 @@ export default function ElevenLabsAgentWidget({
         // Refresh task store so Voice Carson context reflects the new task.
         useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
 
-        // When photos were attached, keep the photo context available without
-        // teaching Carson to narrate that it used an attachment.
-        if (capturedPhotoContext) {
-          return `${summary}\n\nPhoto context was available for this action. Do not mention it unless the user asks.`;
-        }
         return summary;
       } catch (err) {
         console.error("[executeInstruction:catch]", err);
