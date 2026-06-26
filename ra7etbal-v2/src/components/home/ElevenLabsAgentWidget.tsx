@@ -13,6 +13,7 @@ import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, summarizeSessionRecap, isSummaryWorthSaving, SESSION_RECAP_PREFIX, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
+import { appendPhotoContextDescription } from "../../lib/carson-photo-context";
 import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { buildDelegationMessage } from "../../lib/delegation-message";
@@ -780,6 +781,30 @@ export default function ElevenLabsAgentWidget({
     }));
 
     syncPendingPhotoState([...existing, ...newPhotos]);
+
+    // Mid-call attachment — the user opened the file picker while already
+    // talking to Carson. pendingPhotosRef is already updated above, so the
+    // next tool call (sendDelegation/executeInstruction) picks up the new
+    // photo automatically — both prefer the live ref over the call-start
+    // snapshot. The two things that still need updating explicitly are:
+    // (1) sessionPhotosRef, the iOS-safe snapshot some paths fall back to,
+    // and (2) Carson's own conversational context, since the initial photo
+    // description was already sent (or skipped) before this photo existed.
+    if (statusRef.current === "connected" && conversationRef.current) {
+      sessionPhotosRef.current = [...sessionPhotosRef.current, ...newPhotos];
+      describePhotosForCarson(newPhotos)
+        .then((description) => {
+          if (!description) return;
+          sessionPhotoContextRef.current = appendPhotoContextDescription(
+            sessionPhotoContextRef.current,
+            description,
+          );
+          conversationRef.current?.sendContextualUpdate(
+            `The user just attached a new photo during this call. Description:\n${description}\nUse this photo for the task they were referring to. Do not ask them to attach it again.`,
+          );
+        })
+        .catch((err) => console.error("[carson-photo-attach] mid-call describe failed (non-fatal):", err));
+    }
   }
 
   function removePendingPhoto(id: string) {
@@ -3727,24 +3752,50 @@ export default function ElevenLabsAgentWidget({
       )}
 
       {status === "connected" && (
-        <button
-          type="button"
-          onClick={endCall}
-          aria-label="End call"
-          className="flex items-center gap-2.5 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.28)] transition hover:bg-white active:scale-95"
-        >
-          {mode === "speaking" ? (
-            <PulsingDot color="bg-gold" />
-          ) : (
-            <PulsingDot color="bg-sage" />
-          )}
-          <span className="text-[13px] font-semibold text-charcoal">
-            {mode === "speaking" ? "Speaking…" : "Listening…"}
-          </span>
-          <span className="ml-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-text">
-            End
-          </span>
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Image attach button — lets the user attach a photo Carson asked
+              for without ending the call. The file input is always mounted,
+              so this is safe to show mid-session; handleImageFileChange
+              pushes the new photo into the live session context above. */}
+          <button
+            type="button"
+            onClick={() => imageFileInputRef.current?.click()}
+            aria-label="Attach a photo for Carson"
+            title="Attach photo"
+            disabled={pendingPhotoPreviews.length >= 5}
+            className={
+              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
+              (pendingPhotoPreviews.length > 0
+                ? "border-sage/40 bg-sage/10 text-sage"
+                : "border-charcoal/15 bg-warm-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
+            }
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="M21 15l-5-5L5 21" />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            onClick={endCall}
+            aria-label="End call"
+            className="flex items-center gap-2.5 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.28)] transition hover:bg-white active:scale-95"
+          >
+            {mode === "speaking" ? (
+              <PulsingDot color="bg-gold" />
+            ) : (
+              <PulsingDot color="bg-sage" />
+            )}
+            <span className="text-[13px] font-semibold text-charcoal">
+              {mode === "speaking" ? "Speaking…" : "Listening…"}
+            </span>
+            <span className="ml-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-text">
+              End
+            </span>
+          </button>
+        </div>
       )}
 
       {status === "error" && (
