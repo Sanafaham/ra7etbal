@@ -5,6 +5,9 @@ export type TaskType = Exclude<ItemType, "message">;
 
 export type TaskStatus = "pending" | "done" | "cancelled";
 
+/** Outcome of Carson's automated proof-photo review. Null = not yet reviewed. */
+export type QualityReviewStatus = "approved" | "correction_required" | "uncertain";
+
 export interface Task {
   id: string;
   user_id: string;
@@ -38,6 +41,12 @@ export interface Task {
   image_path: string | null;
   /** Supabase Storage path for the recipient's proof photo. e.g. "task-images/{user_id}/{task_id}/proof.jpg". Null until recipient uploads. */
   proof_image_path: string | null;
+  /** Outcome of Carson's automated review of the most recent proof photo. Null = no proof submitted yet, or review not applicable (no assignee). */
+  quality_review_status: QualityReviewStatus | null;
+  /** Short note from the review — the correction text sent to the assignee, or Carson's reasoning for an uncertain/approved result. */
+  quality_review_note: string | null;
+  /** Timestamp of the most recent automated review. Null until one runs. */
+  quality_reviewed_at: string | null;
 }
 
 export interface TaskDraft {

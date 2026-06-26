@@ -49,6 +49,7 @@ export default function Confirm() {
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const confirmedRef = useRef(false);
+  const [outcome, setOutcome] = useState<"approved" | "correction_required" | "uncertain" | null>(null);
 
   // Proof photo state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -174,24 +175,37 @@ export default function Confirm() {
         success?: boolean;
         already_done?: boolean;
         error?: string;
+        outcome?: "approved" | "correction_required" | "uncertain";
       };
       if (!res.ok || data.error) {
         setConfirmError(data.error || "Could not confirm. Please try again.");
         confirmedRef.current = false;
         return;
       }
-      // Either success or already_done — both mean the task is now done.
+
+      // already_done always means approved in a prior submission.
+      const resolvedOutcome = data.already_done ? "approved" : data.outcome ?? "approved";
+      setOutcome(resolvedOutcome);
+
+      // Quality Intelligence V1 — only an "approved" outcome marks the task
+      // done. correction_required / uncertain leave it pending so the
+      // recipient can submit a new proof photo next time they open this link.
       setInfo((prev) =>
         prev
           ? {
               ...prev,
-              status: "done",
-              confirmedAt: new Date().toISOString(),
-              // Show local proof preview as the confirmed proof url
+              status: resolvedOutcome === "approved" ? "done" : prev.status,
+              confirmedAt: resolvedOutcome === "approved" ? new Date().toISOString() : prev.confirmedAt,
+              // Show local proof preview as the submitted proof url
               proofImageUrl: proofPreviewUrl ?? prev.proofImageUrl,
             }
           : prev,
       );
+      if (resolvedOutcome !== "approved") {
+        // Allow another submission attempt on this same visit.
+        confirmedRef.current = false;
+        setProofFile(null);
+      }
     } catch (err) {
       confirmedRef.current = false;
       setConfirmError(
@@ -285,8 +299,21 @@ export default function Confirm() {
             <div className="space-y-3">
               <AuthNotice kind="success">Marked as done.</AuthNotice>
             </div>
+          ) : outcome === "uncertain" ? (
+            <div className="space-y-3">
+              <AuthNotice kind="success">
+                Thanks — this has been sent to the owner for a quick review.
+              </AuthNotice>
+            </div>
           ) : (
             <>
+              {/* Quality Intelligence V1 — task stayed open; a new proof photo is needed */}
+              {outcome === "correction_required" && (
+                <AuthNotice kind="error">
+                  A quick correction is needed — check WhatsApp for details, then attach a new photo below.
+                </AuthNotice>
+              )}
+
               {/* Proof photo section — shown before Mark done */}
               <div className="space-y-2">
                 <p className="text-xs font-medium uppercase tracking-wide text-ink/50">

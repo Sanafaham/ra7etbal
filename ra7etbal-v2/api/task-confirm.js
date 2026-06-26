@@ -9,11 +9,23 @@
  *   Called by the public /confirm page (no auth session required).
  *
  * POST /api/task-confirm  { taskId, confirmedBy?, proofImagePath? }
- *   Marks the task as done, inserts a confirmation record, and fires a
- *   push notification to the task owner.
+ *   Quality Intelligence V1 — when a proof photo is submitted for a
+ *   delegated task, Carson reviews it (downloadImageAsBase64 +
+ *   runQualityReview from _quality-review.js) before deciding what happens:
+ *     - approved: falls through to the original behavior — mark done,
+ *       insert a confirmation record, push the owner.
+ *     - correction_required: task stays pending; a short WhatsApp message
+ *       is sent to the assignee via the existing send-whatsapp-task route
+ *       (sendMode: "direct_message", no new template).
+ *     - uncertain: task stays pending; the owner gets pushed to review
+ *       manually instead of a "confirmed" notification.
+ *   No proof photo, or a task with no assignee (assigned_to null) — review
+ *   is skipped entirely and behavior is unchanged from before this stage
+ *   existed.
  */
 
 import webpush from 'web-push';
+import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
 
 export default async function handler(req, res) {
   if (req.method === 'GET') return handleGet(req, res);
@@ -152,7 +164,7 @@ async function handlePost(req, res) {
     const fetchRes = await fetch(
       supabaseUrl + '/rest/v1/tasks' +
         '?id=eq.' + encodeURIComponent(taskId) +
-        '&select=id,user_id,status,description,assigned_to',
+        '&select=id,user_id,status,description,assigned_to,image_path',
       { headers },
     );
 
@@ -171,7 +183,83 @@ async function handlePost(req, res) {
 
     const now = new Date().toISOString();
 
-    // 2. Mark task done
+    // Quality Intelligence V1 — only applies to delegated tasks with a
+    // freshly submitted proof photo. No proof / no assignee → unchanged.
+    const needsReview = !!proofImagePath && !!task.assigned_to;
+    let review = null;
+
+    if (needsReview) {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+
+      const [delegationMessage, referenceImageBase64, proofImageBase64] = await Promise.all([
+        fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }),
+        downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath: task.image_path }),
+        downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath: proofImagePath }),
+      ]);
+
+      review = await runQualityReview({
+        apiKey,
+        taskDescription: task.description,
+        delegationMessage,
+        referenceImageBase64,
+        proofImageBase64,
+      });
+    }
+
+    if (review && review.status !== 'approved') {
+      // CORRECTION_REQUIRED or UNCERTAIN — task stays open. Save the
+      // submitted photo and the review outcome; do not mark done, do not
+      // insert a confirmation record.
+      const patchRes = await fetch(
+        supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId),
+        {
+          method: 'PATCH',
+          headers: { ...headers, Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            proof_image_path: proofImagePath,
+            quality_review_status: review.status,
+            quality_review_note: review.note,
+            quality_reviewed_at: now,
+          }),
+        },
+      );
+
+      if (!patchRes.ok) {
+        return res.status(500).json({ error: 'Could not save the review. Please try again.' });
+      }
+
+      if (review.status === 'correction_required') {
+        await sendCorrectionWhatsApp({
+          supabaseUrl,
+          serviceKey,
+          userId: task.user_id,
+          assignedTo: task.assigned_to,
+          correctionMessage: review.note,
+        }).catch((err) =>
+          console.error('[task-confirm] correction WhatsApp send failed (non-fatal):', err?.message || err),
+        );
+      } else {
+        await sendOwnerPush({
+          supabaseUrl,
+          serviceKey,
+          userId: task.user_id,
+          description: task.description,
+          assignedTo: task.assigned_to,
+          variant: 'uncertain',
+        }).catch((err) =>
+          console.error('[task-confirm] uncertain-review owner push failed (non-fatal):', err?.message || err),
+        );
+      }
+
+      return res.status(200).json({
+        success: true,
+        outcome: review.status,
+        description: task.description,
+      });
+    }
+
+    // 2. Mark task done — original behavior, now also recording an
+    // APPROVED review outcome when one was run.
     const updateRes = await fetch(
       supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId),
       {
@@ -181,6 +269,9 @@ async function handlePost(req, res) {
           status: 'done',
           confirmed_at: now,
           ...(proofImagePath ? { proof_image_path: proofImagePath } : {}),
+          ...(review
+            ? { quality_review_status: 'approved', quality_review_note: review.note, quality_reviewed_at: now }
+            : {}),
         }),
       },
     );
@@ -214,7 +305,7 @@ async function handlePost(req, res) {
       console.error('[task-confirm] owner push failed (non-fatal):', err?.message || err);
     }
 
-    return res.status(200).json({ success: true, description: task.description });
+    return res.status(200).json({ success: true, outcome: 'approved', description: task.description });
   } catch (err) {
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
   }
@@ -222,7 +313,7 @@ async function handlePost(req, res) {
 
 // ── Push helper ───────────────────────────────────────────────────────────────
 
-async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo }) {
+async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant }) {
   if (!userId) return;
 
   const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY;
@@ -257,9 +348,12 @@ async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, ass
   webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 
   const assignee = (assignedTo || '').trim();
-  const notificationBody = assignee
-    ? `${assignee} confirmed: ${description}`
-    : `Task confirmed: ${description}`;
+  const notificationBody =
+    variant === 'uncertain'
+      ? `Carson is unsure about ${assignee ? `${assignee}'s` : 'the'} proof for: ${description}. Please check.`
+      : assignee
+        ? `${assignee} confirmed: ${description}`
+        : `Task confirmed: ${description}`;
 
   const payload = JSON.stringify({ title: 'Ra7etBal', body: notificationBody });
 
@@ -281,6 +375,85 @@ async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, ass
         ).catch(() => {});
       }
     }
+  }
+}
+
+// ── Quality Intelligence V1 helpers ───────────────────────────────────────────
+
+/** Best-effort lookup of the companion delegation message for a task. */
+async function fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }) {
+  try {
+    const response = await fetch(
+      supabaseUrl + '/rest/v1/messages?task_id=eq.' + encodeURIComponent(taskId) +
+        '&select=content&limit=1',
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: 'Bearer ' + serviceKey,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    if (!response.ok) return null;
+    const rows = await response.json();
+    return Array.isArray(rows) && rows[0]?.content ? rows[0].content : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sends the correction message to the assignee via the existing
+ * send-whatsapp-task route (sendMode: "direct_message") — same plain
+ * template already used for direct messages. No new template, no new
+ * Vercel function.
+ */
+async function sendCorrectionWhatsApp({ supabaseUrl, serviceKey, userId, assignedTo, correctionMessage }) {
+  if (!userId || !assignedTo || !correctionMessage) return;
+
+  const headers = {
+    apikey: serviceKey,
+    Authorization: 'Bearer ' + serviceKey,
+    'Content-Type': 'application/json',
+  };
+
+  const response = await fetch(
+    supabaseUrl + '/rest/v1/people?user_id=eq.' + encodeURIComponent(userId) +
+      '&select=name,phone,whatsapp_opted_in',
+    { headers },
+  );
+  if (!response.ok) return;
+  const people = await response.json().catch(() => []);
+  if (!Array.isArray(people)) return;
+
+  const assignee = people.find(
+    (person) => String(person.name || '').trim().toLowerCase() === assignedTo.trim().toLowerCase(),
+  );
+  if (!assignee?.phone || assignee.whatsapp_opted_in !== true) {
+    console.warn('[task-confirm] correction message skipped — no phone or consent for', assignedTo);
+    return;
+  }
+
+  const appBaseUrl = process.env.APP_BASE_URL;
+  if (!appBaseUrl) {
+    console.warn('[task-confirm] APP_BASE_URL not configured — correction message skipped');
+    return;
+  }
+
+  const sendRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      to: assignee.phone,
+      messageText: correctionMessage,
+      sendMode: 'direct_message',
+      recipientName: assignee.name,
+    }),
+  });
+
+  if (!sendRes.ok) {
+    const errBody = await sendRes.text().catch(() => '');
+    console.error('[task-confirm] correction WhatsApp send returned non-ok', sendRes.status, errBody.slice(0, 200));
   }
 }
 

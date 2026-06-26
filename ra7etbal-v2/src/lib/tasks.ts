@@ -2,7 +2,7 @@ import { supabase } from "./supabase";
 import type { Task, TaskDraft, TaskPatch } from "../types/task";
 
 const COLUMNS =
-  "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path";
+  "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path, quality_review_status, quality_review_note, quality_reviewed_at";
 
 /**
  * Active workspace tasks — excludes archived rows. Used by Actions /

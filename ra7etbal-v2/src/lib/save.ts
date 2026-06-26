@@ -244,7 +244,7 @@ export async function savePending(
               .update({ status: "pending", confirmed_at: null })
               .eq("id", task.id)
               .select(
-                "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path",
+                "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path, quality_review_status, quality_review_note, quality_reviewed_at",
               )
               .single(),
         );
@@ -328,7 +328,7 @@ export async function savePending(
             .update({ status: "pending", confirmed_at: null })
             .eq("id", task.id)
             .select(
-              "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path",
+              "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path, quality_review_status, quality_review_note, quality_reviewed_at",
             )
             .single(),
       );
@@ -454,7 +454,7 @@ async function updateTaskUrl(id: string, url: string): Promise<Task> {
     .update({ confirmation_url: url })
     .eq("id", id)
     .select(
-      "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path",
+      "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path, quality_review_status, quality_review_note, quality_reviewed_at",
     )
     .single();
   if (error) throw error;
