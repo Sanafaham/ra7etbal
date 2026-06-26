@@ -109,9 +109,10 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
-      .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }])) // messages lookup
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }])) // messages lookup (delegation content)
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (stays pending, review fields)
       .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '971500000000', whatsapp_opted_in: true }])) // people lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-correction-1' }])) // messages insert (correction record)
       .mockResolvedValueOnce(jsonResponse({ success: true })); // send-whatsapp-task call
     vi.stubGlobal('fetch', fetchMock);
 
@@ -131,12 +132,29 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.quality_review_note).toBe('Christopher, please center the chicken and send another photo.');
     expect(patchBody.proof_image_path).toBe('task-images/u/t/proof.jpg');
 
-    expect(String(fetchMock.mock.calls[4][0])).toContain('https://ra7etbal.com/api/send-whatsapp-task');
-    const sendBody = JSON.parse(fetchMock.mock.calls[4][1].body);
+    // The correction message is saved as a real `messages` row first — this
+    // is the fix: send-whatsapp-task.js rejects direct_message sends with no
+    // messageRecordId, and beginWhatsappDelivery cannot create a delivery
+    // row without one (or a taskId) to resolve ownership from.
+    expect(String(fetchMock.mock.calls[4][0])).toContain('/rest/v1/messages');
+    const messageInsertBody = JSON.parse(fetchMock.mock.calls[4][1].body);
+    expect(messageInsertBody).toEqual(
+      expect.objectContaining({
+        task_id: 'task-1',
+        recipient: 'Christopher',
+        content: 'Christopher, please center the chicken and send another photo.',
+      }),
+    );
+
+    expect(String(fetchMock.mock.calls[5][0])).toContain('https://ra7etbal.com/api/send-whatsapp-task');
+    const sendBody = JSON.parse(fetchMock.mock.calls[5][1].body);
     expect(sendBody).toEqual(
       expect.objectContaining({
         to: '971500000000',
         messageText: 'Christopher, please center the chicken and send another photo.',
+        messageRecordId: 'message-correction-1',
+        taskId: 'task-1',
+        sourceType: 'message',
         sendMode: 'direct_message',
         recipientName: 'Christopher',
       }),
@@ -144,6 +162,24 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 
     // No "done" PATCH and no confirmations row for a correction-required outcome.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+  });
+
+  it('correction_required review: aborts the send if the message record cannot be saved', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'correction_required', note: 'Please fix the placement.' });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '971500000000', whatsapp_opted_in: true }])) // people lookup
+      .mockResolvedValueOnce(jsonResponse({}, 500)); // messages insert fails
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required' }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
   });
 
   it('correction_required review: does not send WhatsApp when the assignee has no consent', async () => {

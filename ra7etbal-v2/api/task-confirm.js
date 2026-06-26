@@ -233,6 +233,7 @@ async function handlePost(req, res) {
           supabaseUrl,
           serviceKey,
           userId: task.user_id,
+          taskId,
           assignedTo: task.assigned_to,
           correctionMessage: review.note,
         }).catch((err) =>
@@ -407,8 +408,21 @@ async function fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }
  * send-whatsapp-task route (sendMode: "direct_message") — same plain
  * template already used for direct messages. No new template, no new
  * Vercel function.
+ *
+ * Root cause of the original silent failure: send-whatsapp-task.js requires
+ * a messageRecordId for any sendMode: "direct_message" send (it rejects with
+ * 400 "Direct message requires a saved message record" otherwise), and
+ * beginWhatsappDelivery cannot create a whatsapp_deliveries row without a
+ * messageRecordId or taskId to resolve ownership from ("no trusted owner
+ * context" — see _whatsapp-delivery.js resolveDeliveryContext). This
+ * function previously called send-whatsapp-task with neither, so every
+ * correction send 400'd before ever reaching Meta, and the failure was only
+ * ever logged via the caller's non-fatal console.error. Fixed by inserting a
+ * `messages` row first — the same pattern already used by
+ * direct-message-fast-path.ts and the send_direct_whatsapp_message tool —
+ * and passing both messageRecordId and taskId through.
  */
-async function sendCorrectionWhatsApp({ supabaseUrl, serviceKey, userId, assignedTo, correctionMessage }) {
+async function sendCorrectionWhatsApp({ supabaseUrl, serviceKey, userId, taskId, assignedTo, correctionMessage }) {
   if (!userId || !assignedTo || !correctionMessage) return;
 
   const headers = {
@@ -440,12 +454,37 @@ async function sendCorrectionWhatsApp({ supabaseUrl, serviceKey, userId, assigne
     return;
   }
 
+  const messageRes = await fetch(supabaseUrl + '/rest/v1/messages', {
+    method: 'POST',
+    headers: { ...headers, Prefer: 'return=representation' },
+    body: JSON.stringify({
+      user_id: userId,
+      task_id: taskId || null,
+      recipient: assignee.name,
+      content: correctionMessage,
+      confirmation_url: null,
+    }),
+  });
+  if (!messageRes.ok) {
+    console.error('[task-confirm] could not save correction message record — send aborted', messageRes.status);
+    return;
+  }
+  const savedMessages = await messageRes.json().catch(() => []);
+  const messageRecordId = Array.isArray(savedMessages) ? savedMessages[0]?.id : null;
+  if (!messageRecordId) {
+    console.error('[task-confirm] correction message record had no id — send aborted');
+    return;
+  }
+
   const sendRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       to: assignee.phone,
       messageText: correctionMessage,
+      messageRecordId,
+      taskId: taskId || null,
+      sourceType: 'message',
       sendMode: 'direct_message',
       recipientName: assignee.name,
     }),
