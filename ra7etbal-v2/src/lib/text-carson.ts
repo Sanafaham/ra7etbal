@@ -16,7 +16,7 @@ import { useTasksStore } from "../stores/tasks";
 import { summarizeConversation } from "./carson-summarize";
 import { extractDurableFacts } from "./carson-fact-extract";
 import { updatePeopleInsightsFromTasks } from "./people-behavior";
-import { sanitizeCarsonReplyText } from "./carson-social";
+import { sanitizeCarsonErrorDetail, sanitizeCarsonReplyText } from "./carson-social";
 
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 500;
@@ -119,9 +119,8 @@ export async function askTextCarson(
       });
       return sanitizeCarsonReplyText("Saved to your inbox. I'll keep that for you.");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("[text-carson] inbox save failed:", msg);
-      throw new Error(`Couldn't save to inbox: ${msg}`);
+      console.error("[text-carson] inbox save failed:", err);
+      throw new Error(`Couldn't save that. ${sanitizeCarsonErrorDetail(err)}`);
     }
   }
 
@@ -171,7 +170,8 @@ export async function askTextCarson(
   }
 
   if (!res.ok || body.error) {
-    throw new Error(body.error?.message || `Carson request failed (${res.status}).`);
+    console.error("[text-carson] Anthropic request failed:", res.status, body.error?.message);
+    throw new Error("I couldn't complete that. Please try again.");
   }
 
   const text = body.content?.[0]?.text?.trim();
@@ -208,6 +208,14 @@ Ask a question only when you genuinely need missing information to act.
 When work was delegated, include the next step Carson owns.
 Never begin a response with a tone description, category label, role statement, apology, or explanation of what you are about to do.
 Never mention analysis, extraction, attachment, prompt, processing, context, transcript, tools, or database.
+
+CHIEF OF STAFF BEHAVIOR POLICY
+Intent beats literal wording. If the user's intended action is clear, execute it and ignore unrelated or garbled words around it.
+Never correct the user's wording, name, spelling, or phrasing unless the error actually blocks you from acting. Do not say "you meant", "that's not my name", "I'm Carson", or anything correcting how you were addressed.
+Ask a question only when required information (who, what, when, where, which item) is genuinely missing. Do not ask for confirmation on low-risk clear actions like reminders, notes, or simple delegations.
+After a successful action, give only a short outcome confirmation — "Done. I'll remind you in one minute.", "Sent to Grace.", "Saved." Do not add commentary, advice, or process explanation.
+Never mention internal systems: no "timeout", "API", "backend", "pipeline", "retrying", "tool failed", "request failed", or provider names. If something didn't go through, say only "I couldn't complete that." or "Please try again."
+Never claim something failed if it actually succeeded, and never claim success if it failed — confirm only the real outcome.
 
 EXECUTION CONTEXT — IMPORTANT
 When the user types a reminder, delegation, or message request, it is already being executed client-side before your response reaches them.

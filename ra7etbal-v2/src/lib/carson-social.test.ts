@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
+  sanitizeCarsonErrorDetail,
   sanitizeCarsonReplyText,
   sanitizeSocialAcknowledgementReply,
   shouldSuppressCarsonIdlePrompt,
+  stripIdentityCorrections,
 } from "./carson-social";
 
 describe("Carson social acknowledgement detection", () => {
@@ -127,5 +129,82 @@ describe("Carson global reply text sanitation", () => {
     const text = "Grace has it. Are you there?";
     expect(sanitizeCarsonReplyText(text)).toBe("Grace has it");
     expect(shouldSuppressCarsonIdlePrompt(text)).toBe(false);
+  });
+});
+
+// Chief of Staff Behavior Policy regressions ---------------------------------
+// Carson must execute on clear intent and ignore misheard/garbled words
+// around it, rather than correcting the user's name, wording, or the
+// transcript itself. Live example: a misheard "remind me" became "Rimaan,
+// will you call Loulya" and Carson replied "Your name is Sana, not Rimaan —
+// I'm Carson" instead of confirming the reminder it had already created.
+describe("stripIdentityCorrections — misheard name does not trigger correction", () => {
+  it("strips a name-correction sentence while keeping the action confirmation", () => {
+    const text = "Your name is Sana, not Rimaan — I'm Carson, your Chief of Staff. Done. I'll remind you in one minute.";
+    expect(stripIdentityCorrections(text)).toBe("Done. I'll remind you in one minute.");
+  });
+
+  it.each([
+    ["I'm Carson, not Rimaan. Sent to Grace.", "Sent to Grace."],
+    ["You called me the wrong name. Saved.", "Saved."],
+    ["That's not my name. Added to your calendar.", "Added to your calendar."],
+    ["I think you meant Carson. I'll follow up tomorrow.", "I'll follow up tomorrow."],
+  ])("strips identity-correction phrasing: '%s'", (input, expected) => {
+    expect(stripIdentityCorrections(input)).toBe(expected);
+  });
+
+  it("leaves a clean confirmation completely unchanged", () => {
+    expect(stripIdentityCorrections("Done. I'll remind you in one minute.")).toBe(
+      "Done. I'll remind you in one minute.",
+    );
+  });
+
+  it("is wired into the main reply sanitizer used for both voice and text replies", () => {
+    const text = "Your name is Sana, not Rimaan — I'm Carson, your Chief of Staff. Done. I'll remind you in one minute.";
+    expect(sanitizeCarsonReplyText(text)).toBe("Done. I'll remind you in one minute.");
+  });
+});
+
+describe("successful action replies stay short confirmations only", () => {
+  it.each([
+    "I'll remind you in one minute.",
+    "Sent to Grace.",
+    "Added to your calendar.",
+    "I'll follow up tomorrow.",
+    "Saved.",
+  ])("passes a clean short confirmation through unchanged: '%s'", (reply) => {
+    expect(sanitizeCarsonReplyText(reply)).toBe(reply);
+  });
+
+  it("a successful WhatsApp send confirmation never contains failure language", () => {
+    const reply = sanitizeCarsonReplyText("Sent to Grace.");
+    expect(reply).not.toMatch(/not delivered|failed|couldn't complete|try again/i);
+  });
+});
+
+describe("sanitizeCarsonErrorDetail — internal error language is sanitized", () => {
+  it.each([
+    new Error("(#132000) Number of parameters does not match the expected number of params"),
+    new Error("Meta API request failed with status 400"),
+    new Error("Request to backend pipeline timed out while retrying"),
+    new Error("fetch failed: connect ECONNREFUSED"),
+    "a raw string thrown instead of an Error",
+    undefined,
+  ])("never echoes internal system detail for: %#", (err) => {
+    const detail = sanitizeCarsonErrorDetail(err);
+    expect(detail).toMatch(/^(Please try again\.|Please check your connection\.)$/);
+    expect(detail).not.toMatch(/meta|api|backend|pipeline|retry|retrying|timeout|timed out|econnrefused|132000/i);
+  });
+
+  it("returns a connection-specific phrase only for genuine network/TypeError failures", () => {
+    expect(sanitizeCarsonErrorDetail(new TypeError("Failed to fetch"))).toBe(
+      "Please check your connection.",
+    );
+  });
+
+  it("returns the generic fallback for non-network errors", () => {
+    expect(sanitizeCarsonErrorDetail(new Error("Could not save the reminder"))).toBe(
+      "Please try again.",
+    );
   });
 });

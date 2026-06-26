@@ -22,6 +22,7 @@ import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
 import {
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
+  sanitizeCarsonErrorDetail,
   sanitizeCarsonReplyText,
   sanitizeSocialAcknowledgementReply,
   shouldSuppressCarsonIdlePrompt,
@@ -362,8 +363,7 @@ async function createAndSendDelegation({
       imagePath = await uploadTaskImage(userId, taskRowId, blob);
     } catch (err) {
       console.error("[send_delegation] image upload failed; blocking text-only send:", err);
-      const detail = err instanceof Error ? err.message : "Please try a different photo.";
-      throw new Error(`Could not attach the image. ${detail}`);
+      throw new Error(`Could not attach the image. ${sanitizeCarsonErrorDetail(err)}`);
     }
   }
 
@@ -1045,7 +1045,7 @@ export default function ElevenLabsAgentWidget({
           due_at: null,
         });
       } catch (err) {
-        return `Could not save the follow-up task. ${err instanceof Error ? err.message : "Please try again."}`;
+        return `Could not save the follow-up task. ${sanitizeCarsonErrorDetail(err)}`;
       }
 
       // 8. Create message row
@@ -1074,7 +1074,7 @@ export default function ElevenLabsAgentWidget({
           ownerName: displayName ?? null,
         });
       } catch (err) {
-        return `Could not send the WhatsApp message to ${person.name}. ${err instanceof Error ? err.message : "Please try again."}`;
+        return `Could not send the WhatsApp message to ${person.name}. ${sanitizeCarsonErrorDetail(err)}`;
       }
 
       lastSentRef.current.set(cooldownKey, Date.now());
@@ -1276,7 +1276,7 @@ export default function ElevenLabsAgentWidget({
           imageFiles: delegationImageFiles,
         });
       } catch (err) {
-        const detail = err instanceof Error ? err.message : "Please try again.";
+        const detail = sanitizeCarsonErrorDetail(err);
         return `Could not send the delegation to ${person.name}. ${detail}`;
       }
 
@@ -1374,7 +1374,7 @@ export default function ElevenLabsAgentWidget({
           due_at: resolvedDueAt,
         });
       } catch (err) {
-        return `Could not save the reminder. ${err instanceof Error ? err.message : "Please try again."}`;
+        return `Could not save the reminder. ${sanitizeCarsonErrorDetail(err)}`;
       }
 
       // Schedule QStash — identical to save.ts.
@@ -2199,7 +2199,7 @@ export default function ElevenLabsAgentWidget({
           console.log("[act_on_note] task created from note:", task.id);
           return "I've got that on your list.";
         } catch (err) {
-          return `Couldn't create the task. ${err instanceof Error ? err.message : "Please try again."}`;
+          return `Couldn't create the task. ${sanitizeCarsonErrorDetail(err)}`;
         }
       }
 
@@ -2242,7 +2242,7 @@ export default function ElevenLabsAgentWidget({
           console.log("[act_on_note] reminder created:", task.id, parsed.dueAt);
           return `I'll remind you ${dateLabel} at ${timeStr}.`;
         } catch (err) {
-          return `Couldn't set the reminder. ${err instanceof Error ? err.message : "Please try again."}`;
+          return `Couldn't set the reminder. ${sanitizeCarsonErrorDetail(err)}`;
         }
       }
 
@@ -2281,7 +2281,7 @@ export default function ElevenLabsAgentWidget({
           console.log("[act_on_note] delegation sent:", result.taskId, "→", person.name);
           return `${person.name} has it. I'll follow up if needed.`;
         } catch (err) {
-          return `Couldn't send the delegation. ${err instanceof Error ? err.message : "Please try again."}`;
+          return `Couldn't send the delegation. ${sanitizeCarsonErrorDetail(err)}`;
         }
       }
 
@@ -2813,7 +2813,7 @@ export default function ElevenLabsAgentWidget({
         return summary;
       } catch (err) {
         console.error("[executeInstruction:catch]", err);
-        const detail = err instanceof Error ? err.message : "Please try again.";
+        const detail = sanitizeCarsonErrorDetail(err);
         return `Could not process that. ${detail}`;
       }
       }; // close _runProductionExec
@@ -3248,7 +3248,7 @@ export default function ElevenLabsAgentWidget({
             } catch (err) {
               trace.outcome = "error";
               console.error("[executeInstruction:catch]", err);
-              const detail = err instanceof Error ? err.message : "Please try again.";
+              const detail = sanitizeCarsonErrorDetail(err);
               return `Could not process that. ${detail}`;
             } finally {
               const toolCompletedPerf = performance.now();
@@ -3561,10 +3561,7 @@ export default function ElevenLabsAgentWidget({
       // Show the real error message so the user knows what went wrong.
       // Do not auto-dismiss — the error persists until the user closes it.
       setStatus("error");
-      setErrorMsg(
-        sanitizeCarsonReplyText(err instanceof Error ? err.message : "Couldn't connect.") ||
-          "Couldn't connect.",
-      );
+      setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
   }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot]);
 
