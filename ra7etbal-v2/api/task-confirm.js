@@ -169,7 +169,7 @@ async function handlePost(req, res) {
     const fetchRes = await fetch(
       supabaseUrl + '/rest/v1/tasks' +
         '?id=eq.' + encodeURIComponent(taskId) +
-        '&select=id,user_id,status,description,assigned_to,image_path',
+        '&select=id,user_id,status,description,assigned_to,image_path,quality_review_cycle_count',
       { headers },
     );
 
@@ -215,6 +215,14 @@ async function handlePost(req, res) {
       // CORRECTION_REQUIRED, UNCERTAIN, or FRAUD_SUSPECTED — task stays
       // open. Save the submitted photo and the review outcome; do not mark
       // done, do not insert a confirmation record.
+      //
+      // Correction-cycle control: every non-approved outcome increments
+      // quality_review_cycle_count so repeated correction_required rounds
+      // are countable, not silently infinite. Never reset on approval —
+      // the count is a lifetime record of how many rounds this task needed.
+      const cycleCount = (task.quality_review_cycle_count || 0) + 1;
+      const correctionLimitReached = review.status === 'correction_required' && cycleCount >= 2;
+
       const patchRes = await fetch(
         supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId),
         {
@@ -225,6 +233,7 @@ async function handlePost(req, res) {
             quality_review_status: review.status,
             quality_review_note: review.note,
             quality_reviewed_at: now,
+            quality_review_cycle_count: cycleCount,
           }),
         },
       );
@@ -234,7 +243,7 @@ async function handlePost(req, res) {
       }
 
       let correctionDelivered = null;
-      if (review.status === 'correction_required') {
+      if (review.status === 'correction_required' && !correctionLimitReached) {
         correctionDelivered = await sendCorrectionWhatsApp({
           supabaseUrl,
           serviceKey,
@@ -247,17 +256,19 @@ async function handlePost(req, res) {
           return false;
         });
       } else {
-        // UNCERTAIN or FRAUD_SUSPECTED — owner-only notification, never an
-        // automatic message to the assignee. For fraud_suspected this is
-        // deliberate: the owner decides whether and how to follow up with
-        // the assignee, Carson does not accuse anyone automatically.
+        // UNCERTAIN, FRAUD_SUSPECTED, or correction_required after reaching
+        // the correction-cycle limit — owner-only notification, never an
+        // automatic message to the assignee. For fraud_suspected and the
+        // limit case this is deliberate: the owner decides whether and how
+        // to follow up with the assignee, Carson does not accuse or retry
+        // indefinitely on its own.
         await sendOwnerPush({
           supabaseUrl,
           serviceKey,
           userId: task.user_id,
           description: task.description,
           assignedTo: task.assigned_to,
-          variant: review.status,
+          variant: correctionLimitReached ? 'correction_limit' : review.status,
         }).catch((err) =>
           console.error(`[task-confirm] ${review.status}-review owner push failed (non-fatal):`, err?.message || err),
         );
@@ -269,9 +280,10 @@ async function handlePost(req, res) {
         description: task.description,
         // Only meaningful for outcome "correction_required" — whether the
         // WhatsApp message describing the correction actually went out.
-        // null for "uncertain" / "fraud_suspected" (no WhatsApp send is
-        // attempted to the assignee for those outcomes).
+        // null for "uncertain" / "fraud_suspected" / correction-limit-reached
+        // (no WhatsApp send is attempted to the assignee in those cases).
         correctionDelivered,
+        correctionCycleCount: cycleCount,
       });
     }
 
@@ -370,9 +382,11 @@ async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, ass
       ? `Carson is unsure about ${assignee ? `${assignee}'s` : 'the'} proof for: ${description}. Please check.`
       : variant === 'fraud_suspected'
         ? `Carson flagged ${assignee ? `${assignee}'s` : 'the'} proof for: ${description}. The photo doesn't look like genuine proof — please review.`
-        : assignee
-          ? `${assignee} confirmed: ${description}`
-          : `Task confirmed: ${description}`;
+        : variant === 'correction_limit'
+          ? `${assignee ? `${assignee}'s` : 'The'} proof for "${description}" still needs correction after a follow-up attempt. Carson stopped messaging — please review.`
+          : assignee
+            ? `${assignee} confirmed: ${description}`
+            : `Task confirmed: ${description}`;
 
   const payload = JSON.stringify({ title: 'Ra7etBal', body: notificationBody });
 

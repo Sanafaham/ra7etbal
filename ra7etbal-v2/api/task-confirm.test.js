@@ -123,7 +123,12 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     );
 
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ success: true, outcome: 'correction_required', correctionDelivered: true }),
+      expect.objectContaining({
+        success: true,
+        outcome: 'correction_required',
+        correctionDelivered: true,
+        correctionCycleCount: 1,
+      }),
     );
 
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -131,6 +136,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.quality_review_status).toBe('correction_required');
     expect(patchBody.quality_review_note).toBe('Christopher, please center the chicken and send another photo.');
     expect(patchBody.proof_image_path).toBe('task-images/u/t/proof.jpg');
+    // First correction round — cycle count goes from unset (0) to 1.
+    expect(patchBody.quality_review_cycle_count).toBe(1);
 
     // The correction message is saved as a real `messages` row first — this
     // is the fix: send-whatsapp-task.js rejects direct_message sends with no
@@ -204,28 +211,100 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4); // no send-whatsapp-task call attempted
   });
 
-  it('uncertain review: keeps the task pending without sending any WhatsApp message', async () => {
+  it('correction-cycle control: second correction_required reaches the limit and routes to owner push instead of another WhatsApp send', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'correction_required',
+      note: 'Christopher, please center the chicken again.',
+    });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      // Task already has one prior correction round.
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg', quality_review_cycle_count: 1 }]))
+      .mockResolvedValueOnce(jsonResponse([])) // messages lookup (delegation content)
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (review fields, cycle count -> 2)
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // push_subscriptions lookup
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof2.jpg' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        outcome: 'correction_required',
+        correctionDelivered: null,
+        correctionCycleCount: 2,
+      }),
+    );
+
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.quality_review_cycle_count).toBe(2);
+
+    // No second automatic WhatsApp correction message once the limit is reached.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+
+    // Routes to the existing owner-push path instead.
+    expect(String(fetchMock.mock.calls[3][0])).toContain('/rest/v1/push_subscriptions');
+  });
+
+  it('uncertain review: keeps the task pending, sends no WhatsApp message, and triggers the owner-push path', async () => {
     runQualityReviewMock.mockResolvedValue({
       status: 'uncertain',
       note: 'No reference image and the description is too vague to judge.',
     });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'tidy the room', assigned_to: 'Grace', image_path: null }]))
       .mockResolvedValueOnce(jsonResponse([])) // no messages row
-      .mockResolvedValueOnce(emptyResponse()); // PATCH tasks
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // push_subscriptions lookup
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }), res);
 
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'uncertain' }));
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, outcome: 'uncertain', correctionCycleCount: 1 }),
+    );
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
     expect(patchBody.quality_review_status).toBe('uncertain');
     expect(patchBody.status).toBeUndefined();
+    expect(patchBody.quality_review_cycle_count).toBe(1);
     // No send-whatsapp-task call and no confirmations row for an uncertain outcome.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+    // Owner-push path was attempted (push_subscriptions lookup ran).
+    expect(String(fetchMock.mock.calls[3][0])).toContain('/rest/v1/push_subscriptions');
+  });
+
+  it('cycle count increments only for non-approved outcomes — approved leaves it untouched', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Matches the reference.' });
+    const fetchMock = vi
+      .fn()
+      // Task had one prior correction round before this approved resubmission.
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg', quality_review_cycle_count: 1 }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }])) // messages lookup
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof2.jpg' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.status).toBe('done');
+    expect(patchBody.quality_review_status).toBe('approved');
+    // Approved outcomes do not touch the cycle count — it is left as-is, not reset.
+    expect(patchBody.quality_review_cycle_count).toBeUndefined();
   });
 
   it('fraud_suspected review (reused reference image): keeps the task pending, notifies the owner only, never the assignee', async () => {
