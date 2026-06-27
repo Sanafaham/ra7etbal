@@ -8,6 +8,7 @@ import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
 import { saveCarsonNote, loadRecentNotes, type CarsonNote } from "../../lib/carson-notes";
+import { createTodo, listActiveTodos, completeTodo, findTodoMatches, type CarsonTodo } from "../../lib/carson-todos";
 import { filterCalendarEventsByRange } from "../../lib/calendar";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
@@ -845,6 +846,10 @@ export default function ElevenLabsAgentWidget({
   /** Snapshot of saved notes loaded at startCall. Used by act_on_note for
    *  in-memory keyword lookup without hitting Supabase during the call. */
   const notesRef = useRef<CarsonNote[]>([]);
+
+  /** Snapshot of active to-dos loaded at startCall. Used by complete_todo for
+   *  in-memory keyword lookup without hitting Supabase during the call. */
+  const todosRef = useRef<CarsonTodo[]>([]);
 
   /**
    * Last user utterance that contained recurring language, captured in onMessage
@@ -1780,6 +1785,76 @@ export default function ElevenLabsAgentWidget({
         return "Saved.";
       } catch {
         return "I couldn't save that note right now. Please try again.";
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
+  // Client tool: create_todo
+  // Active personal commitments — "add X to my to-do list", "remind me to
+  // add X to my to-do". Distinct from save_note (passive information).
+  // ------------------------------------------------------------------
+  const createTodoTool = useCallback(
+    async ({
+      title,
+      description,
+    }: {
+      title: string;
+      description?: string;
+    }): Promise<string> => {
+      const trimmed = title?.trim();
+      if (!trimmed) {
+        return "I did not receive a to-do title. Ask the user what to add.";
+      }
+
+      try {
+        const todo = await createTodo(trimmed, description ?? null);
+        todosRef.current = [todo, ...todosRef.current];
+        sessionActionsRef.current.push(`Added to-do: ${trimmed}`);
+        return "Added to your to-do list.";
+      } catch {
+        return "I couldn't add that to-do right now. Please try again.";
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
+  // Client tool: complete_todo
+  // "Mark buy flowers done" — matches an active to-do by keyword and marks
+  // it completed. To-dos are pre-loaded into todosRef at startCall — no
+  // in-call network fetch for the lookup itself.
+  // ------------------------------------------------------------------
+  const completeTodoTool = useCallback(
+    async ({ query }: { query: string }): Promise<string> => {
+      const q = query?.trim();
+      if (!q) {
+        return "I did not receive which to-do to complete. Ask the user which one they mean.";
+      }
+
+      const matches = findTodoMatches(todosRef.current, q);
+
+      if (matches.length === 0) {
+        return `I couldn't find a to-do matching "${q}". Ask the user what it's called exactly.`;
+      }
+
+      if (matches.length > 1) {
+        const snippets = matches
+          .slice(0, 4)
+          .map((t) => `"${t.title.slice(0, 45).trim()}${t.title.length > 45 ? "…" : ""}"`)
+          .join(", ");
+        return `I found ${matches.length} to-dos matching "${q}": ${snippets}. Ask the user which one they mean.`;
+      }
+
+      const todo = matches[0];
+      try {
+        await completeTodo(todo.id);
+        todosRef.current = todosRef.current.filter((t) => t.id !== todo.id);
+        sessionActionsRef.current.push(`Completed to-do: ${todo.title}`);
+        return "Done. I've marked that complete.";
+      } catch {
+        return "I couldn't mark that to-do complete right now. Please try again.";
       }
     },
     [],
@@ -3148,6 +3223,14 @@ export default function ElevenLabsAgentWidget({
     }
     if (!isCurrentSession()) return;
 
+    // Load active to-dos into ref for in-call complete_todo lookups — non-fatal.
+    try {
+      todosRef.current = await listActiveTodos(100);
+    } catch {
+      todosRef.current = [];
+    }
+    if (!isCurrentSession()) return;
+
     // Fetch live weather for the user's saved city — non-fatal.
     // If city is not set, current_weather is "" and Carson will ask.
     let currentWeather = "";
@@ -3334,6 +3417,10 @@ export default function ElevenLabsAgentWidget({
             runDirectToolWithDiagnostic("save_note", params, () => saveNote(params)),
           act_on_note: (params: Parameters<typeof actOnNote>[0]) =>
             runDirectToolWithDiagnostic("act_on_note", params, () => actOnNote(params)),
+          create_todo: (params: Parameters<typeof createTodoTool>[0]) =>
+            runDirectToolWithDiagnostic("create_todo", params, () => createTodoTool(params)),
+          complete_todo: (params: Parameters<typeof completeTodoTool>[0]) =>
+            runDirectToolWithDiagnostic("complete_todo", params, () => completeTodoTool(params)),
           get_calendar_events: (params: Parameters<typeof getCalendarEvents>[0]) =>
             runDirectToolWithDiagnostic("get_calendar_events", params, () =>
               getCalendarEvents(params),

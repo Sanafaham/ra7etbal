@@ -32,6 +32,7 @@ import { useAuth } from "./hooks/useAuth";
 import { buildCarsonContext } from "./lib/carson-context";
 import { fetchCalendarEvents, type CalendarEvent } from "./lib/calendar";
 import { formatNotesForContext, loadRecentNotes } from "./lib/carson-notes";
+import { formatTodosForContext, listActiveTodos } from "./lib/carson-todos";
 import {
   fetchAutomationDigest,
   buildAutomationStatusBlock,
@@ -201,6 +202,7 @@ function PersistentCarsonWidget({
   /** True once the 30-day calendar fetch completed successfully (even if empty). */
   const [calendarFetched, setCalendarFetched] = useState(false);
   const [notesBlock, setNotesBlock] = useState("");
+  const [todosBlock, setTodosBlock] = useState("");
   const [automationDigest, setAutomationDigest] = useState<AutomationDigest | null>(null);
 
   // When calendarDisconnectCount increments, clear stale calendar events so
@@ -240,6 +242,13 @@ function PersistentCarsonWidget({
   }, [userId]);
 
   useEffect(() => {
+    if (!userId) { setTodosBlock(""); return; }
+    listActiveTodos(50)
+      .then((todos) => setTodosBlock(formatTodosForContext(todos)))
+      .catch(() => setTodosBlock(""));
+  }, [userId]);
+
+  useEffect(() => {
     if (!userId) { setAutomationDigest(null); return; }
     fetchAutomationDigest()
       .then((digest) => setAutomationDigest(digest))
@@ -257,8 +266,8 @@ function PersistentCarsonWidget({
   );
 
   const elevenLabsBriefStateText = useMemo(
-    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, householdRules, automationStatusBlock }),
-    [tasks, people, user?.email, now, calendarEvents, notesBlock, householdRules, automationStatusBlock],
+    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock }),
+    [tasks, people, user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock],
   );
   const isEvening = now.getHours() >= EVENING_HOUR;
   const spokenBrief = useMemo(
@@ -298,6 +307,9 @@ function PersistentCarsonWidget({
     const freshNotesBlock = userId ? formatNotesForContext(await loadRecentNotes(20)) : "";
     setNotesBlock(freshNotesBlock);
 
+    const freshTodosBlock = userId ? formatTodosForContext(await listActiveTodos(50)) : "";
+    setTodosBlock(freshTodosBlock);
+
     const freshDigest = userId
       ? await fetchAutomationDigest().catch(() => null)
       : null;
@@ -309,7 +321,7 @@ function PersistentCarsonWidget({
     const freshHouseholdRules = useHouseholdRulesStore.getState().rules;
 
     return {
-      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock }),
+      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock }),
       spokenBrief:
         freshNow.getHours() >= EVENING_HOUR
           ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined)

@@ -37,6 +37,11 @@ export interface CarsonContextInput {
    */
   notesBlock?: string;
   /**
+   * Pre-formatted active to-dos block from formatTodosForContext().
+   * Pass empty string or omit when to-dos aren't loaded yet.
+   */
+  todosBlock?: string;
+  /**
    * Pre-formatted automation status block from buildAutomationStatusBlock().
    * Pass empty string or omit when automations aren't loaded yet.
    */
@@ -269,6 +274,9 @@ export function buildCarsonContext(input: CarsonContextInput): string {
 
   // ── Saved notes ───────────────────────────────────────────────────────────
   if (input.notesBlock) lines.push(input.notesBlock);
+
+  // ── Active to-dos ─────────────────────────────────────────────────────────
+  if (input.todosBlock) lines.push(input.todosBlock);
 
   return lines.join("\n");
 }

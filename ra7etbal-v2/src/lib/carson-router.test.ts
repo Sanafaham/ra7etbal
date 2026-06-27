@@ -263,6 +263,67 @@ describe("Carson router — self-pronoun guard", () => {
   });
 });
 
+// ── To-do vs Notes routing ──────────────────────────────────────────────────────
+
+describe("Carson router — To-do vs Notes", () => {
+  it("'Add buy flowers to my to-do list' → todo", () => {
+    const result = classify("Add buy flowers to my to-do list");
+    expect(result.primary_domain).toBe("todo");
+    expect(result.confidence).toBeGreaterThanOrEqual(0.90);
+    expect(result.needs_clarification).toBe(false);
+  });
+
+  it("'Add renew passport' (bare add, no other signal) → todo, not unknown", () => {
+    const result = classify("Add renew passport");
+    expect(result.primary_domain).toBe("todo");
+    expect(result.needs_clarification).toBe(false);
+  });
+
+  it("'What's on my to-do list?' → todo", () => {
+    const result = classify("What's on my to-do list?");
+    expect(result.primary_domain).toBe("todo");
+    expect(result.confidence).toBeGreaterThanOrEqual(0.90);
+  });
+
+  it("'Mark buy flowers done' → todo", () => {
+    const result = classify("Mark buy flowers done");
+    expect(result.primary_domain).toBe("todo");
+    expect(result.confidence).toBeGreaterThanOrEqual(0.80);
+  });
+
+  it("'Save this idea' → note, not todo", () => {
+    const result = classify("Save this idea");
+    expect(result.primary_domain).toBe("note");
+    expect(result.confidence).toBeGreaterThanOrEqual(0.90);
+  });
+
+  it("'Remember this information' → note, not memory or reminder", () => {
+    const result = classify("Remember this information");
+    expect(result.primary_domain).toBe("note");
+  });
+
+  it("'Hold this thought' → note", () => {
+    const result = classify("Hold this thought");
+    expect(result.primary_domain).toBe("note");
+  });
+
+  it("'Add this to my notes' → note, not todo, even though it starts with 'add'", () => {
+    const result = classify("Add this to my notes");
+    expect(result.primary_domain).toBe("note");
+    expect(result.confidence).toBeGreaterThanOrEqual(0.90);
+  });
+
+  it("'Remember to call the vet' still routes to reminder, not note/todo", () => {
+    const result = classify("Remember to call the vet");
+    expect(result.primary_domain).toBe("reminder");
+  });
+
+  it("'Remember that Grace prefers short messages' still routes to memory, not note", () => {
+    const result = classify("Remember that Grace prefers short messages");
+    expect(result.primary_domain).toBe("memory");
+  });
+});
+
 // ── Unknown / low-confidence ──────────────────────────────────────────────────
 
 describe("Carson router — unknown", () => {

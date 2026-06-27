@@ -5,6 +5,8 @@ import { isSocialAcknowledgement } from "./carson-social";
 
 export type CarsonDomain =
   | "task"
+  | "todo"
+  | "note"
   | "delegation"
   | "whatsapp"
   | "reminder"
@@ -86,8 +88,11 @@ export function classifyCarsonInstruction(
     matchMemory(text),
     matchWhatsApp(text),
     matchDelegation(text, peopleNames),
+    matchTodo(text),
+    matchNote(text),
     matchTask(text),
     matchGeneralAnswer(text),
+    matchBareAdd(text),
   ].filter((c): c is CandidateMatch => c !== null);
 
   candidates.sort((a, b) => b.confidence - a.confidence);
@@ -367,26 +372,119 @@ function matchDelegation(
   return null;
 }
 
+/**
+ * To-do — active personal commitments ("add X to my to-do list",
+ * "mark X done"). Distinct from matchNote (passive information) and the
+ * generic matchTask fallback below.
+ */
+function matchTodo(text: string): CandidateMatch | null {
+  if (/\badd\s+.+\s+to\s+(my\s+)?to-?do\s+list\b/i.test(text)) {
+    return {
+      domain: "todo",
+      confidence: 0.95,
+      reason: "'Add X to my to-do list' is an explicit to-do creation request.",
+    };
+  }
+  if (/\b(add|create|make)\s+(a\s+)?to-?do\b/i.test(text)) {
+    return {
+      domain: "todo",
+      confidence: 0.92,
+      reason: "Explicit to-do creation request.",
+    };
+  }
+  if (/\bwhat'?s\s+on\s+my\s+to-?do\s+list\b/i.test(text)) {
+    return {
+      domain: "todo",
+      confidence: 0.95,
+      reason: "'What's on my to-do list' is a to-do listing query.",
+    };
+  }
+  if (/\bmark\s+.+\s+(as\s+)?(done|complete|finished)\b/i.test(text)) {
+    return {
+      domain: "todo",
+      confidence: 0.85,
+      reason: "'Mark X done/complete' is a to-do completion request.",
+    };
+  }
+  if (/\badd\s+.+\s+to\s+(my\s+)?(list|tasks)\b/i.test(text)) {
+    return {
+      domain: "todo",
+      confidence: 0.80,
+      reason: "'Add X to my list/tasks' maps to to-do creation.",
+    };
+  }
+  return null;
+}
+
+/**
+ * Note — passive information, ideas, and reference material the user wants
+ * captured but NOT turned into an action. Distinct from matchTodo above.
+ * "remember to [verb]" is a reminder (handled in matchReminder); "remember
+ * that [fact]" is durable memory (handled in matchMemory); this matcher is
+ * for explicit note-saving language only.
+ */
+function matchNote(text: string): CandidateMatch | null {
+  if (/\bsave\s+(this|that)\s+(note|idea|thought)\b/i.test(text)) {
+    return {
+      domain: "note",
+      confidence: 0.93,
+      reason: "'Save this note/idea/thought' is explicit note-saving language.",
+    };
+  }
+  if (/\bremember\s+this\s+(idea|thought|information)\b/i.test(text)) {
+    return {
+      domain: "note",
+      confidence: 0.90,
+      reason: "'Remember this idea/thought/information' maps to a note, not a task.",
+    };
+  }
+  if (/\bhold\s+this\s+thought\b/i.test(text)) {
+    return {
+      domain: "note",
+      confidence: 0.90,
+      reason: "'Hold this thought' is explicit note-saving language.",
+    };
+  }
+  if (/\badd\s+this\s+to\s+(my\s+)?notes\b/i.test(text)) {
+    return {
+      domain: "note",
+      confidence: 0.92,
+      reason: "'Add this to my notes' is explicit note-saving language.",
+    };
+  }
+  if (/\b(save|write|note)\s+(this|that|it)\b/i.test(text)) {
+    return {
+      domain: "note",
+      confidence: 0.65,
+      reason: "Generic 'save/write/note this' — defaults to a note when no to-do/task language is present.",
+    };
+  }
+  return null;
+}
+
 function matchTask(text: string): CandidateMatch | null {
-  if (/\b(add|create|make)\s+(a\s+)?(task|todo|to-do)\b/i.test(text)) {
+  if (/\b(add|create|make)\s+(a\s+)?task\b/i.test(text)) {
     return {
       domain: "task",
       confidence: 0.88,
       reason: "Explicit task creation request.",
     };
   }
-  if (/\badd\s+.+\s+to\s+(my\s+)?(list|tasks)\b/i.test(text)) {
+  return null;
+}
+
+/**
+ * Lowest-priority fallback: a bare "Add X" / "Add buy flowers" with no
+ * to-do/note/reminder/delegation/calendar language anywhere else in the
+ * instruction defaults to a to-do (active personal commitment) rather than
+ * "unknown". Only wins when nothing else matched with higher confidence.
+ */
+function matchBareAdd(text: string): CandidateMatch | null {
+  if (/^\s*(please\s+)?add\b/i.test(text)) {
     return {
-      domain: "task",
-      confidence: 0.82,
-      reason: "'Add to my list/tasks' maps to task creation.",
-    };
-  }
-  if (/\b(save|write|note)\s+(this|that|it)\b/i.test(text)) {
-    return {
-      domain: "task",
-      confidence: 0.70,
-      reason: "Requesting to save or note an item.",
+      domain: "todo",
+      confidence: 0.55,
+      reason: "Bare 'add X' with no other domain signal defaults to a to-do.",
     };
   }
   return null;

@@ -1,6 +1,6 @@
 /**
  * Updates — Carson operations center.
- * Tabs: Needs You / Waiting / Inbox / Routines / History
+ * Tabs: Needs You / Waiting / To-do / Notes / Automations / History
  * Deep-link: /updates?tab=needs-you (default)
  */
 import { useEffect, useMemo, useState } from "react";
@@ -15,13 +15,15 @@ import { usePeopleStore } from "../stores/people";
 import { useTasksStore } from "../stores/tasks";
 import type { Task } from "../types/task";
 import Inbox from "./Inbox";
+import Todos from "./Todos";
 import Routines from "./Routines";
 
-type Tab = "needs-you" | "waiting" | "inbox" | "routines" | "history";
+type Tab = "needs-you" | "waiting" | "todo" | "inbox" | "routines" | "history";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "needs-you",  label: "Needs You" },
   { id: "waiting",    label: "Waiting"   },
+  { id: "todo",       label: "To-do"     },
   { id: "inbox",      label: "Notes"     },
   { id: "routines",   label: "Automations"  },
   { id: "history",    label: "History"   },
@@ -169,7 +171,7 @@ export default function Updates() {
       </div>
 
       {/* ── Error ── */}
-      {tasksError && tasksStatus !== "loading" && activeTab !== "inbox" && activeTab !== "routines" && (
+      {tasksError && tasksStatus !== "loading" && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && (
         <AuthNotice kind="error">
           {tasksError}{" "}
           <button type="button" onClick={reload} className="ml-1 underline">
@@ -179,7 +181,7 @@ export default function Updates() {
       )}
 
       {/* ── Initial loading (task-based tabs only) ── */}
-      {initialLoading && activeTab !== "inbox" && activeTab !== "routines" && (
+      {initialLoading && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && (
         <div className="flex items-center justify-center py-12 text-ink/60">
           <Spinner size={20} label="Loading" />
         </div>
@@ -285,6 +287,11 @@ export default function Updates() {
           )}
         </div>
       )}
+
+      {/* ══════════════════════════════════════════════════════════════
+          TO-DO
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === "todo" && <Todos headerless />}
 
       {/* ══════════════════════════════════════════════════════════════
           INBOX
