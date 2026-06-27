@@ -7,6 +7,11 @@ import { listTasks } from "./tasks";
 import { saveInboxItem } from "./inbox";
 import { buildCarsonContext } from "./carson-context";
 import { CARSON_STATUS_POLICY } from "./carson-status-policy";
+import { fetchAutomationDigest, buildAutomationStatusBlock } from "./automation-context";
+import { fetchWhatsappDeliveryFailures, buildWhatsappDeliveryStatusBlock } from "./whatsapp-delivery-context";
+import { loadRecentNotes, formatNotesForContext } from "./carson-notes";
+import { listActiveTodos, formatTodosForContext } from "./carson-todos";
+import { getHouseholdRules } from "./household-rules";
 import { extractItems } from "./ai/extract";
 import { savePending, saveTaskAttachments } from "./save";
 import { resizeImage } from "./image-upload";
@@ -127,14 +132,43 @@ export async function askTextCarson(
   // Fetch fresh task state from Supabase so Carson always reflects the
   // latest confirmed/pending status — not the potentially-stale store.
   // Describe attached image in parallel so it doesn't add latency.
-  const [userMemory, recentMemory, freshTasks, imageDescription] = await Promise.all([
+  //
+  // Phase 9A consistency fix: Voice Carson (App.tsx) builds automation
+  // status, WhatsApp delivery diagnostics, notes, to-dos, and household
+  // rules blocks and feeds them into buildCarsonContext(). Text Carson
+  // previously called buildCarsonContext() with only tasks/people/email/now,
+  // so the two disagreed about what Carson "knows". Self-fetching here
+  // (same pattern as userMemory/recentMemory/freshTasks above) closes that
+  // gap without requiring every caller of askTextCarson() to wire it in.
+  const [
+    userMemory,
+    recentMemory,
+    freshTasks,
+    imageDescription,
+    automationDigest,
+    whatsappFailures,
+    notes,
+    todos,
+    householdRulesRow,
+  ] = await Promise.all([
     loadUserMemory(50).catch(() => ""),
     loadRecentMemory(20).catch(() => "No previous sessions."),
     listTasks().catch(() => context.tasks),
     context.imageFile
       ? describeImageForTextCarson(context.imageFile).catch(() => null)
       : Promise.resolve(null),
+    fetchAutomationDigest().catch(() => null),
+    fetchWhatsappDeliveryFailures().catch(() => []),
+    loadRecentNotes(20).catch(() => []),
+    listActiveTodos(50).catch(() => []),
+    getHouseholdRules().catch(() => null),
   ]);
+
+  const automationStatusBlock = automationDigest ? buildAutomationStatusBlock(automationDigest) : "";
+  const whatsappDeliveryStatusBlock = buildWhatsappDeliveryStatusBlock(whatsappFailures);
+  const notesBlock = formatNotesForContext(notes);
+  const todosBlock = formatTodosForContext(todos);
+  const householdRules = householdRulesRow?.rules ?? "";
 
   const prompt = buildTextCarsonPrompt(question, {
     ...context,
@@ -143,6 +177,11 @@ export async function askTextCarson(
     recentMemory,
     now: new Date(),
     imageDescription,
+    automationStatusBlock,
+    whatsappDeliveryStatusBlock,
+    notesBlock,
+    todosBlock,
+    householdRules,
   });
 
   let res: Response;
@@ -181,7 +220,17 @@ export async function askTextCarson(
 
 function buildTextCarsonPrompt(
   question: string,
-  context: TextCarsonContext & { userMemory: string; recentMemory: string; now: Date; imageDescription?: string | null },
+  context: TextCarsonContext & {
+    userMemory: string;
+    recentMemory: string;
+    now: Date;
+    imageDescription?: string | null;
+    automationStatusBlock?: string;
+    whatsappDeliveryStatusBlock?: string;
+    notesBlock?: string;
+    todosBlock?: string;
+    householdRules?: string;
+  },
 ): string {
   const imageContext = context.imageDescription
     ? `\nAttached photo context (use this for the conversation): ${context.imageDescription}`
@@ -273,6 +322,11 @@ ${buildCarsonContext({
   people: context.people,
   email: context.userEmail,
   now: context.now,
+  automationStatusBlock: context.automationStatusBlock,
+  whatsappDeliveryStatusBlock: context.whatsappDeliveryStatusBlock,
+  notesBlock: context.notesBlock,
+  todosBlock: context.todosBlock,
+  householdRules: context.householdRules,
 })}${imageContext}
 
 User asks:

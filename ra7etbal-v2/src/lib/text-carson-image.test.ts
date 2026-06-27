@@ -38,6 +38,36 @@ vi.mock("./routines", () => ({
   listRoutines: vi.fn(),
 }));
 
+// Phase 9A consistency fix: askTextCarson() now self-fetches the same
+// operational/product context blocks Voice Carson gets from App.tsx
+// (automation status, WhatsApp delivery diagnostics, notes, to-dos,
+// household rules). All five modules import ./supabase at module top
+// level, which throws without VITE_SUPABASE_* env vars — mock them the
+// same way ./calendar is already mocked above.
+vi.mock("./automation-context", () => ({
+  fetchAutomationDigest: vi.fn().mockResolvedValue(null),
+  buildAutomationStatusBlock: vi.fn().mockReturnValue(""),
+}));
+
+vi.mock("./whatsapp-delivery-context", () => ({
+  fetchWhatsappDeliveryFailures: vi.fn().mockResolvedValue([]),
+  buildWhatsappDeliveryStatusBlock: vi.fn().mockReturnValue(""),
+}));
+
+vi.mock("./carson-notes", () => ({
+  loadRecentNotes: vi.fn().mockResolvedValue([]),
+  formatNotesForContext: vi.fn().mockReturnValue(""),
+}));
+
+vi.mock("./carson-todos", () => ({
+  listActiveTodos: vi.fn().mockResolvedValue([]),
+  formatTodosForContext: vi.fn().mockReturnValue(""),
+}));
+
+vi.mock("./household-rules", () => ({
+  getHouseholdRules: vi.fn().mockResolvedValue(null),
+}));
+
 vi.mock("../stores/tasks", () => ({
   useTasksStore: {
     getState: () => ({
