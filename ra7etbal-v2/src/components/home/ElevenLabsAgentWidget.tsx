@@ -1814,7 +1814,7 @@ export default function ElevenLabsAgentWidget({
         sessionActionsRef.current.push(`Added to-do: ${trimmed}`);
         return "Added to your to-do list.";
       } catch {
-        return "I couldn't add that to-do right now. Please try again.";
+        return "I wasn't able to save that. Please say the to-do again.";
       }
     },
     [],

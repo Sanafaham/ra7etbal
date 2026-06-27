@@ -47,3 +47,22 @@ describe("ElevenLabsAgentWidget — To-do client tool registration", () => {
     expect(SOURCE).toMatch(/execute_instruction:\s*async\s*\(params/);
   });
 });
+
+// P0 follow-up: a live failed to-do creation produced a tech-support
+// deflection instead of a clean retry request. createTodoTool's own catch
+// message must never contain that language, and must match the required
+// wording exactly — this is the source-of-truth message before the shared
+// sanitizeCarsonReplyText() defense-in-depth filter (carson-social.ts) even
+// runs.
+describe("ElevenLabsAgentWidget — createTodoTool failure message", () => {
+  it("returns the required clean retry message on failure, not a technical/support deflection", () => {
+    expect(SOURCE).toContain('return "I wasn\'t able to save that. Please say the to-do again.";');
+  });
+
+  it("the createTodoTool catch block never mentions technical issues or support", () => {
+    const match = SOURCE.match(/const createTodoTool = useCallback\([\s\S]{0,1500}?\n  \);/);
+    expect(match).not.toBeNull();
+    const block = match![0];
+    expect(block.toLowerCase()).not.toMatch(/technical issue|contact support|support team|visibility into/);
+  });
+});

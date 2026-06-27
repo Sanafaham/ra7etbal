@@ -32,6 +32,24 @@ export function stripIdentityCorrections(text: string): string {
   return text.replace(CARSON_IDENTITY_CORRECTION_SENTENCE_PATTERN, "").replace(/\s+/g, " ").trim();
 }
 
+// Live example: a user asked Voice Carson to add a to-do, the action did not
+// complete, and the model freelanced a tech-support deflection — "I don't
+// have visibility into technical issues with the To-Do feature itself...
+// you can report it through the app's support or settings" — instead of a
+// plain retry request. This is not a single sentence we can clip and leave a
+// coherent remainder behind (the whole reply is built around the deflection),
+// so unlike stripIdentityCorrections this replaces the entire reply with a
+// clean, honest retry line. Defense-in-depth: catches this regardless of
+// whether the dashboard prompt or the model's own improvisation produced it.
+const CARSON_TECHNICAL_SUPPORT_DEFLECTION_PATTERN =
+  /technical issue|contact support|support team|reach out to (?:support|the team)|visibility into|report (?:it|this) through|rahet bal team|ra7et bal team|the app(?:'|’)s support/i;
+
+export const CARSON_RETRY_FALLBACK_REPLY = "I wasn't able to complete that. Please say it again.";
+
+export function containsTechnicalSupportDeflection(text: string): boolean {
+  return CARSON_TECHNICAL_SUPPORT_DEFLECTION_PATTERN.test(text);
+}
+
 const NETWORK_ERROR_PATTERN = /fetch|network|connection/i;
 
 /**
@@ -89,11 +107,17 @@ export function sanitizeCarsonReplyText(text: string): string {
     .replace(CARSON_INTERNAL_SENTENCE_PATTERN, "")
     .trim();
 
-  return stripIdentityCorrections(sanitized)
+  sanitized = stripIdentityCorrections(sanitized)
     .replace(/\s+([.?!])/g, "$1")
     .replace(/(?:\s*[.?!]){2,}/g, ".")
     .replace(/\s+/g, " ")
     .trim();
+
+  if (containsTechnicalSupportDeflection(sanitized)) {
+    return CARSON_RETRY_FALLBACK_REPLY;
+  }
+
+  return sanitized;
 }
 
 export function shouldSuppressCarsonIdlePrompt(text: string): boolean {

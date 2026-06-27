@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  CARSON_RETRY_FALLBACK_REPLY,
+  containsTechnicalSupportDeflection,
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
   sanitizeCarsonErrorDetail,
@@ -179,6 +181,47 @@ describe("successful action replies stay short confirmations only", () => {
   it("a successful WhatsApp send confirmation never contains failure language", () => {
     const reply = sanitizeCarsonReplyText("Sent to Grace.");
     expect(reply).not.toMatch(/not delivered|failed|couldn't complete|try again/i);
+  });
+});
+
+// P0 live bug — Voice Carson To-do creation. User asked Carson to add a
+// to-do; it did not complete, and Carson freelanced a tech-support
+// deflection instead of asking the user to repeat the request.
+describe("containsTechnicalSupportDeflection / CARSON_RETRY_FALLBACK_REPLY — P0 To-do fallback fix", () => {
+  it("detects the exact live transcript that triggered this fix", () => {
+    const liveTranscript =
+      "I don't have visibility into technical issues with the To-Do feature itself — that's something the Rahet Bal team would need to look into. You can report it through the app's support or settings, and I can help you draft that message if you'd like.";
+    expect(containsTechnicalSupportDeflection(liveTranscript)).toBe(true);
+    expect(sanitizeCarsonReplyText(liveTranscript)).toBe(CARSON_RETRY_FALLBACK_REPLY);
+  });
+
+  it.each([
+    "There seems to be a technical issue. Please contact support.",
+    "You may want to reach out to support about this.",
+    "I'd recommend reaching out to the support team.",
+    "I don't have visibility into that — the Rahet Bal team would need to look into it.",
+    "You can report this through the app's support or settings.",
+  ])("replaces tech-support deflection with the clean retry line: '%s'", (input) => {
+    expect(sanitizeCarsonReplyText(input)).toBe(CARSON_RETRY_FALLBACK_REPLY);
+  });
+
+  it("never offers to save the request as a note instead, once flagged as a deflection", () => {
+    const liveTranscript =
+      "There's a technical issue with that feature. I can save this as a note instead, if you'd like.";
+    const result = sanitizeCarsonReplyText(liveTranscript);
+    expect(result).toBe(CARSON_RETRY_FALLBACK_REPLY);
+    expect(result).not.toMatch(/save.*as a note/i);
+  });
+
+  it("leaves a clean retry message completely unchanged", () => {
+    expect(sanitizeCarsonReplyText("I wasn't able to save that. Please say the to-do again.")).toBe(
+      "I wasn't able to save that. Please say the to-do again.",
+    );
+  });
+
+  it("does not flag normal successful confirmations", () => {
+    expect(containsTechnicalSupportDeflection("Added to your to-do list.")).toBe(false);
+    expect(containsTechnicalSupportDeflection("Grace has it.")).toBe(false);
   });
 });
 
