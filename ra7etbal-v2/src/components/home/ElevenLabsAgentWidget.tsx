@@ -36,7 +36,7 @@ import {
   summarizeCarsonPlanDiagnostic,
 } from "../../lib/carson-planner-diagnostics";
 import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-tool-diagnostics";
-import { detectAllRecurringSchedules, buildVoiceAutomationInput, normalizeCadenceText } from "../../lib/routine-detection";
+import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
@@ -2757,7 +2757,14 @@ export default function ElevenLabsAgentWidget({
                 const input = buildVoiceAutomationInput(routineInstruction, sched, people, undefined, originalInstr);
 
                 if (!input) {
-                  // No person matched — cannot send WhatsApp without a recipient.
+                  // No person in the instruction at all → this is a self-directed
+                  // recurring reminder, not a WhatsApp automation missing a
+                  // recipient. Route to the Carson-native reminder routine
+                  // (push notification + task, no WhatsApp) instead of failing.
+                  if (!findPersonInInstruction(routineInstruction, people)) {
+                    const reminderSummary = await createReminderRoutineFromInstruction(routineInstruction, sched);
+                    if (reminderSummary) return reminderSummary;
+                  }
                   console.warn("[automation:NO_PERSON] no person found in instruction", { routineInstruction });
                   return "I could not find a person in your contacts for that recurring instruction. Check their name in People and try again.";
                 }

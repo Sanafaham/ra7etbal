@@ -109,7 +109,7 @@ export function detectRecurringSchedule(text: string): RecurringSchedule | null 
  * Finds the first person whose name appears in the instruction.
  * Sorted by name length descending to prefer longer matches.
  */
-function findPersonInInstruction(instruction: string, people: Person[]): Person | null {
+export function findPersonInInstruction(instruction: string, people: Person[]): Person | null {
   const lower = instruction.toLowerCase();
   console.log("[routine:PERSON_SEARCH]", {
     instruction: lower,
@@ -246,6 +246,82 @@ export async function createVoiceRoutine(
   console.log("[routine:ROUTINE_ID]", routine.id);
 
   return buildRoutineSummary(person.name, message, schedule);
+}
+
+// Leading "remind me to/that/about" — stripped after cadence language so a
+// self-directed reminder title reads as the action itself ("Take my
+// medication."), not as the instruction phrasing.
+const REMIND_ME_PREFIX_RE = /^\s*(?:please\s+)?remind\s+me\s+(?:to\s+|that\s+|about\s+)?/i;
+
+/**
+ * Strips recurring/time language and the "remind me to" prefix from a
+ * self-directed recurring instruction to produce the reminder's title.
+ */
+function extractReminderTitle(instruction: string): string {
+  let msg = instruction;
+  msg = msg.replace(RECURRING_CLEAN_RE, "").replace(/\s{2,}/g, " ").trim();
+  msg = msg.replace(REMIND_ME_PREFIX_RE, "").trim();
+  msg = msg.replace(TIME_PHRASE_RE, "").replace(/\s{2,}/g, " ").trim();
+  msg = msg.replace(/^(and|,|,\s*and)\s*/i, "").trim();
+  if (msg.length > 0) msg = msg.charAt(0).toUpperCase() + msg.slice(1);
+  return msg;
+}
+
+function buildReminderRoutineSummary(title: string, schedule: RecurringSchedule): string {
+  const shortTitle = title.length > 60 ? title.slice(0, 60).trimEnd() + "…" : title;
+  const label = scheduleDisplayLabel(schedule).toLowerCase();
+  return (
+    `Reminder set. I'll remind you ${label}: "${shortTitle}". ` +
+    `You can manage it in Updates → Routines.`
+  );
+}
+
+/**
+ * Creates a Carson-native reminder routine for a self-directed recurring
+ * instruction — used when no person is found in the text (the existing
+ * "no person" signal already produced by findPersonInInstruction /
+ * buildVoiceAutomationInput). Reuses the already-shipped
+ * routines.type="reminder" pipeline (push notification + task creation via
+ * executeReminderRoutine in process-delegation-escalations.js) instead of
+ * the WhatsApp automations table — recurring personal reminders no longer
+ * go through WhatsApp; third-party recurring instructions (a person name
+ * resolves) are untouched and keep using buildVoiceAutomationInput/automations.
+ *
+ * Returns null only if no usable title remains after stripping cadence
+ * language — callers should fall back to the existing "could not understand"
+ * messaging in that case, same as today.
+ */
+export async function createReminderRoutineFromInstruction(
+  rawInstruction: string,
+  schedule: RecurringSchedule,
+): Promise<string | null> {
+  const title = extractReminderTitle(rawInstruction);
+  if (!title) return null;
+
+  let nextRunAt: string | undefined;
+  if (schedule.schedule === "every_n_days" && schedule.intervalDays) {
+    const ms = schedule.intervalDays * 24 * 60 * 60 * 1000;
+    nextRunAt = new Date(Date.now() + ms).toISOString();
+  }
+
+  const scheduleTime = extractTimeFromInstruction(rawInstruction) ?? "09:00";
+  const shortTitle = title.length > 40 ? title.slice(0, 40).trimEnd() + "…" : title;
+  const routineName = `${scheduleDisplayLabel(schedule)}: ${shortTitle}`;
+
+  const routine = await createRoutine({
+    name: routineName,
+    type: "reminder",
+    schedule: schedule.schedule,
+    schedule_day: schedule.scheduleDay,
+    schedule_time: scheduleTime,
+    payload: { title },
+    interval_days: schedule.intervalDays,
+    next_run_at: nextRunAt,
+  });
+
+  console.log("[routine:REMINDER_ROUTINE_CREATED] routine_id=" + routine.id + " title=" + title);
+
+  return buildReminderRoutineSummary(title, schedule);
 }
 
 // ── Voice automation builder (Phase 1 — routes to automations table) ──────────
