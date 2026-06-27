@@ -48,6 +48,33 @@ describe("ElevenLabsAgentWidget — To-do client tool registration", () => {
   });
 });
 
+// P0 root-cause fix: createTodoTool/completeTodoTool used to destructure
+// {title}/{query} with no fallback, unlike execute_instruction's
+// extractInstructionParam which already tries several plausible keys. A
+// mismatch between the key the agent actually sends and the one literal key
+// the code read meant createTodo()/completeTodo() were never called at all —
+// see carson-todo-tool-params.test.ts for the actual parsing-logic tests.
+// This just locks in that the tool bodies use the defensive parser instead
+// of a bare destructure.
+describe("ElevenLabsAgentWidget — To-do tools use defensive parameter parsing", () => {
+  it("imports the defensive param extractors from carson-todo-tool-params", () => {
+    expect(SOURCE).toContain('from "../../lib/carson-todo-tool-params"');
+    expect(SOURCE).toContain("extractTodoTitleParam");
+    expect(SOURCE).toContain("extractTodoDescriptionParam");
+    expect(SOURCE).toContain("extractTodoQueryParam");
+  });
+
+  it("createTodoTool no longer destructures {title, description} directly", () => {
+    expect(SOURCE).not.toMatch(/createTodoTool = useCallback\(\s*async\s*\(\s*\{\s*title/);
+    expect(SOURCE).toMatch(/createTodoTool = useCallback\(\s*async\s*\(params: CreateTodoParams\)/);
+  });
+
+  it("completeTodoTool no longer destructures {query} directly", () => {
+    expect(SOURCE).not.toMatch(/completeTodoTool = useCallback\(\s*async\s*\(\s*\{\s*query/);
+    expect(SOURCE).toMatch(/completeTodoTool = useCallback\(\s*async\s*\(params: CompleteTodoParams\)/);
+  });
+});
+
 // P0 follow-up: a live failed to-do creation produced a tech-support
 // deflection instead of a clean retry request. createTodoTool's own catch
 // message must never contain that language, and must match the required

@@ -9,6 +9,13 @@ import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
 import { saveCarsonNote, loadRecentNotes, type CarsonNote } from "../../lib/carson-notes";
 import { createTodo, listActiveTodos, completeTodo, findTodoMatches, type CarsonTodo } from "../../lib/carson-todos";
+import {
+  extractTodoTitleParam,
+  extractTodoDescriptionParam,
+  extractTodoQueryParam,
+  type CreateTodoParams,
+  type CompleteTodoParams,
+} from "../../lib/carson-todo-tool-params";
 import { filterCalendarEventsByRange } from "../../lib/calendar";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
@@ -98,6 +105,7 @@ function extractInstructionParam(params: ExecuteInstructionParams): string {
   }
   return "";
 }
+
 
 // ---------------------------------------------------------------------------
 // Image analysis — converts an attached File to a 1-sentence Claude description.
@@ -1796,20 +1804,15 @@ export default function ElevenLabsAgentWidget({
   // add X to my to-do". Distinct from save_note (passive information).
   // ------------------------------------------------------------------
   const createTodoTool = useCallback(
-    async ({
-      title,
-      description,
-    }: {
-      title: string;
-      description?: string;
-    }): Promise<string> => {
-      const trimmed = title?.trim();
+    async (params: CreateTodoParams): Promise<string> => {
+      const trimmed = extractTodoTitleParam(params).trim();
       if (!trimmed) {
         return "I did not receive a to-do title. Ask the user what to add.";
       }
+      const description = extractTodoDescriptionParam(params) ?? null;
 
       try {
-        const todo = await createTodo(trimmed, description ?? null);
+        const todo = await createTodo(trimmed, description);
         todosRef.current = [todo, ...todosRef.current];
         sessionActionsRef.current.push(`Added to-do: ${trimmed}`);
         return "Added to your to-do list.";
@@ -1827,8 +1830,8 @@ export default function ElevenLabsAgentWidget({
   // in-call network fetch for the lookup itself.
   // ------------------------------------------------------------------
   const completeTodoTool = useCallback(
-    async ({ query }: { query: string }): Promise<string> => {
-      const q = query?.trim();
+    async (params: CompleteTodoParams): Promise<string> => {
+      const q = extractTodoQueryParam(params).trim();
       if (!q) {
         return "I did not receive which to-do to complete. Ask the user which one they mean.";
       }
