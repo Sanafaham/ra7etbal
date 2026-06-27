@@ -6,6 +6,7 @@ import type {
 } from "../../types/extraction";
 import { buildExtractionPrompt } from "./extract-prompt";
 import { applyRolePrecedence } from "./role-precedence";
+import { applyNoteRouting } from "./note-routing";
 import { applyTodoRouting } from "./todo-routing";
 
 /**
@@ -92,13 +93,18 @@ export async function extractItems(
   // the model to promote message->delegation when the recipient's role is
   // operational for the topic; this catches the residual misclassifications.
   const withRolePrecedence = applyRolePrecedence(extracted, people, text);
+  // Deterministic safety net for explicit note-saving language ("Note to…",
+  // "Save this note…", "Remember this idea…", "Hold this thought…"). Must
+  // run BEFORE applyTodoRouting so a reclassified "parked" item is never
+  // promoted to "todo" (see note-routing.ts).
+  const withNoteRouting = applyNoteRouting(withRolePrecedence, text);
   // Deterministic safety net for To-do routing. The prompt has no "todo"
   // concept — a personal action/errand item with no due date and no
   // delegate is reclassified here so it's saved into carson_todos instead
   // of `tasks` (see todo-routing.ts).
   return {
     ...result,
-    extracted: applyTodoRouting(withRolePrecedence),
+    extracted: applyTodoRouting(withNoteRouting),
   };
 }
 

@@ -322,6 +322,27 @@ describe("Carson router — To-do vs Notes", () => {
     const result = classify("Remember that Grace prefers short messages");
     expect(result.primary_domain).toBe("memory");
   });
+
+  it("'Note to follow the Gemini plan' → note, not todo/action", () => {
+    const result = classify("Note to follow the Gemini plan");
+    expect(result.primary_domain).toBe("note");
+    expect(result.needs_clarification).toBe(false);
+  });
+
+  it("'Save this note: follow Gemini plan' → note", () => {
+    const result = classify("Save this note: follow Gemini plan");
+    expect(result.primary_domain).toBe("note");
+  });
+
+  it("'Remember this idea for later' → note", () => {
+    const result = classify("Remember this idea for later");
+    expect(result.primary_domain).toBe("note");
+  });
+
+  it("'Hold this thought about the menu' → note", () => {
+    const result = classify("Hold this thought about the menu");
+    expect(result.primary_domain).toBe("note");
+  });
 });
 
 // ── Unknown / low-confidence ──────────────────────────────────────────────────

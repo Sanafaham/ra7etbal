@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildDeliveryStatusPatch,
+  getFailureDetails,
   updateWhatsappDeliveryStatus,
 } from './whatsapp-webhook.js';
 
@@ -99,6 +100,38 @@ describe('WhatsApp delivery status progression', () => {
     ).toBeNull();
   });
 
+  it('a failed webhook status carries the Meta error code/subcode into the patch (previously dropped)', () => {
+    expect(
+      buildDeliveryStatusPatch({
+        currentStatus: 'sent',
+        incomingStatus: 'failed',
+        updatedAt: '2026-06-27T14:30:09Z',
+        failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+        failureCode: 131049,
+        failureSubcode: 2494,
+      }),
+    ).toMatchObject({
+      delivery_status: 'failed',
+      failure_reason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failure_code: '131049',
+      failure_subcode: '2494',
+    });
+  });
+
+  it('a failed status with no code/subcode reported stores null rather than a stray string', () => {
+    expect(
+      buildDeliveryStatusPatch({
+        currentStatus: 'sent',
+        incomingStatus: 'failed',
+        updatedAt: '2026-06-27T14:30:09Z',
+        failureReason: 'WhatsApp delivery failed.',
+      }),
+    ).toMatchObject({
+      failure_code: null,
+      failure_subcode: null,
+    });
+  });
+
   it('fails open when canonical delivery storage is unavailable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('database unavailable')));
 
@@ -163,6 +196,79 @@ describe('WhatsApp delivery status progression', () => {
       delivery_status: 'delivered',
       delivered_at: '2026-06-22T18:01:00.000Z',
       last_status_at: '2026-06-22T18:01:00.000Z',
+    });
+  });
+
+  it('a failed status carries failureCode/failureSubcode all the way into the delivery PATCH body', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([
+        {
+          id: 'delivery-1',
+          user_id: 'user-1',
+          delivery_status: 'sent',
+          last_status_at: '2026-06-27T14:30:04Z',
+          automation_run_id: null,
+          source_type: 'automation_message',
+        },
+      ]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.1',
+      status: 'failed',
+      updatedAt: '2026-06-27T14:30:09Z',
+      failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failureCode: 131049,
+      failureSubcode: 2494,
+      phoneNumberId: 'phone-number-1',
+    });
+
+    expect(result).toMatchObject({ matched: true, updated: true });
+
+    const deliveryBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(deliveryBody).toMatchObject({
+      delivery_status: 'failed',
+      failure_reason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failure_code: '131049',
+      failure_subcode: '2494',
+    });
+  });
+});
+
+describe('getFailureDetails — Meta webhook error extraction', () => {
+  it('extracts reason, code, and subcode together (previously only reason was kept)', () => {
+    expect(
+      getFailureDetails({
+        errors: [
+          {
+            code: 131049,
+            error_subcode: 2494,
+            title: 'Unable to deliver message',
+            message: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+          },
+        ],
+      }),
+    ).toEqual({
+      reason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      code: 131049,
+      subcode: 2494,
+    });
+  });
+
+  it('returns nulls when there are no errors on the status entry', () => {
+    expect(getFailureDetails({})).toEqual({ reason: null, code: null, subcode: null });
+  });
+
+  it('falls back to a generic reason when Meta sends a code with no message/title', () => {
+    expect(getFailureDetails({ errors: [{ code: 470 }] })).toEqual({
+      reason: '470',
+      code: 470,
+      subcode: null,
     });
   });
 });

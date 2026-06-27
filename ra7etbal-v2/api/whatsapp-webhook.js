@@ -309,6 +309,8 @@ export async function updateWhatsappDeliveryStatus({
   status,
   updatedAt,
   failureReason,
+  failureCode,
+  failureSubcode,
   phoneNumberId,
   webhookReceivedAt = new Date().toISOString(),
   retryCount = 0,
@@ -347,6 +349,8 @@ export async function updateWhatsappDeliveryStatus({
       updatedAt,
       currentLastStatusAt: delivery.last_status_at,
       failureReason,
+      failureCode,
+      failureSubcode,
     });
 
     let updated = false;
@@ -390,6 +394,8 @@ export async function updateWhatsappDeliveryStatus({
           status,
           updatedAt,
           failureReason,
+          failureCode,
+          failureSubcode,
           phoneNumberId,
           webhookReceivedAt,
           retryCount: retryCount + 1,
@@ -457,6 +463,8 @@ export function buildDeliveryStatusPatch({
   updatedAt,
   currentLastStatusAt,
   failureReason,
+  failureCode,
+  failureSubcode,
 }) {
   if (currentStatus === 'failed') return null;
 
@@ -470,6 +478,8 @@ export function buildDeliveryStatusPatch({
       last_status_at: lastStatusAt,
       failure_stage: 'meta_api',
       failure_reason: failureReason || 'WhatsApp delivery failed.',
+      failure_code: failureCode == null ? null : String(failureCode),
+      failure_subcode: failureSubcode == null ? null : String(failureSubcode),
     };
   }
 
@@ -708,11 +718,14 @@ function extractStatuses(body) {
         const status    = String(raw?.status || '').trim();
         if (!messageId || !status) continue;
 
+        const failureDetails = getFailureDetails(raw);
         statuses.push({
           messageId,
           status,
-          updatedAt:     timestampToIso(raw?.timestamp),
-          failureReason: getFailureReason(raw),
+          updatedAt:      timestampToIso(raw?.timestamp),
+          failureReason:  failureDetails.reason,
+          failureCode:    failureDetails.code,
+          failureSubcode: failureDetails.subcode,
           phoneNumberId: String(value?.metadata?.phone_number_id || '').trim() || null,
         });
       }
@@ -767,18 +780,31 @@ function timestampToIso(timestamp) {
   return new Date().toISOString();
 }
 
-function getFailureReason(status) {
+/**
+ * Extracts the human-readable reason AND the Meta error code/subcode from a
+ * webhook status entry. Previously only the reason text was kept — the
+ * numeric code/subcode (e.g. 131049 for ecosystem-engagement pacing) was
+ * read off `first.code` as a last-resort *reason* string, then discarded.
+ * whatsapp_deliveries already has failure_code/failure_subcode columns
+ * (populated by the synchronous send path in _whatsapp-delivery.js); the
+ * async webhook path never wrote them, so failures reported later via
+ * webhook callback lost their machine-readable error code entirely.
+ */
+export function getFailureDetails(status) {
   const errors = Array.isArray(status?.errors) ? status.errors : [];
   const first  = errors[0];
-  if (!first) return null;
+  if (!first) return { reason: null, code: null, subcode: null };
 
-  return (
-    first.error_data?.details ||
-    first.message ||
-    first.title ||
-    first.code?.toString() ||
-    'WhatsApp delivery failed.'
-  );
+  return {
+    reason:
+      first.error_data?.details ||
+      first.message ||
+      first.title ||
+      first.code?.toString() ||
+      'WhatsApp delivery failed.',
+    code: first.code ?? null,
+    subcode: first.error_subcode ?? null,
+  };
 }
 
 function serviceHeaders(serviceKey) {

@@ -424,6 +424,13 @@ function matchTodo(text: string): CandidateMatch | null {
  * for explicit note-saving language only.
  */
 function matchNote(text: string): CandidateMatch | null {
+  if (/\bnote\s+to\s+\w+/i.test(text)) {
+    return {
+      domain: "note",
+      confidence: 0.88,
+      reason: "'Note to [verb]' is explicit note-saving language.",
+    };
+  }
   if (/\bsave\s+(this|that)\s+(note|idea|thought)\b/i.test(text)) {
     return {
       domain: "note",
