@@ -38,6 +38,11 @@ import {
   buildAutomationStatusBlock,
   type AutomationDigest,
 } from "./lib/automation-context";
+import {
+  fetchWhatsappDeliveryFailures,
+  buildWhatsappDeliveryStatusBlock,
+  type WhatsappDeliveryFailureSummary,
+} from "./lib/whatsapp-delivery-context";
 import { buildMorningBriefSpoken } from "./lib/morning-brief";
 import { buildNightSweepSpoken, EVENING_HOUR } from "./lib/night-sweep";
 import { useCarsonStore } from "./stores/carson";
@@ -204,6 +209,7 @@ function PersistentCarsonWidget({
   const [notesBlock, setNotesBlock] = useState("");
   const [todosBlock, setTodosBlock] = useState("");
   const [automationDigest, setAutomationDigest] = useState<AutomationDigest | null>(null);
+  const [whatsappFailures, setWhatsappFailures] = useState<WhatsappDeliveryFailureSummary[]>([]);
 
   // When calendarDisconnectCount increments, clear stale calendar events so
   // Carson does not see them in the next session after a disconnect.
@@ -256,6 +262,13 @@ function PersistentCarsonWidget({
   }, [userId]);
 
   useEffect(() => {
+    if (!userId) { setWhatsappFailures([]); return; }
+    fetchWhatsappDeliveryFailures()
+      .then((failures) => setWhatsappFailures(failures))
+      .catch(() => setWhatsappFailures([]));
+  }, [userId]);
+
+  useEffect(() => {
     if (!userId) return;
     void loadHouseholdRules();
   }, [userId, loadHouseholdRules]);
@@ -265,9 +278,14 @@ function PersistentCarsonWidget({
     [automationDigest],
   );
 
+  const whatsappDeliveryStatusBlock = useMemo(
+    () => buildWhatsappDeliveryStatusBlock(whatsappFailures),
+    [whatsappFailures],
+  );
+
   const elevenLabsBriefStateText = useMemo(
-    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock }),
-    [tasks, people, user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock],
+    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock }),
+    [tasks, people, user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock],
   );
   const isEvening = now.getHours() >= EVENING_HOUR;
   const spokenBrief = useMemo(
@@ -318,10 +336,16 @@ function PersistentCarsonWidget({
       ? buildAutomationStatusBlock(freshDigest)
       : "";
 
+    const freshWhatsappFailures = userId
+      ? await fetchWhatsappDeliveryFailures().catch(() => [])
+      : [];
+    setWhatsappFailures(freshWhatsappFailures);
+    const freshWhatsappDeliveryStatusBlock = buildWhatsappDeliveryStatusBlock(freshWhatsappFailures);
+
     const freshHouseholdRules = useHouseholdRulesStore.getState().rules;
 
     return {
-      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock }),
+      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock, whatsappDeliveryStatusBlock: freshWhatsappDeliveryStatusBlock }),
       spokenBrief:
         freshNow.getHours() >= EVENING_HOUR
           ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined)

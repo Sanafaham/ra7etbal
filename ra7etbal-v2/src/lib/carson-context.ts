@@ -47,6 +47,12 @@ export interface CarsonContextInput {
    */
   automationStatusBlock?: string;
   /**
+   * Pre-formatted WhatsApp delivery failures block from
+   * buildWhatsappDeliveryStatusBlock(). Pass empty string or omit when not
+   * loaded yet, or when there are no recent failures.
+   */
+  whatsappDeliveryStatusBlock?: string;
+  /**
    * Household-level delegation rules text (from household_rules table).
    * Injected verbatim into Carson's context so it guides assignment decisions.
    */
@@ -271,6 +277,9 @@ export function buildCarsonContext(input: CarsonContextInput): string {
 
   // ── Automation status ─────────────────────────────────────────────────────
   if (input.automationStatusBlock) lines.push(input.automationStatusBlock);
+
+  // ── WhatsApp delivery diagnostics ─────────────────────────────────────────
+  if (input.whatsappDeliveryStatusBlock) lines.push(input.whatsappDeliveryStatusBlock);
 
   // ── Saved notes ───────────────────────────────────────────────────────────
   if (input.notesBlock) lines.push(input.notesBlock);

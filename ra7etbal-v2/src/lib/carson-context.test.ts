@@ -96,3 +96,30 @@ describe("buildCarsonContext — People memory retrieval", () => {
     expect(out).toContain("Notes: Loves painting.");
   });
 });
+
+describe("buildCarsonContext — Phase 9A operational diagnostics", () => {
+  it("includes the WhatsApp delivery status block when provided", () => {
+    const out = buildCarsonContext({
+      tasks: [],
+      people: [],
+      whatsappDeliveryStatusBlock: "WHATSAPP DELIVERY ISSUES (last 48h):\n- Failed to Sana — 2h ago: ecosystem engagement throttle",
+    });
+    expect(out).toContain("WHATSAPP DELIVERY ISSUES");
+    expect(out).toContain("ecosystem engagement throttle");
+  });
+
+  it("omits the WhatsApp delivery status block when not provided (no recent failures)", () => {
+    const out = buildCarsonContext({ tasks: [], people: [] });
+    expect(out).not.toContain("WHATSAPP DELIVERY ISSUES");
+  });
+
+  it("includes the automation status block when provided, including a failed entry", () => {
+    const out = buildCarsonContext({
+      tasks: [],
+      people: [],
+      automationStatusBlock: "AUTOMATION STATUS:\nFailed (delivery or send failure — needs attention):\n- Daily check-in — Sana — failed 2h ago: ecosystem engagement throttle",
+    });
+    expect(out).toContain("AUTOMATION STATUS");
+    expect(out).toContain("Failed (delivery or send failure");
+  });
+});

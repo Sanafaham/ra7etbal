@@ -25,6 +25,8 @@ export interface AutomationRunSummary {
   isFollowupSent: boolean;
   confirmedAgoMs?: number;
   escalatedAgoMs?: number;
+  /** Only set for failed runs — automation_runs.failure_reason. */
+  failureReason?: string | null;
 }
 
 export interface AutomationScheduleSummary {
@@ -38,6 +40,8 @@ export interface AutomationDigest {
   pending: AutomationRunSummary[];
   /** In escalated state (last 48 h) */
   escalated: AutomationRunSummary[];
+  /** In failed state (last 48 h) — e.g. WhatsApp delivery failure propagated from the webhook. */
+  failed: AutomationRunSummary[];
   /** Confirmed within the last 24 h */
   confirmedToday: AutomationRunSummary[];
   /** Scheduled to fire within the next 24 h */
@@ -49,6 +53,7 @@ export interface AutomationDigest {
 const EMPTY_DIGEST: AutomationDigest = {
   pending: [],
   escalated: [],
+  failed: [],
   confirmedToday: [],
   firingToday: [],
   firingTomorrow: [],
@@ -76,11 +81,11 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   const window24hFwd = new Date(nowMs + 24 * 3_600_000).toISOString();
   const window48hFwd = new Date(nowMs + 48 * 3_600_000).toISOString();
 
-  // ── Open runs (pending + escalated, last 48 h) ────────────────────────────
+  // ── Open runs (pending + escalated + failed, last 48 h) ───────────────────
   const { data: openRuns } = await supabase
     .from("automation_runs")
-    .select("automation_id, current_state, sent_at, confirmed_at, escalated_at, automations!inner(title, automation_type)")
-    .in("current_state", ["sent", "followup_sent", "escalated"])
+    .select("automation_id, current_state, sent_at, confirmed_at, escalated_at, failure_reason, automations!inner(title, automation_type)")
+    .in("current_state", ["sent", "followup_sent", "escalated", "failed"])
     .gte("sent_at", window48hAgo)
     .order("sent_at", { ascending: false })
     .limit(20);
@@ -154,6 +159,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
       isFollowupSent: r.current_state === "followup_sent",
       confirmedAgoMs: confirmedMode && confirmedAt ? nowMs - new Date(confirmedAt).getTime() : undefined,
       escalatedAgoMs: escalatedAt ? nowMs - new Date(escalatedAt).getTime() : undefined,
+      failureReason: r.current_state === "failed" ? ((r.failure_reason as string | null) ?? null) : undefined,
     };
   }
 
@@ -173,6 +179,10 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     .filter((r) => r.current_state === "escalated")
     .map((r) => toRunSummary(r));
 
+  const failed = openRunsTyped
+    .filter((r) => r.current_state === "failed")
+    .map((r) => toRunSummary(r));
+
   const confirmedToday = ((confirmedRuns ?? []) as Record<string, unknown>[])
     .map((r) => toRunSummary(r, true));
 
@@ -188,7 +198,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     nextRunAt: a.next_run_at as string,
   }));
 
-  return { pending, escalated, confirmedToday, firingToday, firingTomorrow };
+  return { pending, escalated, failed, confirmedToday, firingToday, firingTomorrow };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -240,6 +250,16 @@ export function buildAutomationStatusBlock(digest: AutomationDigest): string {
     }
   }
 
+  if (digest.failed.length > 0) {
+    lines.push("Failed (delivery or send failure — needs attention):");
+    for (const r of digest.failed.slice(0, MAX_TEXT)) {
+      const who = r.assignee ? ` — ${r.assignee}` : "";
+      const age = msToAgo(r.sentAgoMs);
+      const reason = r.failureReason ? `: ${r.failureReason}` : "";
+      lines.push(`- ${r.automationTitle}${who} — failed ${age}${reason}`);
+    }
+  }
+
   if (digest.firingToday.length > 0) {
     lines.push("Firing today:");
     for (const a of digest.firingToday.slice(0, MAX_TEXT)) {
@@ -275,6 +295,16 @@ export function buildAutomationStatusBlock(digest: AutomationDigest): string {
  * regular tasks; these are automation-generated loops).
  */
 export function formatAutomationForMorning(digest: AutomationDigest): string {
+  // Failed — highest urgency, something actually broke (e.g. WhatsApp delivery failure)
+  if (digest.failed.length === 1) {
+    const r = digest.failed[0];
+    const who = r.assignee ? ` to ${cap(r.assignee)}` : "";
+    return `One automation failed to send${who} — it needs your attention.`;
+  }
+  if (digest.failed.length > 1) {
+    return `${digest.failed.length} automations failed to send and need your attention.`;
+  }
+
   // Escalated — highest urgency
   if (digest.escalated.length === 1) {
     const r = digest.escalated[0];
@@ -320,6 +350,16 @@ export function formatAutomationForMorning(digest: AutomationDigest): string {
  */
 export function formatAutomationForNight(digest: AutomationDigest): string {
   const stillOpen = digest.escalated.length + digest.pending.length;
+
+  // Failed — highest urgency, surfaced before anything else tonight
+  if (digest.failed.length === 1) {
+    const r = digest.failed[0];
+    const who = r.assignee ? ` to ${cap(r.assignee)}` : "";
+    return `The ${lc(r.automationTitle)} automation failed to send${who} — worth a look before tomorrow.`;
+  }
+  if (digest.failed.length > 1) {
+    return `${digest.failed.length} automations failed to send today and need a look.`;
+  }
 
   // Still waiting / escalated
   if (digest.escalated.length === 1) {
