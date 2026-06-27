@@ -21,6 +21,7 @@ const TYPE_META: Record<ItemType, { label: string; cls: string }> = {
   followup: { label: "Follow-up", cls: "bg-rose-100 text-rose-900 border-rose-300" },
   errand: { label: "Errand", cls: "bg-teal-100 text-teal-900 border-teal-300" },
   parked: { label: "Parked", cls: "bg-stone-100 text-stone-700 border-stone-300" },
+  todo: { label: "To-do", cls: "bg-lime-100 text-lime-900 border-lime-300" },
 };
 
 // `field-sizing: content` lets modern browsers (iOS 17+, Chrome 123+) grow the
@@ -62,7 +63,7 @@ export default function ItemCard({
     item.assignedTo === "__me__" ||
     people.some((p) => p.name === item.assignedTo);
 
-  const showsAssignment = item.type !== "parked" && item.type !== "decision";
+  const showsAssignment = item.type !== "parked" && item.type !== "decision" && item.type !== "todo";
   // Messages and delegations are the two types where a recipient-facing
   // message makes sense. Other types can still have one if the AI suggested it.
   const messageRelevant =

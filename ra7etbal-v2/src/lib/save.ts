@@ -7,10 +7,12 @@ import { scheduleReminderPush } from "./qstash-reminder";
 import { scheduleEscalationMessages } from "./qstash-escalation";
 import { supabase } from "./supabase";
 import { createTask } from "./tasks";
+import { createTodo } from "./carson-todos";
 import type { ExtractedItem } from "../types/extraction";
 import type { Message } from "../types/message";
 import type { Person } from "../types/person";
 import type { Task } from "../types/task";
+import type { CarsonTodo } from "./carson-todos";
 
 /**
  * Replace first-person owner pronouns in a delegation message so the
@@ -103,6 +105,8 @@ async function buildMessageContent({
 export interface SaveResult {
   tasks: Task[];
   messages: Message[];
+  /** "todo"-typed items routed into carson_todos instead of `tasks` — see todo-routing.ts. */
+  todos: CarsonTodo[];
   /** How many items were intentionally skipped (e.g. parked, message without recipient). */
   skipped: number;
   /**
@@ -142,12 +146,26 @@ export async function savePending(
 
   const tasks: Task[] = [];
   const messages: Message[] = [];
+  const todos: CarsonTodo[] = [];
   let skipped = 0;
   const imagePathsByTaskId = new Map<string, string | null>();
 
   for (const item of items) {
     if (item.type === "parked") {
       skipped += 1;
+      continue;
+    }
+
+    // "todo" items never go through the tasks pipeline — they're active
+    // personal commitments with no due date and no delegate, routed here
+    // deterministically by applyTodoRouting() in extract.ts. Fixes the bug
+    // where "Add buy flowers to my to-do list" created a `tasks` row
+    // (surfaced under Needs You) instead of a carson_todos row.
+    if (item.type === "todo") {
+      const todo = await measureSupabaseOperation(timingObserver, () =>
+        createTodo(item.description.trim(), null, "clear_my_head"),
+      );
+      todos.push(todo);
       continue;
     }
 
@@ -389,7 +407,7 @@ export async function savePending(
     tasks.push(task);
   }
 
-  return { tasks, messages, skipped, imagePathsByTaskId };
+  return { tasks, messages, todos, skipped, imagePathsByTaskId };
 }
 
 /**

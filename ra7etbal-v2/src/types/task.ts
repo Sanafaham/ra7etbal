@@ -1,7 +1,11 @@
 import type { ItemType } from "./extraction";
 
-/** Tasks store everything except free-form messages. */
-export type TaskType = Exclude<ItemType, "message">;
+/**
+ * Tasks store everything except free-form messages and "todo" items.
+ * "todo" items are routed into carson_todos by savePending() and never
+ * reach createTask() — see todo-routing.ts.
+ */
+export type TaskType = Exclude<ItemType, "message" | "todo">;
 
 export type TaskStatus = "pending" | "done" | "cancelled";
 

@@ -10,6 +10,12 @@
  *   followup    — waiting on someone or something
  *   errand      — shopping, pickup, errand
  *   parked      — idea for later
+ *
+ * "todo" is NOT part of the model's vocabulary — the extraction prompt never
+ * returns it. It's applied deterministically by applyTodoRouting() in
+ * todo-routing.ts as a post-processing pass over "action"/"errand" items
+ * with no due date and no delegate, so it never needs prompt changes.
+ * savePending() routes "todo" items into carson_todos instead of tasks.
  */
 export type ItemType =
   | "action"
@@ -19,7 +25,8 @@ export type ItemType =
   | "decision"
   | "followup"
   | "errand"
-  | "parked";
+  | "parked"
+  | "todo";
 
 /** "__me__" is the sentinel for the signed-in user; otherwise it's a person name. */
 export type Assignment = "__me__" | string | null;

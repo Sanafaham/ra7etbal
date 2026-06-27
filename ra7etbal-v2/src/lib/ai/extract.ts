@@ -6,6 +6,7 @@ import type {
 } from "../../types/extraction";
 import { buildExtractionPrompt } from "./extract-prompt";
 import { applyRolePrecedence } from "./role-precedence";
+import { applyTodoRouting } from "./todo-routing";
 
 /**
  * AI extraction
@@ -90,9 +91,14 @@ export async function extractItems(
   // Deterministic safety net for the role-precedence rule. The prompt asks
   // the model to promote message->delegation when the recipient's role is
   // operational for the topic; this catches the residual misclassifications.
+  const withRolePrecedence = applyRolePrecedence(extracted, people, text);
+  // Deterministic safety net for To-do routing. The prompt has no "todo"
+  // concept — a personal action/errand item with no due date and no
+  // delegate is reclassified here so it's saved into carson_todos instead
+  // of `tasks` (see todo-routing.ts).
   return {
     ...result,
-    extracted: applyRolePrecedence(extracted, people, text),
+    extracted: applyTodoRouting(withRolePrecedence),
   };
 }
 
