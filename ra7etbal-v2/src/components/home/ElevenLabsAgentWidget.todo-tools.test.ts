@@ -35,7 +35,7 @@ describe("ElevenLabsAgentWidget — To-do client tool registration", () => {
 
   it("defines a createTodoTool implementation that calls the carson-todos createTodo helper", () => {
     expect(SOURCE).toContain("const createTodoTool = useCallback(");
-    expect(SOURCE).toMatch(/createTodoTool[\s\S]{0,400}await createTodo\(/);
+    expect(SOURCE).toMatch(/createTodoTool[\s\S]{0,900}await createTodo\(/);
   });
 
   it("defines a completeTodoTool implementation that calls the carson-todos completeTodo helper", () => {
@@ -87,7 +87,7 @@ describe("ElevenLabsAgentWidget — createTodoTool failure message", () => {
   });
 
   it("the createTodoTool catch block never mentions technical issues or support", () => {
-    const match = SOURCE.match(/const createTodoTool = useCallback\([\s\S]{0,1500}?\n  \);/);
+    const match = SOURCE.match(/const createTodoTool = useCallback\([\s\S]{0,2500}?\n  \);/);
     expect(match).not.toBeNull();
     const block = match![0];
     expect(block.toLowerCase()).not.toMatch(/technical issue|contact support|support team|visibility into/);

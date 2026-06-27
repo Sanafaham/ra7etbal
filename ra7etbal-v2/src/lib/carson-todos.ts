@@ -40,6 +40,14 @@ export async function createTodo(
   const trimmedTitle = title.trim();
   if (!trimmedTitle) throw new Error("Cannot create a to-do without a title.");
 
+  // TEMP P0 INSTRUMENTATION — remove once live to-do failure is root-caused.
+  const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+  console.error("[TODO_DEBUG] createTodo() auth session check:", {
+    hasSession: !!sessionData?.session,
+    userId: sessionData?.session?.user?.id,
+    sessionErr: sessionErr?.message,
+  });
+
   const { data, error } = await supabase
     .from("carson_todos")
     .insert({
@@ -51,9 +59,15 @@ export async function createTodo(
     .single();
 
   if (error) {
-    console.error("[carson-todos] createTodo failed:", error.message);
+    console.error("[carson-todos] createTodo failed:", {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+    });
     throw error;
   }
+  console.error("[TODO_DEBUG] createTodo() insert succeeded, row id:", data?.id);
   return data as CarsonTodo;
 }
 

@@ -1805,18 +1805,47 @@ export default function ElevenLabsAgentWidget({
   // ------------------------------------------------------------------
   const createTodoTool = useCallback(
     async (params: CreateTodoParams): Promise<string> => {
+      // TEMP P0 INSTRUMENTATION — remove once live to-do failure is root-caused.
+      console.error("[TODO_DEBUG] 1/5 create_todo tool invoked. raw params:", JSON.stringify(params));
+
       const trimmed = extractTodoTitleParam(params).trim();
+      console.error("[TODO_DEBUG] 2/5 extracted title:", JSON.stringify(trimmed));
+
       if (!trimmed) {
+        console.error("[TODO_DEBUG] ABORT — no title extracted from params, never calling createTodo().");
         return "I did not receive a to-do title. Ask the user what to add.";
       }
       const description = extractTodoDescriptionParam(params) ?? null;
 
       try {
+        console.error("[TODO_DEBUG] 3/5 calling createTodo() now...");
         const todo = await createTodo(trimmed, description);
+        console.error("[TODO_DEBUG] 4/5 createTodo() resolved. row id:", todo.id);
         todosRef.current = [todo, ...todosRef.current];
         sessionActionsRef.current.push(`Added to-do: ${trimmed}`);
         return "Added to your to-do list.";
-      } catch {
+      } catch (err) {
+        const supabaseErr = err as { message?: string; code?: string; details?: string; hint?: string };
+        console.error("[TODO_DEBUG] 5/5 createTodo() THREW.", {
+          message: supabaseErr?.message,
+          code: supabaseErr?.code,
+          details: supabaseErr?.details,
+          hint: supabaseErr?.hint,
+          raw: err,
+        });
+        try {
+          recordCarsonDiagnostic("carson-error", {
+            message: `create_todo failed: ${supabaseErr?.message ?? String(err)}`,
+            detail: JSON.stringify({
+              code: supabaseErr?.code,
+              details: supabaseErr?.details,
+              hint: supabaseErr?.hint,
+              title: trimmed,
+            }),
+          });
+        } catch {
+          // diagnostic logging must never block the user-facing reply
+        }
         return "I wasn't able to save that. Please say the to-do again.";
       }
     },
