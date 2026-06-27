@@ -115,6 +115,12 @@ export default async function handler(req, res) {
       attachment_count: attachmentCountN,
       send_mode: isDirectMessage ? 'direct_message' : isRoutineMessage ? 'routine_message' : 'task_template',
       direct_message: isDirectMessage,
+      // Stored only for automation_message rows so an async webhook-reported
+      // failure (e.g. Meta 131049) can build an SMS fallback without a
+      // separate lookup. Not stored for delegation/task/direct-message rows —
+      // those already have a synchronous SMS fallback path that has the text
+      // in scope, and we don't want to widen what's persisted unnecessarily.
+      ...(deliverySourceType === 'automation_message' ? { message_text: cleanMessage } : {}),
     },
   });
 
@@ -1052,7 +1058,7 @@ async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath })
   }
 }
 
-function buildSmsBody({ ownerName, messageText, confirmationLink }) {
+export function buildSmsBody({ ownerName, messageText, confirmationLink }) {
   const parts = [];
   if (ownerName) parts.push(`From ${ownerName}:`);
   parts.push(String(messageText || '').trim());
@@ -1060,7 +1066,7 @@ function buildSmsBody({ ownerName, messageText, confirmationLink }) {
   return parts.join('\n');
 }
 
-async function sendTwilioSms({ to, body, accountSid, authToken, fromNumber }) {
+export async function sendTwilioSms({ to, body, accountSid, authToken, fromNumber }) {
   const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
   const params = new URLSearchParams({ From: fromNumber, To: `+${to}`, Body: body });
   try {

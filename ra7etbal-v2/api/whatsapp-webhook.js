@@ -1,3 +1,5 @@
+import { buildSmsBody, sendTwilioSms } from './send-whatsapp-task.js';
+
 const ALLOWED_STATUSES = new Set(['sent', 'delivered', 'read', 'failed']);
 const DELIVERY_STATUS_RANK = {
   pending: 0,
@@ -319,7 +321,7 @@ export async function updateWhatsappDeliveryStatus({
     const lookupRes = await fetch(
       `${supabaseUrl}/rest/v1/whatsapp_deliveries` +
         `?meta_message_id=eq.${encodeURIComponent(messageId)}` +
-        `&select=id,user_id,delivery_status,last_status_at,automation_run_id,source_type` +
+        `&select=id,user_id,delivery_status,last_status_at,automation_run_id,source_type,recipient_phone,metadata` +
         `&limit=1`,
       { headers: serviceHeaders(serviceKey) },
     );
@@ -425,6 +427,28 @@ export async function updateWhatsappDeliveryStatus({
       } catch (err) {
         console.warn('[whatsapp-webhook] automation_run failure propagation threw', {
           automationRunId: delivery.automation_run_id,
+          error: err?.message ?? String(err),
+        });
+      }
+    }
+
+    // SMS fallback for recurring message automations throttled by Meta
+    // (131049 — "ecosystem engagement" pacing on the Marketing-category
+    // ra7etbal_routine_message template). Reuses the existing Twilio path
+    // from send-whatsapp-task.js's synchronous failure branch. Inert unless
+    // SMS_FALLBACK_ENABLED is set — deploying this changes no behavior until
+    // that flag is explicitly turned on.
+    if (
+      updated &&
+      status === 'failed' &&
+      delivery.source_type === 'automation_message' &&
+      String(failureCode) === '131049'
+    ) {
+      try {
+        await attemptAutomationMessageSmsFallback({ supabaseUrl, serviceKey, delivery });
+      } catch (err) {
+        console.warn('[whatsapp-webhook] automation_message SMS fallback threw', {
+          deliveryId: delivery.id,
           error: err?.message ?? String(err),
         });
       }
@@ -805,6 +829,108 @@ export function getFailureDetails(status) {
     code: first.code ?? null,
     subcode: first.error_subcode ?? null,
   };
+}
+
+/**
+ * Recurring message automations have no task, no confirmation link, and
+ * (by the plain-message boundary in send-whatsapp-task.js) no SMS fallback
+ * on the synchronous send path. When Meta accepts the send and only later
+ * reports `failed` via this webhook with error 131049 — a pacing/quality
+ * throttle on the Marketing-category ra7etbal_routine_message template —
+ * there was previously nothing left to try. This reuses the same Twilio
+ * path send-whatsapp-task.js already uses for synchronous task-template
+ * failures, scoped to this exact failure. No-ops (fail-open) unless
+ * SMS_FALLBACK_ENABLED + Twilio env vars are configured.
+ */
+export async function attemptAutomationMessageSmsFallback({
+  supabaseUrl,
+  serviceKey,
+  delivery,
+}) {
+  const smsFallbackEnabled = process.env.SMS_FALLBACK_ENABLED === 'true';
+  const twilioAccountSid = process.env.TWILIO_ACCOUNT_SID;
+  const twilioAuthToken = process.env.TWILIO_AUTH_TOKEN;
+  const twilioFromNumber = process.env.TWILIO_FROM_NUMBER;
+  const recipientPhone = delivery?.recipient_phone;
+
+  if (!smsFallbackEnabled || !twilioAccountSid || !twilioAuthToken || !twilioFromNumber || !recipientPhone) {
+    console.log('[whatsapp-webhook] automation_message SMS fallback skipped — not configured', {
+      deliveryId: delivery?.id,
+      smsFallbackEnabled,
+      hasTwilioCreds: Boolean(twilioAccountSid && twilioAuthToken && twilioFromNumber),
+      hasRecipientPhone: Boolean(recipientPhone),
+    });
+    return { attempted: false, reason: 'not_configured' };
+  }
+
+  const metadata = isPlainObject(delivery?.metadata) ? delivery.metadata : {};
+  const messageText = typeof metadata.message_text === 'string' ? metadata.message_text.trim() : '';
+  if (!messageText) {
+    console.warn('[whatsapp-webhook] automation_message SMS fallback skipped — no stored message text', {
+      deliveryId: delivery?.id,
+    });
+    return { attempted: false, reason: 'no_message_text' };
+  }
+
+  const body = buildSmsBody({ ownerName: null, messageText, confirmationLink: null });
+  const smsResult = await sendTwilioSms({
+    to: recipientPhone,
+    body,
+    accountSid: twilioAccountSid,
+    authToken: twilioAuthToken,
+    fromNumber: twilioFromNumber,
+  });
+
+  if (smsResult.ok) {
+    console.log('[whatsapp-webhook] automation_message SMS fallback sent', {
+      deliveryId: delivery.id,
+      sid: smsResult.sid,
+    });
+  } else {
+    console.error('[whatsapp-webhook] automation_message SMS fallback failed', {
+      deliveryId: delivery?.id,
+      error: smsResult.error,
+    });
+  }
+
+  await recordSmsFallbackOutcome({
+    supabaseUrl,
+    serviceKey,
+    deliveryId: delivery.id,
+    existingMetadata: metadata,
+    outcome: {
+      attempted_at: new Date().toISOString(),
+      sent: smsResult.ok,
+      sid: smsResult.sid ?? null,
+      error: smsResult.ok ? null : smsResult.error,
+    },
+  });
+
+  return { attempted: true, sent: smsResult.ok };
+}
+
+async function recordSmsFallbackOutcome({ supabaseUrl, serviceKey, deliveryId, existingMetadata, outcome }) {
+  try {
+    await fetch(
+      `${supabaseUrl}/rest/v1/whatsapp_deliveries?id=eq.${encodeURIComponent(deliveryId)}`,
+      {
+        method: 'PATCH',
+        headers: { ...serviceHeaders(serviceKey), Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          metadata: { ...existingMetadata, sms_fallback: outcome },
+        }),
+      },
+    );
+  } catch (err) {
+    console.warn('[whatsapp-webhook] sms_fallback metadata patch threw (non-fatal)', {
+      deliveryId,
+      error: err?.message ?? String(err),
+    });
+  }
+}
+
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function serviceHeaders(serviceKey) {

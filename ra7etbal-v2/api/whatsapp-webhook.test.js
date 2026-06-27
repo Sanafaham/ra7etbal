@@ -1,5 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const smsMocks = vi.hoisted(() => ({
+  buildSmsBody: vi.fn(({ messageText }) => `SMS: ${messageText}`),
+  sendTwilioSms: vi.fn(async () => ({ ok: true, sid: 'SM123', error: null })),
+}));
+
+vi.mock('./send-whatsapp-task.js', () => ({
+  buildSmsBody: smsMocks.buildSmsBody,
+  sendTwilioSms: smsMocks.sendTwilioSms,
+}));
+
 import {
+  attemptAutomationMessageSmsFallback,
   buildDeliveryStatusPatch,
   getFailureDetails,
   updateWhatsappDeliveryStatus,
@@ -8,6 +20,9 @@ import {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  smsMocks.buildSmsBody.mockClear();
+  smsMocks.sendTwilioSms.mockClear();
 });
 
 describe('WhatsApp delivery status progression', () => {
@@ -271,6 +286,189 @@ describe('getFailureDetails — Meta webhook error extraction', () => {
       subcode: null,
     });
   });
+});
+
+describe('attemptAutomationMessageSmsFallback — recurring automation 131049 fallback', () => {
+  function configureSmsEnv() {
+    vi.stubEnv('SMS_FALLBACK_ENABLED', 'true');
+    vi.stubEnv('TWILIO_ACCOUNT_SID', 'AC123');
+    vi.stubEnv('TWILIO_AUTH_TOKEN', 'token123');
+    vi.stubEnv('TWILIO_FROM_NUMBER', '+15550001111');
+  }
+
+  it('skips (fail-open) when SMS_FALLBACK_ENABLED is not set — the production default today', async () => {
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await attemptAutomationMessageSmsFallback({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      delivery: {
+        id: 'delivery-1',
+        recipient_phone: '971500000000',
+        metadata: { message_text: 'Drink water reminder' },
+      },
+    });
+
+    expect(result).toEqual({ attempted: false, reason: 'not_configured' });
+    expect(smsMocks.sendTwilioSms).not.toHaveBeenCalled();
+  });
+
+  it('skips when Twilio creds are configured but the recipient has no phone on the delivery row', async () => {
+    configureSmsEnv();
+    const result = await attemptAutomationMessageSmsFallback({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      delivery: { id: 'delivery-1', recipient_phone: null, metadata: { message_text: 'Hi' } },
+    });
+
+    expect(result).toEqual({ attempted: false, reason: 'not_configured' });
+    expect(smsMocks.sendTwilioSms).not.toHaveBeenCalled();
+  });
+
+  it('skips when no message text was stored on the delivery row (older deliveries pre-dating this fix)', async () => {
+    configureSmsEnv();
+    const result = await attemptAutomationMessageSmsFallback({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      delivery: { id: 'delivery-1', recipient_phone: '971500000000', metadata: {} },
+    });
+
+    expect(result).toEqual({ attempted: false, reason: 'no_message_text' });
+    expect(smsMocks.sendTwilioSms).not.toHaveBeenCalled();
+  });
+
+  it('sends the SMS and records the outcome in metadata when fully configured', async () => {
+    configureSmsEnv();
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await attemptAutomationMessageSmsFallback({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      delivery: {
+        id: 'delivery-1',
+        recipient_phone: '971500000000',
+        metadata: { send_mode: 'routine_message', message_text: 'Take your medicine' },
+      },
+    });
+
+    expect(result).toEqual({ attempted: true, sent: true });
+    expect(smsMocks.sendTwilioSms).toHaveBeenCalledWith(
+      expect.objectContaining({ to: '971500000000', accountSid: 'AC123', fromNumber: '+15550001111' }),
+    );
+
+    const patchBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(patchBody.metadata).toMatchObject({
+      send_mode: 'routine_message',
+      message_text: 'Take your medicine',
+      sms_fallback: { sent: true, sid: 'SM123', error: null },
+    });
+  });
+
+  it('records a failed outcome without throwing when the Twilio send itself fails', async () => {
+    configureSmsEnv();
+    smsMocks.sendTwilioSms.mockResolvedValueOnce({ ok: false, sid: null, error: 'Twilio rejected number' });
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await attemptAutomationMessageSmsFallback({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      delivery: { id: 'delivery-1', recipient_phone: '971500000000', metadata: { message_text: 'Hi' } },
+    });
+
+    expect(result).toEqual({ attempted: true, sent: false });
+    const patchBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(patchBody.metadata.sms_fallback).toMatchObject({ sent: false, sid: null, error: 'Twilio rejected number' });
+  });
+});
+
+describe('updateWhatsappDeliveryStatus — SMS fallback trigger gating', () => {
+  function mockDeliveryLookupAndPatch({ sourceType, recipientPhone = '971500000000', extraCalls = [] }) {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([
+        {
+          id: 'delivery-1',
+          user_id: 'user-1',
+          delivery_status: 'sent',
+          last_status_at: '2026-06-27T14:30:04Z',
+          automation_run_id: 'run-1',
+          source_type: sourceType,
+          recipient_phone: recipientPhone,
+          metadata: { message_text: 'Drink water' },
+        },
+      ]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }])) // delivery patch
+      .mockResolvedValueOnce(jsonResponse([], 200)) // automation_runs patch
+      .mockImplementation((...args) => {
+        for (const call of extraCalls) call();
+        return Promise.resolve(jsonResponse([{ id: 'delivery-1' }]));
+      });
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('triggers the SMS fallback for source_type=automation_message + failureCode=131049', async () => {
+    configureSmsEnvGlobal();
+    mockDeliveryLookupAndPatch({ sourceType: 'automation_message' });
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.1',
+      status: 'failed',
+      updatedAt: '2026-06-27T14:30:09Z',
+      failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failureCode: 131049,
+      failureSubcode: 2494,
+    });
+
+    expect(smsMocks.sendTwilioSms).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT trigger the SMS fallback for a different failure code on the same source_type', async () => {
+    configureSmsEnvGlobal();
+    mockDeliveryLookupAndPatch({ sourceType: 'automation_message' });
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.1',
+      status: 'failed',
+      updatedAt: '2026-06-27T14:30:09Z',
+      failureReason: 'Recipient number invalid.',
+      failureCode: 131026,
+      failureSubcode: null,
+    });
+
+    expect(smsMocks.sendTwilioSms).not.toHaveBeenCalled();
+  });
+
+  it('does NOT trigger the SMS fallback for 131049 on a non-automation_message source_type (e.g. delegation)', async () => {
+    configureSmsEnvGlobal();
+    mockDeliveryLookupAndPatch({ sourceType: 'automation_delegation' });
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.1',
+      status: 'failed',
+      updatedAt: '2026-06-27T14:30:09Z',
+      failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failureCode: 131049,
+      failureSubcode: 2494,
+    });
+
+    expect(smsMocks.sendTwilioSms).not.toHaveBeenCalled();
+  });
+
+  function configureSmsEnvGlobal() {
+    vi.stubEnv('SMS_FALLBACK_ENABLED', 'true');
+    vi.stubEnv('TWILIO_ACCOUNT_SID', 'AC123');
+    vi.stubEnv('TWILIO_AUTH_TOKEN', 'token123');
+    vi.stubEnv('TWILIO_FROM_NUMBER', '+15550001111');
+  }
 });
 
 function jsonResponse(body, status = 200) {
