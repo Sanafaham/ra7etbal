@@ -8,6 +8,7 @@ import { scheduleEscalationMessages } from "./qstash-escalation";
 import { supabase } from "./supabase";
 import { createTask } from "./tasks";
 import { createTodo } from "./carson-todos";
+import { saveCarsonNote } from "./carson-notes";
 import type { ExtractedItem } from "../types/extraction";
 import type { Message } from "../types/message";
 import type { Person } from "../types/person";
@@ -38,7 +39,10 @@ function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
  *
  * Rules:
  *  - `message` items become a row in `messages` (no task).
- *  - `parked` items are skipped — by definition not yet actionable.
+ *  - `parked` items (passive ideas/information) become a row in `carson_notes`,
+ *    not `tasks` — they are not yet actionable by definition.
+ *  - `todo` items (deterministically reclassified from action/errand by
+ *    applyTodoRouting — see todo-routing.ts) become a row in `carson_todos`.
  *  - Everything else becomes a row in `tasks`.
  *  - `delegation` rows that have a named non-Me recipient also get a paired
  *    row in `messages` (linked via task_id) carrying the suggestedMessage
@@ -107,7 +111,9 @@ export interface SaveResult {
   messages: Message[];
   /** "todo"-typed items routed into carson_todos instead of `tasks` — see todo-routing.ts. */
   todos: CarsonTodo[];
-  /** How many items were intentionally skipped (e.g. parked, message without recipient). */
+  /** How many "parked"-typed items were saved into carson_notes (passive ideas/info). */
+  notesSaved: number;
+  /** How many items were intentionally skipped (e.g. message without recipient). */
   skipped: number;
   /**
    * Maps task.id → image_path for every task that had an image uploaded in
@@ -147,12 +153,27 @@ export async function savePending(
   const tasks: Task[] = [];
   const messages: Message[] = [];
   const todos: CarsonTodo[] = [];
+  let notesSaved = 0;
   let skipped = 0;
   const imagePathsByTaskId = new Map<string, string | null>();
 
   for (const item of items) {
+    // "parked" = passive idea/information the user wants remembered, not
+    // acted on ("Save this idea...", "Remember this thought...", "Hold this
+    // thought...", "Add this to my notes..."). Previously these were
+    // silently skipped and never persisted anywhere. Now they're saved into
+    // carson_notes, same table/shape as save_note (Voice Carson) and the
+    // manual Notes tab — see carson-notes.ts.
     if (item.type === "parked") {
-      skipped += 1;
+      const trimmed = item.description.trim();
+      if (trimmed) {
+        await measureSupabaseOperation(timingObserver, () =>
+          saveCarsonNote(trimmed, "general", "clear_my_head"),
+        );
+        notesSaved += 1;
+      } else {
+        skipped += 1;
+      }
       continue;
     }
 
@@ -407,7 +428,7 @@ export async function savePending(
     tasks.push(task);
   }
 
-  return { tasks, messages, todos, skipped, imagePathsByTaskId };
+  return { tasks, messages, todos, notesSaved, skipped, imagePathsByTaskId };
 }
 
 /**
