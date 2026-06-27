@@ -65,11 +65,22 @@ vi.mock("./inbox", () => ({
   saveInboxItem: vi.fn(),
 }));
 
+const fetchCalendarEventsMock = vi.fn();
+
 vi.mock("./calendar", () => ({
   filterCalendarEventsByRange: vi.fn(),
   classifyCalendarEvent: vi.fn(),
   formatEventTime: vi.fn(),
   formatEventEndTime: vi.fn(),
+  fetchCalendarEvents: fetchCalendarEventsMock,
+  deriveCalendarConnectionStatus: (result: { connected: boolean; revoked?: boolean }) =>
+    result.connected ? "connected" : result.revoked ? "revoked" : "disconnected",
+  buildCalendarConnectionStatusBlock: (status: string) =>
+    status === "connected"
+      ? "GOOGLE CALENDAR: Connected. Calendar events are visible."
+      : status === "revoked" || status === "disconnected"
+        ? "GOOGLE CALENDAR: Not connected."
+        : "",
 }));
 
 vi.mock("./save", () => ({
@@ -125,6 +136,7 @@ beforeEach(() => {
   loadRecentNotesMock.mockResolvedValue([]);
   listActiveTodosMock.mockResolvedValue([]);
   getHouseholdRulesMock.mockResolvedValue(null);
+  fetchCalendarEventsMock.mockResolvedValue({ connected: false, events: [] });
 
   fetchMock = vi.fn().mockResolvedValue({
     ok: true,

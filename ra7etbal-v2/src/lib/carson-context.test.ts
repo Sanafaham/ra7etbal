@@ -122,4 +122,18 @@ describe("buildCarsonContext — Phase 9A operational diagnostics", () => {
     expect(out).toContain("AUTOMATION STATUS");
     expect(out).toContain("Failed (delivery or send failure");
   });
+
+  it("includes the calendar connection status block when provided", () => {
+    const out = buildCarsonContext({
+      tasks: [],
+      people: [],
+      calendarConnectionStatusBlock: "GOOGLE CALENDAR: Connected. Calendar events are visible.",
+    });
+    expect(out).toContain("GOOGLE CALENDAR: Connected.");
+  });
+
+  it("omits the calendar connection status block when not provided", () => {
+    const out = buildCarsonContext({ tasks: [], people: [] });
+    expect(out).not.toContain("GOOGLE CALENDAR");
+  });
 });

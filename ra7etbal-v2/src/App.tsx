@@ -30,7 +30,13 @@ import SettingsModal from "./components/settings/SettingsModal";
 import Spinner from "./components/Spinner";
 import { useAuth } from "./hooks/useAuth";
 import { buildCarsonContext } from "./lib/carson-context";
-import { fetchCalendarEvents, type CalendarEvent } from "./lib/calendar";
+import {
+  fetchCalendarEvents,
+  deriveCalendarConnectionStatus,
+  buildCalendarConnectionStatusBlock,
+  type CalendarEvent,
+  type CalendarConnectionStatus,
+} from "./lib/calendar";
 import { formatNotesForContext, loadRecentNotes } from "./lib/carson-notes";
 import { formatTodosForContext, listActiveTodos } from "./lib/carson-todos";
 import {
@@ -210,6 +216,7 @@ function PersistentCarsonWidget({
   const [todosBlock, setTodosBlock] = useState("");
   const [automationDigest, setAutomationDigest] = useState<AutomationDigest | null>(null);
   const [whatsappFailures, setWhatsappFailures] = useState<WhatsappDeliveryFailureSummary[]>([]);
+  const [calendarConnectionStatus, setCalendarConnectionStatus] = useState<CalendarConnectionStatus>("unknown");
 
   // When calendarDisconnectCount increments, clear stale calendar events so
   // Carson does not see them in the next session after a disconnect.
@@ -230,6 +237,7 @@ function PersistentCarsonWidget({
     if (!userId) return;
     fetchCalendarEvents("next_7_days")
       .then((result) => {
+        setCalendarConnectionStatus(deriveCalendarConnectionStatus(result));
         if (result.connected) {
           setCalendarEvents(result.events);
           onCalendarRevokedChange(false);
@@ -283,9 +291,14 @@ function PersistentCarsonWidget({
     [whatsappFailures],
   );
 
+  const calendarConnectionStatusBlock = useMemo(
+    () => buildCalendarConnectionStatusBlock(calendarConnectionStatus),
+    [calendarConnectionStatus],
+  );
+
   const elevenLabsBriefStateText = useMemo(
-    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock }),
-    [tasks, people, user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock],
+    () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock, calendarConnectionStatusBlock }),
+    [tasks, people, user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock, calendarConnectionStatusBlock],
   );
   const isEvening = now.getHours() >= EVENING_HOUR;
   const spokenBrief = useMemo(
@@ -301,8 +314,12 @@ function PersistentCarsonWidget({
     if (userId) await loadTasks(userId, { force: true });
 
     let freshCalendarEvents = calendarEvents;
+    let freshCalendarConnectionStatusBlock = calendarConnectionStatusBlock;
     try {
       const calResult = await fetchCalendarEvents("next_7_days");
+      const freshStatus = deriveCalendarConnectionStatus(calResult);
+      setCalendarConnectionStatus(freshStatus);
+      freshCalendarConnectionStatusBlock = buildCalendarConnectionStatusBlock(freshStatus);
       if (calResult.connected) {
         freshCalendarEvents = calResult.events;
         setCalendarEvents(calResult.events);
@@ -345,13 +362,13 @@ function PersistentCarsonWidget({
     const freshHouseholdRules = useHouseholdRulesStore.getState().rules;
 
     return {
-      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock, whatsappDeliveryStatusBlock: freshWhatsappDeliveryStatusBlock }),
+      briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock, whatsappDeliveryStatusBlock: freshWhatsappDeliveryStatusBlock, calendarConnectionStatusBlock: freshCalendarConnectionStatusBlock }),
       spokenBrief:
         freshNow.getHours() >= EVENING_HOUR
           ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined)
           : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined),
     };
-  }, [userId, loadTasks, calendarEvents, people, user?.email, displayName, onCalendarRevokedChange]);
+  }, [userId, loadTasks, calendarEvents, calendarConnectionStatusBlock, people, user?.email, displayName, onCalendarRevokedChange]);
 
   if (status !== "signed_in" || !userId) return null;
 

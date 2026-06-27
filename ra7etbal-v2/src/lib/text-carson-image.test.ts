@@ -32,6 +32,9 @@ vi.mock("./image-upload", () => ({
 
 vi.mock("./calendar", () => ({
   filterCalendarEventsByRange: vi.fn(),
+  fetchCalendarEvents: vi.fn().mockResolvedValue({ connected: false, events: [] }),
+  deriveCalendarConnectionStatus: vi.fn().mockReturnValue("unknown"),
+  buildCalendarConnectionStatusBlock: vi.fn().mockReturnValue(""),
 }));
 
 vi.mock("./routines", () => ({

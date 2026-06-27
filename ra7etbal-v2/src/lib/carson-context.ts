@@ -53,6 +53,12 @@ export interface CarsonContextInput {
    */
   whatsappDeliveryStatusBlock?: string;
   /**
+   * Pre-formatted Google Calendar connection status block from
+   * buildCalendarConnectionStatusBlock(). Pass empty string or omit when the
+   * connection state hasn't been checked yet this session.
+   */
+  calendarConnectionStatusBlock?: string;
+  /**
    * Household-level delegation rules text (from household_rules table).
    * Injected verbatim into Carson's context so it guides assignment decisions.
    */
@@ -280,6 +286,9 @@ export function buildCarsonContext(input: CarsonContextInput): string {
 
   // ── WhatsApp delivery diagnostics ─────────────────────────────────────────
   if (input.whatsappDeliveryStatusBlock) lines.push(input.whatsappDeliveryStatusBlock);
+
+  // ── Google Calendar connection status ─────────────────────────────────────
+  if (input.calendarConnectionStatusBlock) lines.push(input.calendarConnectionStatusBlock);
 
   // ── Saved notes ───────────────────────────────────────────────────────────
   if (input.notesBlock) lines.push(input.notesBlock);

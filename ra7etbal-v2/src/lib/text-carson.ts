@@ -9,6 +9,7 @@ import { buildCarsonContext } from "./carson-context";
 import { CARSON_STATUS_POLICY } from "./carson-status-policy";
 import { fetchAutomationDigest, buildAutomationStatusBlock } from "./automation-context";
 import { fetchWhatsappDeliveryFailures, buildWhatsappDeliveryStatusBlock } from "./whatsapp-delivery-context";
+import { fetchCalendarEvents, deriveCalendarConnectionStatus, buildCalendarConnectionStatusBlock } from "./calendar";
 import { loadRecentNotes, formatNotesForContext } from "./carson-notes";
 import { listActiveTodos, formatTodosForContext } from "./carson-todos";
 import { getHouseholdRules } from "./household-rules";
@@ -150,6 +151,7 @@ export async function askTextCarson(
     notes,
     todos,
     householdRulesRow,
+    calendarResult,
   ] = await Promise.all([
     loadUserMemory(50).catch(() => ""),
     loadRecentMemory(20).catch(() => "No previous sessions."),
@@ -162,6 +164,7 @@ export async function askTextCarson(
     loadRecentNotes(20).catch(() => []),
     listActiveTodos(50).catch(() => []),
     getHouseholdRules().catch(() => null),
+    fetchCalendarEvents("today").catch(() => ({ connected: false, events: [] })),
   ]);
 
   const automationStatusBlock = automationDigest ? buildAutomationStatusBlock(automationDigest) : "";
@@ -169,6 +172,9 @@ export async function askTextCarson(
   const notesBlock = formatNotesForContext(notes);
   const todosBlock = formatTodosForContext(todos);
   const householdRules = householdRulesRow?.rules ?? "";
+  const calendarConnectionStatusBlock = buildCalendarConnectionStatusBlock(
+    deriveCalendarConnectionStatus(calendarResult),
+  );
 
   const prompt = buildTextCarsonPrompt(question, {
     ...context,
@@ -182,6 +188,7 @@ export async function askTextCarson(
     notesBlock,
     todosBlock,
     householdRules,
+    calendarConnectionStatusBlock,
   });
 
   let res: Response;
@@ -230,6 +237,7 @@ function buildTextCarsonPrompt(
     notesBlock?: string;
     todosBlock?: string;
     householdRules?: string;
+    calendarConnectionStatusBlock?: string;
   },
 ): string {
   const imageContext = context.imageDescription
@@ -327,6 +335,7 @@ ${buildCarsonContext({
   notesBlock: context.notesBlock,
   todosBlock: context.todosBlock,
   householdRules: context.householdRules,
+  calendarConnectionStatusBlock: context.calendarConnectionStatusBlock,
 })}${imageContext}
 
 User asks:

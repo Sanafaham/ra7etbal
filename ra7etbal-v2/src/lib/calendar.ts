@@ -37,6 +37,47 @@ export interface CalendarResult {
 }
 
 /**
+ * Calendar connection state for Carson's awareness — separate from the
+ * events themselves. "unknown" is the state before the first fetch resolves
+ * (e.g. signed out, or the connection check hasn't run yet this session).
+ */
+export type CalendarConnectionStatus = "connected" | "disconnected" | "revoked" | "unknown";
+
+/**
+ * Derives a CalendarConnectionStatus from a CalendarResult — the same
+ * connected/revoked flags fetchCalendarEvents() already returns.
+ */
+export function deriveCalendarConnectionStatus(result: CalendarResult): CalendarConnectionStatus {
+  if (result.connected) return "connected";
+  if (result.revoked) return "revoked";
+  return "disconnected";
+}
+
+/**
+ * Builds a one-line GOOGLE CALENDAR block for Carson's context so Carson can
+ * answer "is my calendar connected?" from real state instead of guessing.
+ * Returns "" for "unknown" — never claim a state we haven't actually checked.
+ *
+ * User-facing language only — human outcomes, not technical cause. Carson is
+ * a user-facing surface (voice + internal text path), so this must never leak
+ * OAuth/token/revocation mechanics. "revoked" and "disconnected" intentionally
+ * produce the same user-facing instruction; the distinction is for admin/log
+ * use only, not for what Carson says out loud.
+ */
+export function buildCalendarConnectionStatusBlock(status: CalendarConnectionStatus): string {
+  switch (status) {
+    case "connected":
+      return "GOOGLE CALENDAR: Connected. Calendar events are visible.";
+    case "revoked":
+    case "disconnected":
+      return "GOOGLE CALENDAR: Not connected. The user needs to reconnect their calendar in Settings before events will show again.";
+    case "unknown":
+    default:
+      return "";
+  }
+}
+
+/**
  * Fetch upcoming calendar events for the authenticated user.
  *
  * Returns { connected: false, events: [] } when no Google Calendar is linked
