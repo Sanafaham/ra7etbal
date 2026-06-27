@@ -61,7 +61,7 @@ import { composeMergedMessage } from "../../lib/ai/compose-message";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
-import { recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
+import { recordCarsonDiagnostic, getCarsonDiagnostics } from "../../lib/carson-diagnostics";
 import { CARSON_STATUS_POLICY } from "../../lib/carson-status-policy";
 import {
   addLatencyStageDuration,
@@ -3950,6 +3950,28 @@ export default function ElevenLabsAgentWidget({
           <p className="text-[12px] leading-relaxed text-ink/70">{lastCarsonMessage}</p>
         </div>
       )}
+
+      {/* TEMP P0 INSTRUMENTATION — inline diagnostics, no /debug/carson navigation
+          needed (unreachable from an installed iOS PWA mid-call). Remove once the
+          live to-do failure is root-caused. */}
+      {lastCarsonMessage && (
+        <InlineTodoDebugPanel />
+      )}
+    </div>
+  );
+}
+
+function InlineTodoDebugPanel() {
+  const events = getCarsonDiagnostics().slice(0, 5);
+  if (events.length === 0) return null;
+  return (
+    <div className="mt-2 max-w-[280px] rounded-xl border border-amber-400/40 bg-amber-50/95 px-3 py-2 text-[10px] leading-snug text-amber-900">
+      <p className="mb-1 font-bold uppercase tracking-wide">Debug (temp)</p>
+      {events.map((ev, i) => (
+        <pre key={i} className="mb-1 whitespace-pre-wrap break-words">
+          [{ev.kind}] {JSON.stringify(ev.data)}
+        </pre>
+      ))}
     </div>
   );
 }
