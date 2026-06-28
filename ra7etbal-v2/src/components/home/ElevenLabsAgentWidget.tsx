@@ -35,9 +35,10 @@ import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, summarizeSessionRecap, isSummaryWorthSaving, SESSION_RECAP_PREFIX, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { appendPhotoContextDescription } from "../../lib/carson-photo-context";
-import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
 import { createReminderTask } from "../../lib/reminders";
-import { buildDelegationMessage } from "../../lib/delegation-message";
+import {
+  createDelegationTaskAndMessage,
+} from "../../lib/delegations";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
@@ -69,8 +70,6 @@ import {
   type ProposedPlan,
 } from "../../lib/ops-intelligence";
 import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/people-behavior";
-import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "../../lib/personal-note";
-import { composeMergedMessage } from "../../lib/ai/compose-message";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
@@ -205,29 +204,6 @@ async function describePhotosForCarson(photos: PendingPhoto[]): Promise<string |
   return lines.length > 0 ? lines.join("\n") : null;
 }
 
-// ---------------------------------------------------------------------------
-// Pronoun rewriter — delegated messages are sent on behalf of the owner.
-// "call me" from the owner's mouth becomes "call Sana" in the outgoing
-// message so the recipient knows who to contact.
-// ---------------------------------------------------------------------------
-
-/**
- * Replace first-person owner pronouns with the owner's display name.
- * Used for Carson-generated delegation messages before they are sent.
- *
- * Falls back to "the sender" when no name is available so the message
- * remains natural: "Can you please call the sender when you arrive."
- */
-function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
-  const name = ownerName?.trim() || "the sender";
-  return text
-    .replace(/\bmy\b/gi, `${name}'s`)
-    .replace(/\bmyself\b/gi, name)
-    .replace(/\bme\b/gi, name)
-    .replace(/\bI\b/g, name); // capital I only — avoids altering mid-word "i"
-}
-
-
 interface SentDelegationRecord {
   personName: string;
   taskText: string;
@@ -306,69 +282,12 @@ async function createAndSendDelegation({
   imageFile,
   imageFiles,
 }: DelegationSendOptions): Promise<DelegationSendResult> {
-  // Always build the base message with buildDelegationMessage so personality
-  // notes (bossy, reliable, etc.) are applied consistently — never skip this
-  // step for known people even when the agent provides its own message text.
-  //
-  // Personal/informational notes are injected AFTER the base message is built,
-  // so they appear before the closing confirmation sentence:
-  //   "Hi Grace, could you call Sana? [Sana says she misses you.] Confirm when done."
-  //
-  // Note resolution order:
-  //   1. personalNote param (explicit — from updated dashboard prompt or execute_instruction)
-  //   2. extracted from agent-provided message (best-effort, current dashboard compat)
-  //   3. null — no note injected
   const rawNote =
     personalNote?.trim() ||
     extractNoteFromAgentMessage(message, taskText) ||
     null;
-  // Normalize the raw note into natural recipient-facing language before
-  // composition — ensures bare expressions like "Thank you" become
-  // "Sana says thank you." and avoids dropping or mangling the note.
-  const resolvedNote = rawNote
-    ? normalizePersonalNote(rawNote, ownerName)
-    : null;
-
-  // When a note is present, use LLM composition to produce one natural
-  // sentence. Falls back to the append path if composition fails.
-  let messageText: string;
-  if (resolvedNote) {
-    const merged = await composeMergedMessage({
-      personName: person.name,
-      taskText,
-      personalNote: resolvedNote,
-      ownerName,
-    });
-    messageText = merged ?? injectPersonalNote(
-      stripClosingLine(
-        rewriteOwnerPronouns(
-          buildDelegationMessage({
-            personName: person.name,
-            taskText,
-            personNotes: person.notes ?? null,
-            ownerName,
-          }),
-          ownerName,
-        ),
-      ),
-      resolvedNote,
-    );
-  } else {
-    messageText = stripClosingLine(
-      rewriteOwnerPronouns(
-        buildDelegationMessage({
-          personName: person.name,
-          taskText,
-          personNotes: person.notes ?? null,
-          ownerName,
-        }),
-        ownerName,
-      ),
-    );
-  }
 
   const taskRowId = crypto.randomUUID();
-  const confirmationUrl = `${window.location.origin}/confirm?task=${taskRowId}`;
 
   // Resolve the canonical photo list. imageFiles (multi) takes precedence;
   // fall back to the legacy single imageFile field.
@@ -391,18 +310,19 @@ async function createAndSendDelegation({
     }
   }
 
-  const taskRow = await createTask({
-    id: taskRowId,
-    user_id: userId,
-    description: taskText,
-    type: "delegation",
-    assigned_to: person.name,
-    status: "pending",
-    needs_follow_up: true,
-    confirmation_url: confirmationUrl,
-    due_at: null,
-    image_path: imagePath,
+  const created = await createDelegationTaskAndMessage({
+    source: "send_delegation",
+    userId,
+    assignee: person,
+    taskText,
+    note: rawNote,
+    imagePath,
+    ownerName,
+    taskId: taskRowId,
+    onEscalationError: (err, task) =>
+      console.error("[send_delegation] QStash scheduleEscalationMessages failed for task", task.id, err),
   });
+  const taskRow = created.task;
 
   // Multi-attachment: when >1 photo is attached, upload ALL photos to
   // task_attachments and set attachment_count. This forces the WhatsApp send
@@ -419,24 +339,11 @@ async function createAndSendDelegation({
     }
   }
 
-  let messageRecord;
-  try {
-    messageRecord = await createMessage({
-      user_id: userId,
-      task_id: taskRow.id,
-      recipient: person.name,
-      content: messageText,
-      confirmation_url: confirmationUrl,
-    });
-  } catch {
-    // Non-fatal: the WhatsApp send can still proceed with task metadata.
-  }
-
   await sendWhatsAppTask({
     to: person.phone,
-    messageText,
-    confirmationLink: confirmationUrl,
-    messageRecordId: messageRecord?.id ?? null,
+    messageText: created.messageText,
+    confirmationLink: created.confirmationUrl,
+    messageRecordId: created.message?.id ?? null,
     taskId: taskRow.id,
     recipientName: person.name,
     ownerName: ownerName ?? null,
@@ -444,13 +351,7 @@ async function createAndSendDelegation({
     attachmentCount,
   });
 
-  if (taskRow.created_at) {
-    scheduleEscalationMessages(taskRow.id, taskRow.created_at).catch((err) =>
-      console.error("[send_delegation] QStash scheduleEscalationMessages failed for task", taskRow.id, err),
-    );
-  }
-
-  return { taskId: taskRow.id, messageText };
+  return { taskId: taskRow.id, messageText: created.messageText };
 }
 
 /**

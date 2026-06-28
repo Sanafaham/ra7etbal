@@ -1,9 +1,7 @@
-import { createMessage } from "./messages";
+import { createDelegationTaskAndMessage, rewriteOwnerPronouns } from "./delegations";
 import { buildDelegationMessage } from "./delegation-message";
-import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "./personal-note";
-import { composeMergedMessage } from "./ai/compose-message";
+import { createMessage } from "./messages";
 import { resizeImage, uploadTaskImage, uploadTaskAttachment } from "./image-upload";
-import { scheduleEscalationMessages } from "./qstash-escalation";
 import { supabase } from "./supabase";
 import { createTask } from "./tasks";
 import { createTodo } from "./carson-todos";
@@ -14,25 +12,6 @@ import type { Message } from "../types/message";
 import type { Person } from "../types/person";
 import type { Task } from "../types/task";
 import type { CarsonTodo } from "./carson-todos";
-
-/**
- * Replace first-person owner pronouns in a delegation message so the
- * recipient reads "call Sana" instead of "call me".
- *
- * The message is sent by Ra7etBal on the owner's behalf, so "me" would
- * mean "Ra7etBal" to the recipient — which is wrong.
- *
- * Falls back to "the sender" when no ownerName is provided so the
- * message still reads naturally.
- */
-function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
-  const name = ownerName?.trim() || "the sender";
-  return text
-    .replace(/\bmy\b/gi, `${name}'s`)
-    .replace(/\bmyself\b/gi, name)
-    .replace(/\bme\b/gi, name)
-    .replace(/\bI\b/g, name); // capital I only — avoids altering "i" inside words
-}
 
 /**
  * Save the reviewed extraction to Supabase.
@@ -59,52 +38,6 @@ function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
  * Returns the created rows so the caller can push them straight into the
  * tasks/messages stores without an extra refetch.
  */
-
-/**
- * Build the final delegation message content for one item.
- *
- * When a personalNote is present, delegates to composeMergedMessage so the
- * task and note are woven into a single natural sentence (e.g. "urgency" →
- * action gets "as soon as possible"; "on the way" → note leads the message).
- * Falls back to the append path if composition fails or no note is present.
- */
-async function buildMessageContent({
-  personName,
-  taskText,
-  personalNote,
-  personNotes,
-  ownerName,
-}: {
-  personName: string;
-  taskText: string;
-  personalNote: string | null | undefined;
-  personNotes: string | null | undefined;
-  ownerName?: string | null;
-}): Promise<string> {
-  const normalizedNote = normalizePersonalNote(personalNote ?? "", ownerName);
-
-  // Try LLM composition when a note is present — produces one fluent sentence.
-  if (normalizedNote) {
-    const merged = await composeMergedMessage({
-      personName,
-      taskText,
-      personalNote: normalizedNote,
-      ownerName,
-    });
-    if (merged) return merged;
-  }
-
-  // Fallback: deterministic builder + append.
-  return injectPersonalNote(
-    stripClosingLine(
-      rewriteOwnerPronouns(
-        buildDelegationMessage({ personName, taskText, personNotes, ownerName }),
-        ownerName,
-      ),
-    ),
-    normalizedNote,
-  );
-}
 
 export interface SaveResult {
   tasks: Task[];
@@ -254,6 +187,33 @@ export async function savePending(
       // reliably retrieve imagePath without depending on SELECT responses.
       imagePathsByTaskId.set(pregenId, imagePath);
       // createTask will use this pre-generated id so paths stay in sync.
+      if (isDelegation && assignedTo) {
+        const assignedPerson = people.find(
+          (person) => person.name.trim().toLowerCase() === assignedTo.toLowerCase(),
+        );
+        const result = await measureSupabaseOperation(timingObserver, () =>
+          createDelegationTaskAndMessage({
+            source: "save",
+            userId,
+            assignee: {
+              name: assignedTo,
+              notes: assignedPerson?.notes ?? null,
+            },
+            taskText: item.description,
+            note: item.personalNote,
+            imagePath,
+            dueAt: item.dueAt,
+            ownerName,
+            taskId: pregenId,
+            onEscalationError: (err, task) =>
+              console.error("[save] QStash scheduleEscalationMessages failed for task", task.id, err),
+          }),
+        );
+        tasks.push(result.task);
+        if (result.message) messages.push(result.message);
+        continue;
+      }
+
       let task = await measureSupabaseOperation(timingObserver, () =>
         item.type === "reminder"
           ? createReminderTask({
@@ -300,42 +260,32 @@ export async function savePending(
         task = data as Task;
       }
 
-      if (isDelegation) {
-        const confirmationUrl = `${window.location.origin}/confirm?task=${task.id}`;
-        task = await measureSupabaseOperation(timingObserver, () =>
-          updateTaskUrl(task.id, confirmationUrl),
-        );
-        const assignedPerson = people.find(
-          (person) => person.name.trim().toLowerCase() === assignedTo!.toLowerCase(),
-        );
-        const content = await buildMessageContent({
-          personName: assignedTo!,
-          taskText: item.description,
-          personalNote: item.personalNote,
-          personNotes: assignedPerson?.notes ?? null,
-          ownerName,
-        });
-        if (content && assignedTo) {
-          const msg = await measureSupabaseOperation(timingObserver, () =>
-            createMessage({
-              user_id: userId,
-              task_id: task.id,
-              recipient: assignedTo,
-              content,
-              confirmation_url: confirmationUrl,
-            }),
-          );
-          messages.push(msg);
-        }
-      }
-
-      if (task.type === "delegation" && task.created_at) {
-        scheduleEscalationMessages(task.id, task.created_at).catch((err) =>
-          console.error("[save] QStash scheduleEscalationMessages failed for task", task.id, err),
-        );
-      }
-
       tasks.push(task);
+      continue;
+    }
+
+    if (isDelegation && assignedTo) {
+      const assignedPerson = people.find(
+        (person) => person.name.trim().toLowerCase() === assignedTo.toLowerCase(),
+      );
+      const result = await measureSupabaseOperation(timingObserver, () =>
+        createDelegationTaskAndMessage({
+          source: "save",
+          userId,
+          assignee: {
+            name: assignedTo,
+            notes: assignedPerson?.notes ?? null,
+          },
+          taskText: item.description,
+          note: item.personalNote,
+          dueAt: item.dueAt,
+          ownerName,
+          onEscalationError: (err, task) =>
+            console.error("[save] QStash scheduleEscalationMessages failed for task", task.id, err),
+        }),
+      );
+      tasks.push(result.task);
+      if (result.message) messages.push(result.message);
       continue;
     }
 
@@ -383,49 +333,6 @@ export async function savePending(
       );
       if (error) throw error;
       task = data as Task;
-    }
-
-    if (isDelegation) {
-      const confirmationUrl = `${window.location.origin}/confirm?task=${task.id}`;
-      // Persist the URL on the task now that we know its id. confirmation_url
-      // is intentionally not in TaskPatch — it's write-once at save time.
-      task = await measureSupabaseOperation(timingObserver, () =>
-        updateTaskUrl(task.id, confirmationUrl),
-      );
-
-      // Pair message row for the host to copy and send.
-      // Rewrite any owner first-person pronouns ("me" → "Sana", etc.) so the
-      // recipient reads the message correctly — this is a code-side safety net
-      // in addition to the prompt-level instruction, because LLM output is not
-      const assignedPerson = people.find(
-        (person) => person.name.trim().toLowerCase() === assignedTo.toLowerCase(),
-      );
-      const content = await buildMessageContent({
-        personName: assignedTo,
-        taskText: item.description,
-        personalNote: item.personalNote,
-        personNotes: assignedPerson?.notes ?? null,
-        ownerName,
-      });
-      if (content && assignedTo) {
-        const msg = await measureSupabaseOperation(timingObserver, () =>
-          createMessage({
-            user_id: userId,
-            task_id: task.id,
-            recipient: assignedTo,
-            content,
-            confirmation_url: confirmationUrl,
-          }),
-        );
-        messages.push(msg);
-      }
-    }
-
-    // Schedule exact-time follow-up (+10 min) and escalation (+20 min) for delegation tasks.
-    if (task.type === "delegation" && task.created_at) {
-      scheduleEscalationMessages(task.id, task.created_at).catch((err) =>
-        console.error("[save] QStash scheduleEscalationMessages failed for task", task.id, err),
-      );
     }
 
     tasks.push(task);
@@ -484,21 +391,4 @@ export async function saveTaskAttachments(
   if (updateError) throw updateError;
 
   return files.length;
-}
-
-async function updateTaskUrl(id: string, url: string): Promise<Task> {
-  // Tiny helper that bypasses the typed TaskPatch (which intentionally omits
-  // confirmation_url to keep that column write-once at save time).
-  // Must select ALL task columns so callers (e.g. save → taskImagePathById)
-  // retain image_path and other fields after the update round-trip.
-  const { data, error } = await supabase
-    .from("tasks")
-    .update({ confirmation_url: url })
-    .eq("id", id)
-    .select(
-      "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path, quality_review_status, quality_review_note, quality_reviewed_at",
-    )
-    .single();
-  if (error) throw error;
-  return data as Task;
 }

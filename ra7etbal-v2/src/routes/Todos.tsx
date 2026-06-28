@@ -18,28 +18,15 @@ import {
   type CarsonTodo,
 } from "../lib/carson-todos";
 import { saveCarsonNote } from "../lib/carson-notes";
-import { createTask } from "../lib/tasks";
 import { useTasksStore } from "../stores/tasks";
 import { useAuthStore } from "../stores/auth";
 import { parseVoiceTime } from "../lib/parse-voice-time";
 import { createReminderTask } from "../lib/reminders";
 import { createCalendarEvent } from "../lib/calendar";
-import { buildDelegationMessage } from "../lib/delegation-message";
-import { stripClosingLine } from "../lib/personal-note";
-import { createMessage } from "../lib/messages";
+import { createDelegationTaskAndMessage } from "../lib/delegations";
 import { sendWhatsAppTask } from "../lib/whatsapp";
-import { scheduleEscalationMessages } from "../lib/qstash-escalation";
 import { usePeopleStore } from "../stores/people";
 import { useProfileStore } from "../stores/profile";
-
-function rewriteOwnerPronouns(text: string, ownerName?: string | null): string {
-  const name = ownerName?.trim() || "the sender";
-  return text
-    .replace(/\bmy\b/gi, `${name}'s`)
-    .replace(/\bmyself\b/gi, name)
-    .replace(/\bme\b/gi, name)
-    .replace(/\bI\b/g, name);
-}
 
 export default function Todos({ headerless = false }: { headerless?: boolean } = {}) {
   const { user } = useAuth();
@@ -213,14 +200,23 @@ export default function Todos({ headerless = false }: { headerless?: boolean } =
     setSendingDelegateId(todo.id);
     setDelegateError(null);
     try {
-      const messageText = stripClosingLine(rewriteOwnerPronouns(buildDelegationMessage({ personName: person.name, taskText: todo.title, personNotes: person.notes ?? null, ownerName: ownerName ?? null }), ownerName));
-      const taskId = crypto.randomUUID();
-      const confirmationUrl = `${window.location.origin}/confirm?task=${taskId}`;
-      const task = await createTask({ id: taskId, user_id: authUserId, description: todo.title, type: "delegation", assigned_to: person.name, status: "pending", needs_follow_up: true, confirmation_url: confirmationUrl, due_at: null });
-      let messageRecord;
-      try { messageRecord = await createMessage({ user_id: authUserId, task_id: task.id, recipient: person.name, content: messageText, confirmation_url: confirmationUrl }); } catch { /* non-fatal */ }
-      await sendWhatsAppTask({ to: person.phone, messageText, confirmationLink: confirmationUrl, messageRecordId: messageRecord?.id ?? null, taskId: task.id, recipientName: person.name, ownerName: ownerName ?? null });
-      if (task.created_at) scheduleEscalationMessages(task.id, task.created_at).catch((err) => console.error("[todos] escalation schedule failed:", err));
+      const created = await createDelegationTaskAndMessage({
+        source: "todos",
+        userId: authUserId,
+        assignee: person,
+        taskText: todo.title,
+        ownerName: ownerName ?? null,
+        onEscalationError: (err) => console.error("[todos] escalation schedule failed:", err),
+      });
+      await sendWhatsAppTask({
+        to: person.phone,
+        messageText: created.messageText,
+        confirmationLink: created.confirmationUrl,
+        messageRecordId: created.message?.id ?? null,
+        taskId: created.task.id,
+        recipientName: person.name,
+        ownerName: ownerName ?? null,
+      });
       useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
       setDelegatedMap((prev) => new Map(prev).set(todo.id, person.name));
       setDelegatingId(null);

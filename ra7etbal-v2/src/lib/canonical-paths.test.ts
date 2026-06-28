@@ -411,30 +411,33 @@ describe("canonical path source adapters", () => {
     expect(widget).toMatch(/if \(action === "reminder"\)[\s\S]*createReminderTask\(\{[\s\S]*source:\s*"act_on_note"/);
   });
 
-  it("keeps note/to-do delegation conversions going through message creation, WhatsApp delivery, and escalation scheduling", () => {
+  it("keeps note/to-do delegation conversions going through the shared delegation boundary and WhatsApp delivery", () => {
     const inbox = source("src/routes/Inbox.tsx");
     const todos = source("src/routes/Todos.tsx");
+    const widget = source("src/components/home/ElevenLabsAgentWidget.tsx");
 
-    expect(inbox).toMatch(/async function handleDelegateSubmit[\s\S]*createTask\(\{[\s\S]*type:\s*"delegation"[\s\S]*createMessage\([\s\S]*sendWhatsAppTask\([\s\S]*scheduleEscalationMessages\(/);
-    expect(todos).toMatch(/async function handleDelegateSubmit[\s\S]*createTask\(\{[\s\S]*type:\s*"delegation"[\s\S]*createMessage\([\s\S]*sendWhatsAppTask\([\s\S]*scheduleEscalationMessages\(/);
+    expect(inbox).toMatch(/async function handleDelegateSubmit[\s\S]*createDelegationTaskAndMessage\(\{[\s\S]*source:\s*"inbox"[\s\S]*sendWhatsAppTask\(\{/);
+    expect(todos).toMatch(/async function handleDelegateSubmit[\s\S]*createDelegationTaskAndMessage\(\{[\s\S]*source:\s*"todos"[\s\S]*sendWhatsAppTask\(\{/);
+    expect(widget).toMatch(/async function createAndSendDelegation[\s\S]*createDelegationTaskAndMessage\(\{[\s\S]*source:\s*"send_delegation"[\s\S]*sendWhatsAppTask\(\{/);
   });
 
   it("documents confirmation URL canonical param and legacy compatibility", () => {
     const confirm = source("src/routes/Confirm.tsx");
     const save = source("src/lib/save.ts");
+    const delegations = source("src/lib/delegations.ts");
     const inbox = source("src/routes/Inbox.tsx");
     const todos = source("src/routes/Todos.tsx");
     const widget = source("src/components/home/ElevenLabsAgentWidget.tsx");
     const recurringRunner = source("api/process-delegation-escalations.js");
 
     expect(confirm).toMatch(/params\.get\("task"\)\s*\?\?\s*params\.get\("task_id"\)/);
-    expect(save).toContain("/confirm?task=");
-    expect(inbox).toContain("/confirm?task=");
-    expect(todos).toContain("/confirm?task=");
+    expect(save).toContain("createDelegationTaskAndMessage");
+    expect(delegations).toContain("/confirm?task=");
+    expect(inbox).toContain("createDelegationTaskAndMessage");
+    expect(todos).toContain("createDelegationTaskAndMessage");
     expect(widget).toContain("/confirm?task=");
 
-    // Legacy recurring reminder/routine runner still emits task_id today.
-    // The confirmation page accepts it, but `task` remains the canonical app param.
-    expect(recurringRunner).toContain("/confirm?task_id=");
+    expect(recurringRunner).toContain("/confirm?task=");
+    expect(recurringRunner).not.toContain("/confirm?task_id=");
   });
 });

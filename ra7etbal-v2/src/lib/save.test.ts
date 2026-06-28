@@ -31,7 +31,7 @@ vi.mock("./tasks", () => ({
       due_at: draft.due_at ?? null,
       assigned_to: draft.assigned_to ?? null,
       image_path: draft.image_path ?? null,
-      confirmation_url: null,
+      confirmation_url: draft.confirmation_url ?? null,
     };
   }),
 }));
@@ -92,8 +92,8 @@ vi.mock("./ai/compose-message", () => ({
 }));
 
 vi.mock("./image-upload", () => ({
-  resizeImage: vi.fn(),
-  uploadTaskImage: vi.fn(),
+  resizeImage: vi.fn(async (file: File) => file),
+  uploadTaskImage: vi.fn(async (userId: string, taskId: string) => `task-images/${userId}/${taskId}/photo.jpg`),
   uploadTaskAttachment: vi.fn(),
 }));
 
@@ -242,6 +242,46 @@ describe("savePending — Clear My Head routing (Notes/To-do/Reminder/Delegation
     expect(calls.scheduleEscalationMessages).toHaveLength(1);
     expect(calls.saveCarsonNote).toHaveLength(0);
     expect(calls.createTodo).toHaveLength(0);
+  });
+
+  it("image delegations keep image_path and still get message, canonical link, and escalation", async () => {
+    const file = new File(["image"], "reference.jpg", { type: "image/jpeg" });
+    const imageFiles = new Map<string, File>([["img-delegation", file]]);
+
+    const result = await savePending(
+      [
+        item({
+          id: "img-delegation",
+          type: "delegation",
+          description: "Find this blouse",
+          assignedTo: "Grace",
+        }),
+      ],
+      "user-1",
+      "Sana",
+      [GRACE],
+      imageFiles,
+    );
+
+    expect(result.tasks).toHaveLength(1);
+    expect(result.messages).toHaveLength(1);
+    const task = result.tasks[0];
+    expect(task.image_path).toBe(`task-images/user-1/${task.id}/photo.jpg`);
+    expect(task.confirmation_url).toBe(`https://ra7etbal.com/confirm?task=${task.id}`);
+    expect(result.imagePathsByTaskId.get(task.id)).toBe(task.image_path);
+    expect(calls.createTask[0]).toMatchObject({
+      id: task.id,
+      type: "delegation",
+      assigned_to: "Grace",
+      image_path: task.image_path,
+      confirmation_url: `https://ra7etbal.com/confirm?task=${task.id}`,
+    });
+    expect(calls.createMessage[0]).toMatchObject({
+      task_id: task.id,
+      recipient: "Grace",
+      confirmation_url: `https://ra7etbal.com/confirm?task=${task.id}`,
+    });
+    expect(calls.scheduleEscalationMessages).toEqual([[task.id, task.created_at]]);
   });
 
   it("processes a mixed batch — notes/todo/reminder/delegation are independently routed", async () => {

@@ -887,7 +887,7 @@ async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appB
   }
 
   // Build and persist the confirmation URL so the escalation cron can use it.
-  const confirmationUrl = `${appBaseUrl}/confirm?task_id=${encodeURIComponent(taskId)}`;
+  const confirmationUrl = `${appBaseUrl}/confirm?task=${encodeURIComponent(taskId)}`;
   await fetch(
     `${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}`,
     {
@@ -1385,7 +1385,7 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
   });
 
   // Persist confirmation URL on the task so escalation cron can use it.
-  const confirmationUrl = `${appBaseUrl}/confirm?task_id=${encodeURIComponent(taskId)}`;
+  const confirmationUrl = `${appBaseUrl}/confirm?task=${encodeURIComponent(taskId)}`;
   await patchTask(supabaseUrl, serviceKey, taskId, { confirmation_url: confirmationUrl });
 
   // ── Step 5: Send WhatsApp (if assignee + phone) ───────────────────────────
