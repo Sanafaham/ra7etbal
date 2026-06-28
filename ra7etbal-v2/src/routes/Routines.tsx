@@ -14,7 +14,7 @@ import { usePeopleStore } from "../stores/people";
 
 // ── Automation types ───────────────────────────────────────────────────────────
 
-interface AutomationRow {
+export interface AutomationRow {
   id: string;
   title: string;
   instruction: string;
@@ -29,7 +29,7 @@ interface AutomationRow {
   people?: { name: string } | null;
 }
 
-interface AutomationRunRow {
+export interface AutomationRunRow {
   automation_id: string;
   current_state: string;
   failure_reason: string | null;
@@ -47,6 +47,10 @@ function automationCadenceLabel(row: AutomationRow): string {
     }
     default: return row.cadence_type;
   }
+}
+
+export function isOwnerOnlyAutomation(row: Pick<AutomationRow, "assignee_id" | "automation_type">): boolean {
+  return row.assignee_id === null && row.automation_type !== "message";
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -887,15 +891,24 @@ type StateConfig = {
   border: string;     // card left-border accent class
 };
 
-function resolveStateConfig(
+export function resolveStateConfig(
   state: string | null,
   automationType: AutomationRow["automation_type"],
+  ownerOnly = false,
 ): StateConfig {
   switch (state) {
     case "sent":
       if (automationType === "message") {
         return {
           label: "Sent",
+          dot:   "bg-sage",
+          text:  "text-sage",
+          border: "border-l-sage/40",
+        };
+      }
+      if (ownerOnly) {
+        return {
+          label: "Reminder created",
           dot:   "bg-sage",
           text:  "text-sage",
           border: "border-l-sage/40",
@@ -966,6 +979,7 @@ function AutomationCard({
   const assigneeName =
     automation.people?.name ??
     (automation.assignee_id ? "Unknown" : null);
+  const ownerOnly = isOwnerOnlyAutomation(automation);
 
   const nextRun = automation.next_run_at
     ? new Date(automation.next_run_at).toLocaleString([], {
@@ -976,7 +990,7 @@ function AutomationCard({
       })
     : null;
 
-  const state = resolveStateConfig(latestRun?.current_state ?? null, automation.automation_type);
+  const state = resolveStateConfig(latestRun?.current_state ?? null, automation.automation_type, ownerOnly);
   const failureReason = latestRun?.current_state === "failed" ? latestRun.failure_reason : null;
   const isActive = automation.status === "active";
   const isPaused = automation.status === "paused";
@@ -992,6 +1006,10 @@ function AutomationCard({
             {automation.automation_type === "message" ? (
               <span className="rounded-full bg-blush/20 px-2 py-0.5 text-[11px] font-medium text-blush">
                 Message
+              </span>
+            ) : ownerOnly ? (
+              <span className="rounded-full bg-stone/40 px-2 py-0.5 text-[11px] font-medium text-espresso/70">
+                Reminder
               </span>
             ) : (
               <span className="rounded-full bg-sage/15 px-2 py-0.5 text-[11px] font-medium text-sage">

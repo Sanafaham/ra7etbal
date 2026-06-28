@@ -41,6 +41,14 @@ vi.mock("./routines", () => ({
   listRoutines: vi.fn(),
 }));
 
+vi.mock("./supabase", () => ({
+  supabase: {
+    auth: {
+      getSession: vi.fn(),
+    },
+  },
+}));
+
 // Phase 9A consistency fix: askTextCarson() now self-fetches the same
 // operational/product context blocks Voice Carson gets from App.tsx
 // (automation status, WhatsApp delivery diagnostics, notes, to-dos,

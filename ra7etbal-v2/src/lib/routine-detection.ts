@@ -11,6 +11,7 @@
 import type { Person } from "../types/person";
 import { createRoutine } from "./routines";
 import type { RoutineSchedule } from "./routines";
+import { supabase } from "./supabase";
 
 // ── Schedule detection ─────────────────────────────────────────────────────────
 
@@ -272,20 +273,42 @@ function buildReminderRoutineSummary(title: string, schedule: RecurringSchedule)
   const label = scheduleDisplayLabel(schedule).toLowerCase();
   return (
     `Reminder set. I'll remind you ${label}: "${shortTitle}". ` +
-    `You can manage it in Updates → Routines.`
+    `You can manage it in Automations.`
   );
 }
 
+function computeOwnerAutomationNextRunAt(schedule: RecurringSchedule, scheduleTime: string): string {
+  const [hh, mm] = scheduleTime.split(":").map((part) => parseInt(part, 10));
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(Number.isFinite(hh) ? hh : 9, Number.isFinite(mm) ? mm : 0, 0, 0);
+
+  if (schedule.schedule === "every_n_days" && schedule.intervalDays) {
+    next.setDate(now.getDate() + schedule.intervalDays);
+    return next.toISOString();
+  }
+
+  if (schedule.schedule === "weekly") {
+    const targetDay = schedule.scheduleDay ?? 1;
+    const today = now.getDay();
+    let daysUntil = (targetDay - today + 7) % 7;
+    if (daysUntil === 0 && next <= now) daysUntil = 7;
+    next.setDate(now.getDate() + daysUntil);
+    return next.toISOString();
+  }
+
+  if (next <= now) {
+    next.setDate(now.getDate() + 1);
+  }
+  return next.toISOString();
+}
+
 /**
- * Creates a Carson-native reminder routine for a self-directed recurring
- * instruction — used when no person is found in the text (the existing
- * "no person" signal already produced by findPersonInInstruction /
- * buildVoiceAutomationInput). Reuses the already-shipped
- * routines.type="reminder" pipeline (push notification + task creation via
- * executeReminderRoutine in process-delegation-escalations.js) instead of
- * the WhatsApp automations table — recurring personal reminders no longer
- * go through WhatsApp; third-party recurring instructions (a person name
- * resolves) are untouched and keep using buildVoiceAutomationInput/automations.
+ * Creates a Carson-native owner-only automation for a self-directed recurring
+ * instruction, used when no person is found in the text. The automation runner
+ * creates the owner task and sends the owner push; no WhatsApp path is involved.
+ * Third-party recurring instructions are untouched and keep using the existing
+ * person-based automation/routine paths.
  *
  * Returns null only if no usable title remains after stripping cadence
  * language — callers should fall back to the existing "could not understand"
@@ -298,28 +321,57 @@ export async function createReminderRoutineFromInstruction(
   const title = extractReminderTitle(rawInstruction);
   if (!title) return null;
 
-  let nextRunAt: string | undefined;
-  if (schedule.schedule === "every_n_days" && schedule.intervalDays) {
-    const ms = schedule.intervalDays * 24 * 60 * 60 * 1000;
-    nextRunAt = new Date(Date.now() + ms).toISOString();
-  }
-
   const scheduleTime = extractTimeFromInstruction(rawInstruction) ?? "09:00";
   const shortTitle = title.length > 40 ? title.slice(0, 40).trimEnd() + "…" : title;
   const routineName = `${scheduleDisplayLabel(schedule)}: ${shortTitle}`;
 
-  const routine = await createRoutine({
-    name: routineName,
-    type: "reminder",
-    schedule: schedule.schedule,
-    schedule_day: schedule.scheduleDay,
-    schedule_time: scheduleTime,
-    payload: { title },
-    interval_days: schedule.intervalDays,
-    next_run_at: nextRunAt,
-  });
+  const { data: sessionData } = await supabase.auth.getSession();
+  const jwt = sessionData?.session?.access_token;
+  if (!jwt) throw new Error("Not authenticated.");
 
-  console.log("[routine:REMINDER_ROUTINE_CREATED] routine_id=" + routine.id + " title=" + title);
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const cadenceType =
+    schedule.schedule === "every_n_days"
+      ? "every_n_days"
+      : schedule.schedule === "weekly"
+        ? "weekly"
+        : "daily";
+  const cadenceValue: Record<string, unknown> = { time: scheduleTime };
+  if (schedule.schedule === "every_n_days" && schedule.intervalDays) {
+    cadenceValue.n = schedule.intervalDays;
+  }
+  if (schedule.schedule === "weekly" && schedule.scheduleDay != null) {
+    cadenceValue.day = schedule.scheduleDay;
+  }
+  const nextRunAt = computeOwnerAutomationNextRunAt(schedule, scheduleTime);
+
+  const res = await fetch("/api/automations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${jwt}` },
+    body: JSON.stringify({
+      title: routineName,
+      instruction: title,
+      cadence_type: cadenceType,
+      cadence_value: cadenceValue,
+      next_run_at: nextRunAt,
+      timezone,
+      assignee_id: null,
+      created_by: "carson",
+      proof_required: false,
+      proof_type: null,
+      automation_type: "delegation",
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error ?? "Failed to create automation.");
+  }
+  const result = await res.json().catch(() => null);
+
+  console.log("[automation:REMINDER_AUTOMATION_CREATED]", {
+    automationId: result?.automation?.id ?? null,
+    title,
+  });
 
   return buildReminderRoutineSummary(title, schedule);
 }

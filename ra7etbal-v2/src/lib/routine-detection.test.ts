@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 
 const routinesMocks = vi.hoisted(() => ({
   createRoutine: vi.fn(async (input: any) => ({
@@ -8,14 +8,29 @@ const routinesMocks = vi.hoisted(() => ({
   })),
 }));
 
+const supabaseMocks = vi.hoisted(() => ({
+  getSession: vi.fn(async () => ({
+    data: { session: { access_token: "jwt-1" } },
+  })),
+}));
+
 vi.mock("./routines", () => ({
   createRoutine: routinesMocks.createRoutine,
+}));
+
+vi.mock("./supabase", () => ({
+  supabase: {
+    auth: {
+      getSession: supabaseMocks.getSession,
+    },
+  },
 }));
 
 import {
   detectAllRecurringSchedules,
   findPersonInInstruction,
   createReminderRoutineFromInstruction,
+  createVoiceRoutine,
 } from "./routine-detection";
 import type { Person } from "../types/person";
 
@@ -37,6 +52,21 @@ const GRACE: Person = {
 
 beforeEach(() => {
   routinesMocks.createRoutine.mockClear();
+  supabaseMocks.getSession.mockClear();
+  supabaseMocks.getSession.mockResolvedValue({
+    data: { session: { access_token: "jwt-1" } },
+  });
+  vi.stubGlobal("fetch", vi.fn(async () => ({
+    ok: true,
+    json: async () => ({ automation: { id: "automation-1", title: "Daily: Take my medication." } }),
+  })));
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-06-28T05:00:00.000Z"));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("findPersonInInstruction — self vs third-party detection", () => {
@@ -55,7 +85,7 @@ describe("findPersonInInstruction — self vs third-party detection", () => {
 });
 
 describe("createReminderRoutineFromInstruction", () => {
-  it("creates a routines.reminder for a daily self-reminder", async () => {
+  it("creates an owner-only automation for a daily self-reminder", async () => {
     const schedules = detectAllRecurringSchedules("Remind me every day to take my medication.");
     expect(schedules.length).toBeGreaterThan(0);
 
@@ -65,13 +95,26 @@ describe("createReminderRoutineFromInstruction", () => {
     );
 
     expect(summary).toBeTruthy();
-    expect(routinesMocks.createRoutine).toHaveBeenCalledTimes(1);
-    const payload = routinesMocks.createRoutine.mock.calls[0][0];
-    expect(payload.type).toBe("reminder");
-    expect(payload.payload?.title?.toLowerCase()).toContain("take my medication");
+    expect(summary).toContain("You can manage it in Automations.");
+    expect(routinesMocks.createRoutine).not.toHaveBeenCalled();
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    expect(init?.headers).toMatchObject({ Authorization: "Bearer jwt-1" });
+    const payload = JSON.parse(String(init?.body));
+    expect(payload).toMatchObject({
+      title: "Daily: Take my medication.",
+      instruction: "Take my medication.",
+      cadence_type: "daily",
+      cadence_value: { time: "09:00" },
+      assignee_id: null,
+      proof_required: false,
+      proof_type: null,
+      automation_type: "delegation",
+    });
+    expect(new Date(payload.next_run_at).getTime()).not.toBeNaN();
   });
 
-  it("creates a routines.reminder for a weekly self-reminder", async () => {
+  it("creates an owner-only automation for a weekly self-reminder", async () => {
     const schedules = detectAllRecurringSchedules("Every Monday remind me to review insurance.");
     expect(schedules.length).toBeGreaterThan(0);
 
@@ -81,13 +124,15 @@ describe("createReminderRoutineFromInstruction", () => {
     );
 
     expect(summary).toBeTruthy();
-    expect(routinesMocks.createRoutine).toHaveBeenCalledTimes(1);
-    const payload = routinesMocks.createRoutine.mock.calls[0][0];
-    expect(payload.type).toBe("reminder");
-    expect(payload.schedule).toBe(schedules[0].schedule);
+    expect(routinesMocks.createRoutine).not.toHaveBeenCalled();
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.cadence_type).toBe("weekly");
+    expect(payload.cadence_value).toMatchObject({ time: "09:00", day: 1 });
+    expect(payload.assignee_id).toBeNull();
   });
 
-  it("creates a routines.reminder for 'every morning' self-reminder", async () => {
+  it("creates an owner-only automation for 'every morning' self-reminder", async () => {
     const schedules = detectAllRecurringSchedules("Every morning remind me to check passport renewal.");
     expect(schedules.length).toBeGreaterThan(0);
 
@@ -97,8 +142,30 @@ describe("createReminderRoutineFromInstruction", () => {
     );
 
     expect(summary).toBeTruthy();
-    const payload = routinesMocks.createRoutine.mock.calls[0][0];
-    expect(payload.type).toBe("reminder");
-    expect(payload.payload?.title?.toLowerCase()).toContain("passport renewal");
+    expect(routinesMocks.createRoutine).not.toHaveBeenCalled();
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.instruction.toLowerCase()).toContain("passport renewal");
+    expect(payload.cadence_type).toBe("daily");
+    expect(payload.assignee_id).toBeNull();
+  });
+
+  it("keeps legacy delegated recurring routine creation on routines", async () => {
+    const summary = await createVoiceRoutine({
+      rawInstruction: "Every morning ask Christopher to send a lunch photo.",
+      schedule: { schedule: "daily" },
+      people: [CHRISTOPHER, GRACE],
+      userId: "user-1",
+      displayName: "Sana",
+    });
+
+    expect(summary).toContain("Routine set.");
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+    expect(routinesMocks.createRoutine).toHaveBeenCalledTimes(1);
+    expect(routinesMocks.createRoutine.mock.calls[0][0]).toMatchObject({
+      type: "delegation",
+      schedule: "daily",
+      payload: { person_id: "p1", message: "Send a lunch photo." },
+    });
   });
 });
