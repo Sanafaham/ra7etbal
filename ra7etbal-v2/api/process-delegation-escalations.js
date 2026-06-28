@@ -1449,6 +1449,19 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
       current_state: 'sent',
       sent_at:       now.toISOString(),
     });
+    const pushed = await sendOwnerPush({
+      userId: automation.user_id,
+      title: 'Ra7etBal · Reminder',
+      body: automation.instruction,
+      supabaseUrl,
+      serviceKey,
+    });
+    if (!pushed) {
+      console.warn('[automations] owner-only push not delivered', {
+        automationId: automation.id,
+        taskId,
+      });
+    }
     console.log('[automations] owner-only task created (no WhatsApp)', {
       automationId: automation.id,
       taskId,

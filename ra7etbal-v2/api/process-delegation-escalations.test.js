@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { processMessageAutomation } from './process-delegation-escalations.js';
+
+vi.mock('web-push', () => ({
+  default: {
+    sendNotification: vi.fn(),
+    setVapidDetails: vi.fn(),
+  },
+}));
+
+import webpush from 'web-push';
+import { processAutomation, processMessageAutomation } from './process-delegation-escalations.js';
 
 beforeEach(() => {
   vi.stubEnv('CRON_SECRET', 'cron-secret');
+  vi.mocked(webpush.sendNotification).mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -95,6 +105,98 @@ describe('processMessageAutomation', () => {
   });
 });
 
+describe('processAutomation owner-only automations', () => {
+  it('creates an owner task and sends an owner push', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }], 201))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1' }], 201))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'sub-1', endpoint: 'https://push.example/a', p256dh: 'p', auth: 'a' },
+      ]))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('ok');
+    expect(String(fetchMock.mock.calls[1][0])).toContain('/rest/v1/tasks');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      user_id: 'user-1',
+      type: 'action',
+      description: 'Review your priorities.',
+      status: 'pending',
+      needs_follow_up: false,
+      assigned_to: null,
+      due_at: '2026-06-26T14:30:00.000Z',
+    });
+    expect(JSON.parse(fetchMock.mock.calls[4][1].body)).toMatchObject({
+      current_state: 'sent',
+      sent_at: '2026-06-26T14:30:00.000Z',
+    });
+    expect(String(fetchMock.mock.calls[5][0])).toContain('/rest/v1/push_subscriptions');
+    expect(webpush.sendNotification).toHaveBeenCalledTimes(1);
+    expect(webpush.sendNotification).toHaveBeenCalledWith(
+      { endpoint: 'https://push.example/a', keys: { p256dh: 'p', auth: 'a' } },
+      JSON.stringify({
+        title: 'Ra7etBal · Reminder',
+        body: 'Review your priorities.',
+      }),
+      { urgency: 'normal', TTL: 600 },
+    );
+    expect(JSON.parse(fetchMock.mock.calls[6][1].body)).toMatchObject({
+      next_run_at: '2026-06-27T14:30:00.000Z',
+    });
+  });
+
+  it('keeps owner-only automation successful when owner push fails', async () => {
+    vi.mocked(webpush.sendNotification).mockRejectedValueOnce(Object.assign(new Error('push rejected'), {
+      statusCode: 500,
+    }));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }], 201))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1' }], 201))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'sub-1', endpoint: 'https://push.example/a', p256dh: 'p', auth: 'a' },
+      ]))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('ok');
+    expect(webpush.sendNotification).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[4][1].body)).toMatchObject({
+      current_state: 'sent',
+    });
+    expect(JSON.parse(fetchMock.mock.calls[6][1].body)).toMatchObject({
+      next_run_at: '2026-06-27T14:30:00.000Z',
+    });
+    expect(fetchMock.mock.calls.some(([, init]) =>
+      String(init?.body ?? '').includes('failure_reason')
+    )).toBe(false);
+  });
+});
+
 function automationRow(overrides = {}) {
   return {
     id: 'automation-1',
@@ -103,6 +205,22 @@ function automationRow(overrides = {}) {
     instruction: 'Recurring automation test.',
     automation_type: 'message',
     assignee_id: 'person-1',
+    cadence_type: 'daily',
+    cadence_value: { time: '17:30' },
+    timezone: 'Europe/Istanbul',
+    next_run_at: '2026-06-26T14:30:00.000Z',
+    ...overrides,
+  };
+}
+
+function ownerOnlyAutomationRow(overrides = {}) {
+  return {
+    id: 'automation-1',
+    user_id: 'user-1',
+    title: 'Daily priorities',
+    instruction: 'Review your priorities.',
+    automation_type: 'delegation',
+    assignee_id: null,
     cadence_type: 'daily',
     cadence_value: { time: '17:30' },
     timezone: 'Europe/Istanbul',
