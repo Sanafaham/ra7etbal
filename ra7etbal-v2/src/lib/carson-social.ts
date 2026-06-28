@@ -5,7 +5,7 @@ const SOCIAL_ACKNOWLEDGEMENT_RESPONSES = [
 ] as const;
 
 const CARSON_FILLER_PREFIX_PATTERN =
-  /^(?:(?:one moment(?:\s+while\s+i[^.?!]*)?|done|got it|of course|hold on|give me a second|just a second|i understand|certainly|absolutely|processing|i(?:'|’)ll analyze(?: that)?|let me(?: check| take a look| look into that)?)[\s.,!?;:—-]*)+/i;
+  /^(?:(?:(?:just\s+)?one\s+(?:moment|sec(?:ond)?s?)(?:\s+while\s+i[^.?!]*)?|done|got it|of course|hold on|give me (?:a|one) second|just a second|i understand|certainly|absolutely|processing|i(?:'|’)ll analyze(?: that)?|let me(?: check| take a look| look into that)?)[\s.,!?;:—–-]*)+/i;
 
 const CARSON_REASONING_PREFIX_PATTERN =
   /^(?:based on (?:your request|the attached (?:photo|image)|the information i have)[\s.,!?;:—-]*|according to (?:your )?(?:ra7etbal|rahet bal)? ?(?:data|context|information)?[\s.,!?;:—-]*|it (?:appears|seems)(?: that)?[\s.,!?;:—-]*|the attached (?:photo|image) (?:shows|is|was)[\s.,!?;:—-]*|the task delegated[\s.,!?;:—-]*)+/i;

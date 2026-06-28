@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { resolveCarsonDisplayMessage, type DirectToolSuccessResult } from "./carson-direct-tool-override";
+import {
+  resolveCarsonDisplayMessage,
+  resolveSanitizedCarsonDisplayMessage,
+  type DirectToolSuccessResult,
+} from "./carson-direct-tool-override";
 
 const NOW = Date.parse("2026-06-28T00:02:20.000Z");
 
@@ -78,5 +82,48 @@ describe("resolveCarsonDisplayMessage", () => {
     expect(resolveCarsonDisplayMessage(failureMessage, successResult(), NOW)).toBe(
       "Added to your to-do list.",
     );
+  });
+});
+
+describe("resolveSanitizedCarsonDisplayMessage", () => {
+  it("sanitizes an agent message starting with one moment", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "One moment. Added to your to-do list.",
+      lastSuccess: null,
+      now: NOW,
+    });
+
+    expect(result).toBe("Added to your to-do list.");
+  });
+
+  it("sanitizes an agent message where one moment is the whole reply", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "One moment",
+      lastSuccess: null,
+      now: NOW,
+    });
+
+    expect(result).toBe("");
+  });
+
+  it("does not let a direct-tool success override bypass Carson reply sanitation", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "I wasn't able to save that. Please try again.",
+      lastSuccess: successResult({ resultText: "One moment. Added to your to-do list." }),
+      now: NOW,
+    });
+
+    expect(result).toBe("Added to your to-do list.");
+  });
+
+  it("keeps social acknowledgement fallback natural when the agent reply is only filler", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "One moment.",
+      previousUserMessage: "thank you",
+      lastSuccess: null,
+      now: NOW,
+    });
+
+    expect(result).toBe("Anytime.");
   });
 });

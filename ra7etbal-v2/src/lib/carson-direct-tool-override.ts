@@ -9,6 +9,12 @@
  * over a contradictory agent message, for a short window after the tool ran.
  */
 
+import {
+  isSocialAcknowledgement,
+  sanitizeCarsonReplyText,
+  sanitizeSocialAcknowledgementReply,
+} from "./carson-social";
+
 export interface DirectToolSuccessResult {
   toolName: string;
   resultText: string;
@@ -38,4 +44,25 @@ export function resolveCarsonDisplayMessage(
   }
 
   return lastSuccess.resultText;
+}
+
+interface ResolveSanitizedCarsonDisplayMessageInput {
+  agentMessage: string;
+  previousUserMessage?: string;
+  lastSuccess: DirectToolSuccessResult | null;
+  now?: number;
+}
+
+export function resolveSanitizedCarsonDisplayMessage({
+  agentMessage,
+  previousUserMessage = "",
+  lastSuccess,
+  now = Date.now(),
+}: ResolveSanitizedCarsonDisplayMessageInput): string {
+  const toolAwareMessage = resolveCarsonDisplayMessage(agentMessage, lastSuccess, now);
+  return sanitizeCarsonReplyText(
+    isSocialAcknowledgement(previousUserMessage)
+      ? sanitizeSocialAcknowledgementReply(toolAwareMessage)
+      : toolAwareMessage,
+  );
 }

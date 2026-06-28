@@ -76,7 +76,7 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
-import { resolveCarsonDisplayMessage, type DirectToolSuccessResult } from "../../lib/carson-direct-tool-override";
+import { resolveSanitizedCarsonDisplayMessage, type DirectToolSuccessResult } from "../../lib/carson-direct-tool-override";
 import { CARSON_STATUS_POLICY } from "../../lib/carson-status-policy";
 import {
   addLatencyStageDuration,
@@ -3410,15 +3410,11 @@ export default function ElevenLabsAgentWidget({
             // reply — it can contradict a direct tool call that just succeeded
             // (create_todo P0). Prefer the tool's own success result when the
             // agent's message reads as a failure shortly after that tool ran.
-            const toolAwareMessage = resolveCarsonDisplayMessage(
-              message,
-              lastDirectToolSuccessRef.current,
-            );
-            const displayMessage = sanitizeCarsonReplyText(
-              isSocialAcknowledgement(previousUserMessage)
-                ? sanitizeSocialAcknowledgementReply(toolAwareMessage)
-                : toolAwareMessage,
-            );
+            const displayMessage = resolveSanitizedCarsonDisplayMessage({
+              agentMessage: message,
+              previousUserMessage,
+              lastSuccess: lastDirectToolSuccessRef.current,
+            });
             if (!displayMessage || shouldSuppressCarsonIdlePrompt(message)) {
               sessionTranscriptRef.current.pop();
               console.log("[carson-idle] suppressed idle prompt", {

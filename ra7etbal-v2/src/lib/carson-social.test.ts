@@ -43,6 +43,7 @@ describe("Carson social acknowledgement detection", () => {
     ["Got it. You're welcome.", "You're welcome."],
     ["Hold on. Anytime.", "Anytime."],
     ["Just a second. I've got you.", "I've got you."],
+    ["One sec. Anytime.", "Anytime."],
     ["One moment, got it — Anytime.", "Anytime."],
   ])("strips execution filler from social replies: '%s'", (input, expected) => {
     const reply = sanitizeSocialAcknowledgementReply(input);
@@ -57,8 +58,14 @@ describe("Carson social acknowledgement detection", () => {
 
 describe("Carson global reply text sanitation", () => {
   it.each([
+    ["One moment", ""],
+    ["One moment,", ""],
+    ["One sec", ""],
+    ["One second.", ""],
     ["One moment. Anytime.", "Anytime."],
     ["One moment. Grace has it.", "Grace has it."],
+    ["One sec. Grace has it.", "Grace has it."],
+    ["Just one moment. Grace has it.", "Grace has it."],
     ["One moment while I check that. Grace has it.", "Grace has it."],
     ["Got it. Grace has it.", "Grace has it."],
     ["Hold on. Grace has it.", "Grace has it."],
@@ -119,6 +126,9 @@ describe("Carson global reply text sanitation", () => {
 
   it.each([
     "One moment.",
+    "One moment",
+    "One sec",
+    "Just one moment.",
     "One moment. Still there?",
     "Still there, سيدتي الجميلة?",
     "Are you there?",
