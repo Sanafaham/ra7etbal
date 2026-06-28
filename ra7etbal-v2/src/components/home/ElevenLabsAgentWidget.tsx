@@ -39,6 +39,7 @@ import { createReminderTask } from "../../lib/reminders";
 import {
   createDelegationTaskAndMessage,
 } from "../../lib/delegations";
+import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
@@ -1594,52 +1595,32 @@ export default function ElevenLabsAgentWidget({
         return "I couldn't verify your identity. Please try again.";
       }
 
-      let messageRow: Awaited<ReturnType<typeof createMessage>>;
-      try {
-        messageRow = await createMessage({
-          user_id: userId,
-          task_id: null,
-          recipient: person.name,
-          content: text,
-          confirmation_url: null,
-        });
-      } catch (err) {
-        console.error("[direct_whatsapp_tool_failed]", {
-          stage: "create_message",
-          recipient: person.name,
-          error: err instanceof Error ? err.message : String(err),
-        });
-        return `I couldn't send ${person.name} the message. Please try again.`;
-      }
-
-      console.log("[direct_whatsapp_tool_saved]", {
-        messageRecordId: messageRow.id,
-        recipient: person.name,
-      });
-
       const ownerName = useProfileStore.getState().displayName ?? null;
 
       try {
-        const result = await sendWhatsAppTask({
-          to: person.phone,
-          messageText: messageRow.content,
-          confirmationLink: null,
-          messageRecordId: messageRow.id,
-          taskId: null,
-          sendMode: "direct_message",
-          recipientName: person.name,
+        const { message, delivery } = await createAndSendDirectMessage({
+          source: "send_direct_whatsapp_message",
+          userId,
+          recipient: person.name,
+          messageText: text,
+          phone: person.phone,
           ownerName,
+          createMessageFn: createMessage,
+        });
+        console.log("[direct_whatsapp_tool_saved]", {
+          messageRecordId: message.id,
+          recipient: person.name,
         });
         console.log("[direct_whatsapp_tool_delivery_result]", {
           success: true,
-          channel: result.channel,
-          deliveryId: result.deliveryId,
+          channel: delivery.channel,
+          deliveryId: delivery.deliveryId,
         });
         return `It's with ${person.name}. I'll watch for the reply.`;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error("[direct_whatsapp_tool_failed]", {
-          stage: "deliver_message",
+          stage: err instanceof DirectMessageBoundaryError ? err.stage : "deliver_message",
           recipient: person.name,
           error: errMsg,
         });

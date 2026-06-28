@@ -9,6 +9,7 @@ import { useAuth } from "../hooks/useAuth";
 import { addImpliedOperationalResponsibilities } from "../lib/ai/role-precedence";
 import { savePending, saveTaskAttachments } from "../lib/save";
 import { sendWhatsAppTask } from "../lib/whatsapp";
+import { sendDirectMessageRecord } from "../lib/direct-messages";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { useMessagesStore } from "../stores/messages";
@@ -275,8 +276,18 @@ export default function Review() {
       } else if (consentedMessages.length > 0) {
         try {
           await Promise.all(
-            consentedMessages.map((message) =>
-              sendWhatsAppTask({
+            consentedMessages.map(async (message) => {
+              if (!message.task_id && !message.confirmation_url) {
+                const delivery = await sendDirectMessageRecord({
+                  source: "review",
+                  message,
+                  phone: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
+                  ownerName: displayName ?? null,
+                });
+                return delivery;
+              }
+
+              return sendWhatsAppTask({
                 to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
                 messageText: message.content,
                 confirmationLink: message.confirmation_url,
@@ -286,9 +297,9 @@ export default function Review() {
                 ownerName: displayName ?? null,
                 imagePath: message.task_id ? (taskImagePathById.get(message.task_id) ?? null) : null,
                 attachmentCount: message.task_id ? (attachmentCountByTaskId.get(message.task_id) ?? null) : null,
-                sendMode: !message.task_id && !message.confirmation_url ? "direct_message" : null,
-              }),
-            ),
+                sendMode: null,
+              });
+            }),
           );
         } catch (err) {
           console.error("Review Save & Send WhatsApp failed:", err);

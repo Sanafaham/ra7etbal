@@ -23,6 +23,7 @@ import type { Person } from "../types/person";
 import type { ExtractedItem } from "../types/extraction";
 import { savePending } from "./save";
 import { deliverTaskMessage } from "./delivery";
+import { sendDirectMessageRecord } from "./direct-messages";
 import { buildDelegationMessage } from "./delegation-message";
 import { supabase } from "./supabase";
 
@@ -336,17 +337,24 @@ export async function executeProposedPlan(
 
   await Promise.allSettled(
     sendableMessages.map((msg) =>
-      deliverTaskMessage({
-        to: phoneByName.get(msg.recipient.trim().toLowerCase()) ?? null,
-        messageText: msg.content,
-        confirmationLink: msg.confirmation_url ?? null,
-        messageRecordId: msg.id,
-        taskId: msg.task_id,
-        sendMode: !msg.task_id && !msg.confirmation_url ? "direct_message" : null,
-        recipientName: msg.recipient,
-        ownerName: displayName,
-        imagePath: null,
-      }),
+      !msg.task_id && !msg.confirmation_url
+        ? sendDirectMessageRecord({
+            source: "ops-intelligence",
+            message: msg,
+            phone: phoneByName.get(msg.recipient.trim().toLowerCase()) ?? null,
+            ownerName: displayName,
+          })
+        : deliverTaskMessage({
+            to: phoneByName.get(msg.recipient.trim().toLowerCase()) ?? null,
+            messageText: msg.content,
+            confirmationLink: msg.confirmation_url ?? null,
+            messageRecordId: msg.id,
+            taskId: msg.task_id,
+            sendMode: null,
+            recipientName: msg.recipient,
+            ownerName: displayName,
+            imagePath: null,
+          }),
     ),
   );
 

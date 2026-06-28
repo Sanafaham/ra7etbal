@@ -244,6 +244,29 @@ describe("savePending — Clear My Head routing (Notes/To-do/Reminder/Delegation
     expect(calls.createTodo).toHaveLength(0);
   });
 
+  it("direct messages create one message row with no task and no confirmation link", async () => {
+    const result = await savePending(
+      [item({ type: "message", description: "Dinner is at 9", assignedTo: "Grace" })],
+      "user-1",
+      "Sana",
+      [GRACE],
+    );
+
+    expect(result.messages).toHaveLength(1);
+    expect(calls.createTask).toHaveLength(0);
+    expect(calls.createMessage).toHaveLength(1);
+    expect(calls.createMessage[0]).toMatchObject({
+      user_id: "user-1",
+      task_id: null,
+      recipient: "Grace",
+      confirmation_url: null,
+    });
+    expect(result.messages[0].task_id).toBeNull();
+    expect(result.messages[0].confirmation_url).toBeNull();
+    expect(calls.scheduleEscalationMessages).toHaveLength(0);
+    expect(calls.scheduleReminderPush).toHaveLength(0);
+  });
+
   it("image delegations keep image_path and still get message, canonical link, and escalation", async () => {
     const file = new File(["image"], "reference.jpg", { type: "image/jpeg" });
     const imageFiles = new Map<string, File>([["img-delegation", file]]);

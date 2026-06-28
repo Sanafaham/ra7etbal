@@ -1,8 +1,9 @@
 import { createDelegationTaskAndMessage, rewriteOwnerPronouns } from "./delegations";
+import { createDirectMessageRecord } from "./direct-messages";
 import { buildDelegationMessage } from "./delegation-message";
-import { createMessage } from "./messages";
 import { resizeImage, uploadTaskImage, uploadTaskAttachment } from "./image-upload";
 import { supabase } from "./supabase";
+import { createMessage } from "./messages";
 import { createTask } from "./tasks";
 import { createTodo } from "./carson-todos";
 import { saveCarsonNote } from "./carson-notes";
@@ -153,12 +154,12 @@ export async function savePending(
         continue;
       }
       const row = await measureSupabaseOperation(timingObserver, () =>
-        createMessage({
-          user_id: userId,
-          task_id: null,
+        createDirectMessageRecord({
+          source: "save",
+          userId,
           recipient,
-          content,
-          confirmation_url: null,
+          messageText: content,
+          createMessageFn: createMessage,
         }),
       );
       messages.push(row);

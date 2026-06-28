@@ -18,6 +18,7 @@ import { savePending, saveTaskAttachments } from "./save";
 import { resizeImage } from "./image-upload";
 import { detectAllRecurringSchedules } from "./routine-detection";
 import { deliverTaskMessage, type DeliveryResult } from "./delivery";
+import { sendDirectMessageRecord } from "./direct-messages";
 import { useTasksStore } from "../stores/tasks";
 import { summarizeConversation } from "./carson-summarize";
 import { extractDurableFacts } from "./carson-fact-extract";
@@ -486,22 +487,26 @@ export async function executeDelegationFromText(
       sendableMessages.length > 0
         ? await Promise.allSettled(
             sendableMessages.map((message) =>
-              deliverTaskMessage({
-              to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
-              messageText: withImageContext(message.content, context.imageDescription),
-              confirmationLink: message.confirmation_url ?? null,
-              messageRecordId: message.id,
-              taskId: message.task_id,
-              sendMode: !message.task_id && !message.confirmation_url ? "direct_message" : null,
-              recipientName: message.recipient,
-              ownerName: context.displayName ?? null,
-              imagePath: message.task_id
-                ? (saved.imagePathsByTaskId.get(message.task_id) ?? null)
-                : null,
-              attachmentCount: message.task_id
-                ? (attachmentCountByTaskId.get(message.task_id) ?? null)
-                : null,
-              }),
+              !message.task_id && !message.confirmation_url
+                ? sendDirectMessageRecord({
+                    source: "execute_instruction",
+                    message,
+                    messageText: withImageContext(message.content, context.imageDescription),
+                    phone: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
+                    ownerName: context.displayName ?? null,
+                  })
+                : deliverTaskMessage({
+                    to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
+                    messageText: withImageContext(message.content, context.imageDescription),
+                    confirmationLink: message.confirmation_url ?? null,
+                    messageRecordId: message.id,
+                    taskId: message.task_id,
+                    sendMode: null,
+                    recipientName: message.recipient,
+                    ownerName: context.displayName ?? null,
+                    imagePath: saved.imagePathsByTaskId.get(message.task_id!) ?? null,
+                    attachmentCount: attachmentCountByTaskId.get(message.task_id!) ?? null,
+                  }),
             ),
           )
         : [];

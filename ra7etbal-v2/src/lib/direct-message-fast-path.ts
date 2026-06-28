@@ -1,6 +1,6 @@
-import { deliverTaskMessage, type DeliveryResult } from "./delivery";
+import { createAndSendDirectMessage, DirectMessageBoundaryError } from "./direct-messages";
+import { deliverTaskMessage } from "./delivery";
 import { createMessage } from "./messages";
-import type { Message } from "../types/message";
 import type { Person } from "../types/person";
 
 export type DirectMessageFastPathResult =
@@ -103,47 +103,36 @@ export async function executeDirectMessageFastPath(
   const createMessageFn = deps.createMessageFn ?? createMessage;
   const deliverTaskMessageFn = deps.deliverTaskMessageFn ?? deliverTaskMessage;
 
-  let message: Message;
   try {
-    message = await createMessageFn({
-      user_id: context.userId,
-      task_id: null,
+    const { message, delivery } = await createAndSendDirectMessage({
+      source: "direct-message-fast-path",
+      userId: context.userId,
       recipient: person.name,
-      content: parsed.messageText,
-      confirmation_url: null,
-    });
-  } catch (err) {
-    console.error("[fast_path_direct_message_failed]", {
-      recipientName: person.name,
-      stage: "create_message",
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return {
-      handled: true,
-      status: "failed",
-      reason: "delivery_failed",
-      recipientName: person.name,
       messageText: parsed.messageText,
-      response: `I couldn't send ${person.name} the message. Please try again.`,
-    };
-  }
-
-  let delivery: DeliveryResult;
-  try {
-    delivery = await deliverTaskMessageFn({
-      to: person.phone,
-      messageText: message.content,
-      confirmationLink: null,
-      messageRecordId: message.id,
-      taskId: null,
-      sendMode: "direct_message",
-      recipientName: person.name,
+      phone: person.phone,
       ownerName: context.displayName ?? null,
+      createMessageFn,
+      deliverTaskMessageFn,
     });
+
+    console.info("[fast_path_direct_message_sent]", {
+      recipientName: person.name,
+      messageRecordId: message.id,
+      deliveryId: delivery.deliveryId ?? null,
+      messageId: delivery.messageId ?? null,
+    });
+
+    return {
+      handled: true,
+      status: "sent",
+      recipientName: person.name,
+      messageText: parsed.messageText,
+      response: `It's with ${person.name}. I'll watch for the reply.`,
+    };
   } catch (err) {
     console.error("[fast_path_direct_message_failed]", {
       recipientName: person.name,
-      stage: "deliver_message",
+      stage: err instanceof DirectMessageBoundaryError ? err.stage : "deliver_message",
       error: err instanceof Error ? err.message : String(err),
     });
     return {
@@ -155,38 +144,6 @@ export async function executeDirectMessageFastPath(
       response: `I couldn't send ${person.name} the message. Please try again.`,
     };
   }
-
-  if (!delivery.success) {
-    console.error("[fast_path_direct_message_failed]", {
-      recipientName: person.name,
-      stage: "deliver_message",
-      error: delivery.error ?? "delivery failed",
-      deliveryId: delivery.deliveryId ?? null,
-    });
-    return {
-      handled: true,
-      status: "failed",
-      reason: "delivery_failed",
-      recipientName: person.name,
-      messageText: parsed.messageText,
-      response: `I couldn't send ${person.name} the message. Please try again.`,
-    };
-  }
-
-  console.info("[fast_path_direct_message_sent]", {
-    recipientName: person.name,
-    messageRecordId: message.id,
-    deliveryId: delivery.deliveryId ?? null,
-    messageId: delivery.messageId ?? null,
-  });
-
-  return {
-    handled: true,
-    status: "sent",
-    recipientName: person.name,
-    messageText: parsed.messageText,
-    response: `It's with ${person.name}. I'll watch for the reply.`,
-  };
 }
 
 export function parseSimpleDirectMessage(

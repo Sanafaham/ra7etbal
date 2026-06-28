@@ -421,6 +421,20 @@ describe("canonical path source adapters", () => {
     expect(widget).toMatch(/async function createAndSendDelegation[\s\S]*createDelegationTaskAndMessage\(\{[\s\S]*source:\s*"send_delegation"[\s\S]*sendWhatsAppTask\(\{/);
   });
 
+  it("keeps direct message creation and sending on the shared direct-message boundary", () => {
+    const save = source("src/lib/save.ts");
+    const textCarson = source("src/lib/text-carson.ts");
+    const fastPath = source("src/lib/direct-message-fast-path.ts");
+    const widget = source("src/components/home/ElevenLabsAgentWidget.tsx");
+    const review = source("src/routes/Review.tsx");
+
+    expect(save).toMatch(/if \(item\.type === "message"\)[\s\S]*createDirectMessageRecord\(\{[\s\S]*source:\s*"save"/);
+    expect(textCarson).toMatch(/sendDirectMessageRecord\(\{[\s\S]*source:\s*"execute_instruction"/);
+    expect(fastPath).toMatch(/createAndSendDirectMessage\(\{[\s\S]*source:\s*"direct-message-fast-path"/);
+    expect(widget).toMatch(/const sendDirectWhatsAppMessage = useCallback[\s\S]*createAndSendDirectMessage\(\{[\s\S]*source:\s*"send_direct_whatsapp_message"/);
+    expect(review).toMatch(/sendDirectMessageRecord\(\{[\s\S]*source:\s*"review"/);
+  });
+
   it("documents confirmation URL canonical param and legacy compatibility", () => {
     const confirm = source("src/routes/Confirm.tsx");
     const save = source("src/lib/save.ts");
