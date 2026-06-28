@@ -41,12 +41,16 @@ export async function createTodo(
   if (!trimmedTitle) throw new Error("Cannot create a to-do without a title.");
 
   // TEMP P0 INSTRUMENTATION — remove once live to-do failure is root-caused.
-  const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
-  console.error("[TODO_DEBUG] createTodo() auth session check:", {
-    hasSession: !!sessionData?.session,
-    userId: sessionData?.session?.user?.id,
-    sessionErr: sessionErr?.message,
-  });
+  try {
+    const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+    console.error("[TODO_DEBUG] createTodo() auth session check:", {
+      hasSession: !!sessionData?.session,
+      userId: sessionData?.session?.user?.id,
+      sessionErr: sessionErr?.message,
+    });
+  } catch (sessionCheckErr) {
+    console.warn("[TODO_DEBUG] auth session check skipped:", sessionCheckErr);
+  }
 
   const { data, error } = await supabase
     .from("carson_todos")

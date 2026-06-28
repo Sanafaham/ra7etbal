@@ -62,6 +62,7 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { recordCarsonDiagnostic, getCarsonDiagnostics } from "../../lib/carson-diagnostics";
+import { resolveCarsonDisplayMessage, type DirectToolSuccessResult } from "../../lib/carson-direct-tool-override";
 import { CARSON_STATUS_POLICY } from "../../lib/carson-status-policy";
 import {
   addLatencyStageDuration,
@@ -858,6 +859,12 @@ export default function ElevenLabsAgentWidget({
   /** Snapshot of active to-dos loaded at startCall. Used by complete_todo for
    *  in-memory keyword lookup without hitting Supabase during the call. */
   const todosRef = useRef<CarsonTodo[]>([]);
+
+  /** Most recent successful direct client-tool result (create_todo/complete_todo).
+   *  The ElevenLabs agent's spoken/displayed reply is a separate LLM generation
+   *  (onMessage) that can contradict a tool that just succeeded — this lets
+   *  onMessage prefer the tool's own result over a contradictory agent message. */
+  const lastDirectToolSuccessRef = useRef<DirectToolSuccessResult | null>(null);
 
   /**
    * Last user utterance that contained recurring language, captured in onMessage
@@ -2468,7 +2475,17 @@ export default function ElevenLabsAgentWidget({
         } catch (diagnosticErr) {
           console.warn("[carson_direct_tool:DIAGNOSTIC_ERROR]", diagnosticErr);
         }
-        return typeof result === "string" ? (sanitizeCarsonReplyText(result) as TResult) : result;
+        const sanitizedResult =
+          typeof result === "string" ? (sanitizeCarsonReplyText(result) as TResult) : result;
+        if (typeof sanitizedResult === "string") {
+          lastDirectToolSuccessRef.current = {
+            toolName,
+            resultText: sanitizedResult,
+            at: new Date().toISOString(),
+            inputSummary: input,
+          };
+        }
+        return sanitizedResult;
       } catch (err) {
         try {
           recordCarsonDiagnostic(
@@ -3561,10 +3578,18 @@ export default function ElevenLabsAgentWidget({
                 .slice(0, -1)
                 .reverse()
                 .find((entry) => entry.role === "user")?.message ?? "";
+            // This onMessage callback delivers the agent's own separately-generated
+            // reply — it can contradict a direct tool call that just succeeded
+            // (create_todo P0). Prefer the tool's own success result when the
+            // agent's message reads as a failure shortly after that tool ran.
+            const toolAwareMessage = resolveCarsonDisplayMessage(
+              message,
+              lastDirectToolSuccessRef.current,
+            );
             const displayMessage = sanitizeCarsonReplyText(
               isSocialAcknowledgement(previousUserMessage)
-                ? sanitizeSocialAcknowledgementReply(message)
-                : message,
+                ? sanitizeSocialAcknowledgementReply(toolAwareMessage)
+                : toolAwareMessage,
             );
             if (!displayMessage || shouldSuppressCarsonIdlePrompt(message)) {
               sessionTranscriptRef.current.pop();
