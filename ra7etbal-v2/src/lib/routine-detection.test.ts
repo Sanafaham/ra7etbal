@@ -16,6 +16,8 @@ const supabaseMocks = vi.hoisted(() => ({
 
 vi.mock("./routines", () => ({
   createRoutine: routinesMocks.createRoutine,
+  LEGACY_ROUTINE_CREATION_FROZEN_MESSAGE:
+    "New recurring work now lives in Automations. Existing routines still work here.",
 }));
 
 vi.mock("./supabase", () => ({
@@ -27,6 +29,7 @@ vi.mock("./supabase", () => ({
 }));
 
 import {
+  buildVoiceAutomationInput,
   detectAllRecurringSchedules,
   findPersonInInstruction,
   createReminderRoutineFromInstruction,
@@ -150,7 +153,7 @@ describe("createReminderRoutineFromInstruction", () => {
     expect(payload.assignee_id).toBeNull();
   });
 
-  it("keeps legacy delegated recurring routine creation on routines", async () => {
+  it("freezes the old delegated recurring routine helper without creating a routine", async () => {
     const summary = await createVoiceRoutine({
       rawInstruction: "Every morning ask Christopher to send a lunch photo.",
       schedule: { schedule: "daily" },
@@ -159,13 +162,29 @@ describe("createReminderRoutineFromInstruction", () => {
       displayName: "Sana",
     });
 
-    expect(summary).toContain("Routine set.");
+    expect(summary).toBe("New recurring work now lives in Automations. Existing routines still work here.");
     expect(globalThis.fetch).not.toHaveBeenCalled();
-    expect(routinesMocks.createRoutine).toHaveBeenCalledTimes(1);
-    expect(routinesMocks.createRoutine.mock.calls[0][0]).toMatchObject({
-      type: "delegation",
-      schedule: "daily",
-      payload: { person_id: "p1", message: "Send a lunch photo." },
+    expect(routinesMocks.createRoutine).not.toHaveBeenCalled();
+  });
+});
+
+describe("third-party recurring automation routing", () => {
+  it("keeps new third-party recurring delegations on the automation input path", () => {
+    const schedules = detectAllRecurringSchedules("Every morning ask Christopher to send a lunch photo.");
+    const input = buildVoiceAutomationInput(
+      "Every morning ask Christopher to send a lunch photo.",
+      schedules[0],
+      [CHRISTOPHER, GRACE],
+    );
+
+    expect(input).toMatchObject({
+      assigneeId: "p1",
+      personName: "Christopher",
+      cleanMessage: "Send a lunch photo.",
+      cadenceType: "daily",
+      cadenceValue: { time: "09:00" },
+      automationType: "delegation",
     });
+    expect(routinesMocks.createRoutine).not.toHaveBeenCalled();
   });
 });

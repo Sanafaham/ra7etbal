@@ -5,6 +5,7 @@ import { useAuth } from "../hooks/useAuth";
 import {
   createRoutine,
   deleteRoutine,
+  LEGACY_ROUTINE_CREATION_FROZEN_MESSAGE,
   listRoutines,
   toggleRoutine,
 } from "../lib/routines";
@@ -52,6 +53,8 @@ function automationCadenceLabel(row: AutomationRow): string {
 export function isOwnerOnlyAutomation(row: Pick<AutomationRow, "assignee_id" | "automation_type">): boolean {
   return row.assignee_id === null && row.automation_type !== "message";
 }
+
+export const LEGACY_ROUTINE_MANUAL_CREATION_ENABLED = false;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -517,7 +520,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
             </p>
           </div>
         )}
-        {!showForm && (
+        {LEGACY_ROUTINE_MANUAL_CREATION_ENABLED && !showForm && (
           <button
             type="button"
             onClick={handleOpenForm}
@@ -544,7 +547,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       )}
 
       {/* ── Create form ── */}
-      {showForm && (
+      {LEGACY_ROUTINE_MANUAL_CREATION_ENABLED && showForm && (
         <div className="rounded-2xl border border-sand bg-white/80 p-5 shadow-sm space-y-4">
           <h2 className="text-base font-semibold text-ink">New Routine</h2>
 
@@ -804,7 +807,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       {showEmpty && (
         <div className="rounded-2xl border border-sand bg-white/60 px-5 py-10 text-center">
           <p className="text-sm text-ink/50">
-            No routines yet. Add one to automate recurring reminders and delegations.
+            {LEGACY_ROUTINE_CREATION_FROZEN_MESSAGE}
           </p>
         </div>
       )}

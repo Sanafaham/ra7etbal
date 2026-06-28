@@ -24,9 +24,17 @@ vi.mock("../stores/people", () => ({
   }),
 }));
 
-import { isOwnerOnlyAutomation, resolveStateConfig } from "./Routines";
+import {
+  isOwnerOnlyAutomation,
+  LEGACY_ROUTINE_MANUAL_CREATION_ENABLED,
+  resolveStateConfig,
+} from "./Routines";
 
 describe("owner-only automation UI status", () => {
+  it("keeps manual legacy routine creation disabled", () => {
+    expect(LEGACY_ROUTINE_MANUAL_CREATION_ENABLED).toBe(false);
+  });
+
   it("identifies personal reminder/action automations", () => {
     expect(isOwnerOnlyAutomation({ assignee_id: null, automation_type: "delegation" })).toBe(true);
     expect(isOwnerOnlyAutomation({ assignee_id: "person-1", automation_type: "delegation" })).toBe(false);

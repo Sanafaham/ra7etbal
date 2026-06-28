@@ -10,6 +10,9 @@
 
 import { supabase } from "./supabase";
 
+export const LEGACY_ROUTINE_CREATION_FROZEN_MESSAGE =
+  "New recurring work now lives in Automations. Existing routines still work here.";
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export type RoutineType = "reminder" | "delegation" | "message";
@@ -57,27 +60,6 @@ export interface CreateRoutineInput {
   next_run_at?: string;
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-const FALLBACK_TIMEZONE = "Europe/Istanbul";
-
-/**
- * Resolve the current user's preferred timezone.
- * Reads profiles.morning_brief_timezone; falls back to Europe/Istanbul.
- * Never throws — timezone lookup failure is non-fatal.
- */
-async function resolveTimezone(): Promise<string> {
-  try {
-    const { data } = await supabase
-      .from("profiles")
-      .select("morning_brief_timezone")
-      .maybeSingle();
-    return data?.morning_brief_timezone ?? FALLBACK_TIMEZONE;
-  } catch {
-    return FALLBACK_TIMEZONE;
-  }
-}
-
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
@@ -101,40 +83,8 @@ export async function listRoutines(): Promise<Routine[]> {
  * - timezone from profiles.morning_brief_timezone (fallback: Europe/Istanbul)
  */
 export async function createRoutine(input: CreateRoutineInput): Promise<Routine> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated.");
-
-  const timezone = await resolveTimezone();
-
-  const insert: Record<string, unknown> = {
-    user_id: user.id,
-    name: input.name,
-    type: input.type,
-    schedule: input.schedule,
-    schedule_day: input.schedule_day ?? null,
-    schedule_time: input.schedule_time,
-    timezone,
-    payload: input.payload,
-    enabled: true,
-  };
-  if (input.schedule === "every_n_days") {
-    insert.interval_days = input.interval_days ?? null;
-    insert.next_run_at = input.next_run_at ?? null;
-  }
-
-  console.log("[routine:CREATE_ROUTINE_PAYLOAD]", insert);
-  const { data, error } = await supabase
-    .from("routines")
-    .insert(insert)
-    .select()
-    .single();
-
-  console.log("[routine:SUPABASE_INSERT_SUCCESS]", data);
-  console.error("[routine:SUPABASE_INSERT_ERROR]", error);
-  if (error) throw new Error(error.message);
-  return data as Routine;
+  void input;
+  throw new Error(LEGACY_ROUTINE_CREATION_FROZEN_MESSAGE);
 }
 
 /**

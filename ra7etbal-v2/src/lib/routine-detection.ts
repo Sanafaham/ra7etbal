@@ -9,7 +9,7 @@
  */
 
 import type { Person } from "../types/person";
-import { createRoutine } from "./routines";
+import { LEGACY_ROUTINE_CREATION_FROZEN_MESSAGE } from "./routines";
 import type { RoutineSchedule } from "./routines";
 import { supabase } from "./supabase";
 
@@ -166,12 +166,9 @@ interface CreateVoiceRoutineOptions {
 }
 
 /**
- * Creates a recurring routine from a voice instruction using regex-first
- * extraction (no AI call). Throws on Supabase insert failure so the widget
- * can surface a clear error rather than silently falling through.
- *
- * Returns a Carson-ready spoken summary on success, or null if the instruction
- * does not contain a recognisable person name from the contacts list.
+ * Legacy delegated-routine creation is frozen. This helper is kept only as a
+ * defensive compatibility boundary: it still validates whether the instruction
+ * could have been a person-based routine, but never inserts a routines row.
  */
 export async function createVoiceRoutine(
   opts: CreateVoiceRoutineOptions,
@@ -202,51 +199,11 @@ export async function createVoiceRoutine(
     return null;
   }
 
-  // ── 3. Compute next_run_at for every_n_days ────────────────────────────────
-  let nextRunAt: string | undefined;
-  if (schedule.schedule === "every_n_days" && schedule.intervalDays) {
-    const ms = schedule.intervalDays * 24 * 60 * 60 * 1000;
-    nextRunAt = new Date(Date.now() + ms).toISOString();
-  }
-
-  // ── 4. Parse schedule_time from raw instruction ────────────────────────────
-  // "at 9 AM" / "at 9:30 AM" / "at 21:00" — fallback to 09:00
-  const scheduleTime = extractTimeFromInstruction(rawInstruction) ?? "09:00";
-
-  // ── 5. Build routine name from message content ─────────────────────────────
-  const shortMsg = message.length > 40 ? message.slice(0, 40).trimEnd() + "…" : message;
-  const schedLabel = scheduleDisplayLabel(schedule);
-  const routineName = `${schedLabel}: ${shortMsg}`;
-
-  const routinePayload = { person_id: person.id, message };
-
-  console.log(LOG, "createRoutine payload", {
-    name: routineName,
-    type: "delegation",
+  console.warn(LOG, "legacy routine creation frozen", {
+    personName: person.name,
     schedule: schedule.schedule,
-    schedule_day: schedule.scheduleDay ?? null,
-    schedule_time: scheduleTime,
-    payload: routinePayload,
-    interval_days: schedule.intervalDays ?? null,
-    next_run_at: nextRunAt ?? null,
   });
-
-  // ── 6. Insert into Supabase ────────────────────────────────────────────────
-  const routine = await createRoutine({
-    name: routineName,
-    type: "delegation",
-    schedule: schedule.schedule,
-    schedule_day: schedule.scheduleDay,
-    schedule_time: scheduleTime,
-    payload: routinePayload,
-    interval_days: schedule.intervalDays,
-    next_run_at: nextRunAt,
-  });
-
-  console.log("[routine:SUPABASE_INSERT_SUCCESS] routine_id=" + routine.id + " name=" + routine.name);
-  console.log("[routine:ROUTINE_ID]", routine.id);
-
-  return buildRoutineSummary(person.name, message, schedule);
+  return LEGACY_ROUTINE_CREATION_FROZEN_MESSAGE;
 }
 
 // Leading "remind me to/that/about" — stripped after cadence language so a
@@ -582,37 +539,6 @@ function scheduleDisplayLabel(s: RecurringSchedule): string {
     return `Every ${day.charAt(0).toUpperCase() + day.slice(1)}`;
   }
   return "Recurring";
-}
-
-function buildRoutineSummary(
-  personName: string,
-  message: string,
-  schedule: RecurringSchedule,
-): string {
-  const shortMsg = message.length > 60 ? message.slice(0, 60).trimEnd() + "…" : message;
-
-  if (schedule.schedule === "every_n_days" && schedule.intervalDays) {
-    const unit = schedule.intervalDays === 1 ? "day" : "days";
-    return (
-      `Routine set. I'll ask ${personName} every ${schedule.intervalDays} ${unit}: ` +
-      `"${shortMsg}". You can manage it in Updates → Routines.`
-    );
-  }
-  if (schedule.schedule === "daily") {
-    return (
-      `Routine set. I'll ask ${personName} daily: "${shortMsg}". ` +
-      `You can manage it in Updates → Routines.`
-    );
-  }
-  const dayName =
-    schedule.scheduleDay != null
-      ? WEEKDAY_NAMES[schedule.scheduleDay].charAt(0).toUpperCase() +
-        WEEKDAY_NAMES[schedule.scheduleDay].slice(1)
-      : "weekly";
-  return (
-    `Routine set. I'll ask ${personName} every ${dayName}: "${shortMsg}". ` +
-    `You can manage it in Updates → Routines.`
-  );
 }
 
 /**
