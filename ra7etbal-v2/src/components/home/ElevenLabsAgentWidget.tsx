@@ -13,9 +13,22 @@ import {
   extractTodoTitleParam,
   extractTodoDescriptionParam,
   extractTodoQueryParam,
+  extractStringField,
   type CreateTodoParams,
   type CompleteTodoParams,
 } from "../../lib/carson-todo-tool-params";
+import {
+  extractPersonNameParam,
+  extractMessageParam,
+  extractTaskParam,
+  extractNoteParam,
+  extractTimeTextParam,
+  extractCityParam,
+  extractQueryParam,
+  extractCalendarTitleParam,
+  extractEventIdParam,
+  extractAutomationInstructionParam,
+} from "../../lib/carson-tool-params";
 import { filterCalendarEventsByRange } from "../../lib/calendar";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
@@ -979,16 +992,14 @@ export default function ElevenLabsAgentWidget({
   // Client tool: send_followup
   // ------------------------------------------------------------------
   const sendFollowup = useCallback(
-    async ({
-      name,
-      message,
-      allowNewFollowup = false,
-    }: {
+    async (params: {
       name: string;
       message?: string;
       allowNewFollowup?: boolean;
     }): Promise<string> => {
-      const normalizedName = name.trim();
+      const normalizedName = extractPersonNameParam(params, "name").trim();
+      const message = params?.message ?? extractMessageParam(params) ?? undefined;
+      const allowNewFollowup = params?.allowNewFollowup ?? false;
       if (!normalizedName) {
         return "I did not receive a person name. Ask the user who to follow up with.";
       }
@@ -1133,12 +1144,7 @@ export default function ElevenLabsAgentWidget({
   // Client tool: send_delegation
   // ------------------------------------------------------------------
   const sendDelegation = useCallback(
-    async ({
-      name,
-      task,
-      message,
-      note,
-    }: {
+    async (params: {
       name: string;
       task: string;
       message?: string;
@@ -1149,12 +1155,14 @@ export default function ElevenLabsAgentWidget({
        *  When absent, note is extracted from `message` as best-effort. */
       note?: string;
     }): Promise<string> => {
-      const normalizedName = name.trim();
+      const normalizedName = extractPersonNameParam(params, "name").trim();
+      const message = params?.message ?? extractMessageParam(params);
+      const note = params?.note;
       if (!normalizedName) {
         return "I did not receive a person name. Ask the user who to delegate to.";
       }
 
-      const taskText = task.trim();
+      const taskText = extractTaskParam(params).trim();
       if (!taskText || taskText.length < 4) {
         return "The task description is too vague. Ask the user what exactly they should do.";
       }
@@ -1347,18 +1355,17 @@ export default function ElevenLabsAgentWidget({
   // Client tool: create_reminder
   // ------------------------------------------------------------------
   const createReminder = useCallback(
-    async ({
-      description,
-      time_text,
-      due_at,
-    }: {
+    async (params: {
       description: string;
       /** Raw time phrase from the user, e.g. "tomorrow at 5 PM", "in 30 minutes". */
       time_text?: string;
       /** ISO fallback — only used when time_text is absent. */
       due_at?: string;
     }): Promise<string> => {
-      const text = description?.trim();
+      const due_at = params?.due_at;
+      // "description" is create_reminder's existing exact key — tried first,
+      // then the same note-shaped fallbacks as save_note.
+      const text = extractStringField(params, ["description", "note", "text", "content"]).trim();
       if (!text) {
         return "I did not receive a reminder description. Ask the user what they want to be reminded about.";
       }
@@ -1368,6 +1375,7 @@ export default function ElevenLabsAgentWidget({
       // time_text is absent. This ensures "tomorrow at 5 PM" always resolves
       // using the browser's local clock, not the agent's arithmetic.
       let resolvedDueAt: string;
+      const time_text = extractTimeTextParam(params);
 
       if (time_text?.trim()) {
         const parsed = parseVoiceTime(time_text.trim());
@@ -1457,15 +1465,7 @@ export default function ElevenLabsAgentWidget({
   // Cadence resolution is done client-side (browser clock + timezone).
   // ------------------------------------------------------------------
   const createAutomation = useCallback(
-    async ({
-      title,
-      instruction,
-      cadence_phrase,
-      first_run_text,
-      assignee_name,
-      proof_required,
-      proof_type,
-    }: {
+    async (params: {
       /** Short display title, e.g. "Daily kitchen check". */
       title: string;
       /** The full instruction sent to the assignee or executed as an action. */
@@ -1487,8 +1487,12 @@ export default function ElevenLabsAgentWidget({
       /** Type of proof required: "photo", "confirmation", or "text". */
       proof_type?: "photo" | "confirmation" | "text" | null;
     }): Promise<string> => {
-      const titleTrimmed = title?.trim();
-      const instrTrimmed = instruction?.trim();
+      const { cadence_phrase, first_run_text, proof_required, proof_type } = params;
+      const assignee_name = params?.assignee_name ?? extractPersonNameParam(params, "assignee_name");
+      const titleTrimmed = (params?.title ?? "").trim();
+      // "instruction" is the existing exact key — tried first, with the same
+      // task-shaped fallbacks used elsewhere (task/description/text).
+      const instrTrimmed = extractAutomationInstructionParam(params).trim();
       if (!titleTrimmed) return "I did not receive a title. Ask the user what to call this automation.";
       if (!instrTrimmed) return "I did not receive an instruction. Ask the user what Carson should do.";
       if (!cadence_phrase?.trim()) return "I did not receive a cadence. Ask the user how often this should run.";
@@ -1640,15 +1644,12 @@ export default function ElevenLabsAgentWidget({
   // browser-side and calls the existing /api/send-whatsapp-task route.
   // ------------------------------------------------------------------
   const sendDirectWhatsAppMessage = useCallback(
-    async ({
-      recipient_name,
-      message,
-    }: {
+    async (params: {
       recipient_name: string;
       message: string;
     }): Promise<string> => {
-      const name = (recipient_name ?? "").trim();
-      const text = (message ?? "").trim();
+      const name = extractPersonNameParam(params, "recipient_name").trim();
+      const text = extractMessageParam(params).trim();
 
       console.log("[direct_whatsapp_tool_called]", {
         recipient_name: name,
@@ -1763,8 +1764,8 @@ export default function ElevenLabsAgentWidget({
   // Persists to profiles.weather_city so future sessions have weather.
   // ------------------------------------------------------------------
   const saveCity = useCallback(
-    async ({ city }: { city: string }): Promise<string> => {
-      const trimmed = city.trim();
+    async (params: { city: string }): Promise<string> => {
+      const trimmed = extractCityParam(params).trim();
       if (!trimmed) return "I did not receive a city name. Please ask the user again.";
       try {
         await useProfileStore.getState().saveWeatherCity(trimmed);
@@ -1782,14 +1783,12 @@ export default function ElevenLabsAgentWidget({
   // durable behavior rules.
   // ------------------------------------------------------------------
   const saveNote = useCallback(
-    async ({
-      note,
-      category,
-    }: {
+    async (params: {
       note: string;
       category?: string;
     }): Promise<string> => {
-      const trimmed = note?.trim();
+      const trimmed = extractNoteParam(params).trim();
+      const category = params?.category;
       if (!trimmed) {
         return "I did not receive a note. Ask the user what they want saved.";
       }
@@ -1982,13 +1981,16 @@ export default function ElevenLabsAgentWidget({
           params?.time ?? "none",
         );
 
-        const title: string = (params?.title ?? "").trim();
+        const title: string = extractCalendarTitleParam(params).trim();
         const date: string  = (params?.date  ?? "").trim();
         const time: string  = (params?.time  ?? "").trim();
         const durationMinutes: number = Number(params?.duration_minutes) > 0
           ? Number(params.duration_minutes)
           : 60;
-        const description: string = (params?.description ?? "").trim();
+        // "description" can double as the title fallback above — don't also
+        // duplicate it as the event description in that case.
+        const descriptionRaw: string = (params?.description ?? "").trim();
+        const description: string = descriptionRaw === title ? "" : descriptionRaw;
 
         if (!title || !date || !time) {
           console.log("[calendar-create-debug] client validation failed missing fields title=%s date=%s time=%s",
@@ -2120,7 +2122,7 @@ export default function ElevenLabsAgentWidget({
           params?.date ?? "none",
           params?.time ?? "none",
         );
-        const eventId: string = (params?.event_id ?? "").trim();
+        const eventId: string = extractEventIdParam(params).trim();
         if (!eventId) {
           return "I need the event ID to update it. Please call get_calendar_events first to find the event.";
         }
@@ -2219,7 +2221,7 @@ export default function ElevenLabsAgentWidget({
     async (params: any): Promise<string> => {
       try {
         console.log("[calendar:delete_tool_called] event_id=%s", params?.event_id ?? "none");
-        const eventId: string = (params?.event_id ?? "").trim();
+        const eventId: string = extractEventIdParam(params).trim();
         if (!eventId) {
           return "I need the event ID to delete it. Please call get_calendar_events first to find the event.";
         }
@@ -2282,12 +2284,7 @@ export default function ElevenLabsAgentWidget({
   // Defined after createCalendarEvent so the calendar branch can call it directly.
   // ------------------------------------------------------------------
   const actOnNote = useCallback(
-    async ({
-      query,
-      action,
-      time_text,
-      person_name,
-    }: {
+    async (params: {
       /** Keyword(s) to match against note text — case-insensitive substring. */
       query: string;
       action: "task" | "reminder" | "delegate" | "calendar";
@@ -2296,7 +2293,10 @@ export default function ElevenLabsAgentWidget({
       /** Required for delegate. Exact person name. */
       person_name?: string;
     }): Promise<string> => {
-      const q = query?.trim();
+      const { action } = params;
+      const time_text = extractTimeTextParam(params);
+      const person_name = params?.person_name ?? extractPersonNameParam(params, "person_name");
+      const q = extractQueryParam(params).trim();
       if (!q) {
         return "I did not receive a search term. Ask the user which note they mean.";
       }
