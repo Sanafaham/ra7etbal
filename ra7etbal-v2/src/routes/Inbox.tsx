@@ -19,7 +19,7 @@ import { createTask } from "../lib/tasks";
 import { useTasksStore } from "../stores/tasks";
 import { useAuthStore } from "../stores/auth";
 import { parseVoiceTime } from "../lib/parse-voice-time";
-import { scheduleReminderPush } from "../lib/qstash-reminder";
+import { createReminderTask } from "../lib/reminders";
 import { createCalendarEvent } from "../lib/calendar";
 import { buildDelegationMessage } from "../lib/delegation-message";
 import { stripClosingLine } from "../lib/personal-note";
@@ -255,8 +255,12 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
     setSettingReminderId(note.id);
     setReminderInputError(null);
     try {
-      const task = await createTask({ user_id: authUserId, description: note.note, type: "reminder", assigned_to: null, status: "pending", needs_follow_up: false, confirmation_url: null, due_at: parsed.dueAt });
-      scheduleReminderPush(task.id, parsed.dueAt).catch((err) => console.error("[inbox] QStash reminder schedule failed:", err));
+      await createReminderTask({
+        userId: authUserId,
+        text: note.note,
+        dueAt: parsed.dueAt,
+        source: "inbox",
+      });
       useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
       setReminderSetIds((prev) => new Set(prev).add(note.id));
       setRemindingNoteId(null);

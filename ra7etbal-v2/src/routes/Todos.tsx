@@ -22,7 +22,7 @@ import { createTask } from "../lib/tasks";
 import { useTasksStore } from "../stores/tasks";
 import { useAuthStore } from "../stores/auth";
 import { parseVoiceTime } from "../lib/parse-voice-time";
-import { scheduleReminderPush } from "../lib/qstash-reminder";
+import { createReminderTask } from "../lib/reminders";
 import { createCalendarEvent } from "../lib/calendar";
 import { buildDelegationMessage } from "../lib/delegation-message";
 import { stripClosingLine } from "../lib/personal-note";
@@ -278,8 +278,12 @@ export default function Todos({ headerless = false }: { headerless?: boolean } =
     setSettingReminderId(todo.id);
     setReminderInputError(null);
     try {
-      const task = await createTask({ user_id: authUserId, description: todo.title, type: "reminder", assigned_to: null, status: "pending", needs_follow_up: false, confirmation_url: null, due_at: parsed.dueAt });
-      scheduleReminderPush(task.id, parsed.dueAt).catch((err) => console.error("[todos] QStash reminder schedule failed:", err));
+      await createReminderTask({
+        userId: authUserId,
+        text: todo.title,
+        dueAt: parsed.dueAt,
+        source: "todos",
+      });
       useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
       setReminderSetIds((prev) => new Set(prev).add(todo.id));
       setRemindingId(null);

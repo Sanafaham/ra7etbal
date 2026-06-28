@@ -5,8 +5,8 @@
  * capture). Collapses entirely when the inbox is empty.
  *
  * Actions per item:
- *   Remind me   — creates a real reminder task immediately using existing
- *                 infrastructure (createTask + scheduleReminderPush). Marks
+ *   Remind me   — creates a real reminder task immediately using the shared
+ *                 reminder boundary. Marks
  *                 the inbox item processed ONLY after the save succeeds.
  *   Delegate    — pre-fills Clear My Head; item stays unprocessed.
  *   Task        — pre-fills Clear My Head; item stays unprocessed.
@@ -17,8 +17,7 @@
 import { useEffect, useState } from "react";
 import type { InboxItem } from "../../types/inbox";
 import { listInboxItems, markInboxItemProcessed } from "../../lib/inbox";
-import { createTask } from "../../lib/tasks";
-import { scheduleReminderPush } from "../../lib/qstash-reminder";
+import { createReminderTask } from "../../lib/reminders";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { useBadgeStore } from "../../stores/badges";
 
@@ -63,21 +62,12 @@ export default function InboxReviewPanel({ userId, onPrefill }: Props) {
       // Extract due time and clean the description.
       const { description, timeLabel, dueAt } = extractReminderParts(withoutTo);
 
-      const task = await createTask({
-        user_id: userId,
-        description,
-        type: "reminder",
-        assigned_to: null,
-        status: "pending",
-        needs_follow_up: false,
-        confirmation_url: null,
-        due_at: dueAt,
+      await createReminderTask({
+        userId,
+        text: description,
+        dueAt,
+        source: "inbox-review",
       });
-
-      // Schedule QStash push notification — fire-and-log, never blocks save.
-      if (dueAt) {
-        void scheduleReminderPush(task.id, dueAt);
-      }
 
       // Mark processed ONLY after reminder is saved.
       await markInboxItemProcessed(item.id);

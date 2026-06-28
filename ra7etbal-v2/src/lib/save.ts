@@ -3,12 +3,12 @@ import { buildDelegationMessage } from "./delegation-message";
 import { injectPersonalNote, normalizePersonalNote, stripClosingLine } from "./personal-note";
 import { composeMergedMessage } from "./ai/compose-message";
 import { resizeImage, uploadTaskImage, uploadTaskAttachment } from "./image-upload";
-import { scheduleReminderPush } from "./qstash-reminder";
 import { scheduleEscalationMessages } from "./qstash-escalation";
 import { supabase } from "./supabase";
 import { createTask } from "./tasks";
 import { createTodo } from "./carson-todos";
 import { saveCarsonNote } from "./carson-notes";
+import { createReminderTask } from "./reminders";
 import type { ExtractedItem } from "../types/extraction";
 import type { Message } from "../types/message";
 import type { Person } from "../types/person";
@@ -255,18 +255,27 @@ export async function savePending(
       imagePathsByTaskId.set(pregenId, imagePath);
       // createTask will use this pre-generated id so paths stay in sync.
       let task = await measureSupabaseOperation(timingObserver, () =>
-        createTask({
-          id: pregenId,
-          user_id: userId,
-          description: item.description.trim(),
-          type: item.type as Task["type"],
-          assigned_to: assignedTo,
-          status: "pending",
-          needs_follow_up: needsFollowUp,
-          confirmation_url: null,
-          due_at: item.dueAt,
-          image_path: imagePath,
-        }),
+        item.type === "reminder"
+          ? createReminderTask({
+              id: pregenId,
+              userId,
+              text: item.description,
+              dueAt: item.dueAt,
+              source: "save",
+              imagePath,
+            })
+          : createTask({
+              id: pregenId,
+              user_id: userId,
+              description: item.description.trim(),
+              type: item.type as Task["type"],
+              assigned_to: assignedTo,
+              status: "pending",
+              needs_follow_up: needsFollowUp,
+              confirmation_url: null,
+              due_at: item.dueAt,
+              image_path: imagePath,
+            }),
       );
 
       // Defensive status check
@@ -320,12 +329,6 @@ export async function savePending(
         }
       }
 
-      if (task.type === "reminder" && task.due_at) {
-        scheduleReminderPush(task.id, task.due_at).catch((err) =>
-          console.error("[save] QStash scheduleReminderPush failed for task", task.id, err),
-        );
-      }
-
       if (task.type === "delegation" && task.created_at) {
         scheduleEscalationMessages(task.id, task.created_at).catch((err) =>
           console.error("[save] QStash scheduleEscalationMessages failed for task", task.id, err),
@@ -338,16 +341,23 @@ export async function savePending(
 
     // No image — original path
     let task = await measureSupabaseOperation(timingObserver, () =>
-      createTask({
-        user_id: userId,
-        description: item.description.trim(),
-        type: item.type as Task["type"],
-        assigned_to: assignedTo,
-        status: "pending",
-        needs_follow_up: needsFollowUp,
-        confirmation_url: null,
-        due_at: item.dueAt,
-      }),
+      item.type === "reminder"
+        ? createReminderTask({
+            userId,
+            text: item.description,
+            dueAt: item.dueAt,
+            source: "save",
+          })
+        : createTask({
+            user_id: userId,
+            description: item.description.trim(),
+            type: item.type as Task["type"],
+            assigned_to: assignedTo,
+            status: "pending",
+            needs_follow_up: needsFollowUp,
+            confirmation_url: null,
+            due_at: item.dueAt,
+          }),
     );
 
     // Defensive: if any column-level default or trigger flipped the row to
@@ -409,13 +419,6 @@ export async function savePending(
         );
         messages.push(msg);
       }
-    }
-
-    // Schedule an exact-time QStash push job for reminder tasks with a due date.
-    if (task.type === "reminder" && task.due_at) {
-      scheduleReminderPush(task.id, task.due_at).catch((err) =>
-        console.error("[save] QStash scheduleReminderPush failed for task", task.id, err),
-      );
     }
 
     // Schedule exact-time follow-up (+10 min) and escalation (+20 min) for delegation tasks.

@@ -35,8 +35,8 @@ import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, summarizeSessionRecap, isSummaryWorthSaving, SESSION_RECAP_PREFIX, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { appendPhotoContextDescription } from "../../lib/carson-photo-context";
-import { scheduleReminderPush } from "../../lib/qstash-reminder";
 import { scheduleEscalationMessages } from "../../lib/qstash-escalation";
+import { createReminderTask } from "../../lib/reminders";
 import { buildDelegationMessage } from "../../lib/delegation-message";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
@@ -1413,27 +1413,17 @@ export default function ElevenLabsAgentWidget({
         return existingReminderReply;
       }
 
-      // Create the task through the store — identical to the UI save path.
-      let task;
       try {
-        task = await useTasksStore.getState().add({
-          user_id: userId,
-          description: text,
-          type: "reminder",
-          assigned_to: null,
-          status: "pending",
-          needs_follow_up: false,
-          confirmation_url: null,
-          due_at: resolvedDueAt,
+        await createReminderTask({
+          userId,
+          text,
+          dueAt: resolvedDueAt,
+          source: "create_reminder",
+          createTaskFn: useTasksStore.getState().add,
         });
       } catch (err) {
         return `Could not save the reminder. ${sanitizeCarsonErrorDetail(err)}`;
       }
-
-      // Schedule QStash — identical to save.ts.
-      scheduleReminderPush(task.id, resolvedDueAt).catch((err) =>
-        console.error("[create_reminder] QStash schedule failed", task.id, err),
-      );
 
       // Human-readable confirmation for the agent to speak back.
       const dueDate = new Date(resolvedDueAt);
@@ -2355,19 +2345,12 @@ export default function ElevenLabsAgentWidget({
           return `I couldn't understand the time "${phrase}". Ask the user to say when they want the reminder.`;
         }
         try {
-          const task = await createTask({
-            user_id: authUserId,
-            description: note.note,
-            type: "reminder",
-            assigned_to: null,
-            status: "pending",
-            needs_follow_up: false,
-            confirmation_url: null,
-            due_at: parsed.dueAt,
+          const task = await createReminderTask({
+            userId: authUserId,
+            text: note.note,
+            dueAt: parsed.dueAt,
+            source: "act_on_note",
           });
-          scheduleReminderPush(task.id, parsed.dueAt).catch((err) =>
-            console.error("[act_on_note] QStash reminder schedule failed:", err),
-          );
           useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
           sessionActionsRef.current.push(`Set reminder from note: ${note.note}`);
           const d = new Date(parsed.dueAt);
