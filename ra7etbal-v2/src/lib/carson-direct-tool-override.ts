@@ -22,12 +22,30 @@ export interface DirectToolSuccessResult {
   inputSummary?: unknown;
 }
 
-const OVERRIDABLE_TOOL_NAMES = new Set(["create_todo", "complete_todo"]);
+const OVERRIDABLE_TOOL_NAMES = new Set(["create_todo", "complete_todo", "create_reminder"]);
 
 const OVERRIDE_WINDOW_MS = 15_000;
 
 const FAILURE_LANGUAGE_PATTERN =
   /wasn['’]?t able|couldn['’]?t complete|try again|technical issue|\bsupport\b/i;
+
+const GENERIC_KNOWLEDGE_ANSWER_PATTERN =
+  /as for your question|to answer your question|your question|question about|sounds like a question|in general|generally speaking|here(?:'|’)s (?:what|how|why)|the answer is|provide financial protection|insurance compan(?:y|ies|ies')|insurance providers/i;
+
+const REMINDER_CONFIRMATION_PATTERN =
+  /\b(?:i(?:'|’)ll remind you|reminder (?:created|set|saved)|created (?:the )?reminder|set (?:the )?reminder)\b/i;
+
+function shouldOverrideAgentMessage(
+  agentMessage: string,
+  lastSuccess: DirectToolSuccessResult,
+): boolean {
+  if (FAILURE_LANGUAGE_PATTERN.test(agentMessage)) return true;
+
+  if (lastSuccess.toolName !== "create_reminder") return false;
+  if (REMINDER_CONFIRMATION_PATTERN.test(agentMessage)) return false;
+
+  return GENERIC_KNOWLEDGE_ANSWER_PATTERN.test(agentMessage);
+}
 
 export function resolveCarsonDisplayMessage(
   agentMessage: string,
@@ -36,7 +54,7 @@ export function resolveCarsonDisplayMessage(
 ): string {
   if (!lastSuccess) return agentMessage;
   if (!OVERRIDABLE_TOOL_NAMES.has(lastSuccess.toolName)) return agentMessage;
-  if (!FAILURE_LANGUAGE_PATTERN.test(agentMessage)) return agentMessage;
+  if (!shouldOverrideAgentMessage(agentMessage, lastSuccess)) return agentMessage;
 
   const successAt = Date.parse(lastSuccess.at);
   if (Number.isNaN(successAt) || now - successAt > OVERRIDE_WINDOW_MS) {

@@ -776,7 +776,7 @@ export default function ElevenLabsAgentWidget({
    *  in-memory keyword lookup without hitting Supabase during the call. */
   const todosRef = useRef<CarsonTodo[]>([]);
 
-  /** Most recent successful direct client-tool result (create_todo/complete_todo).
+  /** Most recent successful direct client-tool result.
    *  The ElevenLabs agent's spoken/displayed reply is a separate LLM generation
    *  (onMessage) that can contradict a tool that just succeeded — this lets
    *  onMessage prefer the tool's own result over a contradictory agent message. */
@@ -1347,6 +1347,12 @@ export default function ElevenLabsAgentWidget({
       const reply = `I'll remind you ${dateLabel} at ${timeStr}.`;
       createdReminderKeysRef.current.set(reminderKey, reply);
       sessionActionsRef.current.push(`Created reminder: ${text} (${dateLabel} at ${timeStr})`);
+      lastDirectToolSuccessRef.current = {
+        toolName: "create_reminder",
+        resultText: reply,
+        at: new Date().toISOString(),
+        inputSummary: { description: text, dueAt: resolvedDueAt },
+      };
       return reply;
     },
     [],

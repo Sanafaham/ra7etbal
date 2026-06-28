@@ -93,3 +93,19 @@ describe("ElevenLabsAgentWidget — createTodoTool failure message", () => {
     expect(block.toLowerCase()).not.toMatch(/technical issue|contact support|support team|visibility into/);
   });
 });
+
+describe("ElevenLabsAgentWidget — createReminder success override", () => {
+  it("records create_reminder as override-eligible only after the reminder task is created", () => {
+    const start = SOURCE.indexOf("const createReminder = useCallback(");
+    const end = SOURCE.indexOf("// ------------------------------------------------------------------\n  // Client tool: get_calendar_events", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = SOURCE.slice(start, end);
+    const createIndex = block.indexOf("await createReminderTask({");
+    const overrideIndex = block.indexOf('toolName: "create_reminder"');
+
+    expect(createIndex).toBeGreaterThan(-1);
+    expect(overrideIndex).toBeGreaterThan(createIndex);
+  });
+});

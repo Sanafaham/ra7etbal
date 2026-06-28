@@ -35,6 +35,45 @@ describe("resolveCarsonDisplayMessage", () => {
     expect(result).toBe("Done. I've marked that complete.");
   });
 
+  it("overrides an unrelated agent reply with the successful create_reminder result", () => {
+    const result = resolveCarsonDisplayMessage(
+      "That sounds like a question about insurance providers.",
+      successResult({
+        toolName: "create_reminder",
+        resultText: "I'll remind you tomorrow at 10:00 AM.",
+      }),
+      NOW,
+    );
+
+    expect(result).toBe("I'll remind you tomorrow at 10:00 AM.");
+  });
+
+  it("overrides a generic knowledge answer with the successful create_reminder result", () => {
+    const result = resolveCarsonDisplayMessage(
+      "As for your question — insurance companies provide financial protection against losses.",
+      successResult({
+        toolName: "create_reminder",
+        resultText: "I'll remind you tomorrow at 10:00 AM.",
+      }),
+      NOW,
+    );
+
+    expect(result).toBe("I'll remind you tomorrow at 10:00 AM.");
+  });
+
+  it("overrides a contradictory reminder failure with the successful create_reminder result", () => {
+    const result = resolveCarsonDisplayMessage(
+      "I wasn't able to create that reminder. Please try again.",
+      successResult({
+        toolName: "create_reminder",
+        resultText: "I'll remind you tomorrow at 10:00 AM.",
+      }),
+      NOW,
+    );
+
+    expect(result).toBe("I'll remind you tomorrow at 10:00 AM.");
+  });
+
   it("does not override a normal, non-contradictory agent message", () => {
     const result = resolveCarsonDisplayMessage(
       "Anything else I can help with?",
@@ -42,6 +81,19 @@ describe("resolveCarsonDisplayMessage", () => {
       NOW,
     );
     expect(result).toBe("Anything else I can help with?");
+  });
+
+  it("does not override a normal reminder confirmation", () => {
+    const result = resolveCarsonDisplayMessage(
+      "Reminder created for tomorrow at 10:00 AM.",
+      successResult({
+        toolName: "create_reminder",
+        resultText: "I'll remind you tomorrow at 10:00 AM.",
+      }),
+      NOW,
+    );
+
+    expect(result).toBe("Reminder created for tomorrow at 10:00 AM.");
   });
 
   it("does not override when there is no recent successful tool result", () => {
@@ -114,6 +166,19 @@ describe("resolveSanitizedCarsonDisplayMessage", () => {
     });
 
     expect(result).toBe("Added to your to-do list.");
+  });
+
+  it("sanitizes the successful create_reminder override before display", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "As for your question — insurance companies provide financial protection.",
+      lastSuccess: successResult({
+        toolName: "create_reminder",
+        resultText: "One moment. I'll remind you tomorrow at 10:00 AM.",
+      }),
+      now: NOW,
+    });
+
+    expect(result).toBe("I'll remind you tomorrow at 10:00 AM.");
   });
 
   it("keeps social acknowledgement fallback natural when the agent reply is only filler", () => {
