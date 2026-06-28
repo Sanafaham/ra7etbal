@@ -40,7 +40,8 @@ interface TaskInfo {
 
 export default function Confirm() {
   const [params] = useSearchParams();
-  const taskId = params.get("task");
+  // `task` is canonical; `task_id` keeps legacy routine/automation links working.
+  const taskId = params.get("task") ?? params.get("task_id");
 
   const [info, setInfo] = useState<TaskInfo | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "ready" | "error">("loading");
