@@ -1830,7 +1830,17 @@ export default function ElevenLabsAgentWidget({
         console.error("[TODO_DEBUG] 4/5 createTodo() resolved. row id:", todo.id);
         todosRef.current = [todo, ...todosRef.current];
         sessionActionsRef.current.push(`Added to-do: ${trimmed}`);
-        return "Added to your to-do list.";
+        const resultText = "Added to your to-do list.";
+        // Genuine success only — recorded here, not in the generic tool
+        // wrapper, so the no-title early-return above is never mistaken
+        // for success by the onMessage override.
+        lastDirectToolSuccessRef.current = {
+          toolName: "create_todo",
+          resultText,
+          at: new Date().toISOString(),
+          inputSummary: { title: trimmed },
+        };
+        return resultText;
       } catch (err) {
         const supabaseErr = err as { message?: string; code?: string; details?: string; hint?: string };
         console.error("[TODO_DEBUG] 5/5 createTodo() THREW.", {
@@ -1891,7 +1901,14 @@ export default function ElevenLabsAgentWidget({
         await completeTodo(todo.id);
         todosRef.current = todosRef.current.filter((t) => t.id !== todo.id);
         sessionActionsRef.current.push(`Completed to-do: ${todo.title}`);
-        return "Done. I've marked that complete.";
+        const resultText = "Done. I've marked that complete.";
+        lastDirectToolSuccessRef.current = {
+          toolName: "complete_todo",
+          resultText,
+          at: new Date().toISOString(),
+          inputSummary: { title: todo.title },
+        };
+        return resultText;
       } catch {
         return "I couldn't mark that to-do complete right now. Please try again.";
       }
@@ -2475,17 +2492,13 @@ export default function ElevenLabsAgentWidget({
         } catch (diagnosticErr) {
           console.warn("[carson_direct_tool:DIAGNOSTIC_ERROR]", diagnosticErr);
         }
-        const sanitizedResult =
-          typeof result === "string" ? (sanitizeCarsonReplyText(result) as TResult) : result;
-        if (typeof sanitizedResult === "string") {
-          lastDirectToolSuccessRef.current = {
-            toolName,
-            resultText: sanitizedResult,
-            at: new Date().toISOString(),
-            inputSummary: input,
-          };
-        }
-        return sanitizedResult;
+        // NOTE: do not record lastDirectToolSuccessRef here — a string return
+        // from runTool() only means the tool didn't throw, not that it
+        // genuinely succeeded (createTodoTool's "no title received" early
+        // return is also a string). create_todo/complete_todo record their
+        // own override-eligible success directly, only on their real
+        // success path, right before returning.
+        return typeof result === "string" ? (sanitizeCarsonReplyText(result) as TResult) : result;
       } catch (err) {
         try {
           recordCarsonDiagnostic(

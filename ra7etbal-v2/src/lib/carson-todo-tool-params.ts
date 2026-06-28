@@ -57,13 +57,23 @@ export function extractStringField(params: unknown, keys: readonly string[]): st
 }
 
 export function extractTodoTitleParam(params: CreateTodoParams): string {
-  return extractStringField(params, ["title", "text", "item", "todo", "name"]);
+  // "description" is a last-resort fallback: live evidence (carson-direct-tool
+  // diagnostics, P0 to-do bug) showed the ElevenLabs agent sending the to-do
+  // text as { description: "..." } with no title/text/item/todo/name key at
+  // all — without this fallback, createTodoTool treated every such call as
+  // "no title received" and never called createTodo().
+  return extractStringField(params, ["title", "text", "item", "todo", "name", "description"]);
 }
 
 export function extractTodoDescriptionParam(params: CreateTodoParams): string | undefined {
   if (!params || typeof params !== "object") return undefined;
   const value = extractStringField(params, ["description", "details", "note"]);
-  return value || undefined;
+  if (!value) return undefined;
+  // Don't duplicate the same text into both title and description when
+  // "description" was the only field sent and extractTodoTitleParam already
+  // used it as the title fallback above.
+  if (value === extractTodoTitleParam(params)) return undefined;
+  return value;
 }
 
 export function extractTodoQueryParam(params: CompleteTodoParams): string {

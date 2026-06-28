@@ -48,6 +48,21 @@ describe("extractTodoTitleParam", () => {
   it("prefers 'title' over later fallback keys when both are present", () => {
     expect(extractTodoTitleParam({ title: "Gemini plan", text: "wrong" })).toBe("Gemini plan");
   });
+
+  // P0 live bug: carson-direct-tool diagnostics showed the ElevenLabs agent
+  // calling create_todo with ONLY { description: "Gemini plan" } — no title/
+  // text/item/todo/name key at all — across every reproduction. Without this
+  // fallback, createTodoTool returned "no title received" and never called
+  // createTodo(), while still reporting success:true to the diagnostic buffer.
+  it("falls back to 'description' when no title-shaped key is sent (live ElevenLabs payload)", () => {
+    expect(extractTodoTitleParam({ description: "Gemini plan" })).toBe("Gemini plan");
+  });
+
+  it("still prefers 'title' over 'description' when both are present", () => {
+    expect(extractTodoTitleParam({ title: "Gemini plan", description: "wrong" })).toBe(
+      "Gemini plan",
+    );
+  });
 });
 
 describe("extractTodoDescriptionParam", () => {
@@ -67,6 +82,10 @@ describe("extractTodoDescriptionParam", () => {
     expect(extractTodoDescriptionParam({ title: "x" })).toBeUndefined();
     expect(extractTodoDescriptionParam("just a string")).toBeUndefined();
     expect(extractTodoDescriptionParam(null)).toBeUndefined();
+  });
+
+  it("does not duplicate description into title when 'description' was used as the title fallback", () => {
+    expect(extractTodoDescriptionParam({ description: "Gemini plan" })).toBeUndefined();
   });
 });
 
