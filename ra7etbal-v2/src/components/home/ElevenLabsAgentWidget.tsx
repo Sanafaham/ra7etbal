@@ -31,6 +31,7 @@ import {
 } from "../../lib/carson-tool-params";
 import { filterCalendarEventsByRange } from "../../lib/calendar";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
+import { callCalendarApi } from "../../lib/calendar-actions";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
 import { summarizeConversation, summarizeSessionRecap, isSummaryWorthSaving, SESSION_RECAP_PREFIX, type TranscriptMessage } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
@@ -1915,26 +1916,14 @@ export default function ElevenLabsAgentWidget({
         }
         // ── End conflict detection ──────────────────────────────────────────
 
-        const { data: sessionData } = await supabase.auth.getSession();
-        const jwt = sessionData?.session?.access_token;
-        if (!jwt) return "You're not signed in. Please sign in and try again.";
-
         const body: Record<string, unknown> = { title, date, time, duration_minutes: durationMinutes };
         if (description) body.description = description;
 
-        const res = await fetch("/api/google-calendar", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${jwt}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(body),
-          cache: "no-store",
-        });
-
-        const data = await res.json().catch(() => null);
-        console.log("[calendar-create-debug] server response httpStatus=%d ok=%s code=%s",
-          res.status, data?.ok ?? "null", data?.code ?? "none");
+        const result = await callCalendarApi("POST", body);
+        console.log("[calendar-create-debug] server response ok=%s code=%s",
+          result.data?.ok ?? "null", (result.data?.code as string | undefined) ?? result.code ?? "none");
+        if (result.code === "unauthenticated") return "You're not signed in. Please sign in and try again.";
+        const data = result.data as Record<string, any> | null;
         if (!data) return "Something went wrong. Please try again.";
 
         if (!data.ok) {
@@ -2021,23 +2010,11 @@ export default function ElevenLabsAgentWidget({
           return "I need something to change — a new title, date, or time.";
         }
 
-        const { data: sessionData } = await supabase.auth.getSession();
-        const jwt = sessionData?.session?.access_token;
-        if (!jwt) return "You're not signed in. Please sign in and try again.";
-
-        const res = await fetch("/api/google-calendar", {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${jwt}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ event_id: eventId, ...patch }),
-          cache: "no-store",
-        });
-
-        console.log("[calendar:update_tool_called] backend_status=%d", res.status);
-        const data = await res.json().catch(() => null);
-        console.log("[calendar:update_tool_called] backend_ok=%s code=%s", data?.ok, data?.code ?? "none");
+        const result = await callCalendarApi("PATCH", { event_id: eventId, ...patch });
+        console.log("[calendar:update_tool_called] backend_ok=%s code=%s",
+          result.data?.ok, (result.data?.code as string | undefined) ?? result.code ?? "none");
+        if (result.code === "unauthenticated") return "You're not signed in. Please sign in and try again.";
+        const data = result.data as Record<string, any> | null;
         if (!data) return "I couldn't update that event. Please try again.";
 
         if (!data.ok) {
@@ -2102,23 +2079,11 @@ export default function ElevenLabsAgentWidget({
         const eventEntry = planningCalendarEventsRef.current.find((ev) => ev.id === eventId);
         const eventTitle = eventEntry?.title ?? "that event";
 
-        const { data: sessionData } = await supabase.auth.getSession();
-        const jwt = sessionData?.session?.access_token;
-        if (!jwt) return "You're not signed in. Please sign in and try again.";
-
-        const res = await fetch("/api/google-calendar", {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${jwt}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ event_id: eventId }),
-          cache: "no-store",
-        });
-
-        console.log("[calendar:delete_tool_called] backend_status=%d", res.status);
-        const data = await res.json().catch(() => null);
-        console.log("[calendar:delete_tool_called] backend_ok=%s code=%s", data?.ok, data?.code ?? "none");
+        const result = await callCalendarApi("DELETE", { event_id: eventId });
+        console.log("[calendar:delete_tool_called] backend_ok=%s code=%s",
+          result.data?.ok, (result.data?.code as string | undefined) ?? result.code ?? "none");
+        if (result.code === "unauthenticated") return "You're not signed in. Please sign in and try again.";
+        const data = result.data as Record<string, any> | null;
         if (!data) return "I couldn't delete that event. Please try again.";
 
         if (!data.ok) {

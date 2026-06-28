@@ -8,6 +8,7 @@
  */
 
 import { supabase } from "./supabase";
+import { callCalendarApi } from "./calendar-actions";
 
 export type CalendarRange =
   | "today"
@@ -308,27 +309,9 @@ export async function updateCalendarEvent(
     duration_minutes?: number;
   },
 ): Promise<UpdateCalendarEventResult> {
-  try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const jwt = sessionData?.session?.access_token;
-    if (!jwt) return { ok: false, code: "unauthenticated" };
-
-    const res = await fetch("/api/google-calendar", {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ event_id: eventId, ...patch }),
-      cache: "no-store",
-    });
-
-    const data = await res.json().catch(() => null);
-    if (!data) return { ok: false, code: "parse_error" };
-    return data as UpdateCalendarEventResult;
-  } catch {
-    return { ok: false, code: "network_error" };
-  }
+  const result = await callCalendarApi("PATCH", { event_id: eventId, ...patch });
+  if (!result.data) return { ok: false, code: result.code };
+  return result.data as unknown as UpdateCalendarEventResult;
 }
 
 /**
@@ -339,27 +322,9 @@ export async function updateCalendarEvent(
 export async function deleteCalendarEvent(
   eventId: string,
 ): Promise<{ ok: boolean; code?: string }> {
-  try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const jwt = sessionData?.session?.access_token;
-    if (!jwt) return { ok: false, code: "unauthenticated" };
-
-    const res = await fetch("/api/google-calendar", {
-      method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ event_id: eventId }),
-      cache: "no-store",
-    });
-
-    const data = await res.json().catch(() => null);
-    if (!data) return { ok: false, code: "parse_error" };
-    return data as { ok: boolean; code?: string };
-  } catch {
-    return { ok: false, code: "network_error" };
-  }
+  const result = await callCalendarApi("DELETE", { event_id: eventId });
+  if (!result.data) return { ok: false, code: result.code };
+  return result.data as { ok: boolean; code?: string };
 }
 
 export async function createCalendarEvent(
@@ -368,25 +333,7 @@ export async function createCalendarEvent(
   time: string,
   durationMinutes = 60,
 ): Promise<CreateCalendarEventResult> {
-  try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const jwt = sessionData?.session?.access_token;
-    if (!jwt) return { ok: false, code: "unauthenticated" };
-
-    const res = await fetch("/api/google-calendar", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${jwt}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ title, date, time, duration_minutes: durationMinutes }),
-      cache: "no-store",
-    });
-
-    const data = await res.json().catch(() => null);
-    if (!data) return { ok: false, code: "parse_error" };
-    return data as CreateCalendarEventResult;
-  } catch {
-    return { ok: false, code: "network_error" };
-  }
+  const result = await callCalendarApi("POST", { title, date, time, duration_minutes: durationMinutes });
+  if (!result.data) return { ok: false, code: result.code };
+  return result.data as unknown as CreateCalendarEventResult;
 }
