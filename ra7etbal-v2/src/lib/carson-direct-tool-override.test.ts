@@ -35,6 +35,16 @@ describe("resolveCarsonDisplayMessage", () => {
     expect(result).toBe("Done. I've marked that complete.");
   });
 
+  it("overrides a contradictory inability message with the successful control_task result", () => {
+    const result = resolveCarsonDisplayMessage(
+      "I don't have the ability to directly close a delegation from Rahet Bal.",
+      successResult({ toolName: "control_task", resultText: "Done. I marked that task done." }),
+      NOW,
+    );
+
+    expect(result).toBe("Done. I marked that task done.");
+  });
+
   it("overrides an unrelated agent reply with the successful create_reminder result", () => {
     const result = resolveCarsonDisplayMessage(
       "That sounds like a question about insurance providers.",

@@ -86,6 +86,11 @@ import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, type DirectToolSuccessResult } from "../../lib/carson-direct-tool-override";
 import {
+  executeVoiceTaskControl,
+  resolveVoiceTaskControl,
+  type VoiceTaskContext,
+} from "../../lib/voice-task-control";
+import {
   buildDelegationCoveragePartialSuccessResponse,
   checkDelegationCoverage,
   type ExecutedDelegationRecord,
@@ -285,6 +290,7 @@ function extractNoteFromAgentMessage(
 interface DelegationSendResult {
   taskId: string;
   messageText: string;
+  taskContext: VoiceTaskContext;
 }
 
 async function createAndSendDelegation({
@@ -366,7 +372,16 @@ async function createAndSendDelegation({
     attachmentCount,
   });
 
-  return { taskId: taskRow.id, messageText: created.messageText };
+  return {
+    taskId: taskRow.id,
+    messageText: created.messageText,
+    taskContext: {
+      id: taskRow.id,
+      description: taskRow.description,
+      assigned_to: taskRow.assigned_to,
+      type: taskRow.type,
+    },
+  };
 }
 
 /**
@@ -789,6 +804,10 @@ export default function ElevenLabsAgentWidget({
    *  in-memory keyword lookup without hitting Supabase during the call. */
   const todosRef = useRef<CarsonTodo[]>([]);
 
+  /** Most recent concrete Ra7etBal task Carson created or controlled. Used
+   *  only for safe "this / it / that" task-control references. */
+  const currentTaskContextRef = useRef<VoiceTaskContext | null>(null);
+
   /** Most recent successful direct client-tool result.
    *  The ElevenLabs agent's spoken/displayed reply is a separate LLM generation
    *  (onMessage) that can contradict a tool that just succeeded — this lets
@@ -870,6 +889,8 @@ export default function ElevenLabsAgentWidget({
           taskText: dinner.taskText,
           messageText: result.messageText,
         });
+        currentTaskContextRef.current = result.taskContext;
+        useTasksStore.getState().loadFor(userId, { force: true }).catch(() => {});
         sessionActionsRef.current.push(`Delegated to ${owner.name}: ${dinner.taskText}`);
       } catch (err) {
         console.error("[send_delegation] implied dinner delegation failed", err);
@@ -1258,6 +1279,8 @@ export default function ElevenLabsAgentWidget({
         taskText,
         messageText: result.messageText,
       });
+      currentTaskContextRef.current = result.taskContext;
+      useTasksStore.getState().loadFor(userId, { force: true }).catch(() => {});
       sessionActionsRef.current.push(`Delegated to ${person.name}: ${taskText}`);
 
       await maybeSendImpliedDinnerDelegation(userId);
@@ -1330,13 +1353,19 @@ export default function ElevenLabsAgentWidget({
       }
 
       try {
-        await createReminderTask({
+        const task = await createReminderTask({
           userId,
           text,
           dueAt: resolvedDueAt,
           source: "create_reminder",
           createTaskFn: useTasksStore.getState().add,
         });
+        currentTaskContextRef.current = {
+          id: task.id,
+          description: task.description,
+          assigned_to: task.assigned_to,
+          type: task.type,
+        };
       } catch (err) {
         return `Could not save the reminder. ${sanitizeCarsonErrorDetail(err)}`;
       }
@@ -1793,6 +1822,79 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Client tool: control_task
+  // Owner-side control for existing Ra7etBal tasks: mark done or delete.
+  // Uses the same store actions as the Updates UI, so reminder push
+  // cancellation and optimistic state behavior stay unchanged.
+  // ------------------------------------------------------------------
+  const controlTaskTool = useCallback(
+    async (params: {
+      instruction?: string;
+      query?: string;
+      text?: string;
+      description?: string;
+      action?: "mark_done" | "delete" | string;
+      task_id?: string;
+    }): Promise<string> => {
+      const taskId = params?.task_id?.trim();
+      const rawInstruction = extractStringField(params, [
+        "instruction",
+        "query",
+        "text",
+        "description",
+      ]).trim();
+      const actionParam = params?.action?.trim();
+
+      const tasksStore = useTasksStore.getState();
+      const authUserId = useAuthStore.getState().user?.id;
+      if (!authUserId) return "You are not signed in. Please sign in and try again.";
+      if (tasksStore.status === "idle" || tasksStore.items.length === 0) {
+        await tasksStore.loadFor(authUserId, { force: true });
+      }
+      const latestTasksStore = useTasksStore.getState();
+      try {
+        const result = await executeVoiceTaskControl({
+          rawText: rawInstruction,
+          tasks: latestTasksStore.items,
+          currentTask: currentTaskContextRef.current,
+          taskId,
+          action: actionParam,
+          markDoneTask: (task) => latestTasksStore.markDone(task.id),
+          deleteTask: (task) => latestTasksStore.remove(task.id),
+        });
+        if (!result.handled) return "Which task should I update?";
+
+        if (result.action === "delete" && result.task) {
+          currentTaskContextRef.current = null;
+          sessionActionsRef.current.push(`Deleted ${result.task.type === "reminder" ? "reminder" : "task"}: ${result.task.description}`);
+          lastDirectToolSuccessRef.current = {
+            toolName: "control_task",
+            resultText: result.reply,
+            at: new Date().toISOString(),
+            inputSummary: { action: "delete", taskId: result.task.id, description: result.task.description },
+          };
+          return result.reply;
+        }
+
+        if (result.action === "mark_done" && result.task) {
+          currentTaskContextRef.current = null;
+          sessionActionsRef.current.push(`Marked ${result.task.type === "reminder" ? "reminder" : "task"} done: ${result.task.description}`);
+          lastDirectToolSuccessRef.current = {
+            toolName: "control_task",
+            resultText: result.reply,
+            at: new Date().toISOString(),
+            inputSummary: { action: "mark_done", taskId: result.task.id, description: result.task.description },
+          };
+        }
+        return result.reply;
+      } catch {
+        return "I couldn't update that task right now. Please try again.";
+      }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
   // Client tool: get_calendar_events
   // On-demand calendar access for wider ranges (today, tomorrow, this_week,
   // next_week, next_7_days, next_10_days, next_14_days, next_30_days).
@@ -2228,6 +2330,12 @@ export default function ElevenLabsAgentWidget({
             source: "act_on_note",
           });
           useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+          currentTaskContextRef.current = {
+            id: task.id,
+            description: task.description,
+            assigned_to: task.assigned_to,
+            type: task.type,
+          };
           sessionActionsRef.current.push(`Set reminder from note: ${note.note}`);
           const d = new Date(parsed.dueAt);
           const timeStr = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -2277,6 +2385,7 @@ export default function ElevenLabsAgentWidget({
             ownerName: displayName,
           });
           useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+          currentTaskContextRef.current = result.taskContext;
           sessionActionsRef.current.push(`Delegated note to ${person.name}: ${note.note}`);
           console.log("[act_on_note] delegation sent:", result.taskId, "→", person.name);
           return `${person.name} has it. I'll follow up if needed.`;
@@ -2483,6 +2592,24 @@ export default function ElevenLabsAgentWidget({
       const people = usePeopleStore.getState().items;
       const tasks = useTasksStore.getState().items;
       const userEmail = useAuthStore.getState().user?.email ?? null;
+
+      const taskControlResolution = resolveVoiceTaskControl(
+        rawInstruction,
+        tasks,
+        currentTaskContextRef.current,
+      );
+      if (taskControlResolution.status !== "not_task_control") {
+        const result = await controlTaskTool({ instruction: rawInstruction });
+        if (/^Done\./i.test(result)) {
+          lastDirectToolSuccessRef.current = {
+            toolName: "execute_instruction",
+            resultText: result,
+            at: new Date().toISOString(),
+            inputSummary: { kind: "task_control", instruction: rawInstruction },
+          };
+        }
+        return result;
+      }
 
       // ── Parser diagnostic gate ─────────────────────────────────────────────
       // Activated by saying a phrase containing "parser diagnostic only" or
@@ -2897,7 +3024,7 @@ export default function ElevenLabsAgentWidget({
       }
       return productionResult;
     },
-    [displayName, clearPendingImages, sendDelegation],
+    [displayName, clearPendingImages, sendDelegation, controlTaskTool],
   );
 
   const clearCarsonSessionTimers = useCallback(() => {
@@ -2982,6 +3109,7 @@ export default function ElevenLabsAgentWidget({
         sessionActionsRef.current = [];
         sessionTranscriptRef.current = [];
         sentDelegationsRef.current = [];
+        currentTaskContextRef.current = null;
         createdReminderKeysRef.current.clear();
 
         let conversationSummary: string | null = null;
@@ -3059,6 +3187,7 @@ export default function ElevenLabsAgentWidget({
         sessionActionsRef.current = [];
         sessionTranscriptRef.current = [];
         sentDelegationsRef.current = [];
+        currentTaskContextRef.current = null;
         createdReminderKeysRef.current.clear();
       }
     },
@@ -3137,6 +3266,7 @@ export default function ElevenLabsAgentWidget({
     sessionActionsRef.current = [];
     sessionTranscriptRef.current = [];
     sentDelegationsRef.current = [];
+    currentTaskContextRef.current = null;
     createdReminderKeysRef.current.clear();
     recurringRawRef.current = null;
     setLastCarsonMessage(null);
@@ -3372,6 +3502,8 @@ export default function ElevenLabsAgentWidget({
             runDirectToolWithDiagnostic("create_todo", params, () => createTodoTool(params)),
           complete_todo: (params: Parameters<typeof completeTodoTool>[0]) =>
             runDirectToolWithDiagnostic("complete_todo", params, () => completeTodoTool(params)),
+          control_task: (params: Parameters<typeof controlTaskTool>[0]) =>
+            runDirectToolWithDiagnostic("control_task", params, () => controlTaskTool(params)),
           get_calendar_events: (params: Parameters<typeof getCalendarEvents>[0]) =>
             runDirectToolWithDiagnostic("get_calendar_events", params, () =>
               getCalendarEvents(params),
@@ -3531,6 +3663,7 @@ export default function ElevenLabsAgentWidget({
           conversationRef.current = null;
           startInFlightRef.current = false;
           clearCarsonSessionTimers();
+          currentTaskContextRef.current = null;
           setStatus("idle");
           setMode("listening");
           setSessionEndedMsg("Session ended.");
@@ -3557,6 +3690,7 @@ export default function ElevenLabsAgentWidget({
           conversationRef.current = null;
           startInFlightRef.current = false;
           clearCarsonSessionTimers();
+          currentTaskContextRef.current = null;
           setStatus("error");
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 

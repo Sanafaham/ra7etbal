@@ -27,12 +27,13 @@ const OVERRIDABLE_TOOL_NAMES = new Set([
   "complete_todo",
   "create_reminder",
   "execute_instruction",
+  "control_task",
 ]);
 
 const OVERRIDE_WINDOW_MS = 15_000;
 
 const FAILURE_LANGUAGE_PATTERN =
-  /wasn['’]?t able|couldn['’]?t complete|try again|technical issue|\bsupport\b/i;
+  /wasn['’]?t able|couldn['’]?t complete|don['’]?t have (?:the )?ability|cannot directly|can['’]?t directly|directly close|try again|technical issue|\bsupport\b/i;
 
 const GENERIC_KNOWLEDGE_ANSWER_PATTERN =
   /as for your question|to answer your question|your question|question about|sounds like a question|in general|generally speaking|here(?:'|’)s (?:what|how|why)|the answer is|provide financial protection|insurance compan(?:y|ies|ies')|insurance providers/i;

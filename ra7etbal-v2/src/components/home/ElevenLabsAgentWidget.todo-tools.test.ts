@@ -33,6 +33,10 @@ describe("ElevenLabsAgentWidget — To-do client tool registration", () => {
     expect(SOURCE).toMatch(/complete_todo:\s*\(params[^)]*\)\s*=>\s*\n?\s*runDirectToolWithDiagnostic\("complete_todo",\s*params,\s*\(\)\s*=>\s*completeTodoTool\(params\)\)/);
   });
 
+  it("registers control_task in the clientTools map, wired to controlTaskTool", () => {
+    expect(SOURCE).toMatch(/control_task:\s*\(params[^)]*\)\s*=>\s*\n?\s*runDirectToolWithDiagnostic\("control_task",\s*params,\s*\(\)\s*=>\s*controlTaskTool\(params\)\)/);
+  });
+
   it("defines a createTodoTool implementation that calls the carson-todos createTodo helper", () => {
     expect(SOURCE).toContain("const createTodoTool = useCallback(");
     expect(SOURCE).toMatch(/createTodoTool[\s\S]{0,900}await createTodo\(/);
@@ -45,6 +49,11 @@ describe("ElevenLabsAgentWidget — To-do client tool registration", () => {
 
   it("execute_instruction fallback pipeline is also registered (shared extraction path for any to-do phrasing the dashboard routes there instead)", () => {
     expect(SOURCE).toMatch(/execute_instruction:\s*async\s*\(params/);
+  });
+
+  it("execute_instruction checks task control before creating new work", () => {
+    expect(SOURCE).toMatch(/const taskControlResolution = resolveVoiceTaskControl\(/);
+    expect(SOURCE).toMatch(/if \(taskControlResolution\.status !== "not_task_control"\)[\s\S]{0,250}controlTaskTool\(\{ instruction: rawInstruction \}\)/);
   });
 });
 
