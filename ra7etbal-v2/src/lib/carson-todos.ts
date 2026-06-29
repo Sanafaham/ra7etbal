@@ -224,11 +224,80 @@ export function formatTodosForContext(todos: CarsonTodo[]): string {
  * Pure function so it can be unit-tested without hitting Supabase.
  */
 export function findTodoMatches(todos: CarsonTodo[], query: string): CarsonTodo[] {
-  const q = query.trim().toLowerCase();
+  const q = cleanTodoCompletionQuery(query);
   if (!q) return [];
-  return todos.filter(
-    (t) =>
-      t.title.toLowerCase().includes(q) ||
-      (t.description ?? "").toLowerCase().includes(q),
+
+  const queryTokens = tokenizeTodo(q);
+  if (queryTokens.length === 0) return [];
+
+  const scored = todos
+    .map((todo) => {
+      const title = todo.title.toLowerCase();
+      const description = (todo.description ?? "").toLowerCase();
+      const haystack = `${title} ${description}`;
+      if (title.includes(q) || description.includes(q)) return { todo, score: 100 };
+
+      const haystackTokens = new Set(tokenizeTodo(haystack));
+      let score = 0;
+      for (const token of queryTokens) {
+        if (haystackTokens.has(token)) score += 1;
+      }
+      return { todo, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        Date.parse(b.todo.created_at) - Date.parse(a.todo.created_at),
+    );
+
+  if (scored.length <= 1) return scored.map((item) => item.todo);
+
+  const bestScore = scored[0].score;
+  return scored.filter((item) => item.score === bestScore).map((item) => item.todo);
+}
+
+function cleanTodoCompletionQuery(query: string): string {
+  return query
+    .toLowerCase()
+    .replace(/[’']s\b/g, "")
+    .replace(/[’']/g, "")
+    .replace(/\b(?:please|can you|could you|carson)\b/g, " ")
+    .replace(/\b(?:mark|close|complete|finish|done|completed|finished|handled|resolved)\b/g, " ")
+    .replace(/\b(?:the|a|an|my|me|for|from|in|on|as|to\s*do|todo|item|task)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenizeTodo(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .toLowerCase()
+        .replace(/[’']s\b/g, "")
+        .replace(/[’']/g, "")
+        .replace(/[^a-z0-9]+/g, " ")
+        .split(/\s+/)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 2)
+        .filter(
+          (token) =>
+            !new Set([
+              "the",
+              "and",
+              "for",
+              "with",
+              "task",
+              "item",
+              "todo",
+              "to",
+              "me",
+              "my",
+            ]).has(token),
+        )
+        .flatMap((token) =>
+          token.endsWith("s") && token.length > 3 ? [token, token.slice(0, -1)] : [token],
+        ),
+    ),
   );
 }

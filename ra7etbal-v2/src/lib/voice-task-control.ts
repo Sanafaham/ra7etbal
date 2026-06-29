@@ -46,7 +46,10 @@ const DELETE_PATTERN =
   /\b(?:delete|cancel|remove|dismiss|clear)\b/i;
 
 const MARK_DONE_PATTERN =
-  /\b(?:mark|close|complete|finish|done|completed|finished)\b/i;
+  /\b(?:mark|close|complete|finish|done|completed|finished|handled|resolved)\b/i;
+
+const WAITING_CLOSE_PATTERN =
+  /\b(?:remove|clear|close|mark|resolve)\b[\s\S]{0,80}\b(?:waiting|wait(?:ing)?\s+on)\b|\b(?:waiting|wait(?:ing)?\s+on)\b[\s\S]{0,80}\b(?:handled|resolved|done|complete|closed)\b/i;
 
 export function resolveVoiceTaskControl(
   rawText: string,
@@ -163,6 +166,8 @@ export function parseVoiceTaskControlIntent(rawText: string): VoiceTaskControlIn
   const lower = text.toLowerCase();
   const action: VoiceTaskControlAction | null = /^\s*yes[.!]?\s*$/i.test(text)
     ? "mark_done"
+    : WAITING_CLOSE_PATTERN.test(text)
+    ? "mark_done"
     : DELETE_PATTERN.test(text)
     ? "delete"
     : MARK_DONE_PATTERN.test(text)
@@ -172,7 +177,7 @@ export function parseVoiceTaskControlIntent(rawText: string): VoiceTaskControlIn
 
   const taskish =
     /\b(?:task|reminder|delegation|item|alarm|to[-\s]?do)\b/i.test(text) ||
-    /\b(?:mark|close|complete|finish|done|completed|finished|delete|cancel|remove|dismiss|clear|yes)\b/i.test(text);
+    /\b(?:waiting|mark|close|complete|finish|done|completed|finished|handled|resolved|delete|cancel|remove|dismiss|clear|yes)\b/i.test(text);
   if (!taskish) return null;
 
   const usesCurrentReference = CURRENT_REFERENCE_PATTERN.test(text);
@@ -238,11 +243,11 @@ function cleanTaskControlQuery(
     .replace(/[’']s\b/g, "")
     .replace(/[’']/g, "")
     .replace(/\b(?:please|can you|could you|carson)\b/g, " ")
-    .replace(/\b(?:the|a|an|my|me|for|from|in|on|as|owner|side)\b/g, " ")
-    .replace(/\b(?:task|reminder|delegation|item|to\s*do|todo)\b/g, " ");
+    .replace(/\b(?:the|a|an|my|me|for|from|in|on|as|is|are|was|were|owner|side)\b/g, " ")
+    .replace(/\b(?:task|reminder|delegation|item|open\s+loop|loop|waiting|wait(?:ing)?\s+on|to\s*do|todo)\b/g, " ");
 
   if (action === "mark_done") {
-    query = query.replace(/\b(?:mark|close|complete|finish|done|completed|finished)\b/g, " ");
+    query = query.replace(/\b(?:mark|close|complete|finish|done|completed|finished|handled|resolved|remove|clear)\b/g, " ");
   } else {
     query = query.replace(/\b(?:delete|cancel|remove|dismiss|clear)\b/g, " ");
   }

@@ -31,9 +31,16 @@ function task(overrides: Partial<Task> & Pick<Task, "id" | "description" | "type
 
 const insuranceReminder = task({
   id: "reminder-1",
-  description: "Call the insurance company",
+  description: "Renew passport",
   type: "reminder",
   due_at: "2026-06-30T10:00:00.000Z",
+});
+
+const flowerReminder = task({
+  id: "reminder-4",
+  description: "Buy flowers",
+  type: "reminder",
+  due_at: "2026-06-30T12:00:00.000Z",
 });
 
 const alarmReminder = task({
@@ -77,13 +84,23 @@ async function run(rawText: string, tasks: Task[], currentTask?: VoiceTaskContex
 describe("voice task control", () => {
   it("voice marks a reminder done", async () => {
     const { result, markDoneTask, deleteTask } = await run(
-      "mark the insurance reminder done",
+      "mark my passport reminder done",
       [insuranceReminder],
     );
 
     expect(result.reply).toBe("Done. I marked that reminder done.");
     expect(markDoneTask).toHaveBeenCalledWith(insuranceReminder);
     expect(deleteTask).not.toHaveBeenCalled();
+  });
+
+  it("voice completes a flower reminder", async () => {
+    const { result, markDoneTask } = await run(
+      "complete the flower reminder",
+      [flowerReminder],
+    );
+
+    expect(result.reply).toBe("Done. I marked that reminder done.");
+    expect(markDoneTask).toHaveBeenCalledWith(flowerReminder);
   });
 
   it("voice deletes or cancels a reminder", async () => {
@@ -99,12 +116,44 @@ describe("voice task control", () => {
 
   it("voice marks Ghulam delegation done as owner override", async () => {
     const { result, markDoneTask } = await run(
-      "mark Ghulam's car task done",
+      "mark Ghulam's task complete",
       [ghulamDelegation],
     );
 
     expect(result.reply).toBe("Done. I marked that task done.");
     expect(markDoneTask).toHaveBeenCalledWith(ghulamDelegation);
+  });
+
+  it("voice closes a waiting item by assignee", async () => {
+    const { result, markDoneTask, deleteTask } = await run(
+      "close the waiting item for Grace",
+      [graceDelegation],
+    );
+
+    expect(result.reply).toBe("Done. I marked that task done.");
+    expect(markDoneTask).toHaveBeenCalledWith(graceDelegation);
+    expect(deleteTask).not.toHaveBeenCalled();
+  });
+
+  it("voice treats handled waiting language as completion", async () => {
+    const { result, markDoneTask } = await run(
+      "that Grace item is handled",
+      [graceDelegation],
+    );
+
+    expect(result.reply).toBe("Done. I marked that task done.");
+    expect(markDoneTask).toHaveBeenCalledWith(graceDelegation);
+  });
+
+  it("voice treats remove-from-waiting language as completion, not deletion", async () => {
+    const { result, markDoneTask, deleteTask } = await run(
+      "remove Ghulam from waiting",
+      [ghulamDelegation],
+    );
+
+    expect(result.reply).toBe("Done. I marked that task done.");
+    expect(markDoneTask).toHaveBeenCalledWith(ghulamDelegation);
+    expect(deleteTask).not.toHaveBeenCalled();
   });
 
   it("voice marks Grace delegation done as owner override", async () => {
@@ -141,10 +190,24 @@ describe("voice task control", () => {
     });
     const { result, markDoneTask, deleteTask } = await run(
       "cancel insurance reminder",
-      [insuranceReminder, secondInsurance],
+      [
+        task({ ...insuranceReminder, description: "Call insurance company" }),
+        secondInsurance,
+      ],
     );
 
     expect(result.reply).toMatch(/more than one matching task/i);
+    expect(markDoneTask).not.toHaveBeenCalled();
+    expect(deleteTask).not.toHaveBeenCalled();
+  });
+
+  it("missing item returns a clear not-found response", async () => {
+    const { result, markDoneTask, deleteTask } = await run(
+      "mark the passport reminder done",
+      [flowerReminder],
+    );
+
+    expect(result.reply).toBe("I couldn't find an open task matching that. Which one do you mean?");
     expect(markDoneTask).not.toHaveBeenCalled();
     expect(deleteTask).not.toHaveBeenCalled();
   });

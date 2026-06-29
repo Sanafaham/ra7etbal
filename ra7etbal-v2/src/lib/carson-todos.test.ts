@@ -156,6 +156,16 @@ describe("carson-todos: findTodoMatches", () => {
     expect(findTodoMatches(list, "grace")).toHaveLength(2);
   });
 
+  it("matches a to-do when ElevenLabs passes the full completion sentence", () => {
+    expect(findTodoMatches(list, "Mark buy flowers done").map((item) => item.id)).toEqual(["t1"]);
+    expect(findTodoMatches(list, "Complete buy flowers").map((item) => item.id)).toEqual(["t1"]);
+    expect(findTodoMatches(list, "Close buy flowers").map((item) => item.id)).toEqual(["t1"]);
+  });
+
+  it("asks for clarification by returning tied best matches", () => {
+    expect(findTodoMatches(list, "mark buy done").map((item) => item.id)).toEqual(["t1", "t3"]);
+  });
+
   it("returns empty array for an empty query", () => {
     expect(findTodoMatches(list, "  ")).toEqual([]);
   });
