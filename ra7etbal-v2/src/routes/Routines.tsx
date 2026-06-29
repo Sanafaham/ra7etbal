@@ -54,6 +54,13 @@ export function isOwnerOnlyAutomation(row: Pick<AutomationRow, "assignee_id" | "
   return row.assignee_id === null && row.automation_type !== "message";
 }
 
+export function isUnsupportedRecurringWhatsappAutomation(
+  row: Pick<AutomationRow, "assignee_id" | "automation_type" | "cadence_type">,
+): boolean {
+  if (row.cadence_type === "once") return false;
+  return row.automation_type === "message" || row.assignee_id !== null;
+}
+
 export const LEGACY_ROUTINE_MANUAL_CREATION_ENABLED = false;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -983,6 +990,7 @@ function AutomationCard({
     automation.people?.name ??
     (automation.assignee_id ? "Unknown" : null);
   const ownerOnly = isOwnerOnlyAutomation(automation);
+  const unsupportedRecurringWhatsapp = isUnsupportedRecurringWhatsappAutomation(automation);
 
   const nextRun = automation.next_run_at
     ? new Date(automation.next_run_at).toLocaleString([], {
@@ -993,8 +1001,18 @@ function AutomationCard({
       })
     : null;
 
-  const state = resolveStateConfig(latestRun?.current_state ?? null, automation.automation_type, ownerOnly);
-  const failureReason = latestRun?.current_state === "failed" ? latestRun.failure_reason : null;
+  const state = unsupportedRecurringWhatsapp
+    ? {
+        label: "Legacy WhatsApp disabled",
+        dot: "bg-ink/25",
+        text: "text-ink/45",
+        border: "border-l-ink/15",
+      }
+    : resolveStateConfig(latestRun?.current_state ?? null, automation.automation_type, ownerOnly);
+  const failureReason =
+    latestRun?.current_state === "failed" || latestRun?.current_state === "skipped"
+      ? latestRun.failure_reason
+      : null;
   const isActive = automation.status === "active";
   const isPaused = automation.status === "paused";
 
@@ -1024,6 +1042,11 @@ function AutomationCard({
                 Paused
               </span>
             )}
+            {unsupportedRecurringWhatsapp && (
+              <span className="rounded-full bg-ink/5 px-2 py-0.5 text-[11px] font-medium text-ink/45">
+                Unsupported
+              </span>
+            )}
           </div>
 
           {/* Cadence + assignee */}
@@ -1038,17 +1061,20 @@ function AutomationCard({
             <span className={`text-[11px] font-medium ${state.text}`}>{state.label}</span>
           </div>
           {failureReason && (
-            <p className="text-[11px] leading-snug text-red-600/80">{failureReason}</p>
+            <p className={`text-[11px] leading-snug ${unsupportedRecurringWhatsapp ? "text-ink/45" : "text-red-600/80"}`}>
+              {failureReason}
+            </p>
           )}
 
           {/* Next run */}
-          {nextRun && isActive && (
+          {nextRun && isActive && !unsupportedRecurringWhatsapp && (
             <p className="text-[11px] text-ink/35">Next run {nextRun}</p>
           )}
 
         </div>
 
         {/* Controls */}
+        {!unsupportedRecurringWhatsapp && (
         <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
           {/* Pause / Resume toggle */}
           {isActive && (
@@ -1089,6 +1115,7 @@ function AutomationCard({
             {actioning ? "…" : confirmingStop ? "Confirm?" : "Stop"}
           </button>
         </div>
+        )}
       </div>
     </div>
   );

@@ -1184,6 +1184,8 @@ async function disableRoutine(supabaseUrl, serviceKey, routineId) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const AUTOMATIONS_BATCH_SIZE = 25;
+const UNSUPPORTED_RECURRING_WHATSAPP_REASON =
+  'Recurring WhatsApp automations are currently disabled; no task or WhatsApp message was created.';
 
 /** Action dispatch handler — wraps runAutomationsCore with an HTTP response. */
 async function runAutomationsDispatch(req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
@@ -1325,6 +1327,27 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
   }
 
   const runId = run.id;
+
+  if (isUnsupportedRecurringWhatsappAutomation(automation)) {
+    console.warn('[automations] unsupported recurring WhatsApp automation skipped', {
+      automationId: automation.id,
+      title: automation.title,
+      automationType: automation.automation_type,
+      assigneeId: automation.assignee_id,
+      cadenceType: automation.cadence_type,
+      runFor,
+    });
+    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+      current_state: 'skipped',
+      failure_reason: UNSUPPORTED_RECURRING_WHATSAPP_REASON,
+    });
+    await patchAutomation(supabaseUrl, serviceKey, automation.id, {
+      status: 'paused',
+      paused_reason: UNSUPPORTED_RECURRING_WHATSAPP_REASON,
+      updated_at: now.toISOString(),
+    });
+    return 'skipped';
+  }
 
   // ── Message automation branch ─────────────────────────────────────────────
   // No task, no confirmation link, no follow-up. Send ra7etbal_routine_message
@@ -1788,6 +1811,11 @@ async function patchAutomation(supabaseUrl, serviceKey, automationId, fields) {
       automationId, fields, status: res.status, body,
     });
   }
+}
+
+function isUnsupportedRecurringWhatsappAutomation(automation) {
+  if (automation.cadence_type === 'once') return false;
+  return automation.automation_type === 'message' || Boolean(automation.assignee_id);
 }
 
 async function isAuthorized(req) {

@@ -22,6 +22,8 @@ const VALID_PROOF_TYPES   = ['photo', 'confirmation', 'text'];
 const VALID_STATUSES      = ['active', 'paused', 'stopped', 'archived'];
 
 const VALID_AUTOMATION_TYPES = ['delegation', 'message'];
+const UNSUPPORTED_RECURRING_WHATSAPP_MESSAGE =
+  'Recurring WhatsApp automations are currently disabled. Use one-time delegations or owner reminders instead.';
 
 const ALLOWED_UPDATE_FIELDS = new Set([
   'title', 'instruction', 'assignee_id',
@@ -172,6 +174,13 @@ async function handlePost(req, res) {
     return res.status(400).json({
       error: `automation_type must be one of: ${VALID_AUTOMATION_TYPES.join(', ')}.`,
     });
+  }
+  if (isUnsupportedRecurringWhatsappAutomation({
+    automation_type,
+    assignee_id: body.assignee_id ?? null,
+    cadence_type,
+  })) {
+    return res.status(400).json({ error: UNSUPPORTED_RECURRING_WHATSAPP_MESSAGE });
   }
 
   const followup_after_min  = body.followup_after_min  ?? 120;
@@ -420,4 +429,9 @@ function sbFetch(config, url, opts = {}) {
 /** URL-encode a query parameter value safely. */
 function e(value) {
   return encodeURIComponent(value);
+}
+
+function isUnsupportedRecurringWhatsappAutomation(row) {
+  if (row.cadence_type === 'once') return false;
+  return row.automation_type === 'message' || Boolean(row.assignee_id);
 }

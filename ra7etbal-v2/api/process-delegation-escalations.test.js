@@ -197,6 +197,64 @@ describe('processAutomation owner-only automations', () => {
   });
 });
 
+describe('processAutomation unsupported recurring WhatsApp automations', () => {
+  it('skips and pauses delegated recurring automations before creating tasks or WhatsApp deliveries', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }], 201))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow({
+        title: 'Weekly Flower Inventory',
+        instruction: 'Send the flower inventory.',
+        assignee_id: 'person-grace',
+        cadence_type: 'weekly',
+      }),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-29T07:00:00.000Z'),
+    });
+
+    expect(result).toBe('skipped');
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
+      current_state: 'skipped',
+      failure_reason: 'Recurring WhatsApp automations are currently disabled; no task or WhatsApp message was created.',
+    });
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({
+      status: 'paused',
+      paused_reason: 'Recurring WhatsApp automations are currently disabled; no task or WhatsApp message was created.',
+      updated_at: '2026-06-29T07:00:00.000Z',
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/tasks'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/send-whatsapp-task'))).toBe(false);
+  });
+
+  it('skips and pauses recurring message automations before sending WhatsApp', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }], 201))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: automationRow({ automation_type: 'message', cadence_type: 'daily' }),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-29T07:00:00.000Z'),
+    });
+
+    expect(result).toBe('skipped');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/send-whatsapp-task'))).toBe(false);
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({ status: 'paused' });
+  });
+});
+
 function automationRow(overrides = {}) {
   return {
     id: 'automation-1',

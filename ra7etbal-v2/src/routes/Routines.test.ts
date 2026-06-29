@@ -26,6 +26,7 @@ vi.mock("../stores/people", () => ({
 
 import {
   isOwnerOnlyAutomation,
+  isUnsupportedRecurringWhatsappAutomation,
   LEGACY_ROUTINE_MANUAL_CREATION_ENABLED,
   resolveStateConfig,
 } from "./Routines";
@@ -39,6 +40,29 @@ describe("owner-only automation UI status", () => {
     expect(isOwnerOnlyAutomation({ assignee_id: null, automation_type: "delegation" })).toBe(true);
     expect(isOwnerOnlyAutomation({ assignee_id: "person-1", automation_type: "delegation" })).toBe(false);
     expect(isOwnerOnlyAutomation({ assignee_id: null, automation_type: "message" })).toBe(false);
+  });
+
+  it("identifies unsupported recurring WhatsApp automation cards", () => {
+    expect(isUnsupportedRecurringWhatsappAutomation({
+      assignee_id: "person-1",
+      automation_type: "delegation",
+      cadence_type: "weekly",
+    })).toBe(true);
+    expect(isUnsupportedRecurringWhatsappAutomation({
+      assignee_id: "person-1",
+      automation_type: "message",
+      cadence_type: "daily",
+    })).toBe(true);
+    expect(isUnsupportedRecurringWhatsappAutomation({
+      assignee_id: null,
+      automation_type: "delegation",
+      cadence_type: "weekly",
+    })).toBe(false);
+    expect(isUnsupportedRecurringWhatsappAutomation({
+      assignee_id: "person-1",
+      automation_type: "delegation",
+      cadence_type: "once",
+    })).toBe(false);
   });
 
   it("shows Reminder created for sent owner-only automations", () => {
