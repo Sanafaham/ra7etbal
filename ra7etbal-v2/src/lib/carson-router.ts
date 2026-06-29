@@ -1,4 +1,5 @@
 import type { Person } from "../types/person";
+import { hasExplicitNoteIntent } from "./ai/note-routing";
 import { isSocialAcknowledgement } from "./carson-social";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -93,6 +94,7 @@ export function classifyCarsonInstruction(
     matchTask(text),
     matchGeneralAnswer(text),
     matchBareAdd(text),
+    matchBareTodo(text),
   ].filter((c): c is CandidateMatch => c !== null);
 
   candidates.sort((a, b) => b.confidence - a.confidence);
@@ -424,39 +426,11 @@ function matchTodo(text: string): CandidateMatch | null {
  * for explicit note-saving language only.
  */
 function matchNote(text: string): CandidateMatch | null {
-  if (/\bnote\s+to\s+\w+/i.test(text)) {
-    return {
-      domain: "note",
-      confidence: 0.88,
-      reason: "'Note to [verb]' is explicit note-saving language.",
-    };
-  }
-  if (/\bsave\s+(this|that)\s+(note|idea|thought)\b/i.test(text)) {
-    return {
-      domain: "note",
-      confidence: 0.93,
-      reason: "'Save this note/idea/thought' is explicit note-saving language.",
-    };
-  }
-  if (/\bremember\s+this\s+(idea|thought|information)\b/i.test(text)) {
-    return {
-      domain: "note",
-      confidence: 0.90,
-      reason: "'Remember this idea/thought/information' maps to a note, not a task.",
-    };
-  }
-  if (/\bhold\s+this\s+thought\b/i.test(text)) {
-    return {
-      domain: "note",
-      confidence: 0.90,
-      reason: "'Hold this thought' is explicit note-saving language.",
-    };
-  }
-  if (/\badd\s+this\s+to\s+(my\s+)?notes\b/i.test(text)) {
+  if (hasExplicitNoteIntent(text)) {
     return {
       domain: "note",
       confidence: 0.92,
-      reason: "'Add this to my notes' is explicit note-saving language.",
+      reason: "Explicit note-saving language maps to Notes, not To-do.",
     };
   }
   if (/\b(save|write|note)\s+(this|that|it)\b/i.test(text)) {
@@ -492,6 +466,26 @@ function matchBareAdd(text: string): CandidateMatch | null {
       domain: "todo",
       confidence: 0.55,
       reason: "Bare 'add X' with no other domain signal defaults to a to-do.",
+    };
+  }
+  return null;
+}
+
+/**
+ * Bare action commands in Talk to Carson should land in To-do when there is
+ * no reminder, delegation, calendar, note, or question signal.
+ */
+function matchBareTodo(text: string): CandidateMatch | null {
+  if (/[?]/.test(text)) return null;
+  if (
+    /^\s*(please\s+)?(buy|renew|call|email|pay|order|book|submit|file|pick\s+up|return|prepare|finish|complete|check)\b.+/i.test(
+      text,
+    )
+  ) {
+    return {
+      domain: "todo",
+      confidence: 0.56,
+      reason: "Bare personal action with no due date or assignee defaults to To-do.",
     };
   }
   return null;

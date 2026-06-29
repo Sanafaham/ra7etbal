@@ -24,7 +24,7 @@ const NOTE_TRIGGER_PATTERNS: RegExp[] = [
   /\badd\s+this\s+to\s+(my\s+)?notes\b/i,
 ];
 
-function hasNoteTrigger(text: string): boolean {
+export function hasExplicitNoteIntent(text: string): boolean {
   return NOTE_TRIGGER_PATTERNS.some((re) => re.test(text));
 }
 
@@ -51,7 +51,7 @@ export function applyNoteRouting(
   items: ExtractedItem[],
   sourceText: string,
 ): ExtractedItem[] {
-  if (items.length === 0 || !sourceText || !hasNoteTrigger(sourceText)) {
+  if (items.length === 0 || !sourceText || !hasExplicitNoteIntent(sourceText)) {
     return items;
   }
 
@@ -69,7 +69,7 @@ export function applyNoteRouting(
     .split(/[.;\n]+/)
     .map((c) => c.trim())
     .filter(Boolean);
-  const noteClauses = clauses.filter(hasNoteTrigger);
+  const noteClauses = clauses.filter(hasExplicitNoteIntent);
   if (noteClauses.length === 0) return items;
 
   return items.map((item) => {

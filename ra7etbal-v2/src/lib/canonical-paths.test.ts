@@ -260,6 +260,28 @@ describe("canonical action creation paths", () => {
     expect(h.reminderSchedules).toHaveLength(0);
   });
 
+  it.each([
+    ["Buy flowers", "Buy flowers"],
+    ["Add buy flowers to my to-do list", "buy flowers"],
+    ["Renew passport", "Renew passport"],
+  ])("routes Clear My Head %j into To-do", async (text, description) => {
+    const saved = await extractAndSave(text, [
+      { type: "action", description },
+    ]);
+
+    expect(saved.todos).toHaveLength(1);
+    expect(h.db.carson_todos).toMatchObject([
+      {
+        user_id: "user-1",
+        title: description,
+        source: "clear_my_head",
+      },
+    ]);
+    expect(h.db.carson_notes).toHaveLength(0);
+    expect(h.db.tasks).toHaveLength(0);
+    expect(h.db.messages).toHaveLength(0);
+  });
+
   it("direct createTodo writes the same to-do shape without task/message side effects", async () => {
     await createTodo("  buy flowers  ", null, "voice");
 
@@ -286,6 +308,30 @@ describe("canonical action creation paths", () => {
       {
         user_id: "user-1",
         note: "follow Gemini plan",
+        category: "general",
+        source: "clear_my_head",
+      },
+    ]);
+    expect(h.db.carson_todos).toHaveLength(0);
+    expect(h.db.tasks).toHaveLength(0);
+    expect(h.db.messages).toHaveLength(0);
+  });
+
+  it.each([
+    ["Note to follow Gemini plan", "follow Gemini plan"],
+    ["Save this note: follow Gemini plan", "follow Gemini plan"],
+    ["Remember this idea for later", "idea for later"],
+    ["Hold this thought about the menu", "thought about the menu"],
+  ])("routes Clear My Head %j into Notes", async (text, description) => {
+    const saved = await extractAndSave(text, [
+      { type: "action", description },
+    ]);
+
+    expect(saved.notesSaved).toBe(1);
+    expect(h.db.carson_notes).toMatchObject([
+      {
+        user_id: "user-1",
+        note: description,
         category: "general",
         source: "clear_my_head",
       },

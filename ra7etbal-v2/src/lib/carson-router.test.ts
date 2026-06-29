@@ -266,6 +266,12 @@ describe("Carson router — self-pronoun guard", () => {
 // ── To-do vs Notes routing ──────────────────────────────────────────────────────
 
 describe("Carson router — To-do vs Notes", () => {
+  it("'Buy flowers' → todo", () => {
+    const result = classify("Buy flowers");
+    expect(result.primary_domain).toBe("todo");
+    expect(result.needs_clarification).toBe(false);
+  });
+
   it("'Add buy flowers to my to-do list' → todo", () => {
     const result = classify("Add buy flowers to my to-do list");
     expect(result.primary_domain).toBe("todo");
@@ -342,6 +348,21 @@ describe("Carson router — To-do vs Notes", () => {
   it("'Hold this thought about the menu' → note", () => {
     const result = classify("Hold this thought about the menu");
     expect(result.primary_domain).toBe("note");
+  });
+
+  it("'Put dentist appointment on my calendar' → calendar", () => {
+    const result = classify("Put dentist appointment on my calendar");
+    expect(result.primary_domain).toBe("calendar");
+  });
+
+  it("'Remind me to buy flowers tomorrow' → reminder", () => {
+    const result = classify("Remind me to buy flowers tomorrow");
+    expect(result.primary_domain).toBe("reminder");
+  });
+
+  it("'Ask Grace to buy flowers' → delegation", () => {
+    const result = classify("Ask Grace to buy flowers");
+    expect(result.primary_domain).toBe("delegation");
   });
 });
 
