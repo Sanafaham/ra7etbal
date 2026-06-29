@@ -32,6 +32,7 @@ import {
   buildVoiceAutomationInput,
   detectAllRecurringSchedules,
   findPersonInInstruction,
+  resolveRecurringAutomationPerson,
   createReminderRoutineFromInstruction,
   createVoiceRoutine,
 } from "./routine-detection";
@@ -169,6 +170,16 @@ describe("createReminderRoutineFromInstruction", () => {
 });
 
 describe("third-party recurring automation routing", () => {
+  it("uses the person named in stale recurring source over the current one-time tool recipient", () => {
+    const person = resolveRecurringAutomationPerson(
+      "Every Friday ask Grace at 10:00 AM to send the flower inventory.",
+      [CHRISTOPHER, GRACE],
+      CHRISTOPHER,
+    );
+
+    expect(person.name).toBe("Grace");
+  });
+
   it("keeps new third-party recurring delegations on the automation input path", () => {
     const schedules = detectAllRecurringSchedules("Every morning ask Christopher to send a lunch photo.");
     const input = buildVoiceAutomationInput(

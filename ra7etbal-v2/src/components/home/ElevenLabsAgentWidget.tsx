@@ -67,7 +67,7 @@ import {
   summarizeCarsonPlanDiagnostic,
 } from "../../lib/carson-planner-diagnostics";
 import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-tool-diagnostics";
-import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText } from "../../lib/routine-detection";
+import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText, resolveRecurringAutomationPerson } from "../../lib/routine-detection";
 import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
@@ -1161,10 +1161,9 @@ export default function ElevenLabsAgentWidget({
           recurringSchedules,
         });
 
-        const sourceHasPerson = recurringSource
-          .toLowerCase()
-          .includes(person.name.trim().toLowerCase());
-        const routineInstruction = sourceHasPerson
+        const recurringSourcePerson = findPersonInInstruction(recurringSource, people);
+        const automationPerson = resolveRecurringAutomationPerson(recurringSource, people, person);
+        const routineInstruction = recurringSourcePerson
           ? recurringSource
           : `${recurringSource} ask ${person.name} to ${taskText}`;
 
@@ -1176,9 +1175,11 @@ export default function ElevenLabsAgentWidget({
         const results = await Promise.all(
           recurringSchedules.map(async (sched) => {
             try {
-              // Person is already resolved by sendDelegation — pass it directly.
-              // routineInstruction IS the verbatim cadence source here; use it for type detection too.
-              const input = buildVoiceAutomationInput(routineInstruction, sched, people, person, routineInstruction);
+              // If the captured recurring source names a person, trust that
+              // source-local person over the current tool recipient. This
+              // prevents stale recurring text from being attached to an
+              // unrelated one-time delegation recipient.
+              const input = buildVoiceAutomationInput(routineInstruction, sched, people, automationPerson, routineInstruction);
               if (!input) {
                 console.warn("[automation:SEND_DELEGATION_NO_INPUT]", { routineInstruction });
                 return null;

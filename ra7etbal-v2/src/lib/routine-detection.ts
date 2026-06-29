@@ -123,6 +123,14 @@ export function findPersonInInstruction(instruction: string, people: Person[]): 
   );
 }
 
+export function resolveRecurringAutomationPerson(
+  recurringSource: string,
+  people: Person[],
+  fallbackPerson: Person,
+): Person {
+  return findPersonInInstruction(recurringSource, people) ?? fallbackPerson;
+}
+
 // Recurring language to strip from the task message before storing in payload.
 const RECURRING_CLEAN_RE =
   /\b(every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|day|week|morning|evening|night|afternoon|\d+\s+days?|[a-z]+\s+days?)|each\s+(morning|evening|night|afternoon|day)|daily|weekly|as\s+a\s+routine\s+task|as\s+a\s+routine|on\s+a\s+recurring\s+basis|recurring\s+basis|routine\s+task|regularly)\b/gi;

@@ -28,6 +28,7 @@ import {
   isOwnerOnlyAutomation,
   isUnsupportedRecurringWhatsappAutomation,
   LEGACY_ROUTINE_MANUAL_CREATION_ENABLED,
+  resolveAutomationAssigneeName,
   resolveStateConfig,
 } from "./Routines";
 
@@ -63,6 +64,34 @@ describe("owner-only automation UI status", () => {
       automation_type: "delegation",
       cadence_type: "once",
     })).toBe(false);
+  });
+
+  it("displays the person named by the automation text instead of a conflicting joined assignee", () => {
+    const name = resolveAutomationAssigneeName(
+      {
+        title: "Every Fri: Ask Grace at 10:00 AM to send the flower inventory",
+        instruction: "Ask Grace at 10:00 AM to send the flower inventory.",
+        assignee_id: "ghulam-id",
+        people: { name: "Ghulam" },
+      },
+      [{ name: "Grace" }, { name: "Ghulam" }],
+    );
+
+    expect(name).toBe("Grace");
+  });
+
+  it("still displays the automation assignee when the text has no conflicting person", () => {
+    const name = resolveAutomationAssigneeName(
+      {
+        title: "Weekly Flower Inventory",
+        instruction: "Send the flower inventory.",
+        assignee_id: "grace-id",
+        people: { name: "Grace" },
+      },
+      [{ name: "Grace" }, { name: "Ghulam" }],
+    );
+
+    expect(name).toBe("Grace");
   });
 
   it("shows Reminder created for sent owner-only automations", () => {

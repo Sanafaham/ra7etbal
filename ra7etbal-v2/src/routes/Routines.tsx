@@ -61,11 +61,44 @@ export function isUnsupportedRecurringWhatsappAutomation(
   return row.automation_type === "message" || row.assignee_id !== null;
 }
 
+export function resolveAutomationAssigneeName(
+  automation: Pick<AutomationRow, "title" | "instruction" | "assignee_id" | "people">,
+  people: Array<{ name: string }>,
+): string | null {
+  const joinedName = automation.people?.name ?? (automation.assignee_id ? "Unknown" : null);
+  const explicitName = findFirstMentionedPersonName(
+    `${automation.title} ${automation.instruction}`,
+    people,
+  );
+
+  if (!explicitName) return joinedName;
+  if (!joinedName || joinedName === "Unknown") return explicitName;
+  return explicitName.toLowerCase() === joinedName.toLowerCase()
+    ? joinedName
+    : explicitName;
+}
+
 export const LEGACY_ROUTINE_MANUAL_CREATION_ENABLED = false;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function findFirstMentionedPersonName(text: string, people: Array<{ name: string }>): string | null {
+  const lower = text.toLowerCase();
+  let best: { name: string; index: number } | null = null;
+
+  for (const person of people) {
+    const name = person.name.trim();
+    if (!name) continue;
+    const escaped = name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = lower.match(new RegExp(`\\b${escaped}\\b`));
+    if (!match || match.index == null) continue;
+    if (!best || match.index < best.index) best = { name, index: match.index };
+  }
+
+  return best?.name ?? null;
+}
 
 function scheduleLabel(routine: Routine): string {
   if (routine.schedule === "daily") {
@@ -828,6 +861,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               key={a.id}
               automation={a}
               latestRun={automationRuns[a.id] ?? null}
+              people={peopleItems}
               actioning={automationActioningId === a.id}
               confirmingStop={automationConfirmStopId === a.id}
               onPause={() => handleAutomationAction(a.id, "pause")}
@@ -858,6 +892,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               key={a.id}
               automation={a}
               latestRun={automationRuns[a.id] ?? null}
+              people={peopleItems}
               actioning={automationActioningId === a.id}
               confirmingStop={automationConfirmStopId === a.id}
               onPause={() => handleAutomationAction(a.id, "pause")}
@@ -887,6 +922,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
 interface AutomationCardProps {
   automation: AutomationRow;
   latestRun: AutomationRunRow | null;
+  people: Array<{ name: string }>;
   actioning: boolean;
   confirmingStop: boolean;
   onPause: () => void;
@@ -980,15 +1016,14 @@ export function resolveStateConfig(
 function AutomationCard({
   automation,
   latestRun,
+  people,
   actioning,
   confirmingStop,
   onPause,
   onResume,
   onStop,
 }: AutomationCardProps) {
-  const assigneeName =
-    automation.people?.name ??
-    (automation.assignee_id ? "Unknown" : null);
+  const assigneeName = resolveAutomationAssigneeName(automation, people);
   const ownerOnly = isOwnerOnlyAutomation(automation);
   const unsupportedRecurringWhatsapp = isUnsupportedRecurringWhatsappAutomation(automation);
 
