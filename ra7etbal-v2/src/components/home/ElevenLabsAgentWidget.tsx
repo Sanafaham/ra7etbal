@@ -3392,6 +3392,7 @@ export default function ElevenLabsAgentWidget({
       }, 60_000);
       const conv = await Conversation.startSession({
         agentId,
+        connectionType: "websocket",
         dynamicVariables: {
           // Sanitize all speech-bound text so ElevenLabs never receives the
           // Latin "Ra7etBal" string — it mispronounces it. Arabic is correct.
