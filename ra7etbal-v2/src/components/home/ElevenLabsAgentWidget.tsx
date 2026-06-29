@@ -3253,15 +3253,6 @@ export default function ElevenLabsAgentWidget({
     setStatus("connecting");
     setErrorMsg(null);
     setSessionEndedMsg(null);
-    connectTimeoutRef.current = setTimeout(() => {
-      if (!isCurrentSession()) return;
-      console.warn("[carson-lifecycle] timeout", {
-        sessionGeneration,
-        status: statusRef.current,
-        at: new Date().toISOString(),
-      });
-      forceCleanupSession("connect-timeout", { showEndedMessage: true });
-    }, 20_000);
 
     // Reset session state for this new session.
     sessionActionsRef.current = [];
@@ -3390,6 +3381,15 @@ export default function ElevenLabsAgentWidget({
       // Voice prompt changes belong in the ElevenLabs dashboard only,
       // unless SDK support for a specific field has been verified in staging.
       // ─────────────────────────────────────────────────────────────────────
+      connectTimeoutRef.current = setTimeout(() => {
+        if (!isCurrentSession()) return;
+        console.warn("[carson-lifecycle] timeout", {
+          sessionGeneration,
+          status: statusRef.current,
+          at: new Date().toISOString(),
+        });
+        forceCleanupSession("connect-timeout", { showEndedMessage: true });
+      }, 20_000);
       const conv = await Conversation.startSession({
         agentId,
         dynamicVariables: {

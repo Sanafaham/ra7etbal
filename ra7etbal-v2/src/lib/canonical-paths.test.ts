@@ -489,6 +489,18 @@ describe("canonical path source adapters", () => {
     expect(review).toMatch(/if \(parts\.length\) window\.alert\(parts\.join\("\\n\\n"\)\)/);
   });
 
+  it("starts Voice Carson connect timeout around the SDK handshake, after live preload work", () => {
+    const widget = source("src/components/home/ElevenLabsAgentWidget.tsx");
+    const preloadIndex = widget.indexOf("const freshVars = onBeforeCallStart ? await onBeforeCallStart() : null;");
+    const timeoutIndex = widget.indexOf("connectTimeoutRef.current = setTimeout", preloadIndex);
+    const startSessionIndex = widget.indexOf("const conv = await Conversation.startSession", preloadIndex);
+
+    expect(preloadIndex).toBeGreaterThan(-1);
+    expect(timeoutIndex).toBeGreaterThan(preloadIndex);
+    expect(startSessionIndex).toBeGreaterThan(timeoutIndex);
+    expect(startSessionIndex - timeoutIndex).toBeLessThan(800);
+  });
+
   it("documents confirmation URL canonical param and legacy compatibility", () => {
     const confirm = source("src/routes/Confirm.tsx");
     const save = source("src/lib/save.ts");
