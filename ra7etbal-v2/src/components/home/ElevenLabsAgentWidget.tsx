@@ -33,7 +33,14 @@ import { filterCalendarEventsByRange } from "../../lib/calendar";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { callCalendarApi } from "../../lib/calendar-actions";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
-import { summarizeConversation, summarizeSessionRecap, isSummaryWorthSaving, SESSION_RECAP_PREFIX, type TranscriptMessage } from "../../lib/carson-summarize";
+import {
+  buildSessionRecapWithActions,
+  summarizeConversation,
+  summarizeSessionRecap,
+  isSummaryWorthSaving,
+  SESSION_RECAP_PREFIX,
+  type TranscriptMessage,
+} from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { appendPhotoContextDescription } from "../../lib/carson-photo-context";
 import { createReminderTask } from "../../lib/reminders";
@@ -1970,6 +1977,10 @@ export default function ElevenLabsAgentWidget({
           } satisfies CalendarEvent,
         ];
 
+        sessionActionsRef.current.push(
+          `Created calendar event: ${data.title} (${dateLabel} at ${timeLabel})`,
+        );
+
         return `Added ${data.title} to your Google Calendar — ${dateLabel} at ${timeLabel}.`;
       } catch {
         return "I couldn't add the event to your calendar right now. Please try again.";
@@ -2063,6 +2074,10 @@ export default function ElevenLabsAgentWidget({
         if (dateLabel) parts.push(`for ${dateLabel}`);
         if (timeLabel) parts.push(`at ${timeLabel}`);
 
+        sessionActionsRef.current.push(
+          `Updated calendar event: ${data.title}${parts.length ? ` (${parts.join(" ")})` : ""}`,
+        );
+
         return `${data.title} is on your calendar${parts.length ? " " + parts.join(" ") : ""}.`;
       } catch {
         return "I couldn't update that event right now. Please try again.";
@@ -2115,6 +2130,8 @@ export default function ElevenLabsAgentWidget({
         planningCalendarEventsRef.current = planningCalendarEventsRef.current.filter(
           (ev) => ev.id !== eventId,
         );
+
+        sessionActionsRef.current.push(`Deleted calendar event: ${eventTitle}`);
 
         return `${eventTitle} is off your calendar.`;
       } catch {
@@ -2912,11 +2929,13 @@ export default function ElevenLabsAgentWidget({
 
   const saveVoiceSessionSnapshot = useCallback(
     (userId: string | null, transcript: TranscriptMessage[]) => {
+      const sessionActions = [...sessionActionsRef.current];
       if (userId) {
         (async () => {
           const recap = await summarizeSessionRecap(transcript);
-          if (recap) {
-            await saveSessionMemory(`${SESSION_RECAP_PREFIX} ${recap}`);
+          const recapWithActions = buildSessionRecapWithActions(recap, sessionActions);
+          if (recapWithActions) {
+            await saveSessionMemory(`${SESSION_RECAP_PREFIX} ${recapWithActions}`);
           }
         })().catch((err) => {
           console.error(

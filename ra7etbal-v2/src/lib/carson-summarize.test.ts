@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  buildSessionRecapWithActions,
+  formatSessionActionsForRecap,
   isSummaryWorthSaving,
+  summarizeConversation,
   summarizeSessionRecap,
   SESSION_RECAP_PREFIX,
   type TranscriptMessage,
@@ -54,6 +57,32 @@ describe("session recap threshold (the bug that bit us)", () => {
   it("recap prefix constant is stable (loadRecentMemory depends on it)", () => {
     expect(SESSION_RECAP_PREFIX).toBe("• Session recap:");
   });
+
+  it("session action recap includes delegated person names and task text", () => {
+    const actions = formatSessionActionsForRecap([
+      "Delegated to Ghulam: have the cars clean and ready by 8 AM",
+      "Delegated to Grace: send the flower inventory.",
+    ]);
+
+    expect(actions).toBe(
+      [
+        "Session actions:",
+        "* Delegated to Ghulam: have the cars clean and ready by 8 AM.",
+        "* Delegated to Grace: send the flower inventory.",
+      ].join("\n"),
+    );
+  });
+
+  it("session recap includes reminders and calendar actions when present", () => {
+    const recap = buildSessionRecapWithActions("Handled planning requests.", [
+      "Created reminder: call insurance (Tomorrow at 10:00 AM)",
+      "Created calendar event: lunch (Tuesday at 2:00 PM)",
+    ]);
+
+    expect(recap).toContain("Handled planning requests.");
+    expect(recap).toContain("* Created reminder: call insurance (Tomorrow at 10:00 AM).");
+    expect(recap).toContain("* Created calendar event: lunch (Tuesday at 2:00 PM).");
+  });
 });
 
 describe("durable memory gate stays strict (must NOT be weakened)", () => {
@@ -73,5 +102,22 @@ describe("durable memory gate stays strict (must NOT be weakened)", () => {
   it("rejects empty/blank summaries", () => {
     expect(isSummaryWorthSaving("")).toBe(false);
     expect(isSummaryWorthSaving("   ")).toBe(false);
+  });
+
+  it("does not store one-time delegation actions as durable memory", async () => {
+    mockAnthropic(
+      [
+        "• Delegated to Ghulam to have the cars clean and ready by 8 AM.",
+        "• Sent Grace the flower inventory task.",
+      ].join("\n"),
+    );
+
+    const summary = await summarizeConversation([
+      { role: "user", message: "Ask Ghulam to have the cars clean and ready by 8 AM." },
+      { role: "agent", message: "Sent." },
+      { role: "user", message: "Ask Grace to send the flower inventory." },
+    ]);
+
+    expect(summary).toBeNull();
   });
 });

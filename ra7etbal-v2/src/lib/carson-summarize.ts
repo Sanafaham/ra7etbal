@@ -65,6 +65,30 @@ export function isSummaryWorthSaving(summary: string): boolean {
 /** Prefix that marks a carson_memory row as a session recap (not durable fact). */
 export const SESSION_RECAP_PREFIX = "• Session recap:";
 
+export function formatSessionActionsForRecap(actions: string[]): string | null {
+  const cleanActions = actions
+    .map((action) => action.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+
+  if (cleanActions.length === 0) return null;
+
+  return ["Session actions:", ...cleanActions.map((action) => `* ${ensureSentence(action)}`)].join(
+    "\n",
+  );
+}
+
+export function buildSessionRecapWithActions(
+  recap: string | null,
+  actions: string[],
+): string | null {
+  const cleanRecap = recap?.replace(/\s+/g, " ").trim() ?? "";
+  const actionBlock = formatSessionActionsForRecap(actions);
+
+  if (cleanRecap && actionBlock) return `${cleanRecap}\n${actionBlock}`;
+  if (cleanRecap) return cleanRecap;
+  return actionBlock;
+}
+
 /**
  * Produce a single-sentence topical recap of a session — saved on EVERY voice
  * disconnect (with enough turns) regardless of whether anything durable was
@@ -269,4 +293,8 @@ function isLikelyTemporaryOperationalMemory(line: string): boolean {
     );
 
   return hasTemporarySignal;
+}
+
+function ensureSentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
 }

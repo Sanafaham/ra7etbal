@@ -49,6 +49,44 @@ describe("carson-memory recap labelling", () => {
     expect(out).not.toContain("Grace photographs the fridge");
   });
 
+  it("keeps entity-level session action details in recent-memory context", () => {
+    const out = formatRecentMemory([
+      {
+        created_at: "2026-06-22T02:32:14Z",
+        summary: [
+          `${RECAP_PREFIX} Handled household requests.`,
+          "Session actions:",
+          "* Delegated to Ghulam: have the cars clean and ready by 8 AM.",
+          "* Created reminder: call insurance tomorrow at 10 AM.",
+        ].join("\n"),
+      },
+    ]);
+
+    expect(out).toContain("[Most recent session");
+    expect(out).toContain("Delegated to Ghulam: have the cars clean and ready by 8 AM.");
+    expect(out).toContain("Created reminder: call insurance tomorrow at 10 AM.");
+  });
+
+  it("supports last-session delegation questions from recent-memory context", () => {
+    const out = formatRecentMemory([
+      {
+        created_at: "2026-06-22T02:32:14Z",
+        summary: [
+          `${RECAP_PREFIX} Sent household delegations.`,
+          "Session actions:",
+          "* Delegated to Ghulam: have the cars clean and ready by 8 AM.",
+          "* Delegated to Grace: send the flower inventory.",
+        ].join("\n"),
+      },
+    ]);
+
+    const latestBlock = out.split("\n\n").find((block) => block.includes("[Most recent session"));
+    expect(latestBlock).toContain("Ghulam");
+    expect(latestBlock).toContain("Grace");
+    expect(latestBlock).toContain("have the cars clean and ready by 8 AM");
+    expect(latestBlock).toContain("send the flower inventory");
+  });
+
   it("excludes durable rows even when they are globally newer than the latest recap", () => {
     const out = formatRecentMemory([
       { created_at: "2026-06-22T10:00:00Z", summary: "• Routine: newest durable fact" },
