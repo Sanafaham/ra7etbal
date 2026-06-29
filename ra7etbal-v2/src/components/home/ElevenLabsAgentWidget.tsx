@@ -3389,7 +3389,7 @@ export default function ElevenLabsAgentWidget({
           at: new Date().toISOString(),
         });
         forceCleanupSession("connect-timeout", { showEndedMessage: true });
-      }, 20_000);
+      }, 60_000);
       const conv = await Conversation.startSession({
         agentId,
         dynamicVariables: {
