@@ -43,6 +43,7 @@ import {
 } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
 import { appendPhotoContextDescription } from "../../lib/carson-photo-context";
+import { buildCarsonOpeningLine } from "../../lib/carson-opening";
 import { createReminderTask } from "../../lib/reminders";
 import {
   createDelegationTaskAndMessage,
@@ -3215,30 +3216,24 @@ export default function ElevenLabsAgentWidget({
     // Compute opening_line — proactive brief on first session of the day,
     // short status line on subsequent sessions.
     // Uses localStorage key "carson_brief_date" (YYYY-MM-DD) to track.
+    const nowForOpening = new Date();
     const todayStr = (() => {
-      const d = new Date();
+      const d = nowForOpening;
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     })();
     const isFirstSessionToday = localStorage.getItem("carson_brief_date") !== todayStr;
     if (isFirstSessionToday) {
       localStorage.setItem("carson_brief_date", todayStr);
     }
-    const openingLine = (() => {
-      if (!isFirstSessionToday) return "I'm here.";
-      const hour = new Date().getHours();
-      const greeting =
-        hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-      const name = displayName?.trim();
-      const greeterPrefix = name ? `${greeting}, ${name}.` : `${greeting}.`;
-      const briefBody = liveSpokenBrief
-        ? sanitizeForCarsonSpeech(liveSpokenBrief)
-        : "You're all set.";
-      // Strip any greeting already prepended by buildMorningBriefSpoken so we
-      // don't say "Good morning" twice. The spoken brief always starts with a
-      // greeting sentence ending in "." — remove it if present.
-      const briefWithoutGreeting = briefBody.replace(/^(Good morning|Good afternoon|Good evening)[^.]*\.\s*/i, "");
-      return sanitizeCarsonReplyText(`${greeterPrefix} ${briefWithoutGreeting} I'm here if you want anything handled.`);
-    })();
+    const openingVariantIndex = Number(localStorage.getItem("carson_opening_variant") ?? "0");
+    localStorage.setItem("carson_opening_variant", String(openingVariantIndex + 1));
+    const openingLine = buildCarsonOpeningLine({
+      isFirstSessionToday,
+      displayName,
+      spokenBrief: liveSpokenBrief,
+      now: nowForOpening,
+      variantIndex: openingVariantIndex,
+    });
 
     // Await the photo descriptions now — they have been running concurrently with
     // the memory/weather loads above, so in most cases it is already resolved.
