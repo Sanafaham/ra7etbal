@@ -11,6 +11,7 @@ import Spinner from "../components/Spinner";
 import TaskCard from "../components/tasks/TaskCard";
 import { useTaskList } from "../hooks/useTaskList";
 import { buildDailyBrief } from "../lib/daily-brief";
+import { getUpcomingReminderTasks } from "../lib/updates-reminders";
 import { usePeopleStore } from "../stores/people";
 import { useTasksStore } from "../stores/tasks";
 import type { Task } from "../types/task";
@@ -86,24 +87,11 @@ export default function Updates() {
   const doneTasks = useMemo(() => tasks.filter((t) => t.status === "done"), [tasks]);
   const initialLoading = tasksStatus === "loading" && tasks.length === 0;
 
-  // Pending reminders due in the next 14 days (not today, not overdue — those
-  // already appear in needsAttention). Sorted by due date ascending.
-  const MS_14_DAYS = 14 * 24 * 60 * 60 * 1000;
+  // Pending reminders due in the next 14 days. Reminders already shown in
+  // Needs You stay there only, so one reminder never renders in both sections.
   const upcomingReminders = useMemo(() => {
-    const nowMs = now.getTime();
-    return tasks
-      .filter((t) => {
-        if (t.archived_at != null) return false;
-        if (t.status !== "pending") return false;
-        if (t.type !== "reminder") return false;
-        if (!t.due_at) return false;
-        const dueMs = new Date(t.due_at).getTime();
-        if (Number.isNaN(dueMs)) return false;
-        // Future only, within 14 days, not today (today/overdue live in needsAttention)
-        return dueMs > nowMs && dueMs <= nowMs + MS_14_DAYS;
-      })
-      .sort((a, b) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime());
-  }, [tasks, now]);
+    return getUpcomingReminderTasks(tasks, brief.needsAttention, now);
+  }, [tasks, brief.needsAttention, now]);
 
   // IDs already shown in upcomingReminders — exclude from brief.later to avoid duplication
   const upcomingReminderIds = useMemo(
