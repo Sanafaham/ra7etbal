@@ -329,17 +329,16 @@ export default function Review() {
       if (hasSendableMessages || consentWarning) {
         const parts: string[] = [];
         if (consentedMessages.length > 0) {
-          parts.push(sendError
-            ? sendError === "WhatsApp send could not start"
+          if (sendError) {
+            parts.push(sendError === "WhatsApp send could not start"
               ? "Saved, but WhatsApp send could not start. You can retry from Messages."
-              : `Saved, but WhatsApp send failed: ${sendError}. You can retry from Messages.`
-            : "Saved and sent on WhatsApp.");
+              : `Saved, but WhatsApp send failed: ${sendError}. You can retry from Messages.`);
+          }
         } else if (!consentWarning) {
           parts.push("Saved, but WhatsApp send could not start. You can retry from Messages.");
         }
         if (consentWarning) parts.push(consentWarning);
-        if (!parts.length) parts.push("Saved.");
-        window.alert(parts.join("\n\n"));
+        if (parts.length) window.alert(parts.join("\n\n"));
         navigate("/messages", { replace: true });
       } else {
         navigate("/actions", { replace: true });

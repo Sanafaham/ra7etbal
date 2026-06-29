@@ -481,6 +481,14 @@ describe("canonical path source adapters", () => {
     expect(review).toMatch(/sendDirectMessageRecord\(\{[\s\S]*source:\s*"review"/);
   });
 
+  it("keeps Review successful message saves off blocking browser alerts", () => {
+    const review = source("src/routes/Review.tsx");
+
+    expect(review).not.toContain('"Saved and sent on WhatsApp."');
+    expect(review).not.toMatch(/if \(!parts\.length\) parts\.push\("Saved\."\)/);
+    expect(review).toMatch(/if \(parts\.length\) window\.alert\(parts\.join\("\\n\\n"\)\)/);
+  });
+
   it("documents confirmation URL canonical param and legacy compatibility", () => {
     const confirm = source("src/routes/Confirm.tsx");
     const save = source("src/lib/save.ts");
