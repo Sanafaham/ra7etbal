@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildDelegationCoveragePartialSuccessResponse,
   checkDelegationCoverage,
   extractExpectedDelegationCandidates,
   findMissingDelegationCandidates,
@@ -121,6 +122,53 @@ describe("carson-action-coverage missing delegation detection", () => {
     expect(first).toEqual(second);
     expect(expected).toEqual(beforeExpected);
     expect(executed).toEqual(beforeExecuted);
+  });
+});
+
+describe("carson-action-coverage partial-success response", () => {
+  it("returns null when coverage passes so existing behavior can stay unchanged", () => {
+    const result = checkDelegationCoverage(
+      "Ask Ghulam to have the cars clean and ready by 8 AM.",
+      people,
+      [{ type: "delegation", personName: "Ghulam", actionText: "cars clean and ready by 8 AM" }],
+    );
+
+    expect(buildDelegationCoveragePartialSuccessResponse(result.expected, result.missing)).toBeNull();
+  });
+
+  it("names one missing delegation and its action", () => {
+    const result = checkDelegationCoverage(
+      "Ask Grace to send the flowers and ask Ghulam to have the cars clean and ready by 8 AM.",
+      people,
+      [{ type: "delegation", personName: "Grace", actionText: "send the flowers" }],
+    );
+
+    expect(buildDelegationCoveragePartialSuccessResponse(result.expected, result.missing)).toBe(
+      "I handled Grace's request. I may not have sent Ghulam's request: have the cars clean and ready by 8 AM. Please confirm if you want me to send it.",
+    );
+  });
+
+  it("lists multiple missing delegation names and actions", () => {
+    const result = checkDelegationCoverage(
+      "Ask Grace to send the flowers, ask Ghulam to have the cars ready, and ask Christopher to prepare dinner.",
+      people,
+      [{ type: "delegation", personName: "Grace", actionText: "send the flowers" }],
+    );
+
+    expect(buildDelegationCoveragePartialSuccessResponse(result.expected, result.missing)).toBe(
+      "I handled Grace's request. I may not have sent Ghulam's request: have the cars ready and Christopher's request: prepare dinner. Please confirm which ones you want me to send.",
+    );
+  });
+
+  it("does not generate an override when there are no named delegation candidates", () => {
+    const result = checkDelegationCoverage(
+      "Please call the insurance company tomorrow.",
+      people,
+      [],
+    );
+
+    expect(result.expected).toEqual([]);
+    expect(buildDelegationCoveragePartialSuccessResponse(result.expected, result.missing)).toBeNull();
   });
 });
 

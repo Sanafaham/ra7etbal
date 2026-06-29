@@ -1,5 +1,6 @@
 import type { Person } from "../types/person";
 import type { Task } from "../types/task";
+import type { Message } from "../types/message";
 import type { ExtractionResult } from "../types/extraction";
 import { loadUserMemory, upsertUserFacts } from "./carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "./carson-memory";
@@ -99,6 +100,8 @@ export interface TextCarsonContext {
       durationMs: number,
     ): void;
   };
+  /** Optional observer for callers that need to compare requested vs saved work. */
+  onSavedExecution?: (saved: { tasks: Task[]; messages: Message[] }) => void;
 }
 
 interface AnthropicResponse {
@@ -423,6 +426,10 @@ export async function executeDelegationFromText(
         }
       : undefined,
   );
+  context.onSavedExecution?.({
+    tasks: saved.tasks,
+    messages: saved.messages,
+  });
 
   // Multi-attachment: upload all photos to task_attachments when > 1 photo.
   // Track attachment count per task so the WhatsApp send can append the note.

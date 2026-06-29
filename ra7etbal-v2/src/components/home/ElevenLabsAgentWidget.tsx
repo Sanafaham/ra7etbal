@@ -77,6 +77,11 @@ import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, type DirectToolSuccessResult } from "../../lib/carson-direct-tool-override";
+import {
+  buildDelegationCoveragePartialSuccessResponse,
+  checkDelegationCoverage,
+  type ExecutedDelegationRecord,
+} from "../../lib/carson-action-coverage";
 import { CARSON_STATUS_POLICY } from "../../lib/carson-status-policy";
 import {
   addLatencyStageDuration,
@@ -2771,6 +2776,7 @@ export default function ElevenLabsAgentWidget({
           );
         }
 
+        let executedDelegationRecords: ExecutedDelegationRecord[] = [];
         const summary = await executeDelegationFromText(rawInstruction, {
           displayName,
           userEmail,
@@ -2784,6 +2790,16 @@ export default function ElevenLabsAgentWidget({
           imageFile: firstImageFile,
           allImageFiles: imagePhotos.map((p) => p.file),
           imageDescription: photoContext,
+          onSavedExecution: (saved) => {
+            executedDelegationRecords = saved.tasks
+              .filter((task) => task.type === "delegation" || task.type === "followup")
+              .map((task) => ({
+                type: "delegation",
+                personName: task.assigned_to,
+                actionText: task.description,
+                status: "created",
+              }));
+          },
           latencyObserver: {
             addDuration: (stage, durationMs) => {
               const active = activeExecuteLatencyRef.current;
@@ -2795,6 +2811,37 @@ export default function ElevenLabsAgentWidget({
 
         // Clear pending photos after a successful delegation send.
         if (imagePhotos.length > 0) clearPendingImages();
+
+        const delegationCoverage = checkDelegationCoverage(
+          rawInstruction,
+          people,
+          executedDelegationRecords,
+        );
+        const partialSuccessResponse = buildDelegationCoveragePartialSuccessResponse(
+          delegationCoverage.expected,
+          delegationCoverage.missing,
+        );
+        if (partialSuccessResponse) {
+          lastDirectToolSuccessRef.current = {
+            toolName: "execute_instruction",
+            resultText: partialSuccessResponse,
+            at: new Date().toISOString(),
+            inputSummary: {
+              kind: "delegation_coverage_partial_success",
+              missing: delegationCoverage.missing.map((candidate) => ({
+                personName: candidate.personName,
+                actionText: candidate.actionText,
+              })),
+            },
+          };
+          console.warn("[carson-action-coverage] missing delegation candidate", {
+            missing: delegationCoverage.missing.map((candidate) => ({
+              personName: candidate.personName,
+              actionText: candidate.actionText,
+            })),
+          });
+          return partialSuccessResponse;
+        }
 
         sessionActionsRef.current.push(`Executed: ${rawInstruction}`);
         // Refresh task store so Voice Carson context reflects the new task.

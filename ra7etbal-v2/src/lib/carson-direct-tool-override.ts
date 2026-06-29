@@ -22,7 +22,12 @@ export interface DirectToolSuccessResult {
   inputSummary?: unknown;
 }
 
-const OVERRIDABLE_TOOL_NAMES = new Set(["create_todo", "complete_todo", "create_reminder"]);
+const OVERRIDABLE_TOOL_NAMES = new Set([
+  "create_todo",
+  "complete_todo",
+  "create_reminder",
+  "execute_instruction",
+]);
 
 const OVERRIDE_WINDOW_MS = 15_000;
 
@@ -39,12 +44,28 @@ function shouldOverrideAgentMessage(
   agentMessage: string,
   lastSuccess: DirectToolSuccessResult,
 ): boolean {
+  if (
+    lastSuccess.toolName === "execute_instruction" &&
+    isDelegationCoveragePartialSuccess(lastSuccess.inputSummary)
+  ) {
+    return true;
+  }
+
   if (FAILURE_LANGUAGE_PATTERN.test(agentMessage)) return true;
 
   if (lastSuccess.toolName !== "create_reminder") return false;
   if (REMINDER_CONFIRMATION_PATTERN.test(agentMessage)) return false;
 
   return GENERIC_KNOWLEDGE_ANSWER_PATTERN.test(agentMessage);
+}
+
+function isDelegationCoveragePartialSuccess(inputSummary: unknown): boolean {
+  return (
+    typeof inputSummary === "object" &&
+    inputSummary !== null &&
+    "kind" in inputSummary &&
+    inputSummary.kind === "delegation_coverage_partial_success"
+  );
 }
 
 export function resolveCarsonDisplayMessage(

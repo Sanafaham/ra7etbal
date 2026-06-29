@@ -114,6 +114,40 @@ describe("resolveCarsonDisplayMessage", () => {
     expect(result).toBe("I wasn't able to save that. Please try again.");
   });
 
+  it("lets execute_instruction partial-success coverage override a fake all-done agent reply", () => {
+    const partial =
+      "I handled Grace's request. I may not have sent Ghulam's request: have the cars ready. Please confirm if you want me to send it.";
+
+    const result = resolveCarsonDisplayMessage(
+      "Done, I handled Grace and Ghulam.",
+      successResult({
+        toolName: "execute_instruction",
+        resultText: partial,
+        inputSummary: {
+          kind: "delegation_coverage_partial_success",
+          missing: [{ personName: "Ghulam", actionText: "have the cars ready" }],
+        },
+      }),
+      NOW,
+    );
+
+    expect(result).toBe(partial);
+  });
+
+  it("does not override execute_instruction replies without a partial-success marker", () => {
+    const result = resolveCarsonDisplayMessage(
+      "Done, I handled it.",
+      successResult({
+        toolName: "execute_instruction",
+        resultText: "I may not have sent Ghulam's request.",
+        inputSummary: { kind: "normal_execute_instruction_success" },
+      }),
+      NOW,
+    );
+
+    expect(result).toBe("Done, I handled it.");
+  });
+
   it("does not override once the success result is outside the time window", () => {
     const result = resolveCarsonDisplayMessage(
       "I wasn't able to save that. Please try again.",

@@ -112,6 +112,50 @@ export function checkDelegationCoverage(
   };
 }
 
+export function buildDelegationCoveragePartialSuccessResponse(
+  expected: ExpectedDelegationCandidate[],
+  missing: ExpectedDelegationCandidate[],
+): string | null {
+  if (missing.length === 0) return null;
+
+  const handledNames = uniqueNames(
+    expected
+      .filter(
+        (candidate) =>
+          !missing.some(
+            (missingCandidate) =>
+              normalizeCoverageText(missingCandidate.personName) ===
+              normalizeCoverageText(candidate.personName),
+          ),
+      )
+      .map((candidate) => candidate.personName),
+  );
+
+  const parts: string[] = [];
+  if (handledNames.length > 0) {
+    parts.push(
+      `I handled ${formatNameList(handledNames.map((name) => `${name}'s`))} request${handledNames.length === 1 ? "" : "s"}.`,
+    );
+  }
+
+  if (missing.length === 1) {
+    const candidate = missing[0];
+    const action = candidate.actionText ? `: ${candidate.actionText}` : "";
+    parts.push(`I may not have sent ${candidate.personName}'s request${action}.`);
+    parts.push("Please confirm if you want me to send it.");
+    return parts.join(" ");
+  }
+
+  const missingDescriptions = missing.map((candidate) =>
+    candidate.actionText
+      ? `${candidate.personName}'s request: ${candidate.actionText}`
+      : `${candidate.personName}'s request`,
+  );
+  parts.push(`I may not have sent ${formatNameList(missingDescriptions)}.`);
+  parts.push("Please confirm which ones you want me to send.");
+  return parts.join(" ");
+}
+
 function hasExecutedDelegation(
   candidate: ExpectedDelegationCandidate,
   executed: ExecutedDelegationRecord[],
@@ -172,6 +216,25 @@ function meaningfulTokens(text: string): string[] {
   return normalizeCoverageText(text)
     .split(" ")
     .filter((token) => token.length > 2 && !stop.has(token));
+}
+
+function uniqueNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const name of names) {
+    const key = normalizeCoverageText(name);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(name);
+  }
+  return result;
+}
+
+function formatNameList(items: string[]): string {
+  if (items.length === 0) return "";
+  if (items.length === 1) return items[0];
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
 }
 
 function normalizeCoverageText(text: string): string {
