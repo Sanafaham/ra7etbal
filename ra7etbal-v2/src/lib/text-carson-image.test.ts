@@ -252,13 +252,18 @@ describe("executeDelegationFromText image pipeline", () => {
 
     const imageMap = savePendingMock.mock.calls[0][4] as Map<string, File>;
     expect(imageMap.get("item-1")).toBe(file);
-    expect(deliverTaskMessageMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        taskId: "task-1",
-        imagePath: "task-images/user-1/task-1/photo.jpg",
-        messageText: expect.stringContaining("Attached photo context:"),
-      }),
-    );
+
+    // imagePath must be passed so the server can send the photo via the
+    // WhatsApp image template or the confirm-page photo grid.
+    const deliveryCall = deliverTaskMessageMock.mock.calls[0][0];
+    expect(deliveryCall.taskId).toBe("task-1");
+    expect(deliveryCall.imagePath).toBe("task-images/user-1/task-1/photo.jpg");
+
+    // The raw AI vision description must never reach the staff WhatsApp message.
+    expect(deliveryCall.messageText).not.toContain("Attached photo context:");
+    expect(deliveryCall.messageText).not.toContain("# Image Description");
+    // UUID filenames (e.g. "abc.jpeg:") must not appear
+    expect(deliveryCall.messageText).not.toMatch(/[a-f0-9-]{8,}\.jpe?g:/i);
   });
 
   it("attaches the photo to a delegation item, not an earlier message-type item in the same batch", async () => {
@@ -321,5 +326,322 @@ describe("executeDelegationFromText image pipeline", () => {
     const imageMap = savePendingMock.mock.calls[0][4] as Map<string, File>;
     expect(imageMap.get("item-delegation")).toBe(file);
     expect(imageMap.has("item-message")).toBe(false);
+  });
+
+  it("returns success string when delivery completes within the race window", async () => {
+    const { executeDelegationFromText } = await import("./text-carson");
+
+    const extractedItem: ExtractedItem = {
+      id: "item-1",
+      type: "delegation",
+      description: "make lunch",
+      assignedTo: "Christopher",
+      dueAt: null,
+      dueText: null,
+      suggestedMessage: "Please make lunch.",
+      personalNote: null,
+      needsPerson: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+    };
+
+    extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+    savePendingMock.mockResolvedValue({
+      tasks: [
+        {
+          id: "task-1",
+          user_id: "user-1",
+          description: "make lunch",
+          type: "delegation",
+          assigned_to: "Christopher",
+          status: "pending",
+          needs_follow_up: true,
+          confirmation_url: "https://app.test/confirm?task=task-1",
+          confirmed_at: null,
+          due_at: null,
+          archived_at: null,
+          created_at: "2026-06-30T00:00:00.000Z",
+          qstash_message_id: null,
+          followup_sent_at: null,
+          escalated_at: null,
+          image_path: "task-images/user-1/task-1/photo.jpg",
+          proof_image_path: null,
+        },
+      ],
+      messages: [
+        {
+          id: "msg-1",
+          user_id: "user-1",
+          task_id: "task-1",
+          recipient: "Christopher",
+          content: "Please make lunch.",
+          confirmation_url: "https://app.test/confirm?task=task-1",
+          status: "pending",
+          created_at: "2026-06-30T00:00:00.000Z",
+          sent_at: null,
+          confirmed_at: null,
+          whatsapp_message_id: null,
+          whatsapp_delivery_status: null,
+          whatsapp_status_updated_at: null,
+          whatsapp_failure_reason: null,
+        },
+      ],
+      skipped: 0,
+      imagePathsByTaskId: new Map([["task-1", "task-images/user-1/task-1/photo.jpg"]]),
+    });
+    // Delivery resolves immediately with success.
+    deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp", deliveryId: "d-1", messageId: "wamid.1" });
+
+    const result = await executeDelegationFromText("Ask Christopher to make lunch", {
+      displayName: "Sana",
+      userId: "user-1",
+      dailyBrief: "",
+      people: [
+        {
+          id: "p-1",
+          user_id: "user-1",
+          name: "Christopher",
+          role: "staff",
+          phone: "+971500000000",
+          notes: null,
+          relationship: null,
+          is_family: false,
+          responsibilities: null,
+          reliability_level: null,
+          follow_up_level: null,
+          delegation_guidance: null,
+          should_not_assign: null,
+          escalate_to: null,
+          communication_style: null,
+          whatsapp_opted_in: true,
+          whatsapp_consent_at: "2026-06-30T00:00:00.000Z",
+          whatsapp_consent_method: "owner_confirmed",
+          created_at: "2026-06-30T00:00:00.000Z",
+        },
+      ],
+      tasks: [],
+      imageFile: new File(["x"], "photo.jpg", { type: "image/jpeg" }),
+      imageDescription: "Photo 1 (abc123.jpeg): # Image Description\nA bowl of food.",
+    });
+
+    // Success — no failure wording.
+    expect(result).not.toMatch(/wasn.t able/i);
+    expect(result).not.toMatch(/timed out/i);
+    expect(result).not.toMatch(/could not/i);
+    expect(result).toMatch(/Christopher/i);
+  });
+
+  it("still returns success when delivery takes longer than the race window (optimistic)", async () => {
+    vi.useFakeTimers();
+    const { executeDelegationFromText } = await import("./text-carson");
+
+    const extractedItem: ExtractedItem = {
+      id: "item-1",
+      type: "delegation",
+      description: "make lunch",
+      assignedTo: "Christopher",
+      dueAt: null,
+      dueText: null,
+      suggestedMessage: "Please make lunch.",
+      personalNote: null,
+      needsPerson: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+    };
+
+    extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+    savePendingMock.mockResolvedValue({
+      tasks: [
+        {
+          id: "task-1",
+          user_id: "user-1",
+          description: "make lunch",
+          type: "delegation",
+          assigned_to: "Christopher",
+          status: "pending",
+          needs_follow_up: true,
+          confirmation_url: "https://app.test/confirm?task=task-1",
+          confirmed_at: null,
+          due_at: null,
+          archived_at: null,
+          created_at: "2026-06-30T00:00:00.000Z",
+          qstash_message_id: null,
+          followup_sent_at: null,
+          escalated_at: null,
+          image_path: null,
+          proof_image_path: null,
+        },
+      ],
+      messages: [
+        {
+          id: "msg-1",
+          user_id: "user-1",
+          task_id: "task-1",
+          recipient: "Christopher",
+          content: "Please make lunch.",
+          confirmation_url: "https://app.test/confirm?task=task-1",
+          status: "pending",
+          created_at: "2026-06-30T00:00:00.000Z",
+          sent_at: null,
+          confirmed_at: null,
+          whatsapp_message_id: null,
+          whatsapp_delivery_status: null,
+          whatsapp_failure_reason: null,
+          whatsapp_status_updated_at: null,
+        },
+      ],
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    });
+    // Delivery never resolves — simulates Meta image upload hanging past EL timeout.
+    deliverTaskMessageMock.mockReturnValue(new Promise(() => {}));
+
+    const resultPromise = executeDelegationFromText("Ask Christopher to make lunch", {
+      displayName: "Sana",
+      userId: "user-1",
+      dailyBrief: "",
+      people: [
+        {
+          id: "p-1",
+          user_id: "user-1",
+          name: "Christopher",
+          role: "staff",
+          phone: "+971500000000",
+          notes: null,
+          relationship: null,
+          is_family: false,
+          responsibilities: null,
+          reliability_level: null,
+          follow_up_level: null,
+          delegation_guidance: null,
+          should_not_assign: null,
+          escalate_to: null,
+          communication_style: null,
+          whatsapp_opted_in: true,
+          whatsapp_consent_at: "2026-06-30T00:00:00.000Z",
+          whatsapp_consent_method: "owner_confirmed",
+          created_at: "2026-06-30T00:00:00.000Z",
+        },
+      ],
+      tasks: [],
+    });
+
+    // Advance past the 12 s delivery race timeout.
+    await vi.runAllTimersAsync();
+    const result = await resultPromise;
+
+    // Optimistic success — task was created, WA is in-flight server-side.
+    expect(result).not.toMatch(/wasn.t able/i);
+    expect(result).not.toMatch(/timed out/i);
+    expect(result).not.toMatch(/could not/i);
+    expect(result).toMatch(/Christopher/i);
+
+    vi.useRealTimers();
+  });
+
+  it("staff WhatsApp message never contains vision metadata or UUID filenames", async () => {
+    const { executeDelegationFromText } = await import("./text-carson");
+
+    const extractedItem: ExtractedItem = {
+      id: "item-1",
+      type: "delegation",
+      description: "make the dish in the photo",
+      assignedTo: "Christopher",
+      dueAt: null,
+      dueText: null,
+      suggestedMessage: "Please make the dish in the photo.",
+      personalNote: null,
+      needsPerson: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+    };
+
+    extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+    savePendingMock.mockResolvedValue({
+      tasks: [
+        {
+          id: "task-1",
+          user_id: "user-1",
+          description: "make the dish in the photo",
+          type: "delegation",
+          assigned_to: "Christopher",
+          status: "pending",
+          needs_follow_up: true,
+          confirmation_url: "https://app.test/confirm?task=task-1",
+          confirmed_at: null,
+          due_at: null,
+          archived_at: null,
+          created_at: "2026-06-30T00:00:00.000Z",
+          qstash_message_id: null,
+          followup_sent_at: null,
+          escalated_at: null,
+          image_path: "task-images/user-1/task-1/photo.jpg",
+          proof_image_path: null,
+        },
+      ],
+      messages: [
+        {
+          id: "msg-1",
+          user_id: "user-1",
+          task_id: "task-1",
+          recipient: "Christopher",
+          content: "Please make the dish in the photo.",
+          confirmation_url: "https://app.test/confirm?task=task-1",
+          status: "pending",
+          created_at: "2026-06-30T00:00:00.000Z",
+          sent_at: null,
+          confirmed_at: null,
+          whatsapp_message_id: null,
+          whatsapp_delivery_status: null,
+          whatsapp_failure_reason: null,
+          whatsapp_status_updated_at: null,
+        },
+      ],
+      skipped: 0,
+      imagePathsByTaskId: new Map([["task-1", "task-images/user-1/task-1/photo.jpg"]]),
+    });
+    deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    await executeDelegationFromText("Ask Christopher to make this", {
+      displayName: "Sana",
+      userId: "user-1",
+      dailyBrief: "",
+      people: [
+        {
+          id: "p-1",
+          user_id: "user-1",
+          name: "Christopher",
+          role: "staff",
+          phone: "+971500000000",
+          notes: null,
+          relationship: null,
+          is_family: false,
+          responsibilities: null,
+          reliability_level: null,
+          follow_up_level: null,
+          delegation_guidance: null,
+          should_not_assign: null,
+          escalate_to: null,
+          communication_style: null,
+          whatsapp_opted_in: true,
+          whatsapp_consent_at: "2026-06-30T00:00:00.000Z",
+          whatsapp_consent_method: "owner_confirmed",
+          created_at: "2026-06-30T00:00:00.000Z",
+        },
+      ],
+      tasks: [],
+      imageFile: new File(["x"], "a3f1b2c9-dead-beef-1234-abc.jpeg", { type: "image/jpeg" }),
+      // Realistic AI vision description with UUID filename
+      imageDescription:
+        "Photo 1 (a3f1b2c9-dead-beef-1234-abc.jpeg): # Image Description\n## Content\nA plate of food.",
+    });
+
+    // messageText sent to deliverTaskMessage must contain none of the internal metadata.
+    const deliveryCall = deliverTaskMessageMock.mock.calls[0][0];
+    expect(deliveryCall.messageText).not.toContain("Attached photo context:");
+    expect(deliveryCall.messageText).not.toContain("# Image Description");
+    expect(deliveryCall.messageText).not.toContain("## Content");
+    expect(deliveryCall.messageText).not.toContain("a3f1b2c9-dead-beef-1234-abc.jpeg");
+    expect(deliveryCall.messageText).not.toContain("Photo 1 (");
   });
 });

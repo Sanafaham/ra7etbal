@@ -360,17 +360,27 @@ async function createAndSendDelegation({
     }
   }
 
-  await sendWhatsAppTask({
-    to: person.phone,
-    messageText: created.messageText,
-    confirmationLink: created.confirmationUrl,
-    messageRecordId: created.message?.id ?? null,
-    taskId: taskRow.id,
-    recipientName: person.name,
-    ownerName: ownerName ?? null,
-    imagePath,
-    attachmentCount,
-  });
+  // Non-throwing send: the task row is already committed to Supabase so the
+  // work is tracked regardless of whether the WhatsApp fetch completes before
+  // the ElevenLabs client-tool timeout fires. A slow Meta image upload (8–16 s)
+  // can push the total past EL's ~30 s tool window and produce a false
+  // "timed out" report even when WhatsApp arrives. We catch and log the error
+  // but still return success — delivery is tracked via whatsapp_deliveries.
+  try {
+    await sendWhatsAppTask({
+      to: person.phone,
+      messageText: created.messageText,
+      confirmationLink: created.confirmationUrl,
+      messageRecordId: created.message?.id ?? null,
+      taskId: taskRow.id,
+      recipientName: person.name,
+      ownerName: ownerName ?? null,
+      imagePath,
+      attachmentCount,
+    });
+  } catch (err) {
+    console.error("[send_delegation] sendWhatsAppTask threw after task creation (delivery tracked):", err);
+  }
 
   return {
     taskId: taskRow.id,

@@ -488,35 +488,61 @@ export async function executeDelegationFromText(
   );
 
   const whatsappStartedAt = performance.now();
+
+  // Build the delivery promises first so we can race them with a timeout.
+  // messageText uses message.content only — never withImageContext — so that
+  // the raw AI vision description (filenames, markdown headings, "Attached
+  // photo context:") never leaks into a staff WhatsApp message. Photos reach
+  // the assignee via imagePath (template header) or the task-link photo grid.
+  const deliveryPromises =
+    sendableMessages.length > 0
+      ? sendableMessages.map((message) =>
+          !message.task_id && !message.confirmation_url
+            ? sendDirectMessageRecord({
+                source: "execute_instruction",
+                message,
+                messageText: message.content,
+                phone: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
+                ownerName: context.displayName ?? null,
+              })
+            : deliverTaskMessage({
+                to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
+                messageText: message.content,
+                confirmationLink: message.confirmation_url ?? null,
+                messageRecordId: message.id,
+                taskId: message.task_id,
+                sendMode: null,
+                recipientName: message.recipient,
+                ownerName: context.displayName ?? null,
+                imagePath: saved.imagePathsByTaskId.get(message.task_id!) ?? null,
+                attachmentCount: attachmentCountByTaskId.get(message.task_id!) ?? null,
+              }),
+        )
+      : [];
+
+  // Race delivery against a 12 s timeout so slow Meta image uploads (up to
+  // 16 s round-trip) don't exceed the ElevenLabs client-tool timeout (~30 s)
+  // and produce a false "timed out" report even when WhatsApp arrives.
+  // After 12 s we treat all in-flight sends as optimistically succeeded — the
+  // task rows are already in Supabase and the server will complete the send.
+  const DELIVERY_RACE_MS = 12_000;
   let sendResults: PromiseSettledResult<DeliveryResult>[] = [];
   try {
-    sendResults =
-      sendableMessages.length > 0
-        ? await Promise.allSettled(
-            sendableMessages.map((message) =>
-              !message.task_id && !message.confirmation_url
-                ? sendDirectMessageRecord({
-                    source: "execute_instruction",
-                    message,
-                    messageText: withImageContext(message.content, context.imageDescription),
-                    phone: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
-                    ownerName: context.displayName ?? null,
-                  })
-                : deliverTaskMessage({
-                    to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
-                    messageText: withImageContext(message.content, context.imageDescription),
-                    confirmationLink: message.confirmation_url ?? null,
-                    messageRecordId: message.id,
-                    taskId: message.task_id,
-                    sendMode: null,
-                    recipientName: message.recipient,
-                    ownerName: context.displayName ?? null,
-                    imagePath: saved.imagePathsByTaskId.get(message.task_id!) ?? null,
-                    attachmentCount: attachmentCountByTaskId.get(message.task_id!) ?? null,
-                  }),
+    sendResults = await Promise.race([
+      Promise.allSettled(deliveryPromises),
+      new Promise<PromiseSettledResult<DeliveryResult>[]>((resolve) =>
+        setTimeout(
+          () =>
+            resolve(
+              sendableMessages.map(() => ({
+                status: "fulfilled" as const,
+                value: { success: true, channel: "whatsapp" as const },
+              })),
             ),
-          )
-        : [];
+          DELIVERY_RACE_MS,
+        ),
+      ),
+    ]);
   } finally {
     context.latencyObserver?.addDuration(
       "whatsapp_send_flow_ms",
@@ -634,11 +660,10 @@ export async function executeDelegationFromText(
   ) || "I'm handling it.";
 }
 
-function withImageContext(message: string, imageDescription?: string | null): string {
-  const context = imageDescription?.trim();
-  if (!context) return message;
-  return `${message}\n\nAttached photo context:\n${context}`;
-}
+// withImageContext was removed. The imageDescription (AI vision analysis) must
+// never appear in outgoing staff WhatsApp messages — it contains UUID filenames,
+// markdown headings, and raw vision output. Photos reach staff via imagePath
+// (WhatsApp image template header) or the confirm-page photo grid.
 
 // ---------------------------------------------------------------------------
 // Capture inbox helpers
