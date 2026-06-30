@@ -51,7 +51,7 @@ export default function Confirm() {
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const confirmedRef = useRef(false);
   const [outcome, setOutcome] = useState<"approved" | "correction_required" | "uncertain" | "fraud_suspected" | null>(null);
-  const [correctionDelivered, setCorrectionDelivered] = useState<boolean | null>(null);
+  const [correctionNote, setCorrectionNote] = useState<string | null>(null);
 
   // Proof photo state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -178,7 +178,7 @@ export default function Confirm() {
         already_done?: boolean;
         error?: string;
         outcome?: "approved" | "correction_required" | "uncertain" | "fraud_suspected";
-        correctionDelivered?: boolean | null;
+        correctionNote?: string | null;
       };
       if (!res.ok || data.error) {
         setConfirmError(data.error || "Could not confirm. Please try again.");
@@ -189,7 +189,7 @@ export default function Confirm() {
       // already_done always means approved in a prior submission.
       const resolvedOutcome = data.already_done ? "approved" : data.outcome ?? "approved";
       setOutcome(resolvedOutcome);
-      setCorrectionDelivered(data.correctionDelivered ?? null);
+      setCorrectionNote(data.correctionNote ?? null);
 
       // Quality Intelligence V1 — only an "approved" outcome marks the task
       // done. correction_required / uncertain leave it pending so the
@@ -340,12 +340,13 @@ export default function Confirm() {
             </div>
           ) : (
             <>
-              {/* Quality Intelligence V1 — task stayed open; a new proof photo is needed */}
+              {/* Quality Intelligence — task stayed open; a new proof photo is needed */}
               {outcome === "correction_required" && (
                 <AuthNotice kind="error">
-                  {correctionDelivered === false
-                    ? "The correction message was not delivered. I can try again — attach a new photo below to retry."
-                    : "A quick correction is needed — check WhatsApp for details, then attach a new photo below."}
+                  {correctionNote
+                    ? correctionNote
+                    : "This photo does not match the requested item."}{" "}
+                  Please review the reference image above and upload a new photo below.
                 </AuthNotice>
               )}
 

@@ -240,28 +240,13 @@ async function handlePost(req, res) {
         return res.status(500).json({ error: 'Could not save the review. Please try again.' });
       }
 
-      // correction_required: send correction WhatsApp directly to the assignee.
-      // The owner is NOT notified — the correction cycle is between Carson and
-      // the assignee (Christopher gets the WhatsApp and resubmits). Owner push
-      // fires only on final approval, or when manual owner review is required
-      // (uncertain / fraud_suspected — see below).
-      let correctionDelivered = null;
-      if (review.status === 'correction_required') {
-        correctionDelivered = await sendCorrectionWhatsApp({
-          supabaseUrl,
-          serviceKey,
-          userId: task.user_id,
-          taskId,
-          assignedTo: task.assigned_to,
-          correctionMessage: review.note,
-        }).catch((err) => {
-          console.error('[task-confirm] correction WhatsApp send failed (non-fatal):', err?.message || err);
-          return false;
-        });
-      }
-
-      // Owner push only when the owner needs to manually intervene.
-      // correction_required is self-service (assignee handles via WhatsApp);
+      // correction_required: no WhatsApp to the assignee — the original task
+      // WhatsApp already contains the full instructions and reference image.
+      // The confirmation page shows the QI note inline so the assignee can
+      // see exactly what needs to change without leaving the page.
+      //
+      // Owner push only when manual owner review is required.
+      // correction_required is self-correcting on the confirmation page;
       // uncertain and fraud_suspected require the owner to step in.
       if (review.status === 'uncertain' || review.status === 'fraud_suspected') {
         await sendOwnerPush({
@@ -280,10 +265,9 @@ async function handlePost(req, res) {
         success: true,
         outcome: review.status,
         description: task.description,
-        // Only meaningful for correction_required — whether the WhatsApp
-        // correction message actually reached the assignee. null for
-        // uncertain / fraud_suspected (no WhatsApp send is attempted).
-        correctionDelivered,
+        // The QI note for correction_required is shown inline on the
+        // confirmation page so the assignee knows exactly what to fix.
+        correctionNote: review.status === 'correction_required' ? review.note : null,
         correctionCycleCount: cycleCount,
       });
     }
@@ -436,112 +420,6 @@ async function fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }
   } catch {
     return null;
   }
-}
-
-/**
- * Sends the correction message to the assignee via the existing
- * send-whatsapp-task route (sendMode: "direct_message") — same plain
- * template already used for direct messages. No new template, no new
- * Vercel function.
- *
- * Root cause of the original silent failure: send-whatsapp-task.js requires
- * a messageRecordId for any sendMode: "direct_message" send (it rejects with
- * 400 "Direct message requires a saved message record" otherwise), and
- * beginWhatsappDelivery cannot create a whatsapp_deliveries row without a
- * messageRecordId or taskId to resolve ownership from ("no trusted owner
- * context" — see _whatsapp-delivery.js resolveDeliveryContext). This
- * function previously called send-whatsapp-task with neither, so every
- * correction send 400'd before ever reaching Meta, and the failure was only
- * ever logged via the caller's non-fatal console.error. Fixed by inserting a
- * `messages` row first — the same pattern already used by
- * direct-message-fast-path.ts and the send_direct_whatsapp_message tool —
- * and passing both messageRecordId and taskId through.
- */
-async function sendCorrectionWhatsApp({ supabaseUrl, serviceKey, userId, taskId, assignedTo, correctionMessage }) {
-  if (!userId || !assignedTo || !correctionMessage) return false;
-
-  const headers = {
-    apikey: serviceKey,
-    Authorization: 'Bearer ' + serviceKey,
-    'Content-Type': 'application/json',
-  };
-
-  const response = await fetch(
-    supabaseUrl + '/rest/v1/people?user_id=eq.' + encodeURIComponent(userId) +
-      '&select=name,phone,whatsapp_opted_in',
-    { headers },
-  );
-  if (!response.ok) return false;
-  const people = await response.json().catch(() => []);
-  if (!Array.isArray(people)) return false;
-
-  const assignee = people.find(
-    (person) => String(person.name || '').trim().toLowerCase() === assignedTo.trim().toLowerCase(),
-  );
-  if (!assignee?.phone || assignee.whatsapp_opted_in !== true) {
-    console.warn('[task-confirm] correction message skipped — no phone or consent for', assignedTo);
-    return false;
-  }
-
-  const appBaseUrl = process.env.APP_BASE_URL;
-  if (!appBaseUrl) {
-    console.warn('[task-confirm] APP_BASE_URL not configured — correction message skipped');
-    return false;
-  }
-
-  // task_id on the `messages` row itself is fine and expected — it's the
-  // separate top-level `taskId` request param below that send-whatsapp-task.js
-  // explicitly rejects for direct messages (see root-cause note below).
-  const messageRes = await fetch(supabaseUrl + '/rest/v1/messages', {
-    method: 'POST',
-    headers: { ...headers, Prefer: 'return=representation' },
-    body: JSON.stringify({
-      user_id: userId,
-      task_id: taskId || null,
-      recipient: assignee.name,
-      content: correctionMessage,
-      confirmation_url: null,
-    }),
-  });
-  if (!messageRes.ok) {
-    console.error('[task-confirm] could not save correction message record — send aborted', messageRes.status);
-    return false;
-  }
-  const savedMessages = await messageRes.json().catch(() => []);
-  const messageRecordId = Array.isArray(savedMessages) ? savedMessages[0]?.id : null;
-  if (!messageRecordId) {
-    console.error('[task-confirm] correction message record had no id — send aborted');
-    return false;
-  }
-
-  // Root cause of the previous failure: send-whatsapp-task.js explicitly
-  // rejects any sendMode: "direct_message" request that also includes a
-  // top-level taskId — "Direct messages cannot include a task." (400,
-  // before any Meta call). Every other existing caller of direct_message
-  // (direct-message-fast-path.ts, the send_direct_whatsapp_message tool)
-  // passes taskId: null for exactly this reason; messageRecordId alone is
-  // enough for beginWhatsappDelivery to resolve ownership and the task link,
-  // since the messages row above already carries task_id.
-  const sendRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      to: assignee.phone,
-      messageText: correctionMessage,
-      messageRecordId,
-      taskId: null,
-      sourceType: 'message',
-      sendMode: 'direct_message',
-      recipientName: assignee.name,
-    }),
-  });
-
-  if (!sendRes.ok) {
-    const errBody = await sendRes.text().catch(() => '');
-    console.error('[task-confirm] correction WhatsApp send returned non-ok', sendRes.status, errBody.slice(0, 200));
-    return false;
-  }
-  return true;
 }
 
 // ── Storage helpers (from get-confirm-task.js) ────────────────────────────────
