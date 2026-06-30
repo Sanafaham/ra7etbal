@@ -190,7 +190,12 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const res = createRes();
     await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }), res);
 
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required' }));
+    // Correction message record could not be saved — send aborted;
+    // correctionDelivered must be false (not null) so callers can tell the
+    // difference from "no send was attempted" (null).
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'correction_required', correctionDelivered: false }),
+    );
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
   });
 
@@ -207,8 +212,59 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const res = createRes();
     await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }), res);
 
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required' }));
+    // No consent — correction WhatsApp skipped; correctionDelivered must be
+    // false (not null) so the caller knows the send was attempted but blocked.
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'correction_required', correctionDelivered: false }),
+    );
     expect(fetchMock).toHaveBeenCalledTimes(4); // no send-whatsapp-task call attempted
+  });
+
+  it('correction_required first attempt: correction WhatsApp to staff AND owner push both fire (neither replaces the other)', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'correction_required',
+      note: 'Christopher, the chicken is not centered. Please retake the photo.',
+    });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Plate the chicken like the reference photo.' }])) // messages lookup
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '971500000000', whatsapp_opted_in: true }])) // people lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-correction-1' }])) // messages insert (correction record)
+      .mockResolvedValueOnce(jsonResponse({ success: true })) // send-whatsapp-task (correction WhatsApp)
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // push_subscriptions lookup (owner push)
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        outcome: 'correction_required',
+        correctionDelivered: true,
+        correctionCycleCount: 1,
+      }),
+    );
+
+    // Staff correction WhatsApp was sent (send-whatsapp-task call present).
+    const waCallIndex = fetchMock.mock.calls.findIndex(([url]) => String(url).includes('send-whatsapp-task'));
+    expect(waCallIndex).toBeGreaterThan(-1);
+    const sendBody = JSON.parse(fetchMock.mock.calls[waCallIndex][1].body);
+    expect(sendBody.sendMode).toBe('direct_message');
+    expect(sendBody.messageText).toBe('Christopher, the chicken is not centered. Please retake the photo.');
+    expect(sendBody.taskId).toBeNull(); // must be null — direct_message rejects a top-level taskId
+
+    // Owner push was also fired (push_subscriptions lookup present after the WA send).
+    const pushCallIndex = fetchMock.mock.calls.findIndex(([url]) => String(url).includes('push_subscriptions'));
+    expect(pushCallIndex).toBeGreaterThan(-1);
+    // Push must come AFTER the correction WhatsApp, not instead of it.
+    expect(pushCallIndex).toBeGreaterThan(waCallIndex);
   });
 
   it('correction-cycle control: second correction_required reaches the limit and routes to owner push instead of another WhatsApp send', async () => {

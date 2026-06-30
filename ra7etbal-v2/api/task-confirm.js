@@ -242,6 +242,10 @@ async function handlePost(req, res) {
         return res.status(500).json({ error: 'Could not save the review. Please try again.' });
       }
 
+      // Step 1: send correction WhatsApp to the assignee when:
+      //   - QI returned correction_required, AND
+      //   - the cycle limit has not been reached.
+      // Owner push must NOT replace this — both fire in parallel.
       let correctionDelivered = null;
       if (review.status === 'correction_required' && !correctionLimitReached) {
         correctionDelivered = await sendCorrectionWhatsApp({
@@ -255,24 +259,27 @@ async function handlePost(req, res) {
           console.error('[task-confirm] correction WhatsApp send failed (non-fatal):', err?.message || err);
           return false;
         });
-      } else {
-        // UNCERTAIN, FRAUD_SUSPECTED, or correction_required after reaching
-        // the correction-cycle limit — owner-only notification, never an
-        // automatic message to the assignee. For fraud_suspected and the
-        // limit case this is deliberate: the owner decides whether and how
-        // to follow up with the assignee, Carson does not accuse or retry
-        // indefinitely on its own.
-        await sendOwnerPush({
-          supabaseUrl,
-          serviceKey,
-          userId: task.user_id,
-          description: task.description,
-          assignedTo: task.assigned_to,
-          variant: correctionLimitReached ? 'correction_limit' : review.status,
-        }).catch((err) =>
-          console.error(`[task-confirm] ${review.status}-review owner push failed (non-fatal):`, err?.message || err),
-        );
       }
+
+      // Step 2: send owner push for ALL non-approved outcomes — independently
+      // of whether a correction WhatsApp was also sent to the assignee.
+      // Previously in an if/else with the correction send: the correction path
+      // skipped owner push entirely, and the else path skipped the correction
+      // WhatsApp. Root cause: owner push was never firing when correction_required
+      // was the first-cycle result; conversely, when cycleCount reached 2 and
+      // correctionLimitReached, only owner push fired (no staff correction).
+      // Fix: both run for correction_required; uncertain/fraud_suspected still
+      // get owner push only (no correction WhatsApp to the assignee).
+      await sendOwnerPush({
+        supabaseUrl,
+        serviceKey,
+        userId: task.user_id,
+        description: task.description,
+        assignedTo: task.assigned_to,
+        variant: correctionLimitReached ? 'correction_limit' : review.status,
+      }).catch((err) =>
+        console.error(`[task-confirm] ${review.status}-review owner push failed (non-fatal):`, err?.message || err),
+      );
 
       return res.status(200).json({
         success: true,
