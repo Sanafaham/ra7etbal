@@ -500,7 +500,9 @@ describe("canonical path source adapters", () => {
     expect(startSessionIndex).toBeGreaterThan(timeoutIndex);
     expect(startSessionIndex - timeoutIndex).toBeLessThan(800);
     expect(widget.slice(timeoutIndex, startSessionIndex)).toContain("60_000");
-    expect(widget.slice(startSessionIndex, startSessionIndex + 300)).toContain('connectionType: "websocket"');
+    // WebRTC is the correct default for voice (LiveKit path works; websocket
+    // path returns 403 when source= param is present, which the SDK always appends).
+    expect(widget.slice(startSessionIndex, startSessionIndex + 300)).not.toContain('connectionType: "websocket"');
   });
 
   it("documents confirmation URL canonical param and legacy compatibility", () => {
