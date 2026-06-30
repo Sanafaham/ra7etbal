@@ -209,6 +209,24 @@ export default function Confirm() {
         // Allow another submission attempt on this same visit.
         confirmedRef.current = false;
         setProofFile(null);
+        // Refresh the signed upload URL — Supabase pre-signed upload URLs are
+        // single-use, so the one from the initial GET is exhausted after the
+        // first upload. Fetching a fresh one non-fatally; if this fails the
+        // user will see an upload error on their next attempt and can reload.
+        if (taskId) {
+          fetch(`/api/task-confirm?taskId=${encodeURIComponent(taskId)}`)
+            .then((r) => r.json() as Promise<Partial<TaskInfo>>)
+            .then((d) => {
+              if (d.proofUploadUrl && d.proofUploadPath) {
+                setInfo((prev) =>
+                  prev
+                    ? { ...prev, proofUploadUrl: d.proofUploadUrl!, proofUploadPath: d.proofUploadPath! }
+                    : prev,
+                );
+              }
+            })
+            .catch(() => {});
+        }
       }
     } catch (err) {
       confirmedRef.current = false;
@@ -223,6 +241,11 @@ export default function Confirm() {
   }
 
   const isBusy = confirming || proofUploading;
+  // After a correction_required verdict, the assignee must attach a new proof
+  // photo before resubmitting. This prevents bypassing QI by clicking
+  // "Mark done" without a photo (which would skip the review entirely since
+  // needsReview = !!proofImagePath on the server).
+  const needsNewProof = outcome === "correction_required" && !proofFile;
 
   return (
     <section className="mx-auto max-w-md space-y-5 rounded-2xl border border-sage/30 bg-white/85 p-6 shadow-sm">
@@ -393,7 +416,7 @@ export default function Confirm() {
               <button
                 type="button"
                 onClick={() => void handleConfirm()}
-                disabled={isBusy}
+                disabled={isBusy || needsNewProof}
                 aria-busy={isBusy}
                 className="flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -403,9 +426,11 @@ export default function Confirm() {
                     ? "Uploading photo…"
                     : confirming
                       ? "Confirming…"
-                      : proofFile
-                        ? "Mark done with proof"
-                        : "Mark done"}
+                      : needsNewProof
+                        ? "Attach a new photo to continue"
+                        : proofFile
+                          ? "Mark done with proof"
+                          : "Mark done"}
                 </span>
               </button>
             </>

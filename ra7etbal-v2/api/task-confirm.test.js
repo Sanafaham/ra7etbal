@@ -220,14 +220,14 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4); // no send-whatsapp-task call attempted
   });
 
-  it('correction_required first attempt: correction WhatsApp to staff AND owner push both fire (neither replaces the other)', async () => {
+  it('correction_required: sends correction WhatsApp to staff, never triggers owner push', async () => {
     runQualityReviewMock.mockResolvedValue({
       status: 'correction_required',
       note: 'Christopher, the chicken is not centered. Please retake the photo.',
     });
-    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
-    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
-    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+    // VAPID keys intentionally NOT stubbed — owner push must not fire at all
+    // for correction_required (the correction is handled between Carson and
+    // the assignee via WhatsApp; the owner is not notified until final approval).
 
     const fetchMock = vi
       .fn()
@@ -236,8 +236,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
       .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '971500000000', whatsapp_opted_in: true }])) // people lookup
       .mockResolvedValueOnce(jsonResponse([{ id: 'message-correction-1' }])) // messages insert (correction record)
-      .mockResolvedValueOnce(jsonResponse({ success: true })) // send-whatsapp-task (correction WhatsApp)
-      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // push_subscriptions lookup (owner push)
+      .mockResolvedValueOnce(jsonResponse({ success: true })); // send-whatsapp-task (correction WhatsApp)
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -260,21 +259,21 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(sendBody.messageText).toBe('Christopher, the chicken is not centered. Please retake the photo.');
     expect(sendBody.taskId).toBeNull(); // must be null — direct_message rejects a top-level taskId
 
-    // Owner push was also fired (push_subscriptions lookup present after the WA send).
+    // Owner push must NOT fire for correction_required — push_subscriptions
+    // lookup must never be called.
     const pushCallIndex = fetchMock.mock.calls.findIndex(([url]) => String(url).includes('push_subscriptions'));
-    expect(pushCallIndex).toBeGreaterThan(-1);
-    // Push must come AFTER the correction WhatsApp, not instead of it.
-    expect(pushCallIndex).toBeGreaterThan(waCallIndex);
+    expect(pushCallIndex).toBe(-1);
   });
 
-  it('correction-cycle control: second correction_required reaches the limit and routes to owner push instead of another WhatsApp send', async () => {
+  it('correction_required second submission: correction WhatsApp still sent, no owner push', async () => {
+    // Regression test for P0: with cycleCount=2 the original code set
+    // correctionLimitReached=true and routed to owner push instead of WA.
+    // Expected: WA always fires for correction_required; owner push never fires.
     runQualityReviewMock.mockResolvedValue({
       status: 'correction_required',
       note: 'Christopher, please center the chicken again.',
     });
-    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
-    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
-    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+    // VAPID keys intentionally NOT stubbed — owner push must not fire.
 
     const fetchMock = vi
       .fn()
@@ -282,7 +281,9 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg', quality_review_cycle_count: 1 }]))
       .mockResolvedValueOnce(jsonResponse([])) // messages lookup (delegation content)
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (review fields, cycle count -> 2)
-      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // push_subscriptions lookup
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '971500000000', whatsapp_opted_in: true }])) // people lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-correction-2' }])) // messages insert
+      .mockResolvedValueOnce(jsonResponse({ success: true })); // send-whatsapp-task (second correction)
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -292,7 +293,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       expect.objectContaining({
         success: true,
         outcome: 'correction_required',
-        correctionDelivered: null,
+        correctionDelivered: true,
         correctionCycleCount: 2,
       }),
     );
@@ -300,11 +301,11 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
     expect(patchBody.quality_review_cycle_count).toBe(2);
 
-    // No second automatic WhatsApp correction message once the limit is reached.
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+    // Correction WhatsApp IS still sent on the second attempt.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(true);
 
-    // Routes to the existing owner-push path instead.
-    expect(String(fetchMock.mock.calls[3][0])).toContain('/rest/v1/push_subscriptions');
+    // Owner push must NOT fire — push_subscriptions never looked up.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
   });
 
   it('uncertain review: keeps the task pending, sends no WhatsApp message, and triggers the owner-push path', async () => {
@@ -409,6 +410,128 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ success: true, outcome: 'fraud_suspected', correctionDelivered: null }),
     );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+  });
+
+  // ── The 4 required production scenarios ──────────────────────────────────
+
+  it('scenario Pizza→Pizza: approved, task done, owner push fires once', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Matches the reference.' });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // confirmations insert
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // push (approved)
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof-pizza.jpg' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.status).toBe('done');
+    // Owner push fires for approved.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(true);
+    // No correction WhatsApp.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+  });
+
+  it('scenario Pizza→Salad: correction sent to Christopher, task open, NO owner push', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'correction_required',
+      note: 'Christopher, that is a salad, not the pizza. Please bring the correct item.',
+    });
+    // VAPID keys NOT stubbed — owner push must not fire.
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (stays pending)
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '971500000000', whatsapp_opted_in: true }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'msg-1' }])) // messages insert
+      .mockResolvedValueOnce(jsonResponse({ success: true })); // send-whatsapp-task
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof-salad.jpg' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required', correctionDelivered: true }));
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.status).toBeUndefined(); // task NOT marked done
+    // Correction WA sent.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(true);
+    // Owner NOT notified.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
+  });
+
+  it('scenario Pizza→Salad→Salad: second correction still sends WA, task open, NO owner push', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'correction_required',
+      note: 'Christopher, that is still a salad. Please bring the pizza.',
+    });
+    // VAPID keys NOT stubbed — owner push must not fire.
+
+    const fetchMock = vi
+      .fn()
+      // Prior correction round recorded in cycle count.
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg', quality_review_cycle_count: 1 }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (still pending, cycle -> 2)
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '971500000000', whatsapp_opted_in: true }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'msg-2' }])) // messages insert
+      .mockResolvedValueOnce(jsonResponse({ success: true })); // send-whatsapp-task (second correction)
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof-salad2.jpg' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required', correctionDelivered: true, correctionCycleCount: 2 }));
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.status).toBeUndefined(); // still NOT done
+    expect(patchBody.quality_review_cycle_count).toBe(2);
+    // Correction WA still sent even on 2nd wrong attempt.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(true);
+    // Owner NOT notified.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
+  });
+
+  it('scenario Pizza→Salad→Pizza: task done on final approval, owner push fires once for the approval', async () => {
+    // First call: correction round (tested separately above).
+    // This test covers the FINAL approved submission.
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Pizza confirmed.' });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      // Task has one prior correction cycle recorded.
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg', quality_review_cycle_count: 1 }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // confirmations insert
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // push (approved)
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof-pizza.jpg' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.status).toBe('done');
+    expect(patchBody.quality_review_status).toBe('approved');
+    // cycle count is NOT touched on approval — stays as-is in the DB.
+    expect(patchBody.quality_review_cycle_count).toBeUndefined();
+    // Owner push fires ONCE (for approved only).
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(true);
+    // No correction WA for an approved outcome.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
   });
 
