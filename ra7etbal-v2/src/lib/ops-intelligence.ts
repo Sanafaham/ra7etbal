@@ -83,6 +83,27 @@ export function isRejection(text: string): boolean {
   return REJECTION_RE.test(text.trim());
 }
 
+// ── Delivery status question detection ───────────────────────────────────────
+//
+// Detects questions like "Did you send it?", "Did it go through?", "Was it
+// delivered?", "Did Christopher get it?". These must NOT fall through to
+// executeDelegationFromText — passing a status question to Anthropic
+// extraction either creates a duplicate task or returns a failure string,
+// which EL's LLM then rephrases as "No, both attempts timed out."
+//
+// Two broad patterns cover the full range:
+//   1. "did/was/has/have/is/can you … send/sent/deliver/reach/go through/receive"
+//   2. "did [person] get/receive it"
+// Short queries like "sent?" or "go through?" are deliberately excluded since
+// they are too vague and could be part of another phrase.
+
+const STATUS_QUESTION_RE =
+  /\b(did|was|has|have|is|can)\b.{0,40}\b(sent|send|delivered|deliver|go through|went through|received|receive|get (it|that)|gotten|messaged|reach|reached|confirmed|confirm)\b/i;
+
+export function isStatusQuestion(text: string): boolean {
+  return STATUS_QUESTION_RE.test(text.trim());
+}
+
 /** Returns true when the plan is older than 5 minutes and should be ignored. */
 export function isPlanExpired(plan: ProposedPlan): boolean {
   return Date.now() - plan.createdAt > 5 * 60 * 1000;

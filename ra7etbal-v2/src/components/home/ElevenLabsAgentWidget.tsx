@@ -75,6 +75,7 @@ import {
   rejectProposedPlan,
   isConfirmation,
   isRejection,
+  isStatusQuestion,
   isPlanExpired,
   loadLatestPendingPlan,
   type ProposedPlan,
@@ -1324,6 +1325,20 @@ export default function ElevenLabsAgentWidget({
         at: new Date().toISOString(),
         inputSummary: { name: person.name, task: taskText },
       };
+
+      // Inject a contextual update into EL's conversation so that status
+      // questions later in the session ("Did you send it?", "Did it go through?")
+      // are answered from this live fact rather than from the stale
+      // {{ra7etbal_state}} snapshot (set at session-start; never refreshed
+      // mid-call). Without this, EL's DATA HIERARCHY rule ("Live state overrides
+      // memory") causes it to say "No, both attempts timed out" when the task
+      // doesn't appear in the session-start state.
+      conversationRef.current?.sendContextualUpdate(
+        `[Session update] Task created and WhatsApp sent to ${person.name}: "${taskText}". ` +
+        `This happened during the current session. If the user asks whether it was sent, ` +
+        `confirm yes — it was sent.`,
+      );
+
       return successText;
     },
     [displayName, maybeSendImpliedDinnerDelegation, clearPendingImages],
@@ -2602,6 +2617,34 @@ export default function ElevenLabsAgentWidget({
         return sanitizeSocialAcknowledgementReply(getSocialAcknowledgementReply(rawInstruction));
       }
 
+      // Delivery status questions — "Did you send it?", "Did it go through?",
+      // "Was it delivered?", "Did Christopher get it?" etc.
+      //
+      // Root cause of false failure: these fall through to executeDelegationFromText
+      // which feeds them to Anthropic extraction. Anthropic either creates a
+      // DUPLICATE task or returns a failure string. EL's LLM then synthesises
+      // "No, both attempts timed out." from the tool result + stale ra7etbal_state
+      // (which never contains tasks created during the current session because
+      // dynamicVariables is set once at Conversation.startSession and not updated).
+      //
+      // Fix: answer from sentDelegationsRef (live current-session state) before
+      // any Supabase or Anthropic call. If nothing was sent this session, fall
+      // through normally — the instruction might be a real task, not a status check.
+      if (isStatusQuestion(rawInstruction)) {
+        const recentSends = sentDelegationsRef.current;
+        if (recentSends.length > 0) {
+          const last = recentSends[recentSends.length - 1];
+          console.log("[execute_instruction] status_question answered from session state →", {
+            person: last.personName, task: last.taskText,
+          });
+          return `Yes. ${last.personName} has it.`;
+        }
+        // No in-session send — fall through so the question gets processed normally
+        // (it might be asking about a prior session's task, or might be a real
+        // instruction misidentified as a status question on a cold session).
+        console.log("[execute_instruction] status_question — no in-session sends, falling through");
+      }
+
       const authUserId = useAuthStore.getState().user?.id;
       if (!authUserId) return "You are not signed in. Please sign in and try again.";
 
@@ -3058,6 +3101,19 @@ export default function ElevenLabsAgentWidget({
         // Refresh task store so Voice Carson context reflects the new task.
         useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
 
+        // Record in sentDelegationsRef so status questions later in the session
+        // ("Did you send it?", "Did it go through?") can answer from live state
+        // without falling through to executeDelegationFromText again.
+        for (const rec of executedDelegationRecords) {
+          if (rec.personName && rec.actionText) {
+            sentDelegationsRef.current.push({
+              personName: rec.personName,
+              taskText: rec.actionText,
+              messageText: rec.actionText,
+            });
+          }
+        }
+
         // Record success so resolveSanitizedCarsonDisplayMessage can override
         // any failure language in Carson's separately-generated spoken reply.
         lastDirectToolSuccessRef.current = {
@@ -3066,6 +3122,25 @@ export default function ElevenLabsAgentWidget({
           at: new Date().toISOString(),
           inputSummary: { kind: "delegation", instruction: rawInstruction.slice(0, 80) },
         };
+
+        // Inject a contextual update so EL's LLM has current-session task state.
+        // Without this, {{ra7etbal_state}} (set once at session start) never shows
+        // tasks created during the call, causing EL to hallucinate failure when the
+        // user asks "Did you send it?" ("live state always overrides memory" rule
+        // makes EL prefer the stale snapshot over conversation history).
+        if (executedDelegationRecords.length > 0) {
+          const names = executedDelegationRecords
+            .filter((r) => r.personName)
+            .map((r) => r.personName)
+            .join(", ");
+          if (names) {
+            conversationRef.current?.sendContextualUpdate(
+              `[Session update] Tasks created and WhatsApp sent to: ${names}. ` +
+              `This happened during the current session. If the user asks whether ` +
+              `a message was sent, confirm yes — it was sent.`,
+            );
+          }
+        }
 
         return summary;
       } catch (err) {
