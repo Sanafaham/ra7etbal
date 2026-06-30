@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import handler, { normalizeTavilyResult, searchTavily } from "./web-research.js";
+import handler, { normalizeTavilyResult, searchTavily } from "./anthropic.js";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 function mockReq({ method = "POST", body = {} } = {}) {
-  return { method, body };
+  return { method, body, query: { webResearch: "1" }, url: "/api/anthropic?webResearch=1" };
 }
 
 function mockRes() {

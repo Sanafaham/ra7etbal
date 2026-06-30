@@ -19,6 +19,10 @@
   ],
   "rewrites": [
     {
+      "source": "/api/web-research",
+      "destination": "/api/anthropic?webResearch=1"
+    },
+    {
       "source": "/((?!api/|assets/|sw\\.js$|manifest\\.webmanifest$|icons/).*)",
       "destination": "/index.html"
     }
