@@ -225,6 +225,35 @@ describe("resolveSanitizedCarsonDisplayMessage", () => {
     expect(result).toBe("I'll remind you tomorrow at 10:00 AM.");
   });
 
+  it("overrides Carson failure wording with send_delegation success result", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "I wasn't able to send that. Please try again.",
+      lastSuccess: successResult({
+        toolName: "send_delegation",
+        // sanitizeCarsonReplyText strips the "Done." filler prefix — expected.
+        resultText: "Done. I asked Christopher to make it for lunch.",
+        at: new Date(NOW).toISOString(),
+      }),
+      now: NOW,
+    });
+    // "Done." stripped by sanitizeCarsonReplyText; the rest of the success text is shown.
+    expect(result).toBe("I asked Christopher to make it for lunch.");
+  });
+
+  it("overrides Carson failure wording with execute_instruction delegation success", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "I couldn't complete that.",
+      lastSuccess: successResult({
+        toolName: "execute_instruction",
+        resultText: "Christopher has it.",
+        at: new Date(NOW).toISOString(),
+        inputSummary: { kind: "delegation", instruction: "ask Christopher to make these" },
+      }),
+      now: NOW,
+    });
+    expect(result).toBe("Christopher has it.");
+  });
+
   it("keeps social acknowledgement fallback natural when the agent reply is only filler", () => {
     const result = resolveSanitizedCarsonDisplayMessage({
       agentMessage: "One moment.",

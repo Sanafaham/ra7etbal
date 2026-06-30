@@ -360,27 +360,24 @@ async function createAndSendDelegation({
     }
   }
 
-  // Non-throwing send: the task row is already committed to Supabase so the
-  // work is tracked regardless of whether the WhatsApp fetch completes before
-  // the ElevenLabs client-tool timeout fires. A slow Meta image upload (8–16 s)
-  // can push the total past EL's ~30 s tool window and produce a false
-  // "timed out" report even when WhatsApp arrives. We catch and log the error
-  // but still return success — delivery is tracked via whatsapp_deliveries.
-  try {
-    await sendWhatsAppTask({
-      to: person.phone,
-      messageText: created.messageText,
-      confirmationLink: created.confirmationUrl,
-      messageRecordId: created.message?.id ?? null,
-      taskId: taskRow.id,
-      recipientName: person.name,
-      ownerName: ownerName ?? null,
-      imagePath,
-      attachmentCount,
-    });
-  } catch (err) {
-    console.error("[send_delegation] sendWhatsAppTask threw after task creation (delivery tracked):", err);
-  }
+  // Fire-and-forget: the task row is already committed to Supabase.
+  // Do NOT await sendWhatsAppTask — a slow Meta image upload (8–16 s) pushes
+  // the total past EL's ~30 s client-tool timeout, causing a false "I couldn't
+  // complete that" even when WhatsApp arrives. The Vercel function runs to
+  // completion regardless; delivery is tracked via whatsapp_deliveries.
+  sendWhatsAppTask({
+    to: person.phone,
+    messageText: created.messageText,
+    confirmationLink: created.confirmationUrl,
+    messageRecordId: created.message?.id ?? null,
+    taskId: taskRow.id,
+    recipientName: person.name,
+    ownerName: ownerName ?? null,
+    imagePath,
+    attachmentCount,
+  }).catch((err) => {
+    console.error("[send_delegation] sendWhatsAppTask failed (task created, delivery tracked):", err);
+  });
 
   return {
     taskId: taskRow.id,
@@ -1296,7 +1293,16 @@ export default function ElevenLabsAgentWidget({
 
       await maybeSendImpliedDinnerDelegation(userId);
 
-      return `${person.name} has it. I'll follow up if needed.`;
+      const successText = `Done. I asked ${person.name} to ${taskText}.`;
+      // Record success so the override mechanism can replace any contradictory
+      // failure language Carson's LLM generates from its own separate reply.
+      lastDirectToolSuccessRef.current = {
+        toolName: "send_delegation",
+        resultText: successText,
+        at: new Date().toISOString(),
+        inputSummary: { name: person.name, task: taskText },
+      };
+      return successText;
     },
     [displayName, maybeSendImpliedDinnerDelegation, clearPendingImages],
   );
@@ -2512,15 +2518,26 @@ export default function ElevenLabsAgentWidget({
       const instruction = extractInstructionParam(params);
       console.log("[executeInstruction:PARAMS]", params);
 
-      // Prefer the exact user transcript from sessionTranscriptRef over the
-      // agent-provided instruction parameter. The ElevenLabs agent may rephrase
-      // the user's spoken words before passing them here — dropping personal notes,
-      // altering names, or collapsing compound requests into a single sentence.
-      // The last user message in sessionTranscriptRef is the verbatim transcript.
+      // Prefer the verbatim user transcript (lastUserMessage) over the
+      // agent-provided instruction param — EL may rephrase, losing personal notes
+      // or altering names. EXCEPTION: fall back to the instruction param when
+      // lastUserMessage is a short confirmatory reply ("yes", "go ahead",
+      // "yes, send it" ≤ 5 words) — those come after Carson rephrases the task
+      // and do not contain the full delegation context (e.g. the recipient name).
       const lastUserMessage = [...sessionTranscriptRef.current]
         .reverse()
         .find((m) => m.role === "user")?.message?.trim();
-      const rawInstruction = (lastUserMessage || instruction?.trim() || "").trim();
+      const lastUserWordCount = lastUserMessage ? lastUserMessage.split(/\s+/).length : 0;
+      const lastUserIsVague =
+        !lastUserMessage ||
+        isConfirmation(lastUserMessage) ||
+        isRejection(lastUserMessage) ||
+        lastUserWordCount <= 5;
+      const rawInstruction = (
+        lastUserIsVague
+          ? (instruction?.trim() || lastUserMessage || "")
+          : lastUserMessage
+      ).trim();
 
       // ── Routing trace — emitted before any branching ──────────────────
       console.log("[routine:TRACE] instruction_param=", (instruction?.trim() ?? "null").slice(0, 120));
@@ -3002,6 +3019,15 @@ export default function ElevenLabsAgentWidget({
         sessionActionsRef.current.push(`Executed: ${rawInstruction}`);
         // Refresh task store so Voice Carson context reflects the new task.
         useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+
+        // Record success so resolveSanitizedCarsonDisplayMessage can override
+        // any failure language in Carson's separately-generated spoken reply.
+        lastDirectToolSuccessRef.current = {
+          toolName: "execute_instruction",
+          resultText: summary,
+          at: new Date().toISOString(),
+          inputSummary: { kind: "delegation", instruction: rawInstruction.slice(0, 80) },
+        };
 
         return summary;
       } catch (err) {

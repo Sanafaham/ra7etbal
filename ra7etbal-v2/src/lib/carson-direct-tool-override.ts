@@ -28,6 +28,7 @@ const OVERRIDABLE_TOOL_NAMES = new Set([
   "create_reminder",
   "execute_instruction",
   "control_task",
+  "send_delegation",
 ]);
 
 const OVERRIDE_WINDOW_MS = 15_000;

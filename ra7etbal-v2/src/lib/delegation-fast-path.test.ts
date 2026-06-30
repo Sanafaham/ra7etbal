@@ -340,4 +340,48 @@ describe("executeDelegationFastPath", () => {
 
     vi.unstubAllGlobals();
   });
+
+  it("preserves 'Christopher' as recipient when instruction explicitly names him", async () => {
+    const sendDelegationFn = vi.fn().mockResolvedValue("Done. I asked Christopher to make it.");
+
+    const result = await executeDelegationFastPath(
+      "ask Christopher to make these for lunch",
+      { people: roster(), userId: "user-1", displayName: "Sana" },
+      { sendDelegationFn },
+    );
+
+    expect(result.handled).toBe(true);
+    expect((result as { personName?: string }).personName).toBe("Christopher");
+    expect(sendDelegationFn).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Christopher" }),
+    );
+  });
+
+  it("photo delegation with 'ask Christopher to make these' matches fast path even with 'these'", async () => {
+    const sendDelegationFn = vi.fn().mockResolvedValue("Done. I asked Christopher to make these.");
+
+    const result = await executeDelegationFastPath(
+      "ask Christopher to make these for lunch tomorrow",
+      { people: roster(), userId: "user-1", displayName: "Sana" },
+      { sendDelegationFn },
+    );
+
+    expect(result.handled).toBe(true);
+    if (!result.handled) throw new Error("handled expected");
+    expect(result.status).toBe("sent");
+    // Result must not contain failure wording
+    expect(result.response).not.toMatch(/couldn.t|wasn.t able|try again/i);
+  });
+
+  it("does not contain 'one moment' or 'please wait' in any response string", async () => {
+    const sendDelegationFn = vi.fn().mockResolvedValue("Done.");
+    const result = await executeDelegationFastPath(
+      "ask Nasira to clean the bedrooms",
+      { people: roster(), userId: "user-1", displayName: "Sana" },
+      { sendDelegationFn },
+    );
+    if (result.handled && result.status === "sent") {
+      expect(result.response).not.toMatch(/one moment|please wait|hold on|just a second/i);
+    }
+  });
 });
