@@ -319,6 +319,195 @@ describe('routine message shared boundary', () => {
   });
 });
 
+// ── Photo attachment pipeline tests ─────────────────────────────────────────
+
+describe('photo attachment pipeline', () => {
+  // For all tests in this suite, the Supabase task lookup and delivery-row
+  // inserts are always at positions 0–1 in the fetch mock; the signed-URL
+  // generation is position 2 (when imagePath is present).
+  const SIGNED_URL = 'https://example.supabase.co/storage/v1/object/sign/task-images/user/task/photo.jpg?token=abc';
+
+  function basePhotoCalls({ metaUploadResponse = null, metaTemplateResponse = null } = {}) {
+    return [
+      jsonResponse([{ id: 'task-1', user_id: 'user-1' }]),          // Supabase task lookup
+      jsonResponse([{ id: 'delivery-1' }]),                           // whatsapp_deliveries insert
+      jsonResponse({ signedURL: '/object/sign/task-images/user/task/photo.jpg?token=abc' }), // signed URL
+      ...(metaUploadResponse ? [metaUploadResponse] : []),
+      ...(metaTemplateResponse ? [metaTemplateResponse] : []),
+      emptyResponse(),                                                 // delivery update
+    ];
+  }
+
+  it('single-photo: appends photo-on-link note and sends text template when Meta upload fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
+      // signed URL
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user/task/photo.jpg?token=abc' }))
+      // Meta image download (from Supabase signed URL) — fails
+      .mockResolvedValueOnce({ ok: false, status: 403, arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0)), headers: { get: () => null } })
+      // ra7etbal_task_v3 template send
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.text' }] }))
+      // delivery update
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'Ask Christopher to make this for lunch.',
+        confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
+        taskId: 'task-1',
+        imagePath: 'task-images/user/task/photo.jpg',
+        attachmentCount: null,
+        ownerName: 'Sana',
+        recipientName: 'Christopher',
+      }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+
+    // Template send should use ra7etbal_task_v3 (text template, not image header)
+    const graphCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('graph.facebook.com/v20.0'),
+    );
+    expect(graphCalls).toHaveLength(1);
+    const metaPayload = JSON.parse(graphCalls[0][1].body);
+    expect(metaPayload.template.name).toBe('ra7etbal_task_v3');
+
+    // Photo note must appear in message body param
+    const bodyComp = metaPayload.template.components.find((c) => c.type === 'body');
+    const messageParam = bodyComp.parameters.find((p) => p.type === 'text' && p.text.includes('photo'));
+    expect(messageParam).toBeTruthy();
+    expect(messageParam.text).toMatch(/photo/i);
+    expect(messageParam.text).toMatch(/link/i);
+  });
+
+  it('single-photo: uses ra7etbal_task_image template when Meta upload succeeds', async () => {
+    // 1KB fake image buffer
+    const fakeBuffer = new ArrayBuffer(1024);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user/task/photo.jpg?token=abc' }))
+      // Meta image download succeeds
+      .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) })
+      // Meta media upload succeeds
+      .mockResolvedValueOnce(jsonResponse({ id: 'meta-media-id-123' }))
+      // ra7etbal_task_image template send
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.image' }] }))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'Make this for dinner.',
+        confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
+        taskId: 'task-1',
+        imagePath: 'task-images/user/task/photo.jpg',
+        attachmentCount: null,
+        ownerName: 'Sana',
+        recipientName: 'Christopher',
+      }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+
+    const graphCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('graph.facebook.com/v20.0'),
+    );
+    // Two graph calls: media upload + template send
+    expect(graphCalls).toHaveLength(2);
+    const templatePayload = JSON.parse(graphCalls[1][1].body);
+    expect(templatePayload.template.name).toBe('ra7etbal_task_image');
+  });
+
+  it('multi-photo: appends "attached N photos" note and uses text template (no image upload)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
+      // No signed URL call — multi-photo skips the image template entirely
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.multi' }] }))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'Make these for lunch.',
+        confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
+        taskId: 'task-1',
+        imagePath: 'task-images/user/task/photo.jpg',
+        attachmentCount: 2,
+        ownerName: 'Sana',
+        recipientName: 'Christopher',
+      }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+
+    const graphCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('graph.facebook.com/v20.0'),
+    );
+    // Only one graph call — no Meta image upload for multi-photo
+    expect(graphCalls).toHaveLength(1);
+    const payload = JSON.parse(graphCalls[0][1].body);
+    expect(payload.template.name).toBe('ra7etbal_task_v3');
+
+    const bodyComp = payload.template.components.find((c) => c.type === 'body');
+    const messageParam = bodyComp.parameters.find((p) => p.type === 'text' && p.text.includes('photo'));
+    expect(messageParam).toBeTruthy();
+    expect(messageParam.text).toMatch(/2 photos/);
+    expect(messageParam.text).toMatch(/task link/i);
+  });
+
+  it('single-photo failure does not append raw signed URL to message (avoids leaking expiring URL)', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user/task/photo.jpg?token=abc' }))
+      .mockResolvedValueOnce({ ok: false, status: 500, headers: { get: () => null }, arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0)) })
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.fallback' }] }))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'Please review this.',
+        confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
+        taskId: 'task-1',
+        imagePath: 'task-images/user/task/photo.jpg',
+        attachmentCount: null,
+        ownerName: 'Sana',
+      }),
+      res,
+    );
+
+    const graphCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('graph.facebook.com/v20.0'),
+    );
+    const payload = JSON.parse(graphCalls[0][1].body);
+    const bodyComp = payload.template.components.find((c) => c.type === 'body');
+    const allTextParams = bodyComp.parameters.filter((p) => p.type === 'text');
+    // None of the text params should contain a raw Supabase URL with token
+    for (const p of allTextParams) {
+      expect(p.text).not.toMatch(/supabase\.co\/storage.*token=/);
+    }
+  });
+});
+
 function createReq(body, headers = {}) {
   return {
     method: 'POST',

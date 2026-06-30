@@ -5,6 +5,10 @@ import {
   markWhatsappDeliveryFailed,
 } from './_whatsapp-delivery.js';
 
+// Raise Vercel function timeout to 60 s so image download + Meta upload do not
+// hit the default 15 s limit and kill the entire send-whatsapp-task request.
+export const config = { maxDuration: 60 };
+
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
 const DEFAULT_PLAIN_MESSAGE_TEMPLATE = 'ra7etbal_routine_message';
@@ -390,79 +394,26 @@ export default async function handler(req, res) {
   });
 
   // ── Legacy: separate image media message ─────────────────────────────────
-  // Used when imagePath is set but Meta upload failed (graceful degradation).
-  // Send image as a separate media message BEFORE the template.
-  if (imagePath && !metaMediaId) {
-    if (imageSignedUrl) {
-      const imageDeliveryId = await beginWhatsappDelivery({
-        supabaseUrl,
-        serviceKey,
-        messageRecordId,
-        taskId,
-        routineId,
-        automationRunId,
-        parentDeliveryId: deliveryId,
-        sourceType: 'image',
-        messageKind: 'image',
-        recipientPhone: normalizedTo,
-        recipientName: String(recipientName || '').trim() || null,
-        metadata: { fallback_for_template_delivery: true },
-      });
-      const imagePayload = {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
-        to: normalizedTo,
-        type: 'image',
-        image: { link: imageSignedUrl },
-      };
-      try {
-        const imageResult = await sendMetaMessage({ url, accessToken, payload: imagePayload });
-        if (imageResult.ok) {
-          imageSendStatus = 'sent';
-          await markWhatsappDeliveryAccepted({
-            supabaseUrl,
-            serviceKey,
-            deliveryId: imageDeliveryId,
-            metaMessageId: imageResult.messageId,
-            metadata: { fallback_for_template_delivery: true },
-          });
-        } else {
-          imageSendStatus = 'failed';
-          const imageFailure = getMetaFailure(imageResult);
-          await markWhatsappDeliveryFailed({
-            supabaseUrl,
-            serviceKey,
-            deliveryId: imageDeliveryId,
-            failureStage: 'meta_api',
-            ...imageFailure,
-            metadata: { fallback_for_template_delivery: true },
-          });
-          console.warn('[send-whatsapp-task] legacy image send failed (non-fatal), adding fallback link', {
-            status: imageResult.status,
-            errorCode: imageResult.metaError?.code ?? null,
-            errorSubcode: imageResult.metaError?.error_subcode ?? null,
-            errorMessage: typeof imageResult.metaError?.message === 'string'
-              ? imageResult.metaError.message
-              : null,
-          });
-          cleanMessage = `${cleanMessage}\n\nReference photo:\n${imageSignedUrl}`;
-        }
-      } catch (err) {
-        imageSendStatus = 'failed';
-        await markWhatsappDeliveryFailed({
-          supabaseUrl,
-          serviceKey,
-          deliveryId: imageDeliveryId,
-          failureStage: 'network',
-          reason: err?.message ?? String(err),
-          metadata: { fallback_for_template_delivery: true },
-        });
-        console.warn('[send-whatsapp-task] legacy image send threw (non-fatal), adding fallback link', {
-          message: err?.message ?? String(err),
-        });
-        cleanMessage = `${cleanMessage}\n\nReference photo:\n${imageSignedUrl}`;
-      }
-    }
+  // When a single-image task could not be delivered via the ra7etbal_task_image
+  // template (Meta media upload failed or timed out), append a plain-language
+  // note into the message body so the assignee knows a photo is waiting for
+  // them on the confirmation page. This is Option B: "Photo is on the task
+  // page — tap the button to view it." The confirmation page always shows
+  // image_path for single-image tasks so the photo is guaranteed viewable.
+  //
+  // The legacy path that sent `{ image: { link: signedUrl } }` as a separate
+  // WhatsApp media message has been removed. Meta's Business API consistently
+  // rejects URL-based image messages when the URL contains a token query
+  // parameter (e.g. Supabase signed URLs). It added latency, caused delivery
+  // failures, and appended a raw signed URL into the message text as a fallback
+  // — none of which reached the assignee in a useful form.
+  if (imagePath && !metaMediaId && !isMultiAttachment) {
+    console.log('[send-whatsapp-task] image template upload failed; appending photo-on-link note', {
+      imageSendStatus,
+      imagePathPresent: Boolean(imagePath),
+    });
+    imageSendStatus = 'task_link_fallback';
+    cleanMessage = `${cleanMessage} — There is also a photo on this task. Open the link to view it.`;
   }
 
   /**
@@ -979,20 +930,40 @@ async function markMessageAccepted({
 async function uploadImageToMeta({ accessToken, phoneNumberId, imageUrl }) {
   if (!accessToken || !phoneNumberId || !imageUrl) return null;
 
+  // Each network call (download + upload) gets its own abort controller so a
+  // single slow Meta or Supabase response does not hang the entire function.
+  // 8 s per step keeps the total well inside the 60 s Vercel limit while still
+  // giving each call a reasonable window on slow connections.
+  const STEP_TIMEOUT_MS = 8_000;
+
   try {
-    // Download image from Supabase signed URL
-    const imageResponse = await fetch(imageUrl);
+    // ── Step 1: download image from Supabase signed URL ──────────────────────
+    const downloadAbort = new AbortController();
+    const downloadTimer = setTimeout(() => downloadAbort.abort(), STEP_TIMEOUT_MS);
+    let imageResponse;
+    try {
+      imageResponse = await fetch(imageUrl, { signal: downloadAbort.signal });
+    } finally {
+      clearTimeout(downloadTimer);
+    }
     if (!imageResponse.ok) {
       console.warn('[send-whatsapp-task] uploadImageToMeta: image download failed', {
         status: imageResponse.status,
       });
       return null;
     }
+    console.log('[send-whatsapp-task] uploadImageToMeta: image downloaded', {
+      status: imageResponse.status,
+      contentType: imageResponse.headers.get('content-type'),
+    });
 
     const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
     const imageBuffer = await imageResponse.arrayBuffer();
+    console.log('[send-whatsapp-task] uploadImageToMeta: image buffered', {
+      bytes: imageBuffer.byteLength,
+    });
 
-    // Build multipart form — Meta requires messaging_product, type, and file
+    // ── Step 2: upload to Meta media endpoint ────────────────────────────────
     const formData = new FormData();
     formData.append('messaging_product', 'whatsapp');
     formData.append('type', contentType);
@@ -1003,11 +974,19 @@ async function uploadImageToMeta({ accessToken, phoneNumberId, imageUrl }) {
     );
 
     const uploadUrl = `https://graph.facebook.com/v20.0/${phoneNumberId}/media`;
-    const uploadResponse = await fetch(uploadUrl, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}` },
-      body: formData,
-    });
+    const uploadAbort = new AbortController();
+    const uploadTimer = setTimeout(() => uploadAbort.abort(), STEP_TIMEOUT_MS);
+    let uploadResponse;
+    try {
+      uploadResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${accessToken}` },
+        body: formData,
+        signal: uploadAbort.signal,
+      });
+    } finally {
+      clearTimeout(uploadTimer);
+    }
 
     if (!uploadResponse.ok) {
       const errText = await uploadResponse.text().catch(() => '');
@@ -1019,10 +998,16 @@ async function uploadImageToMeta({ accessToken, phoneNumberId, imageUrl }) {
     }
 
     const data = await uploadResponse.json();
-    return data?.id || null;
+    const mediaId = data?.id || null;
+    console.log('[send-whatsapp-task] uploadImageToMeta: Meta upload succeeded', {
+      mediaId,
+    });
+    return mediaId;
   } catch (err) {
+    const isAbort = err?.name === 'AbortError';
     console.warn('[send-whatsapp-task] uploadImageToMeta threw', {
       message: err?.message ?? String(err),
+      aborted: isAbort,
     });
     return null;
   }
