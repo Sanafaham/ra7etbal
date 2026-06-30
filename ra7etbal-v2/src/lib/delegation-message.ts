@@ -68,7 +68,9 @@ export function buildDelegationMessage({
 }: DelegationMessageInput): string {
   const name = personName.trim();
   const owner = ownerName?.trim() || "Sana";
-  const task = cleanTaskText(taskText);
+  const rawTask = cleanTaskText(taskText);
+  const { task, hadPlease } = stripLeadingPlease(rawTask);
+  const p = hadPlease ? "please " : "";
   const notes = (personNotes ?? "").toLowerCase();
   const taskLower = task.toLowerCase();
   const context = classifyTask(taskLower);
@@ -80,55 +82,55 @@ export function buildDelegationMessage({
     const collaborativeTask = lowerFirst(task);
 
     if (context === "verification") {
-      return `Hi ${name}, could you ${collaborativeTask} and let ${owner} know what you find?`;
+      return `Hi ${name}, could you ${p}${collaborativeTask} and let ${owner} know what you find?`;
     }
 
     if (context === "decision") {
       // Flowers: visual choice → ask for a photo first.
       if (/\bflowers\b/.test(taskLower)) {
-        return `Hi ${name}, could you ${collaborativeTask}? Please send ${owner} a photo before you choose.`;
+        return `Hi ${name}, could you ${p}${collaborativeTask}? Please send ${owner} a photo before you choose.`;
       }
       // Supporting someone with dinner → keep it simple, don't override.
       if (/\bhelp\s+\w+.*\bdinner\b/.test(taskLower)) {
-        return `Hi ${name}, could you ${collaborativeTask}? Please check with ${owner} before changing anything important.`;
+        return `Hi ${name}, could you ${p}${collaborativeTask}? Please check with ${owner} before changing anything important.`;
       }
       // General choice task (menu, plan, organize, suggest, etc.).
-      return `Hi ${name}, could you ${collaborativeTask}? Please check with ${owner} before choosing.`;
+      return `Hi ${name}, could you ${p}${collaborativeTask}? Please check with ${owner} before choosing.`;
     }
 
     // Execution: no choices — just confirm.
-    return `Hi ${name}, could you ${collaborativeTask}? Confirm when done.`;
+    return `Hi ${name}, could you ${p}${collaborativeTask}? Confirm when done.`;
   }
 
   // ── Menu / misses details ─────────────────────────────────────────────────
   if (hasAny(notes, ["menu", "miss details", "misses details", "clear menu", "dinner preparation"])) {
     if (context === "verification") {
-      return `Hi ${name}, please ${lowerFirst(task)}. Let ${owner} know what you find.`;
+      return `Hi ${name}, ${p}${lowerFirst(task)}. Let ${owner} know what you find.`;
     }
     const detailLine = taskLower.includes("dinner")
       ? "Stick to the plan and let me know when it is ready."
       : "Keep to the details and confirm when done.";
-    return `Hi ${name}, please ${lowerFirst(task)}. ${detailLine}`;
+    return `Hi ${name}, ${p}${lowerFirst(task)}. ${detailLine}`;
   }
 
   // ── Needs clear instructions ──────────────────────────────────────────────
   if (hasAny(notes, ["clear instructions", "firmer follow-up", "firmer follow up", "needs clear", "specific instructions"])) {
-    return `Hi ${name}, please ${lowerFirst(task)}. Confirm when finished.`;
+    return `Hi ${name}, ${p}${lowerFirst(task)}. Confirm when finished.`;
   }
 
   // ── Reliable / responsible ────────────────────────────────────────────────
   if (hasAny(notes, ["reliable", "punctual", "responsible", "always on time"])) {
-    return `Hi ${name}, please ${lowerFirst(task)}. Confirm when done.`;
+    return `Hi ${name}, ${p}${lowerFirst(task)}. Confirm when done.`;
   }
 
   // ── Protective / bodyguard ────────────────────────────────────────────────
   if (hasAny(notes, ["protective", "bodyguard", "strong"])) {
-    return `Hi ${name}, please ${lowerFirst(task)}. Confirm when done.`;
+    return `Hi ${name}, ${p}${lowerFirst(task)}. Confirm when done.`;
   }
 
   // ── Default: no matching personality note ─────────────────────────────────
   if (context === "verification") {
-    return `Hi ${name}, could you ${lowerFirst(task)} and let ${owner} know what you find?`;
+    return `Hi ${name}, could you ${p}${lowerFirst(task)} and let ${owner} know what you find?`;
   }
 
   // Safety net: if urgency words reached the description (instead of going to
@@ -139,11 +141,11 @@ export function buildDelegationMessage({
   if (urgencyInTask) {
     // Strip the urgency adverb from the task so we can control placement.
     const cleanedTask = task.replace(/\b(urgent(ly)?|asap|as soon as possible|right away|immediately)\b/gi, "").replace(/\s{2,}/g, " ").trim().replace(/[,]+$/, "").trim();
-    return `Hi ${name}, could you ${lowerFirst(cleanedTask)} as soon as possible? ${owner} would appreciate it.`;
+    return `Hi ${name}, could you ${p}${lowerFirst(cleanedTask)} as soon as possible? ${owner} would appreciate it.`;
   }
 
   // Use lowerFirst so "call Sana" stays lowercase after "could you".
-  return `Hi ${name}, could you ${lowerFirst(task)}? Let ${owner} know when done.`;
+  return `Hi ${name}, could you ${p}${lowerFirst(task)}? Let ${owner} know when done.`;
 }
 
 function hasAny(value: string, needles: string[]): boolean {
@@ -156,4 +158,12 @@ function cleanTaskText(value: string): string {
 
 function lowerFirst(value: string): string {
   return value ? value.charAt(0).toLowerCase() + value.slice(1) : value;
+}
+
+function stripLeadingPlease(text: string): { task: string; hadPlease: boolean } {
+  const match = /^please\s+/i.exec(text);
+  if (match) {
+    return { task: text.slice(match[0].length), hadPlease: true };
+  }
+  return { task: text, hadPlease: false };
 }
