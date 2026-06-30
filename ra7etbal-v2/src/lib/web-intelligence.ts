@@ -98,6 +98,7 @@ export interface WebIntelligenceResult {
 export type WebIntelligenceErrorCode =
   | "empty_query"
   | "missing_provider"
+  | "missing_api_key"
   | "provider_failure";
 
 export class WebIntelligenceError extends Error {
@@ -189,8 +190,52 @@ export function formatWebSource(source: Pick<WebIntelligenceSource, "title" | "d
   return `${title} (${displayUrl})`;
 }
 
+export function createWebIntelligenceApiProvider(endpoint = "/api/web-research"): WebIntelligenceProvider {
+  return {
+    name: "server-web-research",
+    async search(query, options) {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          maxFindings: options.maxFindings,
+          region: options.region,
+          language: options.language,
+          freshness: options.freshness,
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const code = toWebIntelligenceErrorCode(payload?.code);
+        const message =
+          typeof payload?.error === "string" && payload.error.trim()
+            ? payload.error.trim()
+            : "Server web research failed.";
+        throw new WebIntelligenceError(code, message);
+      }
+
+      return {
+        summary: typeof payload?.summary === "string" ? payload.summary : undefined,
+        findings: Array.isArray(payload?.findings) ? payload.findings : [],
+        sources: Array.isArray(payload?.sources) ? payload.sources : [],
+        risks: Array.isArray(payload?.risks) ? payload.risks : [],
+        suggestedNextSteps: Array.isArray(payload?.suggestedNextSteps) ? payload.suggestedNextSteps : [],
+      };
+    },
+  };
+}
+
 function getConfiguredWebIntelligenceProvider(): WebIntelligenceProvider | null {
   return null;
+}
+
+function toWebIntelligenceErrorCode(code: unknown): WebIntelligenceErrorCode {
+  if (code === "empty_query" || code === "missing_provider" || code === "missing_api_key") {
+    return code;
+  }
+  return "provider_failure";
 }
 
 function normalizeSources(

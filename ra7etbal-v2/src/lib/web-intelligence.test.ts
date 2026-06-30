@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createWebIntelligenceApiProvider,
   formatWebSource,
   researchWeb,
   WebIntelligenceError,
@@ -173,6 +174,78 @@ describe("researchWeb", () => {
       name: "WebIntelligenceError",
       code: "provider_failure",
       message: "Web research failed: upstream timeout",
+    });
+  });
+
+  it("uses the server-side API bridge without sending client-side secrets", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        summary: "A server-owned provider returned one source.",
+        findings: [
+          {
+            title: "Server result",
+            snippet: "Returned through the server route.",
+            url: "https://example.com/server-result",
+          },
+        ],
+        sources: [
+          {
+            id: "source_1",
+            title: "Server source",
+            url: "https://example.com/server-result",
+            provider: "tavily",
+          },
+        ],
+        risks: [],
+        suggestedNextSteps: ["Review the source."],
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = createWebIntelligenceApiProvider("/api/web-research");
+    const result = await researchWeb("find a cleaner nearby", { provider, now, maxFindings: 2 });
+
+    expect(result.metadata.provider).toBe("server-web-research");
+    expect(result.findings[0].title).toBe("Server result");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/web-research",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const [, requestInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(String(requestInit.body));
+    expect(body).toEqual({
+      query: "find a cleaner nearby",
+      maxFindings: 2,
+    });
+    expect(JSON.stringify(requestInit)).not.toContain("WEB_INTELLIGENCE_API_KEY");
+    expect(JSON.stringify(requestInit)).not.toContain("test-api-key");
+  });
+
+  it("maps server bridge errors into Web Intelligence errors", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        json: async () => ({
+          code: "missing_api_key",
+          error: "Web Intelligence API key is not configured.",
+        }),
+      })),
+    );
+
+    await expect(
+      researchWeb("current florist hours", {
+        provider: createWebIntelligenceApiProvider("/api/web-research"),
+        now,
+      }),
+    ).rejects.toMatchObject({
+      name: "WebIntelligenceError",
+      code: "provider_failure",
+      message: "Web research failed: Web Intelligence API key is not configured.",
     });
   });
 });
