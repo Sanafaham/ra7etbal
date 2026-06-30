@@ -318,66 +318,88 @@ async function createAndSendDelegation({
       ? [imageFile]
       : [];
 
-  // Upload the first photo before createTask so image_path is set atomically on
-  // insert. Non-fatal: if upload fails, delegation still sends without image.
-  let imagePath: string | null = null;
-  if (resolvedFiles.length > 0) {
-    try {
-      const blob = await resizeImage(resolvedFiles[0]);
-      imagePath = await uploadTaskImage(userId, taskRowId, blob);
-    } catch (err) {
-      console.error("[send_delegation] image upload failed; blocking text-only send:", err);
-      throw new Error(`Could not attach the image. ${sanitizeCarsonErrorDetail(err)}`);
-    }
-  }
+  // Start image upload immediately — runs in parallel with task creation so it
+  // does NOT add to the synchronous tool response time. ElevenLabs' agent LLM
+  // generates its spoken reply as soon as the tool returns, so we must return
+  // within ~2 s (task creation only). Image upload takes 3–8 s and would push
+  // the total past EL's response threshold, causing spoken false-failure audio
+  // even when the task and WhatsApp both succeed.
+  const imageUploadPromise: Promise<string | null> =
+    resolvedFiles.length > 0
+      ? (async () => {
+          try {
+            const blob = await resizeImage(resolvedFiles[0]);
+            const path = await uploadTaskImage(userId, taskRowId, blob);
+            console.log("[send_delegation] image_uploaded task_id=", taskRowId, "path=", path);
+            return path;
+          } catch (err) {
+            console.error("[send_delegation] image upload failed (non-fatal, task still created):", err);
+            return null;
+          }
+        })()
+      : Promise.resolve(null);
 
+  // Create task immediately with imagePath=null. The background block below
+  // updates image_path once the upload resolves, then sends WhatsApp.
   const created = await createDelegationTaskAndMessage({
     source: "send_delegation",
     userId,
     assignee: person,
     taskText,
     note: rawNote,
-    imagePath,
+    imagePath: null,
     ownerName,
     taskId: taskRowId,
     onEscalationError: (err, task) =>
       console.error("[send_delegation] QStash scheduleEscalationMessages failed for task", task.id, err),
   });
   const taskRow = created.task;
+  console.log("[send_delegation] task_created task_id=", taskRow.id, "returning_to_elevenlabs_now");
 
-  // Multi-attachment: when >1 photo is attached, upload ALL photos to
-  // task_attachments and set attachment_count. This forces the WhatsApp send
-  // onto ra7etbal_task_v3 (text + inline attachment note, no image header) and
-  // makes the confirmation page render the full "Reference Photos (N)" grid.
-  // Non-fatal: a failure here leaves the single-image fallback intact.
-  let attachmentCount: number | null = null;
-  if (resolvedFiles.length > 1) {
+  // Background: wait for image upload → patch image_path → save multi-photo
+  // attachments → send WhatsApp. None of this blocks the tool result.
+  void (async () => {
     try {
-      attachmentCount = await saveTaskAttachments(taskRow.id, userId, resolvedFiles);
-    } catch (err) {
-      console.error("[send_delegation] saveTaskAttachments failed (non-fatal):", err);
-      attachmentCount = null;
-    }
-  }
+      const resolvedImagePath = await imageUploadPromise;
 
-  // Fire-and-forget: the task row is already committed to Supabase.
-  // Do NOT await sendWhatsAppTask — a slow Meta image upload (8–16 s) pushes
-  // the total past EL's ~30 s client-tool timeout, causing a false "I couldn't
-  // complete that" even when WhatsApp arrives. The Vercel function runs to
-  // completion regardless; delivery is tracked via whatsapp_deliveries.
-  sendWhatsAppTask({
-    to: person.phone,
-    messageText: created.messageText,
-    confirmationLink: created.confirmationUrl,
-    messageRecordId: created.message?.id ?? null,
-    taskId: taskRow.id,
-    recipientName: person.name,
-    ownerName: ownerName ?? null,
-    imagePath,
-    attachmentCount,
-  }).catch((err) => {
-    console.error("[send_delegation] sendWhatsAppTask failed (task created, delivery tracked):", err);
-  });
+      if (resolvedImagePath) {
+        await supabase
+          .from("tasks")
+          .update({ image_path: resolvedImagePath })
+          .eq("id", taskRow.id)
+          .then(({ error }) => {
+            if (error) console.error("[send_delegation] image_path update failed:", error);
+            else console.log("[send_delegation] image_path updated task_id=", taskRow.id);
+          });
+      }
+
+      let attachmentCount: number | null = null;
+      if (resolvedFiles.length > 1 && resolvedImagePath) {
+        try {
+          attachmentCount = await saveTaskAttachments(taskRow.id, userId, resolvedFiles);
+        } catch (err) {
+          console.error("[send_delegation] saveTaskAttachments failed (non-fatal):", err);
+        }
+      }
+
+      console.log("[send_delegation] background_send_started task_id=", taskRow.id, "has_image=", !!resolvedImagePath);
+      sendWhatsAppTask({
+        to: person.phone,
+        messageText: created.messageText,
+        confirmationLink: created.confirmationUrl,
+        messageRecordId: created.message?.id ?? null,
+        taskId: taskRow.id,
+        recipientName: person.name,
+        ownerName: ownerName ?? null,
+        imagePath: resolvedImagePath,
+        attachmentCount,
+      }).catch((err) => {
+        console.error("[send_delegation] background_send_error task_id=", taskRow.id, err);
+      });
+    } catch (err) {
+      console.error("[send_delegation] background block failed task_id=", taskRow.id, err);
+    }
+  })();
 
   return {
     taskId: taskRow.id,
@@ -2737,6 +2759,22 @@ export default function ElevenLabsAgentWidget({
             useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
             return execSummary;
           }
+        }
+
+        // Guard: if rawInstruction is still a bare confirmation/rejection and
+        // there is no active plan to act on, return a graceful acknowledgement
+        // immediately. Do NOT fall through to executeDelegationFromText — feeding
+        // "Yes" or "No" as an instruction to Anthropic extraction returns empty
+        // results and propagates failure wording back to EL's speech pipeline,
+        // causing Carson to SAY failure even when the preceding delegation
+        // succeeded. This is the double-call pattern: user says "Yes." after the
+        // first tool call succeeds, EL fires execute_instruction("Yes") again,
+        // rawInstruction = "Yes", no plan exists → previously fell through here.
+        if (isConfirmation(rawInstruction) || isRejection(rawInstruction)) {
+          console.log("[execute_instruction] confirmation/rejection with no active plan — returning graceful ack");
+          return isRejection(rawInstruction)
+            ? "Understood. Let me know if there's anything else."
+            : "You're all set.";
         }
 
         // ── Operations Intelligence — outcome detection leg ────────────────
