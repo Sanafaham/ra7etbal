@@ -54,6 +54,7 @@ import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../li
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
 import {
   getSocialAcknowledgementReply,
+  isCarsonReengagementPrompt,
   isSocialAcknowledgement,
   sanitizeCarsonErrorDetail,
   sanitizeCarsonReplyText,
@@ -868,6 +869,32 @@ export default function ElevenLabsAgentWidget({
     toolStartedPerf: number;
     toolCompletedPerf: number | null;
   } | null>(null);
+  const mutedReengagementEventIdsRef = useRef<Set<number>>(new Set());
+  const agentResponsePartsByEventIdRef = useRef<Map<number, string>>(new Map());
+
+  const restoreCarsonOutputVolume = useCallback(() => {
+    const conv = conversationRef.current;
+    if (!conv) return;
+    try {
+      conv.setVolume({ volume: 1 });
+    } catch (err) {
+      console.warn("[carson-idle] failed to restore output volume", err);
+    }
+  }, []);
+
+  const muteCarsonReengagementTurn = useCallback((eventId: number | null, text: string) => {
+    if (eventId != null && mutedReengagementEventIdsRef.current.has(eventId)) return;
+    if (eventId != null) mutedReengagementEventIdsRef.current.add(eventId);
+    try {
+      conversationRef.current?.setVolume({ volume: 0 });
+      console.warn("[carson-idle] muted re-engagement prompt", {
+        eventId,
+        preview: text.slice(0, 80),
+      });
+    } catch (err) {
+      console.warn("[carson-idle] failed to mute re-engagement prompt", err);
+    }
+  }, []);
 
   /** Accumulates finalized transcript messages (both user and agent) for
    *  this session. Summarised by Haiku at disconnect for conversational memory. */
@@ -3346,6 +3373,8 @@ export default function ElevenLabsAgentWidget({
       activeExecuteLatencyRef.current = null;
       lastUserTranscriptTimingRef.current = null;
       recurringRawRef.current = null;
+      mutedReengagementEventIdsRef.current.clear();
+      agentResponsePartsByEventIdRef.current.clear();
 
       if (conv) {
         try {
@@ -3448,6 +3477,8 @@ export default function ElevenLabsAgentWidget({
     currentTaskContextRef.current = null;
     createdReminderKeysRef.current.clear();
     recurringRawRef.current = null;
+    mutedReengagementEventIdsRef.current.clear();
+    agentResponsePartsByEventIdRef.current.clear();
     setLastCarsonMessage(null);
     setLastUserTranscript(null);
     if (userTranscriptTimerRef.current) {
@@ -3747,7 +3778,24 @@ export default function ElevenLabsAgentWidget({
           } catch (err) {
             console.warn("[carson-audio] failed to update microphone mute state:", err);
           }
+          if (m === "listening") {
+            restoreCarsonOutputVolume();
+          }
           setMode(m === "speaking" ? "speaking" : "listening");
+        },
+        onAgentChatResponsePart: ({ text, event_id }) => {
+          if (ignoreStaleCallback("agent-chat-response-part")) return;
+          const eventId = event_id ?? null;
+          const accumulatedText =
+            eventId == null
+              ? text
+              : `${agentResponsePartsByEventIdRef.current.get(eventId) ?? ""}${text}`;
+          if (eventId != null) {
+            agentResponsePartsByEventIdRef.current.set(eventId, accumulatedText);
+          }
+          if (isCarsonReengagementPrompt(accumulatedText)) {
+            muteCarsonReengagementTurn(eventId, accumulatedText);
+          }
         },
         onMessage: ({ role, message, event_id }) => {
           if (ignoreStaleCallback("message")) return;
@@ -3766,6 +3814,14 @@ export default function ElevenLabsAgentWidget({
               timestamp: receivedAt,
               message,
             });
+            try {
+              conversationRef.current?.sendUserActivity();
+            } catch (err) {
+              console.warn("[carson-idle] failed to mark user activity", err);
+            }
+            mutedReengagementEventIdsRef.current.clear();
+            agentResponsePartsByEventIdRef.current.clear();
+            restoreCarsonOutputVolume();
             setLastUserTranscript(message);
             if (userTranscriptTimerRef.current) {
               clearTimeout(userTranscriptTimerRef.current);
@@ -3804,11 +3860,14 @@ export default function ElevenLabsAgentWidget({
             });
             if (!displayMessage || shouldSuppressCarsonIdlePrompt(message)) {
               sessionTranscriptRef.current.pop();
+              if (event_id != null) agentResponsePartsByEventIdRef.current.delete(event_id);
+              restoreCarsonOutputVolume();
               console.log("[carson-idle] suppressed idle prompt", {
                 eventId: event_id ?? null,
               });
               return;
             }
+            if (event_id != null) agentResponsePartsByEventIdRef.current.delete(event_id);
             if (displayMessage !== message) {
               sessionTranscriptRef.current[sessionTranscriptRef.current.length - 1] = {
                 role,
@@ -3852,6 +3911,8 @@ export default function ElevenLabsAgentWidget({
           startInFlightRef.current = false;
           clearCarsonSessionTimers();
           currentTaskContextRef.current = null;
+          mutedReengagementEventIdsRef.current.clear();
+          agentResponsePartsByEventIdRef.current.clear();
           setStatus("idle");
           setMode("listening");
           setSessionEndedMsg("Session ended.");
@@ -3879,6 +3940,8 @@ export default function ElevenLabsAgentWidget({
           startInFlightRef.current = false;
           clearCarsonSessionTimers();
           currentTaskContextRef.current = null;
+          mutedReengagementEventIdsRef.current.clear();
+          agentResponsePartsByEventIdRef.current.clear();
           setStatus("error");
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
@@ -3952,7 +4015,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot, restoreCarsonOutputVolume, muteCarsonReengagementTurn]);
 
   // ------------------------------------------------------------------
   // Session teardown

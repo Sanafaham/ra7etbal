@@ -505,6 +505,20 @@ describe("canonical path source adapters", () => {
     expect(widget.slice(startSessionIndex, startSessionIndex + 300)).not.toContain('connectionType: "websocket"');
   });
 
+  it("suppresses ElevenLabs re-engagement prompts before they reach active voice conversations", () => {
+    const widget = source("src/components/home/ElevenLabsAgentWidget.tsx");
+
+    expect(widget).toContain("onAgentChatResponsePart");
+    expect(widget).toContain("agentResponsePartsByEventIdRef");
+    expect(widget).toContain("accumulatedText");
+    expect(widget).toContain("isCarsonReengagementPrompt(accumulatedText)");
+    expect(widget).toContain("muteCarsonReengagementTurn(eventId, accumulatedText)");
+    expect(widget).toContain("conversationRef.current?.setVolume({ volume: 0 })");
+    expect(widget).toContain("conversationRef.current?.sendUserActivity()");
+    expect(widget).toContain("mutedReengagementEventIdsRef.current.clear()");
+    expect(widget).toContain("shouldSuppressCarsonIdlePrompt(message)");
+  });
+
   it("documents confirmation URL canonical param and legacy compatibility", () => {
     const confirm = source("src/routes/Confirm.tsx");
     const save = source("src/lib/save.ts");

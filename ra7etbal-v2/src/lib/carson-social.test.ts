@@ -5,6 +5,7 @@ import {
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
   sanitizeCarsonErrorDetail,
+  isCarsonReengagementPrompt,
   sanitizeCarsonReplyText,
   sanitizeSocialAcknowledgementReply,
   shouldSuppressCarsonIdlePrompt,
@@ -130,16 +131,45 @@ describe("Carson global reply text sanitation", () => {
     "One sec",
     "Just one moment.",
     "One moment. Still there?",
+  ])("detects filler-only prompts for suppression: '%s'", (text) => {
+    expect(shouldSuppressCarsonIdlePrompt(text)).toBe(true);
+  });
+
+  it.each([
     "Still there, سيدتي الجميلة?",
     "Are you there?",
     "Are you still there?",
+    "Just checking in.",
+    "I'm just checking in.",
+    "Checking to see if you're still there.",
+    "Can you hear me?",
+    "Are we still connected?",
   ])("detects idle nag prompts for suppression: '%s'", (text) => {
     expect(shouldSuppressCarsonIdlePrompt(text)).toBe(true);
+    expect(isCarsonReengagementPrompt(text)).toBe(true);
   });
 
   it("does not suppress useful replies after removing an idle sentence", () => {
     const text = "Grace has it. Are you there?";
     expect(sanitizeCarsonReplyText(text)).toBe("Grace has it");
+    expect(shouldSuppressCarsonIdlePrompt(text)).toBe(false);
+  });
+
+  it.each([
+    ["Grace has it. Just checking in.", "Grace has it"],
+    ["I'll handle it. Can you hear me?", "I'll handle it"],
+    ["You're clear right now. Are we still connected?", "You're clear right now"],
+  ])("removes re-engagement prompts from otherwise useful replies: '%s'", (input, expected) => {
+    expect(sanitizeCarsonReplyText(input)).toBe(expected);
+    expect(shouldSuppressCarsonIdlePrompt(input)).toBe(false);
+  });
+
+  it.each([
+    "You're waiting on Grace to confirm the flowers.",
+    "I'll check in with Christopher tomorrow.",
+    "Grace has it. I'll follow up if needed.",
+  ])("does not classify operational waiting/follow-up language as an idle nag: '%s'", (text) => {
+    expect(isCarsonReengagementPrompt(text)).toBe(false);
     expect(shouldSuppressCarsonIdlePrompt(text)).toBe(false);
   });
 });
