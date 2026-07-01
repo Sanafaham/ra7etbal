@@ -73,6 +73,7 @@ import {
   buildOperationalPlanFromOutcome,
   executeProposedPlan,
   rejectProposedPlan,
+  hasOperatingAuthority,
   isConfirmation,
   isRejection,
   isStatusQuestion,
@@ -1149,6 +1150,33 @@ export default function ElevenLabsAgentWidget({
 
       // 2. Resolve person
       const people = usePeopleStore.getState().items;
+      const latestUserMessageForOps = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((m) => m.role === "user")?.message?.trim();
+      if (
+        latestUserMessageForOps &&
+        detectHouseholdOutcome(latestUserMessageForOps) &&
+        hasOperatingAuthority(latestUserMessageForOps)
+      ) {
+        const plan = await buildOperationalPlanFromOutcome(latestUserMessageForOps, people);
+        if (plan) {
+          const execSummary = await executeProposedPlan(plan, {
+            displayName: displayName ?? null,
+            userId: authUserId,
+            people,
+          });
+          sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+          lastDirectToolSuccessRef.current = {
+            toolName: "send_delegation",
+            resultText: execSummary,
+            at: new Date().toISOString(),
+            inputSummary: { kind: "guest_operation_reroute", instruction: latestUserMessageForOps },
+          };
+          return execSummary;
+        }
+      }
+
       const matches = people.filter(
         (p) => p.name.trim().toLowerCase() === normalizedName.toLowerCase(),
       );
@@ -2829,6 +2857,16 @@ export default function ElevenLabsAgentWidget({
           pendingPlanRef.current = null;
           const plan = await buildOperationalPlanFromOutcome(rawInstruction, people);
           if (plan) {
+            if (hasOperatingAuthority(rawInstruction)) {
+              const execSummary = await executeProposedPlan(plan, {
+                displayName: displayName ?? null,
+                userId: authUserId,
+                people,
+              });
+              sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+              return execSummary;
+            }
             pendingPlanRef.current = plan;
             return plan.proposalSpeech;
           }

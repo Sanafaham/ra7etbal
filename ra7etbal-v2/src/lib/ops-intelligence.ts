@@ -67,6 +67,13 @@ export function detectHouseholdOutcome(text: string): HouseholdOutcomeType | nul
   return null;
 }
 
+const OPERATING_AUTHORITY_RE =
+  /\b(handle what you can|handle it|take care of it|run this|coordinate this|make sure everything is ready|make (?:tonight|today|tomorrow|this evening) run smoothly)\b/i;
+
+export function hasOperatingAuthority(text: string): boolean {
+  return OPERATING_AUTHORITY_RE.test(text.trim());
+}
+
 // ── Confirmation / rejection detection ────────────────────────────────────────
 
 const CONFIRMATION_RE =
@@ -193,6 +200,141 @@ interface PlanAIResponse {
   proposal_speech: string;
 }
 
+type GuestPrepDomain = "dinner" | "hospitality" | "coordination";
+
+interface GuestPrepOwner {
+  domain: GuestPrepDomain;
+  person: Person;
+}
+
+const DINNER_ROLE_RE = /\b(cook|chef|kitchen)\b/i;
+const DINNER_TOPIC_RE = /\b(dinner|menu|meal|food|cook|kitchen)\b/i;
+const HOSPITALITY_ROLE_RE = /\b(housekeeper|house\s*keeper|maid|cleaner|hospitality|host|decor|flower)\b/i;
+const HOSPITALITY_TOPIC_RE = /\b(flowers?|hospitality|guest\s*room|setup|table|decor|welcome|hosting)\b/i;
+const COORDINATION_ROLE_RE = /\b(coordinator|coordination|house\s*manager|household\s*manager|estate\s*manager|manager|assistant|\bpa\b|\bea\b)\b/i;
+const COORDINATION_TOPIC_RE = /\b(coordinate|follow\s*up|manage|supervise|oversee|check\s*in)\b/i;
+
+function personText(person: Person): string {
+  return [
+    person.role,
+    person.responsibilities,
+    person.notes,
+    person.delegation_guidance,
+    person.communication_style,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function findGuestPrepOwner(
+  people: Person[],
+  domain: GuestPrepDomain,
+  excluded = new Set<string>(),
+): GuestPrepOwner | null {
+  const candidates = people.filter((person) => !excluded.has(person.id));
+  const ranked = candidates
+    .map((person) => {
+      const text = personText(person);
+      let score = 0;
+
+      if (domain === "dinner") {
+        if (DINNER_ROLE_RE.test(person.role)) score += 6;
+        if (DINNER_TOPIC_RE.test(text)) score += 3;
+      } else if (domain === "hospitality") {
+        if (HOSPITALITY_ROLE_RE.test(person.role)) score += 6;
+        if (HOSPITALITY_TOPIC_RE.test(text)) score += 3;
+        if (DINNER_ROLE_RE.test(person.role)) score -= 4;
+      } else {
+        if (COORDINATION_ROLE_RE.test(person.role)) score += 6;
+        if (COORDINATION_TOPIC_RE.test(text)) score += 3;
+      }
+
+      return { person, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const best = ranked[0]?.person;
+  return best ? { domain, person: best } : null;
+}
+
+export function buildDeterministicGuestPreparationTasks(
+  people: Person[],
+): ProposedTask[] {
+  const used = new Set<string>();
+  const owners: GuestPrepOwner[] = [];
+
+  const dinner = findGuestPrepOwner(people, "dinner", used);
+  if (dinner) {
+    owners.push(dinner);
+    used.add(dinner.person.id);
+  }
+
+  const hospitality = findGuestPrepOwner(people, "hospitality", used);
+  if (hospitality) {
+    owners.push(hospitality);
+    used.add(hospitality.person.id);
+  }
+
+  const coordination = findGuestPrepOwner(people, "coordination", used);
+  if (coordination) owners.push(coordination);
+
+  if (new Set(owners.map((owner) => owner.person.id)).size < 2) return [];
+
+  const dinnerName = dinner?.person.name ?? "the dinner owner";
+  const hospitalityName = hospitality?.person.name ?? "the hospitality owner";
+
+  return owners.map(({ domain, person }) => {
+    if (domain === "dinner") {
+      return {
+        personId: person.id,
+        personName: person.name,
+        message: "Confirm menu and prepare dinner.",
+      };
+    }
+
+    if (domain === "hospitality") {
+      return {
+        personId: person.id,
+        personName: person.name,
+        message: "Prepare flowers and hospitality setup.",
+      };
+    }
+
+    return {
+      personId: person.id,
+      personName: person.name,
+      message: `Coordinate and follow up with ${dinnerName} and ${hospitalityName}.`,
+    };
+  });
+}
+
+export function normalizeGuestPreparationPlan(
+  plan: ProposedPlan,
+  people: Person[],
+): ProposedPlan {
+  if (plan.outcomeType !== "guest_arrival") return plan;
+
+  const deterministicTasks = buildDeterministicGuestPreparationTasks(people);
+  if (deterministicTasks.length < 2) return plan;
+
+  const names = deterministicTasks.map((task) => task.personName);
+  return {
+    ...plan,
+    tasks: deterministicTasks,
+    proposalSpeech:
+      names.length === 1
+        ? `I can handle this with ${names[0]}. Should I send it?`
+        : `I can split this between ${formatNameList(names)}. Should I send it?`,
+  };
+}
+
+function formatNameList(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
 /**
  * Calls Haiku to derive per-person task messages from People roles/notes.
  * Saves the plan to Supabase before returning so it survives disconnect.
@@ -271,13 +413,13 @@ Return ONLY valid JSON, no markdown:
 
   if (proposedTasks.length === 0) return null;
 
-  const plan: ProposedPlan = {
+  const plan = normalizeGuestPreparationPlan({
     outcomeType: "guest_arrival",
     tasks: proposedTasks,
     proposalSpeech: parsed.proposal_speech,
     sourceText: text,
     createdAt: Date.now(),
-  };
+  }, people);
 
   // Persist before returning — survives disconnect.
   const dbId = await persistPlan(plan).catch(() => null);
