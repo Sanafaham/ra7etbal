@@ -495,6 +495,25 @@ interface ExecutePlanOptions {
   people: Person[];
 }
 
+// Idempotency registry — a given plan executes at most once per session.
+// ElevenLabs can double-fire the confirmation tool call, and a plan can be
+// re-loaded from the DB after a reconnect; without this a single approval could
+// send the same WhatsApps twice. The key is claimed synchronously (before any
+// await) so a concurrent second call is rejected immediately, and it persists
+// even on send failure — we never auto-retry.
+const executedPlanKeys = new Set<string>();
+
+function planIdempotencyKey(plan: ProposedPlan): string {
+  if (plan.dbId) return `db:${plan.dbId}`;
+  const taskSignature = plan.tasks.map((t) => `${t.personId}:${t.message}`).join("|");
+  return `text:${plan.sourceText}::${taskSignature}`;
+}
+
+/** Test-only: clears the idempotency registry between cases. */
+export function resetExecutedPlanRegistryForTest(): void {
+  executedPlanKeys.clear();
+}
+
 /**
  * Executes the confirmed plan without any AI re-extraction.
  *
@@ -509,8 +528,21 @@ export async function executeProposedPlan(
 ): Promise<string> {
   const { displayName, userId, people } = opts;
 
+  // Idempotency — claim the plan synchronously before any await.
+  const idempotencyKey = planIdempotencyKey(plan);
+  if (executedPlanKeys.has(idempotencyKey)) {
+    return "I already sent that plan. I won't send it again.";
+  }
+  executedPlanKeys.add(idempotencyKey);
+
+  // Carson can never be a recipient at execution time either.
+  const deliverableTasks = plan.tasks.filter((task) => !isAssistantRecipientName(task.personName));
+  if (deliverableTasks.length === 0) {
+    return "There's no one to send this to. Tell me who should handle it.";
+  }
+
   // Build ExtractedItem[] directly — no AI needed; we already have all info.
-  const extractedItems: ExtractedItem[] = plan.tasks.map((task) => ({
+  const extractedItems: ExtractedItem[] = deliverableTasks.map((task) => ({
     id: crypto.randomUUID(),
     type: "delegation" as const,
     description: task.message,
@@ -609,7 +641,7 @@ export async function executeProposedPlan(
   }
 
   if (failedSends.length === 0) {
-    const names = sentNames.length > 0 ? sentNames.join(", ") : plan.tasks.map((t) => t.personName).join(", ");
+    const names = sentNames.length > 0 ? sentNames.join(", ") : deliverableTasks.map((t) => t.personName).join(", ");
     return `${names} have the plan. I'll watch for confirmations.`;
   }
 
@@ -629,4 +661,63 @@ export async function rejectProposedPlan(plan: ProposedPlan): Promise<string> {
     markPlanCancelled(plan.dbId).catch(() => {});
   }
   return "Okay, I'll hold off. Just say the word when you're ready.";
+}
+
+// ── Confirm-before-send resolution ───────────────────────────────────────────
+
+export type PendingPlanDecision = "confirm" | "reject" | "hold";
+
+/**
+ * Decides how a pending plan should be treated, from the user's reply.
+ *
+ * Accepts multiple candidate strings (e.g. the verbatim transcript AND the
+ * ElevenLabs instruction param) because EL routes a bare "Yes" inconsistently —
+ * sometimes only the transcript carries it, sometimes only the tool arg. A
+ * decision is reached if ANY source strictly reads as confirmation/rejection.
+ * Rejection wins over confirmation. Empty/noisy input holds the plan (never
+ * sends, never clears).
+ */
+export function resolvePendingPlanDecision(...replies: Array<string | null | undefined>): PendingPlanDecision {
+  const texts = replies.map((r) => (r ?? "").trim()).filter(Boolean);
+  if (texts.length === 0) return "hold";
+  if (texts.some((t) => isRejection(t))) return "reject";
+  if (texts.some((t) => isConfirmation(t))) return "confirm";
+  return "hold";
+}
+
+export interface PendingPlanTurnResult {
+  action: "executed" | "cancelled" | "held";
+  summary: string | null;
+  clearPlan: boolean;
+}
+
+/**
+ * End-to-end handler for a turn taken while a plan awaits approval.
+ * - Expired plan → held, caller clears its cache.
+ * - Rejection → cancel, clear.
+ * - Confirmation → execute the EXACT stored plan (idempotent), clear.
+ * - Anything else → held, plan preserved.
+ */
+export async function handlePendingPlanTurn(
+  replies: Array<string | null | undefined>,
+  plan: ProposedPlan,
+  opts: ExecutePlanOptions,
+): Promise<PendingPlanTurnResult> {
+  if (isPlanExpired(plan)) {
+    return { action: "held", summary: null, clearPlan: true };
+  }
+
+  const decision = resolvePendingPlanDecision(...replies);
+
+  if (decision === "reject") {
+    const summary = await rejectProposedPlan(plan);
+    return { action: "cancelled", summary, clearPlan: true };
+  }
+
+  if (decision === "confirm") {
+    const summary = await executeProposedPlan(plan, opts);
+    return { action: "executed", summary, clearPlan: true };
+  }
+
+  return { action: "held", summary: null, clearPlan: false };
 }

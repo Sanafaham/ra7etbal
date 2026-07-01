@@ -23,15 +23,19 @@ vi.mock("./delegation-message", () => ({
 const {
   buildDeterministicGuestPreparationTasks,
   executeProposedPlan,
+  handlePendingPlanTurn,
   hasOperatingAuthority,
   isConfirmation,
   isRejection,
   isStatusQuestion,
   normalizeGuestPreparationPlan,
+  resetExecutedPlanRegistryForTest,
+  resolvePendingPlanDecision,
 } = await import("./ops-intelligence");
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetExecutedPlanRegistryForTest();
 });
 
 describe("isConfirmation", () => {
@@ -352,6 +356,118 @@ describe("guest event planning — safety rules", () => {
       expect(bundlesEverything).toBe(false);
     }
     expect(new Set(tasks.map((t) => t.personName)).size).toBe(tasks.length);
+  });
+});
+
+// ── Confirm-before-send: propose → verbatim "Yes" → execute once ─────────────
+describe("guest plan confirm-before-send", () => {
+  function stubSavePending() {
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item, i) => ({
+        id: `task-${i + 1}`,
+        type: "delegation",
+        assigned_to: item.assignedTo,
+        description: item.description,
+      })),
+      messages: items.map((item, i) => ({
+        id: `message-${i + 1}`,
+        task_id: `task-${i + 1}`,
+        recipient: item.assignedTo,
+        content: item.suggestedMessage ?? item.description,
+        confirmation_url: `https://ra7etbal.test/confirm?task=task-${i + 1}`,
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+  }
+
+  function storedPlan() {
+    // The plan Carson proposes and stores when it asks "Should I send it?"
+    return normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: "I have guests tomorrow for afternoon tea. Handle what you can.",
+      createdAt: Date.now(),
+      proposalSpeech: "I can split this between the team. Should I send it?",
+      tasks: [
+        { personId: "christopher", personName: "Christopher", message: "Handle everything." },
+      ],
+    }, guestTeam());
+  }
+
+  it("resolves a verbatim confirmation to confirm, even if a later source is noisy", () => {
+    expect(resolvePendingPlanDecision("Yes.")).toBe("confirm");
+    expect(resolvePendingPlanDecision("go ahead")).toBe("confirm");
+    // Robust to EL routing: confirm if EITHER source is a confirmation.
+    expect(resolvePendingPlanDecision("send the messages to everyone", "yes")).toBe("confirm");
+    expect(resolvePendingPlanDecision("no", "yes")).toBe("reject"); // rejection wins
+    expect(resolvePendingPlanDecision("cancel")).toBe("reject");
+  });
+
+  it("holds (never sends) on an empty or noisy reply", () => {
+    expect(resolvePendingPlanDecision("")).toBe("hold");
+    expect(resolvePendingPlanDecision("um what were we saying")).toBe("hold");
+  });
+
+  it("executes the exact stored plan on 'Yes' and sends every recipient once", async () => {
+    stubSavePending();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = storedPlan();
+    const turn = await handlePendingPlanTurn(["Yes."], plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    expect(turn.action).toBe("executed");
+    expect(turn.clearPlan).toBe(true);
+    const saved = mocks.savePending.mock.calls[0][0] as ExtractedItem[];
+    expect(saved.map((i) => i.assignedTo)).toEqual(["Christopher", "Nasira", "Grace"]);
+    expect(mocks.deliverTaskMessage.mock.calls.map(([p]) => p.recipientName)).toEqual([
+      "Christopher",
+      "Nasira",
+      "Grace",
+    ]);
+  });
+
+  it("does not send when the reply is held", async () => {
+    const turn = await handlePendingPlanTurn(["um, hang on"], storedPlan(), {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+    expect(turn.action).toBe("held");
+    expect(turn.clearPlan).toBe(false);
+    expect(mocks.savePending).not.toHaveBeenCalled();
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+  });
+
+  it("cancels on a verbatim rejection without sending", async () => {
+    const turn = await handlePendingPlanTurn(["no"], storedPlan(), {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+    expect(turn.action).toBe("cancelled");
+    expect(turn.clearPlan).toBe(true);
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+  });
+
+  it("is idempotent: a duplicate 'Yes' for the same plan sends nothing more", async () => {
+    stubSavePending();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+    const plan = storedPlan();
+    plan.dbId = "plan-db-1";
+
+    await handlePendingPlanTurn(["Yes."], plan, { displayName: "Sana", userId: "user-1", people: guestTeam() });
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
+
+    const again = await handlePendingPlanTurn(["Yes."], plan, { displayName: "Sana", userId: "user-1", people: guestTeam() });
+    expect(again.summary).toMatch(/already sent/i);
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
+    expect(mocks.savePending).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -71,13 +71,12 @@ import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderR
 import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
-  executeProposedPlan,
-  rejectProposedPlan,
   hasOperatingAuthority,
   isConfirmation,
   isRejection,
   isStatusQuestion,
-  isPlanExpired,
+  resolvePendingPlanDecision,
+  handlePendingPlanTurn,
   loadLatestPendingPlan,
   type ProposedPlan,
 } from "../../lib/ops-intelligence";
@@ -1160,20 +1159,16 @@ export default function ElevenLabsAgentWidget({
       ) {
         const plan = await buildOperationalPlanFromOutcome(latestUserMessageForOps, people);
         if (plan) {
-          const execSummary = await executeProposedPlan(plan, {
-            displayName: displayName ?? null,
-            userId: authUserId,
-            people,
-          });
-          sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
-          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+          // Confirm-before-send: store the plan and ask for approval. Nothing
+          // is sent until the user says "Yes" (handled in the confirmation leg).
+          pendingPlanRef.current = plan;
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
-            resultText: execSummary,
+            resultText: plan.proposalSpeech,
             at: new Date().toISOString(),
             inputSummary: { kind: "guest_operation_reroute", instruction: latestUserMessageForOps },
           };
-          return execSummary;
+          return plan.proposalSpeech;
         }
       }
 
@@ -2790,10 +2785,12 @@ export default function ElevenLabsAgentWidget({
         }
 
         // ── Operations Intelligence — confirmation / rejection leg ─────────
-        // Resolve the active pending plan: prefer the local ref (fast), fall
-        // back to the DB (survives a disconnect/reconnect between turns).
+        // Decide from the verbatim reply sources (transcript + tool arg), never
+        // a re-derived instruction, so EL's rephrasing of a bare "Yes" cannot
+        // silently abandon a stored plan. Empty/noisy input holds the plan.
+        const pendingDecision = resolvePendingPlanDecision(lastUserMessage, instruction ?? null);
         let activePlan = pendingPlanRef.current;
-        if (!activePlan && (isConfirmation(rawInstruction) || isRejection(rawInstruction))) {
+        if (!activePlan && pendingDecision !== "hold") {
           const startedAt = performance.now();
           try {
             activePlan = await loadLatestPendingPlan().catch(() => null);
@@ -2811,62 +2808,46 @@ export default function ElevenLabsAgentWidget({
         }
 
         if (activePlan) {
-          if (isPlanExpired(activePlan)) {
-            // Plan is older than 5 minutes — discard silently.
-            pendingPlanRef.current = null;
-          } else if (isRejection(rawInstruction)) {
-            const cancelMsg = await rejectProposedPlan(activePlan);
-            pendingPlanRef.current = null;
-            return cancelMsg;
-          } else if (isConfirmation(rawInstruction)) {
-            const plan = activePlan;
-            pendingPlanRef.current = null;
-            const execSummary = await executeProposedPlan(plan, {
-              displayName: displayName ?? null,
-              userId: authUserId,
-              people,
-            });
-            sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+          const turn = await handlePendingPlanTurn([lastUserMessage, instruction ?? null], activePlan, {
+            displayName: displayName ?? null,
+            userId: authUserId,
+            people,
+          });
+          if (turn.clearPlan) pendingPlanRef.current = null;
+
+          if (turn.action === "executed") {
+            sessionActionsRef.current.push(`Ops plan executed: ${activePlan.sourceText}`);
             useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-            return execSummary;
+            return turn.summary ?? "";
           }
+          if (turn.action === "cancelled") {
+            return turn.summary ?? "";
+          }
+          // held: plan preserved for a later turn (or discarded on expiry).
+          // Fall through to normal handling below.
         }
 
-        // Guard: if rawInstruction is still a bare confirmation/rejection and
-        // there is no active plan to act on, return a graceful acknowledgement
-        // immediately. Do NOT fall through to executeDelegationFromText — feeding
-        // "Yes" or "No" as an instruction to Anthropic extraction returns empty
-        // results and propagates failure wording back to EL's speech pipeline,
-        // causing Carson to SAY failure even when the preceding delegation
-        // succeeded. This is the double-call pattern: user says "Yes." after the
-        // first tool call succeeds, EL fires execute_instruction("Yes") again,
-        // rawInstruction = "Yes", no plan exists → previously fell through here.
-        if (isConfirmation(rawInstruction) || isRejection(rawInstruction)) {
+        // Guard: a confirmation/rejection with no active plan returns a graceful
+        // acknowledgement. Do NOT fall through to executeDelegationFromText —
+        // feeding "Yes"/"No" to extraction returns empty results and propagates
+        // failure wording back to EL's speech even when a prior delegation
+        // succeeded (the double-call pattern).
+        if (pendingDecision !== "hold") {
           console.log("[execute_instruction] confirmation/rejection with no active plan — returning graceful ack");
-          return isRejection(rawInstruction)
+          return pendingDecision === "reject"
             ? "Understood. Let me know if there's anything else."
             : "You're all set.";
         }
 
         // ── Operations Intelligence — outcome detection leg ────────────────
-        // If the instruction describes a household outcome (guests arriving,
-        // etc.), propose a plan and store it — do NOT execute yet.
+        // Confirm-before-send: build the plan, store it, and ask for approval.
+        // Never auto-send — even with operating authority. Execution runs only
+        // through the confirmation leg above, which is idempotent.
         const outcomeType = detectHouseholdOutcome(rawInstruction);
         if (outcomeType) {
-          // Clear any stale pending plan before building a new one.
           pendingPlanRef.current = null;
           const plan = await buildOperationalPlanFromOutcome(rawInstruction, people);
           if (plan) {
-            if (hasOperatingAuthority(rawInstruction)) {
-              const execSummary = await executeProposedPlan(plan, {
-                displayName: displayName ?? null,
-                userId: authUserId,
-                people,
-              });
-              sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
-              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-              return execSummary;
-            }
             pendingPlanRef.current = plan;
             return plan.proposalSpeech;
           }
