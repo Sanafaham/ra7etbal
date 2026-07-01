@@ -200,7 +200,7 @@ interface PlanAIResponse {
   proposal_speech: string;
 }
 
-type GuestPrepDomain = "dinner" | "hospitality" | "coordination";
+type GuestPrepDomain = "dinner" | "hospitality" | "coordination" | "transport";
 
 interface GuestPrepOwner {
   domain: GuestPrepDomain;
@@ -213,6 +213,8 @@ const HOSPITALITY_ROLE_RE = /\b(housekeeper|house\s*keeper|maid|cleaner|hospital
 const HOSPITALITY_TOPIC_RE = /\b(flowers?|hospitality|guest\s*room|setup|table|decor|welcome|hosting)\b/i;
 const COORDINATION_ROLE_RE = /\b(coordinator|coordination|house\s*manager|household\s*manager|estate\s*manager|manager|assistant|\bpa\b|\bea\b)\b/i;
 const COORDINATION_TOPIC_RE = /\b(coordinate|follow\s*up|manage|supervise|oversee|check\s*in)\b/i;
+const TRANSPORT_ROLE_RE = /\b(driver|chauffeur)\b/i;
+const TRANSPORT_TOPIC_RE = /\b(transport|car|drive|driving|pick\s*up|drop\s*off|airport|errands?)\b/i;
 
 function personText(person: Person): string {
   return [
@@ -244,9 +246,14 @@ function findGuestPrepOwner(
         if (HOSPITALITY_ROLE_RE.test(person.role)) score += 6;
         if (HOSPITALITY_TOPIC_RE.test(text)) score += 3;
         if (DINNER_ROLE_RE.test(person.role)) score -= 4;
+        if (TRANSPORT_ROLE_RE.test(person.role)) score -= 4;
+      } else if (domain === "transport") {
+        if (TRANSPORT_ROLE_RE.test(person.role)) score += 6;
+        if (TRANSPORT_TOPIC_RE.test(text)) score += 3;
       } else {
         if (COORDINATION_ROLE_RE.test(person.role)) score += 6;
         if (COORDINATION_TOPIC_RE.test(text)) score += 3;
+        if (TRANSPORT_ROLE_RE.test(person.role)) score -= 4;
       }
 
       return { person, score };
@@ -302,7 +309,17 @@ export function buildDeterministicGuestPreparationTasks(
   }
 
   const coordination = findGuestPrepOwner(people, "coordination", used);
-  if (coordination) owners.push(coordination);
+  if (coordination) {
+    owners.push(coordination);
+    used.add(coordination.person.id);
+  }
+
+  // Transport standby — a driver/chauffeur stands by in case guests need a
+  // ride. Included last so it never displaces a core prep owner. Do NOT drop
+  // this: the deterministic normalizer replaces AI-proposed tasks wholesale,
+  // so omitting transport here would silently remove a valid standby role.
+  const transport = findGuestPrepOwner(people, "transport", used);
+  if (transport) owners.push(transport);
 
   if (new Set(owners.map((owner) => owner.person.id)).size < 2) return [];
 
@@ -326,6 +343,14 @@ export function buildDeterministicGuestPreparationTasks(
         personId: person.id,
         personName: person.name,
         message: withContext("Please prepare the flowers and hospitality setup."),
+      };
+    }
+
+    if (domain === "transport") {
+      return {
+        personId: person.id,
+        personName: person.name,
+        message: withContext("Please stand by for transport in case the guests need a ride."),
       };
     }
 
@@ -600,4 +625,72 @@ export async function rejectProposedPlan(plan: ProposedPlan): Promise<string> {
     markPlanCancelled(plan.dbId).catch(() => {});
   }
   return "Okay, I'll hold off. Just say the word when you're ready.";
+}
+
+// ── Pending-plan approval resolution ─────────────────────────────────────────
+
+export type PendingPlanDecision = "confirm" | "reject" | "hold";
+
+/**
+ * Decides how a pending, awaiting-approval plan should be treated, based on the
+ * user's VERBATIM reply.
+ *
+ * Root cause of the P0 "Yes doesn't send" failure: the approval leg used to key
+ * off the ElevenLabs-rephrased instruction param. EL frequently rewrites a bare
+ * "Yes" into a fuller sentence ("please send them to everyone"), which fails a
+ * strict confirmation match — so the stored plan was silently abandoned and the
+ * turn fell through to extraction, which failed. Deciding from the verbatim
+ * transcript makes approval robust to that rephrasing.
+ *
+ * Empty or noisy replies return "hold" so the pending plan is preserved — never
+ * cleared and never executed on ambiguous input.
+ */
+export function resolvePendingPlanDecision(
+  verbatimReply: string | null | undefined,
+): PendingPlanDecision {
+  const text = (verbatimReply ?? "").trim();
+  if (!text) return "hold";
+  if (isRejection(text)) return "reject";
+  if (isConfirmation(text)) return "confirm";
+  return "hold";
+}
+
+export interface PendingPlanTurnResult {
+  action: "executed" | "cancelled" | "held";
+  /** Spoken summary to return to the caller — null when the turn is held. */
+  summary: string | null;
+  /** True when the caller should clear its cached pending plan. */
+  clearPlan: boolean;
+}
+
+/**
+ * End-to-end handler for a turn taken while a plan is awaiting approval.
+ *
+ * - Expired plan → held, and the caller clears its cache.
+ * - Verbatim rejection → cancel the plan, clear the cache.
+ * - Verbatim confirmation → execute the EXACT stored plan (all sends), clear.
+ * - Anything else (empty/noisy) → held, plan preserved for a later turn.
+ */
+export async function handlePendingPlanTurn(
+  verbatimReply: string | null | undefined,
+  plan: ProposedPlan,
+  opts: ExecutePlanOptions,
+): Promise<PendingPlanTurnResult> {
+  if (isPlanExpired(plan)) {
+    return { action: "held", summary: null, clearPlan: true };
+  }
+
+  const decision = resolvePendingPlanDecision(verbatimReply);
+
+  if (decision === "reject") {
+    const summary = await rejectProposedPlan(plan);
+    return { action: "cancelled", summary, clearPlan: true };
+  }
+
+  if (decision === "confirm") {
+    const summary = await executeProposedPlan(plan, opts);
+    return { action: "executed", summary, clearPlan: true };
+  }
+
+  return { action: "held", summary: null, clearPlan: false };
 }

@@ -23,11 +23,13 @@ vi.mock("./delegation-message", () => ({
 const {
   buildDeterministicGuestPreparationTasks,
   executeProposedPlan,
+  handlePendingPlanTurn,
   hasOperatingAuthority,
   isConfirmation,
   isRejection,
   isStatusQuestion,
   normalizeGuestPreparationPlan,
+  resolvePendingPlanDecision,
 } = await import("./ops-intelligence");
 
 beforeEach(() => {
@@ -322,6 +324,187 @@ describe("guest preparation operational planning", () => {
   });
 });
 
+// Mirrors the savePending shape used above — every saved item becomes a task +
+// message row with a confirmation URL, so executeProposedPlan can send each one.
+function stubSavePendingWithSeparateRowsAndLinks() {
+  mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+    tasks: items.map((item, index) => ({
+      id: `task-${index + 1}`,
+      type: "delegation",
+      assigned_to: item.assignedTo,
+      description: item.description,
+    })),
+    messages: items.map((item, index) => ({
+      id: `message-${index + 1}`,
+      task_id: `task-${index + 1}`,
+      recipient: item.assignedTo,
+      content: item.suggestedMessage ?? item.description,
+      confirmation_url: `https://ra7etbal.test/confirm?task=task-${index + 1}`,
+    })) as Message[],
+    todos: [],
+    notesSaved: 0,
+    skipped: 0,
+    imagePathsByTaskId: new Map(),
+  }));
+}
+
+describe("P0 — pending plan approval execution", () => {
+  const SOURCE = "I have guests coming tomorrow for afternoon tea. Handle what you can.";
+
+  function storedPlan(team = guestTeam()) {
+    // The plan Carson stores when it asks "Shall I send it?" — the deterministic
+    // normalizer expands the collapsed proposal into per-owner tasks.
+    return normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: SOURCE,
+      createdAt: Date.now(),
+      proposalSpeech: "I can split this between the team. Shall I send it?",
+      tasks: [
+        {
+          personId: "christopher",
+          personName: "Christopher",
+          message: "Handle everything for the afternoon tea.",
+        },
+      ],
+    }, team);
+  }
+
+  // Safety net 1 — a stored plan awaiting approval carries every owner as its
+  // own task, so nothing is lost between "Shall I send it?" and "Yes".
+  it("stores a complete multi-owner plan when Carson proposes it", () => {
+    const plan = storedPlan();
+    expect(plan.tasks.map((t) => t.personName)).toEqual(["Christopher", "Nasira", "Grace"]);
+    expect(plan.proposalSpeech).toMatch(/send it\?/i);
+  });
+
+  // Safety net 2 — a verbatim "Yes" resolves to confirm and executes the EXACT
+  // stored plan, even though the LLM would have rephrased the tool instruction.
+  it("resolves a verbatim 'Yes' to confirm regardless of any LLM rephrase", () => {
+    expect(resolvePendingPlanDecision("Yes.")).toBe("confirm");
+    expect(resolvePendingPlanDecision("yes")).toBe("confirm");
+    expect(resolvePendingPlanDecision("go ahead")).toBe("confirm");
+    expect(resolvePendingPlanDecision("send it")).toBe("confirm");
+    expect(resolvePendingPlanDecision("no")).toBe("reject");
+    expect(resolvePendingPlanDecision("cancel")).toBe("reject");
+  });
+
+  // Safety nets 2 + 3 — "Yes" sends every planned WhatsApp and clears the plan.
+  it("executes the exact stored plan and sends all WhatsApps on 'Yes'", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = storedPlan();
+    const turn = await handlePendingPlanTurn("Yes.", plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    expect(turn.action).toBe("executed");
+    expect(turn.clearPlan).toBe(true);
+
+    const savedItems = mocks.savePending.mock.calls[0][0] as ExtractedItem[];
+    expect(savedItems.map((item) => item.assignedTo)).toEqual([
+      "Christopher",
+      "Nasira",
+      "Grace",
+    ]);
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
+    expect(mocks.deliverTaskMessage.mock.calls.map(([p]) => p.recipientName)).toEqual([
+      "Christopher",
+      "Nasira",
+      "Grace",
+    ]);
+    expect(turn.summary).toBe("Christopher, Nasira, Grace have the plan. I'll watch for confirmations.");
+  });
+
+  // Safety net 4 — partial send failure reports exactly who failed and who
+  // succeeded, routed through the approval handler end to end.
+  it("reports exactly who failed and who succeeded on partial send failure", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" })
+      .mockResolvedValueOnce({ success: false, channel: "whatsapp", error: "Meta rejected the message" })
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" });
+
+    const plan = storedPlan();
+    const turn = await handlePendingPlanTurn("go ahead", plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    expect(turn.action).toBe("executed");
+    expect(turn.summary).toContain("Christopher, Grace have the plan");
+    expect(turn.summary).toContain("Nasira was NOT messaged — Meta rejected the message");
+  });
+
+  // Safety net 6 — an empty or noisy transcript holds the plan: it is neither
+  // executed nor cleared, so the user can still confirm on the next turn.
+  it("holds (never clears or sends) the plan on an empty or noisy transcript", async () => {
+    expect(resolvePendingPlanDecision("")).toBe("hold");
+    expect(resolvePendingPlanDecision("   ")).toBe("hold");
+    expect(resolvePendingPlanDecision(null)).toBe("hold");
+    expect(resolvePendingPlanDecision("um, what were we talking about")).toBe("hold");
+
+    const plan = storedPlan();
+    const turn = await handlePendingPlanTurn("um, hang on", plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    expect(turn.action).toBe("held");
+    expect(turn.clearPlan).toBe(false);
+    expect(turn.summary).toBeNull();
+    expect(mocks.savePending).not.toHaveBeenCalled();
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+  });
+
+  // Safety net 7 — Ghulam's transport standby survives normalization and is
+  // sent alongside the core prep owners when the household has a driver.
+  it("keeps Ghulam's transport standby in the guest plan and sends it", async () => {
+    const tasks = buildDeterministicGuestPreparationTasks(guestTeamWithDriver(), SOURCE);
+    const ghulam = tasks.find((t) => t.personName === "Ghulam");
+    expect(ghulam).toBeDefined();
+    expect(ghulam?.message).toContain("stand by for transport");
+    // Christopher/Nasira/Grace must not be turned into transport standby.
+    expect(tasks.find((t) => t.personName === "Christopher")?.message).not.toMatch(/stand by for transport/i);
+
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = storedPlan(guestTeamWithDriver());
+    expect(plan.tasks.map((t) => t.personName)).toContain("Ghulam");
+
+    const turn = await handlePendingPlanTurn("Yes.", plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeamWithDriver(),
+    });
+
+    expect(turn.action).toBe("executed");
+    expect(mocks.deliverTaskMessage.mock.calls.map(([p]) => p.recipientName)).toContain("Ghulam");
+  });
+
+  // A stale plan (older than the 5-minute window) is discarded on approval
+  // rather than executed — the caller clears its cache and speaks nothing here.
+  it("holds and clears an expired plan instead of executing it", async () => {
+    const plan = storedPlan();
+    plan.createdAt = Date.now() - 6 * 60 * 1000;
+
+    const turn = await handlePendingPlanTurn("Yes.", plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    expect(turn.action).toBe("held");
+    expect(turn.clearPlan).toBe(true);
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+  });
+});
+
 function guestTeam(): Person[] {
   return [
     person({
@@ -341,6 +524,18 @@ function guestTeam(): Person[] {
       name: "Grace",
       role: "House Manager",
       responsibilities: "Coordinate staff and follow up on household tasks.",
+    }),
+  ];
+}
+
+function guestTeamWithDriver(): Person[] {
+  return [
+    ...guestTeam(),
+    person({
+      id: "ghulam",
+      name: "Ghulam",
+      role: "Driver",
+      responsibilities: "Transport, car, airport pickups, and errands.",
     }),
   ];
 }

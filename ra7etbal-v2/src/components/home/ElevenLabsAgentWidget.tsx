@@ -73,12 +73,12 @@ import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
   executeProposedPlan,
-  rejectProposedPlan,
   hasOperatingAuthority,
   isConfirmation,
   isRejection,
   isStatusQuestion,
-  isPlanExpired,
+  resolvePendingPlanDecision,
+  handlePendingPlanTurn,
   loadLatestPendingPlan,
   type ProposedPlan,
 } from "../../lib/ops-intelligence";
@@ -2817,10 +2817,16 @@ export default function ElevenLabsAgentWidget({
         }
 
         // ── Operations Intelligence — confirmation / rejection leg ─────────
-        // Resolve the active pending plan: prefer the local ref (fast), fall
-        // back to the DB (survives a disconnect/reconnect between turns).
+        // Decide from the VERBATIM user transcript (lastUserMessage), never the
+        // LLM-rephrased instruction param. EL rewrites a bare "Yes" into a
+        // fuller sentence ("please send them to everyone") that fails a strict
+        // confirmation match — the P0 that left approved guest plans unsent.
+        // resolvePendingPlanDecision keys off the raw transcript so approval is
+        // robust to that rephrasing; empty/noisy replies resolve to "hold",
+        // which preserves the pending plan instead of clearing or executing it.
+        const pendingDecision = resolvePendingPlanDecision(lastUserMessage);
         let activePlan = pendingPlanRef.current;
-        if (!activePlan && (isConfirmation(rawInstruction) || isRejection(rawInstruction))) {
+        if (!activePlan && pendingDecision !== "hold") {
           const startedAt = performance.now();
           try {
             activePlan = await loadLatestPendingPlan().catch(() => null);
@@ -2838,25 +2844,24 @@ export default function ElevenLabsAgentWidget({
         }
 
         if (activePlan) {
-          if (isPlanExpired(activePlan)) {
-            // Plan is older than 5 minutes — discard silently.
-            pendingPlanRef.current = null;
-          } else if (isRejection(rawInstruction)) {
-            const cancelMsg = await rejectProposedPlan(activePlan);
-            pendingPlanRef.current = null;
-            return cancelMsg;
-          } else if (isConfirmation(rawInstruction)) {
-            const plan = activePlan;
-            pendingPlanRef.current = null;
-            const execSummary = await executeProposedPlan(plan, {
-              displayName: displayName ?? null,
-              userId: authUserId,
-              people,
-            });
-            sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+          const turn = await handlePendingPlanTurn(lastUserMessage, activePlan, {
+            displayName: displayName ?? null,
+            userId: authUserId,
+            people,
+          });
+          if (turn.clearPlan) pendingPlanRef.current = null;
+
+          if (turn.action === "executed") {
+            sessionActionsRef.current.push(`Ops plan executed: ${activePlan.sourceText}`);
             useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-            return execSummary;
+            return turn.summary ?? "";
           }
+          if (turn.action === "cancelled") {
+            return turn.summary ?? "";
+          }
+          // held: the plan is preserved for a later turn (or was silently
+          // discarded on expiry). Fall through to normal handling below — a
+          // noisy transcript must not swallow an unrelated real instruction.
         }
 
         // Guard: if rawInstruction is still a bare confirmation/rejection and

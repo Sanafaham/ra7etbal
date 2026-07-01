@@ -144,6 +144,9 @@ describe("Carson global reply text sanitation", () => {
     "Checking to see if you're still there.",
     "Can you hear me?",
     "Are we still connected?",
+    "Still with me?",
+    "Are you still with me?",
+    "Are you with me?",
   ])("detects idle nag prompts for suppression: '%s'", (text) => {
     expect(shouldSuppressCarsonIdlePrompt(text)).toBe(true);
     expect(isCarsonReengagementPrompt(text)).toBe(true);
@@ -159,6 +162,7 @@ describe("Carson global reply text sanitation", () => {
     ["Grace has it. Just checking in.", "Grace has it"],
     ["I'll handle it. Can you hear me?", "I'll handle it"],
     ["You're clear right now. Are we still connected?", "You're clear right now"],
+    ["Christopher, Nasira, Grace have the plan. Still with me?", "Christopher, Nasira, Grace have the plan"],
   ])("removes re-engagement prompts from otherwise useful replies: '%s'", (input, expected) => {
     expect(sanitizeCarsonReplyText(input)).toBe(expected);
     expect(shouldSuppressCarsonIdlePrompt(input)).toBe(false);

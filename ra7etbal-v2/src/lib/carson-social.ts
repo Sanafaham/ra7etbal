@@ -11,10 +11,10 @@ const CARSON_REASONING_PREFIX_PATTERN =
   /^(?:based on (?:your request|the attached (?:photo|image)|the information i have)[\s.,!?;:—-]*|according to (?:your )?(?:ra7etbal|rahet bal)? ?(?:data|context|information)?[\s.,!?;:—-]*|it (?:appears|seems)(?: that)?[\s.,!?;:—-]*|the attached (?:photo|image) (?:shows|is|was)[\s.,!?;:—-]*|the task delegated[\s.,!?;:—-]*)+/i;
 
 const CARSON_REENGAGEMENT_PHRASE_PATTERN =
-  /\b(?:are you (?:still )?there|still there|just checking(?: in)?|checking in|checking (?:to see )?if you(?:'|’)re (?:still )?there|checking (?:to see )?if you are (?:still )?there|i(?:'|’)m just checking(?: in)?|wanted to check (?:if|whether) you(?:'|’)re (?:still )?there|wanted to check (?:if|whether) you are (?:still )?there|can you hear me|are we still connected)\b/i;
+  /\b(?:are you (?:still )?there|still there|are you (?:still )?with me|still with me|just checking(?: in)?|checking in|checking (?:to see )?if you(?:'|’)re (?:still )?there|checking (?:to see )?if you are (?:still )?there|i(?:'|’)m just checking(?: in)?|wanted to check (?:if|whether) you(?:'|’)re (?:still )?there|wanted to check (?:if|whether) you are (?:still )?there|can you hear me|are we still connected)\b/i;
 
 const CARSON_IDLE_SENTENCE_PATTERN =
-  /(?:^|[.?!]\s*)\b(?:are you (?:still )?there|still there|just checking(?: in)?|checking in|checking (?:to see )?if you(?:'|’)re (?:still )?there|checking (?:to see )?if you are (?:still )?there|i(?:'|’)m just checking(?: in)?|wanted to check (?:if|whether) you(?:'|’)re (?:still )?there|wanted to check (?:if|whether) you are (?:still )?there|can you hear me|are we still connected)\b[^.?!]*(?:[.?!]|$)/gi;
+  /(?:^|[.?!]\s*)\b(?:are you (?:still )?there|still there|are you (?:still )?with me|still with me|just checking(?: in)?|checking in|checking (?:to see )?if you(?:'|’)re (?:still )?there|checking (?:to see )?if you are (?:still )?there|i(?:'|’)m just checking(?: in)?|wanted to check (?:if|whether) you(?:'|’)re (?:still )?there|wanted to check (?:if|whether) you are (?:still )?there|can you hear me|are we still connected)\b[^.?!]*(?:[.?!]|$)/gi;
 
 const CARSON_INTERNAL_SENTENCE_PATTERN =
   /\b(?:photo context was available for this action|do not mention it unless the user asks|(?:analysis|extraction|attachment|prompt|processing|context|transcript|tools|database) (?:was|were|is|are|has|have|will|can|should|available|complete|completed)[^.?!]*(?:[.?!]|$))/gi;
