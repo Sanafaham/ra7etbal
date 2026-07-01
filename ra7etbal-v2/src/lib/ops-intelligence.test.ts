@@ -114,15 +114,15 @@ describe("guest preparation operational planning", () => {
     expect(tasks).toEqual([
       expect.objectContaining({
         personName: "Christopher",
-        message: "Confirm menu and prepare dinner.",
+        message: "Please prepare the food and tea.",
       }),
       expect.objectContaining({
         personName: "Nasira",
-        message: "Prepare flowers and hospitality setup.",
+        message: "Please handle the hospitality setup and table presentation.",
       }),
       expect.objectContaining({
         personName: "Grace",
-        message: "Coordinate and follow up with Christopher and Nasira.",
+        message: "Please coordinate with Christopher and Nasira and follow up that everything is ready.",
       }),
     ]);
   });
@@ -148,9 +148,9 @@ describe("guest preparation operational planning", () => {
       "Grace",
     ]);
     expect(collapsed.tasks.map((task) => task.message)).toEqual([
-      "Confirm menu and prepare dinner.",
-      "Prepare flowers and hospitality setup.",
-      "Coordinate and follow up with Christopher and Nasira.",
+      "Please prepare the food and tea.",
+      "Please handle the hospitality setup and table presentation.",
+      "Please coordinate with Christopher and Nasira and follow up that everything is ready.",
     ]);
   });
 
@@ -198,9 +198,9 @@ describe("guest preparation operational planning", () => {
 
     const savedItems = mocks.savePending.mock.calls[0][0] as ExtractedItem[];
     expect(savedItems.map((item) => [item.assignedTo, item.description])).toEqual([
-      ["Christopher", "Confirm menu and prepare dinner."],
-      ["Nasira", "Prepare flowers and hospitality setup."],
-      ["Grace", "Coordinate and follow up with Christopher and Nasira."],
+      ["Christopher", "Please prepare the food and tea."],
+      ["Nasira", "Please handle the hospitality setup and table presentation."],
+      ["Grace", "Please coordinate with Christopher and Nasira and follow up that everything is ready."],
     ]);
     expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
     expect(mocks.deliverTaskMessage.mock.calls.map(([payload]) => payload.recipientName)).toEqual([
@@ -259,6 +259,99 @@ describe("guest preparation operational planning", () => {
     expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
     expect(result).toContain("Christopher, Grace have the plan");
     expect(result).toContain("Nasira was NOT messaged — Meta rejected the message");
+  });
+});
+
+// ── Guest event planning — rebuilt safely (real household roles) ──────────────
+// Mirrors the production roster: Christopher=Cook, Nasira=Housekeeper,
+// Bahan=Coordinator, Grace=Nanny, Ghulam=Driver. Encodes the explicit rules:
+//   - Coordination: Coordinator → House Manager → Assistant → else Grace.
+//   - Transport standby: ONLY when the request names transport/Ghulam.
+//   - Never assign the assistant (Carson).
+//   - Never give one person the whole plan.
+describe("guest event planning — safety rules", () => {
+  const TEA = "I have guests tomorrow for afternoon tea. Handle what you can.";
+
+  function realHousehold(): Person[] {
+    return [
+      person({ id: "christopher", name: "Christopher", role: "Cook", responsibilities: "Dinner, menu, kitchen, food." }),
+      person({ id: "nasira", name: "Nasira", role: "Housekeeper", responsibilities: "Flowers, hospitality, table setup, guest rooms." }),
+      person({ id: "bahan", name: "Bahan", role: "Coordinator", responsibilities: "Coordinate staff and follow up." }),
+      person({ id: "grace", name: "Grace", role: "Nanny", responsibilities: "Childcare." }),
+      person({ id: "ghulam", name: "Ghulam", role: "Driver", responsibilities: "Transport, car, airport pickups." }),
+    ];
+  }
+
+  it("splits the afternoon-tea plan into exact recipient/task pairs", () => {
+    const tasks = buildDeterministicGuestPreparationTasks(realHousehold(), TEA);
+    expect(tasks).toEqual([
+      { personId: "christopher", personName: "Christopher", message: "Please prepare the food and tea." },
+      {
+        personId: "nasira",
+        personName: "Nasira",
+        message: "Please handle the hospitality setup and table presentation.",
+      },
+      {
+        personId: "bahan",
+        personName: "Bahan",
+        message: "Please coordinate with Christopher and Nasira and follow up that everything is ready.",
+      },
+    ]);
+  });
+
+  it("never assigns anything to Carson, even when Carson holds the only coordinator role", () => {
+    const team = [
+      person({ id: "christopher", name: "Christopher", role: "Cook", responsibilities: "food" }),
+      person({ id: "nasira", name: "Nasira", role: "Housekeeper", responsibilities: "hospitality" }),
+      person({ id: "carson", name: "Carson", role: "Coordinator", responsibilities: "Coordinate everything." }),
+      person({ id: "grace", name: "Grace", role: "Nanny", responsibilities: "childcare" }),
+    ];
+    const tasks = buildDeterministicGuestPreparationTasks(team, TEA);
+    expect(tasks.some((t) => /carson/i.test(t.personName))).toBe(false);
+    // Coordination falls back past the filtered assistant to Grace.
+    expect(tasks.find((t) => /coordinate/i.test(t.message))?.personName).toBe("Grace");
+  });
+
+  it("assigns coordination to the Coordinator (Bahan), never the Nanny (Grace)", () => {
+    const tasks = buildDeterministicGuestPreparationTasks(realHousehold(), TEA);
+    expect(tasks.find((t) => /coordinate/i.test(t.message))?.personName).toBe("Bahan");
+    expect(tasks.some((t) => t.personName === "Grace")).toBe(false);
+  });
+
+  it("falls back to Grace for coordination when no coordinator-type role exists", () => {
+    const team = [
+      person({ id: "christopher", name: "Christopher", role: "Cook", responsibilities: "food" }),
+      person({ id: "nasira", name: "Nasira", role: "Housekeeper", responsibilities: "hospitality" }),
+      person({ id: "grace", name: "Grace", role: "Nanny", responsibilities: "childcare" }),
+    ];
+    const tasks = buildDeterministicGuestPreparationTasks(team, TEA);
+    expect(tasks.find((t) => /coordinate/i.test(t.message))?.personName).toBe("Grace");
+  });
+
+  it("does not add transport standby for plain afternoon tea", () => {
+    const tasks = buildDeterministicGuestPreparationTasks(realHousehold(), TEA);
+    expect(tasks.some((t) => t.personName === "Ghulam")).toBe(false);
+    expect(tasks.some((t) => /transport|standby/i.test(t.message))).toBe(false);
+  });
+
+  it("adds transport standby only when the request names transport", () => {
+    const withTransport =
+      "I have guests tomorrow for afternoon tea. Ghulam will collect them from the airport. Handle what you can.";
+    const tasks = buildDeterministicGuestPreparationTasks(realHousehold(), withTransport);
+    const ghulam = tasks.find((t) => t.personName === "Ghulam");
+    expect(ghulam).toBeDefined();
+    expect(ghulam?.message).toMatch(/transport|standby/i);
+  });
+
+  it("never gives one person the whole plan", () => {
+    const tasks = buildDeterministicGuestPreparationTasks(realHousehold(), TEA);
+    expect(tasks.length).toBeGreaterThanOrEqual(2);
+    for (const t of tasks) {
+      const bundlesEverything =
+        /food/i.test(t.message) && /hospitality/i.test(t.message) && /coordinate/i.test(t.message);
+      expect(bundlesEverything).toBe(false);
+    }
+    expect(new Set(tasks.map((t) => t.personName)).size).toBe(tasks.length);
   });
 });
 
