@@ -22,6 +22,7 @@ vi.mock("./delegation-message", () => ({
 
 const {
   buildDeterministicGuestPreparationTasks,
+  detectHouseholdOutcome,
   executeProposedPlan,
   handlePendingPlanTurn,
   hasOperatingAuthority,
@@ -273,6 +274,45 @@ describe("guest preparation operational planning", () => {
 //   - Transport standby: ONLY when the request names transport/Ghulam.
 //   - Never assign the assistant (Carson).
 //   - Never give one person the whole plan.
+describe("household outcome detection — hosting events without the word 'guests'", () => {
+  it.each([
+    "I have afternoon tea at home today.",
+    "We're hosting a dinner party tomorrow.",
+    "I have a luncheon at home on Friday.",
+    "We're having friends over this evening.",
+  ])("detects a hosting event: '%s'", (text) => {
+    expect(detectHouseholdOutcome(text)).toBe("guest_arrival");
+  });
+
+  it.each([
+    "Guests are coming tomorrow.",
+    "We're expecting visitors this evening.",
+  ])("still detects explicit guest phrasing: '%s'", (text) => {
+    expect(detectHouseholdOutcome(text)).toBe("guest_arrival");
+  });
+
+  it.each([
+    "Ask Christopher to make dinner.",
+    "Remind me to buy milk.",
+    "Tell Grace the flowers look nice.",
+    "I had a cup of tea.",
+  ])("does not trigger guest planning on ordinary input: '%s'", (text) => {
+    expect(detectHouseholdOutcome(text)).toBeNull();
+  });
+
+  it("runs the deterministic planner for the exact failed utterance → Christopher, Nasira, Bahan (no Grace, no Ghulam)", () => {
+    const team = [
+      person({ id: "christopher", name: "Christopher", role: "Cook", responsibilities: "food" }),
+      person({ id: "nasira", name: "Nasira", role: "Housekeeper", responsibilities: "hospitality" }),
+      person({ id: "bahan", name: "Bahan", role: "Coordinator", responsibilities: "coordinate" }),
+      person({ id: "grace", name: "Grace", role: "Nanny", responsibilities: "childcare" }),
+      person({ id: "ghulam", name: "Ghulam", role: "Driver", responsibilities: "transport" }),
+    ];
+    const tasks = buildDeterministicGuestPreparationTasks(team, "I have afternoon tea at home today.");
+    expect(tasks.map((t) => t.personName)).toEqual(["Christopher", "Nasira", "Bahan"]);
+  });
+});
+
 describe("guest event planning — safety rules", () => {
   const TEA = "I have guests tomorrow for afternoon tea. Handle what you can.";
 

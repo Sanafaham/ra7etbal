@@ -58,6 +58,15 @@ const GUEST_ARRIVAL_PATTERNS = [
   /\bguest\b.*\b(arrival|arriving|coming|today|tomorrow|tonight|this evening)\b/i,
   /\b(we('re| are) having|expecting)\s+(guests?|visitors?|people over)\b/i,
   /\b(guests?|visitors?)\s+(are|will be)\s+(here|over|visiting)\b/i,
+  // Hosting events that imply guests without the word "guests". Scoped tightly
+  // so ordinary meals/drinks don't trigger — "a cup of tea" / "make dinner"
+  // must stay null; only named social events (afternoon tea, a dinner party,
+  // a luncheon, hosting, having people over) count.
+  /\b(afternoon|high|morning)\s+tea\b/i,
+  /\b(tea|dinner|lunch|cocktail|garden|birthday|holiday|christmas|dinner)\s+part(?:y|ies)\b/i,
+  /\bluncheon\b/i,
+  /\bhosting\b/i,
+  /\bhaving\s+(?:people|friends|family|company|guests?|everyone)\s+(?:over|round|around)\b/i,
 ];
 
 export function detectHouseholdOutcome(text: string): HouseholdOutcomeType | null {
