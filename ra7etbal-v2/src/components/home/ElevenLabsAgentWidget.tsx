@@ -71,7 +71,7 @@ import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderR
 import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
-  hasOperatingAuthority,
+  mustRouteGuestEventToPlanner,
   isConfirmation,
   isRejection,
   isStatusQuestion,
@@ -1152,15 +1152,23 @@ export default function ElevenLabsAgentWidget({
       const latestUserMessageForOps = [...sessionTranscriptRef.current]
         .reverse()
         .find((m) => m.role === "user")?.message?.trim();
-      if (
-        latestUserMessageForOps &&
-        detectHouseholdOutcome(latestUserMessageForOps) &&
-        hasOperatingAuthority(latestUserMessageForOps)
-      ) {
+      // Guardrail: a guest/hosting event must NEVER execute as a direct
+      // per-person delegation. The ElevenLabs agent tends to decompose a guest
+      // event into several send_delegation calls (its own roster — e.g. Grace
+      // "follow up", Ghulam "standby"); each such call is blocked here and
+      // handed to the deterministic planner instead. This does NOT require
+      // operating authority — detection alone diverts. Ordinary single-person
+      // commands are not detected as outcomes and pass straight through.
+      if (latestUserMessageForOps && mustRouteGuestEventToPlanner(latestUserMessageForOps)) {
+        // Dedup a burst of per-person calls: reuse the plan already proposed for
+        // this same utterance instead of re-proposing (and re-persisting) N times.
+        if (pendingPlanRef.current?.sourceText === latestUserMessageForOps) {
+          return pendingPlanRef.current.proposalSpeech;
+        }
         const plan = await buildOperationalPlanFromOutcome(latestUserMessageForOps, people);
         if (plan) {
-          // Confirm-before-send: store the plan and ask for approval. Nothing
-          // is sent until the user says "Yes" (handled in the confirmation leg).
+          // Confirm-before-send: store the deterministic plan and ask for
+          // approval. Nothing is sent until the user says "Yes".
           pendingPlanRef.current = plan;
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
@@ -1170,6 +1178,8 @@ export default function ElevenLabsAgentWidget({
           };
           return plan.proposalSpeech;
         }
+        // Plan build failed — block the direct send rather than fanning out.
+        return "Let me put the full plan together for that. One moment, then say yes to send it.";
       }
 
       const matches = people.filter(

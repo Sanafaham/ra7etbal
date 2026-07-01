@@ -83,6 +83,22 @@ export function hasOperatingAuthority(text: string): boolean {
   return OPERATING_AUTHORITY_RE.test(text.trim());
 }
 
+/**
+ * Guardrail for the direct-delegation path: returns true when a delegation must
+ * be diverted to the deterministic guest planner rather than executed directly.
+ *
+ * A guest/hosting event must NEVER be fanned out into per-person direct
+ * delegations (the live failure where the agent itself decomposed "afternoon
+ * tea" into Grace/Ghulam/Bahan sends). Whenever the current user context is a
+ * detected guest/hosting event, the direct path must hand off to the planner —
+ * regardless of whether the user granted operating authority. Ordinary
+ * single-person commands ("Tell Christopher to make dinner") are not detected as
+ * outcomes and pass straight through.
+ */
+export function mustRouteGuestEventToPlanner(latestUserMessage: string | null | undefined): boolean {
+  return detectHouseholdOutcome((latestUserMessage ?? "").trim()) !== null;
+}
+
 // ── Confirmation / rejection detection ────────────────────────────────────────
 
 const CONFIRMATION_RE =

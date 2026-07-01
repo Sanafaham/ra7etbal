@@ -29,6 +29,7 @@ const {
   isConfirmation,
   isRejection,
   isStatusQuestion,
+  mustRouteGuestEventToPlanner,
   normalizeGuestPreparationPlan,
   resetExecutedPlanRegistryForTest,
   resolvePendingPlanDecision,
@@ -274,6 +275,37 @@ describe("guest preparation operational planning", () => {
 //   - Transport standby: ONLY when the request names transport/Ghulam.
 //   - Never assign the assistant (Carson).
 //   - Never give one person the whole plan.
+// Guardrail: a direct per-person delegation must be diverted to the deterministic
+// planner whenever the current user context is a guest/hosting event — so the
+// agent can never fan a guest event out into its own per-person delegations
+// (the live failure: Grace "follow up with all", Ghulam "standby", etc.).
+describe("direct-delegation guardrail for guest/hosting events", () => {
+  it.each([
+    "I have afternoon tea at home today.",
+    "We're hosting a dinner party tomorrow.",
+    "Guests are coming for lunch.",
+    "We're having friends over tonight.",
+  ])("diverts a guest/hosting event to the planner: '%s'", (text) => {
+    expect(mustRouteGuestEventToPlanner(text)).toBe(true);
+  });
+
+  it.each([
+    "Tell Christopher to make shrimp poke bowl.",
+    "Ask Ghulam to bring the car at 5.",
+    "Remind me to buy milk.",
+    "Text Grace the flowers look nice.",
+    "",
+    "   ",
+  ])("allows ordinary single-person commands through direct delegation: '%s'", (text) => {
+    expect(mustRouteGuestEventToPlanner(text)).toBe(false);
+  });
+
+  it("treats null/undefined context as allow-direct (no diversion)", () => {
+    expect(mustRouteGuestEventToPlanner(null)).toBe(false);
+    expect(mustRouteGuestEventToPlanner(undefined)).toBe(false);
+  });
+});
+
 describe("household outcome detection — hosting events without the word 'guests'", () => {
   it.each([
     "I have afternoon tea at home today.",
