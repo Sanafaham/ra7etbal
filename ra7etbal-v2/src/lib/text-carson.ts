@@ -25,6 +25,7 @@ import { summarizeConversation } from "./carson-summarize";
 import { extractDurableFacts } from "./carson-fact-extract";
 import { updatePeopleInsightsFromTasks } from "./people-behavior";
 import { sanitizeCarsonErrorDetail, sanitizeCarsonReplyText } from "./carson-social";
+import { parseMultiRecipientDelegation } from "./multi-recipient-delegation";
 
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 500;
@@ -372,18 +373,21 @@ export async function executeDelegationFromText(
     );
   }
 
-  const extractionStartedAt = performance.now();
-  let result: ExtractionResult;
-  try {
-    result = await extractItems(input, context.people, context.displayName ?? undefined);
-  } finally {
-    context.latencyObserver?.addDuration(
-      "claude_extraction_ms",
-      performance.now() - extractionStartedAt,
-    );
+  const deterministicItems = parseMultiRecipientDelegation(input, context.people);
+  let allItems = deterministicItems ?? [];
+  if (!deterministicItems) {
+    const extractionStartedAt = performance.now();
+    let result: ExtractionResult;
+    try {
+      result = await extractItems(input, context.people, context.displayName ?? undefined);
+    } finally {
+      context.latencyObserver?.addDuration(
+        "claude_extraction_ms",
+        performance.now() - extractionStartedAt,
+      );
+    }
+    allItems = result.extracted;
   }
-
-  const allItems = result.extracted;
   if (allItems.length === 0) {
     throw new Error("Couldn't understand that. Try rephrasing.");
   }
@@ -594,7 +598,8 @@ export async function executeDelegationFromText(
   const unsentDelegations = saved.tasks.filter(
     (t) =>
       (t.type === "delegation" || t.type === "followup") &&
-      !sentNames.includes(t.assigned_to ?? ""),
+      !sentNames.includes(t.assigned_to ?? "") &&
+      !failedSends.some((failure) => failure.recipient === t.assigned_to),
   );
 
   const parts: string[] = [];

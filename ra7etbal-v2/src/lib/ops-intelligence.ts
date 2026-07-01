@@ -497,8 +497,11 @@ export async function executeProposedPlan(
     (m) => !!m.recipient.trim() && !!m.content.trim()
       && !noConsentNames.has(m.recipient.trim().toLowerCase()),
   );
+  const noConsentMessages = saved.messages.filter(
+    (m) => !!m.recipient.trim() && noConsentNames.has(m.recipient.trim().toLowerCase()),
+  );
 
-  await Promise.allSettled(
+  const sendResults = await Promise.allSettled(
     sendableMessages.map((msg) =>
       !msg.task_id && !msg.confirmation_url
         ? sendDirectMessageRecord({
@@ -521,13 +524,44 @@ export async function executeProposedPlan(
     ),
   );
 
+  const sentNames: string[] = [];
+  const failedSends: Array<{ recipient: string; reason: string }> = noConsentMessages.map((msg) => ({
+    recipient: msg.recipient,
+    reason: "WhatsApp consent not recorded",
+  }));
+
+  for (let i = 0; i < sendableMessages.length; i++) {
+    const msg = sendableMessages[i];
+    const result = sendResults[i];
+    if (result.status === "fulfilled" && result.value.success) {
+      sentNames.push(msg.recipient);
+      continue;
+    }
+    const reason =
+      result.status === "rejected"
+        ? result.reason instanceof Error ? result.reason.message : "send failed"
+        : (result.value.error ?? "delivery failed");
+    failedSends.push({ recipient: msg.recipient, reason });
+  }
+
   // Mark the Supabase row as completed (fire-and-forget).
   if (plan.dbId) {
     markPlanCompleted(plan.dbId).catch(() => {});
   }
 
-  const names = plan.tasks.map((t) => t.personName).join(", ");
-  return `${names} have the plan. I'll watch for confirmations.`;
+  if (failedSends.length === 0) {
+    const names = sentNames.length > 0 ? sentNames.join(", ") : plan.tasks.map((t) => t.personName).join(", ");
+    return `${names} have the plan. I'll watch for confirmations.`;
+  }
+
+  const parts: string[] = [];
+  if (sentNames.length > 0) {
+    parts.push(`${sentNames.join(", ")} ${sentNames.length === 1 ? "has" : "have"} the plan`);
+  }
+  for (const failure of failedSends) {
+    parts.push(`${failure.recipient} was NOT messaged — ${failure.reason}`);
+  }
+  return `${parts.join(". ")}.`;
 }
 
 /** Call when the user rejects a proposed plan. */

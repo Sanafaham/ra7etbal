@@ -644,4 +644,169 @@ describe("executeDelegationFromText image pipeline", () => {
     expect(deliveryCall.messageText).not.toContain("a3f1b2c9-dead-beef-1234-abc.jpeg");
     expect(deliveryCall.messageText).not.toContain("Photo 1 (");
   });
+
+  it("single-recipient delegation still uses the existing extraction path", async () => {
+    const { executeDelegationFromText } = await import("./text-carson");
+
+    const extractedItem: ExtractedItem = {
+      id: "item-1",
+      type: "delegation",
+      description: "prepare the table",
+      assignedTo: "Grace",
+      dueAt: null,
+      dueText: null,
+      suggestedMessage: "Please prepare the table.",
+      personalNote: null,
+      needsPerson: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+    };
+    extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+    savePendingMock.mockResolvedValue(saveResultForItems([extractedItem]));
+    deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    await executeDelegationFromText("Ask Grace to prepare the table", {
+      displayName: "Sana",
+      userId: "user-1",
+      dailyBrief: "",
+      people: [person("Grace")],
+      tasks: [],
+    });
+
+    expect(extractItemsMock).toHaveBeenCalledTimes(1);
+    expect(savePendingMock).toHaveBeenCalledTimes(1);
+    expect(deliverTaskMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("multi-recipient delegation creates separate records and sends every intended WhatsApp", async () => {
+    const { executeDelegationFromText } = await import("./text-carson");
+    const people = ["Grace", "Christopher", "Nasira", "Ghulam"].map(person);
+
+    savePendingMock.mockImplementationOnce(async (items: ExtractedItem[]) => saveResultForItems(items));
+    deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const result = await executeDelegationFromText(
+      "Ask Grace to prepare the table, Christopher to prepare lunch, Nasira to arrange flowers, and Ghulam to be on standby.",
+      {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people,
+        tasks: [],
+      },
+    );
+
+    expect(extractItemsMock).not.toHaveBeenCalled();
+    const savedItems = savePendingMock.mock.calls[0][0] as ExtractedItem[];
+    expect(savedItems.map((item) => [item.assignedTo, item.description])).toEqual([
+      ["Grace", "prepare the table"],
+      ["Christopher", "prepare lunch"],
+      ["Nasira", "arrange flowers"],
+      ["Ghulam", "be on standby."],
+    ]);
+    expect(deliverTaskMessageMock).toHaveBeenCalledTimes(4);
+    expect(deliverTaskMessageMock.mock.calls.map(([payload]) => payload.recipientName)).toEqual([
+      "Grace",
+      "Christopher",
+      "Nasira",
+      "Ghulam",
+    ]);
+    expect(result).toContain("Grace, Christopher, Nasira, Ghulam have it");
+  });
+
+  it("multi-recipient delegation reports failed recipients without hiding successful sends", async () => {
+    const { executeDelegationFromText } = await import("./text-carson");
+    const people = ["Grace", "Christopher", "Nasira", "Ghulam"].map(person);
+
+    savePendingMock.mockImplementationOnce(async (items: ExtractedItem[]) => saveResultForItems(items));
+    deliverTaskMessageMock
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" })
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" })
+      .mockResolvedValueOnce({ success: false, channel: "whatsapp", error: "Meta rejected the message" })
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" });
+
+    const result = await executeDelegationFromText(
+      "Ask Grace to prepare the table, Christopher to prepare lunch, Nasira to arrange flowers, and Ghulam to be on standby.",
+      {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people,
+        tasks: [],
+      },
+    );
+
+    expect(deliverTaskMessageMock).toHaveBeenCalledTimes(4);
+    expect(result).toContain("Grace, Christopher, Ghulam have it");
+    expect(result).toContain("Nasira was NOT messaged — Meta rejected the message");
+    expect(result).not.toContain("task created for Nasira");
+  });
 });
+
+function person(name: string) {
+  return {
+    id: `person-${name.toLowerCase()}`,
+    user_id: "user-1",
+    name,
+    role: "staff",
+    phone: `+9715000000${name.length}`,
+    notes: null,
+    relationship: null,
+    is_family: false,
+    responsibilities: null,
+    reliability_level: null,
+    follow_up_level: null,
+    delegation_guidance: null,
+    should_not_assign: null,
+    escalate_to: null,
+    communication_style: null,
+    whatsapp_opted_in: true,
+    whatsapp_consent_at: "2026-06-30T00:00:00.000Z",
+    whatsapp_consent_method: "owner_confirmed",
+    created_at: "2026-06-30T00:00:00.000Z",
+  };
+}
+
+function saveResultForItems(items: ExtractedItem[]) {
+  return {
+    tasks: items.map((item, index) => ({
+      id: `task-${index + 1}`,
+      user_id: "user-1",
+      description: item.description,
+      type: item.type,
+      assigned_to: item.assignedTo,
+      status: "pending",
+      needs_follow_up: true,
+      confirmation_url: `https://app.test/confirm?task=task-${index + 1}`,
+      confirmed_at: null,
+      due_at: null,
+      archived_at: null,
+      created_at: "2026-06-30T00:00:00.000Z",
+      qstash_message_id: null,
+      followup_sent_at: null,
+      escalated_at: null,
+      image_path: null,
+      proof_image_path: null,
+    })),
+    messages: items.map((item, index) => ({
+      id: `msg-${index + 1}`,
+      user_id: "user-1",
+      task_id: `task-${index + 1}`,
+      recipient: item.assignedTo,
+      content: item.suggestedMessage ?? item.description,
+      confirmation_url: `https://app.test/confirm?task=task-${index + 1}`,
+      status: "pending",
+      created_at: "2026-06-30T00:00:00.000Z",
+      sent_at: null,
+      confirmed_at: null,
+      whatsapp_message_id: null,
+      whatsapp_delivery_status: null,
+      whatsapp_failure_reason: null,
+      whatsapp_status_updated_at: null,
+    })),
+    todos: [],
+    notesSaved: 0,
+    skipped: 0,
+    imagePathsByTaskId: new Map(),
+  };
+}

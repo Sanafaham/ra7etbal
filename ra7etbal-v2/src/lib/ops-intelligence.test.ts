@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtractedItem } from "../types/extraction";
 import type { Message } from "../types/message";
 import type { Person } from "../types/person";
@@ -29,6 +29,10 @@ const {
   isStatusQuestion,
   normalizeGuestPreparationPlan,
 } = await import("./ops-intelligence");
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe("isConfirmation", () => {
   it.each(["yes", "yes.", "yeah", "yep", "ok", "okay", "sure", "go ahead", "do it", "send it", "sounds good", "perfect", "great", "please do", "go for it", "confirmed", "correct", "absolutely", "definitely"])(
@@ -205,6 +209,56 @@ describe("guest preparation operational planning", () => {
       "Grace",
     ]);
     expect(result).toBe("Christopher, Nasira, Grace have the plan. I'll watch for confirmations.");
+  });
+
+  it("reports exactly who succeeded and failed when one multi-owner send fails", async () => {
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item, index) => ({
+        id: `task-${index + 1}`,
+        type: "delegation",
+        assigned_to: item.assignedTo,
+        description: item.description,
+      })),
+      messages: items.map((item, index) => ({
+        id: `message-${index + 1}`,
+        task_id: `task-${index + 1}`,
+        recipient: item.assignedTo,
+        content: item.suggestedMessage ?? item.description,
+        confirmation_url: `https://ra7etbal.test/confirm?task=task-${index + 1}`,
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+    mocks.deliverTaskMessage
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" })
+      .mockResolvedValueOnce({ success: false, channel: "whatsapp", error: "Meta rejected the message" })
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" });
+
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: "I have guests tomorrow. Handle what you can.",
+      createdAt: Date.now(),
+      proposalSpeech: "I can ask Christopher to handle it. Should I send it?",
+      tasks: [
+        {
+          personId: "christopher",
+          personName: "Christopher",
+          message: "Confirm menu, prepare dinner, arrange flowers, and coordinate everyone.",
+        },
+      ],
+    }, guestTeam());
+
+    const result = await executeProposedPlan(plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
+    expect(result).toContain("Christopher, Grace have the plan");
+    expect(result).toContain("Nasira was NOT messaged — Meta rejected the message");
   });
 });
 
