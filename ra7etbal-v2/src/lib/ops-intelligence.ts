@@ -250,10 +250,13 @@ const COORDINATION_ROLE_PRIORITY: RegExp[] = [
 const COORDINATION_GRACE_FALLBACK_RE = /^grace$/i;
 
 // Transport standby is NEVER auto-included. It is added only when the request
-// explicitly references transport logistics or the driver by name — a quiet
-// home event (e.g. afternoon tea) must not pull a driver into the plan.
+// names a REAL transport ACTION (a pickup, dropoff, airport/station run, a ride).
+// Deliberately does NOT match the bare word "transport", a role ("driver"), or a
+// name ("Ghulam") — the ElevenLabs agent injects boilerplate like "Ghulam should
+// be on standby for transport", which must NOT pull a driver into a quiet home
+// event (e.g. afternoon tea). Only a concrete action counts as "explicitly named".
 const TRANSPORT_TRIGGER_RE =
-  /\b(transport|pick\s*up|pickup|drop\s*off|dropoff|airport|station|collect|driving|drive them|driver|chauffeur|ghulam)\b/i;
+  /\b(pick(?:ing|ed)?\s*up|pickup|drop(?:ping|ped)?\s*(?:off|them|everyone)|dropoff|airport|train\s*station|collect(?:ing|ed)?\s+(?:them|everyone|the guests)|drive(?:s|n|\s+them|\s+everyone|\s+the guests)|give(?:s)?\s+(?:them|everyone|the guests)\s+a\s+(?:ride|lift)|needs?\s+a\s+(?:ride|lift|car)|from\s+the\s+(?:airport|station))\b/i;
 
 // Carson (the assistant) must never be a household recipient. Filter by name so
 // a stray "Carson"/"assistant" contact — or one that happens to hold a matching

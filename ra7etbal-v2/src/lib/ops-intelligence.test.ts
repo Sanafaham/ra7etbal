@@ -410,13 +410,25 @@ describe("guest event planning — safety rules", () => {
     expect(tasks.some((t) => /transport|standby/i.test(t.message))).toBe(false);
   });
 
-  it("adds transport standby only when the request names transport", () => {
+  it("adds transport standby only when the request names a real transport action", () => {
     const withTransport =
       "I have guests tomorrow for afternoon tea. Ghulam will collect them from the airport. Handle what you can.";
     const tasks = buildDeterministicGuestPreparationTasks(realHousehold(), withTransport);
     const ghulam = tasks.find((t) => t.personName === "Ghulam");
     expect(ghulam).toBeDefined();
     expect(ghulam?.message).toMatch(/transport|standby/i);
+  });
+
+  it("does NOT add Ghulam for the agent's boilerplate 'standby for transport' (no real action)", () => {
+    // Exact text the ElevenLabs agent injected in production — it names
+    // "transport" and "Ghulam" but describes no actual pickup/dropoff. Ghulam
+    // must stay out; Grace (Nanny) must stay out; result is the core three.
+    const agentDecomposition =
+      "Guests are coming for afternoon tea today at home. Christopher should prepare the food and tea. " +
+      "Nasira should handle the hospitality setup and table presentation. Bahan coordinates the event. " +
+      "Ghulam should be on standby for transport. Grace should follow up with all to make sure everything is ready on time.";
+    const tasks = buildDeterministicGuestPreparationTasks(realHousehold(), agentDecomposition);
+    expect(tasks.map((t) => t.personName)).toEqual(["Christopher", "Nasira", "Bahan"]);
   });
 
   it("never gives one person the whole plan", () => {
