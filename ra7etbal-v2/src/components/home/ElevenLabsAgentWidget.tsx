@@ -72,6 +72,7 @@ import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderR
 import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
+  executeProposedPlan,
   hasOperatingAuthority,
   isConfirmation,
   isRejection,
@@ -2878,18 +2879,30 @@ export default function ElevenLabsAgentWidget({
 
         // ── Operations Intelligence — outcome detection leg ────────────────
         // If the instruction describes a household outcome (guests arriving,
-        // etc.), propose a plan and store it — do NOT execute yet.
+        // etc.), build a plan. When the user granted operating authority
+        // ("handle what you can"), execute it immediately — this is the proven
+        // 0eaaa0d path. Removing this auto-execute (in 9d100c8) left authorized
+        // plans stuck `pending` because execution then depended on a second
+        // "Yes" turn re-firing the tool, which was unreliable. Execution stays
+        // safe: executeProposedPlan filters the assistant recipient and is
+        // idempotent, so it never messages "Carson" and never double-sends.
+        // Without operating authority we still propose and wait for approval.
         const outcomeType = detectHouseholdOutcome(rawInstruction);
         if (outcomeType) {
           // Clear any stale pending plan before building a new one.
           pendingPlanRef.current = null;
           const plan = await buildOperationalPlanFromOutcome(rawInstruction, people);
           if (plan) {
-            // Safety: always propose and wait for an explicit verbatim "Yes".
-            // Even when the user grants broad authority ("handle what you can"),
-            // we never auto-send — a truncated or noisy first utterance must
-            // not trigger WhatsApps. Execution runs only through the approval
-            // leg above, which is idempotent.
+            if (hasOperatingAuthority(rawInstruction)) {
+              const execSummary = await executeProposedPlan(plan, {
+                displayName: displayName ?? null,
+                userId: authUserId,
+                people,
+              });
+              sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+              return execSummary;
+            }
             pendingPlanRef.current = plan;
             return plan.proposalSpeech;
           }

@@ -663,6 +663,124 @@ describe("P0 — Carson execution safety", () => {
   });
 });
 
+// Operating-authority auto-execute (execute_instruction outcome leg).
+//
+// Regression context: 9d100c8 made guest outcomes propose-only, so authorized
+// plans stuck at `pending` and never sent. This restores the 0eaaa0d behavior —
+// an utterance that grants operating authority builds the deterministic plan and
+// executes it immediately — while keeping every 9d100c8 guard. The building
+// blocks below are exactly what the widget's outcome leg runs:
+//   hasOperatingAuthority(text) → executeProposedPlan(normalize(...plan))
+describe("operating-authority guest auto-execute", () => {
+  const AUTHORITY_UTTERANCE = "I have guests tomorrow for afternoon tea. Handle what you can.";
+
+  function planFromUtterance(team = guestTeam()) {
+    // Mirrors buildOperationalPlanFromOutcome → normalizeGuestPreparationPlan,
+    // with a dbId so completion (markPlanCompleted) is exercised.
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: AUTHORITY_UTTERANCE,
+      createdAt: Date.now(),
+      proposalSpeech: "I can split this between the team. Shall I send it?",
+      tasks: [
+        { personId: "christopher", personName: "Christopher", message: "Handle everything for the afternoon tea." },
+      ],
+    }, team);
+    plan.dbId = "plan-db-1";
+    return plan;
+  }
+
+  // Net 1 — the target utterance grants operating authority (the widget gate).
+  it("recognizes operating authority in the afternoon-tea utterance", () => {
+    expect(hasOperatingAuthority(AUTHORITY_UTTERANCE)).toBe(true);
+    // A bare outcome with no authority must NOT auto-execute.
+    expect(hasOperatingAuthority("I have guests tomorrow for afternoon tea.")).toBe(false);
+  });
+
+  // Nets 2–5 — execute runs, creates task rows, and attempts every send.
+  it("auto-executes immediately: task rows created and all recipients messaged", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = planFromUtterance();
+    const summary = await executeProposedPlan(plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    // Net 4 — savePending was called with a task per planned recipient.
+    expect(mocks.savePending).toHaveBeenCalledTimes(1);
+    const savedItems = mocks.savePending.mock.calls[0][0] as ExtractedItem[];
+    expect(savedItems.map((i) => i.assignedTo)).toEqual(["Christopher", "Nasira", "Grace"]);
+    expect(savedItems.every((i) => i.type === "delegation")).toBe(true);
+
+    // Net 5 — a WhatsApp send attempted for every planned recipient.
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
+    expect(mocks.deliverTaskMessage.mock.calls.map(([p]) => p.recipientName)).toEqual([
+      "Christopher",
+      "Nasira",
+      "Grace",
+    ]);
+
+    // Nets 2–3 — execution completed and returned the confirmation summary
+    // (the widget uses this as the spoken result; the plan is not left pending).
+    expect(summary).toBe("Christopher, Nasira, Grace have the plan. I'll watch for confirmations.");
+  });
+
+  // Net 6 — a re-fired authorized utterance for the same plan sends nothing new.
+  it("is idempotent: re-running the same authorized plan sends no duplicate", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = planFromUtterance();
+    await executeProposedPlan(plan, { displayName: "Sana", userId: "user-1", people: guestTeam() });
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
+
+    const again = await executeProposedPlan(plan, { displayName: "Sana", userId: "user-1", people: guestTeam() });
+    expect(again).toMatch(/already sent/i);
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3); // unchanged
+    expect(mocks.savePending).toHaveBeenCalledTimes(1);
+  });
+
+  // Net 7 — the assistant recipient filter still blocks "Carson" on this path.
+  it("still filters Carson out of an auto-executed authorized plan", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = planFromUtterance();
+    plan.tasks.push({ personId: "carson", personName: "Carson", message: "Do the rest yourself." });
+
+    const summary = await executeProposedPlan(plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    const recipients = mocks.deliverTaskMessage.mock.calls.map(([p]) => p.recipientName);
+    expect(recipients).not.toContain("Carson");
+    expect(summary).not.toMatch(/carson/i);
+  });
+
+  // Net 8 — partial failure names exactly who failed and who succeeded.
+  it("reports exact failed recipients on partial failure", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" })
+      .mockResolvedValueOnce({ success: false, channel: "failed", error: "Meta rejected the message" })
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" });
+
+    const summary = await executeProposedPlan(planFromUtterance(), {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    expect(summary).toContain("Christopher, Grace have the plan");
+    expect(summary).toContain("Nasira was NOT messaged — Meta rejected the message");
+  });
+});
+
 function guestTeam(): Person[] {
   return [
     person({
