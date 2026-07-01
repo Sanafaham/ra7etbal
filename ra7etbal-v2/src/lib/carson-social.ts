@@ -16,6 +16,13 @@ const CARSON_REENGAGEMENT_PHRASE_PATTERN =
 const CARSON_IDLE_SENTENCE_PATTERN =
   /(?:^|[.?!]\s*)\b(?:are you (?:still )?there|still there|are you (?:still )?with me|still with me|just checking(?: in)?|checking in|checking (?:to see )?if you(?:'|’)re (?:still )?there|checking (?:to see )?if you are (?:still )?there|i(?:'|’)m just checking(?: in)?|wanted to check (?:if|whether) you(?:'|’)re (?:still )?there|wanted to check (?:if|whether) you are (?:still )?there|can you hear me|are we still connected)\b[^.?!]*(?:[.?!]|$)/gi;
 
+// Carson must never promise to auto-retry a send — it does not retry, and
+// saying so invites the user to expect duplicate WhatsApps. Strip any
+// "I'll keep trying" / "I'll try again" / "still trying" sentence so the spoken
+// reply reflects the honest one-attempt-then-stop behavior.
+const CARSON_RETRY_PROMISE_SENTENCE_PATTERN =
+  /(?:^|[.?!]\s*)\b(?:i(?:'|’)?ll keep (?:trying|attempting)|i(?:'|’)?ll try again|i(?:'|’)?ll keep (?:on )?(?:trying|attempting)|let me keep trying|(?:i(?:'|’)?m )?still trying|keep trying)\b[^.?!]*(?:[.?!]|$)/gi;
+
 const CARSON_INTERNAL_SENTENCE_PATTERN =
   /\b(?:photo context was available for this action|do not mention it unless the user asks|(?:analysis|extraction|attachment|prompt|processing|context|transcript|tools|database) (?:was|were|is|are|has|have|will|can|should|available|complete|completed)[^.?!]*(?:[.?!]|$))/gi;
 
@@ -106,6 +113,7 @@ export function sanitizeCarsonReplyText(text: string): string {
 
   sanitized = sanitized
     .replace(CARSON_IDLE_SENTENCE_PATTERN, "")
+    .replace(CARSON_RETRY_PROMISE_SENTENCE_PATTERN, "")
     .replace(CARSON_PERMISSION_QUESTION_PATTERN, "")
     .replace(CARSON_INTERNAL_SENTENCE_PATTERN, "")
     .trim();

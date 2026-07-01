@@ -72,7 +72,6 @@ import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderR
 import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
-  executeProposedPlan,
   hasOperatingAuthority,
   isConfirmation,
   isRejection,
@@ -1187,20 +1186,17 @@ export default function ElevenLabsAgentWidget({
       ) {
         const plan = await buildOperationalPlanFromOutcome(latestUserMessageForOps, people);
         if (plan) {
-          const execSummary = await executeProposedPlan(plan, {
-            displayName: displayName ?? null,
-            userId: authUserId,
-            people,
-          });
-          sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
-          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+          // Safety: never auto-send a guest plan. Store it and ask for approval
+          // so nothing goes out on a possibly-incomplete first utterance —
+          // execution happens only after an explicit verbatim "Yes".
+          pendingPlanRef.current = plan;
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
-            resultText: execSummary,
+            resultText: plan.proposalSpeech,
             at: new Date().toISOString(),
             inputSummary: { kind: "guest_operation_reroute", instruction: latestUserMessageForOps },
           };
-          return execSummary;
+          return plan.proposalSpeech;
         }
       }
 
@@ -2889,16 +2885,11 @@ export default function ElevenLabsAgentWidget({
           pendingPlanRef.current = null;
           const plan = await buildOperationalPlanFromOutcome(rawInstruction, people);
           if (plan) {
-            if (hasOperatingAuthority(rawInstruction)) {
-              const execSummary = await executeProposedPlan(plan, {
-                displayName: displayName ?? null,
-                userId: authUserId,
-                people,
-              });
-              sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
-              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-              return execSummary;
-            }
+            // Safety: always propose and wait for an explicit verbatim "Yes".
+            // Even when the user grants broad authority ("handle what you can"),
+            // we never auto-send — a truncated or noisy first utterance must
+            // not trigger WhatsApps. Execution runs only through the approval
+            // leg above, which is idempotent.
             pendingPlanRef.current = plan;
             return plan.proposalSpeech;
           }

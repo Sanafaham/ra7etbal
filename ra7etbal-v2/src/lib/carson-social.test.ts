@@ -176,6 +176,24 @@ describe("Carson global reply text sanitation", () => {
     expect(isCarsonReengagementPrompt(text)).toBe(false);
     expect(shouldSuppressCarsonIdlePrompt(text)).toBe(false);
   });
+
+  // Carson must never promise to auto-retry a send — it does not retry, and
+  // saying so risks the user expecting duplicate WhatsApps.
+  it.each([
+    ["Nasira was NOT messaged. I'll keep trying.", "Nasira was NOT messaged"],
+    ["I'll try again in a moment.", ""],
+    ["The send failed. I'll keep trying to reach Christopher.", "The send failed"],
+    ["Still trying to reach Grace.", ""],
+  ])("strips 'keep trying' retry promises from replies: '%s'", (input, expected) => {
+    expect(sanitizeCarsonReplyText(input)).toBe(expected);
+  });
+
+  it("does not strip legitimate one-time follow-up language", () => {
+    // "I'll follow up" is a scheduled action, not an auto-retry promise.
+    expect(sanitizeCarsonReplyText("Grace has it. I'll follow up tomorrow.")).toBe(
+      "Grace has it. I'll follow up tomorrow.",
+    );
+  });
 });
 
 // Chief of Staff Behavior Policy regressions ---------------------------------

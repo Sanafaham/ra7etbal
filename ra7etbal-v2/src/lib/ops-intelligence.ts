@@ -207,6 +207,17 @@ interface GuestPrepOwner {
   person: Person;
 }
 
+// Carson (the assistant) must never be treated as a household recipient. If a
+// proposal ever names "Carson"/"assistant" — an AI hallucination or a stray
+// contact — it is filtered out before any task is created or any WhatsApp is
+// attempted, so Carson can never message itself (and never surface a spurious
+// "recipient phone number is missing").
+const ASSISTANT_RECIPIENT_RE = /^\s*(?:carson|the assistant|assistant)\s*$/i;
+
+export function isAssistantRecipientName(name: string | null | undefined): boolean {
+  return ASSISTANT_RECIPIENT_RE.test((name ?? "").trim());
+}
+
 const DINNER_ROLE_RE = /\b(cook|chef|kitchen)\b/i;
 const DINNER_TOPIC_RE = /\b(dinner|menu|meal|food|cook|kitchen)\b/i;
 const HOSPITALITY_ROLE_RE = /\b(housekeeper|house\s*keeper|maid|cleaner|hospitality|host|decor|flower)\b/i;
@@ -233,7 +244,9 @@ function findGuestPrepOwner(
   domain: GuestPrepDomain,
   excluded = new Set<string>(),
 ): GuestPrepOwner | null {
-  const candidates = people.filter((person) => !excluded.has(person.id));
+  const candidates = people.filter(
+    (person) => !excluded.has(person.id) && !isAssistantRecipientName(person.name),
+  );
   const ranked = candidates
     .map((person) => {
       const text = personText(person);
@@ -459,10 +472,13 @@ Return ONLY valid JSON, no markdown:
   // Resolve person IDs (case-insensitive match).
   const proposedTasks: ProposedTask[] = [];
   for (const t of parsed.tasks) {
+    // Never let the assistant be proposed as a recipient, even if the model
+    // hallucinates "Carson" as a team member.
+    if (isAssistantRecipientName(t.person_name)) continue;
     const person = people.find(
       (p) => p.name.trim().toLowerCase() === t.person_name.trim().toLowerCase(),
     );
-    if (!person || !t.message?.trim()) continue;
+    if (!person || isAssistantRecipientName(person.name) || !t.message?.trim()) continue;
     proposedTasks.push({ personId: person.id, personName: person.name, message: t.message.trim() });
   }
 
@@ -491,6 +507,28 @@ interface ExecutePlanOptions {
   people: Person[];
 }
 
+// Idempotency registry — a given plan may be executed at most once for the life
+// of the session. ElevenLabs frequently double-fires the confirmation tool call
+// ("Yes" → execute_instruction twice), and a plan can also be re-loaded from the
+// DB after a reconnect. Without this guard, a single approval could send the
+// same WhatsApps twice. We claim the key synchronously (before any await) so a
+// concurrent second call is rejected immediately. The key persists even when a
+// send fails: we never auto-retry, so one approval == one send attempt.
+const executedPlanKeys = new Set<string>();
+
+function planIdempotencyKey(plan: ProposedPlan): string {
+  if (plan.dbId) return `db:${plan.dbId}`;
+  const taskSignature = plan.tasks
+    .map((task) => `${task.personId}:${task.message}`)
+    .join("|");
+  return `text:${plan.sourceText}::${taskSignature}`;
+}
+
+/** Test-only: clears the idempotency registry between cases. */
+export function resetExecutedPlanRegistryForTest(): void {
+  executedPlanKeys.clear();
+}
+
 /**
  * Executes the confirmed plan without any AI re-extraction.
  *
@@ -505,8 +543,24 @@ export async function executeProposedPlan(
 ): Promise<string> {
   const { displayName, userId, people } = opts;
 
+  // Idempotency — claim the plan synchronously before any await. A duplicate
+  // approval (EL double-fire, DB re-load) is a no-op that sends nothing.
+  const idempotencyKey = planIdempotencyKey(plan);
+  if (executedPlanKeys.has(idempotencyKey)) {
+    return "I already sent that plan. I won't send it again.";
+  }
+  executedPlanKeys.add(idempotencyKey);
+
+  // Drop any assistant recipient defensively — Carson must never message itself.
+  const deliverableTasks = plan.tasks.filter(
+    (task) => !isAssistantRecipientName(task.personName),
+  );
+  if (deliverableTasks.length === 0) {
+    return "There's no one to send this to. Tell me who should handle it.";
+  }
+
   // Build ExtractedItem[] directly — no AI needed; we already have all info.
-  const extractedItems: ExtractedItem[] = plan.tasks.map((task) => ({
+  const extractedItems: ExtractedItem[] = deliverableTasks.map((task) => ({
     id: crypto.randomUUID(),
     type: "delegation" as const,
     description: task.message,
@@ -605,7 +659,7 @@ export async function executeProposedPlan(
   }
 
   if (failedSends.length === 0) {
-    const names = sentNames.length > 0 ? sentNames.join(", ") : plan.tasks.map((t) => t.personName).join(", ");
+    const names = sentNames.length > 0 ? sentNames.join(", ") : deliverableTasks.map((t) => t.personName).join(", ");
     return `${names} have the plan. I'll watch for confirmations.`;
   }
 

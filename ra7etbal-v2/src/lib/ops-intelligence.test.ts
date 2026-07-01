@@ -25,15 +25,18 @@ const {
   executeProposedPlan,
   handlePendingPlanTurn,
   hasOperatingAuthority,
+  isAssistantRecipientName,
   isConfirmation,
   isRejection,
   isStatusQuestion,
   normalizeGuestPreparationPlan,
+  resetExecutedPlanRegistryForTest,
   resolvePendingPlanDecision,
 } = await import("./ops-intelligence");
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetExecutedPlanRegistryForTest();
 });
 
 describe("isConfirmation", () => {
@@ -502,6 +505,161 @@ describe("P0 — pending plan approval execution", () => {
     expect(turn.action).toBe("held");
     expect(turn.clearPlan).toBe(true);
     expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("P0 — Carson execution safety", () => {
+  const SOURCE = "I have guests coming tomorrow for afternoon tea. Handle what you can.";
+
+  function storedPlan(team = guestTeam()) {
+    return normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: SOURCE,
+      createdAt: Date.now(),
+      proposalSpeech: "I can split this between the team. Shall I send it?",
+      tasks: [
+        {
+          personId: "christopher",
+          personName: "Christopher",
+          message: "Handle everything for the afternoon tea.",
+        },
+      ],
+    }, team);
+  }
+
+  // Safety: "Carson" (the assistant) can never be selected as a recipient.
+  it("never selects Carson as a recipient", () => {
+    expect(isAssistantRecipientName("Carson")).toBe(true);
+    expect(isAssistantRecipientName(" carson ")).toBe(true);
+    expect(isAssistantRecipientName("assistant")).toBe(true);
+    expect(isAssistantRecipientName("Christopher")).toBe(false);
+
+    const teamWithCarson: Person[] = [
+      ...guestTeam(),
+      person({ id: "carson", name: "Carson", role: "House Manager", responsibilities: "Coordinate everything." }),
+    ];
+    const tasks = buildDeterministicGuestPreparationTasks(teamWithCarson, SOURCE);
+    expect(tasks.some((t) => t.personName.toLowerCase() === "carson")).toBe(false);
+    // Grace (the real House Manager) still owns coordination.
+    expect(tasks.some((t) => t.personName === "Grace")).toBe(true);
+  });
+
+  it("filters a Carson task out of execution and never messages it", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = storedPlan();
+    plan.tasks.push({ personId: "carson", personName: "Carson", message: "Do the rest yourself." });
+
+    const summary = await executeProposedPlan(plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    const recipients = mocks.deliverTaskMessage.mock.calls.map(([p]) => p.recipientName);
+    expect(recipients).not.toContain("Carson");
+    expect(recipients).toEqual(["Christopher", "Nasira", "Grace"]);
+    expect(summary).not.toMatch(/carson/i);
+  });
+
+  // Safety: a failed send is reported exactly and NOT auto-retried.
+  it("does not auto-retry a failed send — one attempt per recipient, then stop", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" })
+      .mockResolvedValueOnce({ success: false, channel: "failed", error: "recipient phone number is missing" })
+      .mockResolvedValueOnce({ success: true, channel: "whatsapp" });
+
+    const summary = await executeProposedPlan(storedPlan(), {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    // Exactly one attempt per recipient — no retry of the failed send.
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
+    expect(summary).toContain("Nasira was NOT messaged — recipient phone number is missing");
+    expect(summary).not.toMatch(/keep trying|try again/i);
+  });
+
+  // Safety: only the plan's own recipients are messaged — unrelated household
+  // members (memory/context bleed) never enter the current execution.
+  it("does not pull unrelated people into the current task", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const peopleWithExtras: Person[] = [
+      ...guestTeam(),
+      person({ id: "squishy", name: "Squishy", role: "Nanny", responsibilities: "Unrelated errand." }),
+    ];
+
+    await executeProposedPlan(storedPlan(), {
+      displayName: "Sana",
+      userId: "user-1",
+      people: peopleWithExtras,
+    });
+
+    const recipients = mocks.deliverTaskMessage.mock.calls.map(([p]) => p.recipientName);
+    expect(recipients).toEqual(["Christopher", "Nasira", "Grace"]);
+    expect(recipients).not.toContain("Squishy");
+  });
+
+  // Safety net 5 — an incomplete/empty transcript never executes.
+  it("does not execute on an incomplete transcript", async () => {
+    const turn = await handlePendingPlanTurn("", storedPlan(), {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+    expect(turn.action).toBe("held");
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+    expect(mocks.savePending).not.toHaveBeenCalled();
+  });
+
+  // Safety net 7 — the same pending plan can execute only once. A duplicate
+  // approval (EL double-fire) sends nothing the second time.
+  it("executes a plan only once — duplicate approval sends no second WhatsApp", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = storedPlan();
+
+    const first = await handlePendingPlanTurn("Yes.", plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+    expect(first.action).toBe("executed");
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
+
+    // Second approval of the SAME plan — no additional sends.
+    const second = await handlePendingPlanTurn("Yes.", plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+    expect(second.action).toBe("executed");
+    expect(second.summary).toMatch(/already sent/i);
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3); // unchanged
+    expect(mocks.savePending).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks a concurrent duplicate execution of the same plan", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = storedPlan();
+    const [a, b] = await Promise.all([
+      executeProposedPlan(plan, { displayName: "Sana", userId: "user-1", people: guestTeam() }),
+      executeProposedPlan(plan, { displayName: "Sana", userId: "user-1", people: guestTeam() }),
+    ]);
+
+    const summaries = [a, b];
+    expect(summaries.filter((s) => /already sent/i.test(s))).toHaveLength(1);
+    // Only one real execution reached savePending / delivery.
+    expect(mocks.savePending).toHaveBeenCalledTimes(1);
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
   });
 });
 
