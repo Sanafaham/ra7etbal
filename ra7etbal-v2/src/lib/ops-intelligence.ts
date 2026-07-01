@@ -258,8 +258,33 @@ function findGuestPrepOwner(
   return best ? { domain, person: best } : null;
 }
 
+/**
+ * Extracts the shared event context from the user's utterance (e.g. "We have
+ * guests coming tomorrow for afternoon tea") by dropping any operating-
+ * authority clause ("Handle what you can") and rephrasing first-person
+ * pronouns so the sentence reads naturally when sent to someone else.
+ */
+function extractSharedEventContext(sourceText: string): string {
+  const context = sourceText
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence && !OPERATING_AUTHORITY_RE.test(sentence))
+    .join(" ")
+    .replace(/[.!?]+$/, "")
+    .trim();
+
+  if (!context) return "";
+
+  return context
+    .replace(/\bI'm\b/gi, "We're")
+    .replace(/\bI've\b/gi, "We've")
+    .replace(/\bI\b/g, "We")
+    .replace(/\bmy\b/gi, "our");
+}
+
 export function buildDeterministicGuestPreparationTasks(
   people: Person[],
+  sourceText = "",
 ): ProposedTask[] {
   const used = new Set<string>();
   const owners: GuestPrepOwner[] = [];
@@ -283,13 +308,16 @@ export function buildDeterministicGuestPreparationTasks(
 
   const dinnerName = dinner?.person.name ?? "the dinner owner";
   const hospitalityName = hospitality?.person.name ?? "the hospitality owner";
+  const context = extractSharedEventContext(sourceText);
+  const withContext = (instruction: string) =>
+    context ? `${context}. ${instruction}` : instruction;
 
   return owners.map(({ domain, person }) => {
     if (domain === "dinner") {
       return {
         personId: person.id,
         personName: person.name,
-        message: "Confirm menu and prepare dinner.",
+        message: withContext("Please confirm the menu and prepare dinner."),
       };
     }
 
@@ -297,14 +325,16 @@ export function buildDeterministicGuestPreparationTasks(
       return {
         personId: person.id,
         personName: person.name,
-        message: "Prepare flowers and hospitality setup.",
+        message: withContext("Please prepare the flowers and hospitality setup."),
       };
     }
 
     return {
       personId: person.id,
       personName: person.name,
-      message: `Coordinate and follow up with ${dinnerName} and ${hospitalityName}.`,
+      message: withContext(
+        `Please coordinate with ${dinnerName} and ${hospitalityName} and confirm everything is ready.`,
+      ),
     };
   });
 }
@@ -315,7 +345,7 @@ export function normalizeGuestPreparationPlan(
 ): ProposedPlan {
   if (plan.outcomeType !== "guest_arrival") return plan;
 
-  const deterministicTasks = buildDeterministicGuestPreparationTasks(people);
+  const deterministicTasks = buildDeterministicGuestPreparationTasks(people, plan.sourceText);
   if (deterministicTasks.length < 2) return plan;
 
   const names = deterministicTasks.map((task) => task.personName);

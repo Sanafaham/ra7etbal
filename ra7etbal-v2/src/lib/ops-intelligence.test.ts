@@ -114,17 +114,77 @@ describe("guest preparation operational planning", () => {
     expect(tasks).toEqual([
       expect.objectContaining({
         personName: "Christopher",
-        message: "Confirm menu and prepare dinner.",
+        message: "Please confirm the menu and prepare dinner.",
       }),
       expect.objectContaining({
         personName: "Nasira",
-        message: "Prepare flowers and hospitality setup.",
+        message: "Please prepare the flowers and hospitality setup.",
       }),
       expect.objectContaining({
         personName: "Grace",
-        message: "Coordinate and follow up with Christopher and Nasira.",
+        message: "Please coordinate with Christopher and Nasira and confirm everything is ready.",
       }),
     ]);
+  });
+
+  it("prepends shared event context to every guest-prep message", () => {
+    const tasks = buildDeterministicGuestPreparationTasks(
+      guestTeam(),
+      "I have guests coming tomorrow for afternoon tea. Handle what you can.",
+    );
+
+    const sharedContext = "We have guests coming tomorrow for afternoon tea";
+    for (const task of tasks) {
+      expect(task.message.startsWith(sharedContext)).toBe(true);
+    }
+
+    expect(tasks).toEqual([
+      expect.objectContaining({
+        personName: "Christopher",
+        message: `${sharedContext}. Please confirm the menu and prepare dinner.`,
+      }),
+      expect.objectContaining({
+        personName: "Nasira",
+        message: `${sharedContext}. Please prepare the flowers and hospitality setup.`,
+      }),
+      expect.objectContaining({
+        personName: "Grace",
+        message: `${sharedContext}. Please coordinate with Christopher and Nasira and confirm everything is ready.`,
+      }),
+    ]);
+  });
+
+  it("gives Christopher only dinner responsibilities, never Nasira's or Grace's", () => {
+    const tasks = buildDeterministicGuestPreparationTasks(
+      guestTeam(),
+      "I have guests coming tomorrow for afternoon tea. Handle what you can.",
+    );
+    const christopherMessage = tasks.find((t) => t.personName === "Christopher")?.message ?? "";
+
+    expect(christopherMessage).toContain("confirm the menu and prepare dinner");
+    expect(christopherMessage).not.toMatch(/flowers|hospitality setup|coordinate with/i);
+  });
+
+  it("gives Nasira only hospitality responsibilities, never Christopher's or Grace's", () => {
+    const tasks = buildDeterministicGuestPreparationTasks(
+      guestTeam(),
+      "I have guests coming tomorrow for afternoon tea. Handle what you can.",
+    );
+    const nasiraMessage = tasks.find((t) => t.personName === "Nasira")?.message ?? "";
+
+    expect(nasiraMessage).toContain("prepare the flowers and hospitality setup");
+    expect(nasiraMessage).not.toMatch(/prepare dinner|confirm the menu|coordinate with/i);
+  });
+
+  it("has Grace coordinate only, never owning food or flowers herself", () => {
+    const tasks = buildDeterministicGuestPreparationTasks(
+      guestTeam(),
+      "I have guests coming tomorrow for afternoon tea. Handle what you can.",
+    );
+    const graceMessage = tasks.find((t) => t.personName === "Grace")?.message ?? "";
+
+    expect(graceMessage).toContain("coordinate with Christopher and Nasira and confirm everything is ready");
+    expect(graceMessage).not.toMatch(/prepare dinner|confirm the menu|prepare the flowers/i);
   });
 
   it("repairs a collapsed single-owner guest plan before persistence or execution", () => {
@@ -148,9 +208,9 @@ describe("guest preparation operational planning", () => {
       "Grace",
     ]);
     expect(collapsed.tasks.map((task) => task.message)).toEqual([
-      "Confirm menu and prepare dinner.",
-      "Prepare flowers and hospitality setup.",
-      "Coordinate and follow up with Christopher and Nasira.",
+      "We have guests tomorrow. Please confirm the menu and prepare dinner.",
+      "We have guests tomorrow. Please prepare the flowers and hospitality setup.",
+      "We have guests tomorrow. Please coordinate with Christopher and Nasira and confirm everything is ready.",
     ]);
   });
 
@@ -198,9 +258,9 @@ describe("guest preparation operational planning", () => {
 
     const savedItems = mocks.savePending.mock.calls[0][0] as ExtractedItem[];
     expect(savedItems.map((item) => [item.assignedTo, item.description])).toEqual([
-      ["Christopher", "Confirm menu and prepare dinner."],
-      ["Nasira", "Prepare flowers and hospitality setup."],
-      ["Grace", "Coordinate and follow up with Christopher and Nasira."],
+      ["Christopher", "We have guests tomorrow. Please confirm the menu and prepare dinner."],
+      ["Nasira", "We have guests tomorrow. Please prepare the flowers and hospitality setup."],
+      ["Grace", "We have guests tomorrow. Please coordinate with Christopher and Nasira and confirm everything is ready."],
     ]);
     expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
     expect(mocks.deliverTaskMessage.mock.calls.map(([payload]) => payload.recipientName)).toEqual([
