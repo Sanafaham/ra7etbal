@@ -1,4 +1,5 @@
 import type { CalendarEvent } from "./calendar";
+import { isSupportedOperationalAutomation } from "./automation-support";
 import { supabase } from "./supabase";
 
 export type ChiefOfStaffFreshness = "live" | "fresh" | "recent" | "stale" | "unknown";
@@ -252,6 +253,8 @@ interface AutomationRow {
   id: string;
   title: string;
   instruction: string;
+  automation_type: string | null;
+  assignee_id: string | null;
   cadence_type: string;
   cadence_value: unknown;
   timezone: string;
@@ -277,7 +280,13 @@ interface AutomationRunRow {
   failure_reason: string | null;
   created_at: string;
   updated_at: string;
-  automations?: { title?: string | null; people?: { name?: string | null } | null } | null;
+  automations?: {
+    title?: string | null;
+    automation_type?: string | null;
+    assignee_id?: string | null;
+    cadence_type?: string | null;
+    people?: { name?: string | null } | null;
+  } | null;
 }
 
 interface WhatsappDeliveryRow {
@@ -704,11 +713,11 @@ async function loadAutomations(
   return safeSection("automations", status, async () => {
     const { data, error } = await supabase
       .from("automations")
-      .select("id, title, instruction, cadence_type, cadence_value, timezone, next_run_at, status, created_by, created_at, updated_at, people(name)")
+      .select("id, title, instruction, automation_type, assignee_id, cadence_type, cadence_value, timezone, next_run_at, status, created_by, created_at, updated_at, people(name)")
       .order("next_run_at", { ascending: true })
       .limit(limit);
     if (error) throw error;
-    return ((data ?? []) as AutomationRow[]).map((row) => ({
+    return ((data ?? []) as AutomationRow[]).filter(isSupportedOperationalAutomation).map((row) => ({
       id: row.id,
       type: "automation",
       title: row.title,
@@ -737,11 +746,13 @@ async function loadAutomationRuns(
   return safeSection("automation_runs", status, async () => {
     const { data, error } = await supabase
       .from("automation_runs")
-      .select("id, automation_id, task_id, run_for, current_state, sent_at, confirmed_at, followup_sent_at, escalated_at, completed_at, failure_reason, created_at, updated_at, automations(title, people(name))")
+      .select("id, automation_id, task_id, run_for, current_state, sent_at, confirmed_at, followup_sent_at, escalated_at, completed_at, failure_reason, created_at, updated_at, automations(title, automation_type, assignee_id, cadence_type, people(name))")
       .order("created_at", { ascending: false })
       .limit(limit);
     if (error) throw error;
-    return ((data ?? []) as AutomationRunRow[]).map((row) => ({
+    return ((data ?? []) as AutomationRunRow[])
+      .filter((row) => Boolean(row.automations && isSupportedOperationalAutomation(row.automations)))
+      .map((row) => ({
       id: row.id,
       type: "automation_run",
       title: row.automations?.title ?? "Automation run",

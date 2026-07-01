@@ -11,6 +11,7 @@ const {
   buildAutomationStatusBlock,
   formatAutomationForMorning,
   formatAutomationForNight,
+  isOperationalAutomationRunRow,
 } = await import("./automation-context");
 
 import type { AutomationDigest, AutomationRunSummary } from "./automation-context";
@@ -63,6 +64,46 @@ describe("buildAutomationStatusBlock — Phase 9A failed-run visibility", () => 
     const block = buildAutomationStatusBlock(digest);
     expect(block).toContain("Escalated:");
     expect(block).toContain("Failed (delivery or send failure");
+  });
+});
+
+describe("automation operational-state filtering", () => {
+  it("excludes unsupported recurring WhatsApp runs before Carson state is built", () => {
+    expect(isOperationalAutomationRunRow({
+      automations: {
+        title: "Weekly Flower Inventory",
+        automation_type: "delegation",
+        assignee_id: "grace-id",
+        cadence_type: "weekly",
+      },
+    })).toBe(false);
+    expect(isOperationalAutomationRunRow({
+      automations: {
+        title: "Daily message",
+        automation_type: "message",
+        assignee_id: "grace-id",
+        cadence_type: "daily",
+      },
+    })).toBe(false);
+  });
+
+  it("keeps supported owner-only and one-time runs in Carson state", () => {
+    expect(isOperationalAutomationRunRow({
+      automations: {
+        title: "Weekly owner reminder",
+        automation_type: "delegation",
+        assignee_id: null,
+        cadence_type: "weekly",
+      },
+    })).toBe(true);
+    expect(isOperationalAutomationRunRow({
+      automations: {
+        title: "One-time Grace task",
+        automation_type: "delegation",
+        assignee_id: "grace-id",
+        cadence_type: "once",
+      },
+    })).toBe(true);
   });
 });
 

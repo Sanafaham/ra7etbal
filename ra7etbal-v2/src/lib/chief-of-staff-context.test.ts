@@ -225,4 +225,72 @@ describe("getChiefOfStaffContext", () => {
     expect(context.metadata.section_status.whatsapp_deliveries.ok).toBe(false);
     expect(context.metadata.section_status.whatsapp_deliveries.error).toContain("delivery table unavailable");
   });
+
+  it("excludes unsupported legacy WhatsApp automations from open loops and risks", async () => {
+    tableData.automations = [
+      {
+        id: "legacy-automation",
+        title: "Weekly Flower Inventory",
+        instruction: "Ask Grace to send the flower inventory.",
+        automation_type: "delegation",
+        assignee_id: "grace-id",
+        cadence_type: "weekly",
+        cadence_value: {},
+        timezone: "Europe/Istanbul",
+        next_run_at: "2026-07-01T12:00:00Z",
+        status: "active",
+        created_by: "carson",
+        created_at: "2026-06-30T08:00:00Z",
+        updated_at: "2026-06-30T08:00:00Z",
+        people: { name: "Grace" },
+      },
+      {
+        id: "owner-automation",
+        title: "Weekly Owner Reminder",
+        instruction: "Remind Sana to review priorities.",
+        automation_type: "delegation",
+        assignee_id: null,
+        cadence_type: "weekly",
+        cadence_value: {},
+        timezone: "Europe/Istanbul",
+        next_run_at: "2026-07-01T13:00:00Z",
+        status: "active",
+        created_by: "carson",
+        created_at: "2026-06-30T08:00:00Z",
+        updated_at: "2026-06-30T08:00:00Z",
+        people: null,
+      },
+    ];
+    tableData.automation_runs = [
+      {
+        id: "legacy-run",
+        automation_id: "legacy-automation",
+        task_id: "task-1",
+        run_for: "2026-07-01T12:00:00Z",
+        current_state: "failed",
+        sent_at: "2026-07-01T12:00:00Z",
+        confirmed_at: null,
+        followup_sent_at: null,
+        escalated_at: null,
+        completed_at: null,
+        failure_reason: "Legacy WhatsApp disabled.",
+        created_at: "2026-07-01T12:00:00Z",
+        updated_at: "2026-07-01T12:00:00Z",
+        automations: {
+          title: "Weekly Flower Inventory",
+          automation_type: "delegation",
+          assignee_id: "grace-id",
+          cadence_type: "weekly",
+          people: { name: "Grace" },
+        },
+      },
+    ];
+
+    const context = await getChiefOfStaffContext("sana@example.com", { now });
+
+    expect(context.automations.map((item) => item.id)).toEqual(["owner-automation"]);
+    expect(context.openLoops.map((item) => item.id)).toEqual(["owner-automation"]);
+    expect(context.risks.map((item) => item.id)).not.toContain("risk:legacy-run");
+    expect(summarizeChiefOfStaffContext(context)).not.toContain("automation issue");
+  });
 });

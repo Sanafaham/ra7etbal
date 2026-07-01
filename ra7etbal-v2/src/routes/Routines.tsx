@@ -10,6 +10,10 @@ import {
   toggleRoutine,
 } from "../lib/routines";
 import type { CreateRoutineInput, Routine, RoutineSchedule, RoutineType } from "../lib/routines";
+import {
+  filterSupportedOperationalAutomations,
+  isUnsupportedRecurringWhatsappAutomation as isUnsupportedRecurringWhatsappAutomationRow,
+} from "../lib/automation-support";
 import { supabase } from "../lib/supabase";
 import { usePeopleStore } from "../stores/people";
 
@@ -57,8 +61,7 @@ export function isOwnerOnlyAutomation(row: Pick<AutomationRow, "assignee_id" | "
 export function isUnsupportedRecurringWhatsappAutomation(
   row: Pick<AutomationRow, "assignee_id" | "automation_type" | "cadence_type">,
 ): boolean {
-  if (row.cadence_type === "once") return false;
-  return row.automation_type === "message" || row.assignee_id !== null;
+  return isUnsupportedRecurringWhatsappAutomationRow(row);
 }
 
 export function resolveAutomationAssigneeName(
@@ -211,6 +214,7 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
   // ── Automation action state ────────────────────────────────────────────────
   const [automationActioningId, setAutomationActioningId] = useState<string | null>(null);
   const [automationConfirmStopId, setAutomationConfirmStopId] = useState<string | null>(null);
+  const [automationConfirmDeleteId, setAutomationConfirmDeleteId] = useState<string | null>(null);
 
   // ── Create form state ──────────────────────────────────────────────────────
   const [showForm, setShowForm] = useState(false);
@@ -303,11 +307,15 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
       .order("created_at", { ascending: false });
 
     if (!rows) return;
-    setAutomations(rows as AutomationRow[]);
+    const automationRows = rows as AutomationRow[];
+    setAutomations(automationRows);
 
-    // Fetch latest run state per automation
-    const ids = rows.map((r: AutomationRow) => r.id);
-    if (ids.length === 0) return;
+    // Fetch latest run state only for supported operational automations.
+    const ids = filterSupportedOperationalAutomations(automationRows).map((r) => r.id);
+    if (ids.length === 0) {
+      setAutomationRuns({});
+      return;
+    }
     const { data: runs } = await supabase
       .from("automation_runs")
       .select("automation_id, current_state, failure_reason")
@@ -364,6 +372,46 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
           ? prev.filter((a) => a.id !== id)
           : prev.map((a) => (a.id === id ? { ...a, status: nextStatus as AutomationRow["status"] } : a)),
       );
+    } catch {
+      // Silently fail — list reload on next visit will correct state
+    } finally {
+      setAutomationActioningId(null);
+    }
+  }
+
+  async function handleAutomationDelete(id: string) {
+    if (automationActioningId) return;
+
+    if (automationConfirmDeleteId !== id) {
+      setAutomationConfirmDeleteId(id);
+      window.setTimeout(() => {
+        setAutomationConfirmDeleteId((cur) => (cur === id ? null : cur));
+      }, 3000);
+      return;
+    }
+
+    setAutomationConfirmDeleteId(null);
+    setAutomationActioningId(id);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const jwt = sessionData?.session?.access_token;
+      if (!jwt) return;
+
+      const res = await fetch(`/api/automations?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+        },
+      });
+
+      if (!res.ok) return;
+
+      setAutomations((prev) => prev.filter((a) => a.id !== id));
+      setAutomationRuns((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     } catch {
       // Silently fail — list reload on next visit will correct state
     } finally {
@@ -864,9 +912,11 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               people={peopleItems}
               actioning={automationActioningId === a.id}
               confirmingStop={automationConfirmStopId === a.id}
+              confirmingDelete={automationConfirmDeleteId === a.id}
               onPause={() => handleAutomationAction(a.id, "pause")}
               onResume={() => handleAutomationAction(a.id, "resume")}
               onStop={() => handleAutomationAction(a.id, "stop")}
+              onDelete={() => handleAutomationDelete(a.id)}
             />
           ))}
           {activeRoutines.map((r) => (
@@ -895,9 +945,11 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
               people={peopleItems}
               actioning={automationActioningId === a.id}
               confirmingStop={automationConfirmStopId === a.id}
+              confirmingDelete={automationConfirmDeleteId === a.id}
               onPause={() => handleAutomationAction(a.id, "pause")}
               onResume={() => handleAutomationAction(a.id, "resume")}
               onStop={() => handleAutomationAction(a.id, "stop")}
+              onDelete={() => handleAutomationDelete(a.id)}
             />
           ))}
           {pausedRoutines.map((r) => (
@@ -925,9 +977,11 @@ interface AutomationCardProps {
   people: Array<{ name: string }>;
   actioning: boolean;
   confirmingStop: boolean;
+  confirmingDelete: boolean;
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
+  onDelete: () => void;
 }
 
 type StateConfig = {
@@ -1019,9 +1073,11 @@ function AutomationCard({
   people,
   actioning,
   confirmingStop,
+  confirmingDelete,
   onPause,
   onResume,
   onStop,
+  onDelete,
 }: AutomationCardProps) {
   const assigneeName = resolveAutomationAssigneeName(automation, people);
   const ownerOnly = isOwnerOnlyAutomation(automation);
@@ -1109,7 +1165,23 @@ function AutomationCard({
         </div>
 
         {/* Controls */}
-        {!unsupportedRecurringWhatsapp && (
+        {unsupportedRecurringWhatsapp ? (
+        <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={actioning}
+            aria-label={confirmingDelete ? "Confirm delete" : "Delete unsupported automation"}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-40 ${
+              confirmingDelete
+                ? "bg-red-100 text-red-600 hover:bg-red-200"
+                : "text-ink/30 hover:text-red-500"
+            }`}
+          >
+            {actioning ? "…" : confirmingDelete ? "Confirm?" : "Delete"}
+          </button>
+        </div>
+        ) : (
         <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
           {/* Pause / Resume toggle */}
           {isActive && (

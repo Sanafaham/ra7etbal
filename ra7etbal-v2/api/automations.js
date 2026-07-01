@@ -11,10 +11,10 @@
  *   GET    /api/automations   — list current user's automations + latest run summary
  *   POST   /api/automations   — create a new automation
  *   PATCH  /api/automations   — update fields or apply a lifecycle action
+ *   DELETE /api/automations   — permanently delete one current user's automation
  *
  * Auth:    All routes require Authorization: Bearer <supabase-jwt>.
  * Ownership: users can only read/write their own automations.
- * No DELETE in V1. Stop and archive via PATCH action=stop / action=archive.
  */
 
 const VALID_CADENCE_TYPES = ['once', 'daily', 'weekly', 'every_n_days', 'monthly'];
@@ -40,6 +40,7 @@ export default async function handler(req, res) {
   if (req.method === 'GET')   return handleGet(req, res);
   if (req.method === 'POST')  return handlePost(req, res);
   if (req.method === 'PATCH') return handlePatch(req, res);
+  if (req.method === 'DELETE') return handleDelete(req, res);
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
@@ -364,6 +365,71 @@ async function handlePatch(req, res) {
   const automation = Array.isArray(updated) ? updated[0] : updated;
 
   return res.status(200).json({ automation });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DELETE /api/automations
+//
+// Required: id in query string or JSON body.
+//
+// Permanently deletes one automation owned by the current user. Automation runs
+// are deleted first so legacy rows can be cleaned up even when runs exist.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function handleDelete(req, res) {
+  const { uid, config, error } = await requireUser(req);
+  if (error) return res.status(401).json({ error });
+
+  const id = req.query?.id ?? req.body?.id;
+  if (!id || typeof id !== 'string') {
+    return res.status(400).json({ error: 'id is required.' });
+  }
+
+  const checkRes = await sbFetch(
+    config,
+    `${config.supabaseUrl}/rest/v1/automations` +
+    `?id=eq.${e(id)}&user_id=eq.${e(uid)}&select=id&limit=1`,
+  );
+  if (!checkRes.ok) {
+    return res.status(500).json({ error: 'Failed to verify automation.' });
+  }
+  const rows = await checkRes.json().catch(() => []);
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(404).json({ error: 'Automation not found.' });
+  }
+
+  const runsRes = await sbFetch(
+    config,
+    `${config.supabaseUrl}/rest/v1/automation_runs` +
+    `?automation_id=eq.${e(id)}&user_id=eq.${e(uid)}`,
+    {
+      method: 'DELETE',
+      headers: { Prefer: 'return=minimal' },
+    },
+  );
+  if (!runsRes.ok) {
+    const errText = await runsRes.text().catch(() => '');
+    console.error('[automations DELETE] runs delete failed:', runsRes.status, errText);
+    return res.status(500).json({ error: 'Failed to delete automation runs.' });
+  }
+
+  const deleteRes = await sbFetch(
+    config,
+    `${config.supabaseUrl}/rest/v1/automations` +
+    `?id=eq.${e(id)}&user_id=eq.${e(uid)}`,
+    {
+      method: 'DELETE',
+      headers: { Prefer: 'return=minimal' },
+    },
+  );
+
+  if (!deleteRes.ok) {
+    const errText = await deleteRes.text().catch(() => '');
+    console.error('[automations DELETE] delete failed:', deleteRes.status, errText);
+    return res.status(500).json({ error: 'Failed to delete automation.' });
+  }
+
+  return res.status(200).json({ ok: true, deleted: true, id });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

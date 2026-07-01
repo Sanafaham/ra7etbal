@@ -12,6 +12,7 @@
  */
 
 import { supabase } from "./supabase";
+import { filterSupportedOperationalAutomations, isSupportedOperationalAutomation } from "./automation-support";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -50,6 +51,22 @@ export interface AutomationDigest {
   firingTomorrow: AutomationScheduleSummary[];
 }
 
+interface AutomationJoinFields {
+  title?: string | null;
+  automation_type?: string | null;
+  assignee_id?: string | null;
+  cadence_type?: string | null;
+  status?: string | null;
+}
+
+interface AutomationRunRowWithJoin {
+  automations?: AutomationJoinFields | null;
+}
+
+export function isOperationalAutomationRunRow(row: AutomationRunRowWithJoin): boolean {
+  return Boolean(row.automations && isSupportedOperationalAutomation(row.automations));
+}
+
 const EMPTY_DIGEST: AutomationDigest = {
   pending: [],
   escalated: [],
@@ -84,7 +101,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   // ── Open runs (pending + escalated + failed, last 48 h) ───────────────────
   const { data: openRuns } = await supabase
     .from("automation_runs")
-    .select("automation_id, current_state, sent_at, confirmed_at, escalated_at, failure_reason, automations!inner(title, automation_type)")
+    .select("automation_id, current_state, sent_at, confirmed_at, escalated_at, failure_reason, automations!inner(title, automation_type, assignee_id, cadence_type, status)")
     .in("current_state", ["sent", "followup_sent", "escalated", "failed"])
     .gte("sent_at", window48hAgo)
     .order("sent_at", { ascending: false })
@@ -93,7 +110,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   // ── Confirmed runs (last 24 h) ────────────────────────────────────────────
   const { data: confirmedRuns } = await supabase
     .from("automation_runs")
-    .select("automation_id, current_state, sent_at, confirmed_at, automations!inner(title)")
+    .select("automation_id, current_state, sent_at, confirmed_at, automations!inner(title, automation_type, assignee_id, cadence_type, status)")
     .eq("current_state", "confirmed")
     .gte("confirmed_at", window24hAgo)
     .order("confirmed_at", { ascending: false })
@@ -102,7 +119,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   // ── Automations firing today (next 24 h) ──────────────────────────────────
   const { data: firingTodayRows } = await supabase
     .from("automations")
-    .select("id, title, next_run_at")
+    .select("id, title, next_run_at, automation_type, assignee_id, cadence_type, status")
     .eq("status", "active")
     .gte("next_run_at", now.toISOString())
     .lte("next_run_at", window24hFwd)
@@ -112,7 +129,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   // ── Automations firing tomorrow (24–48 h) ─────────────────────────────────
   const { data: firingTomorrowRows } = await supabase
     .from("automations")
-    .select("id, title, next_run_at")
+    .select("id, title, next_run_at, automation_type, assignee_id, cadence_type, status")
     .eq("status", "active")
     .gt("next_run_at", window24hFwd)
     .lte("next_run_at", window48hFwd)
@@ -120,11 +137,24 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     .limit(5);
 
   // ── Resolve assignee names for all relevant automation IDs ────────────────
+  const openRunsTyped = ((openRuns ?? []) as Record<string, unknown>[]).filter((r) =>
+    isOperationalAutomationRunRow(r as AutomationRunRowWithJoin),
+  );
+  const confirmedRunsTyped = ((confirmedRuns ?? []) as Record<string, unknown>[]).filter((r) =>
+    isOperationalAutomationRunRow(r as AutomationRunRowWithJoin),
+  );
+  const firingTodayRowsTyped = filterSupportedOperationalAutomations(
+    (firingTodayRows ?? []) as (Record<string, unknown> & AutomationJoinFields)[],
+  );
+  const firingTomorrowRowsTyped = filterSupportedOperationalAutomations(
+    (firingTomorrowRows ?? []) as (Record<string, unknown> & AutomationJoinFields)[],
+  );
+
   const allIds = [
-    ...(openRuns ?? []).map((r) => (r as Record<string, unknown>).automation_id as string),
-    ...(confirmedRuns ?? []).map((r) => (r as Record<string, unknown>).automation_id as string),
-    ...(firingTodayRows ?? []).map((a) => (a as Record<string, unknown>).id as string),
-    ...(firingTomorrowRows ?? []).map((a) => (a as Record<string, unknown>).id as string),
+    ...openRunsTyped.map((r) => r.automation_id as string),
+    ...confirmedRunsTyped.map((r) => r.automation_id as string),
+    ...firingTodayRowsTyped.map((a) => a.id as string),
+    ...firingTomorrowRowsTyped.map((a) => a.id as string),
   ].filter(Boolean);
 
   const uniqueIds = [...new Set(allIds)];
@@ -163,8 +193,6 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     };
   }
 
-  const openRunsTyped = (openRuns ?? []) as Record<string, unknown>[];
-
   const pending = openRunsTyped
     .filter((r) => {
       const automation = r.automations as { automation_type?: string } | null;
@@ -183,16 +211,15 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     .filter((r) => r.current_state === "failed")
     .map((r) => toRunSummary(r));
 
-  const confirmedToday = ((confirmedRuns ?? []) as Record<string, unknown>[])
-    .map((r) => toRunSummary(r, true));
+  const confirmedToday = confirmedRunsTyped.map((r) => toRunSummary(r, true));
 
-  const firingToday = ((firingTodayRows ?? []) as Record<string, unknown>[]).map((a) => ({
+  const firingToday = firingTodayRowsTyped.map((a) => ({
     title: a.title as string,
     assignee: assigneeMap[a.id as string] ?? null,
     nextRunAt: a.next_run_at as string,
   }));
 
-  const firingTomorrow = ((firingTomorrowRows ?? []) as Record<string, unknown>[]).map((a) => ({
+  const firingTomorrow = firingTomorrowRowsTyped.map((a) => ({
     title: a.title as string,
     assignee: assigneeMap[a.id as string] ?? null,
     nextRunAt: a.next_run_at as string,
