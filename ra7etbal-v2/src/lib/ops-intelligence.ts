@@ -200,22 +200,11 @@ interface PlanAIResponse {
   proposal_speech: string;
 }
 
-type GuestPrepDomain = "dinner" | "hospitality" | "coordination" | "transport";
+type GuestPrepDomain = "dinner" | "hospitality" | "coordination";
 
 interface GuestPrepOwner {
   domain: GuestPrepDomain;
   person: Person;
-}
-
-// Carson (the assistant) must never be treated as a household recipient. If a
-// proposal ever names "Carson"/"assistant" — an AI hallucination or a stray
-// contact — it is filtered out before any task is created or any WhatsApp is
-// attempted, so Carson can never message itself (and never surface a spurious
-// "recipient phone number is missing").
-const ASSISTANT_RECIPIENT_RE = /^\s*(?:carson|the assistant|assistant)\s*$/i;
-
-export function isAssistantRecipientName(name: string | null | undefined): boolean {
-  return ASSISTANT_RECIPIENT_RE.test((name ?? "").trim());
 }
 
 const DINNER_ROLE_RE = /\b(cook|chef|kitchen)\b/i;
@@ -224,8 +213,6 @@ const HOSPITALITY_ROLE_RE = /\b(housekeeper|house\s*keeper|maid|cleaner|hospital
 const HOSPITALITY_TOPIC_RE = /\b(flowers?|hospitality|guest\s*room|setup|table|decor|welcome|hosting)\b/i;
 const COORDINATION_ROLE_RE = /\b(coordinator|coordination|house\s*manager|household\s*manager|estate\s*manager|manager|assistant|\bpa\b|\bea\b)\b/i;
 const COORDINATION_TOPIC_RE = /\b(coordinate|follow\s*up|manage|supervise|oversee|check\s*in)\b/i;
-const TRANSPORT_ROLE_RE = /\b(driver|chauffeur)\b/i;
-const TRANSPORT_TOPIC_RE = /\b(transport|car|drive|driving|pick\s*up|drop\s*off|airport|errands?)\b/i;
 
 function personText(person: Person): string {
   return [
@@ -244,9 +231,7 @@ function findGuestPrepOwner(
   domain: GuestPrepDomain,
   excluded = new Set<string>(),
 ): GuestPrepOwner | null {
-  const candidates = people.filter(
-    (person) => !excluded.has(person.id) && !isAssistantRecipientName(person.name),
-  );
+  const candidates = people.filter((person) => !excluded.has(person.id));
   const ranked = candidates
     .map((person) => {
       const text = personText(person);
@@ -259,14 +244,9 @@ function findGuestPrepOwner(
         if (HOSPITALITY_ROLE_RE.test(person.role)) score += 6;
         if (HOSPITALITY_TOPIC_RE.test(text)) score += 3;
         if (DINNER_ROLE_RE.test(person.role)) score -= 4;
-        if (TRANSPORT_ROLE_RE.test(person.role)) score -= 4;
-      } else if (domain === "transport") {
-        if (TRANSPORT_ROLE_RE.test(person.role)) score += 6;
-        if (TRANSPORT_TOPIC_RE.test(text)) score += 3;
       } else {
         if (COORDINATION_ROLE_RE.test(person.role)) score += 6;
         if (COORDINATION_TOPIC_RE.test(text)) score += 3;
-        if (TRANSPORT_ROLE_RE.test(person.role)) score -= 4;
       }
 
       return { person, score };
@@ -278,33 +258,8 @@ function findGuestPrepOwner(
   return best ? { domain, person: best } : null;
 }
 
-/**
- * Extracts the shared event context from the user's utterance (e.g. "We have
- * guests coming tomorrow for afternoon tea") by dropping any operating-
- * authority clause ("Handle what you can") and rephrasing first-person
- * pronouns so the sentence reads naturally when sent to someone else.
- */
-function extractSharedEventContext(sourceText: string): string {
-  const context = sourceText
-    .split(/(?<=[.!?])\s+/)
-    .map((sentence) => sentence.trim())
-    .filter((sentence) => sentence && !OPERATING_AUTHORITY_RE.test(sentence))
-    .join(" ")
-    .replace(/[.!?]+$/, "")
-    .trim();
-
-  if (!context) return "";
-
-  return context
-    .replace(/\bI'm\b/gi, "We're")
-    .replace(/\bI've\b/gi, "We've")
-    .replace(/\bI\b/g, "We")
-    .replace(/\bmy\b/gi, "our");
-}
-
 export function buildDeterministicGuestPreparationTasks(
   people: Person[],
-  sourceText = "",
 ): ProposedTask[] {
   const used = new Set<string>();
   const owners: GuestPrepOwner[] = [];
@@ -322,32 +277,19 @@ export function buildDeterministicGuestPreparationTasks(
   }
 
   const coordination = findGuestPrepOwner(people, "coordination", used);
-  if (coordination) {
-    owners.push(coordination);
-    used.add(coordination.person.id);
-  }
-
-  // Transport standby — a driver/chauffeur stands by in case guests need a
-  // ride. Included last so it never displaces a core prep owner. Do NOT drop
-  // this: the deterministic normalizer replaces AI-proposed tasks wholesale,
-  // so omitting transport here would silently remove a valid standby role.
-  const transport = findGuestPrepOwner(people, "transport", used);
-  if (transport) owners.push(transport);
+  if (coordination) owners.push(coordination);
 
   if (new Set(owners.map((owner) => owner.person.id)).size < 2) return [];
 
   const dinnerName = dinner?.person.name ?? "the dinner owner";
   const hospitalityName = hospitality?.person.name ?? "the hospitality owner";
-  const context = extractSharedEventContext(sourceText);
-  const withContext = (instruction: string) =>
-    context ? `${context}. ${instruction}` : instruction;
 
   return owners.map(({ domain, person }) => {
     if (domain === "dinner") {
       return {
         personId: person.id,
         personName: person.name,
-        message: withContext("Please confirm the menu and prepare dinner."),
+        message: "Confirm menu and prepare dinner.",
       };
     }
 
@@ -355,24 +297,14 @@ export function buildDeterministicGuestPreparationTasks(
       return {
         personId: person.id,
         personName: person.name,
-        message: withContext("Please prepare the flowers and hospitality setup."),
-      };
-    }
-
-    if (domain === "transport") {
-      return {
-        personId: person.id,
-        personName: person.name,
-        message: withContext("Please stand by for transport in case the guests need a ride."),
+        message: "Prepare flowers and hospitality setup.",
       };
     }
 
     return {
       personId: person.id,
       personName: person.name,
-      message: withContext(
-        `Please coordinate with ${dinnerName} and ${hospitalityName} and confirm everything is ready.`,
-      ),
+      message: `Coordinate and follow up with ${dinnerName} and ${hospitalityName}.`,
     };
   });
 }
@@ -383,7 +315,7 @@ export function normalizeGuestPreparationPlan(
 ): ProposedPlan {
   if (plan.outcomeType !== "guest_arrival") return plan;
 
-  const deterministicTasks = buildDeterministicGuestPreparationTasks(people, plan.sourceText);
+  const deterministicTasks = buildDeterministicGuestPreparationTasks(people);
   if (deterministicTasks.length < 2) return plan;
 
   const names = deterministicTasks.map((task) => task.personName);
@@ -472,13 +404,10 @@ Return ONLY valid JSON, no markdown:
   // Resolve person IDs (case-insensitive match).
   const proposedTasks: ProposedTask[] = [];
   for (const t of parsed.tasks) {
-    // Never let the assistant be proposed as a recipient, even if the model
-    // hallucinates "Carson" as a team member.
-    if (isAssistantRecipientName(t.person_name)) continue;
     const person = people.find(
       (p) => p.name.trim().toLowerCase() === t.person_name.trim().toLowerCase(),
     );
-    if (!person || isAssistantRecipientName(person.name) || !t.message?.trim()) continue;
+    if (!person || !t.message?.trim()) continue;
     proposedTasks.push({ personId: person.id, personName: person.name, message: t.message.trim() });
   }
 
@@ -507,28 +436,6 @@ interface ExecutePlanOptions {
   people: Person[];
 }
 
-// Idempotency registry — a given plan may be executed at most once for the life
-// of the session. ElevenLabs frequently double-fires the confirmation tool call
-// ("Yes" → execute_instruction twice), and a plan can also be re-loaded from the
-// DB after a reconnect. Without this guard, a single approval could send the
-// same WhatsApps twice. We claim the key synchronously (before any await) so a
-// concurrent second call is rejected immediately. The key persists even when a
-// send fails: we never auto-retry, so one approval == one send attempt.
-const executedPlanKeys = new Set<string>();
-
-function planIdempotencyKey(plan: ProposedPlan): string {
-  if (plan.dbId) return `db:${plan.dbId}`;
-  const taskSignature = plan.tasks
-    .map((task) => `${task.personId}:${task.message}`)
-    .join("|");
-  return `text:${plan.sourceText}::${taskSignature}`;
-}
-
-/** Test-only: clears the idempotency registry between cases. */
-export function resetExecutedPlanRegistryForTest(): void {
-  executedPlanKeys.clear();
-}
-
 /**
  * Executes the confirmed plan without any AI re-extraction.
  *
@@ -543,24 +450,8 @@ export async function executeProposedPlan(
 ): Promise<string> {
   const { displayName, userId, people } = opts;
 
-  // Idempotency — claim the plan synchronously before any await. A duplicate
-  // approval (EL double-fire, DB re-load) is a no-op that sends nothing.
-  const idempotencyKey = planIdempotencyKey(plan);
-  if (executedPlanKeys.has(idempotencyKey)) {
-    return "I already sent that plan. I won't send it again.";
-  }
-  executedPlanKeys.add(idempotencyKey);
-
-  // Drop any assistant recipient defensively — Carson must never message itself.
-  const deliverableTasks = plan.tasks.filter(
-    (task) => !isAssistantRecipientName(task.personName),
-  );
-  if (deliverableTasks.length === 0) {
-    return "There's no one to send this to. Tell me who should handle it.";
-  }
-
   // Build ExtractedItem[] directly — no AI needed; we already have all info.
-  const extractedItems: ExtractedItem[] = deliverableTasks.map((task) => ({
+  const extractedItems: ExtractedItem[] = plan.tasks.map((task) => ({
     id: crypto.randomUUID(),
     type: "delegation" as const,
     description: task.message,
@@ -659,7 +550,7 @@ export async function executeProposedPlan(
   }
 
   if (failedSends.length === 0) {
-    const names = sentNames.length > 0 ? sentNames.join(", ") : deliverableTasks.map((t) => t.personName).join(", ");
+    const names = sentNames.length > 0 ? sentNames.join(", ") : plan.tasks.map((t) => t.personName).join(", ");
     return `${names} have the plan. I'll watch for confirmations.`;
   }
 
@@ -679,72 +570,4 @@ export async function rejectProposedPlan(plan: ProposedPlan): Promise<string> {
     markPlanCancelled(plan.dbId).catch(() => {});
   }
   return "Okay, I'll hold off. Just say the word when you're ready.";
-}
-
-// ── Pending-plan approval resolution ─────────────────────────────────────────
-
-export type PendingPlanDecision = "confirm" | "reject" | "hold";
-
-/**
- * Decides how a pending, awaiting-approval plan should be treated, based on the
- * user's VERBATIM reply.
- *
- * Root cause of the P0 "Yes doesn't send" failure: the approval leg used to key
- * off the ElevenLabs-rephrased instruction param. EL frequently rewrites a bare
- * "Yes" into a fuller sentence ("please send them to everyone"), which fails a
- * strict confirmation match — so the stored plan was silently abandoned and the
- * turn fell through to extraction, which failed. Deciding from the verbatim
- * transcript makes approval robust to that rephrasing.
- *
- * Empty or noisy replies return "hold" so the pending plan is preserved — never
- * cleared and never executed on ambiguous input.
- */
-export function resolvePendingPlanDecision(
-  verbatimReply: string | null | undefined,
-): PendingPlanDecision {
-  const text = (verbatimReply ?? "").trim();
-  if (!text) return "hold";
-  if (isRejection(text)) return "reject";
-  if (isConfirmation(text)) return "confirm";
-  return "hold";
-}
-
-export interface PendingPlanTurnResult {
-  action: "executed" | "cancelled" | "held";
-  /** Spoken summary to return to the caller — null when the turn is held. */
-  summary: string | null;
-  /** True when the caller should clear its cached pending plan. */
-  clearPlan: boolean;
-}
-
-/**
- * End-to-end handler for a turn taken while a plan is awaiting approval.
- *
- * - Expired plan → held, and the caller clears its cache.
- * - Verbatim rejection → cancel the plan, clear the cache.
- * - Verbatim confirmation → execute the EXACT stored plan (all sends), clear.
- * - Anything else (empty/noisy) → held, plan preserved for a later turn.
- */
-export async function handlePendingPlanTurn(
-  verbatimReply: string | null | undefined,
-  plan: ProposedPlan,
-  opts: ExecutePlanOptions,
-): Promise<PendingPlanTurnResult> {
-  if (isPlanExpired(plan)) {
-    return { action: "held", summary: null, clearPlan: true };
-  }
-
-  const decision = resolvePendingPlanDecision(verbatimReply);
-
-  if (decision === "reject") {
-    const summary = await rejectProposedPlan(plan);
-    return { action: "cancelled", summary, clearPlan: true };
-  }
-
-  if (decision === "confirm") {
-    const summary = await executeProposedPlan(plan, opts);
-    return { action: "executed", summary, clearPlan: true };
-  }
-
-  return { action: "held", summary: null, clearPlan: false };
 }

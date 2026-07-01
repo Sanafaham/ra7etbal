@@ -54,7 +54,6 @@ import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../li
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
 import {
   getSocialAcknowledgementReply,
-  isCarsonReengagementPrompt,
   isSocialAcknowledgement,
   sanitizeCarsonErrorDetail,
   sanitizeCarsonReplyText,
@@ -73,12 +72,12 @@ import {
   detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
   executeProposedPlan,
+  rejectProposedPlan,
   hasOperatingAuthority,
   isConfirmation,
   isRejection,
   isStatusQuestion,
-  resolvePendingPlanDecision,
-  handlePendingPlanTurn,
+  isPlanExpired,
   loadLatestPendingPlan,
   type ProposedPlan,
 } from "../../lib/ops-intelligence";
@@ -869,32 +868,6 @@ export default function ElevenLabsAgentWidget({
     toolStartedPerf: number;
     toolCompletedPerf: number | null;
   } | null>(null);
-  const mutedReengagementEventIdsRef = useRef<Set<number>>(new Set());
-  const agentResponsePartsByEventIdRef = useRef<Map<number, string>>(new Map());
-
-  const restoreCarsonOutputVolume = useCallback(() => {
-    const conv = conversationRef.current;
-    if (!conv) return;
-    try {
-      conv.setVolume({ volume: 1 });
-    } catch (err) {
-      console.warn("[carson-idle] failed to restore output volume", err);
-    }
-  }, []);
-
-  const muteCarsonReengagementTurn = useCallback((eventId: number | null, text: string) => {
-    if (eventId != null && mutedReengagementEventIdsRef.current.has(eventId)) return;
-    if (eventId != null) mutedReengagementEventIdsRef.current.add(eventId);
-    try {
-      conversationRef.current?.setVolume({ volume: 0 });
-      console.warn("[carson-idle] muted re-engagement prompt", {
-        eventId,
-        preview: text.slice(0, 80),
-      });
-    } catch (err) {
-      console.warn("[carson-idle] failed to mute re-engagement prompt", err);
-    }
-  }, []);
 
   /** Accumulates finalized transcript messages (both user and agent) for
    *  this session. Summarised by Haiku at disconnect for conversational memory. */
@@ -1187,17 +1160,20 @@ export default function ElevenLabsAgentWidget({
       ) {
         const plan = await buildOperationalPlanFromOutcome(latestUserMessageForOps, people);
         if (plan) {
-          // Safety: never auto-send a guest plan. Store it and ask for approval
-          // so nothing goes out on a possibly-incomplete first utterance —
-          // execution happens only after an explicit verbatim "Yes".
-          pendingPlanRef.current = plan;
+          const execSummary = await executeProposedPlan(plan, {
+            displayName: displayName ?? null,
+            userId: authUserId,
+            people,
+          });
+          sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
-            resultText: plan.proposalSpeech,
+            resultText: execSummary,
             at: new Date().toISOString(),
             inputSummary: { kind: "guest_operation_reroute", instruction: latestUserMessageForOps },
           };
-          return plan.proposalSpeech;
+          return execSummary;
         }
       }
 
@@ -2814,16 +2790,10 @@ export default function ElevenLabsAgentWidget({
         }
 
         // ── Operations Intelligence — confirmation / rejection leg ─────────
-        // Decide from the VERBATIM user transcript (lastUserMessage), never the
-        // LLM-rephrased instruction param. EL rewrites a bare "Yes" into a
-        // fuller sentence ("please send them to everyone") that fails a strict
-        // confirmation match — the P0 that left approved guest plans unsent.
-        // resolvePendingPlanDecision keys off the raw transcript so approval is
-        // robust to that rephrasing; empty/noisy replies resolve to "hold",
-        // which preserves the pending plan instead of clearing or executing it.
-        const pendingDecision = resolvePendingPlanDecision(lastUserMessage);
+        // Resolve the active pending plan: prefer the local ref (fast), fall
+        // back to the DB (survives a disconnect/reconnect between turns).
         let activePlan = pendingPlanRef.current;
-        if (!activePlan && pendingDecision !== "hold") {
+        if (!activePlan && (isConfirmation(rawInstruction) || isRejection(rawInstruction))) {
           const startedAt = performance.now();
           try {
             activePlan = await loadLatestPendingPlan().catch(() => null);
@@ -2841,24 +2811,25 @@ export default function ElevenLabsAgentWidget({
         }
 
         if (activePlan) {
-          const turn = await handlePendingPlanTurn(lastUserMessage, activePlan, {
-            displayName: displayName ?? null,
-            userId: authUserId,
-            people,
-          });
-          if (turn.clearPlan) pendingPlanRef.current = null;
-
-          if (turn.action === "executed") {
-            sessionActionsRef.current.push(`Ops plan executed: ${activePlan.sourceText}`);
+          if (isPlanExpired(activePlan)) {
+            // Plan is older than 5 minutes — discard silently.
+            pendingPlanRef.current = null;
+          } else if (isRejection(rawInstruction)) {
+            const cancelMsg = await rejectProposedPlan(activePlan);
+            pendingPlanRef.current = null;
+            return cancelMsg;
+          } else if (isConfirmation(rawInstruction)) {
+            const plan = activePlan;
+            pendingPlanRef.current = null;
+            const execSummary = await executeProposedPlan(plan, {
+              displayName: displayName ?? null,
+              userId: authUserId,
+              people,
+            });
+            sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
             useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-            return turn.summary ?? "";
+            return execSummary;
           }
-          if (turn.action === "cancelled") {
-            return turn.summary ?? "";
-          }
-          // held: the plan is preserved for a later turn (or was silently
-          // discarded on expiry). Fall through to normal handling below — a
-          // noisy transcript must not swallow an unrelated real instruction.
         }
 
         // Guard: if rawInstruction is still a bare confirmation/rejection and
@@ -2879,14 +2850,7 @@ export default function ElevenLabsAgentWidget({
 
         // ── Operations Intelligence — outcome detection leg ────────────────
         // If the instruction describes a household outcome (guests arriving,
-        // etc.), build a plan. When the user granted operating authority
-        // ("handle what you can"), execute it immediately — this is the proven
-        // 0eaaa0d path. Removing this auto-execute (in 9d100c8) left authorized
-        // plans stuck `pending` because execution then depended on a second
-        // "Yes" turn re-firing the tool, which was unreliable. Execution stays
-        // safe: executeProposedPlan filters the assistant recipient and is
-        // idempotent, so it never messages "Carson" and never double-sends.
-        // Without operating authority we still propose and wait for approval.
+        // etc.), propose a plan and store it — do NOT execute yet.
         const outcomeType = detectHouseholdOutcome(rawInstruction);
         if (outcomeType) {
           // Clear any stale pending plan before building a new one.
@@ -3382,8 +3346,6 @@ export default function ElevenLabsAgentWidget({
       activeExecuteLatencyRef.current = null;
       lastUserTranscriptTimingRef.current = null;
       recurringRawRef.current = null;
-      mutedReengagementEventIdsRef.current.clear();
-      agentResponsePartsByEventIdRef.current.clear();
 
       if (conv) {
         try {
@@ -3486,8 +3448,6 @@ export default function ElevenLabsAgentWidget({
     currentTaskContextRef.current = null;
     createdReminderKeysRef.current.clear();
     recurringRawRef.current = null;
-    mutedReengagementEventIdsRef.current.clear();
-    agentResponsePartsByEventIdRef.current.clear();
     setLastCarsonMessage(null);
     setLastUserTranscript(null);
     if (userTranscriptTimerRef.current) {
@@ -3787,24 +3747,7 @@ export default function ElevenLabsAgentWidget({
           } catch (err) {
             console.warn("[carson-audio] failed to update microphone mute state:", err);
           }
-          if (m === "listening") {
-            restoreCarsonOutputVolume();
-          }
           setMode(m === "speaking" ? "speaking" : "listening");
-        },
-        onAgentChatResponsePart: ({ text, event_id }) => {
-          if (ignoreStaleCallback("agent-chat-response-part")) return;
-          const eventId = event_id ?? null;
-          const accumulatedText =
-            eventId == null
-              ? text
-              : `${agentResponsePartsByEventIdRef.current.get(eventId) ?? ""}${text}`;
-          if (eventId != null) {
-            agentResponsePartsByEventIdRef.current.set(eventId, accumulatedText);
-          }
-          if (isCarsonReengagementPrompt(accumulatedText)) {
-            muteCarsonReengagementTurn(eventId, accumulatedText);
-          }
         },
         onMessage: ({ role, message, event_id }) => {
           if (ignoreStaleCallback("message")) return;
@@ -3823,14 +3766,6 @@ export default function ElevenLabsAgentWidget({
               timestamp: receivedAt,
               message,
             });
-            try {
-              conversationRef.current?.sendUserActivity();
-            } catch (err) {
-              console.warn("[carson-idle] failed to mark user activity", err);
-            }
-            mutedReengagementEventIdsRef.current.clear();
-            agentResponsePartsByEventIdRef.current.clear();
-            restoreCarsonOutputVolume();
             setLastUserTranscript(message);
             if (userTranscriptTimerRef.current) {
               clearTimeout(userTranscriptTimerRef.current);
@@ -3869,14 +3804,11 @@ export default function ElevenLabsAgentWidget({
             });
             if (!displayMessage || shouldSuppressCarsonIdlePrompt(message)) {
               sessionTranscriptRef.current.pop();
-              if (event_id != null) agentResponsePartsByEventIdRef.current.delete(event_id);
-              restoreCarsonOutputVolume();
               console.log("[carson-idle] suppressed idle prompt", {
                 eventId: event_id ?? null,
               });
               return;
             }
-            if (event_id != null) agentResponsePartsByEventIdRef.current.delete(event_id);
             if (displayMessage !== message) {
               sessionTranscriptRef.current[sessionTranscriptRef.current.length - 1] = {
                 role,
@@ -3920,8 +3852,6 @@ export default function ElevenLabsAgentWidget({
           startInFlightRef.current = false;
           clearCarsonSessionTimers();
           currentTaskContextRef.current = null;
-          mutedReengagementEventIdsRef.current.clear();
-          agentResponsePartsByEventIdRef.current.clear();
           setStatus("idle");
           setMode("listening");
           setSessionEndedMsg("Session ended.");
@@ -3949,8 +3879,6 @@ export default function ElevenLabsAgentWidget({
           startInFlightRef.current = false;
           clearCarsonSessionTimers();
           currentTaskContextRef.current = null;
-          mutedReengagementEventIdsRef.current.clear();
-          agentResponsePartsByEventIdRef.current.clear();
           setStatus("error");
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
@@ -4024,7 +3952,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot, restoreCarsonOutputVolume, muteCarsonReengagementTurn]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot]);
 
   // ------------------------------------------------------------------
   // Session teardown

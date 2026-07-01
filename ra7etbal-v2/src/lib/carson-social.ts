@@ -10,18 +10,8 @@ const CARSON_FILLER_PREFIX_PATTERN =
 const CARSON_REASONING_PREFIX_PATTERN =
   /^(?:based on (?:your request|the attached (?:photo|image)|the information i have)[\s.,!?;:—-]*|according to (?:your )?(?:ra7etbal|rahet bal)? ?(?:data|context|information)?[\s.,!?;:—-]*|it (?:appears|seems)(?: that)?[\s.,!?;:—-]*|the attached (?:photo|image) (?:shows|is|was)[\s.,!?;:—-]*|the task delegated[\s.,!?;:—-]*)+/i;
 
-const CARSON_REENGAGEMENT_PHRASE_PATTERN =
-  /\b(?:are you (?:still )?there|still there|are you (?:still )?with me|still with me|just checking(?: in)?|checking in|checking (?:to see )?if you(?:'|’)re (?:still )?there|checking (?:to see )?if you are (?:still )?there|i(?:'|’)m just checking(?: in)?|wanted to check (?:if|whether) you(?:'|’)re (?:still )?there|wanted to check (?:if|whether) you are (?:still )?there|can you hear me|are we still connected)\b/i;
-
 const CARSON_IDLE_SENTENCE_PATTERN =
-  /(?:^|[.?!]\s*)\b(?:are you (?:still )?there|still there|are you (?:still )?with me|still with me|just checking(?: in)?|checking in|checking (?:to see )?if you(?:'|’)re (?:still )?there|checking (?:to see )?if you are (?:still )?there|i(?:'|’)m just checking(?: in)?|wanted to check (?:if|whether) you(?:'|’)re (?:still )?there|wanted to check (?:if|whether) you are (?:still )?there|can you hear me|are we still connected)\b[^.?!]*(?:[.?!]|$)/gi;
-
-// Carson must never promise to auto-retry a send — it does not retry, and
-// saying so invites the user to expect duplicate WhatsApps. Strip any
-// "I'll keep trying" / "I'll try again" / "still trying" sentence so the spoken
-// reply reflects the honest one-attempt-then-stop behavior.
-const CARSON_RETRY_PROMISE_SENTENCE_PATTERN =
-  /(?:^|[.?!]\s*)\b(?:i(?:'|’)?ll keep (?:trying|attempting)|i(?:'|’)?ll try again|i(?:'|’)?ll keep (?:on )?(?:trying|attempting)|let me keep trying|(?:i(?:'|’)?m )?still trying|keep trying)\b[^.?!]*(?:[.?!]|$)/gi;
+  /(?:^|[.?!]\s*)\b(?:still there|are you there|are you still there)\b[^.?!]*(?:[.?!]|$)/gi;
 
 const CARSON_INTERNAL_SENTENCE_PATTERN =
   /\b(?:photo context was available for this action|do not mention it unless the user asks|(?:analysis|extraction|attachment|prompt|processing|context|transcript|tools|database) (?:was|were|is|are|has|have|will|can|should|available|complete|completed)[^.?!]*(?:[.?!]|$))/gi;
@@ -113,7 +103,6 @@ export function sanitizeCarsonReplyText(text: string): string {
 
   sanitized = sanitized
     .replace(CARSON_IDLE_SENTENCE_PATTERN, "")
-    .replace(CARSON_RETRY_PROMISE_SENTENCE_PATTERN, "")
     .replace(CARSON_PERMISSION_QUESTION_PATTERN, "")
     .replace(CARSON_INTERNAL_SENTENCE_PATTERN, "")
     .trim();
@@ -134,10 +123,6 @@ export function sanitizeCarsonReplyText(text: string): string {
 export function shouldSuppressCarsonIdlePrompt(text: string): boolean {
   const sanitized = sanitizeCarsonReplyText(text);
   return !sanitized && text.trim().length > 0;
-}
-
-export function isCarsonReengagementPrompt(text: string): boolean {
-  return CARSON_REENGAGEMENT_PHRASE_PATTERN.test(text);
 }
 
 export function sanitizeSocialAcknowledgementReply(text: string): string {

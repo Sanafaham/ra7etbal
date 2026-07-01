@@ -5,7 +5,6 @@ import {
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
   sanitizeCarsonErrorDetail,
-  isCarsonReengagementPrompt,
   sanitizeCarsonReplyText,
   sanitizeSocialAcknowledgementReply,
   shouldSuppressCarsonIdlePrompt,
@@ -131,68 +130,17 @@ describe("Carson global reply text sanitation", () => {
     "One sec",
     "Just one moment.",
     "One moment. Still there?",
-  ])("detects filler-only prompts for suppression: '%s'", (text) => {
-    expect(shouldSuppressCarsonIdlePrompt(text)).toBe(true);
-  });
-
-  it.each([
     "Still there, سيدتي الجميلة?",
     "Are you there?",
     "Are you still there?",
-    "Just checking in.",
-    "I'm just checking in.",
-    "Checking to see if you're still there.",
-    "Can you hear me?",
-    "Are we still connected?",
-    "Still with me?",
-    "Are you still with me?",
-    "Are you with me?",
   ])("detects idle nag prompts for suppression: '%s'", (text) => {
     expect(shouldSuppressCarsonIdlePrompt(text)).toBe(true);
-    expect(isCarsonReengagementPrompt(text)).toBe(true);
   });
 
   it("does not suppress useful replies after removing an idle sentence", () => {
     const text = "Grace has it. Are you there?";
     expect(sanitizeCarsonReplyText(text)).toBe("Grace has it");
     expect(shouldSuppressCarsonIdlePrompt(text)).toBe(false);
-  });
-
-  it.each([
-    ["Grace has it. Just checking in.", "Grace has it"],
-    ["I'll handle it. Can you hear me?", "I'll handle it"],
-    ["You're clear right now. Are we still connected?", "You're clear right now"],
-    ["Christopher, Nasira, Grace have the plan. Still with me?", "Christopher, Nasira, Grace have the plan"],
-  ])("removes re-engagement prompts from otherwise useful replies: '%s'", (input, expected) => {
-    expect(sanitizeCarsonReplyText(input)).toBe(expected);
-    expect(shouldSuppressCarsonIdlePrompt(input)).toBe(false);
-  });
-
-  it.each([
-    "You're waiting on Grace to confirm the flowers.",
-    "I'll check in with Christopher tomorrow.",
-    "Grace has it. I'll follow up if needed.",
-  ])("does not classify operational waiting/follow-up language as an idle nag: '%s'", (text) => {
-    expect(isCarsonReengagementPrompt(text)).toBe(false);
-    expect(shouldSuppressCarsonIdlePrompt(text)).toBe(false);
-  });
-
-  // Carson must never promise to auto-retry a send — it does not retry, and
-  // saying so risks the user expecting duplicate WhatsApps.
-  it.each([
-    ["Nasira was NOT messaged. I'll keep trying.", "Nasira was NOT messaged"],
-    ["I'll try again in a moment.", ""],
-    ["The send failed. I'll keep trying to reach Christopher.", "The send failed"],
-    ["Still trying to reach Grace.", ""],
-  ])("strips 'keep trying' retry promises from replies: '%s'", (input, expected) => {
-    expect(sanitizeCarsonReplyText(input)).toBe(expected);
-  });
-
-  it("does not strip legitimate one-time follow-up language", () => {
-    // "I'll follow up" is a scheduled action, not an auto-retry promise.
-    expect(sanitizeCarsonReplyText("Grace has it. I'll follow up tomorrow.")).toBe(
-      "Grace has it. I'll follow up tomorrow.",
-    );
   });
 });
 
