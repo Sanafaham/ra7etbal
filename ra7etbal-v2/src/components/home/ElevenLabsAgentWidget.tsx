@@ -7,9 +7,10 @@ import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
-import { saveCarsonNote, loadRecentNotes, type CarsonNote } from "../../lib/carson-notes";
+import { saveCarsonNote, loadRecentNotes, findNoteMatches, type CarsonNote } from "../../lib/carson-notes";
 import { createTodo, listActiveTodos, completeTodo, findTodoMatches, type CarsonTodo } from "../../lib/carson-todos";
 import { listClearMyHeadInboxItems, deleteClearMyHeadInboxItem } from "../../lib/clear-my-head-inbox";
+import { looksLikeTaskInstruction } from "../../lib/carson-inbox-action-quality";
 import {
   extractTodoTitleParam,
   extractTodoDescriptionParam,
@@ -2599,8 +2600,17 @@ export default function ElevenLabsAgentWidget({
       if (!authUserId) return "You are not signed in. Please sign in and try again.";
 
       // ── note ─────────────────────────────────────────────────────────────
+      // Duplicate check first: never create a second note for the same
+      // thought. On a match, the inbox item is left untouched — no delete,
+      // no create — so the user can still decide what to do with it.
       if (action === "note") {
         try {
+          const existingNotes = await loadRecentNotes(100);
+          const dupes = findNoteMatches(existingNotes, item.text);
+          if (dupes.length > 0) {
+            sessionActionsRef.current.push(`Inbox note skipped as duplicate: ${item.text}`);
+            return `You already have a note that says "${dupes[0].note}". I've left it in your inbox — say delete if you want it gone.`;
+          }
           await saveCarsonNote(item.text, "general");
           await deleteClearMyHeadInboxItem(item.id);
           sessionActionsRef.current.push(`Turned inbox item into note: ${item.text}`);
@@ -2611,8 +2621,17 @@ export default function ElevenLabsAgentWidget({
       }
 
       // ── todo ─────────────────────────────────────────────────────────────
+      // Duplicate check first: never create a second to-do for the same
+      // thought. On a match, the inbox item is left untouched — no delete,
+      // no create — so the user can still decide what to do with it.
       if (action === "todo") {
         try {
+          const existingTodos = await listActiveTodos(100);
+          const dupes = findTodoMatches(existingTodos, item.text);
+          if (dupes.length > 0) {
+            sessionActionsRef.current.push(`Inbox to-do skipped as duplicate: ${item.text}`);
+            return `You already have "${dupes[0].title}" on your to-do list. I've left it in your inbox — say delete if you want it gone.`;
+          }
           await createTodo(item.text);
           await deleteClearMyHeadInboxItem(item.id);
           sessionActionsRef.current.push(`Turned inbox item into to-do: ${item.text}`);
@@ -2639,7 +2658,10 @@ export default function ElevenLabsAgentWidget({
             dueAt: parsed.dueAt,
             source: "clear_my_head_inbox",
           });
-          await deleteClearMyHeadInboxItem(item.id);
+          // Intentionally does NOT delete the source inbox item — a
+          // reminder is a nudge to revisit later, not proof the underlying
+          // thought is resolved. The item stays until the user explicitly
+          // deletes it or converts it into something else.
           useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
           currentTaskContextRef.current = {
             id: task.id,
@@ -2658,7 +2680,7 @@ export default function ElevenLabsAgentWidget({
             : isTomorrow
             ? "tomorrow"
             : d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
-          return `I'll remind you ${dateLabel} at ${timeStr}.`;
+          return `I'll remind you ${dateLabel} at ${timeStr}. I've kept it in your inbox too.`;
         } catch (err) {
           return `Couldn't set the reminder. ${sanitizeCarsonErrorDetail(err)}`;
         }
@@ -2702,7 +2724,13 @@ export default function ElevenLabsAgentWidget({
       }
 
       // ── message ──────────────────────────────────────────────────────────
+      // Task-like text ("Confirm the menu.", "Call Grace.") must not become
+      // a bare direct message — that path has no confirmation link and no
+      // follow-up/escalation coverage. Ask instead of silently converting it.
       if (action === "message") {
+        if (looksLikeTaskInstruction(item.text)) {
+          return `"${item.text}" reads like something you want done, not just an FYI. Ask the user if they mean to delegate it as a task instead — only send it as a plain message if they confirm that's really what they want.`;
+        }
         const personNameInput = person_name?.trim();
         if (!personNameInput) {
           return "I need to know who to send this message to. Ask the user for a name.";

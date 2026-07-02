@@ -79,17 +79,20 @@ describe("ElevenLabsAgentWidget — act_on_inbox_item requires explicit, matched
     expect(block).toMatch(/if \(matches\.length === 0\) \{[\s\S]{0,200}I couldn't find an inbox item matching/);
   });
 
-  for (const action of ["note", "todo", "reminder", "delegate", "message", "delete"] as const) {
+  function actionBranch(block: string, action: string): string {
+    const actionIndex = block.indexOf(`if (action === "${action}") {`);
+    expect(actionIndex).toBeGreaterThan(-1);
+    const nextActionIndex = block.indexOf('if (action ===', actionIndex + 1);
+    return nextActionIndex > -1 ? block.slice(actionIndex, nextActionIndex) : block.slice(actionIndex);
+  }
+
+  // Reminder is deliberately excluded — see the dedicated "does not
+  // auto-delete" test below. Reminder creation is not proof the underlying
+  // thought is resolved, so the source item must stay.
+  for (const action of ["note", "todo", "delegate", "message", "delete"] as const) {
     it(`only deletes the inbox item AFTER a successful ${action} action (never before, never on failure)`, () => {
       const block = inboxToolsBlock();
-      const actionIndex = block.indexOf(`if (action === "${action}") {`);
-      expect(actionIndex).toBeGreaterThan(-1);
-
-      // Scope to just this action's branch (up to the next "if (action ===" or end of function).
-      const nextActionIndex = block.indexOf('if (action ===', actionIndex + 1);
-      const branch = nextActionIndex > -1
-        ? block.slice(actionIndex, nextActionIndex)
-        : block.slice(actionIndex);
+      const branch = actionBranch(block, action);
 
       const deleteIndex = branch.indexOf("await deleteClearMyHeadInboxItem(item.id)");
       const catchIndex = branch.indexOf("} catch (err) {");
@@ -101,13 +104,64 @@ describe("ElevenLabsAgentWidget — act_on_inbox_item requires explicit, matched
 
   it("reminder requires time_text and never creates or deletes anything without it", () => {
     const block = inboxToolsBlock();
-    const reminderIndex = block.indexOf('if (action === "reminder") {');
-    const nextActionIndex = block.indexOf('if (action ===', reminderIndex + 1);
-    const branch = block.slice(reminderIndex, nextActionIndex);
+    const branch = actionBranch(block, "reminder");
     const missingTimeIndex = branch.indexOf("I need to know when to remind you");
     const createIndex = branch.indexOf("await createReminderTask(");
     expect(missingTimeIndex).toBeGreaterThan(-1);
     expect(createIndex).toBeGreaterThan(missingTimeIndex);
+  });
+
+  it("reminder creates the reminder but does NOT delete the source inbox item — creation is not completion", () => {
+    const block = inboxToolsBlock();
+    const branch = actionBranch(block, "reminder");
+    expect(branch).toContain("await createReminderTask(");
+    expect(branch).not.toContain("await deleteClearMyHeadInboxItem(item.id)");
+  });
+
+  it("note checks for an existing duplicate before saving, and never deletes when a duplicate blocks it", () => {
+    const block = inboxToolsBlock();
+    const branch = actionBranch(block, "note");
+    const dupeCheckIndex = branch.indexOf("findNoteMatches(existingNotes, item.text)");
+    const dupeReturnIndex = branch.indexOf("You already have a note that says");
+    const saveIndex = branch.indexOf("await saveCarsonNote(");
+    expect(dupeCheckIndex).toBeGreaterThan(-1);
+    expect(dupeReturnIndex).toBeGreaterThan(dupeCheckIndex);
+    expect(saveIndex).toBeGreaterThan(dupeReturnIndex);
+
+    // The duplicate-return branch must not fall through to a delete call —
+    // scope strictly to the "if (dupes.length > 0)" block.
+    const dupeBlockEnd = branch.indexOf("}", dupeReturnIndex);
+    const dupeBlock = branch.slice(dupeCheckIndex, dupeBlockEnd);
+    expect(dupeBlock).not.toContain("deleteClearMyHeadInboxItem");
+  });
+
+  it("todo checks for an existing duplicate before creating, and never deletes when a duplicate blocks it", () => {
+    const block = inboxToolsBlock();
+    const branch = actionBranch(block, "todo");
+    const dupeCheckIndex = branch.indexOf("findTodoMatches(existingTodos, item.text)");
+    const dupeReturnIndex = branch.indexOf("You already have");
+    const createIndex = branch.indexOf("await createTodo(");
+    expect(dupeCheckIndex).toBeGreaterThan(-1);
+    expect(dupeReturnIndex).toBeGreaterThan(dupeCheckIndex);
+    expect(createIndex).toBeGreaterThan(dupeReturnIndex);
+
+    const dupeBlockEnd = branch.indexOf("}", dupeReturnIndex);
+    const dupeBlock = branch.slice(dupeCheckIndex, dupeBlockEnd);
+    expect(dupeBlock).not.toContain("deleteClearMyHeadInboxItem");
+  });
+
+  it("message refuses to silently send task-like text and asks instead — no send, no delete", () => {
+    const block = inboxToolsBlock();
+    const branch = actionBranch(block, "message");
+    const guardIndex = branch.indexOf("looksLikeTaskInstruction(item.text)");
+    const sendIndex = branch.indexOf("await createAndSendDirectMessage(");
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(sendIndex).toBeGreaterThan(guardIndex);
+
+    // The guard's own return must precede any send/delete call.
+    const guardReturnIndex = branch.indexOf("reads like something you want done");
+    expect(guardReturnIndex).toBeGreaterThan(guardIndex);
+    expect(guardReturnIndex).toBeLessThan(sendIndex);
   });
 
   it("delegate requires a resolvable person with a phone number before sending anything", () => {
@@ -140,6 +194,20 @@ describe("ElevenLabsAgentWidget — act_on_inbox_item requires explicit, matched
     const deleteBranch = branch.slice(0, closeIndex);
     expect(deleteBranch).not.toMatch(/saveCarsonNote|createTodo\(|createReminderTask|createAndSendDelegation|createAndSendDirectMessage/);
     expect(deleteBranch).toContain("await deleteClearMyHeadInboxItem(item.id)");
+  });
+
+  it("delegate uses the existing delegation path (confirmation link + follow-up), never the plain direct-message path", () => {
+    const block = inboxToolsBlock();
+    const branch = actionBranch(block, "delegate");
+    expect(branch).toContain("await createAndSendDelegation(");
+    expect(branch).not.toContain("createAndSendDirectMessage(");
+  });
+
+  it("message uses the plain direct-message path, never the delegation/task path", () => {
+    const block = inboxToolsBlock();
+    const branch = actionBranch(block, "message");
+    expect(branch).toContain("await createAndSendDirectMessage(");
+    expect(branch).not.toContain("createAndSendDelegation(");
   });
 });
 
