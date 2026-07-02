@@ -29,6 +29,14 @@ export interface ExtractionState {
   setSuggestedMessage: (itemId: string, suggestedMessage: string | null) => void;
   setImageFile: (itemId: string, file: File | null) => void;
   setImageFiles: (itemId: string, files: File[] | null) => void;
+  /**
+   * Drops an item from the review list entirely. This is the single source
+   * of truth for "not saved" — Review.tsx's Save & Send always reads
+   * `items` from this store, and savePending() only ever processes the
+   * array it's handed, so a removed item can never be saved, sent,
+   * delegated, reminded, or converted into a note/task.
+   */
+  removeItem: (itemId: string) => void;
   clear: () => void;
 }
 
@@ -132,6 +140,12 @@ export const useExtractionStore = create<ExtractionState>((set, get) => ({
           ? { ...it, imageFiles: list, imageFile: list ? list[0] : null }
           : it,
       ),
+    });
+  },
+
+  removeItem(itemId) {
+    set({
+      items: get().items.filter((it) => it.id !== itemId),
     });
   },
 

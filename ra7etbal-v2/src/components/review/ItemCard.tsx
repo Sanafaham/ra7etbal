@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import type { Assignment, ExtractedItem, ItemType } from "../../types/extraction";
 import type { Person } from "../../types/person";
+import { shouldShowPhotoControl } from "../../lib/review-selection";
 
 interface Props {
   item: ExtractedItem;
@@ -9,6 +10,7 @@ interface Props {
   onDescriptionChange: (itemId: string, description: string) => void;
   onMessageChange: (itemId: string, suggestedMessage: string | null) => void;
   onImageChange: (itemId: string, file: File | null) => void;
+  onRemove: (itemId: string) => void;
 }
 
 /** Visual treatment per type — colour cue + label. */
@@ -35,6 +37,7 @@ export default function ItemCard({
   onDescriptionChange,
   onMessageChange,
   onImageChange,
+  onRemove,
 }: Props) {
   const type = TYPE_META[item.type];
   const descId = useId();
@@ -68,6 +71,10 @@ export default function ItemCard({
   // message makes sense. Other types can still have one if the AI suggested it.
   const messageRelevant =
     item.type === "message" || item.type === "delegation" || item.suggestedMessage != null;
+  // Cuts repeated "Attach photo" clutter on multi-item reviews — hidden only
+  // for types where a photo is rarely relevant, and never hidden once an
+  // item already has one attached (see shouldShowPhotoControl).
+  const showPhotoControl = shouldShowPhotoControl(item);
 
   return (
     <article className="rounded-2xl border border-sage/30 bg-white/80 p-4 shadow-sm">
@@ -80,11 +87,22 @@ export default function ItemCard({
         >
           {type.label}
         </span>
-        {item.needsPerson && (
-          <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-900">
-            Needs person
-          </span>
-        )}
+        <div className="flex items-center gap-1.5">
+          {item.needsPerson && (
+            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-900">
+              Needs person
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => onRemove(item.id)}
+            aria-label={`Remove "${item.description || "this item"}" from review`}
+            title="Remove from review"
+            className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50/80 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-700 shadow-sm transition hover:bg-rose-100"
+          >
+            <span aria-hidden>✕</span> Remove
+          </button>
+        </div>
       </header>
 
       <label htmlFor={descId} className="sr-only">
@@ -169,51 +187,56 @@ export default function ItemCard({
         </div>
       )}
 
-      {/* Image attachment */}
-      <div className="mt-3 flex items-center gap-2">
-        {previewUrl ? (
-          <div className="relative inline-block">
-            <img
-              src={previewUrl}
-              alt="Attached"
-              className="h-20 w-20 rounded-xl object-cover shadow-sm border border-sage/20"
-            />
-            {(item.imageFiles?.length ?? 0) > 1 && (
-              <span className="absolute bottom-1 right-1 rounded-full bg-ink/75 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow">
-                {item.imageFiles!.length} photos
-              </span>
-            )}
+      {/* Image attachment. The file input stays mounted unconditionally even
+          when the visible button is hidden — iOS invalidates in-flight File
+          objects if the input unmounts, so it must never live inside the
+          `showPhotoControl` conditional. */}
+      {showPhotoControl && (
+        <div className="mt-3 flex items-center gap-2">
+          {previewUrl ? (
+            <div className="relative inline-block">
+              <img
+                src={previewUrl}
+                alt="Attached"
+                className="h-20 w-20 rounded-xl object-cover shadow-sm border border-sage/20"
+              />
+              {(item.imageFiles?.length ?? 0) > 1 && (
+                <span className="absolute bottom-1 right-1 rounded-full bg-ink/75 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow">
+                  {item.imageFiles!.length} photos
+                </span>
+              )}
+              <button
+                type="button"
+                aria-label="Remove image"
+                onClick={() => onImageChange(item.id, null)}
+                className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold shadow"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
             <button
               type="button"
-              aria-label="Remove image"
-              onClick={() => onImageChange(item.id, null)}
-              className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold shadow"
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex items-center gap-1.5 rounded-full border border-sage/30 bg-white/70 px-3 py-1.5 text-xs font-medium text-ink/60 shadow-sm transition hover:bg-white hover:text-ink"
             >
-              ✕
+              <span aria-hidden>📎</span> Attach photo
             </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="inline-flex items-center gap-1.5 rounded-full border border-sage/30 bg-white/70 px-3 py-1.5 text-xs font-medium text-ink/60 shadow-sm transition hover:bg-white hover:text-ink"
-          >
-            <span aria-hidden>📎</span> Attach photo
-          </button>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          className="sr-only"
-          onChange={(e) => {
-            const file = e.target.files?.[0] ?? null;
-            onImageChange(item.id, file);
-            // Reset input so the same file can be re-selected after removal
-            e.target.value = "";
-          }}
-        />
-      </div>
+          )}
+        </div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="sr-only"
+        onChange={(e) => {
+          const file = e.target.files?.[0] ?? null;
+          onImageChange(item.id, file);
+          // Reset input so the same file can be re-selected after removal
+          e.target.value = "";
+        }}
+      />
     </article>
   );
 }

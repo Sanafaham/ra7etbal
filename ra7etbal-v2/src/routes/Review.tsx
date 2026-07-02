@@ -7,6 +7,7 @@ import Spinner from "../components/Spinner";
 import AuthNotice from "../components/auth/AuthNotice";
 import { useAuth } from "../hooks/useAuth";
 import { addImpliedOperationalResponsibilities } from "../lib/ai/role-precedence";
+import { canSaveAndSend, getReviewSendableCheck, pickReviewEmptyStateMessage } from "../lib/review-selection";
 import { savePending, saveTaskAttachments } from "../lib/save";
 import { sendWhatsAppTask } from "../lib/whatsapp";
 import { sendDirectMessageRecord } from "../lib/direct-messages";
@@ -40,6 +41,7 @@ export default function Review() {
     setDescription,
     setSuggestedMessage,
     setImageFile,
+    removeItem,
   } = useExtractionStore(
     useShallow((s) => ({
       status: s.status,
@@ -49,8 +51,14 @@ export default function Review() {
       setDescription: s.setDescription,
       setSuggestedMessage: s.setSuggestedMessage,
       setImageFile: s.setImageFile,
+      removeItem: s.removeItem,
     })),
   );
+
+  // Tracks whether this review ever had items, so the empty state can tell
+  // "you removed everything" apart from "nothing was found" (requirement 4).
+  const everHadItemsRef = useRef(false);
+  if (items.length > 0) everHadItemsRef.current = true;
 
   const { items: people, loadFor: loadPeople, loadedForUserId } = usePeopleStore(
     useShallow((s) => ({
@@ -71,6 +79,7 @@ export default function Review() {
     [items],
   );
   const hasSendableMessages = sendableChecks.some((check) => check.isSendable);
+  const canSave = canSaveAndSend(items);
 
   const phoneByName = useMemo(() => {
     const m = new Map<string, string>();
@@ -148,8 +157,7 @@ export default function Review() {
 
       {items.length === 0 ? (
         <div className="rounded-[28px] border border-dashed border-gold/30 bg-card/70 p-6 text-sm text-text-soft">
-          Ra7etBal didn't find anything actionable in that. Head back and try
-          rephrasing.
+          {pickReviewEmptyStateMessage(everHadItemsRef.current)}
         </div>
       ) : (
         <ul className="space-y-3">
@@ -162,6 +170,7 @@ export default function Review() {
                 onDescriptionChange={setDescription}
                 onMessageChange={setSuggestedMessage}
                 onImageChange={setImageFile}
+                onRemove={removeItem}
               />
             </li>
           ))}
@@ -177,7 +186,7 @@ export default function Review() {
         >
           ← Back to Home
         </Link>
-        {items.length > 0 && (
+        {canSave && (
           <button
             type="button"
             onClick={() => void handleSave()}
@@ -367,60 +376,4 @@ export default function Review() {
       });
     });
   }
-}
-
-interface ReviewSendableCheck {
-  type: string | null;
-  kind: string | null;
-  category: string | null;
-  assignedPerson: string | null;
-  messageTextPresent: boolean;
-  isPersonalReminder: boolean;
-  isSendable: boolean;
-}
-
-function getReviewSendableCheck(item: unknown): ReviewSendableCheck {
-  const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
-  const type = readString(record.type);
-  const kind = readString(record.kind);
-  const category = readString(record.category);
-  const assignedPerson =
-    readString(record.assignedTo) ??
-    readString(record.assigned_to) ??
-    readString(record.assignee) ??
-    readString(record.recipient) ??
-    readString(record.recipientName);
-  const messageText =
-    readString(record.suggestedMessage) ??
-    readString(record.message) ??
-    readString(record.content) ??
-    readString(record.body) ??
-    readString(record.text);
-  const normalizedType = (type ?? kind ?? category ?? "").toLowerCase();
-  const normalizedAssignee = assignedPerson?.toLowerCase() ?? "";
-  const hasRealAssignedPerson =
-    !!assignedPerson &&
-    normalizedAssignee !== "__me__" &&
-    normalizedAssignee !== "me" &&
-    normalizedAssignee !== "owner";
-  const messageTextPresent = !!messageText;
-  const isPersonalReminder =
-    normalizedType === "reminder" &&
-    (!hasRealAssignedPerson || normalizedAssignee === "__me__");
-
-  return {
-    type,
-    kind,
-    category,
-    assignedPerson,
-    messageTextPresent,
-    isPersonalReminder,
-    isSendable: hasRealAssignedPerson && messageTextPresent && !isPersonalReminder,
-  };
-}
-
-function readString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
 }
