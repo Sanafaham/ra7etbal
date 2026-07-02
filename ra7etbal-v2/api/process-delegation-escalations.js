@@ -235,18 +235,26 @@ export default async function handler(req, res) {
     // ── Follow-up (10 min / 1 min in testMode) ────────────────────────────
     const followupDue = ageMs >= followupThresholdMs && !task.followup_sent_at;
     if (followupDue) {
-      console.log('[escalation] follow-up attempted', { taskId: task.id, assignedTo: task.assigned_to });
-      const sent = await sendFollowupWhatsApp({
-        task,
+      const { claimed, sent } = await processFollowupDueTask(task, {
         supabaseUrl,
         serviceKey,
         appBaseUrl,
         testMode,
+        now,
       });
-      if (sent) {
+      if (!claimed) {
+        // Another concurrent invocation (overlapping scheduler run) already
+        // claimed this task's follow-up between our SELECT and now. This is
+        // the fix for duplicate follow-ups: the in-memory followup_sent_at we
+        // read above is only used for scheduling, never for correctness — the
+        // atomic conditional UPDATE inside claimFollowupGuard is the real guard.
+        console.log('[escalation] task skipped with reason', {
+          taskId: task.id,
+          reason: 'follow-up guard claimed by another invocation',
+          ageMs,
+        });
+      } else if (sent) {
         stats.followupsSent += 1;
-        // Stamp guard column immediately to prevent re-send.
-        await stampColumn(supabaseUrl, serviceKey, task.id, 'followup_sent_at', now.toISOString());
       } else {
         stats.errors.push(`followup failed for task ${task.id}`);
       }
@@ -323,6 +331,85 @@ export default async function handler(req, res) {
 }
 
 // ── Follow-up: re-send the original WhatsApp template ─────────────────────────
+
+/**
+ * Atomically claims a task's follow-up guard BEFORE sending, then sends only
+ * if the claim succeeded.
+ *
+ * Root cause of duplicate follow-ups (confirmed via whatsapp_deliveries +
+ * automation logs): overlapping scheduler invocations (a per-task QStash
+ * follow-up message racing the periodic sweep) each read followup_sent_at as
+ * NULL from their own SELECT, each passed the in-memory "!task.followup_sent_at"
+ * check, and each called sendFollowupWhatsApp — the guard column was only
+ * stamped AFTER a successful send, too late to stop the siblings.
+ *
+ * Fix: claim the guard with a conditional UPDATE (`followup_sent_at=is.null`)
+ * BEFORE sending. Postgres serializes concurrent UPDATEs to the same row —
+ * exactly one request's WHERE clause matches and gets a non-empty response;
+ * every other concurrent request (this run or an overlapping one) gets zero
+ * rows back and must not send. On send failure the claim is released so a
+ * later run can retry — preserving the existing "retry until success"
+ * behavior for transient failures.
+ */
+export async function processFollowupDueTask(task, { supabaseUrl, serviceKey, appBaseUrl, testMode, now }) {
+  const claimed = await claimFollowupGuard(supabaseUrl, serviceKey, task.id, now.toISOString());
+  if (!claimed) {
+    return { claimed: false, sent: false };
+  }
+
+  console.log('[escalation] follow-up attempted', { taskId: task.id, assignedTo: task.assigned_to });
+  const sent = await sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl, testMode });
+  if (!sent) {
+    // Release the claim so a subsequent run retries — matches the previous
+    // behavior where a failed send left followup_sent_at unset.
+    await releaseFollowupGuard(supabaseUrl, serviceKey, task.id);
+  }
+  return { claimed: true, sent };
+}
+
+/**
+ * Conditional UPDATE — succeeds (returns exactly one row) only if
+ * followup_sent_at is still NULL at the moment Postgres applies it. This is
+ * the actual duplicate-prevention lock; the caller's earlier SELECT of
+ * followup_sent_at is used only for scheduling ("is this due yet"), never for
+ * correctness.
+ */
+export async function claimFollowupGuard(supabaseUrl, serviceKey, taskId, value) {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/tasks` +
+      `?id=eq.${encodeURIComponent(taskId)}` +
+      `&followup_sent_at=is.null`,
+    {
+      method: 'PATCH',
+      headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=representation' },
+      body: JSON.stringify({ followup_sent_at: value }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    console.error(`[escalation] claimFollowupGuard failed for task ${taskId}: ${res.status} ${body}`);
+    return false;
+  }
+  const rows = await res.json().catch(() => []);
+  const claimed = Array.isArray(rows) && rows.length === 1;
+  console.log('[escalation] followup guard claim', { taskId, claimed });
+  return claimed;
+}
+
+/** Reverts a claim after a failed send so the task is retried on a later run. */
+export async function releaseFollowupGuard(supabaseUrl, serviceKey, taskId) {
+  const res = await fetch(`${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}`, {
+    method: 'PATCH',
+    headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=minimal' },
+    body: JSON.stringify({ followup_sent_at: null }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    console.error(`[escalation] releaseFollowupGuard failed for task ${taskId}: ${res.status} ${body}`);
+  } else {
+    console.log('[escalation] followup guard released after send failure', { taskId });
+  }
+}
 
 async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl, testMode }) {
   const { id: taskId, user_id, assigned_to, description, confirmation_url } = task;
