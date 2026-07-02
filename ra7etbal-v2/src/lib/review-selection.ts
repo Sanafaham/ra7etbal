@@ -3,79 +3,12 @@ import type { ExtractedItem, ItemType } from "../types/extraction";
 /**
  * Pure selection/decision logic for the Clear My Head Review screen.
  *
- * Extracted from Review.tsx so it's independently unit-testable without a
- * component-rendering harness. Review.tsx always derives its Save & Send
- * behavior from the current `items` array in the extraction store — a
- * removed item is filtered out of that array (see stores/extraction.ts
- * removeItem), so every function here automatically "sees" removals: there
- * is no separate removal-awareness needed, only "operate on whatever items
- * are currently present."
+ * Clear My Head is a temporary thought dump and review space only — it never
+ * persists items to Notes/To-dos/Reminders/Delegations/Messages. Items here
+ * are either kept (stays in the in-memory extraction store) or discarded.
+ * Carson (voice + text-carson.ts / ops-intelligence.ts) remains the only path
+ * that converts thoughts into saved records.
  */
-
-export interface ReviewSendableCheck {
-  type: string | null;
-  kind: string | null;
-  category: string | null;
-  assignedPerson: string | null;
-  messageTextPresent: boolean;
-  isPersonalReminder: boolean;
-  isSendable: boolean;
-}
-
-export function getReviewSendableCheck(item: unknown): ReviewSendableCheck {
-  const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
-  const type = readString(record.type);
-  const kind = readString(record.kind);
-  const category = readString(record.category);
-  const assignedPerson =
-    readString(record.assignedTo) ??
-    readString(record.assigned_to) ??
-    readString(record.assignee) ??
-    readString(record.recipient) ??
-    readString(record.recipientName);
-  const messageText =
-    readString(record.suggestedMessage) ??
-    readString(record.message) ??
-    readString(record.content) ??
-    readString(record.body) ??
-    readString(record.text);
-  const normalizedType = (type ?? kind ?? category ?? "").toLowerCase();
-  const normalizedAssignee = assignedPerson?.toLowerCase() ?? "";
-  const hasRealAssignedPerson =
-    !!assignedPerson &&
-    normalizedAssignee !== "__me__" &&
-    normalizedAssignee !== "me" &&
-    normalizedAssignee !== "owner";
-  const messageTextPresent = !!messageText;
-  const isPersonalReminder =
-    normalizedType === "reminder" &&
-    (!hasRealAssignedPerson || normalizedAssignee === "__me__");
-
-  return {
-    type,
-    kind,
-    category,
-    assignedPerson,
-    messageTextPresent,
-    isPersonalReminder,
-    isSendable: hasRealAssignedPerson && messageTextPresent && !isPersonalReminder,
-  };
-}
-
-/** True when at least one currently-present item would actually be sent. */
-export function hasSendableMessages(items: unknown[]): boolean {
-  return items.some((item) => getReviewSendableCheck(item).isSendable);
-}
-
-/**
- * Whether Save & Send should be enabled/shown at all. False when the review
- * list is empty — whether because extraction found nothing, or because the
- * user removed every item. Requirement: "If all items are removed... disable
- * Save & Send."
- */
-export function canSaveAndSend(items: unknown[]): boolean {
-  return items.length > 0;
-}
 
 /**
  * Picks the right empty-state copy. "Nothing extracted" (the user never had
@@ -84,7 +17,7 @@ export function canSaveAndSend(items: unknown[]): boolean {
  */
 export function pickReviewEmptyStateMessage(everHadItems: boolean): string {
   return everHadItems
-    ? "You removed everything. Nothing will be saved — add something back or head to Home to start over."
+    ? "You cleared everything. Head to Home to dump more, or ask Carson to turn something into a note, to-do, reminder, or delegation."
     : "Ra7etBal didn't find anything actionable in that. Head back and try rephrasing.";
 }
 
@@ -113,10 +46,4 @@ const PHOTO_RELEVANT_TYPES: ReadonlySet<ItemType> = new Set([
 export function shouldShowPhotoControl(item: Pick<ExtractedItem, "type" | "imageFile">): boolean {
   if (item.imageFile) return true;
   return PHOTO_RELEVANT_TYPES.has(item.type);
-}
-
-function readString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
 }

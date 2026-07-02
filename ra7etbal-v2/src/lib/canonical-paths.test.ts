@@ -472,21 +472,11 @@ describe("canonical path source adapters", () => {
     const textCarson = source("src/lib/text-carson.ts");
     const fastPath = source("src/lib/direct-message-fast-path.ts");
     const widget = source("src/components/home/ElevenLabsAgentWidget.tsx");
-    const review = source("src/routes/Review.tsx");
 
     expect(save).toMatch(/if \(item\.type === "message"\)[\s\S]*createDirectMessageRecord\(\{[\s\S]*source:\s*"save"/);
     expect(textCarson).toMatch(/sendDirectMessageRecord\(\{[\s\S]*source:\s*"execute_instruction"/);
     expect(fastPath).toMatch(/createAndSendDirectMessage\(\{[\s\S]*source:\s*"direct-message-fast-path"/);
     expect(widget).toMatch(/const sendDirectWhatsAppMessage = useCallback[\s\S]*createAndSendDirectMessage\(\{[\s\S]*source:\s*"send_direct_whatsapp_message"/);
-    expect(review).toMatch(/sendDirectMessageRecord\(\{[\s\S]*source:\s*"review"/);
-  });
-
-  it("keeps Review successful message saves off blocking browser alerts", () => {
-    const review = source("src/routes/Review.tsx");
-
-    expect(review).not.toContain('"Saved and sent on WhatsApp."');
-    expect(review).not.toMatch(/if \(!parts\.length\) parts\.push\("Saved\."\)/);
-    expect(review).toMatch(/if \(parts\.length\) window\.alert\(parts\.join\("\\n\\n"\)\)/);
   });
 
   it("starts Voice Carson connect timeout around the SDK handshake, after live preload work", () => {

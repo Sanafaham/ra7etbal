@@ -1,37 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { useEffect, useRef } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import ItemCard from "../components/review/ItemCard";
 import Spinner from "../components/Spinner";
 import AuthNotice from "../components/auth/AuthNotice";
 import { useAuth } from "../hooks/useAuth";
-import { addImpliedOperationalResponsibilities } from "../lib/ai/role-precedence";
-import { canSaveAndSend, getReviewSendableCheck, pickReviewEmptyStateMessage } from "../lib/review-selection";
-import { savePending, saveTaskAttachments } from "../lib/save";
-import { sendWhatsAppTask } from "../lib/whatsapp";
-import { sendDirectMessageRecord } from "../lib/direct-messages";
+import { pickReviewEmptyStateMessage } from "../lib/review-selection";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
-import { useMessagesStore } from "../stores/messages";
 import { usePeopleStore } from "../stores/people";
-import { useProfileStore } from "../stores/profile";
-import { useTasksStore } from "../stores/tasks";
 
 /**
- * Review — shows AI-extracted items with editable assignments, descriptions,
- * and messages, then saves them to Supabase as tasks + messages on Save.
+ * Review — Clear My Head's temporary thought-dump review space. Shows
+ * AI-extracted items with editable assignments, descriptions, and messages,
+ * but never persists them. Items are either kept here (in-memory, for
+ * further editing/review) or discarded. Carson is the only path that
+ * converts a thought into a saved Note/To-do/Reminder/Delegation/Message.
  */
 export default function Review() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const userId = user?.id ?? null;
-  // Used to rewrite owner pronouns in outgoing delegation messages at save time.
-  const displayName = useProfileStore((s) => s.displayName);
-
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const savingRef = useRef(false);
 
   const {
     status,
@@ -56,7 +45,7 @@ export default function Review() {
   );
 
   // Tracks whether this review ever had items, so the empty state can tell
-  // "you removed everything" apart from "nothing was found" (requirement 4).
+  // "you cleared everything" apart from "nothing was found".
   const everHadItemsRef = useRef(false);
   if (items.length > 0) everHadItemsRef.current = true;
 
@@ -73,32 +62,6 @@ export default function Review() {
     if (!userId) return;
     if (loadedForUserId !== userId) void loadPeople(userId);
   }, [userId, loadedForUserId, loadPeople]);
-
-  const sendableChecks = useMemo(
-    () => items.map(getReviewSendableCheck),
-    [items],
-  );
-  const hasSendableMessages = sendableChecks.some((check) => check.isSendable);
-  const canSave = canSaveAndSend(items);
-
-  const phoneByName = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const person of people) {
-      const key = person.name.trim().toLowerCase();
-      if (key && person.phone) m.set(key, person.phone);
-    }
-    return m;
-  }, [people]);
-
-  // Maps lowercased name → whatsapp_opted_in for consent gate in handleSave.
-  const consentByName = useMemo(() => {
-    const m = new Map<string, boolean>();
-    for (const person of people) {
-      const key = person.name.trim().toLowerCase();
-      if (key) m.set(key, person.whatsapp_opted_in === true);
-    }
-    return m;
-  }, [people]);
 
   // No extraction has run — user landed on /review directly. Send them home.
   if (status === "idle") {
@@ -134,14 +97,14 @@ export default function Review() {
     <section className="space-y-5">
       <header className="space-y-1">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-gold">
-          Review
+          Clear My Head
         </p>
-        <h1 className="text-4xl font-semibold leading-tight text-text" style={{ fontFamily: "var(--font-display)" }}>Here's your plan.</h1>
+        <h1 className="text-4xl font-semibold leading-tight text-text" style={{ fontFamily: "var(--font-display)" }}>Here's what's on your mind.</h1>
         {items.length > 0 && (
           <p className="text-sm text-text-soft">
             {items.length === 1
-              ? "I found 1 item for you to review."
-              : `I found ${items.length} items for you to review.`}
+              ? "I found 1 thing. Edit it, remove it, or keep it here — ask Carson to turn it into a note, to-do, reminder, or delegation."
+              : `I found ${items.length} things. Edit, remove, or keep them here — ask Carson to turn any of them into a note, to-do, reminder, or delegation.`}
           </p>
         )}
       </header>
@@ -177,8 +140,6 @@ export default function Review() {
         </ul>
       )}
 
-      {saveError && <AuthNotice kind="error">{saveError}</AuthNotice>}
-
       <div className="flex flex-col-reverse items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Link
           to="/"
@@ -186,194 +147,39 @@ export default function Review() {
         >
           ← Back to Home
         </Link>
-        {canSave && (
-          <button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={saving}
-            aria-busy={saving}
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-base font-medium text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
-          >
-            {saving && <Spinner size={16} />}
-            <span>
-              {saving
-                ? hasSendableMessages
-                  ? "Saving & sending…"
-                  : "Saving…"
-                : hasSendableMessages
-                  ? "Save & Send Messages"
-                  : "Save"}
-            </span>
-          </button>
+        {items.length > 0 && (
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={handleDiscardAll}
+              className="rounded-full border border-rose-200 bg-rose-50/80 px-4 py-2 text-sm font-medium text-rose-700 shadow-sm transition hover:bg-rose-100"
+            >
+              Discard all
+            </button>
+            <button
+              type="button"
+              onClick={handleKeep}
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-base font-medium text-ivory shadow-sm transition hover:bg-espresso"
+            >
+              Keep in Clear My Head
+            </button>
+          </div>
         )}
       </div>
     </section>
   );
 
-  async function handleSave() {
-    if (savingRef.current) return;
-    if (!items.length) return;
-    if (!userId) {
-      setSaveError("Not signed in.");
-      return;
-    }
-    savingRef.current = true;
-    setSaving(true);
-    setSaveError(null);
-    try {
-      const itemsToSave = addImpliedOperationalResponsibilities(items, people, sourceText);
-      // Collect any per-item image files into a Map keyed by item id.
-      const imageFiles = new Map<string, File>();
-      for (const item of itemsToSave) {
-        if (item.imageFile) imageFiles.set(item.id, item.imageFile);
-      }
-      const result = await savePending(itemsToSave, userId, displayName, people, imageFiles.size > 0 ? imageFiles : undefined);
-
-      // Multi-attachment: when an item carries more than one photo, upload all of
-      // them to task_attachments and track the count per task so the WhatsApp send
-      // appends the attachment note and uses the text template (no image header).
-      const attachmentCountByTaskId = new Map<string, number>();
-      const multiPhotoItem = itemsToSave.find(
-        (it) => (it.imageFiles?.length ?? 0) > 1,
-      );
-      if (multiPhotoItem?.imageFiles && multiPhotoItem.imageFiles.length > 1) {
-        const firstDelegationTask = result.tasks.find(
-          (t) => t.type === "delegation" || t.type === "followup",
-        );
-        if (firstDelegationTask) {
-          try {
-            const count = await saveTaskAttachments(
-              firstDelegationTask.id,
-              userId,
-              multiPhotoItem.imageFiles,
-            );
-            attachmentCountByTaskId.set(firstDelegationTask.id, count);
-          } catch (err) {
-            console.error("Review saveTaskAttachments failed (non-fatal):", err);
-          }
-        }
-      }
-
-      const savedMessages = result.messages.filter(
-        (message) =>
-          !!message.recipient.trim() &&
-          !!message.content.trim(),
-      );
-
-      // Split by consent — only send to recipients with whatsapp_opted_in=true.
-      const consentedMessages = savedMessages.filter((m) =>
-        consentByName.get(m.recipient.trim().toLowerCase()) === true,
-      );
-      const blockedRecipients = savedMessages
-        .filter((m) => consentByName.get(m.recipient.trim().toLowerCase()) !== true)
-        .map((m) => m.recipient);
-
-      // Build a lookup so we can pass the Reference image path for each task.
-      // Primary source: imagePathsByTaskId recorded at upload time (before DB
-      // round-trips). Fallback: task.image_path from the DB response in case
-      // a task was saved without going through the upload path.
-      const taskImagePathById = new Map<string, string | null>(result.imagePathsByTaskId);
-      for (const t of result.tasks) {
-        if (!taskImagePathById.has(t.id)) {
-          taskImagePathById.set(t.id, t.image_path ?? null);
-        }
-      }
-      let sendError: string | null = null;
-
-      if (hasSendableMessages && consentedMessages.length === 0 && blockedRecipients.length === 0) {
-        sendError = "WhatsApp send could not start";
-      } else if (consentedMessages.length > 0) {
-        try {
-          await Promise.all(
-            consentedMessages.map(async (message) => {
-              if (!message.task_id && !message.confirmation_url) {
-                const delivery = await sendDirectMessageRecord({
-                  source: "review",
-                  message,
-                  phone: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
-                  ownerName: displayName ?? null,
-                });
-                return delivery;
-              }
-
-              return sendWhatsAppTask({
-                to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
-                messageText: message.content,
-                confirmationLink: message.confirmation_url,
-                messageRecordId: message.id,
-                taskId: message.task_id,
-                recipientName: message.recipient,
-                ownerName: displayName ?? null,
-                imagePath: message.task_id ? (taskImagePathById.get(message.task_id) ?? null) : null,
-                attachmentCount: message.task_id ? (attachmentCountByTaskId.get(message.task_id) ?? null) : null,
-                sendMode: null,
-              });
-            }),
-          );
-        } catch (err) {
-          console.error("Review Save & Send WhatsApp failed:", err);
-          sendError =
-            err instanceof Error ? err.message : "Could not send WhatsApp message.";
-        }
-      }
-      // Force-reload from Supabase so Actions/Messages/Follow-ups reflect the
-      // canonical server state, not an optimistic local push. This is the
-      // safety net against any row that didn't actually persist (RLS, missing
-      // default, etc) — if the rows aren't visible on read, the user sees the
-      // empty state immediately rather than a phantom optimistic card.
-      await Promise.all([
-        useTasksStore.getState().loadFor(userId, { force: true }),
-        useMessagesStore.getState().loadFor(userId, { force: true }),
-      ]);
-      // Clear the draft and the extraction — the flow is done.
-      useDraftStore.getState().clear();
-      useExtractionStore.getState().clear();
-      await stopSavingBeforeBlockingAlert();
-      const consentWarning = blockedRecipients.length > 0
-        ? blockedRecipients
-            .map((name) => `WhatsApp consent is not recorded for ${name}. Open their profile and record consent before messaging.`)
-            .join("\n\n")
-        : null;
-
-      if (hasSendableMessages || consentWarning) {
-        const parts: string[] = [];
-        if (consentedMessages.length > 0) {
-          if (sendError) {
-            parts.push(sendError === "WhatsApp send could not start"
-              ? "Saved, but WhatsApp send could not start. You can retry from Messages."
-              : `Saved, but WhatsApp send failed: ${sendError}. You can retry from Messages.`);
-          }
-        } else if (!consentWarning) {
-          parts.push("Saved, but WhatsApp send could not start. You can retry from Messages.");
-        }
-        if (consentWarning) parts.push(consentWarning);
-        if (parts.length) window.alert(parts.join("\n\n"));
-        navigate("/messages", { replace: true });
-      } else {
-        navigate("/actions", { replace: true });
-      }
-    } catch (err) {
-      // Surface the original message — Supabase errors are now propagated
-      // (e.g. "null value in column ... violates not-null constraint").
-      console.error("savePending failed:", err);
-      setSaveError(
-        err instanceof Error ? err.message : "Could not save. Please try again.",
-      );
-    } finally {
-      savingRef.current = false;
-      setSaving(false);
-    }
+  // Leaves the extraction store untouched so items remain available next
+  // time the user opens Clear My Head this session — only the raw draft
+  // textarea (already superseded by these organized items) is cleared.
+  function handleKeep() {
+    useDraftStore.getState().clear();
+    navigate("/", { replace: true });
   }
 
-  async function stopSavingBeforeBlockingAlert() {
-    savingRef.current = false;
-    flushSync(() => {
-      setSaving(false);
-    });
-    await new Promise<void>((resolve) => {
-      window.requestAnimationFrame(() => {
-        window.requestAnimationFrame(() => resolve());
-      });
-    });
+  function handleDiscardAll() {
+    useDraftStore.getState().clear();
+    useExtractionStore.getState().clear();
+    navigate("/", { replace: true });
   }
 }
