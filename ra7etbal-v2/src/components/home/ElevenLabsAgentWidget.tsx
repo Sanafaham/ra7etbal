@@ -2859,9 +2859,18 @@ export default function ElevenLabsAgentWidget({
           const plan = await buildOperationalPlanFromOutcome(rawInstruction, people);
           if (plan) {
             pendingPlanRef.current = plan;
+            lastDirectToolSuccessRef.current = {
+              toolName: "execute_instruction",
+              resultText: plan.proposalSpeech,
+              at: new Date().toISOString(),
+              inputSummary: {
+                kind: "guest_plan_proposal",
+                instruction: rawInstruction.slice(0, 80),
+              },
+            };
             return plan.proposalSpeech;
           }
-          // If plan building fails, fall through to normal delegation.
+          return "I couldn't put that guest plan together right now. Please try again.";
         }
 
         // ── Recurring-language detection ──────────────────────────────────

@@ -158,6 +158,23 @@ describe("resolveCarsonDisplayMessage", () => {
     expect(result).toBe("Done, I handled it.");
   });
 
+  it("overrides a contradictory failure message with a successful guest-plan proposal", () => {
+    const result = resolveCarsonDisplayMessage(
+      "I wasn't able to process that. Please try again.",
+      successResult({
+        toolName: "execute_instruction",
+        resultText: "I can split this between Christopher, Nasira, and Bahan. Should I send it?",
+        inputSummary: {
+          kind: "guest_plan_proposal",
+          instruction: "I have afternoon tea at home tomorrow",
+        },
+      }),
+      NOW,
+    );
+
+    expect(result).toBe("I can split this between Christopher, Nasira, and Bahan. Should I send it?");
+  });
+
   it("does not override once the success result is outside the time window", () => {
     const result = resolveCarsonDisplayMessage(
       "I wasn't able to save that. Please try again.",

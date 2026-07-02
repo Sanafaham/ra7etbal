@@ -118,3 +118,37 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
     expect(overrideIndex).toBeGreaterThan(createIndex);
   });
 });
+
+describe("ElevenLabsAgentWidget — guest plan proposal regression guards", () => {
+  function guestOutcomeBlock(): string {
+    const start = SOURCE.indexOf("const outcomeType = detectHouseholdOutcome(rawInstruction);");
+    const end = SOURCE.indexOf("// ── Recurring-language detection", start);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    return SOURCE.slice(start, end);
+  }
+
+  it("records a guest-plan proposal as an override-eligible execute_instruction result before returning it", () => {
+    const block = guestOutcomeBlock();
+    const planSuccessIndex = block.indexOf("if (plan) {");
+    const overrideIndex = block.indexOf("lastDirectToolSuccessRef.current", planSuccessIndex);
+    const returnIndex = block.indexOf("return plan.proposalSpeech", planSuccessIndex);
+
+    expect(planSuccessIndex).toBeGreaterThan(-1);
+    expect(overrideIndex).toBeGreaterThan(planSuccessIndex);
+    expect(returnIndex).toBeGreaterThan(overrideIndex);
+    expect(block.slice(overrideIndex, returnIndex)).toContain('toolName: "execute_instruction"');
+    expect(block.slice(overrideIndex, returnIndex)).toContain("resultText: plan.proposalSpeech");
+    expect(block.slice(overrideIndex, returnIndex)).toContain('kind: "guest_plan_proposal"');
+  });
+
+  it("does not let a detected guest event fall through to generic delegation when planning fails", () => {
+    const block = guestOutcomeBlock();
+    const failureIndex = block.indexOf("return \"I couldn't put that guest plan together right now. Please try again.\";");
+
+    expect(failureIndex).toBeGreaterThan(-1);
+    expect(block).not.toMatch(/If plan building fails,\s*fall through to normal delegation/i);
+  });
+});
