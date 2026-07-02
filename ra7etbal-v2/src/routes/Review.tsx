@@ -1,45 +1,31 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import ItemCard from "../components/review/ItemCard";
 import Spinner from "../components/Spinner";
 import AuthNotice from "../components/auth/AuthNotice";
-import { useAuth } from "../hooks/useAuth";
 import { pickReviewEmptyStateMessage } from "../lib/review-selection";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
-import { usePeopleStore } from "../stores/people";
 
 /**
  * Review — Clear My Head's temporary thought-dump review space. Shows
- * AI-extracted items with editable assignments, descriptions, and messages,
- * but never persists them. Items are either kept here (in-memory, for
- * further editing/review) or discarded. Carson is the only path that
- * converts a thought into a saved Note/To-do/Reminder/Delegation/Message.
+ * AI-extracted items, editable only as plain text, but never persists them.
+ * Items are either kept here (in-memory, for further review) or discarded.
+ * Carson is the only path that converts a thought into a saved
+ * Note/To-do/Reminder/Delegation/Message — this screen shows no Carson
+ * operational fields (assignment, message, due date, photo) so it never
+ * looks like that conversion has already happened.
  */
 export default function Review() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const userId = user?.id ?? null;
 
-  const {
-    status,
-    items,
-    sourceText,
-    setAssignment,
-    setDescription,
-    setSuggestedMessage,
-    setImageFile,
-    removeItem,
-  } = useExtractionStore(
+  const { status, items, sourceText, setDescription, removeItem } = useExtractionStore(
     useShallow((s) => ({
       status: s.status,
       items: s.items,
       sourceText: s.sourceText,
-      setAssignment: s.setAssignment,
       setDescription: s.setDescription,
-      setSuggestedMessage: s.setSuggestedMessage,
-      setImageFile: s.setImageFile,
       removeItem: s.removeItem,
     })),
   );
@@ -48,20 +34,6 @@ export default function Review() {
   // "you cleared everything" apart from "nothing was found".
   const everHadItemsRef = useRef(false);
   if (items.length > 0) everHadItemsRef.current = true;
-
-  const { items: people, loadFor: loadPeople, loadedForUserId } = usePeopleStore(
-    useShallow((s) => ({
-      items: s.items,
-      loadFor: s.loadFor,
-      loadedForUserId: s.loadedForUserId,
-    })),
-  );
-
-  // Ensure People are loaded so the Assign dropdown is populated.
-  useEffect(() => {
-    if (!userId) return;
-    if (loadedForUserId !== userId) void loadPeople(userId);
-  }, [userId, loadedForUserId, loadPeople]);
 
   // No extraction has run — user landed on /review directly. Send them home.
   if (status === "idle") {
@@ -128,11 +100,7 @@ export default function Review() {
             <li key={it.id}>
               <ItemCard
                 item={it}
-                people={people}
-                onAssign={setAssignment}
                 onDescriptionChange={setDescription}
-                onMessageChange={setSuggestedMessage}
-                onImageChange={setImageFile}
                 onRemove={removeItem}
               />
             </li>

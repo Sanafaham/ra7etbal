@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ItemType } from "../types/extraction";
-import { pickReviewEmptyStateMessage, reviewDisplayLabel, shouldShowPhotoControl } from "./review-selection";
+import { pickReviewEmptyStateMessage, reviewDisplayLabel } from "./review-selection";
 
 const ALL_ITEM_TYPES: ItemType[] = [
   "action",
@@ -46,24 +46,5 @@ describe("pickReviewEmptyStateMessage", () => {
     const msg = pickReviewEmptyStateMessage(true);
     expect(msg).toMatch(/cleared everything/i);
     expect(msg).not.toMatch(/didn't find anything actionable/i);
-  });
-});
-
-describe("shouldShowPhotoControl", () => {
-  it("shows the control for photo-relevant types (delegation, message, action, errand, followup)", () => {
-    for (const type of ["delegation", "message", "action", "errand", "followup"] as const) {
-      expect(shouldShowPhotoControl({ type, imageFile: null })).toBe(true);
-    }
-  });
-
-  it("hides the control for types where a photo is rarely relevant", () => {
-    for (const type of ["reminder", "decision", "todo", "parked"] as const) {
-      expect(shouldShowPhotoControl({ type, imageFile: null })).toBe(false);
-    }
-  });
-
-  it("never hides an already-attached photo, even for an otherwise-hidden type", () => {
-    const file = new File(["x"], "photo.jpg", { type: "image/jpeg" });
-    expect(shouldShowPhotoControl({ type: "reminder", imageFile: file })).toBe(true);
   });
 });

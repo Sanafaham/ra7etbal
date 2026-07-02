@@ -92,3 +92,60 @@ describe("ItemCard.tsx — Clear My Head badges do not display real Carson objec
     expect(ITEM_CARD_SOURCE).toMatch(/\{reviewDisplayLabel\(item\.type\)\}/);
   });
 });
+
+/**
+ * Display cleanup: Clear My Head Review cards must not show Carson
+ * operational fields (Assign To, Message to send, Due date, confirmation
+ * link copy, delegation/message controls, Attach photo) — showing them made
+ * a temporary, unsaved thought look like Carson had already acted on it.
+ * Only the badge, item text, and Remove control remain. Carson conversion
+ * still happens entirely outside this screen (ops-intelligence.ts /
+ * text-carson.ts), untouched.
+ */
+describe("ItemCard.tsx — no Carson operational fields on Clear My Head cards", () => {
+  it("does not render an Assign To control", () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/Assign to/i);
+    expect(ITEM_CARD_SOURCE).not.toMatch(/onAssign/);
+  });
+
+  it("does not render a Message to send control", () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/Message to send/i);
+    expect(ITEM_CARD_SOURCE).not.toMatch(/onMessageChange/);
+  });
+
+  it("does not render a Due date", () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/\bDue:/);
+    expect(ITEM_CARD_SOURCE).not.toMatch(/dueAt|dueText/);
+  });
+
+  it("does not render confirmation-link copy", () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/Confirmation link/i);
+  });
+
+  it("does not render an Attach photo control", () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/Attach photo/i);
+    expect(ITEM_CARD_SOURCE).not.toMatch(/onImageChange/);
+    expect(ITEM_CARD_SOURCE).not.toMatch(/type="file"/);
+  });
+
+  it("does not take a people list (no assignment UI needs it)", () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/\bpeople\b/);
+  });
+
+  it("still renders the item's plain text and the Remove control", () => {
+    expect(ITEM_CARD_SOURCE).toMatch(/onDescriptionChange/);
+    expect(ITEM_CARD_SOURCE).toMatch(/onClick=\{\(\) => onRemove\(item\.id\)\}/);
+  });
+});
+
+describe("Review.tsx — no Carson operational field wiring left to pass down", () => {
+  it("does not wire onAssign, onMessageChange, or onImageChange to ItemCard", () => {
+    expect(SOURCE).not.toMatch(/onAssign=/);
+    expect(SOURCE).not.toMatch(/onMessageChange=/);
+    expect(SOURCE).not.toMatch(/onImageChange=/);
+  });
+
+  it("still tells the user to ask Carson to convert items later", () => {
+    expect(SOURCE).toMatch(/ask Carson to turn/i);
+  });
+});
