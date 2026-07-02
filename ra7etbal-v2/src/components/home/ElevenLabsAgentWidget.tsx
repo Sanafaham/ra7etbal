@@ -69,9 +69,9 @@ import {
 import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-tool-diagnostics";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText, resolveRecurringAutomationPerson } from "../../lib/routine-detection";
 import {
-  detectHouseholdOutcome,
   buildOperationalPlanFromOutcome,
-  mustRouteGuestEventToPlanner,
+  resolveGuestOutcomeAction,
+  executeProposedPlan,
   isConfirmation,
   isRejection,
   isStatusQuestion,
@@ -1159,16 +1159,33 @@ export default function ElevenLabsAgentWidget({
       // handed to the deterministic planner instead. This does NOT require
       // operating authority — detection alone diverts. Ordinary single-person
       // commands are not detected as outcomes and pass straight through.
-      if (latestUserMessageForOps && mustRouteGuestEventToPlanner(latestUserMessageForOps)) {
-        // Dedup a burst of per-person calls: reuse the plan already proposed for
-        // this same utterance instead of re-proposing (and re-persisting) N times.
-        if (pendingPlanRef.current?.sourceText === latestUserMessageForOps) {
+      const guestAction = resolveGuestOutcomeAction(latestUserMessageForOps);
+      if (latestUserMessageForOps && guestAction !== "none") {
+        // Dedup a burst of per-person PROPOSE calls: reuse the plan already
+        // proposed for this same utterance. (Execute is idempotent on its own.)
+        if (guestAction === "propose" && pendingPlanRef.current?.sourceText === latestUserMessageForOps) {
           return pendingPlanRef.current.proposalSpeech;
         }
         const plan = await buildOperationalPlanFromOutcome(latestUserMessageForOps, people);
         if (plan) {
-          // Confirm-before-send: store the deterministic plan and ask for
-          // approval. Nothing is sent until the user says "Yes".
+          if (guestAction === "execute") {
+            // Operating authority → run the plan now and report the real result.
+            const execSummary = await executeProposedPlan(plan, {
+              displayName: displayName ?? null,
+              userId: authUserId,
+              people,
+            });
+            sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+            useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+            lastDirectToolSuccessRef.current = {
+              toolName: "send_delegation",
+              resultText: execSummary,
+              at: new Date().toISOString(),
+              inputSummary: { kind: "guest_operation_execute", instruction: latestUserMessageForOps },
+            };
+            return execSummary;
+          }
+          // No operating authority → confirm-before-send.
           pendingPlanRef.current = plan;
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
@@ -2849,15 +2866,35 @@ export default function ElevenLabsAgentWidget({
             : "You're all set.";
         }
 
-        // ── Operations Intelligence — outcome detection leg ────────────────
-        // Confirm-before-send: build the plan, store it, and ask for approval.
-        // Never auto-send — even with operating authority. Execution runs only
-        // through the confirmation leg above, which is idempotent.
-        const outcomeType = detectHouseholdOutcome(rawInstruction);
-        if (outcomeType) {
+        // ── Operations Intelligence — outcome leg ──────────────────────────
+        // Operating authority ("handle what you can", "make sure everything is
+        // ready", …) → EXECUTE immediately and report the tool-confirmed result.
+        // A hosting event WITHOUT operating authority → propose (confirm-before-
+        // send). Approval-required sensitive actions are gated at the prompt.
+        const outcomeAction = resolveGuestOutcomeAction(rawInstruction);
+        if (outcomeAction !== "none") {
           pendingPlanRef.current = null;
           const plan = await buildOperationalPlanFromOutcome(rawInstruction, people);
           if (plan) {
+            if (outcomeAction === "execute") {
+              const execSummary = await executeProposedPlan(plan, {
+                displayName: displayName ?? null,
+                userId: authUserId,
+                people,
+              });
+              sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+              lastDirectToolSuccessRef.current = {
+                toolName: "execute_instruction",
+                resultText: execSummary,
+                at: new Date().toISOString(),
+                inputSummary: {
+                  kind: "guest_plan_execute",
+                  instruction: rawInstruction.slice(0, 80),
+                },
+              };
+              return execSummary;
+            }
             pendingPlanRef.current = plan;
             lastDirectToolSuccessRef.current = {
               toolName: "execute_instruction",

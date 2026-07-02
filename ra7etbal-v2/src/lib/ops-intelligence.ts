@@ -67,6 +67,10 @@ const GUEST_ARRIVAL_PATTERNS = [
   /\bluncheon\b/i,
   /\bhosting\b/i,
   /\bhaving\s+(?:people|friends|family|company|guests?|everyone)\s+(?:over|round|around)\b/i,
+  // A meal hosted "at home" is an entertaining event ("dinner at home tomorrow"),
+  // distinct from a plain cook task ("make dinner" / "cook dinner"), which must
+  // stay null.
+  /\b(?:dinner|lunch|brunch|breakfast|tea|drinks|cocktails)\s+at\s+home\b/i,
 ];
 
 export function detectHouseholdOutcome(text: string): HouseholdOutcomeType | null {
@@ -97,6 +101,34 @@ export function hasOperatingAuthority(text: string): boolean {
  */
 export function mustRouteGuestEventToPlanner(latestUserMessage: string | null | undefined): boolean {
   return detectHouseholdOutcome((latestUserMessage ?? "").trim()) !== null;
+}
+
+export type GuestOutcomeAction = "execute" | "propose" | "none";
+
+/**
+ * Decides how a guest/hosting/operations utterance should be handled when it
+ * reaches tool routing:
+ *
+ * - "execute": the user granted OPERATING AUTHORITY ("handle what you can",
+ *   "make sure everything is ready", "take care of it", etc.). Carson must run
+ *   the deterministic plan immediately and report only tool-confirmed results —
+ *   NOT stop at a proposal. This is the fix for the regression where operating
+ *   authority was treated as planning instead of execution.
+ * - "propose": a detected guest/hosting event WITHOUT operating authority —
+ *   confirm-before-send (build the plan, ask "Should I send it?").
+ * - "none": not an operations event — leave to normal handling so ordinary
+ *   single-person commands still go through direct delegation unchanged.
+ *
+ * Approval-required sensitive actions (money, bookings, medical, legal,
+ * destructive, unclear recipient/cadence) are gated at the prompt/tool layer,
+ * not here.
+ */
+export function resolveGuestOutcomeAction(text: string | null | undefined): GuestOutcomeAction {
+  const t = (text ?? "").trim();
+  if (!t) return "none";
+  if (hasOperatingAuthority(t)) return "execute";
+  if (detectHouseholdOutcome(t) !== null) return "propose";
+  return "none";
 }
 
 // ── Confirmation / rejection detection ────────────────────────────────────────

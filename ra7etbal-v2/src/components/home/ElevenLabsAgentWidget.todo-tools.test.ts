@@ -121,7 +121,7 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
 
 describe("ElevenLabsAgentWidget — guest plan proposal regression guards", () => {
   function guestOutcomeBlock(): string {
-    const start = SOURCE.indexOf("const outcomeType = detectHouseholdOutcome(rawInstruction);");
+    const start = SOURCE.indexOf("const outcomeAction = resolveGuestOutcomeAction(rawInstruction);");
     const end = SOURCE.indexOf("// ── Recurring-language detection", start);
 
     expect(start).toBeGreaterThan(-1);
@@ -130,18 +130,28 @@ describe("ElevenLabsAgentWidget — guest plan proposal regression guards", () =
     return SOURCE.slice(start, end);
   }
 
-  it("records a guest-plan proposal as an override-eligible execute_instruction result before returning it", () => {
+  it("executes immediately on operating authority and reports the tool result", () => {
     const block = guestOutcomeBlock();
-    const planSuccessIndex = block.indexOf("if (plan) {");
-    const overrideIndex = block.indexOf("lastDirectToolSuccessRef.current", planSuccessIndex);
-    const returnIndex = block.indexOf("return plan.proposalSpeech", planSuccessIndex);
+    const executeBranch = block.indexOf('if (outcomeAction === "execute")');
+    const execCall = block.indexOf("executeProposedPlan(plan", executeBranch);
+    const execReturn = block.indexOf("return execSummary", executeBranch);
 
-    expect(planSuccessIndex).toBeGreaterThan(-1);
-    expect(overrideIndex).toBeGreaterThan(planSuccessIndex);
+    expect(executeBranch).toBeGreaterThan(-1);
+    expect(execCall).toBeGreaterThan(executeBranch);
+    expect(execReturn).toBeGreaterThan(execCall);
+    // The spoken result is the actual tool summary, not a fabricated success.
+    expect(block.slice(executeBranch, execReturn)).toContain("resultText: execSummary");
+    expect(block.slice(executeBranch, execReturn)).toContain('kind: "guest_plan_execute"');
+  });
+
+  it("proposes (confirm-before-send) when there is no operating authority", () => {
+    const block = guestOutcomeBlock();
+    const overrideIndex = block.indexOf('kind: "guest_plan_proposal"');
+    const returnIndex = block.indexOf("return plan.proposalSpeech", overrideIndex);
+
+    expect(overrideIndex).toBeGreaterThan(-1);
     expect(returnIndex).toBeGreaterThan(overrideIndex);
-    expect(block.slice(overrideIndex, returnIndex)).toContain('toolName: "execute_instruction"');
-    expect(block.slice(overrideIndex, returnIndex)).toContain("resultText: plan.proposalSpeech");
-    expect(block.slice(overrideIndex, returnIndex)).toContain('kind: "guest_plan_proposal"');
+    expect(block).toContain("pendingPlanRef.current = plan;");
   });
 
   it("does not let a detected guest event fall through to generic delegation when planning fails", () => {

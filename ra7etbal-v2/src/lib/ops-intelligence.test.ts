@@ -32,6 +32,7 @@ const {
   mustRouteGuestEventToPlanner,
   normalizeGuestPreparationPlan,
   resetExecutedPlanRegistryForTest,
+  resolveGuestOutcomeAction,
   resolvePendingPlanDecision,
 } = await import("./ops-intelligence");
 
@@ -279,6 +280,116 @@ describe("guest preparation operational planning", () => {
 // planner whenever the current user context is a guest/hosting event — so the
 // agent can never fan a guest event out into its own per-person delegations
 // (the live failure: Grace "follow up with all", Ghulam "standby", etc.).
+// Operating authority means EXECUTE, not just plan. The confirm-before-send
+// rebuild regressed this: guest outcomes always proposed, even when the user
+// granted operating authority. These lock in "authority → execute immediately;
+// hosting without authority → propose; ordinary command → none".
+describe("operating authority executes immediately", () => {
+  const AUTH_DINNER =
+    "we're having dinner at home tomorrow night. Handle what you can and make sure everything is ready.";
+
+  function stubSavePendingWithSeparateRowsAndLinks() {
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item, i) => ({
+        id: `task-${i + 1}`,
+        type: "delegation",
+        assigned_to: item.assignedTo,
+        description: item.description,
+      })),
+      messages: items.map((item, i) => ({
+        id: `message-${i + 1}`,
+        task_id: `task-${i + 1}`,
+        recipient: item.assignedTo,
+        content: item.suggestedMessage ?? item.description,
+        confirmation_url: `https://ra7etbal.test/confirm?task=task-${i + 1}`,
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+  }
+
+  it("routes an operating-authority request to execute (not propose)", () => {
+    expect(resolveGuestOutcomeAction(AUTH_DINNER)).toBe("execute");
+    expect(resolveGuestOutcomeAction("Take care of it.")).toBe("execute");
+    expect(resolveGuestOutcomeAction("Make tonight run smoothly.")).toBe("execute");
+    expect(resolveGuestOutcomeAction("I have afternoon tea at home today. Handle what you can.")).toBe("execute");
+  });
+
+  it("proposes a hosting event when no operating authority is given", () => {
+    expect(resolveGuestOutcomeAction("we're having dinner at home tomorrow night.")).toBe("propose");
+    expect(resolveGuestOutcomeAction("I have afternoon tea at home today.")).toBe("propose");
+  });
+
+  it("leaves ordinary single-person commands alone", () => {
+    expect(resolveGuestOutcomeAction("Tell Christopher to make shrimp poke bowl.")).toBe("none");
+    expect(resolveGuestOutcomeAction("Remind me to buy milk.")).toBe("none");
+    expect(resolveGuestOutcomeAction("")).toBe("none");
+    expect(resolveGuestOutcomeAction(null)).toBe("none");
+  });
+
+  it("detects a hosting dinner at home (but not a plain 'make dinner')", () => {
+    expect(detectHouseholdOutcome("we're having dinner at home tomorrow night.")).toBe("guest_arrival");
+    expect(detectHouseholdOutcome("dinner at home tomorrow")).toBe("guest_arrival");
+    expect(detectHouseholdOutcome("make dinner")).toBeNull();
+    expect(detectHouseholdOutcome("cook dinner tonight")).toBeNull();
+  });
+
+  it("executes the deterministic plan and reports only tool-confirmed results", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: AUTH_DINNER,
+      createdAt: Date.now(),
+      proposalSpeech: "Proposal.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Handle everything." }],
+    }, guestTeam());
+
+    const summary = await executeProposedPlan(plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    // Real sends happened for every planned recipient.
+    expect(mocks.deliverTaskMessage.mock.calls.map(([p]) => p.recipientName)).toEqual([
+      "Christopher",
+      "Nasira",
+      "Grace",
+    ]);
+    expect(summary).toContain("have the plan");
+  });
+
+  it("does NOT claim messages were sent when delivery fails", async () => {
+    stubSavePendingWithSeparateRowsAndLinks();
+    mocks.deliverTaskMessage.mockResolvedValue({
+      success: false,
+      channel: "failed",
+      error: "recipient phone number is missing",
+    });
+
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: AUTH_DINNER,
+      createdAt: Date.now(),
+      proposalSpeech: "Proposal.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Handle everything." }],
+    }, guestTeam());
+
+    const summary = await executeProposedPlan(plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: guestTeam(),
+    });
+
+    expect(summary).not.toMatch(/have the plan/i);
+    expect(summary).toMatch(/NOT messaged/i);
+  });
+});
+
 describe("direct-delegation guardrail for guest/hosting events", () => {
   it.each([
     "I have afternoon tea at home today.",
