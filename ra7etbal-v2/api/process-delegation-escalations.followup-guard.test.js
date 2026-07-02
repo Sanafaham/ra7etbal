@@ -212,6 +212,54 @@ describe('processFollowupDueTask — concurrent scheduler executions', () => {
     expect(sendCalls).toHaveLength(1);
   });
 
+  // Named explicitly for the production incident this fix resolves, so a
+  // future reader cannot mistake its purpose or safely remove it.
+  //
+  // Real incident (2026-07-01/02, task f2c557c0-8343-42c0-8fb2-e91eeb9226b1,
+  // recipient Christopher): a guest-prep plan created 4 delegation tasks
+  // together. api/qstash-reminder.js schedules a PER-TASK QStash follow-up
+  // message for each one (notBefore = created + 10 min). Separately, this
+  // endpoint is also invoked by a PERIODIC 10-minute QStash cron that
+  // processes every due task in one batch. Both trigger sources landed in
+  // the same ~10-minute window, producing overlapping invocations that each
+  // independently decided Christopher's task was due and each sent — 4
+  // independent WhatsApp sends within 0.6s. This test models exactly that:
+  // one call standing in for the per-task trigger, one for the periodic
+  // sweep, both racing the SAME task at once.
+  it('reproduces the exact Christopher/f2c557c0 incident shape: per-task QStash trigger racing the periodic sweep sends exactly once', async () => {
+    const row = sharedTaskRow({ id: 'f2c557c0', assigned_to: 'Christopher' });
+    const fetchMock = makeSharedFetchMock(row);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const ctx = {
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      testMode: false,
+      now: new Date('2026-07-02T02:08:15.000Z'),
+    };
+
+    const perTaskQstashTrigger = processFollowupDueTask(
+      sharedTaskRow({ id: 'f2c557c0', assigned_to: 'Christopher' }),
+      ctx,
+    );
+    const periodicSweep = processFollowupDueTask(
+      sharedTaskRow({ id: 'f2c557c0', assigned_to: 'Christopher' }),
+      ctx,
+    );
+
+    const [triggerResult, sweepResult] = await Promise.all([perTaskQstashTrigger, periodicSweep]);
+
+    // Exactly one of the two trigger sources actually claims and sends —
+    // never both, regardless of which one "wins" the race.
+    const winners = [triggerResult, sweepResult].filter((r) => r.sent);
+    expect(winners).toHaveLength(1);
+
+    const sendCalls = fetchMock.mock.calls.filter(([u]) => String(u).includes('/api/send-whatsapp-task'));
+    expect(sendCalls).toHaveLength(1);
+    expect(row.followup_sent_at).toBe('2026-07-02T02:08:15.000Z');
+  });
+
   it('releases the claim on send failure so a later run can retry (preserves existing retry behavior)', async () => {
     const row = sharedTaskRow();
     const fetchMock = makeSharedFetchMock(row, { sendOk: false });

@@ -41,6 +41,35 @@
  * Once either column is stamped the action is never repeated, even if
  * the cron fires again.
  *
+ * ── SAFETY INVARIANT — DO NOT REGRESS ───────────────────────────────────────
+ * Incident (2026-07-01/02): a per-task QStash follow-up trigger
+ * (publishEscalationMessage in qstash-reminder.js, notBefore = created + 10
+ * min) can fire within the same window as this endpoint's own periodic
+ * 10-minute sweep. Both invocations independently SELECT the same due task.
+ * The old code checked `!task.followup_sent_at` from that SELECT, sent the
+ * WhatsApp, and only stamped followup_sent_at AFTER a successful send —
+ * every concurrent invocation read the guard as null, passed the check, and
+ * sent. One task (Christopher, task f2c557c0) received 4 independent
+ * WhatsApp sends within 0.6s as a result; three other tasks in the same
+ * batch received 3-4 duplicates each (see whatsapp_deliveries evidence).
+ *
+ * THE RULE: never write a guard column after a side-effecting call (WhatsApp
+ * send, push notification, external API). Always CLAIM the guard with a
+ * conditional UPDATE (`...&column=is.null`, Prefer: return=representation,
+ * claimed iff exactly one row returned) BEFORE the side effect, and only
+ * proceed if the claim succeeded. Postgres serializes concurrent UPDATEs to
+ * the same row, so this is the only thing that actually prevents duplicates
+ * — the in-memory value read by the initial SELECT is for scheduling only
+ * ("is this due yet") and must never be trusted for correctness.
+ *
+ * The follow-up guard (processFollowupDueTask / claimFollowupGuard /
+ * releaseFollowupGuard, below) follows this rule. If you modify the
+ * follow-up or escalation flow, or add a new one-shot side effect gated by a
+ * guard column, you MUST claim-before-act the same way. See
+ * process-delegation-escalations.followup-guard.test.js for the regression
+ * tests that must keep passing, and docs/SAFETY-duplicate-follow-up-prevention.md
+ * for the full incident writeup.
+ *
  * ── testMode ──────────────────────────────────────────────────────────────
  * Append ?testMode=true when calling manually to collapse the thresholds:
  *   follow-up threshold  : 1 minute  (production: 10 min)
