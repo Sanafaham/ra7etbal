@@ -11,6 +11,19 @@ import type { ExtractedItem, ItemType } from "../types/extraction";
  */
 
 /**
+ * Display label for an item's badge on the Clear My Head Review screen only.
+ *
+ * Nothing here is ever saved, so the badge must not read like a real
+ * Carson-created object (e.g. bare "To-do" or "Reminder") — that implies
+ * persistence that hasn't happened. `item.type` itself is untouched and
+ * keeps driving real behavior (assignment visibility, message relevance,
+ * photo control); this only changes what text renders in the badge.
+ */
+export function reviewDisplayLabel(type: ItemType): string {
+  return type === "parked" ? "Thought" : "Detected";
+}
+
+/**
  * Picks the right empty-state copy. "Nothing extracted" (the user never had
  * anything to review) reads differently from "you removed everything you had"
  * — conflating them would be confusing after a deliberate removal.

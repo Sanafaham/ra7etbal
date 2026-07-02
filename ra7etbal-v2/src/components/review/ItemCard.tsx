@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import type { Assignment, ExtractedItem, ItemType } from "../../types/extraction";
 import type { Person } from "../../types/person";
-import { shouldShowPhotoControl } from "../../lib/review-selection";
+import { reviewDisplayLabel, shouldShowPhotoControl } from "../../lib/review-selection";
 
 interface Props {
   item: ExtractedItem;
@@ -13,17 +13,22 @@ interface Props {
   onRemove: (itemId: string) => void;
 }
 
-/** Visual treatment per type — colour cue + label. */
-const TYPE_META: Record<ItemType, { label: string; cls: string }> = {
-  action: { label: "Action", cls: "bg-sage/15 text-sage border-sage/30" },
-  reminder: { label: "Reminder", cls: "bg-amber-100 text-amber-900 border-amber-300" },
-  message: { label: "Message", cls: "bg-sky-100 text-sky-900 border-sky-300" },
-  delegation: { label: "Delegation", cls: "bg-emerald-100 text-emerald-900 border-emerald-300" },
-  decision: { label: "Decision", cls: "bg-violet-100 text-violet-900 border-violet-300" },
-  followup: { label: "Follow-up", cls: "bg-rose-100 text-rose-900 border-rose-300" },
-  errand: { label: "Errand", cls: "bg-teal-100 text-teal-900 border-teal-300" },
-  parked: { label: "Parked", cls: "bg-stone-100 text-stone-700 border-stone-300" },
-  todo: { label: "To-do", cls: "bg-lime-100 text-lime-900 border-lime-300" },
+/**
+ * Visual colour cue per type. Clear My Head is a temporary dump/review space
+ * that never saves anything, so the badge TEXT must not read like a real
+ * Carson-created object (see reviewDisplayLabel) — only the colour still
+ * differentiates by type, for quick visual scanning.
+ */
+const TYPE_META: Record<ItemType, { cls: string }> = {
+  action: { cls: "bg-sage/15 text-sage border-sage/30" },
+  reminder: { cls: "bg-amber-100 text-amber-900 border-amber-300" },
+  message: { cls: "bg-sky-100 text-sky-900 border-sky-300" },
+  delegation: { cls: "bg-emerald-100 text-emerald-900 border-emerald-300" },
+  decision: { cls: "bg-violet-100 text-violet-900 border-violet-300" },
+  followup: { cls: "bg-rose-100 text-rose-900 border-rose-300" },
+  errand: { cls: "bg-teal-100 text-teal-900 border-teal-300" },
+  parked: { cls: "bg-stone-100 text-stone-700 border-stone-300" },
+  todo: { cls: "bg-lime-100 text-lime-900 border-lime-300" },
 };
 
 // `field-sizing: content` lets modern browsers (iOS 17+, Chrome 123+) grow the
@@ -85,7 +90,7 @@ export default function ItemCard({
             type.cls
           }
         >
-          {type.label}
+          {reviewDisplayLabel(item.type)}
         </span>
         <div className="flex items-center gap-1.5">
           {item.needsPerson && (

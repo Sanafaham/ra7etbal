@@ -49,9 +49,46 @@ describe("Review.tsx — Clear My Head never persists items (structural guard)",
     expect(SOURCE).toMatch(/function handleDiscardAll\(\)\s*\{[^}]*useExtractionStore\.getState\(\)\.clear\(\)/s);
   });
 
-  it("Keep in Clear My Head does not clear the extraction store", () => {
+  it("'Leave here for now' does not clear the extraction store", () => {
     const match = SOURCE.match(/function handleKeep\(\)\s*\{([^}]*)\}/s);
     expect(match).not.toBeNull();
     expect(match![1]).not.toMatch(/useExtractionStore\.getState\(\)\.clear\(\)/);
+  });
+});
+
+/**
+ * Wording + label cleanup: Clear My Head must read as a temporary,
+ * non-operational space. The "keep" button must never say anything that
+ * implies real persistence, and item badges must never show a bare real
+ * Carson object-type name (see ItemCard.tsx / reviewDisplayLabel).
+ */
+describe("Review.tsx — copy does not imply permanent saving", () => {
+  it("does not use the old 'Keep in Clear My Head' button copy", () => {
+    expect(SOURCE).not.toMatch(/Keep in Clear My Head/);
+  });
+
+  it("the keep button's visible copy avoids persistence-implying language", () => {
+    const buttonMatch = SOURCE.match(/onClick=\{handleKeep\}[\s\S]*?<\/button>/);
+    expect(buttonMatch).not.toBeNull();
+    expect(buttonMatch![0]).not.toMatch(/\b(save|saved|keep|kept|store|stored)\b/i);
+  });
+});
+
+const ITEM_CARD_SOURCE = readFileSync(
+  join(__dirname, "..", "components", "review", "ItemCard.tsx"),
+  "utf-8",
+);
+
+describe("ItemCard.tsx — Clear My Head badges do not display real Carson object labels", () => {
+  it("does not render a bare 'To-do' badge label", () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/label:\s*"To-?do"/i);
+  });
+
+  it("no longer keeps a per-type 'label' field at all — the badge text comes from reviewDisplayLabel", () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/label:\s*"/);
+  });
+
+  it("renders the badge text via reviewDisplayLabel(item.type), not a raw type label", () => {
+    expect(ITEM_CARD_SOURCE).toMatch(/\{reviewDisplayLabel\(item\.type\)\}/);
   });
 });

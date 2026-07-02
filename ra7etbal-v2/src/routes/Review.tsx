@@ -161,7 +161,7 @@ export default function Review() {
               onClick={handleKeep}
               className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-base font-medium text-ivory shadow-sm transition hover:bg-espresso"
             >
-              Keep in Clear My Head
+              Leave here for now
             </button>
           </div>
         )}
