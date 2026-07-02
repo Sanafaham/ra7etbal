@@ -149,3 +149,32 @@ describe("Review.tsx — no Carson operational field wiring left to pass down", 
     expect(SOURCE).toMatch(/ask Carson to turn/i);
   });
 });
+
+/**
+ * Explicit, one-string-per-test proof (per the exact list requested) that
+ * Clear My Head Review's rendered card markup never contains these
+ * operational strings. Checked against ItemCard.tsx — the component that
+ * actually renders each review card — since that's where these strings
+ * would appear if they leaked back in.
+ */
+describe("Clear My Head Review does not render operational strings", () => {
+  it('does not render "Assign To"', () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/Assign to/i);
+  });
+
+  it('does not render "Message To Send"', () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/Message to send/i);
+  });
+
+  it('does not render "Due"', () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/\bDue\b/i);
+  });
+
+  it('does not render "Confirmation link"', () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/Confirmation link/i);
+  });
+
+  it('does not render "Attach photo"', () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/Attach photo/i);
+  });
+});
