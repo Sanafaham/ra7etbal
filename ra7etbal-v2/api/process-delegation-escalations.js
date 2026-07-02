@@ -70,6 +70,19 @@
  * tests that must keep passing, and docs/SAFETY-duplicate-follow-up-prevention.md
  * for the full incident writeup.
  *
+ * ── SAFETY NOTE — scheduled triggers are wake-up signals only ───────────────
+ * QStash (per-task follow-up/escalation messages AND the periodic sweep) only
+ * tells this handler WHEN to check, never WHAT to do. The payload for a
+ * per-task delivery is just { taskId } — it carries no proof of eligibility
+ * and is intentionally never read to select or fast-path a specific task (see
+ * the default branch below, which always re-queries every currently-due task
+ * fresh from the database). Eligibility — ageMs >= threshold AND the guard
+ * column is still null — is re-derived from Postgres on every invocation,
+ * regardless of which trigger caused it to run. A scheduled trigger must
+ * never be trusted as authorization to send; only a fresh database read may
+ * authorize one. See docs/SAFETY-duplicate-follow-up-prevention.md §6/§8 and
+ * process-delegation-escalations.timing-safety.test.js.
+ *
  * ── testMode ──────────────────────────────────────────────────────────────
  * Append ?testMode=true when calling manually to collapse the thresholds:
  *   follow-up threshold  : 1 minute  (production: 10 min)
@@ -86,8 +99,11 @@ import { Receiver } from '@upstash/qstash';
 const MAX_TASKS_PER_RUN = 50;
 
 // ── Production thresholds ────────────────────────────────────────────────────
-const PROD_FOLLOWUP_MS  = 10 * 60 * 1000; //  10 minutes
-const PROD_ESCALATE_MS  = 20 * 60 * 1000; //  20 minutes
+// Exported so a test can assert these stay in lockstep with
+// FOLLOWUP_DELAY_MS / ESCALATION_DELAY_MS in qstash-reminder.js — two
+// independently-declared constants with nothing else enforcing they agree.
+export const PROD_FOLLOWUP_MS  = 10 * 60 * 1000; //  10 minutes
+export const PROD_ESCALATE_MS  = 20 * 60 * 1000; //  20 minutes
 
 // ── testMode thresholds ──────────────────────────────────────────────────────
 const TEST_FOLLOWUP_MS  = 1 * 60 * 1000;  //   1 minute

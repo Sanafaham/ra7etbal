@@ -88,3 +88,25 @@ Run: `npm test -- api/process-delegation-escalations.followup-guard.test.js`
 > **Never write a guard/idempotency column after a side-effecting call. Always claim it with an atomic conditional UPDATE (`WHERE column IS NULL`, checking rows-returned) *before* the side effect, and only perform the side effect if the claim succeeded. If the side effect fails, explicitly release the claim from within the same invocation — never rely on an external timeout or retry to "notice" a failure.**
 
 This rule is stated at the top of `api/process-delegation-escalations.js` next to the code it governs, and enforced by the regression tests in §7. Any new one-shot scheduled action (a new escalation tier, a new automation type, etc.) added to this file or a similar poller must follow the same claim-before-act pattern.
+
+## 9. Follow-Up Timing Bug (Priority 2) — investigated and closed
+
+A second, separate concern (from the master plan, not this incident): "freshly-created tasks appeared to trigger follow-up logic too early." Read-only trace of the full caller chain confirmed this is a *different defect class* from §1–8 (premature eligibility vs. duplicate sends) and found no code-level cause:
+
+- **Caller chain:** `save.ts` → `delegations.ts: createDelegationTaskAndMessage()` → `tasks.ts: createTask()` (`INSERT ... SELECT ... .single()`) → `qstash-escalation.ts: scheduleEscalationMessages(task.id, task.created_at)` → `POST /api/qstash-reminder` (`action: 'schedule-escalation'`) → `qstash-reminder.js` computes `sentMs = new Date(sentAt).getTime()` → publishes to QStash with `Upstash-Not-Before`.
+- **Per-task QStash anchor** and **periodic sweep anchor** are the *same database value* — `tasks.created_at`, confirmed `timestamptz DEFAULT now()` (Postgres's own clock; `TaskDraft` has no `created_at` field, so no code path can ever set it to a client-generated or stale value).
+- **The critical safety property:** a per-task QStash delivery's payload (`{ taskId }`) is never used to select or fast-path a task. It lands in the exact same default batch-processing branch as the periodic sweep, which always re-queries every currently-due task fresh from Postgres and re-evaluates `ageMs >= threshold && !guard` — regardless of which trigger caused the invocation or what its payload claims. A trigger firing early (or naming the wrong task, or lying entirely) cannot produce a send the database doesn't independently agree is due.
+- **testMode** cannot leak into the per-task trigger URL — `qstash-reminder.js` never appends a query string to `targetUrl`.
+- **Verdict: no application-level cause of premature follow-up exists.** The one residual, unproven vector is clock skew between the Vercel runtime and Postgres (both cloud-hosted, NTP-assumed in sync); this is an infrastructure assumption, not a code defect, and no measurement suggested it.
+
+**Regression tests** (`api/process-delegation-escalations.timing-safety.test.js`, `src/lib/delegations.test.ts`):
+- `FOLLOWUP_DELAY_MS`/`ESCALATION_DELAY_MS` (`qstash-reminder.js`) locked equal to `PROD_FOLLOWUP_MS`/`PROD_ESCALATE_MS` (`process-delegation-escalations.js`) — two independently-declared constants that must never drift apart.
+- A per-task-shaped request naming a task that is **not yet due** produces zero sends, even though the payload names that exact task — proving the trigger is not trusted.
+- A due task is processed correctly even when the trigger payload names a **different** task entirely — proving `payload.taskId` is never used to select which task to act on.
+- `createDelegationTaskAndMessage` schedules using only the DB-returned `task.created_at`, never a locally-generated timestamp; fails closed (no scheduling call at all) if `created_at` is ever missing.
+
+**Safety rule (added alongside §8):** stated in `process-delegation-escalations.js` and `qstash-reminder.js` headers —
+
+> **A scheduled trigger is a wake-up signal only. It must never authorize a send without a fresh database eligibility re-check.**
+
+Priority 2 status: **CLOSED**. No production behavior changed — this was documentation and test-only hardening for a risk that traced out to be architecturally already-prevented.

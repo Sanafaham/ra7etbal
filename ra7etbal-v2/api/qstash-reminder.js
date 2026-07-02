@@ -8,11 +8,21 @@
  *
  * Auth: Supabase access token in Authorization: Bearer <token> header.
  *       Verified server-side; only the task owner may schedule/cancel.
+ *
+ * SAFETY NOTE: the 'schedule-escalation' action below only PUBLISHES a
+ * timed wake-up call to /api/process-delegation-escalations — it grants no
+ * authority. That handler always re-derives eligibility from the database
+ * (ageMs + guard column) before doing anything, regardless of when or why it
+ * was invoked. See process-delegation-escalations.js's own header for the
+ * full rule and docs/SAFETY-duplicate-follow-up-prevention.md.
  */
 
 const QSTASH_BASE = 'https://qstash.upstash.io/v2';
-const FOLLOWUP_DELAY_MS   = 10 * 60 * 1000; // 10 min
-const ESCALATION_DELAY_MS = 20 * 60 * 1000; // 20 min
+// Exported so a test can assert these stay in lockstep with
+// PROD_FOLLOWUP_MS / PROD_ESCALATE_MS in process-delegation-escalations.js —
+// two independently-declared constants with nothing else enforcing they agree.
+export const FOLLOWUP_DELAY_MS   = 10 * 60 * 1000; // 10 min
+export const ESCALATION_DELAY_MS = 20 * 60 * 1000; // 20 min
 
 /**
  * Unified QStash scheduling endpoint.
