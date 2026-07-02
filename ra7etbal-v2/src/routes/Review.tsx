@@ -1,24 +1,33 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import ItemCard from "../components/review/ItemCard";
 import Spinner from "../components/Spinner";
 import AuthNotice from "../components/auth/AuthNotice";
+import { useAuth } from "../hooks/useAuth";
+import { saveClearMyHeadInboxItems } from "../lib/clear-my-head-inbox";
 import { pickReviewEmptyStateMessage } from "../lib/review-selection";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 
 /**
  * Review — Clear My Head's temporary thought-dump review space. Shows
- * AI-extracted items, editable only as plain text, but never persists them.
- * Items are either kept here (in-memory, for further review) or discarded.
- * Carson is the only path that converts a thought into a saved
- * Note/To-do/Reminder/Delegation/Message — this screen shows no Carson
- * operational fields (assignment, message, due date, photo) so it never
- * looks like that conversion has already happened.
+ * AI-extracted items, editable only as plain text, but never persists them
+ * into Notes/To-dos/Reminders/Delegations/Messages. "Leave here for now"
+ * moves the remaining items into the Clear My Head Inbox (a separate, real
+ * table — read-only thoughts, not Carson objects); "Discard all" removes
+ * them permanently. Carson is the only path that converts an inbox thought
+ * into a saved Note/To-do/Reminder/Delegation/Message — this screen shows no
+ * Carson operational fields (assignment, message, due date, photo) so it
+ * never looks like that conversion has already happened.
  */
 export default function Review() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const userId = user?.id ?? null;
+
+  const [savingToInbox, setSavingToInbox] = useState(false);
+  const [inboxError, setInboxError] = useState<string | null>(null);
 
   const { status, items, sourceText, setDescription, removeItem } = useExtractionStore(
     useShallow((s) => ({
@@ -90,6 +99,8 @@ export default function Review() {
         </details>
       )}
 
+      {inboxError && <AuthNotice kind="error">{inboxError}</AuthNotice>}
+
       {items.length === 0 ? (
         <div className="rounded-[28px] border border-dashed border-gold/30 bg-card/70 p-6 text-sm text-text-soft">
           {pickReviewEmptyStateMessage(everHadItemsRef.current)}
@@ -120,16 +131,20 @@ export default function Review() {
             <button
               type="button"
               onClick={handleDiscardAll}
-              className="rounded-full border border-rose-200 bg-rose-50/80 px-4 py-2 text-sm font-medium text-rose-700 shadow-sm transition hover:bg-rose-100"
+              disabled={savingToInbox}
+              className="rounded-full border border-rose-200 bg-rose-50/80 px-4 py-2 text-sm font-medium text-rose-700 shadow-sm transition hover:bg-rose-100 disabled:opacity-50"
             >
               Discard all
             </button>
             <button
               type="button"
-              onClick={handleKeep}
-              className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-base font-medium text-ivory shadow-sm transition hover:bg-espresso"
+              onClick={() => void handleKeep()}
+              disabled={savingToInbox}
+              aria-busy={savingToInbox}
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-base font-medium text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
             >
-              Leave here for now
+              {savingToInbox && <Spinner size={16} />}
+              <span>{savingToInbox ? "Saving…" : "Leave here for now"}</span>
             </button>
           </div>
         )}
@@ -137,14 +152,34 @@ export default function Review() {
     </section>
   );
 
-  // Leaves the extraction store untouched so items remain available next
-  // time the user opens Clear My Head this session — only the raw draft
-  // textarea (already superseded by these organized items) is cleared.
-  function handleKeep() {
-    useDraftStore.getState().clear();
-    navigate("/", { replace: true });
+  // Moves every remaining item into the Clear My Head Inbox (a real,
+  // persistent table) — only after the save succeeds do we clear the
+  // extraction/draft stores, so a failed save never loses the thoughts.
+  async function handleKeep() {
+    if (savingToInbox) return;
+    if (!items.length) return;
+    if (!userId) {
+      setInboxError("Not signed in.");
+      return;
+    }
+    setSavingToInbox(true);
+    setInboxError(null);
+    try {
+      await saveClearMyHeadInboxItems(items.map((it) => it.description));
+      useDraftStore.getState().clear();
+      useExtractionStore.getState().clear();
+      navigate("/", { replace: true });
+    } catch (err) {
+      setInboxError(
+        err instanceof Error ? err.message : "Could not save to your inbox. Please try again.",
+      );
+    } finally {
+      setSavingToInbox(false);
+    }
   }
 
+  // Permanently discards the reviewed thoughts — nothing is saved to the
+  // inbox or anywhere else.
   function handleDiscardAll() {
     useDraftStore.getState().clear();
     useExtractionStore.getState().clear();

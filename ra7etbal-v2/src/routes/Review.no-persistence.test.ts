@@ -49,10 +49,46 @@ describe("Review.tsx — Clear My Head never persists items (structural guard)",
     expect(SOURCE).toMatch(/function handleDiscardAll\(\)\s*\{[^}]*useExtractionStore\.getState\(\)\.clear\(\)/s);
   });
 
-  it("'Leave here for now' does not clear the extraction store", () => {
-    const match = SOURCE.match(/function handleKeep\(\)\s*\{([^}]*)\}/s);
-    expect(match).not.toBeNull();
-    expect(match![1]).not.toMatch(/useExtractionStore\.getState\(\)\.clear\(\)/);
+});
+
+/**
+ * Clear My Head Inbox V1: "Leave here for now" now MOVES the remaining
+ * items into the Clear My Head Inbox (a real, persistent table) instead of
+ * being a no-op — it must save first, then clear the extraction/draft
+ * stores only on success, so a failed save never silently loses a thought.
+ * "Discard all" must never touch the inbox at all.
+ */
+describe("Review.tsx — 'Leave here for now' moves items into the Clear My Head Inbox", () => {
+  const handleKeepSource = SOURCE.slice(
+    SOURCE.indexOf("async function handleKeep"),
+    SOURCE.indexOf("function handleDiscardAll"),
+  );
+  const handleDiscardAllSource = SOURCE.slice(SOURCE.indexOf("function handleDiscardAll"));
+
+  it("imports saveClearMyHeadInboxItems from the new inbox lib", () => {
+    expect(SOURCE).toMatch(/from ["']\.\.\/lib\/clear-my-head-inbox["']/);
+    expect(SOURCE).toMatch(/saveClearMyHeadInboxItems/);
+  });
+
+  it("handleKeep saves the remaining items' text into the inbox", () => {
+    expect(handleKeepSource).toMatch(/await saveClearMyHeadInboxItems\(items\.map\(\(it\) => it\.description\)\)/);
+  });
+
+  it("handleKeep clears the extraction store only AFTER the save call (moves, doesn't copy)", () => {
+    const saveIndex = handleKeepSource.indexOf("saveClearMyHeadInboxItems");
+    const clearIndex = handleKeepSource.indexOf("useExtractionStore.getState().clear()");
+    expect(saveIndex).toBeGreaterThan(-1);
+    expect(clearIndex).toBeGreaterThan(-1);
+    expect(clearIndex).toBeGreaterThan(saveIndex);
+  });
+
+  it("handleKeep surfaces a save error instead of silently clearing the stores", () => {
+    expect(handleKeepSource).toMatch(/catch \(err\)/);
+    expect(handleKeepSource).toMatch(/setInboxError\(/);
+  });
+
+  it("Discard all never calls saveClearMyHeadInboxItems — nothing is saved to the inbox", () => {
+    expect(handleDiscardAllSource).not.toMatch(/saveClearMyHeadInboxItems/);
   });
 });
 
@@ -68,7 +104,7 @@ describe("Review.tsx — copy does not imply permanent saving", () => {
   });
 
   it("the keep button's visible copy avoids persistence-implying language", () => {
-    const buttonMatch = SOURCE.match(/onClick=\{handleKeep\}[\s\S]*?<\/button>/);
+    const buttonMatch = SOURCE.match(/onClick=\{\(\) => void handleKeep\(\)\}[\s\S]*?<\/button>/);
     expect(buttonMatch).not.toBeNull();
     expect(buttonMatch![0]).not.toMatch(/\b(save|saved|keep|kept|store|stored)\b/i);
   });
