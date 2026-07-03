@@ -233,6 +233,8 @@ interface SentDelegationRecord {
 }
 
 const MAX_VOICE_PHOTOS = 1;
+const MID_SESSION_PHOTO_PENDING_CONTEXT =
+  "The user attached a photo during this call. The current photo is available for delegation, but the visual description is still being generated. Use this current photo only and ignore any earlier attached photo.";
 
 interface DelegationSendOptions {
   userId: string;
@@ -771,13 +773,19 @@ export default function ElevenLabsAgentWidget({
 
     syncPendingPhotoState(newPhotos);
     sessionPhotosRef.current = newPhotos;
-    sessionPhotoContextRef.current = null;
+    sessionPhotoContextRef.current =
+      statusRef.current === "connected"
+        ? MID_SESSION_PHOTO_PENDING_CONTEXT
+        : null;
 
     // Mid-call attachment/replacement — pendingPhotosRef and sessionPhotosRef
     // now hold exactly the current image, so the next tool call sends the
     // latest photo only. Update Carson's live context too; stale descriptions
     // are ignored if the user replaces/removes the photo before vision returns.
     if (statusRef.current === "connected" && conversationRef.current) {
+      conversationRef.current.sendContextualUpdate(
+        `[Session photo update] ${MID_SESSION_PHOTO_PENDING_CONTEXT}`,
+      );
       describePhotosForCarson(newPhotos)
         .then((description) => {
           if (
@@ -786,10 +794,10 @@ export default function ElevenLabsAgentWidget({
           ) {
             return;
           }
-          if (!description) return;
-          sessionPhotoContextRef.current = description;
+          const currentDescription = description ?? MID_SESSION_PHOTO_PENDING_CONTEXT;
+          sessionPhotoContextRef.current = currentDescription;
           conversationRef.current?.sendContextualUpdate(
-            `The user just attached or replaced the photo during this call. Current photo description:\n${description}\nUse this current photo only for the task they were referring to. Ignore any earlier attached photo.`,
+            `The user just attached or replaced the photo during this call. Current photo description:\n${currentDescription}\nUse this current photo only for the task they were referring to. Ignore any earlier attached photo.`,
           );
         })
         .catch((err) => console.error("[carson-photo-attach] mid-call describe failed (non-fatal):", err));

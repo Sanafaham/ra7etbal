@@ -41,7 +41,9 @@ describe("ElevenLabsAgentWidget — Talk to Carson photo attachments", () => {
     expect(block).toContain("if (!file) return");
     expect(block).toContain("syncPendingPhotoState(newPhotos)");
     expect(block).toContain("sessionPhotosRef.current = newPhotos");
-    expect(block).toContain("sessionPhotoContextRef.current = null");
+    expect(block).toContain("MID_SESSION_PHOTO_PENDING_CONTEXT");
+    expect(block).toContain("[Session photo update]");
+    expect(SOURCE).toContain("The current photo is available for delegation");
     expect(block).toContain('statusRef.current === "connected"');
     expect(block).toContain("describePhotosForCarson(newPhotos)");
     expect(block).toContain("The user just attached or replaced the photo during this call.");
