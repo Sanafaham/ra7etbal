@@ -128,23 +128,35 @@ describe("act_on_inbox_item — surviving items from the multi-item scenario are
   });
 });
 
-describe("Prompt doc — multi-item Inbox sequencing guidance is present", () => {
-  const PROMPT = readFileSync(
-    join(__dirname, "..", "..", "..", "docs", "carson-elevenlabs-system-prompt.md"),
+// The repo no longer stores the full ElevenLabs prompt (the live dashboard
+// prompt is the source of truth — see docs/elevenlabs-prompt-patches/README.md).
+// This checks the small, dated patch doc for this fix instead: the exact
+// text a human still needs to paste into the dashboard for the fix to take
+// effect, plus the tests above that the code side already holds up on its own.
+describe("Prompt patch doc — multi-item Inbox sequencing guidance is documented", () => {
+  const PATCH = readFileSync(
+    join(__dirname, "..", "..", "..", "docs", "elevenlabs-prompt-patches", "2026-07-03-inbox-multi-item.md"),
     "utf-8",
   );
 
-  it("instructs Carson to handle each item with its own separate act_on_inbox_item call", () => {
-    expect(PROMPT).toContain("MULTI-ITEM INBOX INSTRUCTIONS");
-    expect(PROMPT).toMatch(/its own separate act_on_inbox_item call/);
+  it("documents the MULTI-ITEM INBOX INSTRUCTIONS section, with each item getting its own separate act_on_inbox_item call", () => {
+    expect(PATCH).toContain("MULTI-ITEM INBOX INSTRUCTIONS");
+    expect(PATCH).toMatch(/its own separate act_on_inbox_item call/);
   });
 
-  it("instructs Carson to re-derive each item's own parameters from the original utterance, not lose them across calls", () => {
-    expect(PROMPT).toMatch(/pull that item's own query, action, time_text, and person_name from its own clause/);
-    expect(PROMPT).toMatch(/Do not drop or forget a name, time, or action/);
+  it("documents re-deriving each item's own parameters from the original utterance, not losing them across calls", () => {
+    expect(PATCH).toMatch(/pull that item's own query, action, time_text, and person_name from its own clause/);
+    expect(PATCH).toMatch(/Do not drop or forget a name, time, or action/);
   });
 
-  it("names the exact delegate trigger words from the incident report", () => {
-    expect(PROMPT).toMatch(/delegate, send, task, or ask someone to do it/);
+  it("documents the exact delegate trigger words from the incident report", () => {
+    expect(PATCH).toMatch(/delegate, send, task, or ask someone to do it/);
+  });
+
+  it("names the affected tool, where to paste, a validation phrase, and a rollback note", () => {
+    expect(PATCH).toContain("act_on_inbox_item");
+    expect(PATCH).toMatch(/Where to paste/);
+    expect(PATCH).toMatch(/Validation test phrase/);
+    expect(PATCH).toMatch(/Rollback/);
   });
 });
