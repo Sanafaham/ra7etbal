@@ -97,7 +97,7 @@ import {
   checkDelegationCoverage,
   type ExecutedDelegationRecord,
 } from "../../lib/carson-action-coverage";
-import { CARSON_STATUS_POLICY } from "../../lib/carson-status-policy";
+import { CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD } from "../../lib/carson-status-policy";
 import {
   addLatencyStageDuration,
   createExecuteInstructionLatencyTrace,
@@ -1407,7 +1407,8 @@ export default function ElevenLabsAgentWidget({
       conversationRef.current?.sendContextualUpdate(
         `[Session update] Task created and WhatsApp sent to ${person.name}: "${taskText}". ` +
         `This happened during the current session. If the user asks whether it was sent, ` +
-        `confirm yes — it was sent.`,
+        `confirm yes — it was sent. Do not ask whether to send it now; it has already been sent. ` +
+        `Do not ask whether the user is still there.`,
       );
 
       return successText;
@@ -3493,7 +3494,8 @@ export default function ElevenLabsAgentWidget({
             conversationRef.current?.sendContextualUpdate(
               `[Session update] Tasks created and WhatsApp sent to: ${names}. ` +
               `This happened during the current session. If the user asks whether ` +
-              `a message was sent, confirm yes — it was sent.`,
+              `a message was sent, confirm yes — it was sent. Do not ask whether to send now; ` +
+              `the send already happened. Do not ask whether the user is still there.`,
             );
           }
         }
@@ -3911,7 +3913,7 @@ export default function ElevenLabsAgentWidget({
           recent_memory: sanitizeForCarsonSpeech(recentMemory),
           current_weather: currentWeather,
           persistent_instructions: sanitizeForCarsonSpeech(
-            [CARSON_STATUS_POLICY, persistentInstructions].filter(Boolean).join("\n\n"),
+            [CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, persistentInstructions].filter(Boolean).join("\n\n"),
           ),
         },
         clientTools: {
@@ -4256,6 +4258,10 @@ export default function ElevenLabsAgentWidget({
       }
 
       conversationRef.current = conv;
+
+      conv.sendContextualUpdate(
+        `[Voice behavior guard]\n${CARSON_VOICE_SESSION_GUARD}`,
+      );
 
       // Inject photo descriptions immediately after session opens — before the
       // user speaks. This is the critical path: Carson must know about the photos
