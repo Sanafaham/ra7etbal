@@ -223,7 +223,9 @@ async function describePhotosForCarson(photos: PendingPhoto[]): Promise<string |
   );
 
   const lines = descriptions.filter(Boolean);
-  return lines.length > 0 ? lines.join("\n") : null;
+  if (lines.length === 0) return null;
+  const count = photos.length;
+  return `${count} photo${count === 1 ? "" : "s"} attached.\n${lines.join("\n")}`;
 }
 
 interface SentDelegationRecord {
@@ -232,9 +234,10 @@ interface SentDelegationRecord {
   messageText: string;
 }
 
-const MAX_VOICE_PHOTOS = 1;
+const MAX_VOICE_PHOTOS = 5;
+const PHOTO_LIMIT_MESSAGE = "You can attach up to 5 photos.";
 const MID_SESSION_PHOTO_PENDING_CONTEXT =
-  "The user attached a photo during this call. The current photo is available for delegation, but the visual description is still being generated. Use this current photo only and ignore any earlier attached photo.";
+  "The user attached a photo during this call. The current photos are available for delegation, but the visual description is still being generated. Use these current photos only and ignore any earlier removed photo.";
 
 interface DelegationSendOptions {
   userId: string;
@@ -711,6 +714,8 @@ export default function ElevenLabsAgentWidget({
   const pendingPhotosRef = useRef<PendingPhoto[]>([]);
   // Preview metadata is state so thumbnails re-render correctly.
   const [pendingPhotoPreviews, setPendingPhotoPreviews] = useState<PendingPhoto[]>([]);
+  // Transient UI copy shown when the user tries to exceed MAX_VOICE_PHOTOS.
+  const [photoLimitWarning, setPhotoLimitWarning] = useState<string | null>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
   const photoRevisionRef = useRef(0);
 
@@ -739,6 +744,7 @@ export default function ElevenLabsAgentWidget({
     }
     pendingPhotosRef.current = [];
     setPendingPhotoPreviews([]);
+    setPhotoLimitWarning(null);
   }, []);
 
   // Revoke object URLs and clear both queued photos and active session snapshots.
@@ -750,24 +756,27 @@ export default function ElevenLabsAgentWidget({
   }, [clearPendingPhotoPreviews]);
 
   function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const newFiles = Array.from(e.target.files ?? []);
+    const incoming = Array.from(e.target.files ?? []);
     e.target.value = ""; // allow reselecting same files
-    if (newFiles.length === 0) return;
+    if (incoming.length === 0) return;
 
     const previousPhotos = pendingPhotosRef.current;
-    for (const photo of previousPhotos) {
-      URL.revokeObjectURL(photo.previewUrl);
+    const availableSlots = Math.max(0, MAX_VOICE_PHOTOS - previousPhotos.length);
+    const accepted = incoming.slice(0, availableSlots);
+    const overflowed = incoming.length > accepted.length;
+
+    if (accepted.length === 0) {
+      setPhotoLimitWarning(PHOTO_LIMIT_MESSAGE);
+      return;
     }
 
-    const file = newFiles.slice(0, MAX_VOICE_PHOTOS)[0];
-    if (!file) return;
-    const newPhoto = {
+    const newPhotoObjs: PendingPhoto[] = accepted.map((file) => ({
       id: crypto.randomUUID(),
       file,
       previewUrl: URL.createObjectURL(file),
       name: file.name,
-    };
-    const newPhotos = [newPhoto];
+    }));
+    const newPhotos = [...previousPhotos, ...newPhotoObjs];
     const revision = photoRevisionRef.current + 1;
     photoRevisionRef.current = revision;
 
@@ -777,27 +786,23 @@ export default function ElevenLabsAgentWidget({
       statusRef.current === "connected"
         ? MID_SESSION_PHOTO_PENDING_CONTEXT
         : null;
+    setPhotoLimitWarning(overflowed ? PHOTO_LIMIT_MESSAGE : null);
 
-    // Mid-call attachment/replacement — pendingPhotosRef and sessionPhotosRef
-    // now hold exactly the current image, so the next tool call sends the
-    // latest photo only. Update Carson's live context too; stale descriptions
-    // are ignored if the user replaces/removes the photo before vision returns.
+    // Mid-call attachment — pendingPhotosRef and sessionPhotosRef now hold all
+    // current images, so the next tool call sends every currently-attached
+    // photo. Update Carson's live context too; stale descriptions are ignored
+    // if the user adds/removes another photo before vision returns.
     if (statusRef.current === "connected" && conversationRef.current) {
       conversationRef.current.sendContextualUpdate(
         `[Session photo update] ${MID_SESSION_PHOTO_PENDING_CONTEXT}`,
       );
       describePhotosForCarson(newPhotos)
         .then((description) => {
-          if (
-            photoRevisionRef.current !== revision ||
-            pendingPhotosRef.current[0]?.id !== newPhoto.id
-          ) {
-            return;
-          }
+          if (photoRevisionRef.current !== revision) return;
           const currentDescription = description ?? MID_SESSION_PHOTO_PENDING_CONTEXT;
           sessionPhotoContextRef.current = currentDescription;
           conversationRef.current?.sendContextualUpdate(
-            `The user just attached or replaced the photo during this call. Current photo description:\n${currentDescription}\nUse this current photo only for the task they were referring to. Ignore any earlier attached photo.`,
+            `The user just attached a photo during this call. Current photo description:\n${currentDescription}\nUse these current photos only for the task they were referring to. Ignore any earlier removed photo.`,
           );
         })
         .catch((err) => console.error("[carson-photo-attach] mid-call describe failed (non-fatal):", err));
@@ -812,10 +817,15 @@ export default function ElevenLabsAgentWidget({
     syncPendingPhotoState(next);
     sessionPhotosRef.current = next;
     sessionPhotoContextRef.current = null;
+    setPhotoLimitWarning(null);
     if (statusRef.current === "connected" && conversationRef.current) {
-      conversationRef.current.sendContextualUpdate(
-        "The user removed the attached photo during this call. Do not use any previously attached photo for the next action.",
-      );
+      const message =
+        next.length > 0
+          ? `The user removed a photo during this call. ${next.length} photo${
+              next.length === 1 ? "" : "s"
+            } remain attached. Do not use the removed photo for the next action.`
+          : "The user removed the attached photo during this call. Do not use any previously attached photo for the next action.";
+      conversationRef.current.sendContextualUpdate(message);
     }
   }
 
@@ -4349,9 +4359,10 @@ export default function ElevenLabsAgentWidget({
         ref={imageFileInputRef}
         type="file"
         accept="image/*"
+        multiple
         onChange={handleImageFileChange}
         className="sr-only"
-        aria-label="Attach photo"
+        aria-label="Attach photos"
       />
 
       {/*
@@ -4384,9 +4395,14 @@ export default function ElevenLabsAgentWidget({
             ))}
           </div>
           <span className="mt-1 block text-[11px] text-ink/55">
-            {status === "idle" ? "Photo ready" : "Photo attached"}
+            {pendingPhotoPreviews.length} photo{pendingPhotoPreviews.length === 1 ? "" : "s"}{" "}
+            {status === "idle" ? "ready" : "attached"}
           </span>
         </div>
+      )}
+
+      {photoLimitWarning && (
+        <p className="mb-1.5 text-[11px] text-ink/55">{photoLimitWarning}</p>
       )}
 
       {status === "idle" && sessionEndedMsg && (
@@ -4399,10 +4415,23 @@ export default function ElevenLabsAgentWidget({
           <button
             type="button"
             onClick={() => imageFileInputRef.current?.click()}
-            aria-label={pendingPhotoPreviews.length > 0 ? "Replace photo for Carson" : "Attach photo for Carson"}
-            title={pendingPhotoPreviews.length > 0 ? "Replace photo" : "Attach photo"}
+            disabled={pendingPhotoPreviews.length >= MAX_VOICE_PHOTOS}
+            aria-label={
+              pendingPhotoPreviews.length >= MAX_VOICE_PHOTOS
+                ? PHOTO_LIMIT_MESSAGE
+                : pendingPhotoPreviews.length > 0
+                  ? "Add another photo for Carson"
+                  : "Attach photo for Carson"
+            }
+            title={
+              pendingPhotoPreviews.length >= MAX_VOICE_PHOTOS
+                ? PHOTO_LIMIT_MESSAGE
+                : pendingPhotoPreviews.length > 0
+                  ? "Add photo"
+                  : "Attach photo"
+            }
             className={
-              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 " +
+              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
               (pendingPhotoPreviews.length > 0
                 ? "border-sage/40 bg-sage/10 text-sage"
                 : "border-charcoal/15 bg-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
@@ -4446,10 +4475,23 @@ export default function ElevenLabsAgentWidget({
           <button
             type="button"
             onClick={() => imageFileInputRef.current?.click()}
-            aria-label={pendingPhotoPreviews.length > 0 ? "Replace photo for Carson" : "Attach photo for Carson"}
-            title={pendingPhotoPreviews.length > 0 ? "Replace photo" : "Attach photo"}
+            disabled={pendingPhotoPreviews.length >= MAX_VOICE_PHOTOS}
+            aria-label={
+              pendingPhotoPreviews.length >= MAX_VOICE_PHOTOS
+                ? PHOTO_LIMIT_MESSAGE
+                : pendingPhotoPreviews.length > 0
+                  ? "Add another photo for Carson"
+                  : "Attach photo for Carson"
+            }
+            title={
+              pendingPhotoPreviews.length >= MAX_VOICE_PHOTOS
+                ? PHOTO_LIMIT_MESSAGE
+                : pendingPhotoPreviews.length > 0
+                  ? "Add photo"
+                  : "Attach photo"
+            }
             className={
-              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 " +
+              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
               (pendingPhotoPreviews.length > 0
                 ? "border-sage/40 bg-sage/10 text-sage"
                 : "border-charcoal/15 bg-warm-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
