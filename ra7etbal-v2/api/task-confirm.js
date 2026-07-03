@@ -5,11 +5,12 @@
  * within the Vercel Hobby 12-serverless-function limit.
  *
  * GET  /api/task-confirm?taskId=<id>
- *   Returns task data + signed image URLs + signed upload URL for proof photo.
- *   Called by the public /confirm page (no auth session required).
+ *   Returns task data + signed image URLs + up to 5 signed upload URLs for
+ *   proof photos (Proof Photo V2). Called by the public /confirm page (no
+ *   auth session required).
  *
- * POST /api/task-confirm  { taskId, confirmedBy?, proofImagePath? }
- *   Quality Intelligence V1 — when a proof photo is submitted for a
+ * POST /api/task-confirm  { taskId, confirmedBy?, proofImagePaths?: string[] }
+ *   Quality Intelligence V1 — when 1-5 proof photos are submitted for a
  *   delegated task, Carson reviews it (downloadImageAsBase64 +
  *   runQualityReview from _quality-review.js) before deciding what happens:
  *     - approved: falls through to the original behavior — mark done,
@@ -31,6 +32,12 @@
 
 import webpush from 'web-push';
 import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
+
+// Proof Photo V2 — up to 5 proof photos per task. No schema change: proof
+// photos are stored in the existing task_attachments table (the same table
+// reference photos use), discriminated by the previously-unused file_name
+// column set to 'proof' (reference-photo rows never set file_name).
+const MAX_PROOF_PHOTOS = 5;
 
 export default async function handler(req, res) {
   if (req.method === 'GET') return handleGet(req, res);
@@ -81,17 +88,14 @@ async function handleGet(req, res) {
       imageUrl = await getSignedImageUrl({ supabaseUrl, serviceKey, imagePath: task.image_path });
     }
 
-    let proofImageUrl = null;
-    if (task.proof_image_path) {
-      proofImageUrl = await getSignedImageUrl({ supabaseUrl, serviceKey, imagePath: task.proof_image_path });
-    }
-
-    // Load task_attachments for multi-photo tasks, sorted by sort_order.
+    // Load task_attachments for multi-photo reference tasks, sorted by
+    // sort_order. file_name=is.null excludes proof-photo rows (below) — a
+    // defensive filter, since reference rows never set file_name anyway.
     let attachmentUrls = [];
     if (task.attachment_count > 0) {
       const attachRes = await fetch(
         supabaseUrl + '/rest/v1/task_attachments?task_id=eq.' + encodeURIComponent(task.id) +
-          '&order=sort_order.asc&select=storage_path',
+          '&file_name=is.null&order=sort_order.asc&select=storage_path',
         {
           headers: {
             apikey: serviceKey,
@@ -111,17 +115,48 @@ async function handleGet(req, res) {
       }
     }
 
-    let proofUploadUrl = null;
-    let proofUploadPath = null;
+    // Load already-submitted proof photos (0-5), sorted by sort_order.
+    let proofImageUrls = [];
+    const proofAttachRes = await fetch(
+      supabaseUrl + '/rest/v1/task_attachments?task_id=eq.' + encodeURIComponent(task.id) +
+        '&file_name=eq.proof&order=sort_order.asc&select=storage_path',
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: 'Bearer ' + serviceKey,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    if (proofAttachRes.ok) {
+      const proofRows = await proofAttachRes.json().catch(() => []);
+      proofImageUrls = await Promise.all(
+        (Array.isArray(proofRows) ? proofRows : []).map((row) =>
+          getSignedImageUrl({ supabaseUrl, serviceKey, imagePath: row.storage_path }),
+        ),
+      );
+      proofImageUrls = proofImageUrls.filter(Boolean);
+    }
+    // Legacy single-column fallback — a task confirmed before Proof Photo V2
+    // only ever wrote tasks.proof_image_path, with no task_attachments row.
+    if (proofImageUrls.length === 0 && task.proof_image_path) {
+      const legacyUrl = await getSignedImageUrl({ supabaseUrl, serviceKey, imagePath: task.proof_image_path });
+      if (legacyUrl) proofImageUrls = [legacyUrl];
+    }
+
+    // Fresh signed upload URLs for up to 5 proof-photo slots. Each slot's
+    // signed URL is created with x-upsert so resubmitting to the same index
+    // (e.g. after a Quality Intelligence rejection) overwrites cleanly
+    // instead of failing with "Upload failed (400)".
+    let proofUploadSlots = [];
     if (task.status !== 'done' && task.user_id) {
-      const uploadResult = await createSignedUploadUrl({
+      proofUploadSlots = await createSignedProofUploadUrls({
         supabaseUrl,
         serviceKey,
         userId: task.user_id,
         taskId: task.id,
+        count: MAX_PROOF_PHOTOS,
       });
-      proofUploadUrl = uploadResult?.uploadUrl ?? null;
-      proofUploadPath = uploadResult?.storagePath ?? null;
     }
 
     return res.status(200).json({
@@ -133,9 +168,8 @@ async function handleGet(req, res) {
       ownerPhone,
       imageUrl,
       attachmentUrls,
-      proofImageUrl,
-      proofUploadUrl,
-      proofUploadPath,
+      proofImageUrls,
+      proofUploadSlots,
     });
   } catch (err) {
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
@@ -145,7 +179,10 @@ async function handleGet(req, res) {
 // ── POST: confirm the task ────────────────────────────────────────────────────
 
 async function handlePost(req, res) {
-  const { taskId, confirmedBy, proofImagePath } = req.body;
+  const { taskId, confirmedBy, proofImagePaths: rawProofImagePaths } = req.body;
+  const proofImagePaths = (Array.isArray(rawProofImagePaths) ? rawProofImagePaths : [])
+    .filter((p) => typeof p === 'string' && p.trim())
+    .slice(0, MAX_PROOF_PHOTOS);
 
   if (!taskId) {
     return res.status(400).json({ error: 'Task ID is required' });
@@ -188,18 +225,21 @@ async function handlePost(req, res) {
 
     const now = new Date().toISOString();
 
-    // Quality Intelligence V1 — only applies to delegated tasks with a
-    // freshly submitted proof photo. No proof / no assignee → unchanged.
-    const needsReview = !!proofImagePath && !!task.assigned_to;
+    // Quality Intelligence V1 — only applies to delegated tasks with at
+    // least one freshly submitted proof photo. No proof / no assignee →
+    // unchanged.
+    const needsReview = proofImagePaths.length > 0 && !!task.assigned_to;
     let review = null;
 
     if (needsReview) {
       const apiKey = process.env.ANTHROPIC_API_KEY;
 
-      const [delegationMessage, referenceImageBase64, proofImageBase64] = await Promise.all([
+      const [delegationMessage, referenceImageBase64, proofImagesBase64] = await Promise.all([
         fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }),
         downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath: task.image_path }),
-        downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath: proofImagePath }),
+        Promise.all(
+          proofImagePaths.map((imagePath) => downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath })),
+        ),
       ]);
 
       review = await runQualityReview({
@@ -207,7 +247,7 @@ async function handlePost(req, res) {
         taskDescription: task.description,
         delegationMessage,
         referenceImageBase64,
-        proofImageBase64,
+        proofImagesBase64,
       });
     }
 
@@ -227,7 +267,9 @@ async function handlePost(req, res) {
           method: 'PATCH',
           headers: { ...headers, Prefer: 'return=minimal' },
           body: JSON.stringify({
-            proof_image_path: proofImagePath,
+            // Primary/back-compat column — TaskCard, HistoryCard, and
+            // ConfirmationNotices all read this single column for a thumbnail.
+            proof_image_path: proofImagePaths[0] ?? null,
             quality_review_status: review.status,
             quality_review_note: review.note,
             quality_reviewed_at: now,
@@ -239,6 +281,21 @@ async function handlePost(req, res) {
       if (!patchRes.ok) {
         return res.status(500).json({ error: 'Could not save the review. Please try again.' });
       }
+
+      // Persist the full submitted proof set (up to 5) for the confirmation
+      // page to display and for the next review cycle to read back. Best-
+      // effort: the review outcome above already saved successfully, so a
+      // failure here only means extra proof photos beyond the primary one
+      // won't show on reload — not a lost submission.
+      await replaceProofAttachments({
+        supabaseUrl,
+        serviceKey,
+        taskId,
+        userId: task.user_id,
+        proofImagePaths,
+      }).catch((err) =>
+        console.error('[task-confirm] replaceProofAttachments failed (non-fatal):', err?.message || err),
+      );
 
       // correction_required: no WhatsApp to the assignee — the original task
       // WhatsApp already contains the full instructions and reference image.
@@ -282,7 +339,7 @@ async function handlePost(req, res) {
         body: JSON.stringify({
           status: 'done',
           confirmed_at: now,
-          ...(proofImagePath ? { proof_image_path: proofImagePath } : {}),
+          ...(proofImagePaths.length > 0 ? { proof_image_path: proofImagePaths[0] } : {}),
           ...(review
             ? { quality_review_status: 'approved', quality_review_note: review.note, quality_reviewed_at: now }
             : {}),
@@ -292,6 +349,18 @@ async function handlePost(req, res) {
 
     if (!updateRes.ok) {
       return res.status(500).json({ error: 'Could not confirm task. Please try again.' });
+    }
+
+    if (proofImagePaths.length > 0) {
+      await replaceProofAttachments({
+        supabaseUrl,
+        serviceKey,
+        taskId,
+        userId: task.user_id,
+        proofImagePaths,
+      }).catch((err) =>
+        console.error('[task-confirm] replaceProofAttachments failed (non-fatal):', err?.message || err),
+      );
     }
 
     // 3. Insert confirmation record (non-fatal)
@@ -482,11 +551,22 @@ async function getSignedImageUrl({ supabaseUrl, serviceKey, imagePath }) {
   }
 }
 
-async function createSignedUploadUrl({ supabaseUrl, serviceKey, userId, taskId }) {
+/**
+ * Signs one proof-photo upload slot at a fixed, index-scoped path
+ * (`{userId}/{taskId}/proof/{index}.jpg`). Root cause of the historical
+ * "Upload failed (400)" bug on re-upload after a Quality Intelligence
+ * rejection: this signing call never set the upsert header, so a second
+ * upload to the same (deterministic) path was rejected by Supabase Storage
+ * as a conflict. `x-upsert: true` here is the fix — the same signed-URL
+ * mechanics remain single-use per token, so the caller still needs a fresh
+ * signed URL per attempt (unchanged), but the underlying object write itself
+ * now succeeds on repeat submissions to the same slot.
+ */
+async function createSignedProofUploadUrl({ supabaseUrl, serviceKey, userId, taskId, index }) {
   if (!userId || !taskId) return null;
 
   const BUCKET = 'task-images';
-  const objectPath = `${userId}/${taskId}/proof.jpg`;
+  const objectPath = `${userId}/${taskId}/proof/${index}.jpg`;
   const storagePath = `${BUCKET}/${objectPath}`;
 
   try {
@@ -498,13 +578,15 @@ async function createSignedUploadUrl({ supabaseUrl, serviceKey, userId, taskId }
           apikey: serviceKey,
           Authorization: `Bearer ${serviceKey}`,
           'Content-Type': 'application/json',
+          'x-upsert': 'true',
         },
         body: JSON.stringify({ expiresIn: 3600 }),
       },
     );
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
-      console.warn('[task-confirm] createSignedUploadUrl: Supabase returned non-ok', {
+      console.warn('[task-confirm] createSignedProofUploadUrl: Supabase returned non-ok', {
+        index,
         status: response.status,
         body: errText.slice(0, 200),
       });
@@ -512,15 +594,70 @@ async function createSignedUploadUrl({ supabaseUrl, serviceKey, userId, taskId }
     }
     const data = await response.json();
     if (!data?.url) {
-      console.warn('[task-confirm] createSignedUploadUrl: no url in response', {
+      console.warn('[task-confirm] createSignedProofUploadUrl: no url in response', {
+        index,
         keys: data ? Object.keys(data) : null,
         data: JSON.stringify(data).slice(0, 300),
       });
       return null;
     }
     const uploadUrl = `${supabaseUrl}/storage/v1${data.url}`;
-    return { uploadUrl, storagePath };
+    return { index, uploadUrl, storagePath };
   } catch {
     return null;
+  }
+}
+
+/** Signs up to `count` proof-photo upload slots in parallel, dropping any that failed to sign. */
+async function createSignedProofUploadUrls({ supabaseUrl, serviceKey, userId, taskId, count }) {
+  const slots = await Promise.all(
+    Array.from({ length: count }, (_, index) =>
+      createSignedProofUploadUrl({ supabaseUrl, serviceKey, userId, taskId, index }),
+    ),
+  );
+  return slots.filter(Boolean);
+}
+
+/**
+ * Replaces the full set of proof-photo rows for a task with the paths just
+ * submitted. Proof rows are discriminated from reference-photo rows in the
+ * same task_attachments table by file_name = 'proof' (reference rows never
+ * set file_name) — no schema change needed. Delete-then-insert rather than
+ * upsert-by-path, since a resubmission may have fewer photos than before
+ * (a removed slot must not linger as a stale row).
+ */
+async function replaceProofAttachments({ supabaseUrl, serviceKey, taskId, userId, proofImagePaths }) {
+  const headers = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  const deleteRes = await fetch(
+    `${supabaseUrl}/rest/v1/task_attachments?task_id=eq.${encodeURIComponent(taskId)}&file_name=eq.proof`,
+    { method: 'DELETE', headers: { ...headers, Prefer: 'return=minimal' } },
+  );
+  if (!deleteRes.ok) {
+    throw new Error(`Could not clear previous proof photos (status ${deleteRes.status})`);
+  }
+
+  if (proofImagePaths.length === 0) return;
+
+  const rows = proofImagePaths.map((storagePath, index) => ({
+    task_id: taskId,
+    user_id: userId,
+    storage_path: storagePath,
+    file_name: 'proof',
+    content_type: 'image/jpeg',
+    sort_order: index,
+  }));
+
+  const insertRes = await fetch(`${supabaseUrl}/rest/v1/task_attachments`, {
+    method: 'POST',
+    headers: { ...headers, Prefer: 'return=minimal' },
+    body: JSON.stringify(rows),
+  });
+  if (!insertRes.ok) {
+    throw new Error(`Could not save proof photos (status ${insertRes.status})`);
   }
 }

@@ -29,7 +29,7 @@ describe('runQualityReview', () => {
       taskDescription: 'plate the chicken like the reference',
       delegationMessage: 'Please plate the chicken like the photo.',
       referenceImageBase64: 'ref-base64',
-      proofImageBase64: 'proof-base64',
+      proofImagesBase64: ['proof-base64'],
     });
 
     expect(result).toEqual({ status: 'approved', note: 'Matches the reference image.' });
@@ -50,7 +50,7 @@ describe('runQualityReview', () => {
       taskDescription: 'plate the chicken like the reference',
       delegationMessage: 'Please plate the chicken like the photo.',
       referenceImageBase64: 'ref-base64',
-      proofImageBase64: 'proof-base64',
+      proofImagesBase64: ['proof-base64'],
     });
 
     expect(result.status).toBe('correction_required');
@@ -72,7 +72,7 @@ describe('runQualityReview', () => {
       taskDescription: 'task',
       delegationMessage: 'message',
       referenceImageBase64: null,
-      proofImageBase64: 'proof-base64',
+      proofImagesBase64: ['proof-base64'],
     });
 
     expect(result.status).toBe('uncertain');
@@ -91,7 +91,7 @@ describe('runQualityReview', () => {
       taskDescription: 'task',
       delegationMessage: null,
       referenceImageBase64: null,
-      proofImageBase64: 'proof-base64',
+      proofImagesBase64: ['proof-base64'],
     });
 
     expect(result).toEqual({ status: 'uncertain', note: 'Photo is too blurry to tell.' });
@@ -112,7 +112,7 @@ describe('runQualityReview', () => {
       taskDescription: 'look for this in the closet',
       delegationMessage: 'Please find this and confirm.',
       referenceImageBase64: 'ref-base64',
-      proofImageBase64: 'ref-base64',
+      proofImagesBase64: ['ref-base64'],
     });
 
     expect(result).toEqual({
@@ -136,7 +136,7 @@ describe('runQualityReview', () => {
       taskDescription: 'buy the pearl bracelet shown',
       delegationMessage: 'Please buy this and send a photo.',
       referenceImageBase64: 'ref-base64',
-      proofImageBase64: 'screenshot-base64',
+      proofImagesBase64: ['screenshot-base64'],
     });
 
     expect(result.status).toBe('fraud_suspected');
@@ -158,7 +158,7 @@ describe('runQualityReview', () => {
       taskDescription: 'order dinner from the usual place',
       delegationMessage: null,
       referenceImageBase64: null,
-      proofImageBase64: 'menu-screenshot-base64',
+      proofImagesBase64: ['menu-screenshot-base64'],
     });
 
     expect(result.status).toBe('fraud_suspected');
@@ -175,7 +175,7 @@ describe('runQualityReview', () => {
       taskDescription: 'task',
       delegationMessage: 'message',
       referenceImageBase64: null,
-      proofImageBase64: 'proof-base64',
+      proofImagesBase64: ['proof-base64'],
     });
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
@@ -193,7 +193,7 @@ describe('runQualityReview', () => {
       taskDescription: 'task',
       delegationMessage: 'message',
       referenceImageBase64: null,
-      proofImageBase64: 'proof-base64',
+      proofImagesBase64: ['proof-base64'],
     });
 
     expect(result.status).toBe('uncertain');
@@ -207,7 +207,7 @@ describe('runQualityReview', () => {
       taskDescription: 'task',
       delegationMessage: 'message',
       referenceImageBase64: null,
-      proofImageBase64: 'proof-base64',
+      proofImagesBase64: ['proof-base64'],
     });
 
     expect(result.status).toBe('uncertain');
@@ -222,7 +222,7 @@ describe('runQualityReview', () => {
       taskDescription: 'task',
       delegationMessage: 'message',
       referenceImageBase64: 'ref-base64',
-      proofImageBase64: null,
+      proofImagesBase64: [],
     });
 
     expect(result.status).toBe('uncertain');
@@ -238,7 +238,7 @@ describe('runQualityReview', () => {
       taskDescription: 'task',
       delegationMessage: 'message',
       referenceImageBase64: null,
-      proofImageBase64: 'proof-base64',
+      proofImagesBase64: ['proof-base64'],
     });
 
     expect(result.status).toBe('uncertain');
@@ -256,7 +256,7 @@ describe('runQualityReview', () => {
       taskDescription: 'task',
       delegationMessage: 'message',
       referenceImageBase64: 'ref-base64',
-      proofImageBase64: 'proof-base64',
+      proofImagesBase64: ['proof-base64'],
     });
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
@@ -282,7 +282,7 @@ describe('runQualityReview', () => {
       taskDescription: 'task',
       delegationMessage: 'message',
       referenceImageBase64: null,
-      proofImageBase64: 'proof-base64',
+      proofImagesBase64: ['proof-base64'],
     });
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);

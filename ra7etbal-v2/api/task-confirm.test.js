@@ -54,21 +54,27 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const patchBody = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(patchBody.status).toBe('done');
     expect(patchBody.quality_review_status).toBeUndefined();
+    // No proof photos submitted — no task_attachments writes at all.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('skips review for a personal task with no assignee even if a proof photo is submitted', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: null, image_path: null }]))
-      .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments (proof replace)
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments (proof replace)
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/user-1/task-1/proof.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
 
     expect(runQualityReviewMock).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    const patchBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(patchBody.proof_image_path).toBe('task-images/user-1/task-1/proof/0.jpg');
   });
 
   it('approved review: marks the task done and records the review outcome', async () => {
@@ -78,12 +84,14 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }])) // messages lookup
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments (proof replace)
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments (proof replace)
       .mockResolvedValueOnce(emptyResponse()); // confirmations insert
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(
-      createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }),
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }),
       res,
     );
 
@@ -92,13 +100,104 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         taskDescription: 'plate the chicken',
         delegationMessage: 'Please plate the chicken like the photo.',
         referenceImageBase64: 'base64-bytes',
-        proofImageBase64: 'base64-bytes',
+        proofImagesBase64: ['base64-bytes'],
       }),
     );
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
     expect(patchBody.status).toBe('done');
     expect(patchBody.quality_review_status).toBe('approved');
+    expect(patchBody.proof_image_path).toBe('task-images/u/t/proof/0.jpg');
+  });
+
+  it('approved review with 3 proof photos: all 3 sent to the vision review together, all 3 persisted', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'All three angles confirm it.' });
+    downloadImageAsBase64Mock
+      .mockReset()
+      .mockResolvedValueOnce('ref-base64') // reference image
+      .mockResolvedValueOnce('proof-0') // proof 1
+      .mockResolvedValueOnce('proof-1') // proof 2
+      .mockResolvedValueOnce('proof-2'); // proof 3
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'set the table', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please set the table for 6.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const paths = ['task-images/u/t/proof/0.jpg', 'task-images/u/t/proof/1.jpg', 'task-images/u/t/proof/2.jpg'];
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: paths }), res);
+
+    expect(runQualityReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ proofImagesBase64: ['proof-0', 'proof-1', 'proof-2'] }),
+    );
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+
+    // Primary column set to the first photo (back-compat for TaskCard/HistoryCard).
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.proof_image_path).toBe(paths[0]);
+
+    // All 3 photos replace the task_attachments proof set, in order.
+    const deleteCall = fetchMock.mock.calls[3];
+    expect(String(deleteCall[0])).toContain('/rest/v1/task_attachments');
+    expect(String(deleteCall[0])).toContain('file_name=eq.proof');
+    expect(deleteCall[1].method).toBe('DELETE');
+
+    const insertCall = fetchMock.mock.calls[4];
+    expect(String(insertCall[0])).toBe('https://example.supabase.co/rest/v1/task_attachments');
+    const insertedRows = JSON.parse(insertCall[1].body);
+    expect(insertedRows).toEqual([
+      expect.objectContaining({ task_id: 'task-1', storage_path: paths[0], file_name: 'proof', sort_order: 0 }),
+      expect.objectContaining({ task_id: 'task-1', storage_path: paths[1], file_name: 'proof', sort_order: 1 }),
+      expect.objectContaining({ task_id: 'task-1', storage_path: paths[2], file_name: 'proof', sort_order: 2 }),
+    ]);
+  });
+
+  it('a 6th submitted proof path is truncated server-side to 5 — defense in depth behind the client-side cap', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'ok' });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const sixPaths = Array.from({ length: 6 }, (_, i) => `task-images/u/t/proof/${i}.jpg`);
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: sixPaths }), res);
+
+    expect(runQualityReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ proofImagesBase64: expect.arrayContaining([]) }),
+    );
+    const insertedRows = JSON.parse(fetchMock.mock.calls[4][1].body);
+    expect(insertedRows).toHaveLength(5);
+  });
+
+  it('replaceProofAttachments failure is non-fatal — the review outcome is still reported truthfully', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'ok' });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done (succeeds)
+      .mockResolvedValueOnce(jsonResponse({ message: 'boom' }, 500)) // DELETE task_attachments fails
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert still runs
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    // The task was still marked done — a secondary-write failure must not
+    // undo or hide the primary, already-succeeded status transition.
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
   });
 
   it('correction_required review: keeps task pending, returns QI note for on-page display, sends no WhatsApp', async () => {
@@ -110,12 +209,14 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }])) // messages lookup (delegation content)
-      .mockResolvedValueOnce(emptyResponse()); // PATCH tasks (stays pending, review fields)
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (stays pending, review fields)
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments (proof replace)
+      .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments (proof replace)
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(
-      createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }),
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }),
       res,
     );
 
@@ -132,7 +233,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.status).toBeUndefined(); // task NOT marked done
     expect(patchBody.quality_review_status).toBe('correction_required');
     expect(patchBody.quality_review_note).toBe('Christopher, please center the chicken and send another photo.');
-    expect(patchBody.proof_image_path).toBe('task-images/u/t/proof.jpg');
+    expect(patchBody.proof_image_path).toBe('task-images/u/t/proof/0.jpg');
     expect(patchBody.quality_review_cycle_count).toBe(1);
 
     // No WhatsApp sent — correction is shown inline on the confirmation page.
@@ -141,8 +242,33 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
     // No confirmations row.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
-    // Only 3 fetch calls total: task, messages lookup, PATCH.
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    // task, messages, PATCH, DELETE proof attachments, INSERT proof attachments.
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('correction_required: replaces the rejected proof set — a corrected resubmission with fewer photos does not leave stale rows', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'correction_required',
+      note: 'Christopher, one of these is still wrong.',
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments
+    vi.stubGlobal('fetch', fetchMock);
+
+    // Corrected resubmission has only 1 photo, down from a prior 3-photo set.
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required' }));
+    const deleteCall = fetchMock.mock.calls[3];
+    expect(deleteCall[1].method).toBe('DELETE');
+    const insertedRows = JSON.parse(fetchMock.mock.calls[4][1].body);
+    expect(insertedRows).toHaveLength(1);
   });
 
   it('correction_required: no WhatsApp, no owner push — QI note returned for on-page display', async () => {
@@ -155,11 +281,13 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Plate the chicken like the reference photo.' }])) // messages lookup
-      .mockResolvedValueOnce(emptyResponse()); // PATCH tasks
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -173,7 +301,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
     // No owner push.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it('correction_required second submission: still no WhatsApp, no owner push, cycle count increments', async () => {
@@ -186,11 +314,13 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg', quality_review_cycle_count: 1 }]))
       .mockResolvedValueOnce(jsonResponse([])) // messages lookup
-      .mockResolvedValueOnce(emptyResponse()); // PATCH tasks (cycle count -> 2)
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (cycle count -> 2)
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof2.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof2.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -204,7 +334,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.status).toBeUndefined();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it('uncertain review: keeps the task pending, sends no WhatsApp message, and triggers the owner-push path', async () => {
@@ -221,11 +351,13 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'tidy the room', assigned_to: 'Grace', image_path: null }]))
       .mockResolvedValueOnce(jsonResponse([])) // no messages row
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
       .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // push_subscriptions lookup
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ success: true, outcome: 'uncertain', correctionCycleCount: 1 }),
@@ -237,8 +369,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     // No send-whatsapp-task call and no confirmations row for an uncertain outcome.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
-    // Owner-push path was attempted (push_subscriptions lookup ran).
-    expect(String(fetchMock.mock.calls[3][0])).toContain('/rest/v1/push_subscriptions');
+    // Owner-push path was attempted (push_subscriptions lookup ran) after the proof-attachment replace.
+    expect(String(fetchMock.mock.calls[5][0])).toContain('/rest/v1/push_subscriptions');
   });
 
   it('cycle count increments only for non-approved outcomes — approved leaves it untouched', async () => {
@@ -249,11 +381,13 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg', quality_review_cycle_count: 1 }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }])) // messages lookup
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
       .mockResolvedValueOnce(emptyResponse()); // confirmations insert
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof2.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof2.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -272,11 +406,13 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'look for this in the closet', assigned_to: 'Grace', image_path: 'task-images/u/t/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([])) // no messages row
-      .mockResolvedValueOnce(emptyResponse()); // PATCH tasks
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ success: true, outcome: 'fraud_suspected' }),
@@ -300,11 +436,13 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-2', user_id: 'user-1', status: 'pending', description: 'buy the pearl bracelet shown', assigned_to: 'Grace', image_path: 'task-images/u/t2/photo.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([])) // no messages row
-      .mockResolvedValueOnce(emptyResponse()); // PATCH tasks
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-2', proofImagePath: 'task-images/u/t2/proof.jpg' }), res);
+    await handler(createReq({ taskId: 'task-2', proofImagePaths: ['task-images/u/t2/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ success: true, outcome: 'fraud_suspected' }),
@@ -325,12 +463,14 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
       .mockResolvedValueOnce(emptyResponse()) // confirmations insert
       .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // push (approved)
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof-pizza.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof-pizza.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -351,11 +491,13 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg' }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
-      .mockResolvedValueOnce(emptyResponse()); // PATCH tasks (stays pending)
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (stays pending)
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof-salad.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof-salad.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       outcome: 'correction_required',
@@ -365,7 +507,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.status).toBeUndefined(); // task NOT marked done
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it('scenario Pizza→Salad→Salad: second wrong proof, still no WhatsApp, task open, NO owner push', async () => {
@@ -378,11 +520,13 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg', quality_review_cycle_count: 1 }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
-      .mockResolvedValueOnce(emptyResponse()); // PATCH tasks (still pending, cycle -> 2)
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (still pending, cycle -> 2)
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof-salad2.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof-salad2.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required', correctionCycleCount: 2 }));
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -390,7 +534,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.quality_review_cycle_count).toBe(2);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it('scenario Pizza→Salad→Pizza: task done on final approval, owner push fires once for the approval', async () => {
@@ -407,12 +551,14 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg', quality_review_cycle_count: 1 }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please bring the pizza.' }]))
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
       .mockResolvedValueOnce(emptyResponse()) // confirmations insert
       .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // push (approved)
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof-pizza.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof-pizza.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -433,10 +579,111 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(createReq({ taskId: 'task-1', proofImagePath: 'task-images/u/t/proof.jpg' }), res);
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
 
     expect(runQualityReviewMock).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ already_done: true }));
+    // Idempotent short-circuit — no attachment writes either.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
+  it('signs up to 5 proof-upload slots with x-upsert set, so a resubmission to the same slot never gets a 400', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending', confirmed_at: null, image_path: null, proof_image_path: null, attachment_count: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([])) // existing proof attachments (none)
+      // 5 signed-upload-url responses, one per slot
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/task-images/user-1/task-1/proof/0.jpg?token=t0' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/task-images/user-1/task-1/proof/1.jpg?token=t1' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/task-images/user-1/task-1/proof/2.jpg?token=t2' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/task-images/user-1/task-1/proof/3.jpg?token=t3' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/task-images/user-1/task-1/proof/4.jpg?token=t4' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.proofUploadSlots).toHaveLength(5);
+    expect(body.proofUploadSlots.map((s) => s.index)).toEqual([0, 1, 2, 3, 4]);
+    expect(body.proofUploadSlots[0].storagePath).toBe('task-images/user-1/task-1/proof/0.jpg');
+
+    // Every signing call must set x-upsert so overwriting an existing
+    // object at the same index succeeds instead of returning a 400.
+    const signingCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/object/upload/sign/'));
+    expect(signingCalls).toHaveLength(5);
+    for (const [, options] of signingCalls) {
+      expect(options.headers['x-upsert']).toBe('true');
+    }
+  });
+
+  it('does not generate upload slots for an already-done task', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'done', confirmed_at: '2026-01-01', image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg', attachment_count: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([])) // proof attachments query
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=x' })); // legacy proof read
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.proofUploadSlots).toEqual([]);
+  });
+
+  it('returns existing proof photos from task_attachments, sorted by sort_order, without leaking into the reference-photo grid', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending', confirmed_at: null, image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg', attachment_count: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }, { storage_path: 'task-images/u/t/proof/1.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/1.jpg?token=b' }))
+      // 5 upload-slot signings (task not done)
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/0.jpg?token=t0' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/1.jpg?token=t1' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/2.jpg?token=t2' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/3.jpg?token=t3' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/4.jpg?token=t4' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.proofImageUrls).toHaveLength(2);
+    // The reference-photo query filters file_name=is.null, so proof rows
+    // (file_name='proof') can never appear as reference photos.
+    const referenceAttachmentCall = fetchMock.mock.calls.find(
+      ([url]) => String(url).includes('/rest/v1/task_attachments') && String(url).includes('file_name=is.null'),
+    );
+    expect(referenceAttachmentCall).toBeUndefined(); // attachment_count is 0 here, so this query never runs
+    const proofAttachmentCall = fetchMock.mock.calls.find(
+      ([url]) => String(url).includes('/rest/v1/task_attachments') && String(url).includes('file_name=eq.proof'),
+    );
+    expect(proofAttachmentCall).toBeDefined();
+  });
+
+  it('falls back to the legacy single tasks.proof_image_path column when no task_attachments proof rows exist yet', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'done', confirmed_at: '2026-01-01', image_path: null, proof_image_path: 'task-images/u/t/proof.jpg', attachment_count: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([])) // no task_attachments proof rows (pre-V2 task)
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof.jpg?token=legacy' })); // legacy single-column read
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.proofImageUrls).toHaveLength(1);
+    expect(body.proofImageUrls[0]).toContain('token=legacy');
   });
 });
 

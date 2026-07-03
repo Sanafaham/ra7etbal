@@ -8,16 +8,34 @@ import { resizeImage } from "../lib/image-upload";
  * Recipient-facing confirmation page.
  *
  * Reached via the link the host shares (`/confirm?task=<id>`). The recipient
- * does NOT sign in — `/api/get-confirm-task` and `/api/confirm-task` use the
- * Supabase service role on the server to read/write a single task by id, so
- * no public RLS policy on the tasks table is required.
+ * does NOT sign in — `/api/task-confirm` uses the Supabase service role on
+ * the server to read/write a single task by id, so no public RLS policy on
+ * the tasks table is required.
  *
- * Visual Verification V2:
- * - Owner's Reference image is shown if attached (image_path).
- * - Recipient can attach a Proof photo before marking done.
- * - Proof photo is uploaded via a server-issued signed upload URL.
- * - proof_image_path is saved atomically with the confirmation PATCH.
+ * Visual Verification V2 / Proof Photo V2:
+ * - Owner's Reference photo(s) are shown if attached (image_path or
+ *   task_attachments).
+ * - Recipient can attach up to 5 Proof photos before marking done.
+ * - Each proof photo is uploaded via its own server-issued signed upload URL.
+ * - proofImagePaths is saved atomically with the confirmation PATCH.
+ * - If Quality Intelligence rejects the submission, the recipient can attach
+ *   corrected photos and resubmit — this re-runs the review.
  */
+
+const MAX_PROOF_PHOTOS = 5;
+const PROOF_LIMIT_MESSAGE = "You can attach up to 5 photos.";
+
+interface ProofUploadSlot {
+  index: number;
+  uploadUrl: string;
+  storagePath: string;
+}
+
+interface ProofPhoto {
+  id: string;
+  file: File;
+  previewUrl: string;
+}
 
 interface TaskInfo {
   id: string;
@@ -28,14 +46,12 @@ interface TaskInfo {
   ownerPhone: string | null;
   /** Signed URL for the owner's reference image (single-photo tasks). Null when none. */
   imageUrl: string | null;
-  /** Signed URLs for all attached photos (multi-photo tasks). Empty for single/no photo tasks. */
+  /** Signed URLs for all attached reference photos (multi-photo tasks). Empty for single/no photo tasks. */
   attachmentUrls: string[];
-  /** Signed URL for an already-uploaded proof photo. Null until recipient uploads. */
-  proofImageUrl: string | null;
-  /** Signed upload URL for the recipient to PUT a proof photo. Null when already done. */
-  proofUploadUrl: string | null;
-  /** Storage path to save as proof_image_path after successful upload. */
-  proofUploadPath: string | null;
+  /** Signed URLs for already-submitted proof photos (0-5). */
+  proofImageUrls: string[];
+  /** Fresh signed upload slots for the next submission. Empty when already done. */
+  proofUploadSlots: ProofUploadSlot[];
 }
 
 export default function Confirm() {
@@ -53,20 +69,22 @@ export default function Confirm() {
   const [outcome, setOutcome] = useState<"approved" | "correction_required" | "uncertain" | "fraud_suspected" | null>(null);
   const [correctionNote, setCorrectionNote] = useState<string | null>(null);
 
-  // Proof photo state
+  // Proof photo state — mirrors the reference-photo PendingPhoto[] pattern
+  // (ElevenLabsAgentWidget.tsx): accumulate up to MAX_PROOF_PHOTOS, remove
+  // any, block overflow with a clear message.
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [proofFile, setProofFile] = useState<File | null>(null);
-  const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
+  const [proofPhotos, setProofPhotos] = useState<ProofPhoto[]>([]);
+  const [proofLimitWarning, setProofLimitWarning] = useState<string | null>(null);
   const [proofUploading, setProofUploading] = useState(false);
   const [proofError, setProofError] = useState<string | null>(null);
 
-  // Revoke object URL on cleanup / file change
+  // Revoke preview object URLs on unmount.
   useEffect(() => {
-    if (!proofFile) return;
-    const url = URL.createObjectURL(proofFile);
-    setProofPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [proofFile]);
+    return () => {
+      for (const photo of proofPhotos) URL.revokeObjectURL(photo.previewUrl);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!taskId) {
@@ -94,9 +112,8 @@ export default function Confirm() {
           ownerPhone: data.ownerPhone ?? null,
           imageUrl: data.imageUrl ?? null,
           attachmentUrls: Array.isArray(data.attachmentUrls) ? data.attachmentUrls : [],
-          proofImageUrl: data.proofImageUrl ?? null,
-          proofUploadUrl: data.proofUploadUrl ?? null,
-          proofUploadPath: data.proofUploadPath ?? null,
+          proofImageUrls: Array.isArray(data.proofImageUrls) ? data.proofImageUrls : [],
+          proofUploadSlots: Array.isArray(data.proofUploadSlots) ? data.proofUploadSlots : [],
         });
         setLoadState("ready");
       } catch (err) {
@@ -115,15 +132,32 @@ export default function Confirm() {
   }, [taskId]);
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0] ?? null;
-    setProofFile(file);
+    const incoming = Array.from(e.target.files ?? []);
+    e.target.value = ""; // allow reselecting same files
+    if (incoming.length === 0) return;
+
+    setProofPhotos((prev) => {
+      const availableSlots = Math.max(0, MAX_PROOF_PHOTOS - prev.length);
+      const accepted = incoming.slice(0, availableSlots);
+      setProofLimitWarning(incoming.length > accepted.length ? PROOF_LIMIT_MESSAGE : null);
+      if (accepted.length === 0) return prev;
+      const added: ProofPhoto[] = accepted.map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        previewUrl: URL.createObjectURL(file),
+      }));
+      return [...prev, ...added];
+    });
     setProofError(null);
-    // Reset input value so the same file can be reselected after removal
-    e.target.value = "";
   }
 
-  function removeProofPhoto() {
-    setProofFile(null);
+  function removeProofPhoto(id: string) {
+    setProofPhotos((prev) => {
+      const removed = prev.find((p) => p.id === id);
+      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      return prev.filter((p) => p.id !== id);
+    });
+    setProofLimitWarning(null);
     setProofError(null);
   }
 
@@ -133,35 +167,45 @@ export default function Confirm() {
     setConfirming(true);
     setConfirmError(null);
 
-    let savedProofPath: string | null = null;
+    const savedProofPaths: string[] = [];
 
-    // Upload proof photo first if one was selected
-    if (proofFile && info.proofUploadUrl && info.proofUploadPath) {
-      try {
-        setProofUploading(true);
-        const blob = await resizeImage(proofFile);
-        const uploadRes = await fetch(info.proofUploadUrl, {
-          method: "PUT",
-          headers: { "Content-Type": "image/jpeg" },
-          body: blob,
-        });
-        if (!uploadRes.ok) {
-          throw new Error(`Upload failed (${uploadRes.status})`);
-        }
-        savedProofPath = info.proofUploadPath;
-      } catch (err) {
-        setProofUploading(false);
-        setProofError(
-          err instanceof Error
-            ? err.message
-            : "Could not upload proof photo. You can still mark done without it.",
-        );
+    // Upload every selected proof photo first, each to its own signed slot.
+    // Abort the whole submission on the first failure — reporting honestly
+    // which photo failed rather than silently proceeding with a partial set.
+    if (proofPhotos.length > 0) {
+      if (proofPhotos.length > info.proofUploadSlots.length) {
+        setProofError("Could not prepare upload slots for all photos. Please reload the page and try again.");
         confirmedRef.current = false;
         setConfirming(false);
         return;
-      } finally {
-        setProofUploading(false);
       }
+      setProofUploading(true);
+      for (let i = 0; i < proofPhotos.length; i++) {
+        const slot = info.proofUploadSlots[i];
+        try {
+          const blob = await resizeImage(proofPhotos[i].file);
+          const uploadRes = await fetch(slot.uploadUrl, {
+            method: "PUT",
+            headers: { "Content-Type": "image/jpeg" },
+            body: blob,
+          });
+          if (!uploadRes.ok) {
+            throw new Error(`Upload failed (${uploadRes.status})`);
+          }
+          savedProofPaths.push(slot.storagePath);
+        } catch (err) {
+          setProofUploading(false);
+          setProofError(
+            err instanceof Error
+              ? `Photo ${i + 1} of ${proofPhotos.length}: ${err.message}`
+              : `Could not upload photo ${i + 1} of ${proofPhotos.length}. You can still mark done without proof, or try again.`,
+          );
+          confirmedRef.current = false;
+          setConfirming(false);
+          return;
+        }
+      }
+      setProofUploading(false);
     }
 
     try {
@@ -170,7 +214,7 @@ export default function Confirm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           taskId,
-          ...(savedProofPath ? { proofImagePath: savedProofPath } : {}),
+          ...(savedProofPaths.length > 0 ? { proofImagePaths: savedProofPaths } : {}),
         }),
       });
       const data = (await res.json()) as {
@@ -193,36 +237,36 @@ export default function Confirm() {
 
       // Quality Intelligence V1 — only an "approved" outcome marks the task
       // done. correction_required / uncertain leave it pending so the
-      // recipient can submit a new proof photo next time they open this link.
+      // recipient can submit corrected proof photos next time they open this link.
+      const submittedPreviewUrls = proofPhotos.map((p) => p.previewUrl);
       setInfo((prev) =>
         prev
           ? {
               ...prev,
               status: resolvedOutcome === "approved" ? "done" : prev.status,
               confirmedAt: resolvedOutcome === "approved" ? new Date().toISOString() : prev.confirmedAt,
-              // Show local proof preview as the submitted proof url
-              proofImageUrl: proofPreviewUrl ?? prev.proofImageUrl,
+              // Show local proof previews as the submitted proof set.
+              proofImageUrls: submittedPreviewUrls.length > 0 ? submittedPreviewUrls : prev.proofImageUrls,
             }
           : prev,
       );
       if (resolvedOutcome !== "approved") {
-        // Allow another submission attempt on this same visit.
+        // Allow another submission attempt on this same visit — clear the
+        // rejected set so the recipient must attach corrected photos.
         confirmedRef.current = false;
-        setProofFile(null);
-        // Refresh the signed upload URL — Supabase pre-signed upload URLs are
-        // single-use, so the one from the initial GET is exhausted after the
-        // first upload. Fetching a fresh one non-fatally; if this fails the
-        // user will see an upload error on their next attempt and can reload.
+        setProofPhotos([]);
+        setProofLimitWarning(null);
+        // Refresh signed upload slots — Supabase pre-signed upload URLs are
+        // single-use, so the ones from the initial GET are exhausted after
+        // the first upload attempt. Fetching fresh ones non-fatally; if this
+        // fails the user will see an upload error on their next attempt and
+        // can reload.
         if (taskId) {
           fetch(`/api/task-confirm?taskId=${encodeURIComponent(taskId)}`)
             .then((r) => r.json() as Promise<Partial<TaskInfo>>)
             .then((d) => {
-              if (d.proofUploadUrl && d.proofUploadPath) {
-                setInfo((prev) =>
-                  prev
-                    ? { ...prev, proofUploadUrl: d.proofUploadUrl!, proofUploadPath: d.proofUploadPath! }
-                    : prev,
-                );
+              if (Array.isArray(d.proofUploadSlots)) {
+                setInfo((prev) => (prev ? { ...prev, proofUploadSlots: d.proofUploadSlots! } : prev));
               }
             })
             .catch(() => {});
@@ -241,11 +285,11 @@ export default function Confirm() {
   }
 
   const isBusy = confirming || proofUploading;
-  // After a correction_required verdict, the assignee must attach a new proof
-  // photo before resubmitting. This prevents bypassing QI by clicking
+  // After a correction_required verdict, the assignee must attach new proof
+  // photos before resubmitting. This prevents bypassing QI by clicking
   // "Mark done" without a photo (which would skip the review entirely since
-  // needsReview = !!proofImagePath on the server).
-  const needsNewProof = outcome === "correction_required" && !proofFile;
+  // needsReview = proofImagePaths.length > 0 on the server).
+  const needsNewProof = outcome === "correction_required" && proofPhotos.length === 0;
 
   return (
     <section className="mx-auto max-w-md space-y-5 rounded-2xl border border-sage/30 bg-white/85 p-6 shadow-sm">
@@ -307,17 +351,22 @@ export default function Confirm() {
               </div>
             ) : null}
 
-            {/* Proof photo — uploaded by recipient, shown after confirmation */}
-            {info.status === "done" && info.proofImageUrl && (
+            {/* Proof photo(s) — uploaded by recipient, shown after confirmation */}
+            {info.status === "done" && info.proofImageUrls.length > 0 && (
               <div className="space-y-1">
                 <p className="text-xs font-medium uppercase tracking-wide text-ink/45">
-                  Proof photo
+                  Proof photo{info.proofImageUrls.length === 1 ? "" : "s"} ({info.proofImageUrls.length})
                 </p>
-                <img
-                  src={info.proofImageUrl}
-                  alt="Proof photo from recipient"
-                  className="max-h-56 w-full rounded-xl border border-emerald-200 object-cover shadow-sm"
-                />
+                <div className={info.proofImageUrls.length === 1 ? "" : "grid grid-cols-2 gap-2"}>
+                  {info.proofImageUrls.map((url, i) => (
+                    <img
+                      key={i}
+                      src={url}
+                      alt={`Proof photo ${i + 1} from recipient`}
+                      className="w-full rounded-xl border border-emerald-200 object-cover shadow-sm aspect-square"
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -340,13 +389,13 @@ export default function Confirm() {
             </div>
           ) : (
             <>
-              {/* Quality Intelligence — task stayed open; a new proof photo is needed */}
+              {/* Quality Intelligence — task stayed open; new proof photos are needed */}
               {outcome === "correction_required" && (
                 <AuthNotice kind="error">
                   {correctionNote
                     ? correctionNote
                     : "This photo does not match the requested item."}{" "}
-                  Please review the reference image above and upload a new photo below.
+                  Please review the reference image above and upload new photo(s) below.
                 </AuthNotice>
               )}
 
@@ -354,58 +403,68 @@ export default function Confirm() {
               <div className="space-y-2">
                 <p className="text-xs font-medium uppercase tracking-wide text-ink/50">
                   Proof photo
-                  <span className="ml-1 normal-case text-ink/35">(optional)</span>
+                  <span className="ml-1 normal-case text-ink/35">(optional, up to 5)</span>
                 </p>
 
-                {proofFile && proofPreviewUrl ? (
-                  <div className="space-y-2">
-                    <div className="relative">
-                      <img
-                        src={proofPreviewUrl}
-                        alt="Proof photo preview"
-                        className="max-h-48 w-full rounded-xl border border-sage/25 object-cover shadow-sm"
-                      />
-                      <button
-                        type="button"
-                        onClick={removeProofPhoto}
-                        disabled={isBusy}
-                        aria-label="Remove proof photo"
-                        className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-ink/60 text-white shadow transition hover:bg-ink/80 disabled:opacity-50"
-                      >
-                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                          <line x1="1" y1="1" x2="11" y2="11" />
-                          <line x1="11" y1="1" x2="1" y2="11" />
-                        </svg>
-                      </button>
-                    </div>
-                    <p className="text-xs text-ink/50">
-                      Photo ready. Tap Mark done to send.
-                    </p>
+                {proofPhotos.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {proofPhotos.map((photo, i) => (
+                      <div key={photo.id} className="relative">
+                        <img
+                          src={photo.previewUrl}
+                          alt={`Proof photo preview ${i + 1}`}
+                          className="aspect-square w-full rounded-xl border border-sage/25 object-cover shadow-sm"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeProofPhoto(photo.id)}
+                          disabled={isBusy}
+                          aria-label={`Remove proof photo ${i + 1}`}
+                          className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-ink/60 text-white shadow transition hover:bg-ink/80 disabled:opacity-50"
+                        >
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                            <line x1="1" y1="1" x2="11" y2="11" />
+                            <line x1="11" y1="1" x2="1" y2="11" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
                   </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isBusy}
-                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-sage/40 bg-cream/40 px-4 py-3 text-sm text-ink/60 transition hover:border-sage/60 hover:bg-cream/60 disabled:opacity-50"
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="3" y="3" width="18" height="18" rx="2" />
-                      <circle cx="8.5" cy="8.5" r="1.5" />
-                      <path d="M21 15l-5-5L5 21" />
-                    </svg>
-                    Attach proof photo
-                  </button>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isBusy || proofPhotos.length >= MAX_PROOF_PHOTOS}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-sage/40 bg-cream/40 px-4 py-3 text-sm text-ink/60 transition hover:border-sage/60 hover:bg-cream/60 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="2" />
+                    <circle cx="8.5" cy="8.5" r="1.5" />
+                    <path d="M21 15l-5-5L5 21" />
+                  </svg>
+                  {proofPhotos.length > 0 ? "Add another photo" : "Attach proof photo"}
+                </button>
 
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept="image/*"
+                  multiple
                   onChange={handleFileChange}
                   className="sr-only"
-                  aria-label="Attach proof photo"
+                  aria-label="Attach proof photos"
                 />
+
+                {proofLimitWarning && (
+                  <p className="text-xs text-ink/50">{proofLimitWarning}</p>
+                )}
+
+                {proofPhotos.length > 0 && !proofError && (
+                  <p className="text-xs text-ink/50">
+                    {proofPhotos.length} photo{proofPhotos.length === 1 ? "" : "s"} ready. Tap Mark done to send.
+                  </p>
+                )}
 
                 {proofError && (
                   <p className="text-xs text-rose-700">{proofError}</p>
@@ -424,12 +483,12 @@ export default function Confirm() {
                 {isBusy && <Spinner size={16} />}
                 <span>
                   {proofUploading
-                    ? "Uploading photo…"
+                    ? "Uploading photo(s)…"
                     : confirming
                       ? "Confirming…"
                       : needsNewProof
                         ? "Attach a new photo to continue"
-                        : proofFile
+                        : proofPhotos.length > 0
                           ? "Mark done with proof"
                           : "Mark done"}
                 </span>

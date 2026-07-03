@@ -39,16 +39,18 @@ export async function downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath
   }
 }
 
-function buildReviewPrompt({ taskDescription, delegationMessage, hasReferenceImage }) {
+function buildReviewPrompt({ taskDescription, delegationMessage, hasReferenceImage, proofImageCount }) {
+  const proofLabel = proofImageCount === 1 ? 'a proof photo' : `${proofImageCount} proof photos`;
   return `You are Carson, a meticulous quality reviewer for household/work task proof photos.
 
 Task: "${taskDescription}"
 Delegation message sent to the assignee: "${delegationMessage || 'none'}"
 ${
   hasReferenceImage
-    ? 'A reference image showing what the result should look like is attached first, followed by the proof photo submitted by the assignee.'
-    : 'No reference image was provided for this task. Only the proof photo submitted by the assignee is attached. Judge it against the task description and delegation message alone.'
+    ? `A reference image showing what the result should look like is attached first, followed by ${proofLabel} submitted by the assignee.`
+    : `No reference image was provided for this task. Only ${proofLabel} submitted by the assignee ${proofImageCount === 1 ? 'is' : 'are'} attached. Judge them against the task description and delegation message alone.`
 }
+${proofImageCount > 1 ? 'Treat all attached proof photos together as one submission — approve only if they collectively satisfy the task.' : ''}
 
 Decide exactly one outcome:
 - APPROVED: the proof photo clearly satisfies the task as described.
@@ -100,19 +102,30 @@ export async function runQualityReview({
   taskDescription,
   delegationMessage,
   referenceImageBase64,
-  proofImageBase64,
+  proofImagesBase64,
 }) {
   const fallback = { status: 'uncertain', note: 'Could not complete an automated review — please check manually.' };
 
-  if (!apiKey || !proofImageBase64) return fallback;
+  const proofImages = (Array.isArray(proofImagesBase64) ? proofImagesBase64 : []).filter(Boolean);
+  if (!apiKey || proofImages.length === 0) return fallback;
 
   const content = [
-    { type: 'text', text: buildReviewPrompt({ taskDescription, delegationMessage, hasReferenceImage: !!referenceImageBase64 }) },
+    {
+      type: 'text',
+      text: buildReviewPrompt({
+        taskDescription,
+        delegationMessage,
+        hasReferenceImage: !!referenceImageBase64,
+        proofImageCount: proofImages.length,
+      }),
+    },
   ];
   if (referenceImageBase64) {
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: referenceImageBase64 } });
   }
-  content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: proofImageBase64 } });
+  for (const proofImageBase64 of proofImages) {
+    content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: proofImageBase64 } });
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 25000);
