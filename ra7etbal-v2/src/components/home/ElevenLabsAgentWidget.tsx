@@ -44,7 +44,6 @@ import {
   type TranscriptMessage,
 } from "../../lib/carson-summarize";
 import { parseVoiceTime } from "../../lib/parse-voice-time";
-import { appendPhotoContextDescription } from "../../lib/carson-photo-context";
 import { buildCarsonOpeningLine } from "../../lib/carson-opening";
 import { createReminderTask } from "../../lib/reminders";
 import {
@@ -233,6 +232,8 @@ interface SentDelegationRecord {
   messageText: string;
 }
 
+const MAX_VOICE_PHOTOS = 1;
+
 interface DelegationSendOptions {
   userId: string;
   person: Person;
@@ -249,10 +250,8 @@ interface DelegationSendOptions {
    */
   imageFile?: File | null;
   /**
-   * All photos attached to this delegation (up to 5). When length > 1 the
-   * extras are uploaded to task_attachments, attachment_count is set, and the
-   * WhatsApp send switches to the ra7etbal_task_v3 text template with an
-   * inline attachment note (no image header). imageFiles[0] mirrors imageFile.
+   * Current Talk to Carson image set. Voice UX is single-image by design:
+   * replacing an image removes the previous one before a delegation can send.
    */
   imageFiles?: File[] | null;
 }
@@ -711,6 +710,7 @@ export default function ElevenLabsAgentWidget({
   // Preview metadata is state so thumbnails re-render correctly.
   const [pendingPhotoPreviews, setPendingPhotoPreviews] = useState<PendingPhoto[]>([]);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
+  const photoRevisionRef = useRef(0);
 
   // Session-scoped photo snapshot.
   // On iOS Safari, a File from <input type="file"> can become inaccessible
@@ -731,6 +731,7 @@ export default function ElevenLabsAgentWidget({
   }, []);
 
   const clearPendingPhotoPreviews = useCallback(() => {
+    photoRevisionRef.current += 1;
     for (const photo of pendingPhotosRef.current) {
       URL.revokeObjectURL(photo.previewUrl);
     }
@@ -751,40 +752,44 @@ export default function ElevenLabsAgentWidget({
     e.target.value = ""; // allow reselecting same files
     if (newFiles.length === 0) return;
 
-    const existing = pendingPhotosRef.current;
-    const remaining = Math.max(0, 5 - existing.length);
-    const toAdd = newFiles.slice(0, remaining);
+    const previousPhotos = pendingPhotosRef.current;
+    for (const photo of previousPhotos) {
+      URL.revokeObjectURL(photo.previewUrl);
+    }
 
-    if (toAdd.length === 0) return;
-
-    const newPhotos = toAdd.map((file) => ({
+    const file = newFiles.slice(0, MAX_VOICE_PHOTOS)[0];
+    if (!file) return;
+    const newPhoto = {
       id: crypto.randomUUID(),
       file,
       previewUrl: URL.createObjectURL(file),
       name: file.name,
-    }));
+    };
+    const newPhotos = [newPhoto];
+    const revision = photoRevisionRef.current + 1;
+    photoRevisionRef.current = revision;
 
-    syncPendingPhotoState([...existing, ...newPhotos]);
+    syncPendingPhotoState(newPhotos);
+    sessionPhotosRef.current = newPhotos;
+    sessionPhotoContextRef.current = null;
 
-    // Mid-call attachment — the user opened the file picker while already
-    // talking to Carson. pendingPhotosRef is already updated above, so the
-    // next tool call (sendDelegation/executeInstruction) picks up the new
-    // photo automatically — both prefer the live ref over the call-start
-    // snapshot. The two things that still need updating explicitly are:
-    // (1) sessionPhotosRef, the iOS-safe snapshot some paths fall back to,
-    // and (2) Carson's own conversational context, since the initial photo
-    // description was already sent (or skipped) before this photo existed.
+    // Mid-call attachment/replacement — pendingPhotosRef and sessionPhotosRef
+    // now hold exactly the current image, so the next tool call sends the
+    // latest photo only. Update Carson's live context too; stale descriptions
+    // are ignored if the user replaces/removes the photo before vision returns.
     if (statusRef.current === "connected" && conversationRef.current) {
-      sessionPhotosRef.current = [...sessionPhotosRef.current, ...newPhotos];
       describePhotosForCarson(newPhotos)
         .then((description) => {
+          if (
+            photoRevisionRef.current !== revision ||
+            pendingPhotosRef.current[0]?.id !== newPhoto.id
+          ) {
+            return;
+          }
           if (!description) return;
-          sessionPhotoContextRef.current = appendPhotoContextDescription(
-            sessionPhotoContextRef.current,
-            description,
-          );
+          sessionPhotoContextRef.current = description;
           conversationRef.current?.sendContextualUpdate(
-            `The user just attached a new photo during this call. Description:\n${description}\nUse this photo for the task they were referring to. Do not ask them to attach it again.`,
+            `The user just attached or replaced the photo during this call. Current photo description:\n${description}\nUse this current photo only for the task they were referring to. Ignore any earlier attached photo.`,
           );
         })
         .catch((err) => console.error("[carson-photo-attach] mid-call describe failed (non-fatal):", err));
@@ -792,10 +797,18 @@ export default function ElevenLabsAgentWidget({
   }
 
   function removePendingPhoto(id: string) {
-    if (status !== "idle") return;
     const removed = pendingPhotosRef.current.find((photo) => photo.id === id);
     if (removed) URL.revokeObjectURL(removed.previewUrl);
-    syncPendingPhotoState(pendingPhotosRef.current.filter((photo) => photo.id !== id));
+    photoRevisionRef.current += 1;
+    const next = pendingPhotosRef.current.filter((photo) => photo.id !== id);
+    syncPendingPhotoState(next);
+    sessionPhotosRef.current = next;
+    sessionPhotoContextRef.current = null;
+    if (statusRef.current === "connected" && conversationRef.current) {
+      conversationRef.current.sendContextualUpdate(
+        "The user removed the attached photo during this call. Do not use any previously attached photo for the next action.",
+      );
+    }
   }
 
   // Cleanup preview URL on unmount
@@ -4322,10 +4335,9 @@ export default function ElevenLabsAgentWidget({
         ref={imageFileInputRef}
         type="file"
         accept="image/*"
-        multiple
         onChange={handleImageFileChange}
         className="sr-only"
-        aria-label="Attach photos"
+        aria-label="Attach photo"
       />
 
       {/*
@@ -4344,25 +4356,21 @@ export default function ElevenLabsAgentWidget({
                   alt={`Attached photo ${index + 1}`}
                   className="h-9 w-9 rounded-lg border border-sage/20 object-cover"
                 />
-                {status === "idle" && (
-                  <button
-                    type="button"
-                    onClick={() => removePendingPhoto(photo.id)}
-                    aria-label={`Remove attached photo ${index + 1}`}
-                    className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink"
-                  >
-                    <svg width="6" height="6" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
-                      <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
-                    </svg>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => removePendingPhoto(photo.id)}
+                  aria-label="Remove attached photo"
+                  className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-ink/70 text-white shadow transition hover:bg-ink"
+                >
+                  <svg width="6" height="6" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                    <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
+                  </svg>
+                </button>
               </div>
             ))}
           </div>
           <span className="mt-1 block text-[11px] text-ink/55">
-            {status === "idle"
-              ? `${pendingPhotoPreviews.length} photo${pendingPhotoPreviews.length !== 1 ? "s" : ""} ready`
-              : `${pendingPhotoPreviews.length} photo${pendingPhotoPreviews.length !== 1 ? "s" : ""} attached`}
+            {status === "idle" ? "Photo ready" : "Photo attached"}
           </span>
         </div>
       )}
@@ -4377,11 +4385,10 @@ export default function ElevenLabsAgentWidget({
           <button
             type="button"
             onClick={() => imageFileInputRef.current?.click()}
-            aria-label="Attach photos for Carson"
-            title="Attach photos"
-            disabled={pendingPhotoPreviews.length >= 5}
+            aria-label={pendingPhotoPreviews.length > 0 ? "Replace photo for Carson" : "Attach photo for Carson"}
+            title={pendingPhotoPreviews.length > 0 ? "Replace photo" : "Attach photo"}
             className={
-              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
+              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 " +
               (pendingPhotoPreviews.length > 0
                 ? "border-sage/40 bg-sage/10 text-sage"
                 : "border-charcoal/15 bg-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
@@ -4425,11 +4432,10 @@ export default function ElevenLabsAgentWidget({
           <button
             type="button"
             onClick={() => imageFileInputRef.current?.click()}
-            aria-label="Attach a photo for Carson"
-            title="Attach photo"
-            disabled={pendingPhotoPreviews.length >= 5}
+            aria-label={pendingPhotoPreviews.length > 0 ? "Replace photo for Carson" : "Attach photo for Carson"}
+            title={pendingPhotoPreviews.length > 0 ? "Replace photo" : "Attach photo"}
             className={
-              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
+              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 " +
               (pendingPhotoPreviews.length > 0
                 ? "border-sage/40 bg-sage/10 text-sage"
                 : "border-charcoal/15 bg-warm-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
