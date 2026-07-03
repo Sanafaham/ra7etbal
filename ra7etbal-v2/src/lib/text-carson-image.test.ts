@@ -849,6 +849,142 @@ describe("executeDelegationFromText image pipeline", () => {
     expect(result).toContain("Christopher was NOT messaged");
     expect(result).toContain("attached photos could not be saved");
   });
+
+  // ── Live failure reproduction: cross-path duplicate delegation send ───────
+  // Production incident: attaching 2 photos and asking Carson to delegate
+  // produced TWO real, delivered WhatsApp sends to Christopher 9 seconds
+  // apart (confirmed via tasks/messages/whatsapp_deliveries — both had a real
+  // meta_message_id and reached delivery_status "read"), because the
+  // send_delegation tool's cooldown was never consulted by this
+  // (executeDelegationFromText) path, and the two attempts used slightly
+  // different task text ("make these for dinner." vs "make these for dinner.
+  // I'll attach the photos.") so an exact-text cooldown could not have caught
+  // it anyway. isDuplicateDelegation/onDelegationSent close that gap.
+  describe("cross-path duplicate delegation guard", () => {
+    it("2-photo delegation still sends successfully when no duplicate is recorded", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+      const extractedItem: ExtractedItem = {
+        id: "item-1",
+        type: "delegation",
+        description: "make these for dinner",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Please make these for dinner.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([extractedItem]));
+      deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp", deliveryId: "d-1", messageId: "wamid.1" });
+
+      const onDelegationSent = vi.fn();
+      const result = await executeDelegationFromText("Ask Christopher to make these for dinner", {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people: [person("Christopher")],
+        tasks: [],
+        allImageFiles: [
+          new File(["one"], "one.jpg", { type: "image/jpeg" }),
+          new File(["two"], "two.jpg", { type: "image/jpeg" }),
+        ],
+        isDuplicateDelegation: () => false,
+        onDelegationSent,
+      });
+
+      expect(deliverTaskMessageMock).toHaveBeenCalledTimes(1);
+      expect(result).toContain("Christopher has it");
+      // The caller's tracker must learn about this real send so a later call
+      // through a different path can detect it as a duplicate.
+      expect(onDelegationSent).toHaveBeenCalledWith("Christopher", "make these for dinner");
+    });
+
+    it("skips the WhatsApp send and reports truthfully when the shared guard recognizes a recent duplicate", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+      const extractedItem: ExtractedItem = {
+        id: "item-1",
+        type: "delegation",
+        description: "make these for dinner. I'll attach the photos.",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Please make these for dinner.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([extractedItem]));
+
+      // Simulates: the first send already happened through send_delegation
+      // (the tool path), so the shared guard now recognizes this as a repeat.
+      const isDuplicateDelegation = vi.fn().mockReturnValue(true);
+      const onDelegationSent = vi.fn();
+      const result = await executeDelegationFromText(
+        "Ask Christopher to make these for dinner. I'll attach the photos.",
+        {
+          displayName: "Sana",
+          userId: "user-1",
+          dailyBrief: "",
+          people: [person("Christopher")],
+          tasks: [],
+          isDuplicateDelegation,
+          onDelegationSent,
+        },
+      );
+
+      // The real defect reproduced live: Carson must never claim success
+      // ("Christopher has it") when the actual WhatsApp send never fired.
+      expect(deliverTaskMessageMock).not.toHaveBeenCalled();
+      expect(result).not.toContain("Christopher has it");
+      expect(result).toContain("Christopher was NOT messaged");
+      expect(result).toContain("already sent this delegation moments ago");
+      // The guard must never be told a send happened when none did.
+      expect(onDelegationSent).not.toHaveBeenCalled();
+      expect(isDuplicateDelegation).toHaveBeenCalledWith(
+        "Christopher",
+        "make these for dinner. I'll attach the photos.",
+      );
+    });
+
+    it("single-photo delegation still works when no duplicate guard is supplied (TextCarsonPanel behavior unchanged)", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+      const extractedItem: ExtractedItem = {
+        id: "item-1",
+        type: "delegation",
+        description: "make this for lunch",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Please make this for lunch.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([extractedItem]));
+      deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+      // No isDuplicateDelegation/onDelegationSent supplied at all — must
+      // behave exactly as before this fix (TextCarsonPanel never passes these).
+      const result = await executeDelegationFromText("Ask Christopher to make this for lunch", {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people: [person("Christopher")],
+        tasks: [],
+        imageFile: new File(["x"], "photo.jpg", { type: "image/jpeg" }),
+      });
+
+      expect(deliverTaskMessageMock).toHaveBeenCalledTimes(1);
+      expect(result).toContain("Christopher has it");
+    });
+  });
 });
 
 function person(name: string, overrides?: Record<string, unknown> | number) {

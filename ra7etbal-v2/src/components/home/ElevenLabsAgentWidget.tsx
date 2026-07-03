@@ -452,6 +452,17 @@ function normalizeDelegationKey(value: string): string {
     .trim();
 }
 
+// Two delegation task descriptions are "the same" if one is a continuation of
+// the other (e.g. "make these for dinner" vs "make these for dinner. I'll
+// attach the photos.") — an exact-string cooldown key misses this, which let a
+// rephrased repeat of the same instruction through as a real duplicate send.
+function isSimilarDelegationTask(a: string, b: string): boolean {
+  const na = normalizeDelegationKey(a);
+  const nb = normalizeDelegationKey(b);
+  if (!na || !nb) return na === nb;
+  return na === nb || na.startsWith(nb) || nb.startsWith(na);
+}
+
 function normalizeMemoryText(value: string): string {
   return value
     .replace(/\s+/g, " ")
@@ -843,6 +854,39 @@ export default function ElevenLabsAgentWidget({
 
   /** Per-action cooldown: action/topic key → timestamp of last send */
   const lastSentRef = useRef<Map<string, number>>(new Map());
+
+  /**
+   * Duplicate-delegation guard, shared across every code path that can send a
+   * delegation WhatsApp (send_delegation tool AND executeDelegationFromText),
+   * keyed by normalized person name → recent {taskText, at} entries. A single
+   * instruction handled by two different paths across two conversation turns
+   * (e.g. the tool call vs the extraction path) must not bypass the cooldown
+   * just because each path used to keep its own state.
+   */
+  const recentDelegationsRef = useRef<Map<string, { taskText: string; at: number }[]>>(
+    new Map(),
+  );
+  const DELEGATION_DUPLICATE_WINDOW_MS = 30_000;
+
+  const findRecentDuplicateDelegation = useCallback(
+    (personName: string, taskText: string): boolean => {
+      const key = personName.trim().toLowerCase();
+      const now = Date.now();
+      const fresh = (recentDelegationsRef.current.get(key) ?? []).filter(
+        (entry) => now - entry.at < DELEGATION_DUPLICATE_WINDOW_MS,
+      );
+      recentDelegationsRef.current.set(key, fresh);
+      return fresh.some((entry) => isSimilarDelegationTask(entry.taskText, taskText));
+    },
+    [],
+  );
+
+  const recordDelegationSent = useCallback((personName: string, taskText: string) => {
+    const key = personName.trim().toLowerCase();
+    const entries = recentDelegationsRef.current.get(key) ?? [];
+    entries.push({ taskText, at: Date.now() });
+    recentDelegationsRef.current.set(key, entries);
+  }, []);
 
   /** Successful delegation sends from this live voice session. Used for
    *  deterministic Daily Brief safety nets and duplicate prevention. */
@@ -1346,12 +1390,13 @@ export default function ElevenLabsAgentWidget({
         return `${person.name} does not have a phone number saved. Ask the user to add one in People settings.`;
       }
 
-      // 3. Cooldown. Key by person + task, not person alone, so a Daily Brief
-      // can legitimately send Christopher both dinner prep and kitchen check.
-      const delegationKey = normalizeDelegationKey(taskText);
-      const cooldownKey = `delegation:${normalizedName.toLowerCase()}:${delegationKey}`;
-      const lastSent = lastSentRef.current.get(cooldownKey) ?? 0;
-      if (Date.now() - lastSent < 30_000) {
+      // 3. Cooldown. Fuzzy-matched by person + task (not person alone, so a
+      // Daily Brief can legitimately send Christopher both dinner prep and
+      // kitchen check; not exact-text, so a rephrased repeat of the same
+      // instruction — e.g. a trailing "I'll attach the photos." — still
+      // counts as the same delegation). Shared with executeDelegationFromText
+      // so a duplicate can't slip through by using the other send path.
+      if (findRecentDuplicateDelegation(person.name, taskText)) {
         return `I already sent ${person.name} that delegation just now. Wait a moment before sending again.`;
       }
 
@@ -1385,7 +1430,7 @@ export default function ElevenLabsAgentWidget({
       // Clear pending photos after successful send — covers the send_delegation path.
       if (delegationPhotos.length > 0) clearPendingImages();
 
-      lastSentRef.current.set(cooldownKey, Date.now());
+      recordDelegationSent(person.name, taskText);
       sentDelegationsRef.current.push({
         personName: person.name,
         taskText,
@@ -1423,7 +1468,13 @@ export default function ElevenLabsAgentWidget({
 
       return successText;
     },
-    [displayName, maybeSendImpliedDinnerDelegation, clearPendingImages],
+    [
+      displayName,
+      maybeSendImpliedDinnerDelegation,
+      clearPendingImages,
+      findRecentDuplicateDelegation,
+      recordDelegationSent,
+    ],
   );
 
   // ------------------------------------------------------------------
@@ -3411,6 +3462,10 @@ export default function ElevenLabsAgentWidget({
           imageFile: firstImageFile,
           allImageFiles: imagePhotos.map((p) => p.file),
           imageDescription: photoContext,
+          // Shared with send_delegation's cooldown so a duplicate can't slip
+          // through by reaching Carson through this path instead of the tool.
+          isDuplicateDelegation: findRecentDuplicateDelegation,
+          onDelegationSent: recordDelegationSent,
           onSavedExecution: (saved) => {
             executedDelegationRecords = saved.tasks
               .filter((task) => task.type === "delegation" || task.type === "followup")
@@ -3542,7 +3597,14 @@ export default function ElevenLabsAgentWidget({
       }
       return productionResult;
     },
-    [displayName, clearPendingImages, sendDelegation, controlTaskTool],
+    [
+      displayName,
+      clearPendingImages,
+      sendDelegation,
+      controlTaskTool,
+      findRecentDuplicateDelegation,
+      recordDelegationSent,
+    ],
   );
 
   const clearCarsonSessionTimers = useCallback(() => {

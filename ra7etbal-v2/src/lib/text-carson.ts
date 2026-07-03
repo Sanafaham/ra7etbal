@@ -103,6 +103,18 @@ export interface TextCarsonContext {
   };
   /** Optional observer for callers that need to compare requested vs saved work. */
   onSavedExecution?: (saved: { tasks: Task[]; messages: Message[] }) => void;
+  /**
+   * Optional cross-path duplicate-delegation guard. When provided, a
+   * delegation/follow-up whose (recipientName, taskText) matches a very
+   * recent send elsewhere (e.g. the send_delegation tool call) is skipped
+   * here instead of sent again. Voice wires this to the same cooldown state
+   * send_delegation uses, so a duplicate can't slip through by reaching
+   * Carson through a different code path than the first attempt.
+   */
+  isDuplicateDelegation?: (recipientName: string, taskText: string) => boolean;
+  /** Called once per message actually delivered, so the caller's duplicate
+   *  guard above learns about sends that happened through this path. */
+  onDelegationSent?: (recipientName: string, taskText: string) => void;
 }
 
 interface AnthropicResponse {
@@ -490,12 +502,28 @@ export async function executeDelegationFromText(
     (m) => !!m.recipient.trim() && !!m.content.trim(),
   );
 
+  // Cross-path duplicate guard: a task/message row is still created (matches
+  // the existing "task created but not sent" convention below), but the
+  // WhatsApp send itself is skipped if the caller's guard recognizes this as
+  // the same delegation already sent moments ago through another path.
+  const duplicateBlockedNames = new Set<string>();
+  if (context.isDuplicateDelegation) {
+    for (const m of allMessages) {
+      const task = m.task_id ? saved.tasks.find((t) => t.id === m.task_id) : null;
+      const taskText = task?.description ?? m.content;
+      if (context.isDuplicateDelegation(m.recipient, taskText)) {
+        duplicateBlockedNames.add(m.recipient.trim().toLowerCase());
+      }
+    }
+  }
+
   // Split into messages we can send (consented) vs pre-blocked (no consent).
   const sendableMessages = allMessages.filter((m) => {
     const recipientKey = m.recipient.trim().toLowerCase();
     if (missingPhoneNames.has(recipientKey)) return false;
     if (noConsentNames.has(recipientKey)) return false;
     if (m.task_id && attachmentFailedTaskIds.has(m.task_id)) return false;
+    if (duplicateBlockedNames.has(recipientKey)) return false;
     return true;
   });
   const missingPhoneMessages = allMessages.filter(
@@ -506,6 +534,9 @@ export async function executeDelegationFromText(
   );
   const attachmentFailedMessages = allMessages.filter(
     (m) => !!m.task_id && attachmentFailedTaskIds.has(m.task_id),
+  );
+  const duplicateBlockedMessages = allMessages.filter(
+    (m) => duplicateBlockedNames.has(m.recipient.trim().toLowerCase()),
   );
 
   const whatsappStartedAt = performance.now();
@@ -590,13 +621,21 @@ export async function executeDelegationFromText(
   for (const m of attachmentFailedMessages) {
     failedSends.push({ recipient: m.recipient, reason: "The attached photos could not be saved, so I did not send the message" });
   }
+  for (const m of duplicateBlockedMessages) {
+    failedSends.push({ recipient: m.recipient, reason: "I already sent this delegation moments ago — skipped to avoid a duplicate WhatsApp message" });
+  }
 
   for (let i = 0; i < sendableMessages.length; i++) {
     const result = sendResults[i];
     if (result.status === "fulfilled" && result.value.success) {
       const channel = result.value.channel;
-      const name = sendableMessages[i].recipient;
+      const message = sendableMessages[i];
+      const name = message.recipient;
       sentNames.push(name);
+      if (context.onDelegationSent) {
+        const task = message.task_id ? saved.tasks.find((t) => t.id === message.task_id) : null;
+        context.onDelegationSent(name, task?.description ?? message.content);
+      }
       if (channel === "sms") {
         sentSmsNames.push(name);
         console.log(`[executeDelegationFromText] delivered via SMS fallback for ${name}`);

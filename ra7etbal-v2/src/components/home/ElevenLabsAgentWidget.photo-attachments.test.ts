@@ -115,7 +115,7 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
   it("send_delegation sends every currently-attached photo via imageFiles, not just the first", () => {
     const block = blockBetween(
       "Snapshot pending photos — prefer live ref",
-      "lastSentRef.current.set(cooldownKey",
+      "recordDelegationSent(person.name, taskText)",
     );
 
     expect(block).toContain("pendingPhotosRef.current.length > 0");
