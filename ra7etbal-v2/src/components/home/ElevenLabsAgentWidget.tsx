@@ -294,6 +294,9 @@ interface DelegationSendResult {
   taskId: string;
   messageText: string;
   taskContext: VoiceTaskContext;
+  deliveryId?: string | null;
+  messageId?: string | null;
+  channel?: "whatsapp" | "sms";
 }
 
 async function createAndSendDelegation({
@@ -321,12 +324,9 @@ async function createAndSendDelegation({
       ? [imageFile]
       : [];
 
-  // Start image upload immediately — runs in parallel with task creation so it
-  // does NOT add to the synchronous tool response time. ElevenLabs' agent LLM
-  // generates its spoken reply as soon as the tool returns, so we must return
-  // within ~2 s (task creation only). Image upload takes 3–8 s and would push
-  // the total past EL's response threshold, causing spoken false-failure audio
-  // even when the task and WhatsApp both succeed.
+  // Start image upload immediately so it can overlap with task/message
+  // creation, but still await it before reporting success. Carson may only say
+  // "sent" after both attachment handling and delivery are proven.
   const imageUploadPromise: Promise<string | null> =
     resolvedFiles.length > 0
       ? (async () => {
@@ -342,8 +342,8 @@ async function createAndSendDelegation({
         })()
       : Promise.resolve(null);
 
-  // Create task immediately with imagePath=null. The background block below
-  // updates image_path once the upload resolves, then sends WhatsApp.
+  // Create task with imagePath=null; once upload resolves we patch image_path
+  // and send WhatsApp only after attachment handling has succeeded.
   const created = await createDelegationTaskAndMessage({
     source: "send_delegation",
     userId,
@@ -357,56 +357,54 @@ async function createAndSendDelegation({
       console.error("[send_delegation] QStash scheduleEscalationMessages failed for task", task.id, err),
   });
   const taskRow = created.task;
-  console.log("[send_delegation] task_created task_id=", taskRow.id, "returning_to_elevenlabs_now");
+  console.log("[send_delegation] task_created task_id=", taskRow.id);
 
-  // Background: wait for image upload → patch image_path → save multi-photo
-  // attachments → send WhatsApp. None of this blocks the tool result.
-  void (async () => {
-    try {
-      const resolvedImagePath = await imageUploadPromise;
+  const resolvedImagePath = await imageUploadPromise;
+  if (resolvedFiles.length > 0 && !resolvedImagePath) {
+    throw new Error("The attached photo could not be saved, so I did not send the delegation.");
+  }
 
-      if (resolvedImagePath) {
-        await supabase
-          .from("tasks")
-          .update({ image_path: resolvedImagePath })
-          .eq("id", taskRow.id)
-          .then(({ error }) => {
-            if (error) console.error("[send_delegation] image_path update failed:", error);
-            else console.log("[send_delegation] image_path updated task_id=", taskRow.id);
-          });
-      }
-
-      let attachmentCount: number | null = null;
-      if (resolvedFiles.length > 1 && resolvedImagePath) {
-        try {
-          attachmentCount = await saveTaskAttachments(taskRow.id, userId, resolvedFiles);
-        } catch (err) {
-          console.error("[send_delegation] saveTaskAttachments failed (non-fatal):", err);
-        }
-      }
-
-      console.log("[send_delegation] background_send_started task_id=", taskRow.id, "has_image=", !!resolvedImagePath);
-      sendWhatsAppTask({
-        to: person.phone,
-        messageText: created.messageText,
-        confirmationLink: created.confirmationUrl,
-        messageRecordId: created.message?.id ?? null,
-        taskId: taskRow.id,
-        recipientName: person.name,
-        ownerName: ownerName ?? null,
-        imagePath: resolvedImagePath,
-        attachmentCount,
-      }).catch((err) => {
-        console.error("[send_delegation] background_send_error task_id=", taskRow.id, err);
-      });
-    } catch (err) {
-      console.error("[send_delegation] background block failed task_id=", taskRow.id, err);
+  if (resolvedImagePath) {
+    const { error } = await supabase
+      .from("tasks")
+      .update({ image_path: resolvedImagePath })
+      .eq("id", taskRow.id);
+    if (error) {
+      console.error("[send_delegation] image_path update failed:", error);
+      throw new Error("The attached photo could not be linked to the task, so I did not send the delegation.");
     }
-  })();
+    console.log("[send_delegation] image_path updated task_id=", taskRow.id);
+  }
+
+  let attachmentCount: number | null = null;
+  if (resolvedFiles.length > 1) {
+    try {
+      attachmentCount = await saveTaskAttachments(taskRow.id, userId, resolvedFiles);
+    } catch (err) {
+      console.error("[send_delegation] saveTaskAttachments failed:", err);
+      throw new Error("The attached photos could not be saved, so I did not send the delegation.");
+    }
+  }
+
+  console.log("[send_delegation] send_started task_id=", taskRow.id, "has_image=", !!resolvedImagePath);
+  const delivery = await sendWhatsAppTask({
+    to: person.phone,
+    messageText: created.messageText,
+    confirmationLink: created.confirmationUrl,
+    messageRecordId: created.message?.id ?? null,
+    taskId: taskRow.id,
+    recipientName: person.name,
+    ownerName: ownerName ?? null,
+    imagePath: resolvedImagePath,
+    attachmentCount,
+  });
 
   return {
     taskId: taskRow.id,
     messageText: created.messageText,
+    deliveryId: delivery.deliveryId ?? null,
+    messageId: delivery.messageId ?? null,
+    channel: delivery.channel,
     taskContext: {
       id: taskRow.id,
       description: taskRow.description,

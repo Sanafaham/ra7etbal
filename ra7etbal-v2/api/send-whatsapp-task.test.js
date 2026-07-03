@@ -225,6 +225,41 @@ describe('routine message shared boundary', () => {
     );
   });
 
+  it('does not report success when Meta returns 200 without a message id', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-direct-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ messages: [] }))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'This should not be treated as sent.',
+        messageRecordId: 'message-1',
+        sourceType: 'message',
+        sendMode: 'direct_message',
+      }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        errorMessage: 'Meta accepted the request but returned no WhatsApp message id.',
+      }),
+    );
+    const failedPatch = JSON.parse(fetchMock.mock.calls[3][1].body);
+    expect(failedPatch).toMatchObject({
+      delivery_status: 'failed',
+      failure_reason: 'Meta accepted the request but returned no WhatsApp message id.',
+    });
+  });
+
   it('logs direct message delivery as a message with direct-message metadata', async () => {
     const fetchMock = vi
       .fn()
@@ -316,6 +351,77 @@ describe('routine message shared boundary', () => {
     expect(metaPayload.template.components).toHaveLength(1);
     expect(metaPayload.template.components[0].type).toBe('body');
     expect(metaPayload.template.components[0].parameters).toHaveLength(3);
+  });
+
+  it('marks the delivery accepted when SMS fallback succeeds after WhatsApp failure', async () => {
+    vi.stubEnv('SMS_FALLBACK_ENABLED', 'true');
+    vi.stubEnv('TWILIO_ACCOUNT_SID', 'AC123');
+    vi.stubEnv('TWILIO_AUTH_TOKEN', 'twilio-token');
+    vi.stubEnv('TWILIO_FROM_NUMBER', '+15550000000');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: 'task-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-task-1' }]))
+      // all template attempts fail
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'Meta rejected' } }, 400))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'Meta rejected' } }, 400))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'Meta rejected' } }, 400))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'Meta rejected' } }, 400))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'Meta rejected' } }, 400))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'Meta rejected' } }, 400))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'Meta rejected' } }, 400))
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'Meta rejected' } }, 400))
+      // mark WhatsApp failed
+      .mockResolvedValueOnce(emptyResponse())
+      // Twilio SMS send
+      .mockResolvedValueOnce(jsonResponse({ sid: 'SM123' }))
+      // mark message accepted as sms
+      .mockResolvedValueOnce(emptyResponse())
+      // mark delivery accepted as sms fallback
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'Please confirm the documents.',
+        confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
+        taskId: 'task-1',
+        messageRecordId: 'message-1',
+        sourceType: 'delegation',
+        recipientName: 'Grace',
+        ownerName: 'Sana',
+      }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        channel: 'sms',
+        messageId: 'SM123',
+      }),
+    );
+
+    const messagePatch = JSON.parse(fetchMock.mock.calls[13][1].body);
+    expect(messagePatch).toMatchObject({
+      whatsapp_message_id: 'SM123',
+      whatsapp_delivery_status: 'sms_sent',
+    });
+    const deliveryAcceptedPatch = JSON.parse(fetchMock.mock.calls[14][1].body);
+    expect(deliveryAcceptedPatch).toMatchObject({
+      delivery_status: 'accepted',
+      meta_message_id: 'SM123',
+      template_name: 'sms_fallback',
+      metadata: expect.objectContaining({
+        channel: 'sms',
+        whatsapp_failed: true,
+      }),
+    });
   });
 });
 

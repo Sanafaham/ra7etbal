@@ -437,7 +437,10 @@ export async function executeDelegationFromText(
 
   // Multi-attachment: upload all photos to task_attachments when > 1 photo.
   // Track attachment count per task so the WhatsApp send can append the note.
+  // If the attachment save fails, do not send that task as if the photos made
+  // it through. The task exists, but the WhatsApp send is not proven complete.
   const attachmentCountByTaskId = new Map<string, number>();
+  const attachmentFailedTaskIds = new Set<string>();
   if (resolvedFiles.length > 1) {
     const firstDelegationTask = saved.tasks.find(
       (t) => t.type === "delegation" || t.type === "followup",
@@ -457,19 +460,23 @@ export async function executeDelegationFromText(
         );
         attachmentCountByTaskId.set(firstDelegationTask.id, count);
       } catch (err) {
-        console.error("[executeDelegationFromText] saveTaskAttachments failed (non-fatal):", err);
+        attachmentFailedTaskIds.add(firstDelegationTask.id);
+        console.error("[executeDelegationFromText] saveTaskAttachments failed:", err);
       }
     }
   }
 
   const phoneByName = new Map<string, string>();
+  const missingPhoneNames = new Set<string>();
   const noConsentNames = new Set<string>();
   for (const person of context.people) {
     const key = person.name.trim().toLowerCase();
     if (!key) continue;
     if (person.phone && person.whatsapp_opted_in) {
       phoneByName.set(key, person.phone);
-    } else if (person.phone && !person.whatsapp_opted_in) {
+    } else if (!person.phone?.trim()) {
+      missingPhoneNames.add(key);
+    } else if (person.whatsapp_opted_in !== true) {
       noConsentNames.add(key);
     }
   }
@@ -484,11 +491,21 @@ export async function executeDelegationFromText(
   );
 
   // Split into messages we can send (consented) vs pre-blocked (no consent).
-  const sendableMessages = allMessages.filter(
-    (m) => !noConsentNames.has(m.recipient.trim().toLowerCase()),
+  const sendableMessages = allMessages.filter((m) => {
+    const recipientKey = m.recipient.trim().toLowerCase();
+    if (missingPhoneNames.has(recipientKey)) return false;
+    if (noConsentNames.has(recipientKey)) return false;
+    if (m.task_id && attachmentFailedTaskIds.has(m.task_id)) return false;
+    return true;
+  });
+  const missingPhoneMessages = allMessages.filter(
+    (m) => missingPhoneNames.has(m.recipient.trim().toLowerCase()),
   );
   const noConsentMessages = allMessages.filter(
     (m) => noConsentNames.has(m.recipient.trim().toLowerCase()),
+  );
+  const attachmentFailedMessages = allMessages.filter(
+    (m) => !!m.task_id && attachmentFailedTaskIds.has(m.task_id),
   );
 
   const whatsappStartedAt = performance.now();
@@ -524,11 +541,10 @@ export async function executeDelegationFromText(
         )
       : [];
 
-  // Race delivery against a 12 s timeout so slow Meta image uploads (up to
-  // 16 s round-trip) don't exceed the ElevenLabs client-tool timeout (~30 s)
-  // and produce a false "timed out" report even when WhatsApp arrives.
-  // After 12 s we treat all in-flight sends as optimistically succeeded — the
-  // task rows are already in Supabase and the server will complete the send.
+  // Race delivery against a 12 s timeout so slow Meta/image work cannot hang
+  // the client tool forever. A timeout is reported as unconfirmed delivery,
+  // never optimistic success: Carson may only say "sent" after the delivery
+  // boundary returns a real accepted result.
   const DELIVERY_RACE_MS = 12_000;
   let sendResults: PromiseSettledResult<DeliveryResult>[] = [];
   try {
@@ -540,7 +556,11 @@ export async function executeDelegationFromText(
             resolve(
               sendableMessages.map(() => ({
                 status: "fulfilled" as const,
-                value: { success: true, channel: "whatsapp" as const },
+                value: {
+                  success: false,
+                  channel: "failed" as const,
+                  error: "Delivery was not confirmed before the timeout. Check delivery status before assuming it was sent.",
+                },
               })),
             ),
           DELIVERY_RACE_MS,
@@ -560,9 +580,15 @@ export async function executeDelegationFromText(
   const sentSmsNames: string[] = [];
   const failedSends: Array<{ recipient: string; reason: string }> = [];
 
-  // Pre-populate with consent-blocked recipients.
+  // Pre-populate with locally blocked recipients.
+  for (const m of missingPhoneMessages) {
+    failedSends.push({ recipient: m.recipient, reason: "No phone number is saved for this person" });
+  }
   for (const m of noConsentMessages) {
     failedSends.push({ recipient: m.recipient, reason: "WhatsApp consent not recorded — update their profile to enable messaging" });
+  }
+  for (const m of attachmentFailedMessages) {
+    failedSends.push({ recipient: m.recipient, reason: "The attached photos could not be saved, so I did not send the message" });
   }
 
   for (let i = 0; i < sendableMessages.length; i++) {

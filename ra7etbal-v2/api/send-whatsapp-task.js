@@ -601,6 +601,19 @@ export default async function handler(req, res) {
         if (smsResult.ok) {
           console.log('[send-whatsapp-task] SMS fallback accepted', { sid: smsResult.sid });
           await markMessageAccepted({ supabaseUrl, serviceKey, messageRecordId, messageId: smsResult.sid, channel: 'sms' });
+          await markWhatsappDeliveryAccepted({
+            supabaseUrl,
+            serviceKey,
+            deliveryId,
+            metaMessageId: smsResult.sid,
+            templateName: 'sms_fallback',
+            metadata: {
+              channel: 'sms',
+              whatsapp_failed: true,
+              fallback_from_template: usedTemplateName,
+              fallback_attempt: usedAttempt?.label ?? null,
+            },
+          });
           return res.status(200).json({
             success: true,
             delivery_id: deliveryId,
@@ -756,10 +769,12 @@ async function sendMetaMessage({ url, accessToken, payload }) {
   }
 
   return {
-    ok: response.ok,
+    ok: response.ok && Boolean(messageId),
     status: response.status,
     metaResponse,
-    metaError: metaResponse?.error || metaResponse,
+    metaError: response.ok && !messageId
+      ? { message: 'Meta accepted the request but returned no WhatsApp message id.' }
+      : metaResponse?.error || metaResponse,
     messageId,
   };
 }
@@ -776,7 +791,8 @@ async function readMetaResponse(response) {
 
 function sendFailure(res, result, freeFormError = null, deliveryId = null) {
   const errorMessage = safeMetaMessage(result.metaError);
-  return res.status(result.status || 502).json({
+  const httpStatus = result.status >= 400 ? result.status : 502;
+  return res.status(httpStatus).json({
     success: false,
     delivery_id: deliveryId,
     status: result.status || 502,

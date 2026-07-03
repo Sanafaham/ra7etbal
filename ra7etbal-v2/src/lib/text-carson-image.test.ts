@@ -431,7 +431,7 @@ describe("executeDelegationFromText image pipeline", () => {
     expect(result).toMatch(/Christopher/i);
   });
 
-  it("still returns success when delivery takes longer than the race window (optimistic)", async () => {
+  it("reports an unconfirmed send as failed when delivery takes longer than the race window", async () => {
     vi.useFakeTimers();
     const { executeDelegationFromText } = await import("./text-carson");
 
@@ -530,11 +530,8 @@ describe("executeDelegationFromText image pipeline", () => {
     await vi.runAllTimersAsync();
     const result = await resultPromise;
 
-    // Optimistic success — task was created, WA is in-flight server-side.
-    expect(result).not.toMatch(/wasn.t able/i);
-    expect(result).not.toMatch(/timed out/i);
-    expect(result).not.toMatch(/could not/i);
-    expect(result).toMatch(/Christopher/i);
+    expect(result).toContain("Christopher was NOT messaged");
+    expect(result).toContain("Delivery was not confirmed before the timeout");
 
     vi.useRealTimers();
   });
@@ -711,7 +708,45 @@ describe("executeDelegationFromText image pipeline", () => {
       "Nasira",
       "Ghulam",
     ]);
+    expect(deliverTaskMessageMock.mock.calls.map(([payload]) => payload.messageText)).toEqual([
+      "prepare the table",
+      "prepare lunch",
+      "arrange flowers",
+      "be on standby.",
+    ]);
     expect(result).toContain("Grace, Christopher, Nasira, Ghulam have it");
+  });
+
+  it("does not let one recipient receive another person's instruction", async () => {
+    const { executeDelegationFromText } = await import("./text-carson");
+    const people = ["Grace", "Christopher"].map(person);
+
+    savePendingMock.mockImplementationOnce(async (items: ExtractedItem[]) => saveResultForItems(items));
+    deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    await executeDelegationFromText(
+      "Ask Grace to prepare the table, and Christopher to prepare lunch.",
+      {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people,
+        tasks: [],
+      },
+    );
+
+    const deliveries = deliverTaskMessageMock.mock.calls.map(([payload]) => payload);
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries[0]).toMatchObject({
+      recipientName: "Grace",
+      messageText: "prepare the table",
+    });
+    expect(deliveries[0].messageText).not.toContain("prepare lunch");
+    expect(deliveries[1]).toMatchObject({
+      recipientName: "Christopher",
+      messageText: "prepare lunch.",
+    });
+    expect(deliveries[1].messageText).not.toContain("prepare the table");
   });
 
   it("multi-recipient delegation reports failed recipients without hiding successful sends", async () => {
@@ -741,9 +776,86 @@ describe("executeDelegationFromText image pipeline", () => {
     expect(result).toContain("Nasira was NOT messaged — Meta rejected the message");
     expect(result).not.toContain("task created for Nasira");
   });
+
+  it("missing phone does not claim success or call the delivery boundary", async () => {
+    const { executeDelegationFromText } = await import("./text-carson");
+    const extractedItem: ExtractedItem = {
+      id: "item-1",
+      type: "delegation",
+      description: "prepare lunch",
+      assignedTo: "Christopher",
+      dueAt: null,
+      dueText: null,
+      suggestedMessage: "Please prepare lunch.",
+      personalNote: null,
+      needsPerson: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+    };
+
+    extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+    savePendingMock.mockResolvedValue(saveResultForItems([extractedItem]));
+
+    const result = await executeDelegationFromText("Ask Christopher to prepare lunch", {
+      displayName: "Sana",
+      userId: "user-1",
+      dailyBrief: "",
+      people: [person("Christopher", { phone: "" })],
+      tasks: [],
+    });
+
+    expect(deliverTaskMessageMock).not.toHaveBeenCalled();
+    expect(result).toContain("Christopher was NOT messaged");
+    expect(result).toContain("No phone number is saved");
+  });
+
+  it("photo delegation does not send when multi-photo attachment persistence fails", async () => {
+    const { saveTaskAttachments } = await import("./save");
+    vi.mocked(saveTaskAttachments).mockRejectedValueOnce(new Error("storage unavailable"));
+    const { executeDelegationFromText } = await import("./text-carson");
+    const extractedItem: ExtractedItem = {
+      id: "item-1",
+      type: "delegation",
+      description: "make this",
+      assignedTo: "Christopher",
+      dueAt: null,
+      dueText: null,
+      suggestedMessage: "Please make this.",
+      personalNote: null,
+      needsPerson: false,
+      needsClarification: false,
+      clarificationQuestion: null,
+    };
+
+    extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+    savePendingMock.mockResolvedValue({
+      ...saveResultForItems([extractedItem]),
+      imagePathsByTaskId: new Map([["task-1", "task-images/user-1/task-1/photo.jpg"]]),
+    });
+
+    const result = await executeDelegationFromText("Ask Christopher to make this", {
+      displayName: "Sana",
+      userId: "user-1",
+      dailyBrief: "",
+      people: [person("Christopher")],
+      tasks: [],
+      allImageFiles: [
+        new File(["one"], "one.jpg", { type: "image/jpeg" }),
+        new File(["two"], "two.jpg", { type: "image/jpeg" }),
+      ],
+    });
+
+    expect(deliverTaskMessageMock).not.toHaveBeenCalled();
+    expect(result).toContain("Christopher was NOT messaged");
+    expect(result).toContain("attached photos could not be saved");
+  });
 });
 
-function person(name: string) {
+function person(name: string, overrides?: Record<string, unknown> | number) {
+  const safeOverrides =
+    overrides && typeof overrides === "object" && !Array.isArray(overrides)
+      ? overrides
+      : {};
   return {
     id: `person-${name.toLowerCase()}`,
     user_id: "user-1",
@@ -764,6 +876,7 @@ function person(name: string) {
     whatsapp_consent_at: "2026-06-30T00:00:00.000Z",
     whatsapp_consent_method: "owner_confirmed",
     created_at: "2026-06-30T00:00:00.000Z",
+    ...safeOverrides,
   };
 }
 
