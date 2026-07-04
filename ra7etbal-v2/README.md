@@ -4,11 +4,10 @@ Clean rebuild of Ra7etBal. Deployed on Vercel with custom domain **https://ra7et
 
 ## Deployment note
 
-Production is Vercel only. GitHub Pages is not the production deployment
-surface for Ra7etBal; if GitHub Pages is enabled for this repository, treat it
-as a legacy/static preview only. Do not use GitHub Pages for app routing,
-serverless APIs, auth callbacks, WhatsApp confirmation links, or production
-verification.
+Production is Vercel only. GitHub Pages is intentionally disabled for this
+repository because it was only a legacy/static preview surface. Do not use
+GitHub Pages for app routing, serverless APIs, auth callbacks, WhatsApp
+confirmation links, or production verification.
 
 ## Stack
 

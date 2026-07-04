@@ -180,3 +180,24 @@ Recommendation:
 
 • Disable GitHub Pages for Sanafaham/ra7etbal only after Sana confirms no
   legacy/static preview is needed.
+
+GITHUB PAGES DISABLED
+
+Changed:
+
+• Disabled GitHub Pages for Sanafaham/ra7etbal in GitHub repository settings.
+• Set Pages source branch to None.
+• Updated README deployment note to say GitHub Pages is intentionally disabled
+  because production runs on Vercel.
+
+Evidence:
+
+• GitHub settings showed: "GitHub Pages source saved."
+• GitHub settings source form showed: "GitHub Pages is currently disabled.
+  Select a source below to enable GitHub Pages for this repository."
+
+Not touched:
+
+• No app code changed.
+• No Vercel, DNS, Supabase, auth, WhatsApp, ElevenLabs, secrets, env vars, or
+  production app settings changed.
