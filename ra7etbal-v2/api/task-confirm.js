@@ -25,9 +25,9 @@
  *       owner gets pushed to review — the assignee never receives an
  *       automatic correction message for this outcome; only the owner can
  *       decide to follow up.
- *   No proof photo, or a task with no assignee (assigned_to null) — review
- *   is skipped entirely and behavior is unchanged from before this stage
- *   existed.
+ *   Photo delegations require proof before completion. Non-photo tasks, or a
+ *   task with no assignee (assigned_to null), keep the original no-review
+ *   completion behavior.
  */
 
 import webpush from 'web-push';
@@ -170,6 +170,7 @@ async function handleGet(req, res) {
       attachmentUrls,
       proofImageUrls,
       proofUploadSlots,
+      proofRequired: Boolean(task.assigned_to && (task.image_path || Number(task.attachment_count || 0) > 0)),
     });
   } catch (err) {
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
@@ -206,7 +207,7 @@ async function handlePost(req, res) {
     const fetchRes = await fetch(
       supabaseUrl + '/rest/v1/tasks' +
         '?id=eq.' + encodeURIComponent(taskId) +
-        '&select=id,user_id,status,description,assigned_to,image_path,quality_review_cycle_count',
+        '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,quality_review_cycle_count',
       { headers },
     );
 
@@ -224,6 +225,15 @@ async function handlePost(req, res) {
     }
 
     const now = new Date().toISOString();
+
+    // Quality Intelligence V1 — photo delegations must include proof so the
+    // review cannot be bypassed by tapping Mark done without uploading.
+    const proofRequired = Boolean(task.assigned_to && (task.image_path || Number(task.attachment_count || 0) > 0));
+    if (proofRequired && proofImagePaths.length === 0) {
+      return res.status(400).json({
+        error: 'Please attach a proof photo before marking this task done.',
+      });
+    }
 
     // Quality Intelligence V1 — only applies to delegated tasks with at
     // least one freshly submitted proof photo. No proof / no assignee →
@@ -297,15 +307,23 @@ async function handlePost(req, res) {
         console.error('[task-confirm] replaceProofAttachments failed (non-fatal):', err?.message || err),
       );
 
-      // correction_required: no WhatsApp to the assignee — the original task
-      // WhatsApp already contains the full instructions and reference image.
-      // The confirmation page shows the QI note inline so the assignee can
-      // see exactly what needs to change without leaving the page.
-      //
       // Owner push only when manual owner review is required.
-      // correction_required is self-correcting on the confirmation page;
-      // uncertain and fraud_suspected require the owner to step in.
-      if (review.status === 'uncertain' || review.status === 'fraud_suspected') {
+      // correction_required is sent directly to the assignee through the
+      // existing direct-message WhatsApp path; uncertain and fraud_suspected
+      // require the owner to step in.
+      if (review.status === 'correction_required') {
+        await sendCorrectionRequest({
+          req,
+          supabaseUrl,
+          serviceKey,
+          userId: task.user_id,
+          taskId,
+          assignedTo: task.assigned_to,
+          correctionNote: review.note,
+        }).catch((err) =>
+          console.error('[task-confirm] correction WhatsApp failed (non-fatal):', err?.message || err),
+        );
+      } else if (review.status === 'uncertain' || review.status === 'fraud_suspected') {
         await sendOwnerPush({
           supabaseUrl,
           serviceKey,
@@ -489,6 +507,96 @@ async function fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }
   } catch {
     return null;
   }
+}
+
+async function sendCorrectionRequest({ req, supabaseUrl, serviceKey, userId, taskId, assignedTo, correctionNote }) {
+  const messageText = String(correctionNote || '').trim();
+  if (!messageText || !userId || !assignedTo) return;
+
+  const person = await findAssigneePerson({ supabaseUrl, serviceKey, userId, assignedTo });
+  if (!person?.phone) {
+    console.warn('[task-confirm] correction WhatsApp skipped — no assignee phone', { taskId, assignedTo });
+    return;
+  }
+
+  const messageRecord = await createCorrectionMessageRecord({
+    supabaseUrl,
+    serviceKey,
+    userId,
+    recipient: person.name || assignedTo,
+    messageText,
+  });
+  if (!messageRecord?.id) {
+    console.warn('[task-confirm] correction WhatsApp skipped — message row not created', { taskId, assignedTo });
+    return;
+  }
+
+  const appBaseUrl =
+    (process.env.APP_BASE_URL || '').trim() ||
+    `${req.headers?.['x-forwarded-proto'] || 'https'}://${req.headers?.host || 'ra7etbal.com'}`;
+
+  const response = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      to: person.phone,
+      messageText,
+      confirmationLink: null,
+      messageRecordId: messageRecord.id,
+      taskId: null,
+      sendMode: 'direct_message',
+      sourceType: 'quality_correction',
+      recipientName: person.name || assignedTo,
+      ownerName: null,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Correction WhatsApp send failed (${response.status}): ${text.slice(0, 200)}`);
+  }
+}
+
+async function createCorrectionMessageRecord({ supabaseUrl, serviceKey, userId, recipient, messageText }) {
+  const response = await fetch(`${supabaseUrl}/rest/v1/messages`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify({
+      user_id: userId,
+      task_id: null,
+      recipient,
+      content: messageText,
+      confirmation_url: null,
+    }),
+  });
+  if (!response.ok) return null;
+  const rows = await response.json().catch(() => []);
+  return Array.isArray(rows) ? rows[0] : null;
+}
+
+async function findAssigneePerson({ supabaseUrl, serviceKey, userId, assignedTo }) {
+  if (!userId || !assignedTo) return null;
+  const response = await fetch(
+    supabaseUrl + '/rest/v1/people?user_id=eq.' +
+      encodeURIComponent(userId) + '&select=name,phone',
+    {
+      headers: {
+        apikey: serviceKey,
+        Authorization: 'Bearer ' + serviceKey,
+        'Content-Type': 'application/json',
+      },
+    },
+  );
+  if (!response.ok) return null;
+  const people = await response.json().catch(() => []);
+  if (!Array.isArray(people)) return null;
+  const target = String(assignedTo).trim().toLowerCase();
+  return people.find((person) => String(person.name || '').trim().toLowerCase() === target) ?? null;
 }
 
 // ── Storage helpers (from get-confirm-task.js) ────────────────────────────────

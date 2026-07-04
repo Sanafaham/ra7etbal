@@ -84,7 +84,15 @@ describe("Confirm — proof photo upload (up to 5, remove/replace, honest failur
   });
 
   it("blocks Mark done after a correction_required verdict until a new photo is attached", () => {
-    expect(SOURCE).toContain('const needsNewProof = outcome === "correction_required" && proofPhotos.length === 0');
+    expect(SOURCE).toContain('outcome === "correction_required"');
+    expect(SOURCE).toContain("disabled={isBusy || needsNewProof}");
+  });
+
+  it("blocks photo delegations from being marked done until proof is attached", () => {
+    expect(SOURCE).toContain("proofRequired: data.proofRequired === true");
+    expect(SOURCE).toContain("info?.proofRequired === true");
+    expect(SOURCE).toContain("proofPhotos.length === 0");
+    expect(SOURCE).toContain('({info.proofRequired ? "required" : "optional"}, up to 5)');
     expect(SOURCE).toContain("disabled={isBusy || needsNewProof}");
   });
 

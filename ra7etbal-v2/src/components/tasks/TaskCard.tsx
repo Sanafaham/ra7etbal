@@ -68,6 +68,8 @@ export default function TaskCard({
   const isDone = task.status === "done";
   const isWaitingDelegation = task.type === "delegation" && !isDone;
   const hasConfirmLink = !!task.confirmation_url && isWaitingDelegation;
+  const isCorrectionRequired = task.quality_review_status === "correction_required";
+  const showProofImage = Boolean(signedProofImageUrl && !isCorrectionRequired);
   const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;
 
   async function toggle() {
@@ -203,15 +205,8 @@ export default function TaskCard({
         </div>
       )}
 
-      {signedProofImageUrl && (
+      {showProofImage && signedProofImageUrl && (
         <ProofPhotoThumbnail url={signedProofImageUrl} />
-      )}
-
-      {task.quality_review_status === "correction_required" && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          <p className="font-medium">Correction requested</p>
-          {task.quality_review_note && <p className="mt-0.5">{task.quality_review_note}</p>}
-        </div>
       )}
 
       {task.quality_review_status === "uncertain" && (

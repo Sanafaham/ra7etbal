@@ -52,6 +52,8 @@ interface TaskInfo {
   proofImageUrls: string[];
   /** Fresh signed upload slots for the next submission. Empty when already done. */
   proofUploadSlots: ProofUploadSlot[];
+  /** True when a delegated task has reference photo(s) and needs proof before completion. */
+  proofRequired: boolean;
 }
 
 export default function Confirm() {
@@ -114,6 +116,7 @@ export default function Confirm() {
           attachmentUrls: Array.isArray(data.attachmentUrls) ? data.attachmentUrls : [],
           proofImageUrls: Array.isArray(data.proofImageUrls) ? data.proofImageUrls : [],
           proofUploadSlots: Array.isArray(data.proofUploadSlots) ? data.proofUploadSlots : [],
+          proofRequired: data.proofRequired === true,
         });
         setLoadState("ready");
       } catch (err) {
@@ -289,7 +292,10 @@ export default function Confirm() {
   // photos before resubmitting. This prevents bypassing QI by clicking
   // "Mark done" without a photo (which would skip the review entirely since
   // needsReview = proofImagePaths.length > 0 on the server).
-  const needsNewProof = outcome === "correction_required" && proofPhotos.length === 0;
+  const needsNewProof =
+    ((info?.proofRequired === true && outcome !== "uncertain" && outcome !== "fraud_suspected") ||
+      outcome === "correction_required") &&
+    proofPhotos.length === 0;
 
   return (
     <section className="mx-auto max-w-md space-y-5 rounded-2xl border border-sage/30 bg-white/85 p-6 shadow-sm">
@@ -403,7 +409,9 @@ export default function Confirm() {
               <div className="space-y-2">
                 <p className="text-xs font-medium uppercase tracking-wide text-ink/50">
                   Proof photo
-                  <span className="ml-1 normal-case text-ink/35">(optional, up to 5)</span>
+                  <span className="ml-1 normal-case text-ink/35">
+                    ({info.proofRequired ? "required" : "optional"}, up to 5)
+                  </span>
                 </p>
 
                 {proofPhotos.length > 0 && (
