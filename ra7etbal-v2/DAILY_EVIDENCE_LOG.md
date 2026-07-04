@@ -135,3 +135,48 @@ Completed:
 No active blockers.
 
 Ready for next development session.
+
+──────────────────────────────
+
+GITHUB PAGES DEPLOYMENT HYGIENE
+
+Investigated:
+
+• GitHub Actions email for failed "pages build and deployment"
+• Repository Actions history
+• Failed deploy job logs
+• GitHub Pages artifact contents
+• GitHub Pages public URLs
+• Current Pages workflow setup
+• Vite base config
+• Vercel production URL safety
+
+Findings:
+
+• Failed workflow belonged to Sanafaham/ra7etbal
+• Failed run: https://github.com/Sanafaham/ra7etbal/actions/runs/28686356729
+• Build and report-build-status succeeded
+• Deploy failed with: "Deployment failed, try again later."
+• Rerunning the failed deploy job succeeded
+• GitHub Pages is not the Ra7etBal production deployment surface
+• Production remains Vercel: https://ra7etbal.com
+• GitHub Pages automatic root publish creates a legacy/static nested path:
+  https://sanafaham.github.io/ra7etbal/ra7etbal/
+• Root Pages URL still 404s:
+  https://sanafaham.github.io/ra7etbal/
+
+Change:
+
+• Added README deployment note clarifying that production is Vercel only and
+  GitHub Pages must not be used for app routing, APIs, auth callbacks,
+  WhatsApp confirmation links, or production verification.
+
+No code changed.
+No GitHub Pages settings changed.
+No Vercel, DNS, Supabase, auth, WhatsApp, ElevenLabs, secrets, env vars, or
+production app settings changed.
+
+Recommendation:
+
+• Disable GitHub Pages for Sanafaham/ra7etbal only after Sana confirms no
+  legacy/static preview is needed.
