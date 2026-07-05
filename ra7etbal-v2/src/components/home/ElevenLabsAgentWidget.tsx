@@ -93,6 +93,10 @@ import {
   type VoiceTaskContext,
 } from "../../lib/voice-task-control";
 import {
+  isRecentDirectWhatsappDuplicate,
+  recordDirectWhatsappSent,
+} from "../../lib/direct-message-duplicate-guard";
+import {
   buildDelegationCoveragePartialSuccessResponse,
   checkDelegationCoverage,
   type ExecutedDelegationRecord,
@@ -891,6 +895,7 @@ export default function ElevenLabsAgentWidget({
   /** Successful delegation sends from this live voice session. Used for
    *  deterministic Daily Brief safety nets and duplicate prevention. */
   const sentDelegationsRef = useRef<SentDelegationRecord[]>([]);
+  const recentDirectWhatsappMessagesRef = useRef<Map<string, number>>(new Map());
 
   /** Accumulates successful tool-call descriptions for this session.
    *  Flushed to carson_memory on disconnect. */
@@ -1833,6 +1838,20 @@ export default function ElevenLabsAgentWidget({
 
       const ownerName = useProfileStore.getState().displayName ?? null;
 
+      if (
+        isRecentDirectWhatsappDuplicate(
+          recentDirectWhatsappMessagesRef.current,
+          person.name,
+          text,
+        )
+      ) {
+        console.info("[direct_whatsapp_tool_duplicate_blocked]", {
+          recipient: person.name,
+          message_length: text.length,
+        });
+        return `I already sent ${person.name} that message just now. I won't send it again.`;
+      }
+
       try {
         const { message, delivery } = await createAndSendDirectMessage({
           source: "send_direct_whatsapp_message",
@@ -1852,6 +1871,7 @@ export default function ElevenLabsAgentWidget({
           channel: delivery.channel,
           deliveryId: delivery.deliveryId,
         });
+        recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, text);
         return `It's with ${person.name}. I'll watch for the reply.`;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
