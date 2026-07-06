@@ -22,15 +22,15 @@ function blockBetween(startNeedle: string, endNeedle: string): string {
  * junk transcripts ("...", "Gnaasira" for "Nasira"), while retry sessions
  * worked.
  *
- * Root cause: iOS flips its audio session from playback-only to
+ * Mitigation hypothesis: iOS flips its audio session from playback-only to
  * play-and-record — a route/sample-rate change — the first time the mic is
  * captured. The ElevenLabs SDK captures the mic inside
  * Conversation.startSession and then builds its input/output audio pipeline
  * with ZERO settle delay on iOS (its DEFAULT_DELAY gives android 3000ms and
- * ios nothing), so in a cold standalone PWA the input worklet starts
- * capturing mid-flip (garbled first words) and the output pipeline can bind
- * to a pre-flip audio context (distorted playback). Retry sessions work
- * because the route is already warm — hence the intermittency.
+ * ios nothing), so in a cold standalone PWA the input worklet may start
+ * capturing mid-flip and playback may distort. Sana's later production retest
+ * still heard printer/machine noise, so this remains a mitigation under test,
+ * not a proven complete root cause.
  *
  * Fix (all public API):
  *   1. startCall acquires a warm-up mic stream immediately, inside the
@@ -43,7 +43,7 @@ function blockBetween(startNeedle: string, endNeedle: string): string {
  *      stream, and on every cleanup/error path, so the mic indicator can
  *      never stay stuck on.
  */
-describe("ElevenLabsAgentWidget — iOS audio-route warm-up (intermittent PWA voice corruption fix)", () => {
+describe("ElevenLabsAgentWidget — iOS audio-route warm-up mitigation", () => {
   it("acquires the warm-up mic inside startCall before Conversation.startSession", () => {
     const startCallIdx = SOURCE.indexOf("const startCall = useCallback(async () => {");
     const warmupIdx = SOURCE.indexOf(

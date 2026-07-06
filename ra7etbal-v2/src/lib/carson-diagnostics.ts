@@ -23,7 +23,10 @@ export interface CarsonDiagnosticEvent {
     | "carson-plan"
     | "carson-plan-audit"
     | "carson-direct-tool"
-    | "carson-audio-warmup";
+    | "carson-audio-warmup"
+    | "carson-audio-environment"
+    | "carson-audio-probe"
+    | "carson-audio-session";
   at: string;
   data: unknown;
 }

@@ -6,7 +6,7 @@
  * every normal user/route, so it never appears in normal navigation or Settings.
  *
  * Shows the latest [carson-disconnect] / [carson-teardown] / [carson-error] /
- * [carson-unhandled-tool] / planner audit events captured by
+ * [carson-unhandled-tool] / planner audit / audio diagnostic events captured by
  * carson-diagnostics.ts.
  *
  * EASY REMOVAL: delete this file, remove the <CarsonDebugOverlay/> mount and its
@@ -31,6 +31,9 @@ const KIND_COLORS: Record<CarsonDiagnosticEvent["kind"], string> = {
   "carson-plan-audit": "#0f766e",
   "carson-direct-tool": "#9333ea",
   "carson-audio-warmup": "#a16207",
+  "carson-audio-environment": "#0891b2",
+  "carson-audio-probe": "#65a30d",
+  "carson-audio-session": "#c2410c",
 };
 
 export default function CarsonDebugOverlay() {

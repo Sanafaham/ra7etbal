@@ -85,7 +85,7 @@ import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/peopl
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
-import { recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
+import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, type DirectToolSuccessResult } from "../../lib/carson-direct-tool-override";
 import {
   executeVoiceTaskControl,
@@ -245,8 +245,103 @@ interface SentDelegationRecord {
 
 const MAX_VOICE_PHOTOS = 5;
 const PHOTO_LIMIT_MESSAGE = "You can attach up to 5 photos.";
+const CARSON_AUDIO_DIAGNOSTICS_STORAGE_KEY = "carson:audio-diagnostics";
 const MID_SESSION_PHOTO_PENDING_CONTEXT =
   "The user attached a photo during this call. The current photos are available for delegation, but the visual description is still being generated. Use these current photos only and ignore any earlier removed photo.";
+
+interface CarsonAudioEnvironment {
+  userAgent: string | null;
+  platform: string | null;
+  maxTouchPoints: number | null;
+  isIosLike: boolean;
+  standaloneDisplay: boolean;
+  visibilityState: DocumentVisibilityState | null;
+  hasMediaDevices: boolean;
+  hasGetUserMedia: boolean;
+  hasMediaRecorder: boolean;
+  hasAudioContext: boolean;
+}
+
+function getCarsonAudioEnvironment(): CarsonAudioEnvironment {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return {
+      userAgent: null,
+      platform: null,
+      maxTouchPoints: null,
+      isIosLike: false,
+      standaloneDisplay: false,
+      visibilityState: null,
+      hasMediaDevices: false,
+      hasGetUserMedia: false,
+      hasMediaRecorder: false,
+      hasAudioContext: false,
+    };
+  }
+
+  const nav = navigator as Navigator & { standalone?: boolean };
+  const platform = nav.platform ?? "";
+  const userAgent = nav.userAgent ?? "";
+  const maxTouchPoints = nav.maxTouchPoints ?? 0;
+  const isIosLike =
+    /iPad|iPhone|iPod/i.test(userAgent) ||
+    (platform === "MacIntel" && maxTouchPoints > 1);
+  const standaloneDisplay =
+    Boolean(nav.standalone) ||
+    window.matchMedia?.("(display-mode: standalone)")?.matches === true;
+  const audioWindow = window as Window & typeof globalThis & {
+    webkitAudioContext?: typeof AudioContext;
+  };
+
+  return {
+    userAgent,
+    platform,
+    maxTouchPoints,
+    isIosLike,
+    standaloneDisplay,
+    visibilityState: typeof document !== "undefined" ? document.visibilityState : null,
+    hasMediaDevices: Boolean(nav.mediaDevices),
+    hasGetUserMedia: Boolean(nav.mediaDevices?.getUserMedia),
+    hasMediaRecorder: typeof MediaRecorder !== "undefined",
+    hasAudioContext: Boolean(audioWindow.AudioContext || audioWindow.webkitAudioContext),
+  };
+}
+
+function getHtmlMediaElementState() {
+  if (typeof document === "undefined") return [];
+  return Array.from(document.querySelectorAll("audio,video")).map((element, index) => {
+    const media = element as HTMLMediaElement;
+    return {
+      index,
+      tagName: media.tagName.toLowerCase(),
+      paused: media.paused,
+      muted: media.muted,
+      ended: media.ended,
+      currentTime: Number.isFinite(media.currentTime) ? Number(media.currentTime.toFixed(2)) : null,
+      duration: Number.isFinite(media.duration) ? Number(media.duration.toFixed(2)) : null,
+      readyState: media.readyState,
+      srcPresent: Boolean(media.currentSrc || media.getAttribute("src")),
+    };
+  });
+}
+
+function readCarsonAudioDiagnosticsEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const queryValue = params.get("carson_audio_diag");
+    if (queryValue === "1" || queryValue === "true") {
+      localStorage.setItem(CARSON_AUDIO_DIAGNOSTICS_STORAGE_KEY, "1");
+      return true;
+    }
+    if (queryValue === "0" || queryValue === "false") {
+      localStorage.removeItem(CARSON_AUDIO_DIAGNOSTICS_STORAGE_KEY);
+      return false;
+    }
+    return localStorage.getItem(CARSON_AUDIO_DIAGNOSTICS_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 interface DelegationSendOptions {
   userId: string;
@@ -702,14 +797,31 @@ export default function ElevenLabsAgentWidget({
   onRequestClose?: () => void;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
+  const audioEnvironmentRef = useRef<CarsonAudioEnvironment>(getCarsonAudioEnvironment());
 
   const [status, setStatus] = useState<CallStatus>("idle");
   const [mode, setMode] = useState<AgentMode>("listening");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [sessionEndedMsg, setSessionEndedMsg] = useState<string | null>(null);
+  const [audioDiagnosticsEnabled, setAudioDiagnosticsEnabled] = useState(
+    readCarsonAudioDiagnosticsEnabled,
+  );
+  const [audioDiagStatus, setAudioDiagStatus] = useState<string | null>(null);
+  const [audioDiagLastReport, setAudioDiagLastReport] = useState<string | null>(null);
+  const isIosStandalonePwa =
+    audioEnvironmentRef.current.isIosLike && audioEnvironmentRef.current.standaloneDisplay;
 
   // Notify parent whenever call status changes.
   useEffect(() => { onCallStatusChange?.(status); }, [status, onCallStatusChange]);
+  useEffect(() => {
+    const environment = getCarsonAudioEnvironment();
+    audioEnvironmentRef.current = environment;
+    recordCarsonDiagnostic("carson-audio-environment", {
+      ...environment,
+      audioDiagnosticsEnabled,
+      at: new Date().toISOString(),
+    });
+  }, [audioDiagnosticsEnabled]);
   /** Latest finalized spoken response from Carson. Cleared at session start, persists after disconnect. */
   const [lastCarsonMessage, setLastCarsonMessage] = useState<string | null>(null);
   /** Latest finalized user transcript, shown briefly for local voice diagnostics only. */
@@ -740,15 +852,10 @@ export default function ElevenLabsAgentWidget({
   /**
    * Short-lived microphone stream acquired at the very start of startCall,
    * released once the SDK owns its own stream (or the attempt is cleaned up).
-   * iOS flips its audio session from playback-only to play-and-record the
-   * first time the mic is captured — a route/sample-rate change. In a Home
-   * Screen (standalone) PWA that flip happens cold, and the ElevenLabs SDK
-   * applies zero connectionDelay on iOS, so without this warm-up the SDK's
-   * input worklet starts capturing mid-flip: the first words arrive garbled
-   * ("..." / one-word transcripts) and playback can distort (mechanical
-   * noise). Acquiring the mic here — inside the user's tap — starts the
-   * route flip immediately and lets it settle during the seconds of memory/
-   * context loading that precede Conversation.startSession.
+   * This is an iOS PWA audio-route mitigation, not a proven complete fix:
+   * capture starts inside the user's tap so any playback-to-record route flip
+   * can settle during the context-loading work before Conversation.startSession.
+   * Keep it while Regression 1 is open unless diagnostics prove it harmful.
    */
   const micWarmupStreamRef = useRef<MediaStream | null>(null);
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1005,6 +1112,166 @@ export default function ElevenLabsAgentWidget({
   useEffect(() => {
     calendarFetchedRef.current = calendarFetched;
   }, [calendarFetched]);
+
+  const runLocalOutputProbe = useCallback(async () => {
+    const startedAt = new Date().toISOString();
+    setAudioDiagStatus("Playing local speaker test...");
+    const environment = getCarsonAudioEnvironment();
+    recordCarsonDiagnostic("carson-audio-probe", {
+      probe: "local_output_start",
+      environment,
+      mediaElements: getHtmlMediaElementState(),
+      status: statusRef.current,
+      mode,
+      at: startedAt,
+    });
+
+    try {
+      const audioWindow = window as Window & typeof globalThis & {
+        webkitAudioContext?: typeof AudioContext;
+      };
+      const AudioContextCtor = audioWindow.AudioContext || audioWindow.webkitAudioContext;
+      if (!AudioContextCtor) throw new Error("AudioContext is not available");
+
+      const ctx = new AudioContextCtor();
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.frequency.value = 440;
+      gain.gain.value = 0.04;
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      oscillator.stop();
+      await ctx.close().catch(() => undefined);
+
+      const report = {
+        probe: "local_output_complete",
+        audioContextState: ctx.state,
+        mediaElements: getHtmlMediaElementState(),
+        at: new Date().toISOString(),
+      };
+      recordCarsonDiagnostic("carson-audio-probe", report);
+      setAudioDiagStatus("Local speaker test played. Note whether the tone was clean or noisy.");
+      setAudioDiagLastReport(JSON.stringify(report, null, 2));
+    } catch (err) {
+      const report = {
+        probe: "local_output_error",
+        error: err instanceof Error ? err.message : String(err),
+        at: new Date().toISOString(),
+      };
+      recordCarsonDiagnostic("carson-audio-probe", report);
+      setAudioDiagStatus("Local speaker test failed.");
+      setAudioDiagLastReport(JSON.stringify(report, null, 2));
+    }
+  }, [mode]);
+
+  const runMicLoopbackProbe = useCallback(async () => {
+    const startedAt = new Date().toISOString();
+    setAudioDiagStatus("Recording 2-second mic loopback...");
+    const environment = getCarsonAudioEnvironment();
+    recordCarsonDiagnostic("carson-audio-probe", {
+      probe: "mic_loopback_start",
+      environment,
+      mediaElements: getHtmlMediaElementState(),
+      status: statusRef.current,
+      mode,
+      at: startedAt,
+    });
+
+    let stream: MediaStream | null = null;
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("getUserMedia is not available");
+      }
+      if (typeof MediaRecorder === "undefined") {
+        throw new Error("MediaRecorder is not available");
+      }
+
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const track = stream.getAudioTracks()[0] ?? null;
+      const settings = track?.getSettings?.() ?? {};
+      const chunks: BlobPart[] = [];
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+      const stopped = new Promise<void>((resolve, reject) => {
+        recorder.onstop = () => resolve();
+        recorder.onerror = () => reject(new Error("MediaRecorder error"));
+      });
+      recorder.start();
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      recorder.stop();
+      await stopped;
+
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      await audio.play();
+
+      const report = {
+        probe: "mic_loopback_complete",
+        mimeType: recorder.mimeType || null,
+        blobSize: blob.size,
+        trackSettings: settings,
+        mediaElements: getHtmlMediaElementState(),
+        at: new Date().toISOString(),
+      };
+      recordCarsonDiagnostic("carson-audio-probe", report);
+      setAudioDiagStatus("Mic loopback played. Note whether your recorded sample was clean or noisy.");
+      setAudioDiagLastReport(JSON.stringify(report, null, 2));
+    } catch (err) {
+      const report = {
+        probe: "mic_loopback_error",
+        error: err instanceof Error ? err.message : String(err),
+        at: new Date().toISOString(),
+      };
+      recordCarsonDiagnostic("carson-audio-probe", report);
+      setAudioDiagStatus("Mic loopback failed.");
+      setAudioDiagLastReport(JSON.stringify(report, null, 2));
+    } finally {
+      stream?.getTracks().forEach((track) => {
+        try { track.stop(); } catch { /* best-effort diagnostic cleanup */ }
+      });
+    }
+  }, [mode]);
+
+  const copyAudioDiagnosticsPacket = useCallback(async () => {
+    const packet = {
+      productionUrl: "https://www.ra7etbal.com",
+      status,
+      mode,
+      environment: getCarsonAudioEnvironment(),
+      sdkVersions: {
+        "@elevenlabs/react": "1.9.0",
+        "@elevenlabs/client": "1.14.0",
+      },
+      commitsTried: [
+        "9562d65 teardown guard",
+        "1e02bd7 iOS mic warm-up and connection delay",
+        "18711586 ElevenLabs SDK upgrade",
+        "1b4223f invalid transcript guard",
+      ],
+      symptoms: [
+        "iPhone Home Screen PWA produces printer/machine noise around Carson",
+        "voice quality is not production usable",
+        "transcripts can become ellipsis or clipped partial phrases",
+      ],
+      mediaElements: getHtmlMediaElementState(),
+      diagnostics: getCarsonDiagnostics(),
+      copiedAt: new Date().toISOString(),
+    };
+    const text = JSON.stringify(packet, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      setAudioDiagStatus("Diagnostics copied.");
+    } catch {
+      setAudioDiagStatus("Copy failed. Diagnostics are shown below.");
+    }
+    setAudioDiagLastReport(text);
+  }, [mode, status]);
 
   const maybeSendImpliedDinnerDelegation = useCallback(
     async (userId: string): Promise<void> => {
@@ -3970,6 +4237,18 @@ export default function ElevenLabsAgentWidget({
       sessionGeneration,
       at: new Date().toISOString(),
     });
+    recordCarsonDiagnostic("carson-audio-session", {
+      phase: "connect_attempt",
+      sessionGeneration,
+      environment: getCarsonAudioEnvironment(),
+      mediaElements: getHtmlMediaElementState(),
+      status: statusRef.current,
+      mode,
+      hasConversation: Boolean(conversationRef.current),
+      teardownInFlight: teardownInFlightRef.current,
+      startInFlight: startInFlightRef.current,
+      at: new Date().toISOString(),
+    });
 
     // Kick off the iOS audio-route warm-up NOW, inside the user's tap — see
     // micWarmupStreamRef. The stream is stashed in the ref so every cleanup
@@ -4154,6 +4433,13 @@ export default function ElevenLabsAgentWidget({
       console.info("[carson-audio-warmup] mic route warmed before session start", warmupInfo);
       recordCarsonDiagnostic("carson-audio-warmup", warmupInfo);
     }
+    recordCarsonDiagnostic("carson-audio-session", {
+      phase: "before_start_session",
+      sessionGeneration,
+      warmupHadStream: Boolean(warmupStream),
+      mediaElements: getHtmlMediaElementState(),
+      at: new Date().toISOString(),
+    });
 
     try {
       // ── ElevenLabs connection safety rule ────────────────────────────────
@@ -4178,8 +4464,9 @@ export default function ElevenLabsAgentWidget({
         // iOS gets 0ms by default (Android gets 3000ms) between the SDK's own
         // mic acquisition and its audio pipeline setup. Give the iOS audio
         // session time to finish switching into play-and-record before the
-        // input worklet starts capturing — the source of garbled first
-        // transcripts and distorted playback in the Home Screen PWA.
+        // input worklet starts capturing. This is mitigation under test while
+        // Regression 1 remains open, not proof that the hosted audio path is
+        // healthy on iPhone Home Screen PWA.
         connectionDelay: { default: 0, android: 3_000, ios: 500 },
         dynamicVariables: {
           // Sanitize all speech-bound text so ElevenLabs never receives the
@@ -4391,6 +4678,16 @@ export default function ElevenLabsAgentWidget({
         },
         onModeChange: ({ mode: m }) => {
           if (ignoreStaleCallback("mode-change")) return;
+          const modeInfo = {
+            phase: "mode_change",
+            sdkMode: m,
+            targetMicMuted: m === "speaking",
+            sessionGeneration,
+            mediaElements: getHtmlMediaElementState(),
+            toolInFlight: toolInFlightRef.current,
+            at: new Date().toISOString(),
+          };
+          recordCarsonDiagnostic("carson-audio-session", modeInfo);
           if (m === "speaking") {
             const active = activeExecuteLatencyRef.current;
             if (active?.toolCompletedPerf != null) {
@@ -4407,6 +4704,12 @@ export default function ElevenLabsAgentWidget({
             conversationRef.current?.setMicMuted(m === "speaking");
           } catch (err) {
             console.warn("[carson-audio] failed to update microphone mute state:", err);
+            recordCarsonDiagnostic("carson-audio-session", {
+              phase: "mic_mute_error",
+              sdkMode: m,
+              error: err instanceof Error ? err.message : String(err),
+              at: new Date().toISOString(),
+            });
           }
           setMode(m === "speaking" ? "speaking" : "listening");
         },
@@ -4424,6 +4727,16 @@ export default function ElevenLabsAgentWidget({
               eventId: event_id ?? null,
               timestamp: receivedAt,
               message,
+            });
+            recordCarsonDiagnostic("carson-audio-session", {
+              phase: "user_transcript",
+              eventId: event_id ?? null,
+              transcriptLength: message.length,
+              transcriptPreview: message.slice(0, 80),
+              validCapture: captureEvaluation.valid,
+              invalidReason: captureEvaluation.reason,
+              sdkMode: mode,
+              at: receivedAt,
             });
             if (!captureEvaluation.valid) {
               const invalidCapture = {
@@ -4474,6 +4787,15 @@ export default function ElevenLabsAgentWidget({
               console.log("[routine:RAW_CAPTURE]", message);
             }
           } else if (role === "agent") {
+            recordCarsonDiagnostic("carson-audio-session", {
+              phase: "agent_message",
+              eventId: event_id ?? null,
+              messageLength: message.length,
+              sdkMode: mode,
+              invalidCapturePending: Boolean(invalidCaptureRef.current),
+              mediaElements: getHtmlMediaElementState(),
+              at: new Date().toISOString(),
+            });
             sessionTranscriptRef.current.push({ role, message });
             if (invalidCaptureRef.current) {
               sessionTranscriptRef.current.pop();
@@ -4542,6 +4864,14 @@ export default function ElevenLabsAgentWidget({
           console.warn("[carson-disconnect]", disconnectInfo);
           console.info("[carson-lifecycle] disconnect", disconnectInfo);
           recordCarsonDiagnostic("carson-disconnect", disconnectInfo);
+          recordCarsonDiagnostic("carson-audio-session", {
+            phase: "disconnect",
+            sessionGeneration,
+            details: disconnectInfo,
+            mediaElements: getHtmlMediaElementState(),
+            transcriptCount: sessionTranscriptRef.current.length,
+            at: new Date().toISOString(),
+          });
 
           // Capture refs before any async work so they can be reset immediately.
           const userId = useAuthStore.getState().user?.id ?? null;
@@ -4571,6 +4901,13 @@ export default function ElevenLabsAgentWidget({
           console.error("[carson-error]", errorInfo);
           console.info("[carson-lifecycle] disconnect", errorInfo);
           recordCarsonDiagnostic("carson-error", errorInfo);
+          recordCarsonDiagnostic("carson-audio-session", {
+            phase: "error",
+            sessionGeneration,
+            details: errorInfo,
+            mediaElements: getHtmlMediaElementState(),
+            at: new Date().toISOString(),
+          });
 
           // Keep error visible until the user closes it.
           sessionGenerationRef.current += 1;
@@ -4598,6 +4935,12 @@ export default function ElevenLabsAgentWidget({
           }
           console.info("[carson-lifecycle] connect", {
             sessionGeneration,
+            at: new Date().toISOString(),
+          });
+          recordCarsonDiagnostic("carson-audio-session", {
+            phase: "connect",
+            sessionGeneration,
+            mediaElements: getHtmlMediaElementState(),
             at: new Date().toISOString(),
           });
           setStatus("connected");
@@ -4659,7 +5002,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot]);
+  }, [agentId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot]);
 
   // ------------------------------------------------------------------
   // Session teardown
@@ -4906,6 +5249,58 @@ export default function ElevenLabsAgentWidget({
             {errorMsg ?? "Couldn't connect."}
           </span>
         </button>
+      )}
+
+      {isIosStandalonePwa && (
+        <p className="mt-1 max-w-[280px] px-2 text-[11px] font-medium text-danger/80">
+          iPhone PWA voice beta: audio quality under investigation.
+        </p>
+      )}
+
+      {audioDiagnosticsEnabled && (
+        <div className="mt-2 max-w-[280px] rounded-xl border border-charcoal/10 bg-white/95 p-2.5 shadow-sm">
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={runLocalOutputProbe}
+              className="rounded-full border border-charcoal/15 px-2.5 py-1 text-[11px] font-semibold text-charcoal"
+            >
+              Speaker test
+            </button>
+            <button
+              type="button"
+              onClick={runMicLoopbackProbe}
+              className="rounded-full border border-charcoal/15 px-2.5 py-1 text-[11px] font-semibold text-charcoal"
+            >
+              Mic loopback
+            </button>
+            <button
+              type="button"
+              onClick={copyAudioDiagnosticsPacket}
+              className="rounded-full border border-charcoal/15 px-2.5 py-1 text-[11px] font-semibold text-charcoal"
+            >
+              Copy packet
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.removeItem(CARSON_AUDIO_DIAGNOSTICS_STORAGE_KEY);
+                setAudioDiagnosticsEnabled(false);
+              }}
+              className="rounded-full border border-charcoal/10 px-2.5 py-1 text-[11px] font-medium text-ink/55"
+            >
+              Off
+            </button>
+          </div>
+          {audioDiagStatus && (
+            <p className="mt-2 text-[11px] leading-snug text-ink/60">{audioDiagStatus}</p>
+          )}
+          {audioDiagLastReport && (
+            <pre className="mt-2 max-h-28 overflow-auto rounded-lg bg-stone/50 p-2 text-[10px] leading-snug text-ink/55">
+              {audioDiagLastReport}
+            </pre>
+          )}
+        </div>
       )}
 
       {lastUserTranscript && (
