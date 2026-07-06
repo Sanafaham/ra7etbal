@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ra7etbal.com/sitemap.xml
