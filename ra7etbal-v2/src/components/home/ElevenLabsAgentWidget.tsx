@@ -716,6 +716,22 @@ export default function ElevenLabsAgentWidget({
   const statusRef = useRef<CallStatus>("idle");
   const sessionGenerationRef = useRef(0);
   const startInFlightRef = useRef(false);
+  /**
+   * True from the moment a previous conversation's endSession() is kicked
+   * off until it actually settles. iOS Home Screen (standalone) PWA mode
+   * fires pagehide/visibilitychange more aggressively than a regular Safari
+   * tab (e.g. on brief backgrounding that isn't a real navigation-away), so
+   * a forced cleanup can be in flight right when the user immediately taps
+   * "Talk to Carson" again. Without this guard, startCall's `!conversationRef.current`
+   * check already passes (it's cleared synchronously before endSession() is
+   * even awaited), so a second live session could open its own mic/WebRTC
+   * pipeline while the first is still tearing down — two overlapping audio
+   * sessions on the same microphone, which is consistent with the reported
+   * "printing machine" noise, garbled/one-word transcripts, and
+   * "Failed to set input muted state" errors from a stale track.
+   */
+  const teardownInFlightRef = useRef(false);
+  const teardownSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -3729,6 +3745,37 @@ export default function ElevenLabsAgentWidget({
     [maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript],
   );
 
+  /**
+   * Ends a conversation's underlying session while holding teardownInFlightRef
+   * so startCall's guard can't open a second, overlapping mic/WebRTC session
+   * before this one's teardown truly finishes. Guarded by its own timeout so
+   * a hung endSession() promise can never permanently block reconnecting.
+   */
+  const endConversationSession = useCallback(
+    (
+      conv: NonNullable<typeof conversationRef.current>,
+      onError: (err: unknown) => void,
+    ) => {
+      teardownInFlightRef.current = true;
+      if (teardownSafetyTimerRef.current) clearTimeout(teardownSafetyTimerRef.current);
+      teardownSafetyTimerRef.current = setTimeout(() => {
+        teardownInFlightRef.current = false;
+        teardownSafetyTimerRef.current = null;
+      }, 4_000);
+      void conv
+        .endSession()
+        .catch(onError)
+        .finally(() => {
+          teardownInFlightRef.current = false;
+          if (teardownSafetyTimerRef.current) {
+            clearTimeout(teardownSafetyTimerRef.current);
+            teardownSafetyTimerRef.current = null;
+          }
+        });
+    },
+    [],
+  );
+
   const forceCleanupSession = useCallback(
     (teardownReason: string, options?: { showEndedMessage?: boolean; clearError?: boolean }) => {
       const previousGeneration = sessionGenerationRef.current;
@@ -3765,7 +3812,7 @@ export default function ElevenLabsAgentWidget({
         } catch (err) {
           console.warn("[carson-lifecycle] microphone mute during cleanup failed", err);
         }
-        void conv.endSession().catch((err) => {
+        endConversationSession(conv, (err) => {
           console.warn("[carson-lifecycle] endSession during cleanup failed", err);
         });
       }
@@ -3794,6 +3841,7 @@ export default function ElevenLabsAgentWidget({
     [
       clearCarsonSessionTimers,
       clearPendingPhotoPreviews,
+      endConversationSession,
       saveVoiceSessionSnapshot,
       stopLocalAudioPlayback,
     ],
@@ -3804,11 +3852,17 @@ export default function ElevenLabsAgentWidget({
   // ------------------------------------------------------------------
   const startCall = useCallback(async () => {
     if (!agentId) return;
-    if (startInFlightRef.current || statusRef.current !== "idle" || conversationRef.current) {
+    if (
+      startInFlightRef.current ||
+      statusRef.current !== "idle" ||
+      conversationRef.current ||
+      teardownInFlightRef.current
+    ) {
       console.warn("[carson-lifecycle] reconnect attempt blocked", {
         status: statusRef.current,
         startInFlight: startInFlightRef.current,
         hasConversation: Boolean(conversationRef.current),
+        teardownInFlight: teardownInFlightRef.current,
         at: new Date().toISOString(),
       });
       return;
@@ -4343,7 +4397,7 @@ export default function ElevenLabsAgentWidget({
         } catch {
           // Best-effort stale connection cleanup.
         }
-        void conv.endSession().catch((err) => {
+        endConversationSession(conv, (err) => {
           console.warn("[carson-lifecycle] stale endSession failed", err);
         });
         return;
@@ -4372,7 +4426,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot]);
 
   // ------------------------------------------------------------------
   // Session teardown
