@@ -22,7 +22,8 @@ export interface CarsonDiagnosticEvent {
     | "carson-latency"
     | "carson-plan"
     | "carson-plan-audit"
-    | "carson-direct-tool";
+    | "carson-direct-tool"
+    | "carson-audio-warmup";
   at: string;
   data: unknown;
 }

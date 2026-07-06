@@ -732,6 +732,20 @@ export default function ElevenLabsAgentWidget({
    */
   const teardownInFlightRef = useRef(false);
   const teardownSafetyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Short-lived microphone stream acquired at the very start of startCall,
+   * released once the SDK owns its own stream (or the attempt is cleaned up).
+   * iOS flips its audio session from playback-only to play-and-record the
+   * first time the mic is captured — a route/sample-rate change. In a Home
+   * Screen (standalone) PWA that flip happens cold, and the ElevenLabs SDK
+   * applies zero connectionDelay on iOS, so without this warm-up the SDK's
+   * input worklet starts capturing mid-flip: the first words arrive garbled
+   * ("..." / one-word transcripts) and playback can distort (mechanical
+   * noise). Acquiring the mic here — inside the user's tap — starts the
+   * route flip immediately and lets it settle during the seconds of memory/
+   * context loading that precede Conversation.startSession.
+   */
+  const micWarmupStreamRef = useRef<MediaStream | null>(null);
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -3745,6 +3759,19 @@ export default function ElevenLabsAgentWidget({
     [maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript],
   );
 
+  /** Stop and drop the warm-up mic stream. Safe to call repeatedly. */
+  const releaseMicWarmupStream = useCallback(() => {
+    const stream = micWarmupStreamRef.current;
+    micWarmupStreamRef.current = null;
+    stream?.getTracks().forEach((track) => {
+      try {
+        track.stop();
+      } catch {
+        // Best-effort release only.
+      }
+    });
+  }, []);
+
   /**
    * Ends a conversation's underlying session while holding teardownInFlightRef
    * so startCall's guard can't open a second, overlapping mic/WebRTC session
@@ -3801,6 +3828,7 @@ export default function ElevenLabsAgentWidget({
       conversationRef.current = null;
 
       clearCarsonSessionTimers();
+      releaseMicWarmupStream();
       toolInFlightRef.current = null;
       activeExecuteLatencyRef.current = null;
       lastUserTranscriptTimingRef.current = null;
@@ -3842,6 +3870,7 @@ export default function ElevenLabsAgentWidget({
       clearCarsonSessionTimers,
       clearPendingPhotoPreviews,
       endConversationSession,
+      releaseMicWarmupStream,
       saveVoiceSessionSnapshot,
       stopLocalAudioPlayback,
     ],
@@ -3887,6 +3916,31 @@ export default function ElevenLabsAgentWidget({
       sessionGeneration,
       at: new Date().toISOString(),
     });
+
+    // Kick off the iOS audio-route warm-up NOW, inside the user's tap — see
+    // micWarmupStreamRef. The stream is stashed in the ref so every cleanup
+    // path (forceCleanupSession) releases it; if this attempt was cancelled
+    // while getUserMedia was still pending, the .then self-releases.
+    const micWarmupPromise: Promise<MediaStream | null> =
+      typeof navigator !== "undefined" && navigator.mediaDevices?.getUserMedia
+        ? navigator.mediaDevices
+            .getUserMedia({ audio: true })
+            .then((stream) => {
+              if (!isCurrentSession()) {
+                stream.getTracks().forEach((track) => {
+                  try { track.stop(); } catch { /* best-effort */ }
+                });
+                return null;
+              }
+              micWarmupStreamRef.current = stream;
+              return stream;
+            })
+            .catch((err) => {
+              // Non-fatal: the SDK requests the mic itself during startSession.
+              console.warn("[carson-audio-warmup] mic warm-up failed (continuing)", err);
+              return null;
+            })
+        : Promise.resolve(null);
 
     // Snapshot pending photos NOW — before setStatus("connecting") causes any
     // potential DOM changes. On iOS Safari, a File from <input type="file"> can
@@ -4026,6 +4080,26 @@ export default function ElevenLabsAgentWidget({
       ? `${baseStateText}\n\nAttached photos context (use this for the conversation):\n${sessionPhotoContextRef.current}`
       : baseStateText;
 
+    // The warm-up has been settling since the tap (through all the loads
+    // above). Await it so startSession never begins mid-route-flip; log the
+    // track settings so device diagnostics can confirm the mic route state.
+    // This runs BEFORE the connect timeout is armed so the timeout wraps
+    // only the SDK handshake, never warm-up/preload work.
+    const warmupStream = await micWarmupPromise;
+    if (!isCurrentSession()) return;
+    if (warmupStream) {
+      const warmupTrack = warmupStream.getAudioTracks()[0];
+      const warmupSettings = (warmupTrack?.getSettings?.() ?? {}) as { sampleRate?: number };
+      const warmupInfo = {
+        sampleRate: warmupSettings.sampleRate ?? null,
+        trackLabel: warmupTrack?.label ?? null,
+        trackReadyState: warmupTrack?.readyState ?? null,
+        at: new Date().toISOString(),
+      };
+      console.info("[carson-audio-warmup] mic route warmed before session start", warmupInfo);
+      recordCarsonDiagnostic("carson-audio-warmup", warmupInfo);
+    }
+
     try {
       // ── ElevenLabs connection safety rule ────────────────────────────────
       // Do NOT pass agent.prompt.prompt (or any prompt overrides) here.
@@ -4043,8 +4117,15 @@ export default function ElevenLabsAgentWidget({
         });
         forceCleanupSession("connect-timeout", { showEndedMessage: true });
       }, 60_000);
+
       const conv = await Conversation.startSession({
         agentId,
+        // iOS gets 0ms by default (Android gets 3000ms) between the SDK's own
+        // mic acquisition and its audio pipeline setup. Give the iOS audio
+        // session time to finish switching into play-and-record before the
+        // input worklet starts capturing — the source of garbled first
+        // transcripts and distorted playback in the Home Screen PWA.
+        connectionDelay: { default: 0, android: 3_000, ios: 500 },
         dynamicVariables: {
           // Sanitize all speech-bound text so ElevenLabs never receives the
           // Latin "Ra7etBal" string — it mispronounces it. Arabic is correct.
@@ -4386,6 +4467,9 @@ export default function ElevenLabsAgentWidget({
           recordCarsonDiagnostic("carson-unhandled-tool", unhandledInfo);
         },
       });
+      // The SDK owns its own mic stream from here — drop the warm-up stream
+      // on both the stale and the normal path.
+      releaseMicWarmupStream();
       if (!isCurrentSession()) {
         console.info("[carson-lifecycle] stale connection cleaned up", {
           sessionGeneration,
@@ -4418,6 +4502,7 @@ export default function ElevenLabsAgentWidget({
         );
       }
     } catch (err) {
+      releaseMicWarmupStream();
       if (!isCurrentSession()) return;
       startInFlightRef.current = false;
       clearCarsonSessionTimers();
@@ -4426,7 +4511,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot]);
 
   // ------------------------------------------------------------------
   // Session teardown
