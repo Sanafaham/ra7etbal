@@ -490,9 +490,14 @@ describe("canonical path source adapters", () => {
     expect(startSessionIndex).toBeGreaterThan(timeoutIndex);
     expect(startSessionIndex - timeoutIndex).toBeLessThan(800);
     expect(widget.slice(timeoutIndex, startSessionIndex)).toContain("60_000");
-    // WebRTC is the correct default for voice (LiveKit path works; websocket
-    // path returns 403 when source= param is present, which the SDK always appends).
-    expect(widget.slice(startSessionIndex, startSessionIndex + 300)).not.toContain('connectionType: "websocket"');
+    // Regression 1: ElevenLabs support identified mobile WebRTC/LiveKit init as
+    // a likely audio corruption source, so Carson uses the SDK's single public
+    // websocket session path while requesting PCM 16 kHz audio.
+    expect(widget.slice(startSessionIndex, startSessionIndex + 500)).toContain(
+      'connectionType: "websocket"',
+    );
+    expect(widget.slice(startSessionIndex, startSessionIndex + 500)).toContain('format: "pcm"');
+    expect(widget.slice(startSessionIndex, startSessionIndex + 500)).toContain("sampleRate: 16_000");
   });
 
   it("documents confirmation URL canonical param and legacy compatibility", () => {

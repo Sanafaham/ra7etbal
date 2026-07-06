@@ -19,6 +19,26 @@ const PACKAGE_LOCK = JSON.parse(
   packages?: Record<string, { version?: string; dependencies?: Record<string, string> }>;
 };
 
+const ELEVENLABS_BASE_CONNECTION_TYPES = readFileSync(
+  join(__dirname, "../../..", "node_modules/@elevenlabs/client/dist/utils/BaseConnection.d.ts"),
+  "utf-8",
+);
+
+const ELEVENLABS_BASE_CONVERSATION_TYPES = readFileSync(
+  join(__dirname, "../../..", "node_modules/@elevenlabs/client/dist/BaseConversation.d.ts"),
+  "utf-8",
+);
+
+const ELEVENLABS_CONNECTION_FACTORY = readFileSync(
+  join(__dirname, "../../..", "node_modules/@elevenlabs/client/dist/utils/ConnectionFactory.js"),
+  "utf-8",
+);
+
+const ELEVENLABS_WEBRTC_CONNECTION = readFileSync(
+  join(__dirname, "../../..", "node_modules/@elevenlabs/client/dist/utils/WebRTCConnection.js"),
+  "utf-8",
+);
+
 function blockBetween(startNeedle: string, endNeedle: string): string {
   const start = SOURCE.indexOf(startNeedle);
   const end = SOURCE.indexOf(endNeedle, start);
@@ -40,7 +60,7 @@ describe("ElevenLabsAgentWidget — SDK config compatibility", () => {
     expect(PACKAGE_LOCK.packages?.["node_modules/webrtc-adapter"]?.version).toBe("9.0.6");
   });
 
-  it("opens one public Conversation.startSession path with the iOS audio-route settle config", () => {
+  it("opens one public Conversation.startSession path with the 16 kHz PCM websocket config", () => {
     expect(countOccurrences("Conversation.startSession(")).toBe(1);
 
     const optionsBlock = blockBetween(
@@ -48,6 +68,9 @@ describe("ElevenLabsAgentWidget — SDK config compatibility", () => {
       "clientTools: {",
     );
     expect(optionsBlock).toContain("agentId,");
+    expect(optionsBlock).toContain('connectionType: "websocket"');
+    expect(optionsBlock).toContain('format: "pcm"');
+    expect(optionsBlock).toContain("sampleRate: 16_000");
     expect(optionsBlock).toContain("connectionDelay: { default: 0, android: 3_000, ios: 500 }");
     expect(optionsBlock).toContain("dynamicVariables: {");
     expect(optionsBlock).toContain("ra7etbal_state:");
@@ -58,7 +81,18 @@ describe("ElevenLabsAgentWidget — SDK config compatibility", () => {
     expect(optionsBlock).not.toContain("agent: {");
     expect(optionsBlock).not.toContain("prompt");
     expect(optionsBlock).not.toContain("overrides");
-    expect(optionsBlock).not.toContain("connectionType");
+    expect(optionsBlock).not.toContain("output_format");
+    expect(optionsBlock).not.toContain("outputFormat");
+  });
+
+  it("documents why the pcm_16000 attempt uses websocket instead of default WebRTC", () => {
+    expect(ELEVENLABS_BASE_CONNECTION_TYPES).toContain("connectionType?: ConnectionType");
+    expect(ELEVENLABS_BASE_CONNECTION_TYPES).toContain('format: "pcm" | "ulaw"');
+    expect(ELEVENLABS_BASE_CONNECTION_TYPES).toContain("sampleRate: number");
+    expect(ELEVENLABS_BASE_CONVERSATION_TYPES).toContain("Partial<FormatConfig>");
+    expect(ELEVENLABS_CONNECTION_FACTORY).toContain("if (config.connectionType)");
+    expect(ELEVENLABS_CONNECTION_FACTORY).toContain('return config.textOnly ? "websocket" : "webrtc"');
+    expect(ELEVENLABS_WEBRTC_CONNECTION).toContain('parseFormat("pcm_48000")');
   });
 
   it("keeps one guarded endSession path and no fallback audio/session implementation", () => {
@@ -80,6 +114,9 @@ describe("ElevenLabsAgentWidget — SDK config compatibility", () => {
     expect(sessionBlock).toContain("onDisconnect:");
     expect(sessionBlock).toContain("onError:");
     expect(sessionBlock).toContain("onConnect:");
+    expect(sessionBlock).toContain("onConversationMetadata:");
+    expect(sessionBlock).toContain("agentOutputAudioFormat");
+    expect(sessionBlock).toContain("userInputAudioFormat");
     expect(sessionBlock).toContain("onUnhandledClientToolCall:");
   });
 });

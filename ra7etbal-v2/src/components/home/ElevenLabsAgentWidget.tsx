@@ -811,6 +811,16 @@ export default function ElevenLabsAgentWidget({
   const isIosStandalonePwa =
     audioEnvironmentRef.current.isIosLike && audioEnvironmentRef.current.standaloneDisplay;
 
+  const enableAudioDiagnostics = useCallback(() => {
+    try {
+      localStorage.setItem(CARSON_AUDIO_DIAGNOSTICS_STORAGE_KEY, "1");
+    } catch {
+      // Diagnostics are still enabled for this mounted sheet.
+    }
+    setAudioDiagnosticsEnabled(true);
+    setAudioDiagStatus("Audio diagnostics enabled.");
+  }, []);
+
   // Notify parent whenever call status changes.
   useEffect(() => { onCallStatusChange?.(status); }, [status, onCallStatusChange]);
   useEffect(() => {
@@ -1248,11 +1258,19 @@ export default function ElevenLabsAgentWidget({
         "@elevenlabs/react": "1.9.0",
         "@elevenlabs/client": "1.14.0",
       },
+      sessionAudioConfig: {
+        connectionType: "websocket",
+        format: "pcm",
+        sampleRate: 16_000,
+        requestedOutputFormat: "pcm_16000",
+        note: "The SDK exposes format/sampleRate, not output_format/outputFormat. Conversation metadata below shows the server-returned formats.",
+      },
       commitsTried: [
         "9562d65 teardown guard",
         "1e02bd7 iOS mic warm-up and connection delay",
         "18711586 ElevenLabs SDK upgrade",
         "1b4223f invalid transcript guard",
+        "f4e90a1 iPhone PWA audio diagnostics",
       ],
       symptoms: [
         "iPhone Home Screen PWA produces printer/machine noise around Carson",
@@ -4461,6 +4479,11 @@ export default function ElevenLabsAgentWidget({
 
       const conv = await Conversation.startSession({
         agentId,
+        // Regression 1 / ElevenLabs support: avoid the mobile WebRTC/LiveKit
+        // init path and request the SDK's public PCM 16 kHz media-device path.
+        connectionType: "websocket",
+        format: "pcm",
+        sampleRate: 16_000,
         // iOS gets 0ms by default (Android gets 3000ms) between the SDK's own
         // mic acquisition and its audio pipeline setup. Give the iOS audio
         // session time to finish switching into play-and-record before the
@@ -4945,6 +4968,21 @@ export default function ElevenLabsAgentWidget({
           });
           setStatus("connected");
         },
+        onConversationMetadata: (metadata) => {
+          if (ignoreStaleCallback("conversation-metadata")) return;
+          const metadataInfo = {
+            conversationId: metadata.conversation_id ?? null,
+            agentOutputAudioFormat: metadata.agent_output_audio_format ?? null,
+            userInputAudioFormat: metadata.user_input_audio_format ?? null,
+            sessionGeneration,
+            at: new Date().toISOString(),
+          };
+          console.info("[carson-audio-metadata]", metadataInfo);
+          recordCarsonDiagnostic("carson-audio-session", {
+            phase: "conversation_metadata",
+            ...metadataInfo,
+          });
+        },
         // Diagnostic: fires when the agent invokes a tool the client has NOT
         // registered (e.g. a dashboard tool name that doesn't match any client
         // tool). Directly surfaces tool-registration regressions.
@@ -5252,9 +5290,20 @@ export default function ElevenLabsAgentWidget({
       )}
 
       {isIosStandalonePwa && (
-        <p className="mt-1 max-w-[280px] px-2 text-[11px] font-medium text-danger/80">
-          iPhone PWA voice beta: audio quality under investigation.
-        </p>
+        <div className="mt-1 flex max-w-[280px] flex-wrap items-center gap-1.5 px-2">
+          <p className="text-[11px] font-medium text-danger/80">
+            iPhone PWA voice beta: audio quality under investigation.
+          </p>
+          {!audioDiagnosticsEnabled && (
+            <button
+              type="button"
+              onClick={enableAudioDiagnostics}
+              className="rounded-full border border-danger/20 px-2 py-0.5 text-[10px] font-semibold text-danger/80"
+            >
+              Diagnostics
+            </button>
+          )}
+        </div>
       )}
 
       {audioDiagnosticsEnabled && (

@@ -34,6 +34,15 @@ describe("ElevenLabsAgentWidget — iPhone PWA audio diagnostics", () => {
     expect(SOURCE).toContain("Copy packet");
   });
 
+  it("lets an installed iPhone PWA enable diagnostics after the query string is lost", () => {
+    expect(SOURCE).toContain("const enableAudioDiagnostics = useCallback(");
+    expect(SOURCE).toContain('localStorage.setItem(CARSON_AUDIO_DIAGNOSTICS_STORAGE_KEY, "1")');
+    expect(SOURCE).toContain("setAudioDiagnosticsEnabled(true)");
+    expect(SOURCE).toContain('setAudioDiagStatus("Audio diagnostics enabled.")');
+    expect(SOURCE).toContain("{!audioDiagnosticsEnabled && (");
+    expect(SOURCE).toContain("Diagnostics");
+  });
+
   it("labels iPhone Home Screen PWA voice as beta while Regression 1 remains open", () => {
     expect(SOURCE).toContain("const isIosStandalonePwa =");
     expect(SOURCE).toContain("iPhone PWA voice beta: audio quality under investigation.");
@@ -63,10 +72,15 @@ describe("ElevenLabsAgentWidget — iPhone PWA audio diagnostics", () => {
     expect(copyBlock).toContain('productionUrl: "https://www.ra7etbal.com"');
     expect(copyBlock).toContain('"@elevenlabs/react": "1.9.0"');
     expect(copyBlock).toContain('"@elevenlabs/client": "1.14.0"');
+    expect(copyBlock).toContain('connectionType: "websocket"');
+    expect(copyBlock).toContain('format: "pcm"');
+    expect(copyBlock).toContain("sampleRate: 16_000");
+    expect(copyBlock).toContain('requestedOutputFormat: "pcm_16000"');
     expect(copyBlock).toContain('"9562d65 teardown guard"');
     expect(copyBlock).toContain('"1e02bd7 iOS mic warm-up and connection delay"');
     expect(copyBlock).toContain('"18711586 ElevenLabs SDK upgrade"');
     expect(copyBlock).toContain('"1b4223f invalid transcript guard"');
+    expect(copyBlock).toContain('"f4e90a1 iPhone PWA audio diagnostics"');
     expect(copyBlock).toContain("getCarsonDiagnostics()");
   });
 });
