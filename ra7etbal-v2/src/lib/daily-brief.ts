@@ -170,14 +170,29 @@ function isNeedsYouTask(task: Task, waitingIds: Set<string>, now: Date): boolean
 
 function isWaitingTask(task: Task): boolean {
   if (task.status === "done" || task.status === "cancelled") return false;
+  // A proof photo Carson couldn't confidently approve (uncertain) or flagged
+  // as suspicious (fraud_suspected) has already gone to the owner for a
+  // manual decision — it is no longer waiting on the assignee, so it must
+  // not sit in "Waiting" alongside tasks the assignee hasn't responded to
+  // yet. See isWaitingInterventionTask, which routes it to "Needs You"
+  // instead. correction_required deliberately stays here — Carson already
+  // auto-messaged the assignee to resubmit, so the ball is still with them.
+  if (isQualityReviewOwnerInterventionStatus(task.quality_review_status)) return false;
   if (task.needs_follow_up) return true;
   if (task.type === "delegation" && task.assigned_to) return true;
   return task.type === "followup";
 }
 
+function isQualityReviewOwnerInterventionStatus(
+  status: Task["quality_review_status"],
+): boolean {
+  return status === "uncertain" || status === "fraud_suspected";
+}
+
 function isWaitingInterventionTask(task: Task): boolean {
   if (task.type !== "delegation" && task.type !== "followup") return false;
-  return task.status === "cancelled";
+  if (task.status === "cancelled") return true;
+  return isQualityReviewOwnerInterventionStatus(task.quality_review_status);
 }
 
 function isLaterTask(

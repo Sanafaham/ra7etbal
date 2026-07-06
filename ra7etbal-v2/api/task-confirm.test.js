@@ -133,6 +133,20 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.status).toBe('done');
     expect(patchBody.quality_review_status).toBe('approved');
     expect(patchBody.proof_image_path).toBe('task-images/u/t/proof/0.jpg');
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, options]) =>
+          String(url).includes('/rest/v1/tasks') &&
+          String(options?.method || '').toUpperCase() === 'DELETE',
+      ),
+    ).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, options]) =>
+          String(url).includes('/rest/v1/messages') &&
+          String(options?.method || '').toUpperCase() === 'DELETE',
+      ),
+    ).toBe(false);
   });
 
   it('approved review with 3 proof photos: all 3 sent to the vision review together, all 3 persisted', async () => {
@@ -746,6 +760,113 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
     const body = res.json.mock.calls[0][0];
     expect(body.proofImageUrls).toHaveLength(1);
     expect(body.proofImageUrls[0]).toContain('token=legacy');
+  });
+
+  it('returns the persisted quality review status/note so a fresh page load can rehydrate the locked state', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending',
+            confirmed_at: null, image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg',
+            attachment_count: 0, quality_review_status: 'uncertain', quality_review_note: 'No reference image to compare against.',
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.qualityReviewStatus).toBe('uncertain');
+    expect(body.qualityReviewNote).toBe('No reference image to compare against.');
+  });
+
+  it('locks the confirmation link: no upload slots are generated once quality review is "uncertain"', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending',
+            confirmed_at: null, image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg',
+            attachment_count: 0, quality_review_status: 'uncertain', quality_review_note: 'No reference image to compare against.',
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.proofUploadSlots).toEqual([]);
+    // No signing calls at all — locked tasks must not even attempt to sign upload URLs.
+    const signingCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/object/upload/sign/'));
+    expect(signingCalls).toHaveLength(0);
+  });
+
+  it('locks the confirmation link: no upload slots are generated once quality review is "fraud_suspected"', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending',
+            confirmed_at: null, image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg',
+            attachment_count: 0, quality_review_status: 'fraud_suspected', quality_review_note: 'This is the reference image, not a new photo.',
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.proofUploadSlots).toEqual([]);
+  });
+
+  it('protected: upload slots are still generated for "correction_required" — the recipient must still be able to resubmit', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'pending',
+            confirmed_at: null, image_path: null, proof_image_path: 'task-images/u/t/proof/0.jpg',
+            attachment_count: 0, quality_review_status: 'correction_required', quality_review_note: 'Please center the chicken.',
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }))
+      // 5 upload-slot signings — still allowed
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/0.jpg?token=t0' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/1.jpg?token=t1' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/2.jpg?token=t2' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/3.jpg?token=t3' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/4.jpg?token=t4' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.proofUploadSlots).toHaveLength(5);
+    expect(body.qualityReviewStatus).toBe('correction_required');
   });
 });
 

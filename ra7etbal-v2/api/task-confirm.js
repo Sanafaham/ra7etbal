@@ -64,7 +64,7 @@ async function handleGet(req, res) {
   try {
     const response = await fetch(
       supabaseUrl + '/rest/v1/tasks?id=eq.' + taskId +
-        '&select=id,user_id,description,assigned_to,status,confirmed_at,image_path,proof_image_path,attachment_count',
+        '&select=id,user_id,description,assigned_to,status,confirmed_at,image_path,proof_image_path,attachment_count,quality_review_status,quality_review_note',
       {
         headers: {
           apikey: serviceKey,
@@ -144,12 +144,22 @@ async function handleGet(req, res) {
       if (legacyUrl) proofImageUrls = [legacyUrl];
     }
 
+    // Locked for owner review — Carson already sent this proof to the owner
+    // (uncertain / fraud_suspected) and the assignee's turn is over. Unlike
+    // correction_required (where Carson explicitly asked for a new photo),
+    // there is nothing left for the recipient to do here, so no fresh
+    // upload slots are issued — the confirmation link must not offer another
+    // upload after this outcome. This is the single source of truth the
+    // confirm page's locked/final state is derived from.
+    const isLockedForOwnerReview =
+      task.quality_review_status === 'uncertain' || task.quality_review_status === 'fraud_suspected';
+
     // Fresh signed upload URLs for up to 5 proof-photo slots. Each slot's
     // signed URL is created with x-upsert so resubmitting to the same index
     // (e.g. after a Quality Intelligence rejection) overwrites cleanly
     // instead of failing with "Upload failed (400)".
     let proofUploadSlots = [];
-    if (task.status !== 'done' && task.user_id) {
+    if (task.status !== 'done' && !isLockedForOwnerReview && task.user_id) {
       proofUploadSlots = await createSignedProofUploadUrls({
         supabaseUrl,
         serviceKey,
@@ -171,6 +181,12 @@ async function handleGet(req, res) {
       proofImageUrls,
       proofUploadSlots,
       proofRequired: Boolean(task.assigned_to && (task.image_path || Number(task.attachment_count || 0) > 0)),
+      // Source of truth for the confirm page's post-reload state — without
+      // this, reopening the link after an uncertain/fraud_suspected outcome
+      // lost the "sent to owner" locked view and showed the normal upload
+      // form again, allowing endless re-upload.
+      qualityReviewStatus: task.quality_review_status ?? null,
+      qualityReviewNote: task.quality_review_note ?? null,
     });
   } catch (err) {
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });

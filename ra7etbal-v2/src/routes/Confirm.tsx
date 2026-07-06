@@ -54,6 +54,14 @@ interface TaskInfo {
   proofUploadSlots: ProofUploadSlot[];
   /** True when a delegated task has reference photo(s) and needs proof before completion. */
   proofRequired: boolean;
+  /**
+   * Persisted outcome of Carson's automated proof review (server source of
+   * truth). Rehydrated into `outcome` state on every load so reopening the
+   * confirmation link after an uncertain/fraud_suspected review shows the
+   * locked "sent to owner" state instead of the upload form again.
+   */
+  qualityReviewStatus: "approved" | "correction_required" | "uncertain" | "fraud_suspected" | null;
+  qualityReviewNote: string | null;
 }
 
 export default function Confirm() {
@@ -117,7 +125,19 @@ export default function Confirm() {
           proofImageUrls: Array.isArray(data.proofImageUrls) ? data.proofImageUrls : [],
           proofUploadSlots: Array.isArray(data.proofUploadSlots) ? data.proofUploadSlots : [],
           proofRequired: data.proofRequired === true,
+          qualityReviewStatus: data.qualityReviewStatus ?? null,
+          qualityReviewNote: data.qualityReviewNote ?? null,
         });
+        // Rehydrate the review outcome from the server so a fresh page
+        // load/reopen reflects the persisted state — see qualityReviewStatus
+        // above. Without this, `outcome` only ever came from a submission
+        // made during the same page visit, so reopening the link after an
+        // uncertain/fraud_suspected result lost the locked view and showed
+        // the upload form again (the original bug).
+        if (data.qualityReviewStatus) {
+          setOutcome(data.qualityReviewStatus);
+          setCorrectionNote(data.qualityReviewNote ?? null);
+        }
         setLoadState("ready");
       } catch (err) {
         if (cancelled) return;
@@ -239,8 +259,9 @@ export default function Confirm() {
       setCorrectionNote(data.correctionNote ?? null);
 
       // Quality Intelligence V1 — only an "approved" outcome marks the task
-      // done. correction_required / uncertain leave it pending so the
-      // recipient can submit corrected proof photos next time they open this link.
+      // done. correction_required leaves it pending for the recipient to
+      // resubmit; uncertain / fraud_suspected leave it pending but lock the
+      // link because the proof has moved to owner review.
       const submittedPreviewUrls = proofPhotos.map((p) => p.previewUrl);
       setInfo((prev) =>
         prev
