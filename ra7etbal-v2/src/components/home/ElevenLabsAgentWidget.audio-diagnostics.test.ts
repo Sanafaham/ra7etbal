@@ -34,18 +34,23 @@ describe("ElevenLabsAgentWidget — iPhone PWA audio diagnostics", () => {
     expect(SOURCE).toContain("Copy packet");
   });
 
-  it("lets an installed iPhone PWA enable diagnostics after the query string is lost", () => {
-    expect(SOURCE).toContain("const enableAudioDiagnostics = useCallback(");
-    expect(SOURCE).toContain('localStorage.setItem(CARSON_AUDIO_DIAGNOSTICS_STORAGE_KEY, "1")');
-    expect(SOURCE).toContain("setAudioDiagnosticsEnabled(true)");
-    expect(SOURCE).toContain('setAudioDiagStatus("Audio diagnostics enabled.")');
-    expect(SOURCE).toContain("{!audioDiagnosticsEnabled && (");
-    expect(SOURCE).toContain("Diagnostics");
+  it("has no in-page enable-diagnostics affordance visible to normal users — the query/localStorage flag is the only way in", () => {
+    // A previous version rendered an always-visible "Diagnostics" button (and
+    // beta banner) to every iOS Home Screen PWA user, regardless of the
+    // diagnostic flag. That leaked internal debugging UI to normal production
+    // users. There must be no callback/button left that enables diagnostics
+    // from inside the widget itself.
+    expect(SOURCE).not.toContain("const enableAudioDiagnostics");
+    expect(SOURCE).not.toContain("{!audioDiagnosticsEnabled && (");
   });
 
-  it("labels iPhone Home Screen PWA voice as beta while Regression 1 remains open", () => {
+  it("labels iPhone Home Screen PWA voice as beta only when the diagnostic flag is already on — never for normal users", () => {
     expect(SOURCE).toContain("const isIosStandalonePwa =");
     expect(SOURCE).toContain("iPhone PWA voice beta: audio quality under investigation.");
+    // The beta banner and the diagnostics panel (Speaker test / Mic loopback /
+    // Copy packet) must both require audioDiagnosticsEnabled — never just
+    // isIosStandalonePwa alone.
+    expect(SOURCE).toContain("{isIosStandalonePwa && audioDiagnosticsEnabled && (");
   });
 
   it("records environment, local probe, and session events in the existing diagnostics buffer", () => {

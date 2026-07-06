@@ -811,16 +811,6 @@ export default function ElevenLabsAgentWidget({
   const isIosStandalonePwa =
     audioEnvironmentRef.current.isIosLike && audioEnvironmentRef.current.standaloneDisplay;
 
-  const enableAudioDiagnostics = useCallback(() => {
-    try {
-      localStorage.setItem(CARSON_AUDIO_DIAGNOSTICS_STORAGE_KEY, "1");
-    } catch {
-      // Diagnostics are still enabled for this mounted sheet.
-    }
-    setAudioDiagnosticsEnabled(true);
-    setAudioDiagStatus("Audio diagnostics enabled.");
-  }, []);
-
   // Notify parent whenever call status changes.
   useEffect(() => { onCallStatusChange?.(status); }, [status, onCallStatusChange]);
   useEffect(() => {
@@ -4710,7 +4700,6 @@ export default function ElevenLabsAgentWidget({
           const modeInfo = {
             phase: "mode_change",
             sdkMode: m,
-            targetMicMuted: m === "speaking",
             sessionGeneration,
             mediaElements: getHtmlMediaElementState(),
             toolInFlight: toolInFlightRef.current,
@@ -4729,17 +4718,19 @@ export default function ElevenLabsAgentWidget({
               activeExecuteLatencyRef.current = null;
             }
           }
-          try {
-            conversationRef.current?.setMicMuted(m === "speaking");
-          } catch (err) {
-            console.warn("[carson-audio] failed to update microphone mute state:", err);
-            recordCarsonDiagnostic("carson-audio-session", {
-              phase: "mic_mute_error",
-              sdkMode: m,
-              error: err instanceof Error ? err.message : String(err),
-              at: new Date().toISOString(),
-            });
-          }
+          // No app-level setMicMuted() here. WebRTC/LiveKit already runs
+          // full-duplex with its own echo cancellation and native barge-in;
+          // muting the mic on every speaking<->listening transition forced
+          // LiveKit to mute/unmute (and sometimes re-acquire) the underlying
+          // track on every single turn. On iOS Home Screen PWA that produced
+          // audio-unit reconfiguration artifacts during Carson's speech
+          // (reported as mechanical "printing machine" noise) and a capture
+          // dead-window right as the user started replying (clipped/garbled
+          // transcripts, e.g. "Ask Suresh to call me" -> "Call me"). Removing
+          // this restores the SDK's designed full-duplex operation. If
+          // self-interruption/echo on speakerphone ever surfaces, tune
+          // interruption sensitivity in the ElevenLabs dashboard rather than
+          // reinstating app-level half-duplex muting.
           setMode(m === "speaking" ? "speaking" : "listening");
         },
         onMessage: ({ role, message, event_id }) => {
@@ -5317,20 +5308,16 @@ export default function ElevenLabsAgentWidget({
         </button>
       )}
 
-      {isIosStandalonePwa && (
+      {/* Beta-status banner: only for testers already running with the
+          diagnostic flag on (?carson_audio_diag=1) — never shown to normal
+          production users. There is no in-page "enable diagnostics" toggle;
+          the query-string/localStorage flag (readCarsonAudioDiagnosticsEnabled)
+          is the one and only way in, by design. */}
+      {isIosStandalonePwa && audioDiagnosticsEnabled && (
         <div className="mt-1 flex max-w-[280px] flex-wrap items-center gap-1.5 px-2">
           <p className="text-[11px] font-medium text-danger/80">
             iPhone PWA voice beta: audio quality under investigation.
           </p>
-          {!audioDiagnosticsEnabled && (
-            <button
-              type="button"
-              onClick={enableAudioDiagnostics}
-              className="rounded-full border border-danger/20 px-2 py-0.5 text-[10px] font-semibold text-danger/80"
-            >
-              Diagnostics
-            </button>
-          )}
         </div>
       )}
 
