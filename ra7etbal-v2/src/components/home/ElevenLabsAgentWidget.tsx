@@ -1259,11 +1259,17 @@ export default function ElevenLabsAgentWidget({
         "@elevenlabs/client": "1.14.0",
       },
       sessionAudioConfig: {
-        connectionType: "websocket",
-        format: "pcm",
-        sampleRate: 16_000,
-        requestedOutputFormat: "pcm_16000",
-        note: "The SDK exposes format/sampleRate, not output_format/outputFormat. Conversation metadata below shows the server-returned formats.",
+        connectionType: "sdk-default-public-voice",
+        format: "sdk-default",
+        sampleRate: "sdk-default",
+        rejectedExperiment: {
+          connectionType: "websocket",
+          format: "pcm",
+          sampleRate: 16_000,
+          requestedOutputFormat: "pcm_16000",
+          reason: "Public browser WebSocket voice session did not connect in iPhone Home Screen PWA.",
+        },
+        note: "The SDK exposes format/sampleRate, not output_format/outputFormat. WebSocket/pcm_16000 was reverted after connection failure; diagnostics remain active.",
       },
       commitsTried: [
         "9562d65 teardown guard",
@@ -1271,6 +1277,7 @@ export default function ElevenLabsAgentWidget({
         "18711586 ElevenLabs SDK upgrade",
         "1b4223f invalid transcript guard",
         "f4e90a1 iPhone PWA audio diagnostics",
+        "0eab7e5 WebSocket/pcm_16000 experiment - reverted because Carson could not connect",
       ],
       symptoms: [
         "iPhone Home Screen PWA produces printer/machine noise around Carson",
@@ -4479,11 +4486,10 @@ export default function ElevenLabsAgentWidget({
 
       const conv = await Conversation.startSession({
         agentId,
-        // Regression 1 / ElevenLabs support: avoid the mobile WebRTC/LiveKit
-        // init path and request the SDK's public PCM 16 kHz media-device path.
-        connectionType: "websocket",
-        format: "pcm",
-        sampleRate: 16_000,
+        // Regression 1: keep the SDK's public browser voice connection path.
+        // The WebSocket plus 16 kHz PCM experiment prevented Carson from
+        // connecting in the iPhone Home Screen PWA, so those session changes
+        // stay out of this active config.
         // iOS gets 0ms by default (Android gets 3000ms) between the SDK's own
         // mic acquisition and its audio pipeline setup. Give the iOS audio
         // session time to finish switching into play-and-record before the
@@ -5035,6 +5041,28 @@ export default function ElevenLabsAgentWidget({
       if (!isCurrentSession()) return;
       startInFlightRef.current = false;
       clearCarsonSessionTimers();
+      const errorInfo = {
+        message: err instanceof Error ? err.message : String(err),
+        name: err instanceof Error ? err.name : null,
+        stack: err instanceof Error ? err.stack?.slice(0, 800) ?? null : null,
+        sessionGeneration,
+        mediaElements: getHtmlMediaElementState(),
+        environment: getCarsonAudioEnvironment(),
+        sessionAudioConfig: {
+          connectionType: "sdk-default-public-voice",
+          rejectedExperiment: "websocket/pcm_16000",
+        },
+        at: new Date().toISOString(),
+      };
+      console.error("[carson-start-session-failed]", errorInfo);
+      recordCarsonDiagnostic("carson-error", {
+        kind: "start_session_failed",
+        ...errorInfo,
+      });
+      recordCarsonDiagnostic("carson-audio-session", {
+        phase: "start_session_failed",
+        details: errorInfo,
+      });
       // Show the real error message so the user knows what went wrong.
       // Do not auto-dismiss — the error persists until the user closes it.
       setStatus("error");

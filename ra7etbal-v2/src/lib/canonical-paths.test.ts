@@ -490,14 +490,12 @@ describe("canonical path source adapters", () => {
     expect(startSessionIndex).toBeGreaterThan(timeoutIndex);
     expect(startSessionIndex - timeoutIndex).toBeLessThan(800);
     expect(widget.slice(timeoutIndex, startSessionIndex)).toContain("60_000");
-    // Regression 1: ElevenLabs support identified mobile WebRTC/LiveKit init as
-    // a likely audio corruption source, so Carson uses the SDK's single public
-    // websocket session path while requesting PCM 16 kHz audio.
-    expect(widget.slice(startSessionIndex, startSessionIndex + 500)).toContain(
-      'connectionType: "websocket"',
-    );
-    expect(widget.slice(startSessionIndex, startSessionIndex + 500)).toContain('format: "pcm"');
-    expect(widget.slice(startSessionIndex, startSessionIndex + 500)).toContain("sampleRate: 16_000");
+    // Regression 1: the websocket/pcm_16000 browser PWA experiment prevented
+    // Carson from connecting, so the single SDK public voice path must not
+    // force a connectionType/format/sampleRate override here.
+    expect(widget.slice(startSessionIndex, startSessionIndex + 500)).not.toContain("connectionType");
+    expect(widget.slice(startSessionIndex, startSessionIndex + 500)).not.toContain("sampleRate");
+    expect(widget.slice(startSessionIndex, startSessionIndex + 500)).not.toContain("format:");
   });
 
   it("documents confirmation URL canonical param and legacy compatibility", () => {
