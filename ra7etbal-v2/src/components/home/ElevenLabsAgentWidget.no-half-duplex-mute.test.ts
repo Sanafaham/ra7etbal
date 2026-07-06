@@ -67,18 +67,47 @@ describe("ElevenLabsAgentWidget — no app-level half-duplex mic muting", () => 
     expect(modeChangeBlock).toContain('setMode(m === "speaking" ? "speaking" : "listening");');
   });
 
-  it("the only remaining setMicMuted calls are one-time mutes right before endSession during teardown, not per-turn", () => {
-    // Both surviving call sites must be immediately followed by the shared
-    // endConversationSession teardown helper — i.e. "mute because we are
-    // hanging up", never "mute because the agent started speaking".
-    const occurrences = SOURCE.split("setMicMuted(true)");
-    expect(occurrences.length - 1).toBe(2);
-    for (let i = 0; i < occurrences.length - 1; i++) {
-      const after = occurrences[i + 1].slice(0, 300);
-      expect(after).toContain("endConversationSession(conv,");
-    }
-    // Confirms no other setMicMuted call (as opposed to the explanatory
-    // comment above) exists anywhere else in the file.
-    expect(SOURCE.split(".setMicMuted(").length - 1).toBe(2);
+  it("the only remaining raw setMicMuted calls are one-time mutes right before endSession during teardown, not per-turn", () => {
+    // Exactly two raw .setMicMuted( calls in the whole file: one inside the
+    // shared muteConversationBeforeTeardown helper (used by the normal
+    // teardown path), and one in the stale-connection-cleanup branch of
+    // startCall (deliberately not routed through the shared helper — see
+    // that branch's own comment). Neither is reachable from onModeChange.
+    expect(SOURCE.split(".setMicMuted(true)").length - 1).toBe(2);
+
+    const helperBlock = blockBetween(
+      "const muteConversationBeforeTeardown = useCallback(",
+      "const endConversationSession = useCallback(",
+    );
+    expect(helperBlock.split(".setMicMuted(true)").length - 1).toBe(1);
+
+    const staleCleanupBlock = blockBetween(
+      '"[carson-lifecycle] stale connection cleaned up"',
+      "endConversationSession(conv,",
+    );
+    expect(staleCleanupBlock.split(".setMicMuted(true)").length - 1).toBe(1);
+  });
+
+  it("forceCleanupSession mutes through the shared helper immediately before ending the session — not inline", () => {
+    const conclusionBlock = blockBetween(
+      "if (conv) {\n        muteConversationBeforeTeardown(conv,",
+      "      stopLocalAudioPlayback();",
+    );
+    expect(conclusionBlock).toContain("muteConversationBeforeTeardown(conv, teardownReason);");
+    expect(conclusionBlock).toContain("endConversationSession(conv,");
+  });
+
+  it("counts every legitimate mute call per session and would flag a second one as an anomaly", () => {
+    const helperBlock = blockBetween(
+      "const muteConversationBeforeTeardown = useCallback(",
+      "const endConversationSession = useCallback(",
+    );
+    expect(helperBlock).toContain("micMuteCallCountRef.current += 1;");
+    expect(helperBlock).toContain("if (micMuteCallCountRef.current > 1) {");
+    expect(helperBlock).toContain('phase: "mic_mute_anomaly"');
+    // Reset once per new session, alongside the other per-session counters —
+    // otherwise a legitimate mute from a PREVIOUS session would falsely trip
+    // the anomaly check on session two.
+    expect(SOURCE).toContain("micMuteCallCountRef.current = 0;");
   });
 });

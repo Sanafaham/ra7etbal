@@ -861,6 +861,27 @@ export default function ElevenLabsAgentWidget({
   const connectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const visibilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ── Reliability hardening (post-mortem: app-level half-duplex mic muting) ──
+  /**
+   * Timestamp (performance.now()) the moment the current session's onConnect
+   * fired. Reset to null on every new attempt and on teardown. Used to flag
+   * unusually short sessions — the same churn signature (rapid teardown +
+   * immediate restart) that masked the original mic-mute/teardown-race bugs.
+   */
+  const sessionConnectedAtRef = useRef<number | null>(null);
+  /**
+   * Counts conv.setMicMuted() calls for the CURRENT session generation only
+   * (reset on every new startCall attempt). Exactly one legitimate call is
+   * expected per session — the single mute-before-endSession in
+   * muteConversationBeforeTeardown. Any second call in the same session is
+   * the signature of the regressed behavior (per-turn half-duplex muting)
+   * and is recorded as an anomaly so it surfaces long before a human notices
+   * audio corruption again.
+   */
+  const micMuteCallCountRef = useRef(0);
+  /** Per-session count of transcript captures rejected by evaluateCarsonTranscriptCapture. */
+  const invalidCaptureCountRef = useRef(0);
+
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
@@ -4108,6 +4129,37 @@ export default function ElevenLabsAgentWidget({
   }, []);
 
   /**
+   * The ONE place allowed to call conv.setMicMuted(). Always paired with a
+   * teardown (mute right before endSession) — never called mid-conversation.
+   * Counts calls per session generation via micMuteCallCountRef; a second
+   * call within the same session is exactly the signature of the regressed
+   * per-turn half-duplex muting bug and is recorded as an anomaly.
+   */
+  const muteConversationBeforeTeardown = useCallback(
+    (conv: NonNullable<typeof conversationRef.current>, reason: string) => {
+      micMuteCallCountRef.current += 1;
+      try {
+        conv.setMicMuted(true);
+      } catch (err) {
+        console.warn("[carson-lifecycle] microphone mute during cleanup failed", err);
+      }
+      if (micMuteCallCountRef.current > 1) {
+        const anomalyInfo = {
+          reason,
+          callCountThisSession: micMuteCallCountRef.current,
+          at: new Date().toISOString(),
+        };
+        console.warn("[carson-audio] mic-mute anomaly — more than one setMicMuted call in one session", anomalyInfo);
+        recordCarsonDiagnostic("carson-audio-session", {
+          phase: "mic_mute_anomaly",
+          ...anomalyInfo,
+        });
+      }
+    },
+    [],
+  );
+
+  /**
    * Ends a conversation's underlying session while holding teardownInFlightRef
    * so startCall's guard can't open a second, overlapping mic/WebRTC session
    * before this one's teardown truly finishes. Guarded by its own timeout so
@@ -4138,6 +4190,38 @@ export default function ElevenLabsAgentWidget({
     [],
   );
 
+  /**
+   * Reliability hardening: a session that connects and is torn down again
+   * within seconds — for a reason the user didn't ask for — is the churn
+   * signature behind the original teardown-race/mute regressions (rapid
+   * disconnect + immediate reconnect while the previous session's audio
+   * pipeline hadn't actually released the mic yet). Called from every real
+   * teardown-triggering path (forceCleanupSession, onDisconnect, onError) so
+   * none of them can silently skip the check. Always clears
+   * sessionConnectedAtRef, whether or not the duration was short, so a stale
+   * timestamp can never leak into the next session's measurement.
+   */
+  const checkForSessionChurn = useCallback((teardownReason: string) => {
+    const isUserInitiatedTeardown =
+      teardownReason === "manual-end" || teardownReason === "manual-end-button";
+    if (sessionConnectedAtRef.current != null && !isUserInitiatedTeardown) {
+      const durationMs = Math.round(performance.now() - sessionConnectedAtRef.current);
+      if (durationMs < 4_000) {
+        const shortSessionInfo = {
+          teardownReason,
+          durationMs,
+          at: new Date().toISOString(),
+        };
+        console.warn("[carson-audio] short-lived session torn down — possible churn", shortSessionInfo);
+        recordCarsonDiagnostic("carson-audio-session", {
+          phase: "short_session",
+          ...shortSessionInfo,
+        });
+      }
+    }
+    sessionConnectedAtRef.current = null;
+  }, []);
+
   const forceCleanupSession = useCallback(
     (teardownReason: string, options?: { showEndedMessage?: boolean; clearError?: boolean }) => {
       const previousGeneration = sessionGenerationRef.current;
@@ -4156,6 +4240,7 @@ export default function ElevenLabsAgentWidget({
       console.warn("[carson-lifecycle] forced cleanup", teardownInfo);
       console.warn("[carson-teardown]", teardownInfo);
       recordCarsonDiagnostic("carson-teardown", teardownInfo);
+      checkForSessionChurn(teardownReason);
 
       const userId = useAuthStore.getState().user?.id ?? null;
       const transcript = [...sessionTranscriptRef.current];
@@ -4171,11 +4256,7 @@ export default function ElevenLabsAgentWidget({
       invalidCaptureRef.current = null;
 
       if (conv) {
-        try {
-          conv.setMicMuted(true);
-        } catch (err) {
-          console.warn("[carson-lifecycle] microphone mute during cleanup failed", err);
-        }
+        muteConversationBeforeTeardown(conv, teardownReason);
         endConversationSession(conv, (err) => {
           console.warn("[carson-lifecycle] endSession during cleanup failed", err);
         });
@@ -4203,9 +4284,11 @@ export default function ElevenLabsAgentWidget({
       }
     },
     [
+      checkForSessionChurn,
       clearCarsonSessionTimers,
       clearPendingPhotoPreviews,
       endConversationSession,
+      muteConversationBeforeTeardown,
       releaseMicWarmupStream,
       saveVoiceSessionSnapshot,
       stopLocalAudioPlayback,
@@ -4317,6 +4400,9 @@ export default function ElevenLabsAgentWidget({
     createdReminderKeysRef.current.clear();
     recurringRawRef.current = null;
     invalidCaptureRef.current = null;
+    sessionConnectedAtRef.current = null;
+    micMuteCallCountRef.current = 0;
+    invalidCaptureCountRef.current = 0;
     setLastCarsonMessage(null);
     setLastUserTranscript(null);
     if (userTranscriptTimerRef.current) {
@@ -4455,6 +4541,30 @@ export default function ElevenLabsAgentWidget({
       mediaElements: getHtmlMediaElementState(),
       at: new Date().toISOString(),
     });
+
+    // Reliability hardening — defense in depth: startCall's entry guard
+    // already refuses to reach this point while conversationRef.current is
+    // set, but a lot of async work (memory/weather loads, the warm-up await)
+    // runs between that guard and here. This second checkpoint, right before
+    // the one and only Conversation.startSession call, means a future code
+    // change that removes or weakens the entry guard can never silently
+    // reopen the overlapping-session bug — it fails loud, with evidence,
+    // instead of opening a second live mic/WebRTC session.
+    if (conversationRef.current) {
+      const duplicateInfo = {
+        sessionGeneration,
+        activeGeneration: sessionGenerationRef.current,
+        at: new Date().toISOString(),
+      };
+      console.error("[carson-audio] duplicate session blocked just before startSession", duplicateInfo);
+      recordCarsonDiagnostic("carson-audio-session", {
+        phase: "duplicate_session_blocked",
+        ...duplicateInfo,
+      });
+      releaseMicWarmupStream();
+      startInFlightRef.current = false;
+      return;
+    }
 
     try {
       // ── ElevenLabs connection safety rule ────────────────────────────────
@@ -4766,12 +4876,14 @@ export default function ElevenLabsAgentWidget({
                 at: receivedAt,
               };
               invalidCaptureRef.current = invalidCapture;
+              invalidCaptureCountRef.current += 1;
               recurringRawRef.current = null;
               lastDirectToolSuccessRef.current = null;
               activeExecuteLatencyRef.current = null;
               console.warn("[carson-invalid-capture:user]", invalidCapture);
               recordCarsonDiagnostic("carson-direct-tool", {
                 kind: "invalid_capture_user_transcript",
+                sessionInvalidCaptureCount: invalidCaptureCountRef.current,
                 ...invalidCapture,
               });
               setLastUserTranscript(CARSON_REPEAT_PROMPT);
@@ -4890,8 +5002,11 @@ export default function ElevenLabsAgentWidget({
             details: disconnectInfo,
             mediaElements: getHtmlMediaElementState(),
             transcriptCount: sessionTranscriptRef.current.length,
+            invalidCaptureCount: invalidCaptureCountRef.current,
+            micMuteCallCount: micMuteCallCountRef.current,
             at: new Date().toISOString(),
           });
+          checkForSessionChurn(disconnectInfo.reason);
 
           // Capture refs before any async work so they can be reset immediately.
           const userId = useAuthStore.getState().user?.id ?? null;
@@ -4926,8 +5041,11 @@ export default function ElevenLabsAgentWidget({
             sessionGeneration,
             details: errorInfo,
             mediaElements: getHtmlMediaElementState(),
+            invalidCaptureCount: invalidCaptureCountRef.current,
+            micMuteCallCount: micMuteCallCountRef.current,
             at: new Date().toISOString(),
           });
+          checkForSessionChurn("sdk-error");
 
           // Keep error visible until the user closes it.
           sessionGenerationRef.current += 1;
@@ -4949,6 +5067,7 @@ export default function ElevenLabsAgentWidget({
         onConnect: () => {
           if (ignoreStaleCallback("connect")) return;
           startInFlightRef.current = false;
+          sessionConnectedAtRef.current = performance.now();
           if (connectTimeoutRef.current) {
             clearTimeout(connectTimeoutRef.current);
             connectTimeoutRef.current = null;
@@ -5002,6 +5121,11 @@ export default function ElevenLabsAgentWidget({
           activeGeneration: sessionGenerationRef.current,
           at: new Date().toISOString(),
         });
+        // Deliberately NOT routed through muteConversationBeforeTeardown: this
+        // conv belongs to an abandoned generation that never became the
+        // tracked current session (superseded before onConnect), so counting
+        // it against micMuteCallCountRef would cause a false-positive
+        // mic-mute anomaly the next time the real current session tears down.
         try {
           conv.setMicMuted(true);
         } catch {
