@@ -402,24 +402,29 @@ export default function App() {
   return (
     <div className="min-h-dvh bg-cream text-ink">
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <header className="mx-auto flex max-w-3xl items-center justify-between px-5 pt-5" style={{ paddingTop: "max(20px, env(safe-area-inset-top))" }}>
-        <div className="flex items-center gap-2 px-1 py-1">
-          <span aria-hidden className="text-xl">🌿</span>
-          <span className="font-semibold text-ink">راحة بال</span>
-        </div>
-
+      <header className="relative mx-auto max-w-3xl px-5 pt-4" style={{ paddingTop: "max(18px, env(safe-area-inset-top))" }}>
         <button
           type="button"
           aria-label="More options"
           onClick={() => setMoreOpen(true)}
-          className="flex h-10 w-10 items-center justify-center rounded-full border border-sage/15 bg-white/70 shadow-[0_1px_4px_-1px_rgba(20,20,20,0.08)] transition hover:bg-white/90 active:bg-white/95 active:scale-95"
+          className="absolute right-4 top-2 flex h-10 w-10 items-center justify-center rounded-xl border-none bg-transparent text-ink transition hover:bg-ink/5 active:scale-95"
+          style={{ top: "max(2px, env(safe-area-inset-top))" }}
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-            <circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none" />
-            <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
-            <circle cx="19" cy="12" r="1.2" fill="currentColor" stroke="none" />
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M19.14 12.94a7.49 7.49 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.51 7.51 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.14.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.65 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.49.39 1.04.7 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.51 7.51 0 0 0 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64Z" />
+            <circle cx="12" cy="12" r="2.6" />
           </svg>
         </button>
+
+        <div className="flex flex-col items-center pb-4 pt-4 text-center">
+          <img src="/ra7etbal-logo-gold.png" alt="" aria-hidden className="mb-2 h-8 w-auto object-contain" />
+          <span style={{ fontFamily: "var(--font-sans)" }} className="text-[22px] font-medium leading-none tracking-[-0.005em] text-ink">
+            Ra7etbal
+          </span>
+          <span dir="rtl" style={{ fontFamily: "var(--font-sans)" }} className="mt-1 text-[13px] font-medium tracking-[0.03em] text-ink">
+            راحة بال
+          </span>
+        </div>
       </header>
 
       {/* ── Main content ────────────────────────────────────────────────── */}

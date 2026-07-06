@@ -3,7 +3,7 @@
  * Tabs: Needs You / Waiting / To-do / Notes / Inbox / Automations / History
  * Deep-link: /updates?tab=needs-you (default)
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
@@ -43,6 +43,47 @@ export default function Updates() {
 
   function setTab(tab: Tab) {
     setSearchParams({ tab }, { replace: true });
+  }
+
+  // ── Category chip bar — slow idle auto-scroll, pauses on interaction ──
+  // Selection/content is driven only by clicks (setTab above); auto-scroll
+  // never changes which tab's content is shown.
+  const chipScrollerRef = useRef<HTMLDivElement>(null);
+  const chipAutoPausedRef = useRef(false);
+  const chipResumeTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const el = chipScrollerRef.current;
+    if (!el) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+
+    const id = window.setInterval(() => {
+      if (chipAutoPausedRef.current) return;
+      const loopWidth = el.scrollWidth / 2;
+      if (loopWidth <= 0) return;
+      el.scrollLeft += 0.6;
+      if (el.scrollLeft >= loopWidth) el.scrollLeft -= loopWidth;
+    }, 20);
+
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (chipResumeTimerRef.current) window.clearTimeout(chipResumeTimerRef.current);
+    };
+  }, []);
+
+  function pauseChipAutoScroll() {
+    chipAutoPausedRef.current = true;
+    if (chipResumeTimerRef.current) window.clearTimeout(chipResumeTimerRef.current);
+  }
+
+  function scheduleChipAutoScrollResume() {
+    if (chipResumeTimerRef.current) window.clearTimeout(chipResumeTimerRef.current);
+    chipResumeTimerRef.current = window.setTimeout(() => {
+      chipAutoPausedRef.current = false;
+    }, 1200);
   }
 
   const { userId, tasks, tasksStatus, tasksError, messages, reload } = useTaskList();
@@ -130,34 +171,49 @@ export default function Updates() {
     <section className="space-y-4">
       {/* ── Header ── */}
       <header>
-        <h1 className="text-xl font-semibold text-ink">Updates</h1>
-        <p className="text-xs text-ink/55">What Carson is managing for you.</p>
+        <h1 style={{ fontFamily: "var(--font-display)" }} className="text-[32px] font-semibold leading-none tracking-[-0.005em] text-ink">Updates</h1>
+        <p className="mt-1.5 text-[13px] font-medium text-text-soft">What Carson is managing for you.</p>
       </header>
 
-      {/* ── Segmented control ── */}
-      <div
-        className="flex gap-1 overflow-x-auto rounded-2xl border border-sage/15 bg-white/60 p-1"
-        role="tablist"
-        aria-label="Updates sections"
-        style={{ scrollbarWidth: "none" }}
-      >
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            onClick={() => setTab(tab.id)}
-            className={
-              "shrink-0 rounded-xl px-3 py-1.5 text-xs font-medium transition " +
-              (activeTab === tab.id
-                ? "bg-sage text-white shadow-sm"
-                : "text-ink/65 hover:text-ink/80 hover:bg-sage/8")
-            }
-          >
-            {tab.label}
-          </button>
-        ))}
+      {/* ── Category chips — auto-scrolls slowly when idle, loops, pauses on interaction ── */}
+      <div className="relative -mx-5">
+        <div
+          ref={chipScrollerRef}
+          className="flex gap-2 overflow-x-auto px-5 py-0.5"
+          role="tablist"
+          aria-label="Updates sections"
+          style={{ scrollbarWidth: "none" }}
+          onPointerDown={pauseChipAutoScroll}
+          onPointerUp={scheduleChipAutoScrollResume}
+          onPointerLeave={scheduleChipAutoScrollResume}
+          onTouchStart={pauseChipAutoScroll}
+          onTouchEnd={scheduleChipAutoScrollResume}
+          onWheel={() => { pauseChipAutoScroll(); scheduleChipAutoScrollResume(); }}
+        >
+          {[...TABS, ...TABS].map((tab, i) => (
+            <button
+              key={tab.id + "-" + i}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              onClick={() => setTab(tab.id)}
+              className={
+                "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[10px] border px-4 py-2 text-[13.5px] font-semibold transition " +
+                (activeTab === tab.id
+                  ? "border-sage bg-sage text-white"
+                  : "border-border text-ink hover:bg-ink/[0.03]")
+              }
+            >
+              <span
+                aria-hidden
+                className={"h-[5px] w-[5px] shrink-0 rounded-full bg-gold " + (activeTab === tab.id ? "opacity-100" : "opacity-0")}
+              />
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-cream to-transparent" />
+        <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-cream to-transparent" />
       </div>
 
       {/* ── Error ── */}
@@ -183,7 +239,7 @@ export default function Updates() {
       {activeTab === "needs-you" && !initialLoading && tasksStatus === "ready" && (
         <div className="space-y-3">
           {brief.needsAttention.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-sage/20 bg-white/40 px-4 py-6 text-sm text-ink/45">
+            <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
               Nothing needs your attention right now.
             </div>
           ) : (
@@ -258,7 +314,7 @@ export default function Updates() {
       {activeTab === "waiting" && !initialLoading && tasksStatus === "ready" && (
         <div className="space-y-3">
           {brief.waitingOnOthers.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-sage/20 bg-white/40 px-4 py-6 text-sm text-ink/45">
+            <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
               Nothing is waiting on others right now.
             </div>
           ) : (
@@ -311,7 +367,7 @@ export default function Updates() {
           </div>
 
           {doneTasks.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-sage/20 bg-white/40 px-4 py-6 text-sm text-ink/45">
+            <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
               No completed items yet.
             </div>
           ) : (

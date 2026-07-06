@@ -142,7 +142,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         <input
           id={nameId} type="text" value={name} onChange={(e) => setName(e.target.value)}
           placeholder="e.g. Grace" autoComplete="off" disabled={!!busy}
-          className="w-full rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+          className="w-full rounded-xl border border-border bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
         />
       </div>
 
@@ -151,7 +151,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         <input
           id={roleId} list={roleListId} type="text" value={role} onChange={(e) => setRole(e.target.value)}
           placeholder="e.g. House Manager" autoComplete="off" disabled={!!busy}
-          className="w-full rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+          className="w-full rounded-xl border border-border bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
         />
         <datalist id={roleListId}>
           {ROLE_SUGGESTIONS.map((r) => <option key={r} value={r} />)}
@@ -166,7 +166,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
           id={notesId} value={notes} onChange={(e) => setNotes(e.target.value)}
           placeholder="Tell Carson who this person is, what they do, and anything important to remember."
           rows={3} disabled={!!busy}
-          className="w-full resize-none rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+          className="w-full resize-none rounded-xl border border-border bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
         />
       </div>
 
@@ -188,12 +188,12 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         <input
           id={phoneId} type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
           placeholder="+971 50 000 0000" autoComplete="tel" inputMode="tel" disabled={!!busy}
-          className="w-full rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+          className="w-full rounded-xl border border-border bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
         />
       </div>
 
       {/* ── WhatsApp Consent ──────────────────────────────────────── */}
-      <div className="rounded-2xl border border-sage/20 bg-white px-4 py-3">
+      <div className="rounded-2xl border border-border bg-white px-4 py-3">
         <div className="flex items-start gap-3">
           <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
             <input
@@ -225,7 +225,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
       </div>
 
       {/* ── Carson Intelligence ────────────────────────────────────── */}
-      <div className="rounded-2xl border border-sage/15 bg-sage/3">
+      <div className="rounded-2xl border border-border bg-ink/[0.02]">
         <button
           type="button"
           onClick={() => setShowIntelligence((v) => !v)}
@@ -245,7 +245,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         </button>
 
         {showIntelligence && (
-          <div className="space-y-4 border-t border-sage/10 px-4 pb-4 pt-4">
+          <div className="space-y-4 border-t border-border px-4 pb-4 pt-4">
             <p className="text-[11px] leading-relaxed text-ink/45">
               These fields teach Carson how to delegate to this person and when to follow up. None are required.
             </p>
@@ -259,7 +259,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
                 type="text" value={relationship} onChange={(e) => setRelationship(e.target.value)}
                 placeholder="e.g. Sana's brother, household staff, my daughter"
                 disabled={!!busy}
-                className="w-full rounded-xl border border-sage/25 bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+                className="w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
               />
             </div>
 
@@ -272,7 +272,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
                 value={responsibilities} onChange={(e) => setResponsibilities(e.target.value)}
                 placeholder="What this person handles (e.g. cleaning, laundry, room preparation)"
                 rows={2} disabled={!!busy}
-                className="w-full resize-none rounded-xl border border-sage/25 bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+                className="w-full resize-none rounded-xl border border-border bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
               />
             </div>
 
@@ -286,7 +286,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
                   value={reliabilityLevel}
                   onChange={(e) => setReliabilityLevel(e.target.value as ReliabilityLevel | "")}
                   disabled={!!busy}
-                  className="w-full rounded-xl border border-sage/25 bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+                  className="w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
                 >
                   <option value="">— not set —</option>
                   {RELIABILITY_OPTIONS.map((o) => (
@@ -302,7 +302,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
                   value={followUpLevel}
                   onChange={(e) => setFollowUpLevel(e.target.value as FollowUpLevel | "")}
                   disabled={!!busy}
-                  className="w-full rounded-xl border border-sage/25 bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+                  className="w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
                 >
                   <option value="">— not set —</option>
                   {FOLLOWUP_OPTIONS.map((o) => (
@@ -321,7 +321,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
                 value={delegationGuidance} onChange={(e) => setDelegationGuidance(e.target.value)}
                 placeholder="How Carson should assign tasks to this person (e.g. always loop in Grace, needs step-by-step instructions)"
                 rows={2} disabled={!!busy}
-                className="w-full resize-none rounded-xl border border-sage/25 bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+                className="w-full resize-none rounded-xl border border-border bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
               />
             </div>
 
@@ -334,7 +334,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
                 type="text" value={shouldNotAssign} onChange={(e) => setShouldNotAssign(e.target.value)}
                 placeholder="e.g. financial tasks, driving, unsupervised decisions"
                 disabled={!!busy}
-                className="w-full rounded-xl border border-sage/25 bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+                className="w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
               />
             </div>
 
@@ -347,7 +347,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
                 type="text" value={escalateTo} onChange={(e) => setEscalateTo(e.target.value)}
                 placeholder="e.g. Grace"
                 disabled={!!busy}
-                className="w-full rounded-xl border border-sage/25 bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+                className="w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
               />
             </div>
 
@@ -360,7 +360,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
                 type="text" value={communicationStyle} onChange={(e) => setCommunicationStyle(e.target.value)}
                 placeholder="e.g. Short WhatsApp messages, prefers voice notes, needs written instructions"
                 disabled={!!busy}
-                className="w-full rounded-xl border border-sage/25 bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+                className="w-full rounded-xl border border-border bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
               />
             </div>
 
@@ -375,7 +375,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         {onDelete && !confirmingDelete && (
           <button
             type="button" onClick={() => setConfirmingDelete(true)} disabled={!!busy}
-            className="mr-auto rounded-full border border-rose-300 bg-white px-4 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-50 disabled:opacity-50"
+            className="mr-auto rounded-full border border-danger/30 bg-white px-4 py-2 text-sm font-medium text-danger transition hover:bg-danger/8 disabled:opacity-50"
           >
             Delete
           </button>
@@ -385,13 +385,13 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
             <span className="text-xs text-ink/70">Are you sure?</span>
             <button
               type="button" onClick={() => setConfirmingDelete(false)} disabled={!!busy}
-              className="rounded-full border border-sage/30 bg-white px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-cream disabled:opacity-50"
+              className="rounded-full border border-border bg-white px-3 py-1.5 text-xs font-medium text-ink transition hover:bg-cream disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="button" onClick={handleDelete} disabled={!!busy}
-              className="inline-flex items-center gap-2 rounded-full bg-rose-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-full bg-danger px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
             >
               {busy === "delete" && <Spinner size={12} />}
               {busy === "delete" ? "Deleting…" : "Delete"}
@@ -400,7 +400,7 @@ export default function PersonForm({ initial, onSubmit, onCancel, onDelete }: Pr
         )}
         <button
           type="button" onClick={onCancel} disabled={!!busy}
-          className="rounded-full border border-sage/30 bg-white px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:bg-cream disabled:opacity-50"
+          className="rounded-full border border-border bg-white px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:bg-cream disabled:opacity-50"
         >
           Cancel
         </button>

@@ -145,7 +145,7 @@ export default function TaskCard({
     <article
       className={
         "rounded-2xl border bg-white/85 p-4 shadow-sm transition " +
-        (isDone ? "border-sage/15 opacity-70" : "border-sage/30")
+        (isDone ? "border-border opacity-70" : "border-sage/30")
       }
     >
       <header className="flex items-start justify-between gap-3">
@@ -200,7 +200,7 @@ export default function TaskCard({
           <img
             src={signedImageUrl}
             alt="Reference image attached by owner"
-            className="max-h-48 w-full rounded-xl border border-sage/20 object-cover shadow-sm"
+            className="max-h-48 w-full rounded-xl border border-border object-cover shadow-sm"
           />
         </div>
       )}
@@ -224,7 +224,7 @@ export default function TaskCard({
       )}
 
       {message?.content && (
-        <p className="mt-2 whitespace-pre-wrap rounded-lg border border-sage/15 bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
+        <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
           "{message.content}"
         </p>
       )}
@@ -287,8 +287,8 @@ export default function TaskCard({
           className={
             "ml-auto inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition disabled:opacity-50 " +
             (confirmingDelete
-              ? "border-rose-500 bg-rose-500 text-white"
-              : "border-rose-200 bg-white text-rose-700 hover:bg-rose-50")
+              ? "border-danger bg-danger text-white"
+              : "border-transparent bg-transparent text-danger hover:bg-danger/8")
           }
         >
           {busy === "delete" && <Spinner size={12} />}

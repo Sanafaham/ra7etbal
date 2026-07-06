@@ -84,11 +84,11 @@ export default function Modal({
         className="absolute inset-0 bg-ink/40 backdrop-blur-sm"
       />
       <div
-        className="relative z-10 flex w-full max-w-md flex-col overflow-hidden rounded-t-3xl border border-sage/30 bg-cream shadow-xl sm:rounded-3xl"
+        className="relative z-10 flex w-full max-w-md flex-col overflow-hidden rounded-t-3xl border border-border bg-cream shadow-xl sm:rounded-3xl"
         style={{ maxHeight: "calc(100dvh - 1rem)" }}
       >
-        <header className="flex items-start justify-between gap-4 border-b border-sage/15 px-5 pt-5 pb-3">
-          <h2 className="text-lg font-semibold text-ink">{title}</h2>
+        <header className="flex items-start justify-between gap-4 border-b border-border px-5 pt-5 pb-3">
+          <h2 style={{ fontFamily: "var(--font-display)" }} className="text-[22px] font-semibold text-ink">{title}</h2>
           {dismissable && (
             <button
               type="button"

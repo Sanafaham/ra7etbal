@@ -56,17 +56,17 @@ export default function MoreSheet({ open, onClose, onSettings }: Props) {
             <li>
               <button
                 type="button"
-                className="flex w-full items-center gap-4 rounded-xl px-2 py-4 text-left transition hover:bg-rose-50 active:bg-rose-100"
+                className="flex w-full items-center gap-4 rounded-xl px-2 py-4 text-left transition hover:bg-danger/5 active:bg-danger/10"
                 onClick={() => { onClose(); void signOut(); }}
               >
-                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-rose-50">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-danger/8">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
                     <polyline points="16 17 21 12 16 7" />
                     <line x1="21" y1="12" x2="9" y2="12" />
                   </svg>
                 </span>
-                <span className="text-base font-medium text-rose-700">Sign out</span>
+                <span className="text-base font-medium text-danger">Sign out</span>
               </button>
             </li>
           </ul>

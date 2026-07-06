@@ -78,11 +78,11 @@ export default function ConfirmationNotices() {
             key={task.id}
             data-testid={`confirmation-notice-${task.id}`}
             role="status"
-            className="flex items-start gap-3 rounded-2xl border border-sage/30 bg-sage/[0.08] px-4 py-3.5 shadow-[0_8px_24px_-18px_rgba(91,114,69,0.35)]"
+            className="flex items-start gap-3 rounded-2xl border border-gold/30 bg-gold/[0.08] px-4 py-3.5 shadow-[0_8px_24px_-18px_rgba(184,155,94,0.35)]"
           >
             <span
               aria-hidden
-              className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sage text-white"
+              className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gold text-white"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
                 <path
@@ -100,7 +100,7 @@ export default function ConfirmationNotices() {
                 {summary}
               </p>
               {task.proof_image_path && (
-                <span data-testid={`confirmation-notice-proof-${task.id}`} className="mt-1 flex items-center gap-1 text-[11px] font-medium text-sage">
+                <span data-testid={`confirmation-notice-proof-${task.id}`} className="mt-1 flex items-center gap-1 text-[11px] font-medium text-gold-dark">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path
                       d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
@@ -126,7 +126,7 @@ export default function ConfirmationNotices() {
               type="button"
               onClick={() => dismiss(task.id)}
               aria-label="Dismiss notification"
-              className="-mr-1 shrink-0 rounded-full p-1 text-ink/45 transition hover:bg-sage/10 hover:text-ink/80"
+              className="-mr-1 shrink-0 rounded-full p-1 text-ink/45 transition hover:bg-gold/10 hover:text-ink/80"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path

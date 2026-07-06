@@ -4454,14 +4454,14 @@ export default function ElevenLabsAgentWidget({
        * garbage-collected by iOS when the idle section unmounts.
        */}
       {pendingPhotoPreviews.length > 0 && (
-        <div className="mb-1.5 rounded-2xl border border-sage/25 bg-white/90 px-2.5 py-2 shadow-sm">
+        <div className="mb-1.5 rounded-2xl border border-border bg-white/90 px-2.5 py-2 shadow-sm">
           <div className="flex items-center gap-1.5">
             {pendingPhotoPreviews.map((photo, index) => (
               <div key={photo.id} className="relative">
                 <img
                   src={photo.previewUrl}
                   alt={`Attached photo ${index + 1}`}
-                  className="h-9 w-9 rounded-lg border border-sage/20 object-cover"
+                  className="h-9 w-9 rounded-lg border border-border object-cover"
                 />
                 <button
                   type="button"
@@ -4515,7 +4515,7 @@ export default function ElevenLabsAgentWidget({
             className={
               "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
               (pendingPhotoPreviews.length > 0
-                ? "border-sage/40 bg-sage/10 text-sage"
+                ? "border-gold/40 bg-gold/10 text-gold"
                 : "border-charcoal/15 bg-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
             }
           >
@@ -4575,7 +4575,7 @@ export default function ElevenLabsAgentWidget({
             className={
               "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
               (pendingPhotoPreviews.length > 0
-                ? "border-sage/40 bg-sage/10 text-sage"
+                ? "border-gold/40 bg-gold/10 text-gold"
                 : "border-charcoal/15 bg-warm-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
             }
           >

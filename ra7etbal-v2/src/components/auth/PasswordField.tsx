@@ -48,7 +48,7 @@ export default function PasswordField({
           placeholder={placeholder}
           autoComplete={autoComplete}
           disabled={disabled}
-          className="w-full rounded-xl border border-sage/30 bg-white px-4 py-3 pr-12 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+          className="w-full rounded-xl border border-border bg-white px-4 py-3 pr-12 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
         />
         <button
           type="button"

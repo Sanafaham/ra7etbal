@@ -118,7 +118,7 @@ export default function InboxReviewPanel({ userId, onPrefill }: Props) {
   }
 
   return (
-    <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
+    <section className="mt-3 rounded-[24px] border border-border bg-white/72 p-4 shadow-sm backdrop-blur-sm">
       <div className="mb-3 flex items-center gap-2">
         <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-gold/20 text-[11px] font-bold text-gold-dark">
           {visible.length}
@@ -131,7 +131,7 @@ export default function InboxReviewPanel({ userId, onPrefill }: Props) {
         {visible.map((item) => (
           <li
             key={item.id}
-            className="rounded-2xl border border-sage/15 bg-card/60 px-3 py-2.5"
+            className="rounded-2xl border border-border bg-card/60 px-3 py-2.5"
           >
             <p className="mb-1 text-[14px] leading-snug text-text">{item.content}</p>
             <p className="mb-2.5 text-[11px] text-text-muted">{timeAgo(item.created_at)}</p>
@@ -142,7 +142,7 @@ export default function InboxReviewPanel({ userId, onPrefill }: Props) {
               </p>
             )}
             {successes[item.id] && (
-              <p className="mb-2 rounded-xl border border-sage/20 bg-sage/10 px-2.5 py-1.5 text-xs text-text">
+              <p className="mb-2 rounded-xl border border-border bg-cream px-2.5 py-1.5 text-xs text-text">
                 {successes[item.id]}
               </p>
             )}
@@ -199,7 +199,7 @@ function ActionButton({
   const base = "rounded-full px-2.5 py-1 text-xs font-medium transition disabled:opacity-50";
   const styles = {
     primary: "border border-charcoal/15 bg-charcoal/90 text-ivory hover:bg-espresso",
-    ghost: "border border-sage/20 bg-transparent text-text-soft hover:bg-sage/10",
+    ghost: "border border-border bg-transparent text-text-soft hover:bg-ink/5",
     danger: "border border-danger/20 bg-transparent text-danger/70 hover:bg-danger/5",
   };
   return (

@@ -118,7 +118,7 @@ export default function TextCarsonPanel({ context, hideHeading = false, embedded
             <img
               src={imagePreviewUrl}
               alt="Attached image"
-              className="h-14 w-14 rounded-xl border border-sage/25 object-cover shadow-sm"
+              className="h-14 w-14 rounded-xl border border-border object-cover shadow-sm"
             />
             <button
               type="button"
@@ -147,8 +147,8 @@ export default function TextCarsonPanel({ context, hideHeading = false, embedded
           className={
             "inline-flex min-h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full border transition disabled:opacity-50 " +
             (imageFile
-              ? "border-sage/50 bg-sage/10 text-sage"
-              : "border-sage/25 bg-white text-ink/40 hover:border-sage/40 hover:text-ink/60")
+              ? "border-gold/50 bg-gold/10 text-gold"
+              : "border-border bg-white text-ink/40 hover:border-ink/25 hover:text-ink/60")
           }
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -181,7 +181,7 @@ export default function TextCarsonPanel({ context, hideHeading = false, embedded
           }}
           disabled={loading}
           placeholder="Type what you want Carson to handle…"
-          className="min-h-[44px] flex-1 rounded-full border border-sage/25 bg-white px-4 text-[14px] text-text outline-none transition placeholder:text-muted focus:border-sage disabled:opacity-70"
+          className="min-h-[44px] flex-1 rounded-full border border-border bg-white px-4 text-[14px] text-text outline-none transition placeholder:text-muted focus:border-sage disabled:opacity-70"
         />
         <button
           type="button"
@@ -202,9 +202,9 @@ export default function TextCarsonPanel({ context, hideHeading = false, embedded
       )}
 
       {answer && (
-        <div className="mt-3 rounded-2xl border border-sage/15 bg-card/80 px-3 py-2.5">
+        <div className="mt-3 rounded-2xl border border-border bg-card/80 px-3 py-2.5">
           <p className="text-sm leading-relaxed text-text-soft whitespace-pre-wrap">{answer}</p>
-          <div className="mt-2.5 flex items-center gap-2 border-t border-sage/10 pt-2">
+          <div className="mt-2.5 flex items-center gap-2 border-t border-border pt-2">
             {looksLikeStatusSummary(answer) ? (
               <span className="text-[11px] text-text-muted">Already tracked in Ra7etBal.</span>
             ) : (
@@ -212,7 +212,7 @@ export default function TextCarsonPanel({ context, hideHeading = false, embedded
                 type="button"
                 onClick={() => { void handleSaveToInbox(); }}
                 disabled={saving || saveStatus === "saved"}
-                className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/30 bg-white px-3 text-[12px] font-medium text-text shadow-sm transition hover:bg-cream disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-border bg-white px-3 text-[12px] font-medium text-text shadow-sm transition hover:bg-cream disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {saving && <Spinner size={11} />}
                 <span>{saveStatus === "saved" ? "Saved ✓" : "Save to Inbox"}</span>
@@ -225,7 +225,7 @@ export default function TextCarsonPanel({ context, hideHeading = false, embedded
                 setSaveStatus(null);
                 setSaveError(null);
               }}
-              className="inline-flex min-h-[32px] items-center rounded-full border border-sage/20 bg-transparent px-3 text-[12px] font-medium text-text-muted transition hover:bg-cream hover:text-text"
+              className="inline-flex min-h-[32px] items-center rounded-full border border-border bg-transparent px-3 text-[12px] font-medium text-text-muted transition hover:bg-cream hover:text-text"
             >
               Clear
             </button>
@@ -239,11 +239,11 @@ export default function TextCarsonPanel({ context, hideHeading = false, embedded
   );
 
   if (embedded) {
-    return <div className="mt-3 border-t border-sage/15 pt-3">{content}</div>;
+    return <div className="mt-3 border-t border-border pt-3">{content}</div>;
   }
 
   return (
-    <section className="mt-3 rounded-[24px] border border-sage/25 bg-white/72 p-4 shadow-sm backdrop-blur-sm">
+    <section className="mt-3 rounded-[24px] border border-border bg-white/72 p-4 shadow-sm backdrop-blur-sm">
       {content}
     </section>
   );

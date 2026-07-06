@@ -59,10 +59,10 @@ export default function Reset() {
   }
 
   return (
-    <section className="mx-auto max-w-md space-y-6 rounded-2xl border border-sage/30 bg-white/80 p-6 shadow-sm">
+    <section className="mx-auto max-w-md space-y-6 rounded-2xl border border-border bg-white/80 p-6 shadow-sm">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold text-ink">Set a new password</h1>
-        <p className="text-sm text-ink/60">
+        <h1 style={{ fontFamily: "var(--font-display)" }} className="text-[28px] font-semibold leading-tight tracking-[-0.005em] text-ink">Set a new password</h1>
+        <p className="text-[13px] text-text-soft">
           Choose a password that's at least {MIN_PASSWORD_LENGTH} characters. You'll
           be signed out and asked to sign in again with the new password.
         </p>

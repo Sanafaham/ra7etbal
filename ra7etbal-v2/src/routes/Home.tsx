@@ -10,6 +10,7 @@ import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import { fetchCalendarEvents, type CalendarEvent } from "../lib/calendar";
 import { buildDailyBrief } from "../lib/daily-brief";
+import { getUpcomingReminderTasks } from "../lib/updates-reminders";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
 import { usePeopleStore } from "../stores/people";
@@ -146,6 +147,16 @@ export default function Home() {
   const premiumStatus = buildPremiumStatus(statusTone);
   const briefSentence = useMemo(() => buildBriefSentence(brief, now), [brief, now]);
 
+  // ── Stats grid — real counts, same sources as Updates ──────────────
+  const upcomingReminders = useMemo(
+    () => getUpcomingReminderTasks(tasks, brief.needsAttention, now),
+    [tasks, brief.needsAttention, now],
+  );
+  const completedCount = useMemo(
+    () => tasks.filter((t) => t.status === "done").length,
+    [tasks],
+  );
+
   const trimmed = text.trim();
   const canSubmit = !submitting && (trimmed.length > 0 || draftImageFiles.length > 0) && !!userId;
   const keyboardOpen = textareaFocused || viewportShrunk;
@@ -259,16 +270,106 @@ export default function Home() {
         </div>
       </div>
 
+      {/* ── Stats grid — real counts, tap to jump to Updates ─────────── */}
+      <div data-testid="home-stats-grid" className="mt-9 border-t border-border">
+        <div className="grid grid-cols-2">
+          <button
+            type="button"
+            onClick={() => navigate("/updates?tab=needs-you")}
+            className="border-b border-r border-border py-[22px] pr-5 text-left"
+          >
+            <span className="mb-2.5 flex items-center gap-[7px]">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-gold" />
+              <span className="text-[11.5px] font-bold uppercase tracking-[0.04em] text-text-soft">Needs You</span>
+            </span>
+            <span className="block text-[33px] font-semibold leading-none tracking-[-0.02em] text-ink">
+              {brief.needsAttention.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate("/updates?tab=waiting")}
+            className="border-b border-border py-[22px] pl-5 text-left"
+          >
+            <span className="mb-2.5 flex items-center gap-[7px]">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-text-soft" />
+              <span className="text-[11.5px] font-bold uppercase tracking-[0.04em] text-text-soft">Waiting</span>
+            </span>
+            <span className="block text-[33px] font-semibold leading-none tracking-[-0.02em] text-ink">
+              {brief.waitingOnOthers.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate("/updates?tab=needs-you")}
+            className="border-r border-border py-[22px] pr-5 text-left"
+          >
+            <span className="mb-2.5 flex items-center gap-[7px]">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-text-soft" />
+              <span className="text-[11.5px] font-bold uppercase tracking-[0.04em] text-text-soft">Upcoming</span>
+            </span>
+            <span className="block text-[33px] font-semibold leading-none tracking-[-0.02em] text-ink">
+              {upcomingReminders.length}
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate("/updates?tab=history")}
+            className="py-[22px] pl-5 text-left"
+          >
+            <span className="mb-2.5 flex items-center gap-[7px]">
+              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-text-soft" />
+              <span className="text-[11.5px] font-bold uppercase tracking-[0.04em] text-text-soft">Completed</span>
+            </span>
+            <span className="block text-[33px] font-semibold leading-none tracking-[-0.02em] text-ink">
+              {completedCount}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── Waiting preview — hidden entirely when nothing is waiting ── */}
+      {brief.waitingOnOthers.length > 0 && (
+        <div data-testid="home-waiting-preview" className="mt-7 border-t border-border pt-6">
+          <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-soft">Waiting</p>
+          <button type="button" onClick={() => navigate("/updates?tab=waiting")} className="w-full text-left">
+            {brief.waitingOnOthers.slice(0, 2).map((t) => (
+              <span key={t.id} className="flex items-baseline gap-2 py-1.5">
+                <span aria-hidden className="h-[5px] w-[5px] shrink-0 rounded-full bg-text-soft" />
+                <span className="text-[14.5px] font-medium leading-snug text-ink">{t.description}</span>
+              </span>
+            ))}
+            {brief.waitingOnOthers.length > 2 && (
+              <span className="block pl-[13px] pt-0.5 text-[13px] font-semibold text-text-soft">
+                +{brief.waitingOnOthers.length - 2} more waiting
+              </span>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* ── Needs You — top item ─────────────────────────────────────── */}
+      {brief.needsAttention.length > 0 && (
+        <div data-testid="home-needs-you-preview" className="mt-6">
+          <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-gold">Needs You</p>
+          <button type="button" onClick={() => navigate("/updates?tab=needs-you")} className="w-full text-left">
+            <span className="block text-[16.5px] font-bold leading-snug text-ink">
+              {brief.needsAttention[0].description}
+            </span>
+          </button>
+        </div>
+      )}
+
       {/* ── Talk to Carson — visual hero ────────────────────────────── */}
       <section data-testid="home-talk-to-carson-section" className="mt-6 sm:mt-8">
         <button
           data-testid="home-talk-to-carson-button"
           type="button"
           onClick={() => openCarson(true)}
-          className="group flex w-full flex-col items-center gap-0.5 rounded-[28px] bg-warm-white px-6 py-1.5 shadow-[0_24px_60px_-30px_rgba(20,20,20,0.28)] backdrop-blur-sm transition active:scale-[0.982]"
+          className="group flex w-full flex-col items-center gap-0.5 rounded-[14px] border border-border bg-gold/[0.08] px-6 py-4 shadow-[0_1px_2px_rgba(31,31,31,0.05)] transition active:scale-[0.982]"
         >
-          <span className="flex h-[56px] w-[56px] items-center justify-center rounded-full bg-sage/[0.12] ring-1 ring-sage/30 transition group-hover:bg-sage/[0.18] group-hover:ring-sage/55">
-            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-sage">
+          <span className="flex h-[56px] w-[56px] items-center justify-center rounded-full bg-gold/[0.12] ring-1 ring-gold/30 transition group-hover:bg-gold/[0.18] group-hover:ring-gold/55">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="text-gold">
               <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               <line x1="12" y1="19" x2="12" y2="23" />

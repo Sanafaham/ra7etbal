@@ -340,7 +340,7 @@ function SettingsList({
         <button
           type="button"
           onClick={onClickDelegationRules}
-          className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
+          className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
         >
           <span className="min-w-0">
             <span className="block text-base text-ink">Household Delegation Rules</span>
@@ -408,7 +408,7 @@ function DisplayNameRow({
 
   if (editing) {
     return (
-      <div className="border-b border-sage/10 px-4 py-3 last:border-b-0">
+      <div className="border-b border-border px-4 py-3 last:border-b-0">
         <p className="mb-1.5 text-xs text-ink/60">Your name</p>
         <input
           ref={inputRef}
@@ -452,7 +452,7 @@ function DisplayNameRow({
     <button
       type="button"
       onClick={startEdit}
-      className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
+      className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
     >
       <span className="min-w-0">
         <span className="block text-base text-ink">Your name</span>
@@ -513,7 +513,7 @@ function WeatherCityRow({
 
   if (editing) {
     return (
-      <div className="border-b border-sage/10 px-4 py-3 last:border-b-0">
+      <div className="border-b border-border px-4 py-3 last:border-b-0">
         <p className="mb-1.5 text-xs text-ink/60">Weather city</p>
         <input
           ref={inputRef}
@@ -557,7 +557,7 @@ function WeatherCityRow({
     <button
       type="button"
       onClick={startEdit}
-      className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
+      className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
     >
       <span className="min-w-0">
         <span className="block text-base text-ink">Weather city</span>
@@ -578,7 +578,7 @@ function Group({ label, children }: { label: string; children: React.ReactNode }
       <h3 className="px-1 text-[10px] font-medium uppercase tracking-wide text-ink/60">
         {label}
       </h3>
-      <div className="overflow-hidden rounded-2xl border border-sage/20 bg-white/80 shadow-sm">
+      <div className="overflow-hidden rounded-2xl border border-border bg-white/80 shadow-sm">
         {children}
       </div>
     </section>
@@ -590,7 +590,7 @@ function ActionRow({ label, onClick }: { label: string; onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center justify-between gap-3 border-b border-sage/10 px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
+      className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-3 text-left transition hover:bg-cream/60 last:border-b-0"
     >
       <span className="text-base text-ink">{label}</span>
       <span aria-hidden className="text-ink/30">
@@ -698,7 +698,7 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
   const disabledMain = busy || isUnsupported || !userId;
 
   return (
-    <div className="border-b border-sage/10 last:border-b-0">
+    <div className="border-b border-border last:border-b-0">
       {/* Main row */}
       <button
         type="button"
@@ -716,9 +716,9 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
           className={
             "h-3 w-3 shrink-0 rounded-full " +
             (isEnabled
-              ? "bg-sage"
+              ? "bg-gold"
               : status === "denied" || status === "error"
-                ? "bg-gold"
+                ? "bg-danger"
                 : "bg-ink/20")
           }
         />
@@ -836,9 +836,9 @@ function GoogleCalendarRow({
     connected === null
       ? "bg-ink/20"
       : isRevoked
-        ? "bg-amber-400"
+        ? "bg-danger"
         : connected
-          ? "bg-sage"
+          ? "bg-gold"
           : "bg-ink/20";
 
   const statusClass = isRevoked ? "text-amber-700" : "text-ink/65";
@@ -847,7 +847,7 @@ function GoogleCalendarRow({
   const showDisconnect = onDisconnect && (connected === true || isRevoked);
 
   return (
-    <div className="border-b border-sage/10 px-4 py-3 last:border-b-0">
+    <div className="border-b border-border px-4 py-3 last:border-b-0">
       <button
         type="button"
         onClick={handleConnect}
@@ -939,12 +939,12 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
         placeholder={"e.g.\n• Grace manages all household staff — always loop her in.\n• Never assign financial tasks to staff without my approval.\n• Loulya's schedule always takes priority."}
         rows={8}
         disabled={status === "loading" || saving}
-        className="w-full resize-none rounded-xl border border-sage/20 bg-white px-4 py-3 text-sm text-ink placeholder:text-ink/30 outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
+        className="w-full resize-none rounded-xl border border-border bg-white px-4 py-3 text-sm text-ink placeholder:text-ink/30 outline-none focus:border-sage focus:ring-2 focus:ring-sage/20 disabled:opacity-50"
       />
 
       <div className="flex items-center justify-between gap-3">
         {saved && (
-          <span className="text-xs font-medium text-sage">Saved ✓</span>
+          <span className="text-xs font-medium text-gold">Saved ✓</span>
         )}
         <div className="ml-auto">
           <button

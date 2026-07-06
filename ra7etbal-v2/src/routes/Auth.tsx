@@ -130,12 +130,12 @@ export default function Auth() {
         : "Create account";
 
   return (
-    <section className="mx-auto max-w-md space-y-6 rounded-2xl border border-sage/30 bg-white/80 p-6 shadow-sm">
+    <section className="mx-auto max-w-md space-y-6 rounded-2xl border border-border bg-white/80 p-6 shadow-sm">
       <header className="space-y-1">
-        <h1 className="text-2xl font-semibold text-ink">
+        <h1 style={{ fontFamily: "var(--font-display)" }} className="text-[28px] font-semibold leading-tight tracking-[-0.005em] text-ink">
           {mode === "signin" ? "Welcome back" : "Create your account"}
         </h1>
-        <p className="text-sm text-ink/60">
+        <p className="text-[13px] text-text-soft">
           {mode === "signin"
             ? "Sign in to pick up where you left off."
             : "Your name, email, and a password — no confirmation step."}
@@ -145,7 +145,7 @@ export default function Auth() {
       <div
         role="tablist"
         aria-label="Auth mode"
-        className="grid grid-cols-2 gap-1 rounded-full border border-sage/30 bg-cream/60 p-1"
+        className="grid grid-cols-2 gap-1 rounded-full border border-border bg-cream/60 p-1"
       >
         {(["signin", "signup"] as const).map((m) => (
           <button
@@ -184,7 +184,7 @@ export default function Auth() {
               placeholder="What should Carson call you?"
               autoComplete="name"
               disabled={submitting || sendingReset}
-              className="w-full rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+              className="w-full rounded-xl border border-border bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
             />
           </div>
         )}
@@ -205,7 +205,7 @@ export default function Auth() {
             autoComplete="email"
             inputMode="email"
             disabled={submitting || sendingReset}
-            className="w-full rounded-xl border border-sage/30 bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
+            className="w-full rounded-xl border border-border bg-white px-4 py-3 text-base text-ink shadow-sm outline-none transition focus:border-sage focus:ring-2 focus:ring-sage/30 disabled:opacity-50"
           />
         </div>
 

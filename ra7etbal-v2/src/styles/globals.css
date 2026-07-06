@@ -1,36 +1,38 @@
 @import "tailwindcss";
 
 @theme {
-  /* Calm warm palette — ivory backdrop, beige tones, espresso text,
-     muted gold for accents. Sage stays for accent-positive states
-     elsewhere in the app. */
-  --color-cream: #F5EFE4;
+  /* Calm ivory palette — warm off-white backdrop, ink text, muted gold
+     accent. `sage` is repointed to the dark ink accent (was green) so
+     every existing bg-sage/text-sage/border-sage utility across the app
+     renders as the new primary/active color without per-usage edits. */
+  --color-cream: #FAF9F7;
   --color-sand: #E8DDC8;
   --color-stone: #D8C9AC;
-  --color-gold: #B89968;
+  --color-gold: #B89B5E;
   --color-espresso: #3A2E1F;
-  --color-ink: #2B2A26;
-  --color-sage: #5B7245;
+  --color-ink: #1F1F1F;
+  --color-sage: #1F1F1F;
 
   /* Extended palette — V2 design system */
   --color-warm-white: #FDFBF7;
   --color-charcoal: #2A2927;
   --color-ivory: #FAF7F2;
   --color-card: #FFFFFF;
-  --color-danger: #C0392B;
+  --color-danger: #A8402F;
   --color-muted: #A8A29E;
-  --color-text: #2B2A26;
-  --color-text-soft: #6B6762;
+  --color-text: #1F1F1F;
+  --color-text-soft: #6B6B6B;
   --color-text-muted: #9B9690;
   --color-gold-soft: #D4B483;
   --color-gold-dark: #8B6F3E;
-  --color-border: #E2D9C8;
+  --color-gold-tint: #B89B5E14;
+  --color-border: #E8E3DA;
 
   /* Type stack. Display = elegant serif (Cormorant Garamond).
-     Script = handwritten italic (Caveat). Body = DM Sans. */
+     Script = handwritten italic (Caveat). Body = Inter. */
   --font-display: "Cormorant Garamond", "Playfair Display", Georgia, serif;
   --font-script: "Caveat", "Homemade Apple", cursive;
-  --font-sans: "DM Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 html,

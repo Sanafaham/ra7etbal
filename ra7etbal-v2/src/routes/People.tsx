@@ -71,16 +71,16 @@ export default function People() {
       {/* ── Header ── */}
       <header className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-ink">
-            People{items.length > 0 && <span className="ml-1.5 text-base font-normal text-ink/40">({items.length})</span>}
+          <h1 style={{ fontFamily: "var(--font-display)" }} className="text-[32px] font-semibold leading-none tracking-[-0.005em] text-ink">
+            People{items.length > 0 && <span className="ml-1.5 text-[19px] font-medium text-ink/55" style={{ fontFamily: "var(--font-sans)" }}>({items.length})</span>}
           </h1>
-          <p className="text-sm text-ink/55">People Carson can coordinate with.</p>
+          <p className="mt-1.5 text-[13px] font-medium text-text-soft">People Carson coordinates with on your behalf.</p>
         </div>
         <button
           type="button"
           onClick={() => setAdding(true)}
           aria-label="Add person"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-sage px-3.5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105 active:brightness-95"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-sage px-3.5 py-2 text-[13px] font-bold text-white shadow-sm transition hover:brightness-105 active:brightness-95"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
             <path d="M12 5v14M5 12h14" />
@@ -127,20 +127,20 @@ export default function People() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search people…"
             aria-label="Search people"
-            className="w-full rounded-2xl border border-sage/20 bg-white/70 py-2 pl-9 pr-4 text-sm text-ink placeholder:text-ink/35 focus:border-sage/40 focus:outline-none focus:ring-2 focus:ring-sage/15"
+            className="w-full rounded-2xl border border-border bg-white/70 py-2 pl-9 pr-4 text-sm text-ink placeholder:text-ink/35 focus:border-sage/40 focus:outline-none focus:ring-2 focus:ring-sage/15"
           />
         </div>
       )}
 
       {/* ── Empty state ── */}
       {!initialLoading && status === "ready" && items.length === 0 && (
-        <div className="rounded-2xl border border-dashed border-sage/30 bg-white/50 px-6 py-10 text-center">
+        <div className="rounded-2xl border border-dashed border-border bg-white/50 px-6 py-10 text-center">
           {/* Avatar cluster illustration */}
           <div className="mb-4 flex justify-center gap-2">
             {["A", "B", "C"].map((l) => (
               <span
                 key={l}
-                className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-white bg-sage/10 text-sm font-semibold text-sage shadow-sm"
+                className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-white bg-gold/10 text-sm font-semibold text-gold shadow-sm"
               >
                 {l}
               </span>
@@ -165,7 +165,7 @@ export default function People() {
 
       {/* ── No search results ── */}
       {!initialLoading && items.length > 0 && filtered.length === 0 && (
-        <div className="rounded-2xl border border-dashed border-sage/20 bg-white/40 px-4 py-6 text-center text-sm text-ink/45">
+        <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-center text-sm text-ink/45">
           No people match &ldquo;{query}&rdquo;
         </div>
       )}
