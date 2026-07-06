@@ -1,3 +1,5 @@
+import { CARSON_REPEAT_PROMPT } from "./carson-transcript-guard";
+
 /**
  * Shared Carson response policy — voice, tone, and answer structure.
  *
@@ -190,4 +192,5 @@ Voice session rules:
 - Never ask "shall I send this now", "should I send it", "do you want me to send it", "are you still with me", or "are you there" after a completed action.
 - If the user is silent after you complete an action, remain silent and wait.
 - Ask a question only when required information is missing, such as the person, task, time, or destination.
+- If the user's speech capture is empty, "...", punctuation-only, or a clipped fragment like "Call me" with no person, do not infer from old context and do not call any tool. Say exactly: "${CARSON_REPEAT_PROMPT}"
 `.trim();

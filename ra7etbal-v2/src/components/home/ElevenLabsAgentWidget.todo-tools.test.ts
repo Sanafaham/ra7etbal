@@ -26,15 +26,15 @@ const SOURCE = readFileSync(
 
 describe("ElevenLabsAgentWidget — To-do client tool registration", () => {
   it("registers create_todo in the clientTools map, wired to createTodoTool", () => {
-    expect(SOURCE).toMatch(/create_todo:\s*\(params[^)]*\)\s*=>\s*\n?\s*runDirectToolWithDiagnostic\("create_todo",\s*params,\s*\(\)\s*=>\s*createTodoTool\(params\)\)/);
+    expect(SOURCE).toMatch(/create_todo:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("create_todo"\)[\s\S]*runDirectToolWithDiagnostic\("create_todo",\s*params,\s*\(\)\s*=>\s*createTodoTool\(params\)\)/);
   });
 
   it("registers complete_todo in the clientTools map, wired to completeTodoTool", () => {
-    expect(SOURCE).toMatch(/complete_todo:\s*\(params[^)]*\)\s*=>\s*\n?\s*runDirectToolWithDiagnostic\("complete_todo",\s*params,\s*\(\)\s*=>\s*completeTodoTool\(params\)\)/);
+    expect(SOURCE).toMatch(/complete_todo:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("complete_todo"\)[\s\S]*runDirectToolWithDiagnostic\("complete_todo",\s*params,\s*\(\)\s*=>\s*completeTodoTool\(params\)\)/);
   });
 
   it("registers control_task in the clientTools map, wired to controlTaskTool", () => {
-    expect(SOURCE).toMatch(/control_task:\s*\(params[^)]*\)\s*=>\s*\n?\s*runDirectToolWithDiagnostic\("control_task",\s*params,\s*\(\)\s*=>\s*controlTaskTool\(params\)\)/);
+    expect(SOURCE).toMatch(/control_task:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("control_task"\)[\s\S]*runDirectToolWithDiagnostic\("control_task",\s*params,\s*\(\)\s*=>\s*controlTaskTool\(params\)\)/);
   });
 
   it("defines a createTodoTool implementation that calls the carson-todos createTodo helper", () => {

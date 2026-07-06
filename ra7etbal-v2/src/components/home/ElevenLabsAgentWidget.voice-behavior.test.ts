@@ -21,4 +21,14 @@ describe("ElevenLabsAgentWidget — Voice Carson behavior guard", () => {
     expect(SOURCE).toContain("Do not ask whether to send now;");
     expect(SOURCE).toContain("the send already happened.");
   });
+
+  it("instructs Voice Carson to repeat instead of acting on invalid speech capture", () => {
+    const policy = readFileSync(
+      join(__dirname, "../../lib/carson-status-policy.ts"),
+      "utf-8",
+    );
+    expect(policy).toContain("empty, \"...\", punctuation-only, or a clipped fragment like \"Call me\"");
+    expect(policy).toContain("do not infer from old context and do not call any tool");
+    expect(policy).toContain("CARSON_REPEAT_PROMPT");
+  });
 });

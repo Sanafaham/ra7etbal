@@ -103,6 +103,11 @@ import {
 } from "../../lib/carson-action-coverage";
 import { CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD } from "../../lib/carson-status-policy";
 import {
+  CARSON_REPEAT_PROMPT,
+  evaluateCarsonTranscriptCapture,
+  type CarsonTranscriptGuardReason,
+} from "../../lib/carson-transcript-guard";
+import {
   addLatencyStageDuration,
   createExecuteInstructionLatencyTrace,
   roundDuration,
@@ -962,6 +967,12 @@ export default function ElevenLabsAgentWidget({
    * Cleared at session start and consumed (set null) after the first matching tool call.
    */
   const recurringRawRef = useRef<string | null>(null);
+  const invalidCaptureRef = useRef<{
+    message: string;
+    reason: CarsonTranscriptGuardReason;
+    eventId: number | null;
+    at: string;
+  } | null>(null);
 
   // Diagnostic only: tracks which client tool (if any) is mid-execution, so the
   // onDisconnect log can report whether a disconnect landed before, during, or
@@ -2971,6 +2982,35 @@ export default function ElevenLabsAgentWidget({
     [],
   );
 
+  const guardCurrentVoiceCapture = useCallback((toolName: string): string | null => {
+    const latestInvalid = invalidCaptureRef.current;
+    const latestUserMessage = [...sessionTranscriptRef.current]
+      .reverse()
+      .find((m) => m.role === "user")?.message?.trim();
+    const latestEvaluation = latestUserMessage
+      ? evaluateCarsonTranscriptCapture(latestUserMessage)
+      : { valid: true, reason: null };
+
+    const reason = latestInvalid?.reason ?? latestEvaluation.reason;
+    if (!latestInvalid && latestEvaluation.valid) return null;
+
+    const guardInfo = {
+      toolName,
+      reason,
+      latestInvalid,
+      latestUserMessage: latestUserMessage ?? null,
+      at: new Date().toISOString(),
+    };
+    console.warn("[carson-invalid-capture:tool-blocked]", guardInfo);
+    recordCarsonDiagnostic("carson-direct-tool", {
+      kind: "invalid_capture_blocked",
+      ...guardInfo,
+    });
+    lastDirectToolSuccessRef.current = null;
+    toolInFlightRef.current = null;
+    return CARSON_REPEAT_PROMPT;
+  }, []);
+
   // ------------------------------------------------------------------
   // Shared delegation/message pipeline
   //
@@ -3026,8 +3066,21 @@ export default function ElevenLabsAgentWidget({
       console.log("[routine:TRACE] rawInstruction=", rawInstruction.slice(0, 120));
       console.log("[routine:TRACE] transcriptLength=", sessionTranscriptRef.current.length, "people=", usePeopleStore.getState().items.length);
 
-      if (!rawInstruction) {
-        return "I did not receive an instruction. Ask the user what they want to do.";
+      const instructionCapture = evaluateCarsonTranscriptCapture(rawInstruction);
+      if (!instructionCapture.valid) {
+        const guardInfo = {
+          source: "execute_instruction",
+          reason: instructionCapture.reason,
+          rawInstruction,
+          at: new Date().toISOString(),
+        };
+        console.warn("[carson-invalid-capture:execute_instruction]", guardInfo);
+        recordCarsonDiagnostic("carson-direct-tool", {
+          kind: "invalid_capture_execute_instruction",
+          ...guardInfo,
+        });
+        lastDirectToolSuccessRef.current = null;
+        return CARSON_REPEAT_PROMPT;
       }
 
       // ── Carson supervisor — Phase 1+2: classify, plan, and log ──────────
@@ -3833,6 +3886,7 @@ export default function ElevenLabsAgentWidget({
       activeExecuteLatencyRef.current = null;
       lastUserTranscriptTimingRef.current = null;
       recurringRawRef.current = null;
+      invalidCaptureRef.current = null;
 
       if (conv) {
         try {
@@ -3968,6 +4022,7 @@ export default function ElevenLabsAgentWidget({
     currentTaskContextRef.current = null;
     createdReminderKeysRef.current.clear();
     recurringRawRef.current = null;
+    invalidCaptureRef.current = null;
     setLastCarsonMessage(null);
     setLastUserTranscript(null);
     if (userTranscriptTimerRef.current) {
@@ -4149,6 +4204,8 @@ export default function ElevenLabsAgentWidget({
           // through the same shared pipeline as Text Carson. Use this for all
           // compound instructions, personal notes, and ambiguous cases.
           execute_instruction: async (params: ExecuteInstructionParams) => {
+            const captureBlock = guardCurrentVoiceCapture("execute_instruction");
+            if (captureBlock) return captureBlock;
             toolInFlightRef.current = "execute_instruction";
             const toolStartedPerf = performance.now();
             const toolStartedAt = new Date().toISOString();
@@ -4193,6 +4250,8 @@ export default function ElevenLabsAgentWidget({
           // Diagnostic wrappers only set/clear toolInFlightRef — behavior is
           // identical to calling sendFollowup / sendDelegation directly.
           send_followup: async (params: Parameters<typeof sendFollowup>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("send_followup");
+            if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_followup";
             try {
               return await runDirectToolWithDiagnostic("send_followup", params, () =>
@@ -4203,6 +4262,8 @@ export default function ElevenLabsAgentWidget({
             }
           },
           send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("send_delegation");
+            if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_delegation";
             try {
               return await runDirectToolWithDiagnostic("send_delegation", params, () =>
@@ -4212,12 +4273,21 @@ export default function ElevenLabsAgentWidget({
               toolInFlightRef.current = null;
             }
           },
-          create_reminder: (params: Parameters<typeof createReminder>[0]) =>
-            runDirectToolWithDiagnostic("create_reminder", params, () =>
+          create_reminder: (params: Parameters<typeof createReminder>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("create_reminder");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("create_reminder", params, () =>
               createReminder(params),
-            ),
-          create_automation: createAutomation,
+            );
+          },
+          create_automation: (params: Parameters<typeof createAutomation>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("create_automation");
+            if (captureBlock) return captureBlock;
+            return createAutomation(params);
+          },
           send_direct_whatsapp_message: async (params: { recipient_name: string; message: string }) => {
+            const captureBlock = guardCurrentVoiceCapture("send_direct_whatsapp_message");
+            if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_direct_whatsapp_message";
             try {
               return await runDirectToolWithDiagnostic("send_direct_whatsapp_message", params, () =>
@@ -4227,38 +4297,74 @@ export default function ElevenLabsAgentWidget({
               toolInFlightRef.current = null;
             }
           },
-          save_city: (params: Parameters<typeof saveCity>[0]) =>
-            runDirectToolWithDiagnostic("save_city", params, () => saveCity(params)),
-          save_note: (params: Parameters<typeof saveNote>[0]) =>
-            runDirectToolWithDiagnostic("save_note", params, () => saveNote(params)),
-          act_on_note: (params: Parameters<typeof actOnNote>[0]) =>
-            runDirectToolWithDiagnostic("act_on_note", params, () => actOnNote(params)),
-          list_inbox_items: () =>
-            runDirectToolWithDiagnostic("list_inbox_items", {}, () => getInboxItems()),
-          act_on_inbox_item: (params: Parameters<typeof actOnInboxItem>[0]) =>
-            runDirectToolWithDiagnostic("act_on_inbox_item", params, () => actOnInboxItem(params)),
-          create_todo: (params: Parameters<typeof createTodoTool>[0]) =>
-            runDirectToolWithDiagnostic("create_todo", params, () => createTodoTool(params)),
-          complete_todo: (params: Parameters<typeof completeTodoTool>[0]) =>
-            runDirectToolWithDiagnostic("complete_todo", params, () => completeTodoTool(params)),
-          control_task: (params: Parameters<typeof controlTaskTool>[0]) =>
-            runDirectToolWithDiagnostic("control_task", params, () => controlTaskTool(params)),
-          get_calendar_events: (params: Parameters<typeof getCalendarEvents>[0]) =>
-            runDirectToolWithDiagnostic("get_calendar_events", params, () =>
+          save_city: (params: Parameters<typeof saveCity>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("save_city");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("save_city", params, () => saveCity(params));
+          },
+          save_note: (params: Parameters<typeof saveNote>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("save_note");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("save_note", params, () => saveNote(params));
+          },
+          act_on_note: (params: Parameters<typeof actOnNote>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("act_on_note");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("act_on_note", params, () => actOnNote(params));
+          },
+          list_inbox_items: () => {
+            const captureBlock = guardCurrentVoiceCapture("list_inbox_items");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("list_inbox_items", {}, () => getInboxItems());
+          },
+          act_on_inbox_item: (params: Parameters<typeof actOnInboxItem>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("act_on_inbox_item");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("act_on_inbox_item", params, () => actOnInboxItem(params));
+          },
+          create_todo: (params: Parameters<typeof createTodoTool>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("create_todo");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("create_todo", params, () => createTodoTool(params));
+          },
+          complete_todo: (params: Parameters<typeof completeTodoTool>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("complete_todo");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("complete_todo", params, () => completeTodoTool(params));
+          },
+          control_task: (params: Parameters<typeof controlTaskTool>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("control_task");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("control_task", params, () => controlTaskTool(params));
+          },
+          get_calendar_events: (params: Parameters<typeof getCalendarEvents>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("get_calendar_events");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("get_calendar_events", params, () =>
               getCalendarEvents(params),
-            ),
-          create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) =>
-            runDirectToolWithDiagnostic("create_calendar_event", params, () =>
+            );
+          },
+          create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("create_calendar_event");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("create_calendar_event", params, () =>
               createCalendarEvent(params),
-            ),
-          update_calendar_event: (params: Parameters<typeof updateCalendarEventTool>[0]) =>
-            runDirectToolWithDiagnostic("update_calendar_event", params, () =>
+            );
+          },
+          update_calendar_event: (params: Parameters<typeof updateCalendarEventTool>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("update_calendar_event");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("update_calendar_event", params, () =>
               updateCalendarEventTool(params),
-            ),
-          delete_calendar_event: (params: Parameters<typeof deleteCalendarEventTool>[0]) =>
-            runDirectToolWithDiagnostic("delete_calendar_event", params, () =>
+            );
+          },
+          delete_calendar_event: (params: Parameters<typeof deleteCalendarEventTool>[0]) => {
+            const captureBlock = guardCurrentVoiceCapture("delete_calendar_event");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("delete_calendar_event", params, () =>
               deleteCalendarEventTool(params),
-            ),
+            );
+          },
           save_instruction: async ({
             instruction,
             category,
@@ -4266,18 +4372,22 @@ export default function ElevenLabsAgentWidget({
             instruction: string;
             category?: string;
           }) =>
-            runDirectToolWithDiagnostic(
-              "save_instruction",
-              { instruction, category },
-              async () => {
-                try {
-                  await savePersistentInstruction(category ?? "general", instruction);
-                  return "Got it. I'll remember that from now on.";
-                } catch {
-                  return "I couldn't save that instruction right now. Please try again.";
-                }
-              },
-            ),
+            {
+              const captureBlock = guardCurrentVoiceCapture("save_instruction");
+              if (captureBlock) return captureBlock;
+              return runDirectToolWithDiagnostic(
+                "save_instruction",
+                { instruction, category },
+                async () => {
+                  try {
+                    await savePersistentInstruction(category ?? "general", instruction);
+                    return "Got it. I'll remember that from now on.";
+                  } catch {
+                    return "I couldn't save that instruction right now. Please try again.";
+                  }
+                },
+              );
+            },
         },
         onModeChange: ({ mode: m }) => {
           if (ignoreStaleCallback("mode-change")) return;
@@ -4302,11 +4412,9 @@ export default function ElevenLabsAgentWidget({
         },
         onMessage: ({ role, message, event_id }) => {
           if (ignoreStaleCallback("message")) return;
-          // Accumulate both sides of the conversation for end-of-session
-          // summarisation. Only finalized messages arrive here.
-          sessionTranscriptRef.current.push({ role, message });
           if (role === "user") {
             const receivedAt = new Date().toISOString();
+            const captureEvaluation = evaluateCarsonTranscriptCapture(message);
             lastUserTranscriptTimingRef.current = {
               eventId: event_id ?? null,
               receivedAt,
@@ -4317,6 +4425,36 @@ export default function ElevenLabsAgentWidget({
               timestamp: receivedAt,
               message,
             });
+            if (!captureEvaluation.valid) {
+              const invalidCapture = {
+                message,
+                reason: captureEvaluation.reason ?? "empty",
+                eventId: event_id ?? null,
+                at: receivedAt,
+              };
+              invalidCaptureRef.current = invalidCapture;
+              recurringRawRef.current = null;
+              lastDirectToolSuccessRef.current = null;
+              activeExecuteLatencyRef.current = null;
+              console.warn("[carson-invalid-capture:user]", invalidCapture);
+              recordCarsonDiagnostic("carson-direct-tool", {
+                kind: "invalid_capture_user_transcript",
+                ...invalidCapture,
+              });
+              setLastUserTranscript(CARSON_REPEAT_PROMPT);
+              setLastCarsonMessage(CARSON_REPEAT_PROMPT);
+              if (userTranscriptTimerRef.current) {
+                clearTimeout(userTranscriptTimerRef.current);
+              }
+              userTranscriptTimerRef.current = setTimeout(() => {
+                setLastUserTranscript(null);
+                userTranscriptTimerRef.current = null;
+              }, 8_000);
+              return;
+            }
+
+            invalidCaptureRef.current = null;
+            sessionTranscriptRef.current.push({ role, message });
             setLastUserTranscript(message);
             if (userTranscriptTimerRef.current) {
               clearTimeout(userTranscriptTimerRef.current);
@@ -4336,6 +4474,16 @@ export default function ElevenLabsAgentWidget({
               console.log("[routine:RAW_CAPTURE]", message);
             }
           } else if (role === "agent") {
+            sessionTranscriptRef.current.push({ role, message });
+            if (invalidCaptureRef.current) {
+              sessionTranscriptRef.current.pop();
+              console.warn("[carson-invalid-capture:agent-reply-suppressed]", {
+                eventId: event_id ?? null,
+                invalidCapture: invalidCaptureRef.current,
+              });
+              setLastCarsonMessage(CARSON_REPEAT_PROMPT);
+              return;
+            }
             // "agent" is the ElevenLabs SDK role for Carson's spoken turns.
             // If the role value ever changes, this silently stops updating — check
             // the console log below if the transcript bubble stops appearing.
@@ -4511,7 +4659,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, saveVoiceSessionSnapshot]);
+  }, [agentId, briefStateText, spokenBrief, displayName, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot]);
 
   // ------------------------------------------------------------------
   // Session teardown
