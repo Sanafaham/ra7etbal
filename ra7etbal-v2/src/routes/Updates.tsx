@@ -9,6 +9,7 @@ import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import Spinner from "../components/Spinner";
 import TaskCard from "../components/tasks/TaskCard";
+import Modal from "../components/ui/Modal";
 import { useTaskList } from "../hooks/useTaskList";
 import { buildDailyBrief } from "../lib/daily-brief";
 import { getUpcomingReminderTasks } from "../lib/updates-reminders";
@@ -48,30 +49,74 @@ export default function Updates() {
   // ── Category chip bar — slow idle auto-scroll, pauses on interaction ──
   // Selection/content is driven only by clicks (setTab above); auto-scroll
   // never changes which tab's content is shown.
+  //
+  // Uses requestAnimationFrame with delta-time movement rather than
+  // setInterval: rAF is throttled/paused natively by the browser when the
+  // page isn't visible and resumes cleanly, which setInterval does not
+  // reliably do inside an iOS Home Screen (standalone) PWA. The
+  // prefers-reduced-motion check is re-evaluated live via a change
+  // listener instead of a one-time read at mount, because iOS standalone
+  // mode has been observed to report that media query differently (and
+  // sometimes belatedly) than a regular Safari tab — a one-time mount-time
+  // check could permanently disable the whole loop on a false read.
   const chipScrollerRef = useRef<HTMLDivElement>(null);
   const chipAutoPausedRef = useRef(false);
   const chipResumeTimerRef = useRef<number | null>(null);
+  const chipReducedMotionRef = useRef(false);
 
   useEffect(() => {
     const el = chipScrollerRef.current;
     if (!el) return;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
 
-    const id = window.setInterval(() => {
-      if (chipAutoPausedRef.current) return;
+    const mq = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    chipReducedMotionRef.current = mq?.matches ?? false;
+    const handleMotionPrefChange = (e: MediaQueryListEvent) => {
+      chipReducedMotionRef.current = e.matches;
+    };
+    mq?.addEventListener?.("change", handleMotionPrefChange);
+
+    const PIXELS_PER_MS = 0.6 / 20; // same speed as the previous 0.6px/20ms tick
+    let rafId: number;
+    let lastTs: number | null = null;
+
+    const tick = (ts: number) => {
+      rafId = window.requestAnimationFrame(tick);
+      if (document.hidden || chipReducedMotionRef.current || chipAutoPausedRef.current) {
+        lastTs = null; // drop the stale delta so we don't jump on resume
+        return;
+      }
+      if (lastTs == null) { lastTs = ts; return; }
+      const dt = ts - lastTs;
+      lastTs = ts;
       const loopWidth = el.scrollWidth / 2;
       if (loopWidth <= 0) return;
-      el.scrollLeft += 0.6;
+      el.scrollLeft += PIXELS_PER_MS * dt;
       if (el.scrollLeft >= loopWidth) el.scrollLeft -= loopWidth;
-    }, 20);
+    };
+    rafId = window.requestAnimationFrame(tick);
 
-    return () => window.clearInterval(id);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+      mq?.removeEventListener?.("change", handleMotionPrefChange);
+    };
   }, []);
 
   useEffect(() => {
     return () => {
       if (chipResumeTimerRef.current) window.clearTimeout(chipResumeTimerRef.current);
     };
+  }, []);
+
+  // Safety net: if a touch/pointer gesture gets interrupted (e.g. the app is
+  // backgrounded mid-drag) without its matching end event ever firing, the
+  // pause flag could otherwise stay stuck forever. Resuming whenever the app
+  // becomes visible again guarantees it never stays silently frozen.
+  useEffect(() => {
+    function handleVisibility() {
+      if (!document.hidden) scheduleChipAutoScrollResume();
+    }
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
 
   function pauseChipAutoScroll() {
@@ -159,6 +204,25 @@ export default function Updates() {
     try { await tasksStore.getState().remove(task.id); } catch (e) { console.error(e); }
   }
 
+  // ── Clear History — bulk-delete completed items only, never active ones ──
+  const [confirmingClearHistory, setConfirmingClearHistory] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
+  const [clearHistoryError, setClearHistoryError] = useState<string | null>(null);
+
+  async function handleClearHistory() {
+    if (clearingHistory) return;
+    setClearingHistory(true);
+    setClearHistoryError(null);
+    try {
+      await tasksStore.getState().removeMany(doneTasks.map((t) => t.id));
+      setConfirmingClearHistory(false);
+    } catch (e) {
+      setClearHistoryError(e instanceof Error ? e.message : "Could not clear history. Please try again.");
+    } finally {
+      setClearingHistory(false);
+    }
+  }
+
   const sharedTaskProps = {
     now,
     messageByTaskId,
@@ -183,11 +247,14 @@ export default function Updates() {
           role="tablist"
           aria-label="Updates sections"
           style={{ scrollbarWidth: "none" }}
+          onScroll={() => { pauseChipAutoScroll(); scheduleChipAutoScrollResume(); }}
           onPointerDown={pauseChipAutoScroll}
           onPointerUp={scheduleChipAutoScrollResume}
+          onPointerCancel={scheduleChipAutoScrollResume}
           onPointerLeave={scheduleChipAutoScrollResume}
           onTouchStart={pauseChipAutoScroll}
           onTouchEnd={scheduleChipAutoScrollResume}
+          onTouchCancel={scheduleChipAutoScrollResume}
           onWheel={() => { pauseChipAutoScroll(); scheduleChipAutoScrollResume(); }}
         >
           {[...TABS, ...TABS].map((tab, i) => (
@@ -359,10 +426,21 @@ export default function Updates() {
       ══════════════════════════════════════════════════════════════ */}
       {activeTab === "history" && !initialLoading && (
         <div className="space-y-3">
-          <div className="flex items-center gap-2 px-1 py-0.5">
-            <h2 className="text-xs font-medium uppercase tracking-wide text-ink/60">Completed</h2>
+          <div className="flex items-center justify-between gap-2 px-1 py-0.5">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xs font-medium uppercase tracking-wide text-ink/60">Completed</h2>
+              {doneTasks.length > 0 && (
+                <span className="text-xs text-ink/30">{doneTasks.length}</span>
+              )}
+            </div>
             {doneTasks.length > 0 && (
-              <span className="text-xs text-ink/30">{doneTasks.length}</span>
+              <button
+                type="button"
+                onClick={() => { setClearHistoryError(null); setConfirmingClearHistory(true); }}
+                className="text-xs font-medium text-danger transition hover:underline"
+              >
+                Clear History
+              </button>
             )}
           </div>
 
@@ -386,6 +464,43 @@ export default function Updates() {
           )}
         </div>
       )}
+
+      {/* ── Clear History confirmation ── */}
+      <Modal
+        open={confirmingClearHistory}
+        onClose={() => { if (!clearingHistory) setConfirmingClearHistory(false); }}
+        title="Clear all history?"
+        dismissable={!clearingHistory}
+      >
+        <div className="space-y-4">
+          <p className="text-sm leading-snug text-ink/70">
+            This will remove confirmed/completed items from your history log.
+          </p>
+
+          {clearHistoryError && <AuthNotice kind="error">{clearHistoryError}</AuthNotice>}
+
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={() => setConfirmingClearHistory(false)}
+              disabled={clearingHistory}
+              className="rounded-full border border-border bg-white px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:bg-cream disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleClearHistory()}
+              disabled={clearingHistory}
+              aria-busy={clearingHistory}
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {clearingHistory && <Spinner size={14} />}
+              <span>{clearingHistory ? "Clearing…" : "Clear history"}</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
     </section>
   );
 }

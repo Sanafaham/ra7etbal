@@ -97,6 +97,23 @@ export async function deleteTask(id: string): Promise<void> {
   if (error) throw friendly(error);
 }
 
+/**
+ * Bulk-delete completed history items (Updates → History → Clear History).
+ * The `.eq("status", "done")` guard mirrors archiveDoneTasks — even if a
+ * caller ever passed a stray id, only done tasks can be removed this way.
+ */
+export async function deleteTasks(ids: string[]): Promise<void> {
+  const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+  if (uniqueIds.length === 0) return;
+
+  const { error } = await supabase
+    .from("tasks")
+    .delete()
+    .in("id", uniqueIds)
+    .eq("status", "done");
+  if (error) throw friendly(error);
+}
+
 function friendly(err: { message?: string }): Error {
   const msg = (err.message ?? "").toLowerCase();
   if (msg.includes("row-level security") || msg.includes("permission denied")) {

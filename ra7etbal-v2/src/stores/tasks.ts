@@ -8,6 +8,7 @@ import {
   archiveDoneTasks as apiArchiveDone,
   createTask as apiCreate,
   deleteTask as apiDelete,
+  deleteTasks as apiDeleteMany,
   listTasks as apiList,
   updateTask as apiUpdate,
 } from "../lib/tasks";
@@ -29,6 +30,8 @@ export interface TasksState {
   push: (rows: Task[]) => void;
   update: (id: string, patch: TaskPatch) => Promise<Task>;
   remove: (id: string) => Promise<void>;
+  /** Bulk-delete completed history items. Only removes tasks with status "done". */
+  removeMany: (ids: string[]) => Promise<void>;
   markDone: (id: string) => Promise<Task>;
   markPending: (id: string) => Promise<Task>;
   archiveDone: (ids: string[]) => Promise<Task[]>;
@@ -116,6 +119,30 @@ export const useTasksStore = create<TasksState>((set, get) => ({
       if (task?.type === "reminder" && task.due_at) {
         void cancelReminderPush(id);
       }
+    } catch (err) {
+      set({ items: prev });
+      throw err;
+    }
+  },
+
+  async removeMany(ids) {
+    const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+    if (uniqueIds.length === 0) return;
+
+    const uniqueIdSet = new Set(uniqueIds);
+    const prev = get().items;
+    const removedReminderIds = prev
+      .filter((t) => uniqueIdSet.has(t.id) && t.type === "reminder" && t.due_at)
+      .map((t) => t.id);
+    set({
+      items: prev.filter(
+        (task) => !(uniqueIdSet.has(task.id) && task.status === "done"),
+      ),
+    });
+
+    try {
+      await apiDeleteMany(uniqueIds);
+      for (const id of removedReminderIds) void cancelReminderPush(id);
     } catch (err) {
       set({ items: prev });
       throw err;
