@@ -78,6 +78,21 @@ describe("daily-brief — quality-review-aware Waiting / Needs You classificatio
     expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
   });
 
+  it("regression: a corrected proof whose latest review is approved clears Waiting even after a prior rejected proof", () => {
+    const task = makeTask({
+      status: "done",
+      confirmed_at: NOW.toISOString(),
+      proof_image_path: "task-images/user-1/task-1/proof/0.jpg",
+      quality_review_status: "approved",
+      quality_review_note: "Correct salad bowl confirmed.",
+      quality_reviewed_at: NOW.toISOString(),
+    });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.done.map((t) => t.id)).toContain(task.id);
+  });
+
   it("protected: a cancelled delegation still reaches Needs You — the pre-existing intervention path is untouched", () => {
     const task = makeTask({ status: "cancelled" });
     const brief = buildDailyBrief([task], NOW);

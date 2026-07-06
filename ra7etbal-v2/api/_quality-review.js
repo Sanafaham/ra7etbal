@@ -22,14 +22,21 @@ export async function downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath
   const objectPath = imagePath.startsWith(`${BUCKET}/`)
     ? imagePath.slice(`${BUCKET}/`.length)
     : imagePath;
+  const cacheBuster = `qi=${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   try {
-    const response = await fetch(`${supabaseUrl}/storage/v1/object/${BUCKET}/${objectPath}`, {
-      headers: {
-        apikey: serviceKey,
-        Authorization: `Bearer ${serviceKey}`,
+    const response = await fetch(
+      `${supabaseUrl}/storage/v1/object/${BUCKET}/${objectPath}?${cacheBuster}`,
+      {
+        cache: 'no-store',
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          'Cache-Control': 'no-cache, no-store, max-age=0',
+          Pragma: 'no-cache',
+        },
       },
-    });
+    );
     if (!response.ok) return null;
     const arrayBuffer = await response.arrayBuffer();
     if (arrayBuffer.byteLength === 0) return null;

@@ -14,6 +14,29 @@ function anthropicResponse(text) {
 }
 
 describe('runQualityReview', () => {
+  it('downloads proof images with cache bypass so corrected uploads at the same storage path are reviewed fresh', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      arrayBuffer: async () => Buffer.from('fresh-salad-proof'),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await downloadImageAsBase64({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      imagePath: 'task-images/user-1/task-1/proof/0.jpg',
+    });
+
+    expect(result).toBe(Buffer.from('fresh-salad-proof').toString('base64'));
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(
+      /^https:\/\/example\.supabase\.co\/storage\/v1\/object\/task-images\/user-1\/task-1\/proof\/0\.jpg\?qi=/,
+    );
+    expect(options.cache).toBe('no-store');
+    expect(options.headers['Cache-Control']).toBe('no-cache, no-store, max-age=0');
+    expect(options.headers.Pragma).toBe('no-cache');
+  });
+
   it('returns approved with reasoning when the model approves', async () => {
     vi.stubGlobal(
       'fetch',
@@ -316,9 +339,19 @@ describe('downloadImageAsBase64', () => {
       imagePath: 'task-images/user-1/task-1/proof.jpg',
     });
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://example.supabase.co/storage/v1/object/task-images/user-1/task-1/proof.jpg',
-      expect.objectContaining({ headers: expect.objectContaining({ apikey: 'service-key' }) }),
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(String(url)).toMatch(
+      /^https:\/\/example\.supabase\.co\/storage\/v1\/object\/task-images\/user-1\/task-1\/proof\.jpg\?qi=/,
+    );
+    expect(options).toEqual(
+      expect.objectContaining({
+        cache: 'no-store',
+        headers: expect.objectContaining({
+          apikey: 'service-key',
+          'Cache-Control': 'no-cache, no-store, max-age=0',
+          Pragma: 'no-cache',
+        }),
+      }),
     );
     expect(result).toBe(Buffer.from('image-bytes').toString('base64'));
   });

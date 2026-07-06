@@ -407,6 +407,135 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 
+  it('regression: wrong pizza proof rejected, corrected salad proof accepted, stale correction state cannot carry forward', async () => {
+    runQualityReviewMock
+      .mockResolvedValueOnce({
+        status: 'correction_required',
+        note: 'Christopher, that is pizza, not the salad bowl. Please send the salad bowl.',
+      })
+      .mockResolvedValueOnce({ status: 'approved', note: 'Correct salad bowl confirmed.' });
+    downloadImageAsBase64Mock
+      .mockReset()
+      .mockResolvedValueOnce('ref-salad') // first review reference
+      .mockResolvedValueOnce('proof-pizza') // first review proof, wrong
+      .mockResolvedValueOnce('ref-salad') // corrected review reference
+      .mockResolvedValueOnce('proof-salad'); // corrected review proof, latest bytes
+
+    const sameProofSlot = 'task-images/user-1/task-1/proof/0.jpg';
+    const fetchMock = vi
+      .fn()
+      // First submission: pizza is rejected.
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'make the salad bowl',
+        assigned_to: 'Christopher',
+        image_path: 'task-images/user-1/task-1/reference-salad.jpg',
+        attachment_count: 0,
+        quality_review_cycle_count: 0,
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please make the salad bowl exactly like the photo.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> correction_required
+      .mockResolvedValueOnce(emptyResponse()) // DELETE proof attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT proof attachments
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+971500000004' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'correction-message-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ success: true }))
+      // Second submission: same proof slot has been overwritten with salad and must be evaluated independently.
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'make the salad bowl',
+        assigned_to: 'Christopher',
+        image_path: 'task-images/user-1/task-1/reference-salad.jpg',
+        attachment_count: 0,
+        quality_review_cycle_count: 1,
+        quality_review_status: 'correction_required',
+        quality_review_note: 'Christopher, that is pizza, not the salad bowl. Please send the salad bowl.',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please make the salad bowl exactly like the photo.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done, approved
+      .mockResolvedValueOnce(emptyResponse()) // DELETE proof attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT proof attachments
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const firstRes = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: [sameProofSlot] }), firstRes);
+    expect(firstRes.json).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'correction_required', correctionCycleCount: 1 }),
+    );
+    const firstPatchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(firstPatchBody.status).toBeUndefined();
+    expect(firstPatchBody.quality_review_status).toBe('correction_required');
+    expect(firstPatchBody.quality_review_note).toContain('pizza');
+
+    const secondRes = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: [sameProofSlot] }), secondRes);
+    expect(secondRes.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    expect(runQualityReviewMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ referenceImageBase64: 'ref-salad', proofImagesBase64: ['proof-pizza'] }),
+    );
+    expect(runQualityReviewMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ referenceImageBase64: 'ref-salad', proofImagesBase64: ['proof-salad'] }),
+    );
+
+    const secondPatchBody = JSON.parse(fetchMock.mock.calls[10][1].body);
+    expect(secondPatchBody.status).toBe('done');
+    expect(secondPatchBody.quality_review_status).toBe('approved');
+    expect(secondPatchBody.quality_review_note).toBe('Correct salad bowl confirmed.');
+    expect(secondPatchBody.quality_review_note).not.toContain('pizza');
+    expect(secondPatchBody.proof_image_path).toBe(sameProofSlot);
+    expect(secondPatchBody.quality_review_cycle_count).toBeUndefined();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(true);
+  });
+
+  it('protected: wrong proof followed by another wrong proof stays open and does not incorrectly complete', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'correction_required',
+      note: 'Christopher, that still is not the salad bowl.',
+    });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'make the salad bowl',
+        assigned_to: 'Christopher',
+        image_path: 'task-images/user-1/task-1/reference-salad.jpg',
+        attachment_count: 0,
+        quality_review_cycle_count: 1,
+        quality_review_status: 'correction_required',
+        quality_review_note: 'Christopher, that was pizza.',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please make the salad bowl exactly like the photo.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> still correction_required
+      .mockResolvedValueOnce(emptyResponse()) // DELETE proof attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT proof attachments
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+971500000004' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'correction-message-2' }]))
+      .mockResolvedValueOnce(jsonResponse({ success: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: 'correction_required', correctionCycleCount: 2 }),
+    );
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.status).toBeUndefined();
+    expect(patchBody.quality_review_status).toBe('correction_required');
+    expect(patchBody.quality_review_note).toBe('Christopher, that still is not the salad bowl.');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+  });
+
   it('uncertain review: keeps the task pending, sends no WhatsApp message, and triggers the owner-push path', async () => {
     runQualityReviewMock.mockResolvedValue({
       status: 'uncertain',
