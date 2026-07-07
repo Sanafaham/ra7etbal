@@ -455,6 +455,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         quality_review_status: 'correction_required',
         quality_review_note: 'Christopher, that is pizza, not the salad bowl. Please send the salad bowl.',
       }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> clear old correction before fresh review
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please make the salad bowl exactly like the photo.' }]))
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done, approved
       .mockResolvedValueOnce(emptyResponse()) // DELETE proof attachments
@@ -475,6 +476,14 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const secondRes = createRes();
     await handler(createReq({ taskId: 'task-1', proofImagePaths: [sameProofSlot] }), secondRes);
     expect(secondRes.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    const clearPatchBody = JSON.parse(fetchMock.mock.calls[9][1].body);
+    expect(clearPatchBody).toEqual({
+      proof_image_path: sameProofSlot,
+      quality_review_status: null,
+      quality_review_note: null,
+      quality_reviewed_at: null,
+    });
+    expect(fetchMock.mock.calls[9][1].method).toBe('PATCH');
     expect(runQualityReviewMock).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ referenceImageBase64: 'ref-salad', proofImagesBase64: ['proof-pizza'] }),
@@ -484,7 +493,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       expect.objectContaining({ referenceImageBase64: 'ref-salad', proofImagesBase64: ['proof-salad'] }),
     );
 
-    const secondPatchBody = JSON.parse(fetchMock.mock.calls[10][1].body);
+    const secondPatchBody = JSON.parse(fetchMock.mock.calls[11][1].body);
     expect(secondPatchBody.status).toBe('done');
     expect(secondPatchBody.quality_review_status).toBe('approved');
     expect(secondPatchBody.quality_review_note).toBe('Correct salad bowl confirmed.');
@@ -514,6 +523,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         quality_review_status: 'correction_required',
         quality_review_note: 'Christopher, that was pizza.',
       }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> clear old correction before fresh review
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please make the salad bowl exactly like the photo.' }]))
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> still correction_required
       .mockResolvedValueOnce(emptyResponse()) // DELETE proof attachments
@@ -529,11 +539,46 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ outcome: 'correction_required', correctionCycleCount: 2 }),
     );
-    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    const clearPatchBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(clearPatchBody).toEqual({
+      proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
+      quality_review_status: null,
+      quality_review_note: null,
+      quality_reviewed_at: null,
+    });
+    const patchBody = JSON.parse(fetchMock.mock.calls[3][1].body);
     expect(patchBody.status).toBeUndefined();
     expect(patchBody.quality_review_status).toBe('correction_required');
     expect(patchBody.quality_review_note).toBe('Christopher, that still is not the salad bowl.');
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+  });
+
+  it('protected: if clearing stale review state fails, the corrected proof is not reviewed against a poisoned state', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Should not run.' });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'make the salad bowl',
+        assigned_to: 'Christopher',
+        image_path: 'task-images/user-1/task-1/reference-salad.jpg',
+        attachment_count: 0,
+        quality_review_cycle_count: 1,
+        quality_review_status: 'correction_required',
+        quality_review_note: 'Christopher, that was pizza.',
+      }]))
+      .mockResolvedValueOnce(jsonResponse({ message: 'clear failed' }, 500));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: 'Could not start a fresh review. Please try again.' });
+    expect(runQualityReviewMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls).toHaveLength(2);
   });
 
   it('uncertain review: keeps the task pending, sends no WhatsApp message, and triggers the owner-push path', async () => {

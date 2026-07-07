@@ -223,7 +223,7 @@ async function handlePost(req, res) {
     const fetchRes = await fetch(
       supabaseUrl + '/rest/v1/tasks' +
         '?id=eq.' + encodeURIComponent(taskId) +
-        '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,quality_review_cycle_count',
+        '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,quality_review_status,quality_review_note,quality_review_cycle_count',
       { headers },
     );
 
@@ -259,6 +259,18 @@ async function handlePost(req, res) {
 
     if (needsReview) {
       const apiKey = process.env.ANTHROPIC_API_KEY;
+
+      if (task.quality_review_status) {
+        const clearRes = await clearPreviousQualityReviewForFreshProof({
+          supabaseUrl,
+          headers,
+          taskId,
+          proofImagePath: proofImagePaths[0] ?? null,
+        });
+        if (!clearRes.ok) {
+          return res.status(500).json({ error: 'Could not start a fresh review. Please try again.' });
+        }
+      }
 
       const [delegationMessage, referenceImageBase64, proofImagesBase64] = await Promise.all([
         fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }),
@@ -429,6 +441,22 @@ async function handlePost(req, res) {
 }
 
 // ── Push helper ───────────────────────────────────────────────────────────────
+
+async function clearPreviousQualityReviewForFreshProof({ supabaseUrl, headers, taskId, proofImagePath }) {
+  return fetch(
+    supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId),
+    {
+      method: 'PATCH',
+      headers: { ...headers, Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        proof_image_path: proofImagePath,
+        quality_review_status: null,
+        quality_review_note: null,
+        quality_reviewed_at: null,
+      }),
+    },
+  );
+}
 
 async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant }) {
   if (!userId) return;
