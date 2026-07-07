@@ -33,11 +33,33 @@
 import webpush from 'web-push';
 import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
 
+// Quality Intelligence vision review can legitimately take longer than the
+// default Vercel function window, especially with several proof photos.
+export const config = { maxDuration: 60 };
+
 // Proof Photo V2 — up to 5 proof photos per task. No schema change: proof
 // photos are stored in the existing task_attachments table (the same table
 // reference photos use), discriminated by the previously-unused file_name
 // column set to 'proof' (reference-photo rows never set file_name).
 const MAX_PROOF_PHOTOS = 5;
+
+function taskConfirmErrorMessageForStep(step) {
+  if (step === 'load_review_images') {
+    return 'The proof uploaded, but Ra7etBal could not read it for review. Please try again.';
+  }
+  if (step === 'quality_review') {
+    return 'The proof uploaded, but Carson could not review it. Please try again.';
+  }
+  if (step === 'save_review' || step === 'save_approval') {
+    return 'The proof uploaded, but Ra7etBal could not save the result. Please try again.';
+  }
+  return 'Could not confirm task. Please try again.';
+}
+
+async function responseSnippet(response) {
+  const text = await response.text().catch(() => '');
+  return text.slice(0, 500);
+}
 
 export default async function handler(req, res) {
   if (req.method === 'GET') return handleGet(req, res);
@@ -200,6 +222,7 @@ async function handlePost(req, res) {
   const proofImagePaths = (Array.isArray(rawProofImagePaths) ? rawProofImagePaths : [])
     .filter((p) => typeof p === 'string' && p.trim())
     .slice(0, MAX_PROOF_PHOTOS);
+  let step = 'init';
 
   if (!taskId) {
     return res.status(400).json({ error: 'Task ID is required' });
@@ -220,6 +243,7 @@ async function handlePost(req, res) {
 
   try {
     // 1. Fetch the task
+    step = 'fetch_task';
     const fetchRes = await fetch(
       supabaseUrl + '/rest/v1/tasks' +
         '?id=eq.' + encodeURIComponent(taskId) +
@@ -275,6 +299,7 @@ async function handlePost(req, res) {
       }
 
       if (task.quality_review_status) {
+        step = 'clear_previous_review';
         const clearRes = await clearPreviousQualityReviewForFreshProof({
           supabaseUrl,
           headers,
@@ -282,10 +307,16 @@ async function handlePost(req, res) {
           proofImagePath: proofImagePaths[0] ?? null,
         });
         if (!clearRes.ok) {
+          console.error('[task-confirm] clear_previous_review failed', {
+            taskId,
+            status: clearRes.status,
+            body: await responseSnippet(clearRes),
+          });
           return res.status(500).json({ error: 'Could not start a fresh review. Please try again.' });
         }
       }
 
+      step = 'load_review_images';
       const [delegationMessage, referenceImageBase64, proofImagesBase64] = await Promise.all([
         fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }),
         downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath: task.image_path }),
@@ -294,6 +325,7 @@ async function handlePost(req, res) {
         ),
       ]);
 
+      step = 'quality_review';
       review = await runQualityReview({
         apiKey,
         taskDescription: task.description,
@@ -313,6 +345,7 @@ async function handlePost(req, res) {
       // It is never reset on approval.
       const cycleCount = (task.quality_review_cycle_count || 0) + 1;
 
+      step = 'save_review';
       const patchRes = await fetch(
         supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId) + '&status=eq.pending',
         {
@@ -331,7 +364,13 @@ async function handlePost(req, res) {
       );
 
       if (!patchRes.ok) {
-        return res.status(500).json({ error: 'Could not save the review. Please try again.' });
+        console.error('[task-confirm] save_review failed', {
+          taskId,
+          status: patchRes.status,
+          body: await responseSnippet(patchRes),
+          outcome: review.status,
+        });
+        return res.status(500).json({ error: taskConfirmErrorMessageForStep(step) });
       }
 
       // Persist the full submitted proof set (up to 5) for the confirmation
@@ -391,6 +430,7 @@ async function handlePost(req, res) {
 
     // 2. Mark task done — original behavior, now also recording an
     // APPROVED review outcome when one was run.
+    step = 'save_approval';
     const updateRes = await fetch(
       supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId),
       {
@@ -408,7 +448,13 @@ async function handlePost(req, res) {
     );
 
     if (!updateRes.ok) {
-      return res.status(500).json({ error: 'Could not confirm task. Please try again.' });
+      console.error('[task-confirm] save_approval failed', {
+        taskId,
+        status: updateRes.status,
+        body: await responseSnippet(updateRes),
+        outcome: review?.status ?? null,
+      });
+      return res.status(500).json({ error: taskConfirmErrorMessageForStep(step) });
     }
 
     if (proofImagePaths.length > 0) {
@@ -450,7 +496,14 @@ async function handlePost(req, res) {
 
     return res.status(200).json({ success: true, outcome: 'approved', description: task.description });
   } catch (err) {
-    return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+    console.error('[task-confirm] proof confirmation failed', {
+      taskId,
+      step,
+      proofCount: proofImagePaths.length,
+      message: err?.message || String(err),
+      stack: err?.stack || null,
+    });
+    return res.status(500).json({ error: taskConfirmErrorMessageForStep(step) });
   }
 }
 

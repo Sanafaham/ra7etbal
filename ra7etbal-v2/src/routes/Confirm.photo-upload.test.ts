@@ -133,4 +133,13 @@ describe("Confirm — proof photo upload (up to 5, remove/replace, honest failur
     const block = functionBlock("handleConfirm");
     expect(block).toContain("...(savedProofPaths.length > 0 ? { proofImagePaths: savedProofPaths } : {})");
   });
+
+  it("non-JSON task-confirm failures show an HTTP-specific error and reset loading state", () => {
+    const block = functionBlock("handleConfirm");
+    expect(block).toContain("const rawBody = await res.text()");
+    expect(block).toContain('console.error("[confirm] /api/task-confirm returned non-JSON"');
+    expect(block).toContain('`Could not confirm (HTTP ${res.status}). Please try again.`');
+    expect(block).toContain("confirmedRef.current = false;");
+    expect(block).toContain("setConfirming(false);");
+  });
 });

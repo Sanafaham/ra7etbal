@@ -298,15 +298,24 @@ export default function Confirm() {
           ...(savedProofPaths.length > 0 ? { proofImagePaths: savedProofPaths } : {}),
         }),
       });
-      const data = (await res.json()) as {
+      const rawBody = await res.text();
+      let data: {
         success?: boolean;
         already_done?: boolean;
         error?: string;
         outcome?: "approved" | "correction_required" | "uncertain" | "fraud_suspected";
         correctionNote?: string | null;
-      };
+      } = {};
+      try {
+        data = rawBody ? JSON.parse(rawBody) : {};
+      } catch {
+        console.error("[confirm] /api/task-confirm returned non-JSON", {
+          status: res.status,
+          body: rawBody.slice(0, 200),
+        });
+      }
       if (!res.ok || data.error) {
-        setConfirmError(data.error || "Could not confirm. Please try again.");
+        setConfirmError(data.error || `Could not confirm (HTTP ${res.status}). Please try again.`);
         confirmedRef.current = false;
         return;
       }

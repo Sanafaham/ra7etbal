@@ -1066,6 +1066,125 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
   });
 
+  it('QI review failure returns a useful proof-review error and does not save, confirm, or push', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    runQualityReviewMock.mockRejectedValue(new Error('Anthropic request timed out'));
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'check the outfit',
+        assigned_to: 'Grace',
+        image_path: 'task-images/u/t/outfit.jpg',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'The proof uploaded, but Carson could not review it. Please try again.',
+    });
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[task-confirm] proof confirmation failed',
+      expect.objectContaining({ taskId: 'task-1', step: 'quality_review', proofCount: 1 }),
+    );
+    expect(fetchMock.mock.calls.some(([url, options]) => String(url).includes('/rest/v1/tasks') && options?.method === 'PATCH')).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
+    expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
+  });
+
+  it('DB review-save failure does not send owner push or confirmation after QI has reviewed the proof', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    runQualityReviewMock.mockResolvedValue({
+      status: 'uncertain',
+      note: 'The proof is too dark to verify.',
+    });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'check the outfit',
+        assigned_to: 'Grace',
+        image_path: 'task-images/u/t/outfit.jpg',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
+      .mockResolvedValueOnce(jsonResponse({ message: 'column quality_review_cycle_count does not exist' }, 400));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({
+      error: 'The proof uploaded, but Ra7etBal could not save the result. Please try again.',
+    });
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[task-confirm] save_review failed',
+      expect.objectContaining({
+        taskId: 'task-1',
+        status: 400,
+        body: expect.stringContaining('quality_review_cycle_count'),
+        outcome: 'uncertain',
+      }),
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+    expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
+  });
+
+  it('owner push failure after a saved owner-review state does not break the proof submission response', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'uncertain',
+      note: 'Owner should review this proof.',
+    });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+    vi.mocked(webpush.sendNotification).mockRejectedValueOnce(new Error('push provider down'));
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'check the outfit',
+        assigned_to: 'Grace',
+        image_path: 'task-images/u/t/outfit.jpg',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> owner review state saved
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'uncertain' }));
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.quality_review_status).toBe('uncertain');
+    expect(vi.mocked(webpush.sendNotification)).toHaveBeenCalledTimes(1);
+  });
+
   it('is idempotent — an already-done task short-circuits before any review runs', async () => {
     const fetchMock = vi
       .fn()
@@ -1325,6 +1444,12 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
 });
 
 describe('Quality Intelligence safety lockdown — source-of-truth invariants', () => {
+  it('task-confirm has enough serverless time for the QI vision review timeout', () => {
+    expect(TASK_CONFIRM_SOURCE).toContain('export const config = { maxDuration: 60 }');
+    expect(TASK_CONFIRM_SOURCE).toContain("step = 'quality_review'");
+    expect(TASK_CONFIRM_SOURCE).toContain('taskConfirmErrorMessageForStep(step)');
+  });
+
   it('POST loads quality review fields before deciding whether a fresh proof must clear stale state', () => {
     const postTaskSelectIdx = TASK_CONFIRM_SOURCE.indexOf(
       '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,proof_image_path,quality_review_status,quality_review_note,quality_review_cycle_count',
