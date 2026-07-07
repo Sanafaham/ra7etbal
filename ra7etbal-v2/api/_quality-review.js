@@ -137,6 +137,64 @@ function isUnsupportedReferenceReuseClaim(note) {
   return claimsExactIdentity && tiesClaimToReference && !independentlyNonLive;
 }
 
+function isConcreteNonLiveProofReason(note) {
+  const text = String(note || '').toLowerCase();
+  return (
+    /\bscreenshot\b/.test(text) ||
+    /\bscreen shot\b/.test(text) ||
+    /\bproduct listing\b/.test(text) ||
+    /\bmenu\b/.test(text) ||
+    /\bapp ui\b/.test(text) ||
+    /\bweb image\b/.test(text) ||
+    /\bstock\b/.test(text) ||
+    /\bnon[-\s]?live\b/.test(text) ||
+    /\bnot a live photo\b/.test(text) ||
+    /\bnot a new photo\b/.test(text) ||
+    /\bexactly the same uploaded image\b/.test(text)
+  );
+}
+
+function isVisibleMismatchReason(note) {
+  const text = String(note || '').toLowerCase();
+  return (
+    /\bwrong\b/.test(text) ||
+    /\bdifferent\b/.test(text) ||
+    /\bmismatch/.test(text) ||
+    /\bdoes not match\b/.test(text) ||
+    /\bdoesn't match\b/.test(text) ||
+    /\bnot match\b/.test(text) ||
+    /\bnot the requested\b/.test(text) ||
+    /\bnot the correct\b/.test(text) ||
+    /\binstead of\b/.test(text) ||
+    /\bmissing\b/.test(text) ||
+    /\bincomplete\b/.test(text)
+  );
+}
+
+function correctionMessageFromFraudReason(note) {
+  const base = String(note || '').trim();
+  if (!base) {
+    return 'This proof does not match the requested task. Please upload a new photo showing the correct result.';
+  }
+  if (/please/i.test(base) && /photo|proof|upload|send/i.test(base)) return base;
+  return `${base} Please upload a new photo showing the correct result.`;
+}
+
+function normalizeReviewResult(parsed) {
+  if (
+    parsed.status === 'fraud_suspected' &&
+    isVisibleMismatchReason(parsed.note) &&
+    !isConcreteNonLiveProofReason(parsed.note)
+  ) {
+    return {
+      status: 'correction_required',
+      note: correctionMessageFromFraudReason(parsed.note),
+    };
+  }
+
+  return parsed;
+}
+
 /**
  * Runs the Carson quality review. Never throws — any failure (missing API
  * key, network error, malformed model output, missing correction text for a
@@ -217,7 +275,7 @@ export async function runQualityReview({
       };
     }
 
-    return parsed;
+    return normalizeReviewResult(parsed);
   } catch {
     return fallback;
   } finally {

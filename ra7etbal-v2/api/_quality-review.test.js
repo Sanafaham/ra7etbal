@@ -125,6 +125,29 @@ describe('runQualityReview', () => {
     expect(result.status).toBe('uncertain');
   });
 
+  it('normalizes a clearly wrong item classified as fraud into correction_required for worker correction', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"FRAUD_SUSPECTED","correction_message":null,"reasoning":"The proof shows a different item instead of the requested salad bowl."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'make the salad bowl',
+      delegationMessage: 'Please make the salad bowl like the reference.',
+      referenceImageBase64: 'reference-salad-base64',
+      proofImagesBase64: ['wrong-live-item-base64'],
+    });
+
+    expect(result.status).toBe('correction_required');
+    expect(result.note).toContain('different item');
+    expect(result.note).toContain('Please upload a new photo');
+  });
+
   it('returns uncertain when the model itself is uncertain', async () => {
     vi.stubGlobal(
       'fetch',
@@ -142,6 +165,26 @@ describe('runQualityReview', () => {
     });
 
     expect(result).toEqual({ status: 'uncertain', note: 'Photo is too blurry to tell.' });
+  });
+
+  it('unknown quality result falls safe to uncertain and never auto-completes', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse('{"result":"WRONG_PROOF","correction_message":"Wrong item.","reasoning":"Wrong item."}'),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'task',
+      delegationMessage: 'message',
+      referenceImageBase64: 'ref-base64',
+      proofImagesBase64: ['proof-base64'],
+    });
+
+    expect(result.status).toBe('uncertain');
+    expect(result.status).not.toBe('approved');
   });
 
   it('returns fraud_suspected deterministically when the proof is the exact same uploaded image as the reference', async () => {

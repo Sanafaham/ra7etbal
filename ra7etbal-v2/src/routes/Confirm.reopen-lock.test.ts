@@ -65,10 +65,15 @@ describe("Confirm — reopening the link after a final proof-review outcome stay
   it("protected: correction_required is NOT treated as locked — the recipient can still resubmit", () => {
     const uncertainIdx = SOURCE.indexOf('outcome === "uncertain" ?');
     const fraudIdx = SOURCE.indexOf('outcome === "fraud_suspected" ?');
+    const correctionIdx = SOURCE.indexOf('outcome === "correction_required"', fraudIdx);
     // Only the uncertain branch's own JSX (up to where the fraud_suspected
     // condition starts) must be locked-message-only; correction_required's
     // banner belongs to the fallthrough upload-form branch, not this one.
     const uncertainBranch = SOURCE.slice(uncertainIdx, fraudIdx);
     expect(uncertainBranch).not.toContain("correction_required");
+    expect(correctionIdx).toBeGreaterThan(fraudIdx);
+    expect(SOURCE.slice(correctionIdx, SOURCE.indexOf('{/* Proof photo section', correctionIdx))).not.toContain(
+      "Thanks — this has been sent to the owner for a quick review.",
+    );
   });
 });
