@@ -58,6 +58,30 @@ describe('runQualityReview', () => {
     expect(result).toEqual({ status: 'approved', note: 'Matches the reference image.' });
   });
 
+  it('regression: a visually matching corrected proof is not fraud just because it resembles the reference', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"APPROVED","correction_message":null,"reasoning":"The salad bowl matches the requested result."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'make the salad bowl',
+      delegationMessage: 'Please make the salad bowl like the photo.',
+      referenceImageBase64: 'reference-salad-base64',
+      proofImagesBase64: ['corrected-live-salad-base64'],
+    });
+
+    expect(result).toEqual({
+      status: 'approved',
+      note: 'The salad bowl matches the requested result.',
+    });
+  });
+
   it('returns correction_required with the model-generated correction text', async () => {
     vi.stubGlobal(
       'fetch',
@@ -120,15 +144,9 @@ describe('runQualityReview', () => {
     expect(result).toEqual({ status: 'uncertain', note: 'Photo is too blurry to tell.' });
   });
 
-  it('returns fraud_suspected when the proof is a reused reference image', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        anthropicResponse(
-          '{"result":"FRAUD_SUSPECTED","correction_message":null,"reasoning":"This is the same image as the reference photo, not a new photo of the completed task."}',
-        ),
-      ),
-    );
+  it('returns fraud_suspected deterministically when the proof is the exact same uploaded image as the reference', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
 
     const result = await runQualityReview({
       apiKey: 'test-key',
@@ -140,7 +158,32 @@ describe('runQualityReview', () => {
 
     expect(result).toEqual({
       status: 'fraud_suspected',
-      note: 'This is the same image as the reference photo, not a new photo of the completed task.',
+      note: 'The proof photo is exactly the same uploaded image as the reference, not a new photo of the completed task.',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('guards against unsupported model claims that a non-identical proof is pixel-for-pixel the reference', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"FRAUD_SUSPECTED","correction_message":null,"reasoning":"The proof photo is pixel-for-pixel identical to the reference image."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'make the salad bowl',
+      delegationMessage: 'Please make the salad bowl like the reference.',
+      referenceImageBase64: 'reference-salad-base64',
+      proofImagesBase64: ['new-live-salad-proof-base64'],
+    });
+
+    expect(result).toEqual({
+      status: 'approved',
+      note: 'Proof matches the requested result; no deterministic duplicate was detected.',
     });
   });
 
@@ -187,7 +230,7 @@ describe('runQualityReview', () => {
     expect(result.status).toBe('fraud_suspected');
   });
 
-  it('instructs the model that screenshots and reused reference images are FRAUD_SUSPECTED', async () => {
+  it('instructs the model that screenshots are FRAUD_SUSPECTED but reference-reuse claims are deterministic only', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
     );
@@ -205,7 +248,10 @@ describe('runQualityReview', () => {
     const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
     expect(promptText).toMatch(/FRAUD_SUSPECTED/);
     expect(promptText).toMatch(/screenshot/i);
-    expect(promptText).toMatch(/reused as if it were new proof/i);
+    expect(promptText).toMatch(/exact byte-for-byte duplicate check/i);
+    expect(promptText).toMatch(/Do NOT claim "pixel-for-pixel identical"/i);
+    expect(promptText).toMatch(/A correct proof photo may look very similar to the reference/i);
+    expect(promptText).not.toMatch(/reused as if it were new proof/i);
   });
 
   it('falls back to uncertain when the Anthropic API call fails', async () => {
