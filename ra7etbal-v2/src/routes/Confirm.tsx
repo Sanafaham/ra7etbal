@@ -184,6 +184,50 @@ export default function Confirm() {
     setProofError(null);
   }
 
+  async function refreshProofUploadSlotsForRetry(): Promise<ProofUploadSlot[] | null> {
+    if (!taskId) return null;
+
+    try {
+      const res = await fetch(`/api/task-confirm?taskId=${encodeURIComponent(taskId)}`);
+      const data = (await res.json()) as Partial<TaskInfo> & { error?: string };
+      if (!res.ok || !Array.isArray(data.proofUploadSlots)) {
+        setProofError(data.error || "Could not prepare fresh upload slots. Please try again.");
+        return null;
+      }
+
+      setInfo((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: data.status ?? prev.status,
+              confirmedAt: data.confirmedAt ?? prev.confirmedAt,
+              proofImageUrls: Array.isArray(data.proofImageUrls) ? data.proofImageUrls : prev.proofImageUrls,
+              proofUploadSlots: data.proofUploadSlots ?? prev.proofUploadSlots,
+              qualityReviewStatus: data.qualityReviewStatus ?? prev.qualityReviewStatus,
+              qualityReviewNote: data.qualityReviewNote ?? prev.qualityReviewNote,
+            }
+          : prev,
+      );
+
+      if (data.qualityReviewStatus === "uncertain" || data.qualityReviewStatus === "fraud_suspected") {
+        setOutcome(data.qualityReviewStatus);
+        setCorrectionNote(data.qualityReviewNote ?? null);
+        return null;
+      }
+
+      if (data.status === "done" || data.qualityReviewStatus === "approved") {
+        setOutcome("approved");
+        setCorrectionNote(null);
+        return null;
+      }
+
+      return data.proofUploadSlots;
+    } catch {
+      setProofError("Network issue while preparing the upload. Please check your connection and try again.");
+      return null;
+    }
+  }
+
   async function handleConfirm() {
     if (!taskId || confirmedRef.current || confirming || !info) return;
     confirmedRef.current = true;
@@ -196,7 +240,21 @@ export default function Confirm() {
     // Abort the whole submission on the first failure — reporting honestly
     // which photo failed rather than silently proceeding with a partial set.
     if (proofPhotos.length > 0) {
-      if (proofPhotos.length > info.proofUploadSlots.length) {
+      // After a QI rejection, signed upload URLs from the previous attempt are
+      // single-use and may already be exhausted. Refresh them synchronously so
+      // a corrected proof never depends on the non-blocking background refresh.
+      const activeProofUploadSlots =
+        outcome === "correction_required"
+          ? await refreshProofUploadSlotsForRetry()
+          : info.proofUploadSlots;
+
+      if (!activeProofUploadSlots) {
+        confirmedRef.current = false;
+        setConfirming(false);
+        return;
+      }
+
+      if (proofPhotos.length > activeProofUploadSlots.length) {
         setProofError("Could not prepare upload slots for all photos. Please reload the page and try again.");
         confirmedRef.current = false;
         setConfirming(false);
@@ -204,7 +262,7 @@ export default function Confirm() {
       }
       setProofUploading(true);
       for (let i = 0; i < proofPhotos.length; i++) {
-        const slot = info.proofUploadSlots[i];
+        const slot = activeProofUploadSlots[i];
         try {
           const blob = await resizeImage(proofPhotos[i].file);
           const uploadRes = await fetch(slot.uploadUrl, {

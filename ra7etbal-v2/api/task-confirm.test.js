@@ -556,7 +556,48 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.status).toBeUndefined();
     expect(patchBody.quality_review_status).toBe('correction_required');
     expect(patchBody.quality_review_note).toBe('Christopher, that still is not the salad bowl.');
+    expect(String(fetchMock.mock.calls[3][0])).toContain('&status=eq.pending');
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+  });
+
+  it('stale rejection state cannot overwrite a newer accepted proof', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'correction_required',
+      note: 'This slow rejection must not overwrite a task that already became done.',
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'make the salad bowl',
+        assigned_to: 'Christopher',
+        image_path: 'task-images/user-1/task-1/reference-salad.jpg',
+        attachment_count: 0,
+        quality_review_cycle_count: 1,
+        quality_review_status: 'correction_required',
+        quality_review_note: 'Prior proof was wrong.',
+      }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> clear old correction before fresh review
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please make the salad bowl exactly like the photo.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // pending-only PATCH would match zero rows if a newer request already completed
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+971500000004' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'correction-message-stale' }]))
+      .mockResolvedValueOnce(jsonResponse({ success: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
+
+    const stalePatchUrl = String(fetchMock.mock.calls[3][0]);
+    expect(stalePatchUrl).toContain('/rest/v1/tasks?id=eq.task-1');
+    expect(stalePatchUrl).toContain('&status=eq.pending');
+    const stalePatchBody = JSON.parse(fetchMock.mock.calls[3][1].body);
+    expect(stalePatchBody.quality_review_status).toBe('correction_required');
+    expect(stalePatchBody.status).toBeUndefined();
   });
 
   it('protected: if clearing stale review state fails, the corrected proof is not reviewed against a poisoned state', async () => {
@@ -1246,6 +1287,12 @@ describe('Quality Intelligence safety lockdown — source-of-truth invariants', 
     expect(helperBlock).toContain('quality_review_status: null');
     expect(helperBlock).toContain('quality_review_note: null');
     expect(helperBlock).toContain('quality_reviewed_at: null');
+  });
+
+  it('non-approved QI review saves are pending-only so stale rejection cannot overwrite a completed task', () => {
+    expect(TASK_CONFIRM_SOURCE).toContain(
+      "supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId) + '&status=eq.pending'",
+    );
   });
 
   it('GET exposes persisted review status as the confirmation page source of truth and locks owner-review states', () => {

@@ -55,9 +55,32 @@ describe("Confirm — proof photo upload (up to 5, remove/replace, honest failur
 
   it("uploads each photo to its own signed slot, matched by index", () => {
     const block = functionBlock("handleConfirm");
-    expect(block).toContain("const slot = info.proofUploadSlots[i]");
+    expect(block).toContain("const slot = activeProofUploadSlots[i]");
     expect(block).toContain('fetch(slot.uploadUrl, {\n            method: "PUT"');
     expect(block).toContain("savedProofPaths.push(slot.storagePath)");
+  });
+
+  it("refreshes signed upload slots synchronously before a corrected-proof retry", () => {
+    const helperBlock = functionBlock("refreshProofUploadSlotsForRetry");
+    expect(helperBlock).toContain("fetch(`/api/task-confirm?taskId=${encodeURIComponent(taskId)}`)");
+    expect(helperBlock).toContain("proofUploadSlots: data.proofUploadSlots ?? prev.proofUploadSlots");
+    expect(helperBlock).toContain('setProofError(data.error || "Could not prepare fresh upload slots. Please try again.")');
+
+    const confirmBlock = functionBlock("handleConfirm");
+    expect(confirmBlock).toContain('outcome === "correction_required"');
+    expect(confirmBlock).toContain("await refreshProofUploadSlotsForRetry()");
+    expect(confirmBlock).toContain("const slot = activeProofUploadSlots[i]");
+    expect(confirmBlock).not.toContain("const slot = info.proofUploadSlots[i]");
+  });
+
+  it("a corrected-proof slot refresh failure shows a visible error and resets loading state", () => {
+    const confirmBlock = functionBlock("handleConfirm");
+    expect(confirmBlock).toContain("if (!activeProofUploadSlots) {");
+    expect(confirmBlock).toContain("confirmedRef.current = false;\n        setConfirming(false);\n        return;");
+
+    const helperBlock = functionBlock("refreshProofUploadSlotsForRetry");
+    expect(helperBlock).toContain("setProofError(\"Network issue while preparing the upload. Please check your connection and try again.\")");
+    expect(helperBlock).toContain("return null;");
   });
 
   it("aborts the whole submission and reports honestly which photo failed, instead of silently sending a partial set", () => {
@@ -71,7 +94,7 @@ describe("Confirm — proof photo upload (up to 5, remove/replace, honest failur
 
   it("guards against a mismatched slot count rather than uploading against undefined", () => {
     const block = functionBlock("handleConfirm");
-    expect(block).toContain("if (proofPhotos.length > info.proofUploadSlots.length) {");
+    expect(block).toContain("if (proofPhotos.length > activeProofUploadSlots.length) {");
   });
 
   it("a rejected submission clears the proof set and re-fetches fresh upload slots (Supabase signed URLs are single-use)", () => {

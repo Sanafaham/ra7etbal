@@ -314,7 +314,7 @@ async function handlePost(req, res) {
       const cycleCount = (task.quality_review_cycle_count || 0) + 1;
 
       const patchRes = await fetch(
-        supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId),
+        supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId) + '&status=eq.pending',
         {
           method: 'PATCH',
           headers: { ...headers, Prefer: 'return=minimal' },
