@@ -9,6 +9,8 @@ vi.mock('web-push', () => ({
 
 import {
   claimFollowupGuard,
+  getDelegationSkipReason,
+  getQualityIntelligenceSchedulerBlockReason,
   processFollowupDueTask,
   releaseFollowupGuard,
 } from './process-delegation-escalations.js';
@@ -294,6 +296,105 @@ describe('processFollowupDueTask — concurrent scheduler executions', () => {
     // has claimed but potentially before send-whatsapp-task has resolved.
     const claimedSecond = await claimFollowupGuard('https://example.supabase.co', 'service-key', row.id, '2026-07-02T02:08:12.100Z');
     expect(claimedSecond).toBe(false);
+  });
+
+  it('QI proof submitted blocks direct worker follow-up before claiming the guard', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processFollowupDueTask(
+      sharedTaskRow({
+        proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
+        quality_review_status: 'uncertain',
+      }),
+      {
+        supabaseUrl: 'https://example.supabase.co',
+        serviceKey: 'service-key',
+        appBaseUrl: 'https://ra7etbal.com',
+        testMode: false,
+        now: new Date('2026-07-02T02:08:12.000Z'),
+      },
+    );
+
+    expect(result).toEqual({ claimed: false, sent: false });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('Quality Intelligence scheduler eligibility', () => {
+  function pendingDelegation(overrides = {}) {
+    return {
+      id: 'task-1',
+      user_id: 'user-1',
+      description: 'Bring the pizza.',
+      type: 'delegation',
+      assigned_to: 'Christopher',
+      status: 'pending',
+      needs_follow_up: true,
+      confirmation_url: 'https://ra7etbal.com/confirm/task-1',
+      followup_sent_at: null,
+      escalated_at: null,
+      image_path: null,
+      attachment_count: 0,
+      proof_image_path: null,
+      quality_review_status: null,
+      ...overrides,
+    };
+  }
+
+  it('QI proof submitted blocks worker follow-up and owner escalation eligibility', () => {
+    const task = pendingDelegation({
+      image_path: 'task-images/user-1/task-1/photo.jpg',
+      proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
+      quality_review_status: 'uncertain',
+    });
+
+    expect(getQualityIntelligenceSchedulerBlockReason(task)).toBe('quality review uncertain');
+    expect(getDelegationSkipReason(task)).toBe('quality review uncertain');
+  });
+
+  it('QI rejected proof stays out of generic scheduler follow-up', () => {
+    const task = pendingDelegation({
+      image_path: 'task-images/user-1/task-1/photo.jpg',
+      proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
+      quality_review_status: 'correction_required',
+    });
+
+    expect(getDelegationSkipReason(task)).toBe('quality review correction_required');
+  });
+
+  it('unknown proof status does not enter generic scheduler follow-up path', () => {
+    const task = pendingDelegation({
+      proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
+      quality_review_status: 'needs_human_review',
+    });
+
+    expect(getDelegationSkipReason(task)).toBe('quality review needs_human_review');
+  });
+
+  it('missing proof status with a submitted proof does not create a wrong owner escalation', () => {
+    const task = pendingDelegation({
+      proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
+      quality_review_status: null,
+    });
+
+    expect(getDelegationSkipReason(task)).toBe('quality review proof submitted');
+  });
+
+  it('QI accepted proof is blocked by canonical done status', () => {
+    expect(getDelegationSkipReason(pendingDelegation({
+      status: 'done',
+      proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
+      quality_review_status: 'approved',
+    }))).toBe('status is done');
+  });
+
+  it('normal pending non-QI delegation remains eligible for follow-up and owner escalation', () => {
+    expect(getDelegationSkipReason(pendingDelegation())).toBeNull();
+  });
+
+  it('normal confirmed non-QI delegation receives no follow-up and no owner escalation', () => {
+    expect(getDelegationSkipReason(pendingDelegation({ status: 'done' }))).toBe('status is done');
   });
 });
 

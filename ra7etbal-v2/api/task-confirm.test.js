@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import webpush from 'web-push';
 
 const downloadImageAsBase64Mock = vi.fn();
 const runQualityReviewMock = vi.fn();
@@ -675,6 +676,46 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
     // Owner-push path was attempted (push_subscriptions lookup ran) after the proof-attachment replace.
     expect(String(fetchMock.mock.calls[5][0])).toContain('/rest/v1/push_subscriptions');
+    const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
+    expect(pushPayload.body).toContain('Carson is unsure about Grace');
+    expect(pushPayload.body).not.toMatch(/flagged|hasn't confirmed/i);
+  });
+
+  it('duplicate owner-review proof submit does not create a duplicate owner push', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'uncertain',
+      note: 'This should not run for a duplicate owner-review submission.',
+    });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'get the pizza',
+        assigned_to: 'Christopher',
+        image_path: 'task-images/u/t/pizza.jpg',
+        proof_image_path: 'task-images/u/t/proof/0.jpg',
+        quality_review_status: 'uncertain',
+        quality_review_note: 'Owner already needs to review this proof.',
+      }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      outcome: 'uncertain',
+      duplicate: true,
+    }));
+    expect(runQualityReviewMock).not.toHaveBeenCalled();
+    expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('cycle count increments only for non-approved outcomes — approved leaves it untouched', async () => {
@@ -1181,7 +1222,7 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
 describe('Quality Intelligence safety lockdown — source-of-truth invariants', () => {
   it('POST loads quality review fields before deciding whether a fresh proof must clear stale state', () => {
     const postTaskSelectIdx = TASK_CONFIRM_SOURCE.indexOf(
-      '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,quality_review_status,quality_review_note,quality_review_cycle_count',
+      '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,proof_image_path,quality_review_status,quality_review_note,quality_review_cycle_count',
     );
     const clearIdx = TASK_CONFIRM_SOURCE.indexOf('clearPreviousQualityReviewForFreshProof');
     const reviewIdx = TASK_CONFIRM_SOURCE.indexOf('review = await runQualityReview');

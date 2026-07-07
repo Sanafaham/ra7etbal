@@ -205,7 +205,7 @@ export default async function handler(req, res) {
   const tasksUrl =
     `${supabaseUrl}/rest/v1/tasks` +
     `?select=id,user_id,description,type,assigned_to,status,needs_follow_up,confirmation_url,` +
-    `created_at,followup_sent_at,escalated_at` +
+    `created_at,followup_sent_at,escalated_at,image_path,attachment_count,proof_image_path,quality_review_status` +
     `&status=eq.pending` +
     `&archived_at=is.null` +
     `&created_at=lte.${encodeURIComponent(oldestRelevantCutoff)}` +
@@ -397,6 +397,17 @@ export default async function handler(req, res) {
  * behavior for transient failures.
  */
 export async function processFollowupDueTask(task, { supabaseUrl, serviceKey, appBaseUrl, testMode, now }) {
+  const qiBlockReason = getQualityIntelligenceSchedulerBlockReason(task);
+  if (qiBlockReason) {
+    console.log('[escalation] task skipped with reason', {
+      taskId: task?.id || null,
+      reason: qiBlockReason,
+      qualityReviewStatus: task?.quality_review_status || null,
+      proofImagePathPresent: Boolean(task?.proof_image_path),
+    });
+    return { claimed: false, sent: false };
+  }
+
   const claimed = await claimFollowupGuard(supabaseUrl, serviceKey, task.id, now.toISOString());
   if (!claimed) {
     return { claimed: false, sent: false };
@@ -679,15 +690,38 @@ async function stampColumn(supabaseUrl, serviceKey, taskId, column, value) {
   }
 }
 
-function getDelegationSkipReason(task) {
+export function getDelegationSkipReason(task) {
   if (!task) return 'missing task';
   if (task.status !== 'pending') return `status is ${task.status}`;
   if (!task.assigned_to || !String(task.assigned_to).trim()) return 'no assigned person';
+
+  const qiBlockReason = getQualityIntelligenceSchedulerBlockReason(task);
+  if (qiBlockReason) return qiBlockReason;
 
   const isDelegatedType = task.type === 'delegation' || task.type === 'followup';
   const isWaitingForAssignee = task.needs_follow_up === true || isDelegatedType;
   if (!isWaitingForAssignee) {
     return 'not a delegated/follow-up task';
+  }
+
+  return null;
+}
+
+export function getQualityIntelligenceSchedulerBlockReason(task) {
+  if (!task || task.status !== 'pending') return null;
+
+  const status = typeof task.quality_review_status === 'string'
+    ? task.quality_review_status.trim().toLowerCase()
+    : '';
+  if (status && status !== 'approved') {
+    return `quality review ${status}`;
+  }
+
+  // Defense in depth: if a proof photo has been persisted but the review
+  // status is missing/unknown due to a partial write or older row shape, this
+  // is still no longer a normal "waiting on assignee confirmation" task.
+  if (task.proof_image_path) {
+    return 'quality review proof submitted';
   }
 
   return null;

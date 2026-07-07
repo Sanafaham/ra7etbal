@@ -223,7 +223,7 @@ async function handlePost(req, res) {
     const fetchRes = await fetch(
       supabaseUrl + '/rest/v1/tasks' +
         '?id=eq.' + encodeURIComponent(taskId) +
-        '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,quality_review_status,quality_review_note,quality_review_cycle_count',
+        '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,proof_image_path,quality_review_status,quality_review_note,quality_review_cycle_count',
       { headers },
     );
 
@@ -259,6 +259,20 @@ async function handlePost(req, res) {
 
     if (needsReview) {
       const apiKey = process.env.ANTHROPIC_API_KEY;
+      const existingReviewStatus = normalizeQualityReviewStatus(task.quality_review_status);
+      const duplicateOwnerReviewSubmission =
+        isOwnerReviewLockedStatus(existingReviewStatus) &&
+        task.proof_image_path &&
+        task.proof_image_path === proofImagePaths[0];
+
+      if (duplicateOwnerReviewSubmission) {
+        return res.status(200).json({
+          success: true,
+          outcome: existingReviewStatus,
+          description: task.description,
+          duplicate: true,
+        });
+      }
 
       if (task.quality_review_status) {
         const clearRes = await clearPreviousQualityReviewForFreshProof({
@@ -527,6 +541,14 @@ async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, ass
       }
     }
   }
+}
+
+function normalizeQualityReviewStatus(status) {
+  return typeof status === 'string' ? status.trim().toLowerCase() : '';
+}
+
+function isOwnerReviewLockedStatus(status) {
+  return status === 'uncertain' || status === 'fraud_suspected';
 }
 
 // ── Quality Intelligence V1 helpers ───────────────────────────────────────────
