@@ -246,6 +246,7 @@ function isAuthorized(req) {
 export function getUnauthorizedCallerDiagnostic(req) {
   const headers = req.headers || {};
   const authorization = headers.authorization || headers.Authorization || '';
+  const authComparison = compareAuthorizationToCronSecret(authorization);
   const qstashHeaders = Object.keys(headers)
     .filter((key) => key.toLowerCase().startsWith('upstash-'))
     .sort();
@@ -259,8 +260,28 @@ export function getUnauthorizedCallerDiagnostic(req) {
     authorizationScheme: typeof authorization === 'string' && authorization.includes(' ')
       ? authorization.split(' ', 1)[0]
       : null,
+    authComparison,
     qstashHeaders,
     vercelId: headers['x-vercel-id'] || headers['X-Vercel-Id'] || null,
+  };
+}
+
+export function compareAuthorizationToCronSecret(authorization) {
+  const secret = process.env.CRON_SECRET || '';
+  const token = typeof authorization === 'string' && authorization.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length)
+    : '';
+
+  return {
+    hasExpectedSecret: Boolean(secret),
+    exactMatch: Boolean(secret) && authorization === `Bearer ${secret}`,
+    tokenLength: token.length,
+    expectedSecretLength: secret.length,
+    tokenHasLeadingOrTrailingWhitespace: token !== token.trim(),
+    expectedSecretHasLeadingOrTrailingWhitespace: secret !== secret.trim(),
+    tokenTrimMatchesExpected: Boolean(secret) && token.trim() === secret,
+    tokenMatchesExpectedTrim: Boolean(secret) && token === secret.trim(),
+    tokenTrimMatchesExpectedTrim: Boolean(secret) && token.trim() === secret.trim(),
   };
 }
 
