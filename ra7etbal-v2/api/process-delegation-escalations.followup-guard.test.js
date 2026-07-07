@@ -389,6 +389,14 @@ describe('Quality Intelligence scheduler eligibility', () => {
     }))).toBe('status is done');
   });
 
+  it('scheduler cannot move an approved-but-still-pending QI row back into waiting follow-up', () => {
+    expect(getDelegationSkipReason(pendingDelegation({
+      status: 'pending',
+      proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
+      quality_review_status: 'approved',
+    }))).toBe('quality review proof submitted');
+  });
+
   it('normal pending non-QI delegation remains eligible for follow-up and owner escalation', () => {
     expect(getDelegationSkipReason(pendingDelegation())).toBeNull();
   });

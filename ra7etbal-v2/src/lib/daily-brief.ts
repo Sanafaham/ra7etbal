@@ -1,4 +1,5 @@
 import { formatReminderDue, isReminderOverdue } from "./reminder-time";
+import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
 import type { Task } from "../types/task";
 
 export interface DailyBrief {
@@ -177,22 +178,16 @@ function isWaitingTask(task: Task): boolean {
   // yet. See isWaitingInterventionTask, which routes it to "Needs You"
   // instead. correction_required deliberately stays here — Carson already
   // auto-messaged the assignee to resubmit, so the ball is still with them.
-  if (isQualityReviewOwnerInterventionStatus(task.quality_review_status)) return false;
+  if (isQualityOwnerReviewStatus(task.quality_review_status)) return false;
   if (task.needs_follow_up) return true;
   if (task.type === "delegation" && task.assigned_to) return true;
   return task.type === "followup";
 }
 
-function isQualityReviewOwnerInterventionStatus(
-  status: Task["quality_review_status"],
-): boolean {
-  return status === "uncertain" || status === "fraud_suspected";
-}
-
 function isWaitingInterventionTask(task: Task): boolean {
   if (task.type !== "delegation" && task.type !== "followup") return false;
   if (task.status === "cancelled") return true;
-  return isQualityReviewOwnerInterventionStatus(task.quality_review_status);
+  return isQualityOwnerReviewStatus(task.quality_review_status);
 }
 
 function isLaterTask(

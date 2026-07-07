@@ -78,6 +78,24 @@ describe('Quality Intelligence owner push copy source of truth', () => {
     expect(body).toBe('Christopher confirmed: make the salad bowl');
     expect(body).not.toMatch(/flagged|hasn't confirmed|submitted proof for review/i);
   });
+
+  it('push notification copy maps to exactly one lifecycle variant', () => {
+    const variants = [
+      buildOwnerPushBody({ description: 'make the salad bowl', assignedTo: 'Christopher', variant: 'correction_required' }),
+      buildOwnerPushBody({ description: 'make the salad bowl', assignedTo: 'Christopher', variant: 'fraud_suspected' }),
+      buildOwnerPushBody({ description: 'make the salad bowl', assignedTo: 'Christopher', variant: 'uncertain' }),
+      buildOwnerPushBody({ description: 'make the salad bowl', assignedTo: 'Christopher' }),
+    ];
+
+    expect(variants[0]).toMatch(/flagged/i);
+    expect(variants[0]).not.toMatch(/submitted proof for review|confirmed|hasn't confirmed/i);
+    expect(variants[1]).toMatch(/flagged/i);
+    expect(variants[1]).not.toMatch(/submitted proof for review|confirmed|hasn't confirmed/i);
+    expect(variants[2]).toMatch(/submitted proof for review/i);
+    expect(variants[2]).not.toMatch(/flagged|confirmed|hasn't confirmed/i);
+    expect(variants[3]).toMatch(/confirmed/i);
+    expect(variants[3]).not.toMatch(/flagged|submitted proof for review|hasn't confirmed/i);
+  });
 });
 
 afterEach(() => {

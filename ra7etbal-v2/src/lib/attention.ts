@@ -1,4 +1,5 @@
 import type { Task } from "../types/task";
+import { resolveQualityLifecycle } from "./quality-lifecycle";
 import { formatReminderDue } from "./reminder-time";
 
 export type ReminderState = "upcoming" | "due_today" | "overdue" | "completed";
@@ -16,7 +17,7 @@ export type AttentionItem =
       kind: "delegation";
       title: string;
       label: string;
-      state: "waiting_confirmation";
+      state: "waiting_confirmation" | "proof_submitted" | "needs_owner_review";
     };
 
 export function getReminderState(task: Task, now = new Date()): ReminderState | null {
@@ -49,13 +50,19 @@ export function getNeedsAttentionItems(tasks: Task[], now = new Date()): Attenti
       }
 
       if (task.type === "delegation" && task.needs_follow_up && task.status !== "done") {
+        const lifecycle = resolveQualityLifecycle(task);
+        const delegationState =
+          lifecycle.state === "proof_submitted" || lifecycle.state === "needs_owner_review"
+            ? lifecycle.state
+            : "waiting_confirmation";
+
         return [
           {
             id: task.id,
             kind: "delegation",
             title: task.description,
-            label: "Waiting for confirmation",
-            state: "waiting_confirmation",
+            label: lifecycle.badge ?? "Waiting for confirmation",
+            state: delegationState,
           },
         ];
       }

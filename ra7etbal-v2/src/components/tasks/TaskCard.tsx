@@ -6,6 +6,7 @@ import {
   formatReminderDueTime,
   isReminderOverdue,
 } from "../../lib/reminder-time";
+import { resolveQualityLifecycle } from "../../lib/quality-lifecycle";
 import { openWhatsAppMessage, sendWhatsAppTask } from "../../lib/whatsapp";
 import type { Task, TaskType } from "../../types/task";
 
@@ -69,15 +70,7 @@ export default function TaskCard({
   const isWaitingDelegation = task.type === "delegation" && !isDone;
   const hasConfirmLink = !!task.confirmation_url && isWaitingDelegation;
   const isCorrectionRequired = task.quality_review_status === "correction_required";
-  const hasSubmittedProof = Boolean(task.proof_image_path);
-  const isFlaggedProofForOwnerReview = isWaitingDelegation && hasSubmittedProof && (
-    task.quality_review_status === "correction_required" ||
-    task.quality_review_status === "fraud_suspected"
-  );
-  const isProofSubmittedForOwnerReview = isWaitingDelegation && hasSubmittedProof && (
-    task.quality_review_status !== "approved" &&
-    !isFlaggedProofForOwnerReview
-  );
+  const qualityLifecycle = resolveQualityLifecycle(task);
   const showProofImage = Boolean(signedProofImageUrl && !isCorrectionRequired);
   const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;
 
@@ -167,20 +160,24 @@ export default function TaskCard({
           {type.label}
         </span>
         <div className="flex items-center gap-2 text-xs text-ink/55">
-          {isFlaggedProofForOwnerReview ? (
+          {isWaitingDelegation && qualityLifecycle.badge === "Needs your review" ? (
             <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800">
               Needs your review
             </span>
-          ) : isProofSubmittedForOwnerReview ? (
+          ) : isWaitingDelegation && qualityLifecycle.badge === "Proof submitted" ? (
             <span className="rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-800">
               Proof submitted
             </span>
-          ) : isWaitingDelegation && task.confirmation_url && !hasSubmittedProof ? (
+          ) : isWaitingDelegation && qualityLifecycle.badge === "Waiting for confirmation" ? (
             <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800">
               Waiting for confirmation
             </span>
           ) : null}
-          {isDone && task.type === "delegation" && (
+          {task.type === "delegation" && qualityLifecycle.badge === "Completed" ? (
+            <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
+              Completed
+            </span>
+          ) : isDone && task.type === "delegation" && (
             <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
               Confirmed done
             </span>
