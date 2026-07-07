@@ -506,19 +506,7 @@ async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, ass
 
   webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 
-  const assignee = (assignedTo || '').trim();
-  const notificationBody =
-    variant === 'uncertain'
-      ? `Carson is unsure about ${assignee ? `${assignee}'s` : 'the'} proof for: ${description}. Please check.`
-      : variant === 'fraud_suspected'
-        ? `Carson flagged ${assignee ? `${assignee}'s` : 'the'} proof for: ${description}. The photo doesn't look like genuine proof — please review.`
-        : variant === 'correction_limit'
-          ? `${assignee ? `${assignee}'s` : 'The'} proof for "${description}" still needs correction after a follow-up attempt. Carson stopped messaging — please review.`
-          : variant === 'correction_required'
-            ? `${assignee || 'The assignee'} sent the wrong proof for: ${description}. Carson messaged them to resubmit.`
-            : assignee
-              ? `${assignee} confirmed: ${description}`
-              : `Task confirmed: ${description}`;
+  const notificationBody = buildOwnerPushBody({ description, assignedTo, variant });
 
   const payload = JSON.stringify({ title: 'Ra7etBal', body: notificationBody });
 
@@ -541,6 +529,27 @@ async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, ass
       }
     }
   }
+}
+
+export function buildOwnerPushBody({ description, assignedTo, variant }) {
+  const assignee = (assignedTo || '').trim();
+  const proofOwner = assignee ? `${assignee}'s` : 'the';
+
+  if (variant === 'uncertain') {
+    return `${assignee || 'Someone'} submitted proof for review: ${description}`;
+  }
+  if (variant === 'fraud_suspected') {
+    return `Carson flagged ${proofOwner} proof for: ${description}. The photo doesn't look like genuine proof — please review.`;
+  }
+  if (variant === 'correction_limit') {
+    return `${proofOwner.charAt(0).toUpperCase()}${proofOwner.slice(1)} proof for "${description}" still needs correction after a follow-up attempt. Carson stopped messaging — please review.`;
+  }
+  if (variant === 'correction_required') {
+    return `Carson flagged ${proofOwner} proof for: ${description}. Carson messaged them to resubmit.`;
+  }
+  return assignee
+    ? `${assignee} confirmed: ${description}`
+    : `Task confirmed: ${description}`;
 }
 
 function normalizeQualityReviewStatus(status) {

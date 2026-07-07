@@ -18,4 +18,28 @@ describe("TaskCard — Quality Intelligence owner surface", () => {
     expect(SOURCE).toContain("Carson is unsure");
     expect(SOURCE).toContain("Possible issue with this proof photo");
   });
+
+  it("shows owner-review status instead of waiting-for-confirmation once proof has been submitted", () => {
+    expect(SOURCE).toContain("const isProofSubmittedForOwnerReview = isWaitingDelegation && Boolean(");
+    expect(SOURCE).toContain("task.proof_image_path &&");
+    expect(SOURCE).toContain('task.quality_review_status !== "approved"');
+    expect(SOURCE).toContain('task.quality_review_status !== "correction_required"');
+    expect(SOURCE).toContain("Proof needs review");
+
+    const headerBlock = SOURCE.slice(
+      SOURCE.indexOf('<div className="flex items-center gap-2 text-xs text-ink/55">'),
+      SOURCE.indexOf("{reminderDue?.overdue", SOURCE.indexOf('<div className="flex items-center gap-2 text-xs text-ink/55">')),
+    );
+    expect(headerBlock.indexOf("isProofSubmittedForOwnerReview")).toBeGreaterThan(-1);
+    expect(headerBlock.indexOf("Waiting for confirmation")).toBeGreaterThan(
+      headerBlock.indexOf("isProofSubmittedForOwnerReview"),
+    );
+    expect(headerBlock).toContain("!task.proof_image_path");
+  });
+
+  it("normal pending delegations still show waiting-for-confirmation, while confirmed tasks use done copy", () => {
+    expect(SOURCE).toContain('isWaitingDelegation && task.confirmation_url && !task.proof_image_path');
+    expect(SOURCE).toContain("Waiting for confirmation");
+    expect(SOURCE).toContain("Confirmed done");
+  });
 });

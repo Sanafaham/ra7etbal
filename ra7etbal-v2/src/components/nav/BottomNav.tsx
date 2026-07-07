@@ -44,7 +44,7 @@ export default function BottomNav() {
   return (
     <nav
       className="fixed bottom-0 inset-x-0 z-30 border-t border-sage/15 bg-white/96 backdrop-blur-md"
-      style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      style={{ paddingBottom: "max(env(safe-area-inset-bottom), 8px)" }}
       aria-label="Main navigation"
     >
       <div className="mx-auto flex max-w-3xl items-stretch">

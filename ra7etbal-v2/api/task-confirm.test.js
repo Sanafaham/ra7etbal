@@ -19,10 +19,11 @@ vi.mock('web-push', () => ({
 }));
 
 let handler;
+let buildOwnerPushBody;
 
 beforeEach(async () => {
   vi.resetModules();
-  ({ default: handler } = await import('./task-confirm.js'));
+  ({ default: handler, buildOwnerPushBody } = await import('./task-confirm.js'));
   vi.stubEnv('SUPABASE_URL', 'https://example.supabase.co');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
   vi.stubEnv('ANTHROPIC_API_KEY', 'test-anthropic-key');
@@ -32,6 +33,51 @@ beforeEach(async () => {
   // about the Quality Intelligence routing.
   downloadImageAsBase64Mock.mockReset().mockResolvedValue('base64-bytes');
   runQualityReviewMock.mockReset();
+});
+
+describe('Quality Intelligence owner push copy source of truth', () => {
+  it('rejected QI proof uses flagged owner push copy', () => {
+    const body = buildOwnerPushBody({
+      description: 'make the salad bowl',
+      assignedTo: 'Christopher',
+      variant: 'correction_required',
+    });
+
+    expect(body).toContain("Carson flagged Christopher's proof");
+    expect(body).not.toMatch(/confirmed|submitted proof for review|hasn't confirmed/i);
+  });
+
+  it('suspicious QI proof uses flagged owner push copy', () => {
+    const body = buildOwnerPushBody({
+      description: 'make the salad bowl',
+      assignedTo: 'Christopher',
+      variant: 'fraud_suspected',
+    });
+
+    expect(body).toContain("Carson flagged Christopher's proof");
+    expect(body).not.toMatch(/confirmed|submitted proof for review|hasn't confirmed/i);
+  });
+
+  it('proof submitted for owner review does not use flagged or has-not-confirmed copy', () => {
+    const body = buildOwnerPushBody({
+      description: 'make the salad bowl',
+      assignedTo: 'Christopher',
+      variant: 'uncertain',
+    });
+
+    expect(body).toBe('Christopher submitted proof for review: make the salad bowl');
+    expect(body).not.toMatch(/flagged|hasn't confirmed/i);
+  });
+
+  it('accepted QI proof and normal task confirmation use confirmation copy, not flagged copy', () => {
+    const body = buildOwnerPushBody({
+      description: 'make the salad bowl',
+      assignedTo: 'Christopher',
+    });
+
+    expect(body).toBe('Christopher confirmed: make the salad bowl');
+    expect(body).not.toMatch(/flagged|hasn't confirmed|submitted proof for review/i);
+  });
 });
 
 afterEach(() => {
@@ -718,7 +764,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     // Owner-push path was attempted (push_subscriptions lookup ran) after the proof-attachment replace.
     expect(String(fetchMock.mock.calls[5][0])).toContain('/rest/v1/push_subscriptions');
     const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
-    expect(pushPayload.body).toContain('Carson is unsure about Grace');
+    expect(pushPayload.body).toContain('Grace submitted proof for review');
     expect(pushPayload.body).not.toMatch(/flagged|hasn't confirmed/i);
   });
 

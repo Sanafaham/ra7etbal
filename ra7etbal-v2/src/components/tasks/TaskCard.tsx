@@ -69,6 +69,11 @@ export default function TaskCard({
   const isWaitingDelegation = task.type === "delegation" && !isDone;
   const hasConfirmLink = !!task.confirmation_url && isWaitingDelegation;
   const isCorrectionRequired = task.quality_review_status === "correction_required";
+  const isProofSubmittedForOwnerReview = isWaitingDelegation && Boolean(
+    task.proof_image_path &&
+      task.quality_review_status !== "approved" &&
+      task.quality_review_status !== "correction_required",
+  );
   const showProofImage = Boolean(signedProofImageUrl && !isCorrectionRequired);
   const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;
 
@@ -158,11 +163,15 @@ export default function TaskCard({
           {type.label}
         </span>
         <div className="flex items-center gap-2 text-xs text-ink/55">
-          {isWaitingDelegation && task.confirmation_url && (
+          {isProofSubmittedForOwnerReview ? (
+            <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800">
+              Proof needs review
+            </span>
+          ) : isWaitingDelegation && task.confirmation_url && !task.proof_image_path ? (
             <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-800">
               Waiting for confirmation
             </span>
-          )}
+          ) : null}
           {isDone && task.type === "delegation" && (
             <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
               Confirmed done

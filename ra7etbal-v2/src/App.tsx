@@ -428,7 +428,7 @@ export default function App() {
       </header>
 
       {/* ── Main content ────────────────────────────────────────────────── */}
-      <main className="mx-auto mt-3 max-w-3xl px-5" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 80px)" }}>
+      <main className="mx-auto mt-3 max-w-3xl px-5" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 112px)" }}>
         <ConfirmationNotices />
 
         {/* Hidden Carson diagnostics — self-gates on /debug/carson or
@@ -581,4 +581,3 @@ function useShowNavInner() {
   if (pathname === "/confirm" || pathname === "/auth" || pathname === "/reset") return false;
   return true;
 }
-
