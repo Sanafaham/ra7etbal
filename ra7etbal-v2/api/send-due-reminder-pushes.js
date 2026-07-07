@@ -10,6 +10,7 @@ export default async function handler(req, res) {
   const testMode = isTestMode(req);
 
   if (!testMode && !isAuthorized(req)) {
+    console.warn('[safety-net] unauthorized scheduled caller', getUnauthorizedCallerDiagnostic(req));
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
 
@@ -240,6 +241,27 @@ function isAuthorized(req) {
 
   const authorization = req.headers.authorization || req.headers.Authorization;
   return authorization === `Bearer ${secret}`;
+}
+
+export function getUnauthorizedCallerDiagnostic(req) {
+  const headers = req.headers || {};
+  const authorization = headers.authorization || headers.Authorization || '';
+  const qstashHeaders = Object.keys(headers)
+    .filter((key) => key.toLowerCase().startsWith('upstash-'))
+    .sort();
+
+  return {
+    method: req.method,
+    url: req.url,
+    host: headers.host,
+    userAgent: headers['user-agent'] || headers['User-Agent'] || null,
+    hasAuthorization: Boolean(authorization),
+    authorizationScheme: typeof authorization === 'string' && authorization.includes(' ')
+      ? authorization.split(' ', 1)[0]
+      : null,
+    qstashHeaders,
+    vercelId: headers['x-vercel-id'] || headers['X-Vercel-Id'] || null,
+  };
 }
 
 function getConfig() {
