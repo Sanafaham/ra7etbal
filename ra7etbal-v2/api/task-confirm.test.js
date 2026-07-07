@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
 const downloadImageAsBase64Mock = vi.fn();
 const runQualityReviewMock = vi.fn();
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const TASK_CONFIRM_SOURCE = readFileSync(join(__dirname, 'task-confirm.js'), 'utf-8');
 
 vi.mock('./_quality-review.js', () => ({
   downloadImageAsBase64: downloadImageAsBase64Mock,
@@ -581,6 +586,61 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls).toHaveLength(2);
   });
 
+  it('lockdown: a corrected proof after prior owner-review state is reviewed fresh and latest approval wins', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'approved',
+      note: 'Fresh salad proof approved after owner-review state.',
+    });
+    downloadImageAsBase64Mock
+      .mockReset()
+      .mockResolvedValueOnce('ref-salad')
+      .mockResolvedValueOnce('fresh-salad-proof');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'make the salad bowl',
+        assigned_to: 'Christopher',
+        image_path: 'task-images/user-1/task-1/reference-salad.jpg',
+        attachment_count: 0,
+        quality_review_cycle_count: 1,
+        quality_review_status: 'fraud_suspected',
+        quality_review_note: 'The prior proof looked like a reused reference image.',
+      }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> clear old owner-review warning before fresh review
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please make the salad bowl exactly like the photo.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done, approved
+      .mockResolvedValueOnce(emptyResponse()) // DELETE proof attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT proof attachments
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/user-1/task-1/proof/0.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    const clearPatchBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(clearPatchBody).toEqual({
+      proof_image_path: 'task-images/user-1/task-1/proof/0.jpg',
+      quality_review_status: null,
+      quality_review_note: null,
+      quality_reviewed_at: null,
+    });
+    expect(runQualityReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ referenceImageBase64: 'ref-salad', proofImagesBase64: ['fresh-salad-proof'] }),
+    );
+    const approvedPatchBody = JSON.parse(fetchMock.mock.calls[3][1].body);
+    expect(approvedPatchBody.status).toBe('done');
+    expect(approvedPatchBody.quality_review_status).toBe('approved');
+    expect(approvedPatchBody.quality_review_note).toBe('Fresh salad proof approved after owner-review state.');
+    expect(approvedPatchBody.quality_review_note).not.toContain('reused reference');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/send-whatsapp-task'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(true);
+  });
+
   it('uncertain review: keeps the task pending, sends no WhatsApp message, and triggers the owner-push path', async () => {
     runQualityReviewMock.mockResolvedValue({
       status: 'uncertain',
@@ -639,6 +699,44 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.quality_review_status).toBe('approved');
     // Approved outcomes do not touch the cycle count — it is left as-is, not reset.
     expect(patchBody.quality_review_cycle_count).toBeUndefined();
+  });
+
+  it('lockdown: an approved corrected proof cannot receive a staff correction follow-up', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Correct proof approved.' });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'make the salad bowl',
+        assigned_to: 'Christopher',
+        image_path: 'task-images/u/t/photo.jpg',
+        needs_follow_up: true,
+        quality_review_cycle_count: 1,
+        quality_review_status: 'correction_required',
+        quality_review_note: 'Prior proof was wrong.',
+      }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> clear old correction before fresh review
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please make the salad bowl.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    const approvedPatchBody = JSON.parse(fetchMock.mock.calls[3][1].body);
+    expect(approvedPatchBody.status).toBe('done');
+    expect(approvedPatchBody.quality_review_status).toBe('approved');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/send-whatsapp-task'))).toBe(false);
+    const correctionMessageInserts = fetchMock.mock.calls.filter(
+      ([url, options]) => String(url).endsWith('/rest/v1/messages') && options?.method === 'POST',
+    );
+    expect(correctionMessageInserts).toHaveLength(0);
   });
 
   it('fraud_suspected review (reused reference image): keeps the task pending, notifies the owner only, never the assignee', async () => {
@@ -886,6 +984,42 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
     expect(body.proofUploadSlots).toEqual([]);
   });
 
+  it('lockdown: reopening after an approved corrected proof returns final state and no upload slots', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        description: 'make the salad bowl',
+        assigned_to: 'Christopher',
+        status: 'done',
+        confirmed_at: '2026-07-07T00:00:00.000Z',
+        image_path: 'task-images/u/t/reference-salad.jpg',
+        proof_image_path: 'task-images/u/t/proof/0.jpg',
+        attachment_count: 0,
+        quality_review_status: 'approved',
+        quality_review_note: 'Correct salad bowl confirmed.',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/reference-salad.jpg?token=reference' }))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=final' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.status).toBe('done');
+    expect(body.qualityReviewStatus).toBe('approved');
+    expect(body.qualityReviewNote).toBe('Correct salad bowl confirmed.');
+    expect(body.proofUploadSlots).toEqual([]);
+    expect(body.proofImageUrls).toEqual([
+      'https://example.supabase.co/storage/v1/object/sign/task-images/u/t/proof/0.jpg?token=final',
+    ]);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/object/upload/sign/'))).toHaveLength(0);
+  });
+
   it('returns existing proof photos from task_attachments, sorted by sort_order, without leaking into the reference-photo grid', async () => {
     const fetchMock = vi
       .fn()
@@ -1041,6 +1175,47 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
     const body = res.json.mock.calls[0][0];
     expect(body.proofUploadSlots).toHaveLength(5);
     expect(body.qualityReviewStatus).toBe('correction_required');
+  });
+});
+
+describe('Quality Intelligence safety lockdown — source-of-truth invariants', () => {
+  it('POST loads quality review fields before deciding whether a fresh proof must clear stale state', () => {
+    const postTaskSelectIdx = TASK_CONFIRM_SOURCE.indexOf(
+      '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,quality_review_status,quality_review_note,quality_review_cycle_count',
+    );
+    const clearIdx = TASK_CONFIRM_SOURCE.indexOf('clearPreviousQualityReviewForFreshProof');
+    const reviewIdx = TASK_CONFIRM_SOURCE.indexOf('review = await runQualityReview');
+    expect(postTaskSelectIdx).toBeGreaterThan(-1);
+    expect(clearIdx).toBeGreaterThan(postTaskSelectIdx);
+    expect(reviewIdx).toBeGreaterThan(clearIdx);
+  });
+
+  it('only one task-confirm POST path invokes the Quality Intelligence review', () => {
+    expect(TASK_CONFIRM_SOURCE.match(/runQualityReview\(/g)).toHaveLength(1);
+    expect(TASK_CONFIRM_SOURCE.match(/review = await runQualityReview/g)).toHaveLength(1);
+  });
+
+  it('there is a single fresh-proof clear helper and it clears all stale warning fields together', () => {
+    expect(TASK_CONFIRM_SOURCE.match(/function clearPreviousQualityReviewForFreshProof/g)).toHaveLength(1);
+    const helperBlock = TASK_CONFIRM_SOURCE.slice(
+      TASK_CONFIRM_SOURCE.indexOf('async function clearPreviousQualityReviewForFreshProof'),
+      TASK_CONFIRM_SOURCE.indexOf('\n}', TASK_CONFIRM_SOURCE.indexOf('async function clearPreviousQualityReviewForFreshProof')) + 2,
+    );
+    expect(helperBlock).toContain('proof_image_path: proofImagePath');
+    expect(helperBlock).toContain('quality_review_status: null');
+    expect(helperBlock).toContain('quality_review_note: null');
+    expect(helperBlock).toContain('quality_reviewed_at: null');
+  });
+
+  it('GET exposes persisted review status as the confirmation page source of truth and locks owner-review states', () => {
+    const getBlock = TASK_CONFIRM_SOURCE.slice(
+      TASK_CONFIRM_SOURCE.indexOf('async function handleGet'),
+      TASK_CONFIRM_SOURCE.indexOf('// ── POST: confirm the task'),
+    );
+    expect(getBlock).toContain("task.quality_review_status === 'uncertain' || task.quality_review_status === 'fraud_suspected'");
+    expect(getBlock).toContain('task.status !== \'done\' && !isLockedForOwnerReview');
+    expect(getBlock).toContain('qualityReviewStatus: task.quality_review_status ?? null');
+    expect(getBlock).toContain('qualityReviewNote: task.quality_review_note ?? null');
   });
 });
 
