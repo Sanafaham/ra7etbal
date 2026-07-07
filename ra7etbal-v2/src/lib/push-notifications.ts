@@ -91,9 +91,16 @@ export async function enableReminderNotifications(userId: string): Promise<PushN
 
   const registration = await getOrRegisterServiceWorker();
   const existingSubscription = await registration.pushManager.getSubscription();
+  const existingSavedForUser = existingSubscription
+    ? await isPushSubscriptionSavedForUser(userId, existingSubscription)
+    : false;
+
   const subscription =
-    existingSubscription ??
-    (await subscribeToPush(registration));
+    existingSubscription && existingSavedForUser
+      ? existingSubscription
+      : existingSubscription
+        ? await replacePushSubscription(userId, registration, existingSubscription)
+        : await subscribeToPush(registration);
 
   // Always save — this inserts if missing for this userId, updates if present.
   // Covers the case where the browser subscription exists but was never saved
@@ -117,7 +124,7 @@ export async function refreshPushSubscription(userId: string): Promise<PushNotif
 
   // Unsubscribe existing token so Apple/Google issues a fresh one.
   const existing = await registration.pushManager.getSubscription();
-  if (existing) await existing.unsubscribe();
+  if (existing) await disableSavedPushSubscription(userId, existing);
 
   const newSub = await subscribeToPush(registration);
   await savePushSubscription(userId, newSub);
@@ -168,6 +175,43 @@ async function subscribeToPush(
     userVisibleOnly: true,
     applicationServerKey,
   });
+}
+
+async function replacePushSubscription(
+  userId: string,
+  registration: ServiceWorkerRegistration,
+  existing: PushSubscription,
+): Promise<PushSubscription> {
+  await disableSavedPushSubscription(userId, existing);
+  return subscribeToPush(registration);
+}
+
+async function isPushSubscriptionSavedForUser(
+  userId: string,
+  subscription: PushSubscription,
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("push_subscriptions")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("endpoint", subscription.endpoint)
+    .eq("enabled", true)
+    .maybeSingle();
+
+  return data !== null;
+}
+
+async function disableSavedPushSubscription(
+  userId: string,
+  subscription: PushSubscription,
+): Promise<void> {
+  await supabase
+    .from("push_subscriptions")
+    .update({ enabled: false })
+    .eq("user_id", userId)
+    .eq("endpoint", subscription.endpoint);
+
+  await subscription.unsubscribe();
 }
 
 async function savePushSubscription(
