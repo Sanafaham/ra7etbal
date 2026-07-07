@@ -146,6 +146,7 @@ export default function Home() {
   const greeting = useMemo(() => buildGreeting(now, displayName), [now, displayName]);
   const premiumStatus = buildPremiumStatus(statusTone);
   const briefSentence = useMemo(() => buildBriefSentence(brief, now), [brief, now]);
+  const openCarson = useCarsonStore((s) => s.setOpen);
 
   // ── Stats grid — real counts, same sources as Updates ──────────────
   const upcomingReminders = useMemo(
@@ -175,6 +176,7 @@ export default function Home() {
         setRedirectMessage(
           "Carson can answer questions about your notes, memory, priorities, and open items. Clear My Head is for capturing tasks, reminders, notes, and messages.",
         );
+        openCarson(true);
         return;
       }
 
@@ -233,9 +235,6 @@ export default function Home() {
       setSubmitting(false);
     }
   }
-
-  const openCarson = useCarsonStore((s) => s.setOpen);
-
 
   return (
     <section

@@ -2,6 +2,8 @@ import type { Person } from "../../types/person";
 import type { ExtractionResult, ExtractedItem, ItemType } from "../../types/extraction";
 import { buildExtractionPrompt } from "./extract-prompt";
 import { applyRolePrecedence } from "./role-precedence";
+import { applyNoteRouting } from "./note-routing";
+import { applyTodoRouting } from "./todo-routing";
 import { resizeImage } from "../image-upload";
 
 const MODEL = "claude-sonnet-4-6";
@@ -117,8 +119,11 @@ function parseAndProcess(raw: string, people: Person[]): ExtractionResult {
       ? obj.summary.trim()
       : "Here's what I found in the photo.";
 
+  const withRolePrecedence = applyRolePrecedence(items, people, "");
+  const withNoteRouting = applyNoteRouting(withRolePrecedence, items.map((item) => item.description).join("\n"));
+
   return {
-    extracted: applyRolePrecedence(items, people, ""),
+    extracted: applyTodoRouting(withNoteRouting),
     summary,
   };
 }

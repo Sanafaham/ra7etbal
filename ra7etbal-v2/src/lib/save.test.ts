@@ -128,6 +128,7 @@ vi.mock("./supabase", () => ({
 vi.stubGlobal("window", { location: { origin: "https://ra7etbal.com" } });
 
 import { savePending } from "./save";
+import { uploadTaskImage } from "./image-upload";
 
 function item(overrides: Partial<ExtractedItem> = {}): ExtractedItem {
   return {
@@ -305,6 +306,33 @@ describe("savePending — Clear My Head routing (Notes/To-do/Reminder/Delegation
       confirmation_url: `https://ra7etbal.com/confirm?task=${task.id}`,
     });
     expect(calls.scheduleEscalationMessages).toEqual([[task.id, task.created_at]]);
+  });
+
+  it("broken image upload fails before creating a task, message, or schedule", async () => {
+    vi.mocked(uploadTaskImage).mockRejectedValueOnce(new Error("Image upload failed: storage offline"));
+    const file = new File(["image"], "reference.jpg", { type: "image/jpeg" });
+    const imageFiles = new Map<string, File>([["img-fail", file]]);
+
+    await expect(
+      savePending(
+        [
+          item({
+            id: "img-fail",
+            type: "delegation",
+            description: "Find this blouse",
+            assignedTo: "Grace",
+          }),
+        ],
+        "user-1",
+        "Sana",
+        [GRACE],
+        imageFiles,
+      ),
+    ).rejects.toThrow("Image upload failed");
+
+    expect(calls.createTask).toHaveLength(0);
+    expect(calls.createMessage).toHaveLength(0);
+    expect(calls.scheduleEscalationMessages).toHaveLength(0);
   });
 
   it("processes a mixed batch — notes/todo/reminder/delegation are independently routed", async () => {

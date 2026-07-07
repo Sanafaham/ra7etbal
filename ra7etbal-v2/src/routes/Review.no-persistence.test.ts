@@ -3,214 +3,107 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SOURCE = readFileSync(join(__dirname, "Review.tsx"), "utf-8");
-
-/**
- * Clear My Head product correction: Review.tsx (the Clear My Head review
- * screen) must never persist extracted items into Notes/To-dos/Reminders/
- * Delegations/Messages. Carson (ops-intelligence.ts / text-carson.ts) is the
- * only path allowed to call savePending(). These are source-scanning
- * regression guards — the strongest structural proof available without a
- * component-rendering harness (no React Testing Library in this project) —
- * that no code path to persistence exists in this file at all.
- */
-describe("Review.tsx — Clear My Head never persists items (structural guard)", () => {
-  it("does not import or call savePending", () => {
-    expect(SOURCE).not.toMatch(/savePending/);
-  });
-
-  it("does not import or call saveTaskAttachments", () => {
-    expect(SOURCE).not.toMatch(/saveTaskAttachments/);
-  });
-
-  it("does not import or call sendWhatsAppTask", () => {
-    expect(SOURCE).not.toMatch(/sendWhatsAppTask/);
-  });
-
-  it("does not import or call sendDirectMessageRecord", () => {
-    expect(SOURCE).not.toMatch(/sendDirectMessageRecord/);
-  });
-
-  it("does not import from lib/save, lib/whatsapp, or lib/direct-messages", () => {
-    expect(SOURCE).not.toMatch(/from ["']..\/lib\/save["']/);
-    expect(SOURCE).not.toMatch(/from ["']..\/lib\/whatsapp["']/);
-    expect(SOURCE).not.toMatch(/from ["']..\/lib\/direct-messages["']/);
-  });
-
-  it("does not reference the tasks or messages stores (no local persistence side effects)", () => {
-    expect(SOURCE).not.toMatch(/useTasksStore/);
-    expect(SOURCE).not.toMatch(/useMessagesStore/);
-  });
-
-  it("still wires the per-item Remove control, so dumped items can be deleted", () => {
-    expect(SOURCE).toMatch(/onRemove=\{removeItem\}/);
-  });
-
-  it("Discard all clears the extraction store (deleted items leave no trace)", () => {
-    expect(SOURCE).toMatch(/function handleDiscardAll\(\)\s*\{[^}]*useExtractionStore\.getState\(\)\.clear\(\)/s);
-  });
-
-});
-
-/**
- * Clear My Head Inbox V1: "Leave here for now" now MOVES the remaining
- * items into the Clear My Head Inbox (a real, persistent table) instead of
- * being a no-op — it must save first, then clear the extraction/draft
- * stores only on success, so a failed save never silently loses a thought.
- * "Discard all" must never touch the inbox at all.
- */
-describe("Review.tsx — 'Leave here for now' moves items into the Clear My Head Inbox", () => {
-  const handleKeepSource = SOURCE.slice(
-    SOURCE.indexOf("async function handleKeep"),
-    SOURCE.indexOf("function handleDiscardAll"),
-  );
-  const handleDiscardAllSource = SOURCE.slice(SOURCE.indexOf("function handleDiscardAll"));
-
-  it("imports saveClearMyHeadInboxItems from the new inbox lib", () => {
-    expect(SOURCE).toMatch(/from ["']\.\.\/lib\/clear-my-head-inbox["']/);
-    expect(SOURCE).toMatch(/saveClearMyHeadInboxItems/);
-  });
-
-  it("handleKeep saves the remaining items' text into the inbox", () => {
-    expect(handleKeepSource).toMatch(/await saveClearMyHeadInboxItems\(items\.map\(\(it\) => it\.description\)\)/);
-  });
-
-  it("handleKeep clears the extraction store only AFTER the save call (moves, doesn't copy)", () => {
-    const saveIndex = handleKeepSource.indexOf("saveClearMyHeadInboxItems");
-    const clearIndex = handleKeepSource.indexOf("useExtractionStore.getState().clear()");
-    expect(saveIndex).toBeGreaterThan(-1);
-    expect(clearIndex).toBeGreaterThan(-1);
-    expect(clearIndex).toBeGreaterThan(saveIndex);
-  });
-
-  it("handleKeep surfaces a save error instead of silently clearing the stores", () => {
-    expect(handleKeepSource).toMatch(/catch \(err\)/);
-    expect(handleKeepSource).toMatch(/setInboxError\(/);
-  });
-
-  it("Discard all never calls saveClearMyHeadInboxItems — nothing is saved to the inbox", () => {
-    expect(handleDiscardAllSource).not.toMatch(/saveClearMyHeadInboxItems/);
-  });
-});
-
-/**
- * Wording + label cleanup: Clear My Head must read as a temporary,
- * non-operational space. The "keep" button must never say anything that
- * implies real persistence, and item badges must never show a bare real
- * Carson object-type name (see ItemCard.tsx / reviewDisplayLabel).
- */
-describe("Review.tsx — copy does not imply permanent saving", () => {
-  it("does not use the old 'Keep in Clear My Head' button copy", () => {
-    expect(SOURCE).not.toMatch(/Keep in Clear My Head/);
-  });
-
-  it("the keep button's visible copy avoids persistence-implying language", () => {
-    const buttonMatch = SOURCE.match(/onClick=\{\(\) => void handleKeep\(\)\}[\s\S]*?<\/button>/);
-    expect(buttonMatch).not.toBeNull();
-    expect(buttonMatch![0]).not.toMatch(/\b(save|saved|keep|kept|store|stored)\b/i);
-  });
-});
-
 const ITEM_CARD_SOURCE = readFileSync(
   join(__dirname, "..", "components", "review", "ItemCard.tsx"),
   "utf-8",
 );
+const HOME_SOURCE = readFileSync(join(__dirname, "Home.tsx"), "utf-8");
 
-describe("ItemCard.tsx — Clear My Head badges do not display real Carson object labels", () => {
-  it("does not render a bare 'To-do' badge label", () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/label:\s*"To-?do"/i);
+describe("Review.tsx — Clear My Head canonical save path", () => {
+  it("uses savePending as the only object-creation boundary", () => {
+    expect(SOURCE).toMatch(/import \{ savePending, saveTaskAttachments \} from ["']\.\.\/lib\/save["']/);
+    expect(SOURCE).toMatch(/const result = await savePending\(/);
+    expect(SOURCE).not.toMatch(/createReminderTask|createDelegationTaskAndMessage|createTodo\(|saveCarsonNote\(/);
   });
 
-  it("no longer keeps a per-type 'label' field at all — the badge text comes from reviewDisplayLabel", () => {
+  it("keeps image attachments on the savePending path", () => {
+    expect(SOURCE).toMatch(/const imageFiles = new Map<string, File>\(\)/);
+    expect(SOURCE).toMatch(/if \(item\.imageFile\) imageFiles\.set\(item\.id, item\.imageFile\)/);
+    expect(SOURCE).toMatch(/saveTaskAttachments/);
+  });
+
+  it("keeps WhatsApp sending behind the saved message result, not a parallel route", () => {
+    expect(SOURCE).toMatch(/const savedMessages = result\.messages\.filter/);
+    expect(SOURCE).toMatch(/sendWhatsAppTask\(\{/);
+    expect(SOURCE).toMatch(/sendDirectMessageRecord\(\{/);
+    expect(SOURCE).not.toMatch(/sendWhatsAppTask\([\s\S]*itemsToSave/);
+  });
+
+  it("reloads canonical Tasks and Messages stores after saving", () => {
+    expect(SOURCE).toMatch(/useTasksStore\.getState\(\)\.loadFor\(userId, \{ force: true \}\)/);
+    expect(SOURCE).toMatch(/useMessagesStore\.getState\(\)\.loadFor\(userId, \{ force: true \}\)/);
+  });
+});
+
+describe("Review.tsx — inbox fallback remains separate", () => {
+  const handleKeepSource = SOURCE.slice(
+    SOURCE.indexOf("async function handleKeep"),
+    SOURCE.indexOf("function handleDiscardAll"),
+  );
+  const handleSaveSource = SOURCE.slice(
+    SOURCE.indexOf("async function handleSave"),
+    SOURCE.indexOf("async function handleKeep"),
+  );
+  const handleDiscardAllSource = SOURCE.slice(SOURCE.indexOf("function handleDiscardAll"));
+
+  it("imports saveClearMyHeadInboxItems only for Leave here for now", () => {
+    expect(SOURCE).toMatch(/from ["']\.\.\/lib\/clear-my-head-inbox["']/);
+    expect(handleKeepSource).toMatch(/await saveClearMyHeadInboxItems\(items\.map\(\(it\) => it\.description\)\)/);
+    expect(handleSaveSource).not.toMatch(/saveClearMyHeadInboxItems/);
+  });
+
+  it("handleKeep clears stores only after the inbox save succeeds", () => {
+    const saveIndex = handleKeepSource.indexOf("saveClearMyHeadInboxItems");
+    const clearIndex = handleKeepSource.indexOf("useExtractionStore.getState().clear()");
+    expect(saveIndex).toBeGreaterThan(-1);
+    expect(clearIndex).toBeGreaterThan(saveIndex);
+  });
+
+  it("failure states surface errors without clearing the review", () => {
+    expect(handleKeepSource).toMatch(/catch \(err\)/);
+    expect(handleKeepSource).toMatch(/setSaveError\(/);
+    expect(handleSaveSource).toMatch(/catch \(err\)/);
+    expect(handleSaveSource).toMatch(/setSaveError\(/);
+  });
+
+  it("Discard all never saves objects or inbox rows", () => {
+    expect(handleDiscardAllSource).not.toMatch(/savePending|saveClearMyHeadInboxItems|sendWhatsAppTask|sendDirectMessageRecord/);
+    expect(handleDiscardAllSource).toMatch(/useExtractionStore\.getState\(\)\.clear\(\)/);
+  });
+});
+
+describe("ItemCard.tsx — restored review controls without duplicate implementation", () => {
+  it("renders review controls that feed the extraction store", () => {
+    expect(ITEM_CARD_SOURCE).toMatch(/onAssign/);
+    expect(ITEM_CARD_SOURCE).toMatch(/onMessageChange/);
+    expect(ITEM_CARD_SOURCE).toMatch(/onImageChange/);
+    expect(ITEM_CARD_SOURCE).toMatch(/onRemove/);
+  });
+
+  it("does not create records directly from the card", () => {
+    expect(ITEM_CARD_SOURCE).not.toMatch(/savePending|createTask|createTodo|saveCarsonNote|sendWhatsAppTask/);
+  });
+
+  it("keeps Clear My Head badge display labels separate from object creation", () => {
+    expect(ITEM_CARD_SOURCE).toMatch(/\{reviewDisplayLabel\(item\.type\)\}/);
     expect(ITEM_CARD_SOURCE).not.toMatch(/label:\s*"/);
   });
-
-  it("renders the badge text via reviewDisplayLabel(item.type), not a raw type label", () => {
-    expect(ITEM_CARD_SOURCE).toMatch(/\{reviewDisplayLabel\(item\.type\)\}/);
-  });
 });
 
-/**
- * Display cleanup: Clear My Head Review cards must not show Carson
- * operational fields (Assign To, Message to send, Due date, confirmation
- * link copy, delegation/message controls, Attach photo) — showing them made
- * a temporary, unsaved thought look like Carson had already acted on it.
- * Only the badge, item text, and Remove control remain. Carson conversion
- * still happens entirely outside this screen (ops-intelligence.ts /
- * text-carson.ts), untouched.
- */
-describe("ItemCard.tsx — no Carson operational fields on Clear My Head cards", () => {
-  it("does not render an Assign To control", () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/Assign to/i);
-    expect(ITEM_CARD_SOURCE).not.toMatch(/onAssign/);
+describe("Home.tsx — Clear My Head UI and Carson handoff guards", () => {
+  it("has one normal Clear My Head submit button and one keyboard-only sticky CTA", () => {
+    expect(HOME_SOURCE.match(/data-testid="home-submit-button"/g) ?? []).toHaveLength(1);
+    expect(HOME_SOURCE.match(/data-testid="home-sticky-cta-button"/g) ?? []).toHaveLength(1);
+    expect(HOME_SOURCE).toMatch(/\{keyboardOpen && \(/);
   });
 
-  it("does not render a Message to send control", () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/Message to send/i);
-    expect(ITEM_CARD_SOURCE).not.toMatch(/onMessageChange/);
-  });
-
-  it("does not render a Due date", () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/\bDue:/);
-    expect(ITEM_CARD_SOURCE).not.toMatch(/dueAt|dueText/);
-  });
-
-  it("does not render confirmation-link copy", () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/Confirmation link/i);
-  });
-
-  it("does not render an Attach photo control", () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/Attach photo/i);
-    expect(ITEM_CARD_SOURCE).not.toMatch(/onImageChange/);
-    expect(ITEM_CARD_SOURCE).not.toMatch(/type="file"/);
-  });
-
-  it("does not take a people list (no assignment UI needs it)", () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/\bpeople\b/);
-  });
-
-  it("still renders the item's plain text and the Remove control", () => {
-    expect(ITEM_CARD_SOURCE).toMatch(/onDescriptionChange/);
-    expect(ITEM_CARD_SOURCE).toMatch(/onClick=\{\(\) => onRemove\(item\.id\)\}/);
-  });
-});
-
-describe("Review.tsx — no Carson operational field wiring left to pass down", () => {
-  it("does not wire onAssign, onMessageChange, or onImageChange to ItemCard", () => {
-    expect(SOURCE).not.toMatch(/onAssign=/);
-    expect(SOURCE).not.toMatch(/onMessageChange=/);
-    expect(SOURCE).not.toMatch(/onImageChange=/);
-  });
-
-  it("still tells the user to ask Carson to convert items later", () => {
-    expect(SOURCE).toMatch(/ask Carson to turn/i);
-  });
-});
-
-/**
- * Explicit, one-string-per-test proof (per the exact list requested) that
- * Clear My Head Review's rendered card markup never contains these
- * operational strings. Checked against ItemCard.tsx — the component that
- * actually renders each review card — since that's where these strings
- * would appear if they leaked back in.
- */
-describe("Clear My Head Review does not render operational strings", () => {
-  it('does not render "Assign To"', () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/Assign to/i);
-  });
-
-  it('does not render "Message To Send"', () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/Message to send/i);
-  });
-
-  it('does not render "Due"', () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/\bDue\b/i);
-  });
-
-  it('does not render "Confirmation link"', () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/Confirmation link/i);
-  });
-
-  it('does not render "Attach photo"', () => {
-    expect(ITEM_CARD_SOURCE).not.toMatch(/Attach photo/i);
+  it("hands question-style advanced requests away from capture before extraction", () => {
+    const questionIndex = HOME_SOURCE.indexOf("if (looksLikeQuestion(trimmed))");
+    const openIndex = HOME_SOURCE.indexOf("openCarson(true)", questionIndex);
+    const extractionIndex = HOME_SOURCE.indexOf("await runExtraction");
+    expect(questionIndex).toBeGreaterThan(-1);
+    expect(openIndex).toBeGreaterThan(questionIndex);
+    expect(extractionIndex).toBeGreaterThan(questionIndex);
+    expect(HOME_SOURCE).toMatch(/Carson can answer questions/);
   });
 });

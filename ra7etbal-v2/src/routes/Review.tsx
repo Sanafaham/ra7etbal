@@ -1,50 +1,103 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import ItemCard from "../components/review/ItemCard";
 import Spinner from "../components/Spinner";
 import AuthNotice from "../components/auth/AuthNotice";
 import { useAuth } from "../hooks/useAuth";
+import { addImpliedOperationalResponsibilities } from "../lib/ai/role-precedence";
 import { saveClearMyHeadInboxItems } from "../lib/clear-my-head-inbox";
+import { sendDirectMessageRecord } from "../lib/direct-messages";
 import { pickReviewEmptyStateMessage } from "../lib/review-selection";
+import { savePending, saveTaskAttachments } from "../lib/save";
+import { sendWhatsAppTask } from "../lib/whatsapp";
 import { useDraftStore } from "../stores/draft";
 import { useExtractionStore } from "../stores/extraction";
+import { useMessagesStore } from "../stores/messages";
+import { usePeopleStore } from "../stores/people";
+import { useProfileStore } from "../stores/profile";
+import { useTasksStore } from "../stores/tasks";
 
 /**
- * Review — Clear My Head's temporary thought-dump review space. Shows
- * AI-extracted items, editable only as plain text, but never persists them
- * into Notes/To-dos/Reminders/Delegations/Messages. "Leave here for now"
- * moves the remaining items into the Clear My Head Inbox (a separate, real
- * table — read-only thoughts, not Carson objects); "Discard all" removes
- * them permanently. Carson is the only path that converts an inbox thought
- * into a saved Note/To-do/Reminder/Delegation/Message — this screen shows no
- * Carson operational fields (assignment, message, due date, photo) so it
- * never looks like that conversion has already happened.
+ * Review — Clear My Head's source of truth after capture. The primary action
+ * saves obvious reminders, delegations, to-dos, messages, and notes through
+ * savePending(); "Leave here for now" parks undecided thoughts in the separate
+ * Clear My Head Inbox without creating Carson objects.
  */
 export default function Review() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const userId = user?.id ?? null;
+  const displayName = useProfileStore((s) => s.displayName);
 
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [savingToInbox, setSavingToInbox] = useState(false);
-  const [inboxError, setInboxError] = useState<string | null>(null);
+  const savingRef = useRef(false);
 
-  const { status, items, sourceText, setDescription, removeItem } = useExtractionStore(
+  const {
+    status,
+    items,
+    sourceText,
+    setAssignment,
+    setDescription,
+    setSuggestedMessage,
+    setImageFile,
+    removeItem,
+  } = useExtractionStore(
     useShallow((s) => ({
       status: s.status,
       items: s.items,
       sourceText: s.sourceText,
+      setAssignment: s.setAssignment,
       setDescription: s.setDescription,
+      setSuggestedMessage: s.setSuggestedMessage,
+      setImageFile: s.setImageFile,
       removeItem: s.removeItem,
     })),
   );
 
-  // Tracks whether this review ever had items, so the empty state can tell
-  // "you cleared everything" apart from "nothing was found".
+  const { items: people, loadFor: loadPeople, loadedForUserId } = usePeopleStore(
+    useShallow((s) => ({
+      items: s.items,
+      loadFor: s.loadFor,
+      loadedForUserId: s.loadedForUserId,
+    })),
+  );
+
+  useEffect(() => {
+    if (!userId) return;
+    if (loadedForUserId !== userId) void loadPeople(userId);
+  }, [userId, loadedForUserId, loadPeople]);
+
+  const sendableChecks = useMemo(
+    () => items.map(getReviewSendableCheck),
+    [items],
+  );
+  const hasSendableMessages = sendableChecks.some((check) => check.isSendable);
+
+  const phoneByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const person of people) {
+      const key = person.name.trim().toLowerCase();
+      if (key && person.phone) m.set(key, person.phone);
+    }
+    return m;
+  }, [people]);
+
+  const consentByName = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const person of people) {
+      const key = person.name.trim().toLowerCase();
+      if (key) m.set(key, person.whatsapp_opted_in === true);
+    }
+    return m;
+  }, [people]);
+
   const everHadItemsRef = useRef(false);
   if (items.length > 0) everHadItemsRef.current = true;
 
-  // No extraction has run — user landed on /review directly. Send them home.
   if (status === "idle") {
     return <Navigate to="/" replace />;
   }
@@ -84,8 +137,8 @@ export default function Review() {
         {items.length > 0 && (
           <p className="text-sm text-text-soft">
             {items.length === 1
-              ? "I found 1 thing. Edit it, remove it, or keep it here — ask Carson to turn it into a note, to-do, reminder, or delegation."
-              : `I found ${items.length} things. Edit, remove, or keep them here — ask Carson to turn any of them into a note, to-do, reminder, or delegation.`}
+              ? "I found 1 thing. Review it, save it, or leave it here for later."
+              : `I found ${items.length} things. Review them, save them, or leave them here for later.`}
           </p>
         )}
       </header>
@@ -99,8 +152,6 @@ export default function Review() {
         </details>
       )}
 
-      {inboxError && <AuthNotice kind="error">{inboxError}</AuthNotice>}
-
       {items.length === 0 ? (
         <div className="rounded-[28px] border border-dashed border-gold/30 bg-card/70 p-6 text-sm text-text-soft">
           {pickReviewEmptyStateMessage(everHadItemsRef.current)}
@@ -111,13 +162,19 @@ export default function Review() {
             <li key={it.id}>
               <ItemCard
                 item={it}
+                people={people}
+                onAssign={setAssignment}
                 onDescriptionChange={setDescription}
+                onMessageChange={setSuggestedMessage}
+                onImageChange={setImageFile}
                 onRemove={removeItem}
               />
             </li>
           ))}
         </ul>
       )}
+
+      {saveError && <AuthNotice kind="error">{saveError}</AuthNotice>}
 
       <div className="flex flex-col-reverse items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Link
@@ -131,7 +188,7 @@ export default function Review() {
             <button
               type="button"
               onClick={handleDiscardAll}
-              disabled={savingToInbox}
+              disabled={saving || savingToInbox}
               className="rounded-full border border-rose-200 bg-rose-50/80 px-4 py-2 text-sm font-medium text-rose-700 shadow-sm transition hover:bg-rose-100 disabled:opacity-50"
             >
               Discard all
@@ -139,12 +196,29 @@ export default function Review() {
             <button
               type="button"
               onClick={() => void handleKeep()}
-              disabled={savingToInbox}
+              disabled={saving || savingToInbox}
               aria-busy={savingToInbox}
+              className="rounded-full border border-border/85 bg-warm-white px-4 py-2 text-sm font-medium text-text shadow-sm transition hover:bg-card disabled:opacity-50"
+            >
+              {savingToInbox ? "Leaving…" : "Leave here for now"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving || savingToInbox}
+              aria-busy={saving}
               className="inline-flex items-center justify-center gap-2 rounded-full bg-charcoal px-5 py-3 text-base font-medium text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:bg-gold-soft/50 disabled:text-text-soft"
             >
-              {savingToInbox && <Spinner size={16} />}
-              <span>{savingToInbox ? "Saving…" : "Leave here for now"}</span>
+              {saving && <Spinner size={16} />}
+              <span>
+                {saving
+                  ? hasSendableMessages
+                    ? "Saving & sending…"
+                    : "Saving…"
+                  : hasSendableMessages
+                    ? "Save & Send Messages"
+                    : "Save"}
+              </span>
             </button>
           </div>
         )}
@@ -152,25 +226,163 @@ export default function Review() {
     </section>
   );
 
-  // Moves every remaining item into the Clear My Head Inbox (a real,
-  // persistent table) — only after the save succeeds do we clear the
-  // extraction/draft stores, so a failed save never loses the thoughts.
+  async function handleSave() {
+    if (savingRef.current) return;
+    if (!items.length) return;
+    if (!userId) {
+      setSaveError("Not signed in.");
+      return;
+    }
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const itemsToSave = addImpliedOperationalResponsibilities(items, people, sourceText);
+      const imageFiles = new Map<string, File>();
+      for (const item of itemsToSave) {
+        if (item.imageFile) imageFiles.set(item.id, item.imageFile);
+      }
+      const result = await savePending(
+        itemsToSave,
+        userId,
+        displayName,
+        people,
+        imageFiles.size > 0 ? imageFiles : undefined,
+      );
+
+      const attachmentCountByTaskId = new Map<string, number>();
+      const multiPhotoItem = itemsToSave.find(
+        (it) => (it.imageFiles?.length ?? 0) > 1,
+      );
+      if (multiPhotoItem?.imageFiles && multiPhotoItem.imageFiles.length > 1) {
+        const firstDelegationTask = result.tasks.find(
+          (t) => t.type === "delegation" || t.type === "followup",
+        );
+        if (firstDelegationTask) {
+          try {
+            const count = await saveTaskAttachments(
+              firstDelegationTask.id,
+              userId,
+              multiPhotoItem.imageFiles,
+            );
+            attachmentCountByTaskId.set(firstDelegationTask.id, count);
+          } catch (err) {
+            console.error("Review saveTaskAttachments failed (non-fatal):", err);
+          }
+        }
+      }
+
+      const savedMessages = result.messages.filter(
+        (message) => !!message.recipient.trim() && !!message.content.trim(),
+      );
+      const consentedMessages = savedMessages.filter((m) =>
+        consentByName.get(m.recipient.trim().toLowerCase()) === true,
+      );
+      const blockedRecipients = savedMessages
+        .filter((m) => consentByName.get(m.recipient.trim().toLowerCase()) !== true)
+        .map((m) => m.recipient);
+
+      const taskImagePathById = new Map<string, string | null>(result.imagePathsByTaskId);
+      for (const t of result.tasks) {
+        if (!taskImagePathById.has(t.id)) {
+          taskImagePathById.set(t.id, t.image_path ?? null);
+        }
+      }
+      let sendError: string | null = null;
+
+      if (hasSendableMessages && consentedMessages.length === 0 && blockedRecipients.length === 0) {
+        sendError = "WhatsApp send could not start";
+      } else if (consentedMessages.length > 0) {
+        try {
+          await Promise.all(
+            consentedMessages.map(async (message) => {
+              if (!message.task_id && !message.confirmation_url) {
+                return sendDirectMessageRecord({
+                  source: "review",
+                  message,
+                  phone: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
+                  ownerName: displayName ?? null,
+                });
+              }
+
+              return sendWhatsAppTask({
+                to: phoneByName.get(message.recipient.trim().toLowerCase()) ?? null,
+                messageText: message.content,
+                confirmationLink: message.confirmation_url,
+                messageRecordId: message.id,
+                taskId: message.task_id,
+                recipientName: message.recipient,
+                ownerName: displayName ?? null,
+                imagePath: message.task_id ? (taskImagePathById.get(message.task_id) ?? null) : null,
+                attachmentCount: message.task_id ? (attachmentCountByTaskId.get(message.task_id) ?? null) : null,
+                sendMode: null,
+              });
+            }),
+          );
+        } catch (err) {
+          console.error("Review Save & Send WhatsApp failed:", err);
+          sendError =
+            err instanceof Error ? err.message : "Could not send WhatsApp message.";
+        }
+      }
+
+      await Promise.all([
+        useTasksStore.getState().loadFor(userId, { force: true }),
+        useMessagesStore.getState().loadFor(userId, { force: true }),
+      ]);
+      useDraftStore.getState().clear();
+      useExtractionStore.getState().clear();
+      await stopSavingBeforeBlockingAlert();
+      const consentWarning = blockedRecipients.length > 0
+        ? blockedRecipients
+            .map((name) => `WhatsApp consent is not recorded for ${name}. Open their profile and record consent before messaging.`)
+            .join("\n\n")
+        : null;
+
+      if (hasSendableMessages || consentWarning) {
+        const parts: string[] = [];
+        if (consentedMessages.length > 0) {
+          if (sendError) {
+            parts.push(sendError === "WhatsApp send could not start"
+              ? "Saved, but WhatsApp send could not start. You can retry from Messages."
+              : `Saved, but WhatsApp send failed: ${sendError}. You can retry from Messages.`);
+          }
+        } else if (!consentWarning) {
+          parts.push("Saved, but WhatsApp send could not start. You can retry from Messages.");
+        }
+        if (consentWarning) parts.push(consentWarning);
+        if (parts.length) window.alert(parts.join("\n\n"));
+        navigate("/messages", { replace: true });
+      } else {
+        navigate("/actions", { replace: true });
+      }
+    } catch (err) {
+      console.error("savePending failed:", err);
+      setSaveError(
+        err instanceof Error ? err.message : "Could not save. Please try again.",
+      );
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }
+
   async function handleKeep() {
     if (savingToInbox) return;
     if (!items.length) return;
     if (!userId) {
-      setInboxError("Not signed in.");
+      setSaveError("Not signed in.");
       return;
     }
     setSavingToInbox(true);
-    setInboxError(null);
+    setSaveError(null);
     try {
       await saveClearMyHeadInboxItems(items.map((it) => it.description));
       useDraftStore.getState().clear();
       useExtractionStore.getState().clear();
       navigate("/", { replace: true });
     } catch (err) {
-      setInboxError(
+      setSaveError(
         err instanceof Error ? err.message : "Could not save to your inbox. Please try again.",
       );
     } finally {
@@ -178,11 +390,77 @@ export default function Review() {
     }
   }
 
-  // Permanently discards the reviewed thoughts — nothing is saved to the
-  // inbox or anywhere else.
   function handleDiscardAll() {
     useDraftStore.getState().clear();
     useExtractionStore.getState().clear();
     navigate("/", { replace: true });
   }
+
+  async function stopSavingBeforeBlockingAlert() {
+    savingRef.current = false;
+    flushSync(() => {
+      setSaving(false);
+    });
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => resolve());
+      });
+    });
+  }
+}
+
+interface ReviewSendableCheck {
+  type: string | null;
+  kind: string | null;
+  category: string | null;
+  assignedPerson: string | null;
+  messageTextPresent: boolean;
+  isPersonalReminder: boolean;
+  isSendable: boolean;
+}
+
+function getReviewSendableCheck(item: unknown): ReviewSendableCheck {
+  const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+  const type = readString(record.type);
+  const kind = readString(record.kind);
+  const category = readString(record.category);
+  const assignedPerson =
+    readString(record.assignedTo) ??
+    readString(record.assigned_to) ??
+    readString(record.assignee) ??
+    readString(record.recipient) ??
+    readString(record.recipientName);
+  const messageText =
+    readString(record.suggestedMessage) ??
+    readString(record.message) ??
+    readString(record.content) ??
+    readString(record.body) ??
+    readString(record.text);
+  const normalizedType = (type ?? kind ?? category ?? "").toLowerCase();
+  const normalizedAssignee = assignedPerson?.toLowerCase() ?? "";
+  const hasRealAssignedPerson =
+    !!assignedPerson &&
+    normalizedAssignee !== "__me__" &&
+    normalizedAssignee !== "me" &&
+    normalizedAssignee !== "owner";
+  const messageTextPresent = !!messageText;
+  const isPersonalReminder =
+    normalizedType === "reminder" &&
+    (!hasRealAssignedPerson || normalizedAssignee === "__me__");
+
+  return {
+    type,
+    kind,
+    category,
+    assignedPerson,
+    messageTextPresent,
+    isPersonalReminder,
+    isSendable: hasRealAssignedPerson && messageTextPresent && !isPersonalReminder,
+  };
+}
+
+function readString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
