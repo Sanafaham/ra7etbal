@@ -115,7 +115,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     // bump updated_at, or the task can be left in a state a stale client
     // read as still "Waiting" even though it's done.
     expect(patchBody.needs_follow_up).toBe(false);
-    expect(typeof patchBody.updated_at).toBe('string');
+    expect(patchBody.updated_at).toBe(patchBody.confirmed_at);
     // No proof photos submitted — no task_attachments writes at all.
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
@@ -198,7 +198,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     // Regression (2026-07-08): a QI-approved task must also clear
     // needs_follow_up and bump updated_at — same as the no-review path.
     expect(patchBody.needs_follow_up).toBe(false);
-    expect(typeof patchBody.updated_at).toBe('string');
+    expect(patchBody.updated_at).toBe(patchBody.confirmed_at);
     expect(
       fetchMock.mock.calls.some(
         ([url, options]) =>
