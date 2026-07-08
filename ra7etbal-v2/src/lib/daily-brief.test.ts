@@ -87,6 +87,26 @@ describe("daily-brief — quality-review-aware Waiting / Needs You classificatio
     expect(brief.done.map((t) => t.id)).toContain(task.id);
   });
 
+  it("regression: an approved task with a stale needs_follow_up=true (pre-fix task-confirm shape) still leaves Waiting — status is checked first", () => {
+    // Production incident 2026-07-08: task-confirm's approval PATCH did not
+    // clear needs_follow_up, so an approved task could carry needs_follow_up
+    // true into the client. isWaitingTask must short-circuit on status
+    // before ever reading needs_follow_up, or a done task would wrongly
+    // stay in Waiting regardless of what the owner's tab refetches.
+    const task = makeTask({
+      status: "done",
+      needs_follow_up: true,
+      quality_review_status: "approved",
+      quality_review_note: "Matches the reference.",
+      quality_reviewed_at: NOW.toISOString(),
+      confirmed_at: NOW.toISOString(),
+      proof_image_path: "task-images/user-1/task-1/proof/0.jpg",
+    });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.done.map((t) => t.id)).toContain(task.id);
+  });
+
   it("protected: a cancelled delegation still reaches Needs You — the pre-existing intervention path is untouched", () => {
     const task = makeTask({ status: "cancelled" });
     const brief = buildDailyBrief([task], NOW);

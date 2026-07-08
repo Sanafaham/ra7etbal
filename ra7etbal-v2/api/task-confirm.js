@@ -466,6 +466,8 @@ async function handlePost(req, res) {
         body: JSON.stringify({
           status: 'done',
           confirmed_at: now,
+          needs_follow_up: false,
+          updated_at: now,
           ...(proofImagePaths.length > 0 ? { proof_image_path: proofImagePaths[0] } : {}),
           ...(review
             ? { quality_review_status: 'approved', quality_review_note: review.note, quality_reviewed_at: now }

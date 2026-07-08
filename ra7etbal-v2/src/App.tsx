@@ -56,6 +56,7 @@ import { useHouseholdRulesStore } from "./stores/household-rules";
 import { usePeopleStore } from "./stores/people";
 import { useProfileStore } from "./stores/profile";
 import { useTasksStore } from "./stores/tasks";
+import { registerTasksLiveRefresh } from "./lib/tasks-live-refresh";
 
 function LoadingPane() {
   return (
@@ -161,7 +162,11 @@ function HomeRoute() {
 
 /**
  * App-level tasks force-load so the global ConfirmationNotices banner has
- * fresh data the moment a signed-in user enters the app.
+ * fresh data the moment a signed-in user enters the app. Also keeps an
+ * already-open tab fresh across server-side task mutations (confirmation
+ * page, QI review, escalation cron) that happen outside this browser
+ * session — see tasks-live-refresh.ts for why visibility + push are the two
+ * signals used instead of a realtime subscription.
  */
 function useGlobalTasksRefresh() {
   const { status, user } = useAuth();
@@ -171,6 +176,16 @@ function useGlobalTasksRefresh() {
     if (firedRef.current === user.id) return;
     firedRef.current = user.id;
     void useTasksStore.getState().loadFor(user.id, { force: true });
+  }, [status, user?.id]);
+
+  useEffect(() => {
+    if (status !== "signed_in" || !user?.id) return;
+    const userId = user.id;
+    return registerTasksLiveRefresh({
+      documentApi: document,
+      serviceWorkerApi: "serviceWorker" in navigator ? navigator.serviceWorker : null,
+      refetch: () => void useTasksStore.getState().loadFor(userId, { force: true }),
+    });
   }, [status, user?.id]);
 }
 
