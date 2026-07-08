@@ -106,6 +106,142 @@ describe('runQualityReview', () => {
     );
   });
 
+  it('approves a correct item on a neutral surface for a find-item task', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"APPROVED","correction_message":null,"reasoning":"The correct Cheirosa 68 perfume mist is clearly visible in the live photo."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist and send a photo.',
+      delegationMessage: 'Grace, please find the perfume and send Sana a photo.',
+      referenceImageBase64: 'cheirosa-68-reference-base64',
+      proofImagesBase64: ['live-cheirosa-68-on-fabric-base64'],
+    });
+
+    expect(result).toEqual({
+      status: 'approved',
+      note: 'The correct Cheirosa 68 perfume mist is clearly visible in the live photo.',
+    });
+  });
+
+  it('normalizes over-strict location rejection to approved when location proof was not explicitly required', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"CORRECTION_REQUIRED","correction_message":"Grace, the perfume is photographed on fabric instead of inside the toilet cabinet. Please send a photo in the cabinet.","reasoning":"The item is visible but the location differs."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist in the toilet cabinet and send a photo.',
+      delegationMessage: 'Grace, please find the perfume in the toilet cabinet and send Sana a photo.',
+      referenceImageBase64: 'cheirosa-68-reference-base64',
+      proofImagesBase64: ['live-cheirosa-68-on-couch-base64'],
+    });
+
+    expect(result).toEqual({
+      status: 'approved',
+      note: 'Correct item is visible; location was not explicitly required.',
+    });
+  });
+
+  it('still rejects a wrong item even when location is not required', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"CORRECTION_REQUIRED","correction_message":"Grace, this is the wrong product. Please send a live photo of the Sol de Janeiro Cheirosa 68 perfume mist.","reasoning":"The visible bottle is a different product."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist and send a photo.',
+      delegationMessage: 'Grace, please find the perfume and send Sana a photo.',
+      referenceImageBase64: 'cheirosa-68-reference-base64',
+      proofImagesBase64: ['wrong-product-base64'],
+    });
+
+    expect(result.status).toBe('correction_required');
+    expect(result.note).toContain('wrong product');
+  });
+
+  it('rejects a correct item in the wrong location only when the task explicitly asks for location proof', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"CORRECTION_REQUIRED","correction_message":"Grace, the perfume is visible but it is not shown inside the cabinet. Please send a photo showing it inside the cabinet.","reasoning":"The required cabinet location is missing."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Show me the Sol de Janeiro Cheirosa 68 perfume mist inside the cabinet.',
+      delegationMessage: 'Grace, please send proof that the perfume is inside the cabinet.',
+      referenceImageBase64: 'cheirosa-68-reference-base64',
+      proofImagesBase64: ['live-cheirosa-68-on-couch-base64'],
+    });
+
+    expect(result.status).toBe('correction_required');
+    expect(result.note).toContain('inside the cabinet');
+  });
+
+  it('still rejects synthetic or screenshot proof as fraud_suspected', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"FRAUD_SUSPECTED","correction_message":null,"reasoning":"This looks like a screenshot of a product listing, not a live photo of the item."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist and send a photo.',
+      delegationMessage: 'Grace, please find the perfume and send Sana a photo.',
+      referenceImageBase64: 'cheirosa-68-reference-base64',
+      proofImagesBase64: ['screenshot-proof-base64'],
+    });
+
+    expect(result.status).toBe('fraud_suspected');
+    expect(result.note).toContain('screenshot');
+  });
+
+  it('preserves correction loop behavior for visible non-location problems', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"CORRECTION_REQUIRED","correction_message":"Grace, the photo is too cropped to show the product label. Please send a clearer photo of the full bottle.","reasoning":"The label is cropped out."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist and send a photo.',
+      delegationMessage: 'Grace, please find the perfume and send Sana a photo.',
+      referenceImageBase64: 'cheirosa-68-reference-base64',
+      proofImagesBase64: ['cropped-bottle-base64'],
+    });
+
+    expect(result.status).toBe('correction_required');
+    expect(result.note).toContain('too cropped');
+  });
+
   it('falls back to uncertain when correction_required has no usable message', async () => {
     vi.stubGlobal(
       'fetch',

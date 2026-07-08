@@ -65,9 +65,15 @@ Important duplicate-image boundary:
 - Do NOT claim "pixel-for-pixel identical", "same image as the reference", or "reused reference image" based only on visual similarity.
 - A correct proof photo may look very similar to the reference because the assignee completed the task correctly. If it is a live-looking photo and satisfies the requested outcome, choose APPROVED.
 
+Item-vs-location judgment:
+- For "find this item and send a photo" tasks, approve when the correct item is clearly visible and matches the requested/reference item, even if the item is photographed on a neutral surface, fabric, couch, table, floor, or a different background than the reference photo.
+- Treat location/background/context as helpful evidence, not a hard requirement, unless the task or delegation message explicitly asks for location proof.
+- Examples that do NOT require location proof: "Find the perfume and send a photo", "Take a photo of the Cheirosa 68 mist", "Find this in the closet and send a photo." For these, approve a live photo of the correct item on a couch/table/fabric.
+- Examples that DO require location proof: "Show me the perfume inside the cabinet", "Verify it is in the cabinet", "Send proof that it is on the shelf." For these, reject if the correct item is visible but the required location is not shown.
+
 Decide exactly one outcome:
 - APPROVED: the proof photo clearly satisfies the task as described.
-- CORRECTION_REQUIRED: you can clearly see what's wrong and describe it specifically — wrong placement, missing item, visibly incomplete, or an entirely different/mismatched item than what was asked for (e.g. the wrong product, wrong color, wrong object altogether). A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible.
+- CORRECTION_REQUIRED: you can clearly see what's wrong and describe it specifically — wrong required placement/location, missing item, visibly incomplete, or an entirely different/mismatched item than what was asked for (e.g. the wrong product, wrong color, wrong object altogether). A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible. Do not reject the correct item merely because it is on a different neutral surface/background unless location proof was explicitly requested.
 - UNCERTAIN: reserve this only for genuine ambiguity where you cannot tell what's in the photo or whether it matches — for example the photo itself is blurry, too dark, or cropped so the relevant item isn't visible, the angle makes it impossible to judge, or there's no reference image and the task description is too vague to judge against. If you can clearly see the item and can clearly see that it does not match, that is CORRECTION_REQUIRED, never UNCERTAIN.
 - FRAUD_SUSPECTED: the proof photo itself is not a genuine, live photo of the completed task — it's not just wrong or unclear, it's not real proof at all. Use this when the photo is a screenshot (product listing, marketplace page, menu, app UI, etc.), is a stock/web image rather than a photo taken of a real physical item, or otherwise shows clear signs of not being a live photo of the actual completed task. This is about the photo's authenticity as proof, not about whether the item looks right — a real photo of the wrong item is CORRECTION_REQUIRED; a live-looking photo of the correct item is APPROVED.
 
@@ -180,7 +186,69 @@ function correctionMessageFromFraudReason(note) {
   return `${base} Please upload a new photo showing the correct result.`;
 }
 
+function hasExplicitLocationProofRequirement(...values) {
+  const texts = values.map((value) => String(value || '').toLowerCase()).filter(Boolean);
+  if (texts.length === 0) return false;
+
+  const locationWords =
+    '(?:cabinet|cupboard|closet|drawer|shelf|room|bathroom|toilet|kitchen|garage|car|table|counter|desk|bag|box|basket|fridge|freezer)';
+  const placementWords = '(?:in|inside|on|under|at|beside|next to|within)';
+  const proofVerbs = '(?:show|photograph|take\\s+(?:a\\s+)?photo|send\\s+(?:me\\s+)?(?:a\\s+)?photo|verify|confirm|prove|proof)';
+
+  return texts.some((text) =>
+    new RegExp(`\\b${proofVerbs}\\b[\\s\\S]{0,80}\\b${placementWords}\\s+(?:the\\s+)?${locationWords}\\b`).test(text) ||
+    new RegExp(`\\b(?:verify|confirm|prove|proof)\\b[\\s\\S]{0,80}\\b(?:location|where\\s+it\\s+is|it\\s+is\\s+${placementWords}\\s+(?:the\\s+)?${locationWords})\\b`).test(text)
+  );
+}
+
+function isLocationOnlyCorrection(note) {
+  const text = String(note || '').toLowerCase();
+  if (!text) return false;
+
+  const mentionsLocationContext =
+    /\blocation\b/.test(text) ||
+    /\bbackground\b/.test(text) ||
+    /\bcontext\b/.test(text) ||
+    /\bsurface\b/.test(text) ||
+    /\bfabric\b/.test(text) ||
+    /\bcouch\b/.test(text) ||
+    /\bsofa\b/.test(text) ||
+    /\bbed\b/.test(text) ||
+    /\btable\b/.test(text) ||
+    /\bcounter\b/.test(text) ||
+    /\bfloor\b/.test(text) ||
+    /\bcabinet\b/.test(text) ||
+    /\bcupboard\b/.test(text) ||
+    /\bcloset\b/.test(text) ||
+    /\bdrawer\b/.test(text) ||
+    /\bshelf\b/.test(text) ||
+    /\bnot (?:in|inside|on|under|at)\b/.test(text) ||
+    /\boutside (?:of )?(?:the )?\w+/.test(text);
+
+  if (!mentionsLocationContext) return false;
+
+  const itemMismatch =
+    /\bwrong (?:item|product|object|bottle|brand|color|size|variant)\b/.test(text) ||
+    /\bdifferent (?:item|product|object|bottle|brand|color|size|variant)\b/.test(text) ||
+    /\bnot the (?:requested|correct|same) (?:item|product|object|bottle|brand|color|size|variant)\b/.test(text) ||
+    /\bdoes(?: not|n't) match (?:the )?(?:item|product|object|bottle|brand|color|size|variant)\b/.test(text) ||
+    /\bmissing (?:the )?(?:item|product|object|bottle)\b/.test(text);
+
+  return !itemMismatch;
+}
+
 function normalizeReviewResult(parsed) {
+  if (
+    parsed.status === 'correction_required' &&
+    isLocationOnlyCorrection(parsed.note) &&
+    !hasExplicitLocationProofRequirement(parsed.taskDescription, parsed.delegationMessage)
+  ) {
+    return {
+      status: 'approved',
+      note: 'Correct item is visible; location was not explicitly required.',
+    };
+  }
+
   if (
     parsed.status === 'fraud_suspected' &&
     isVisibleMismatchReason(parsed.note) &&
@@ -192,7 +260,7 @@ function normalizeReviewResult(parsed) {
     };
   }
 
-  return parsed;
+  return { status: parsed.status, note: parsed.note };
 }
 
 /**
@@ -263,6 +331,8 @@ export async function runQualityReview({
     const text = data?.content?.[0]?.text ?? null;
     const parsed = parseReviewResponse(text);
     if (!parsed) return fallback;
+    parsed.taskDescription = taskDescription;
+    parsed.delegationMessage = delegationMessage;
 
     // A CORRECTION_REQUIRED result with no usable message is not actionable
     // — fall back to uncertain rather than sending an empty WhatsApp message.
