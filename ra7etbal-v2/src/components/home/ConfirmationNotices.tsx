@@ -3,10 +3,9 @@ import { useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useAuth } from "../../hooks/useAuth";
 import { useDismissedNotifications } from "../../hooks/useDismissedNotifications";
+import { selectConfirmationNotices } from "../../lib/dismissed-notifications";
 import { useTasksStore } from "../../stores/tasks";
 
-/** Cap surfaced notices so a long-untouched account doesn't flood Home. */
-const MAX_NOTICES = 5;
 const MAX_SUMMARY_LENGTH = 110;
 
 function confirmationSummary(description: string): string {
@@ -44,22 +43,10 @@ export default function ConfirmationNotices() {
   const { dismissed, dismiss } = useDismissedNotifications(userId);
   const tasks = useTasksStore(useShallow((s) => s.items));
 
-  const visible = useMemo(() => {
-    return tasks
-      .filter(
-        (t) =>
-          t.type === "delegation" &&
-          t.status === "done" &&
-          !!t.confirmed_at &&
-          !dismissed.has(t.id),
-      )
-      .sort(
-        (a, b) =>
-          new Date(b.confirmed_at!).getTime() -
-          new Date(a.confirmed_at!).getTime(),
-      )
-      .slice(0, MAX_NOTICES);
-  }, [tasks, dismissed]);
+  const visible = useMemo(
+    () => selectConfirmationNotices(tasks, dismissed),
+    [tasks, dismissed],
+  );
 
   // Hide on the public recipient page and whenever the owner isn't signed in.
   // This component renders at the app-shell level now, so it must self-gate.
