@@ -477,8 +477,8 @@ export default function Confirm() {
             </div>
           ) : outcome === "fraud_suspected" ? (
             <div className="space-y-3">
-              <AuthNotice kind="success">
-                Thanks — this has been sent to the owner for a quick review.
+              <AuthNotice kind="error">
+                Carson flagged this proof for owner review. The task is still open while the owner checks it.
               </AuthNotice>
             </div>
           ) : (

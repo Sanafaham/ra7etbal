@@ -57,11 +57,11 @@ describe("daily-brief — quality-review-aware Waiting / Needs You classificatio
     expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
   });
 
-  it("protected: a correction_required proof review stays in Waiting — Carson already asked the assignee to resubmit", () => {
+  it("a correction_required proof review is visible in Needs You and not hidden in ordinary Waiting", () => {
     const task = makeTask({ quality_review_status: "correction_required", quality_review_note: "Please center the chicken." });
     const brief = buildDailyBrief([task], NOW);
-    expect(brief.waitingOnOthers.map((t) => t.id)).toContain(task.id);
-    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
   });
 
   it("protected: a normal delegation with no quality review yet is unaffected — still Waiting, not Needs You", () => {

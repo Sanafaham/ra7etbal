@@ -1,5 +1,5 @@
 import { formatReminderDue, isReminderOverdue } from "./reminder-time";
-import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
+import { isQualityFlaggedStatus, isQualityOwnerReviewStatus } from "./quality-lifecycle";
 import type { Task } from "../types/task";
 
 export interface DailyBrief {
@@ -171,14 +171,12 @@ function isNeedsYouTask(task: Task, waitingIds: Set<string>, now: Date): boolean
 
 function isWaitingTask(task: Task): boolean {
   if (task.status === "done" || task.status === "cancelled") return false;
-  // A proof photo Carson couldn't confidently approve (uncertain) or flagged
-  // as suspicious (fraud_suspected) has already gone to the owner for a
-  // manual decision — it is no longer waiting on the assignee, so it must
-  // not sit in "Waiting" alongside tasks the assignee hasn't responded to
-  // yet. See isWaitingInterventionTask, which routes it to "Needs You"
-  // instead. correction_required deliberately stays here — Carson already
-  // auto-messaged the assignee to resubmit, so the ball is still with them.
-  if (isQualityOwnerReviewStatus(task.quality_review_status)) return false;
+  // Any active flagged/reviewed proof has already left the plain "waiting
+  // for confirmation" state. Show it in Needs You with one QI badge instead
+  // of hiding it among ordinary pending delegations.
+  if (isQualityOwnerReviewStatus(task.quality_review_status) || isQualityFlaggedStatus(task.quality_review_status)) {
+    return false;
+  }
   if (task.needs_follow_up) return true;
   if (task.type === "delegation" && task.assigned_to) return true;
   return task.type === "followup";
@@ -187,7 +185,7 @@ function isWaitingTask(task: Task): boolean {
 function isWaitingInterventionTask(task: Task): boolean {
   if (task.type !== "delegation" && task.type !== "followup") return false;
   if (task.status === "cancelled") return true;
-  return isQualityOwnerReviewStatus(task.quality_review_status);
+  return isQualityOwnerReviewStatus(task.quality_review_status) || isQualityFlaggedStatus(task.quality_review_status);
 }
 
 function isLaterTask(

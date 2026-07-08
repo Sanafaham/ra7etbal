@@ -39,7 +39,7 @@ describe("Confirm — reopening the link after a final proof-review outcome stay
     expect(interfaceBlock).toContain("qualityReviewNote: string | null;");
   });
 
-  it("an uncertain/fraud_suspected outcome (hydrated or fresh) renders the locked owner-review message, not the upload form", () => {
+  it("an uncertain outcome (hydrated or fresh) renders the owner-review message, not the upload form", () => {
     // Both branches must resolve BEFORE the upload-form fallthrough — order
     // matters, since this is a ternary chain, not independent conditionals.
     const doneIdx = SOURCE.indexOf('info.status === "done" ?');
@@ -53,6 +53,15 @@ describe("Confirm — reopening the link after a final proof-review outcome stay
     expect(SOURCE.slice(uncertainIdx, fraudIdx)).toContain(
       "Thanks — this has been sent to the owner for a quick review.",
     );
+  });
+
+  it("a fraud_suspected outcome renders flagged proof copy, not the generic quick-review success copy", () => {
+    const fraudIdx = SOURCE.indexOf('outcome === "fraud_suspected" ?');
+    const correctionIdx = SOURCE.indexOf('outcome === "correction_required"', fraudIdx);
+    const fraudBranch = SOURCE.slice(fraudIdx, correctionIdx);
+    expect(fraudBranch).toContain("Carson flagged this proof for owner review.");
+    expect(fraudBranch).toContain("The task is still open while the owner checks it.");
+    expect(fraudBranch).not.toContain("Thanks — this has been sent to the owner for a quick review.");
   });
 
   it("needsNewProof does not force a fresh photo while the link is locked for owner review", () => {
