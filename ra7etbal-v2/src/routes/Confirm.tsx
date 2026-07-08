@@ -57,8 +57,9 @@ interface TaskInfo {
   /**
    * Persisted outcome of Carson's automated proof review (server source of
    * truth). Rehydrated into `outcome` state on every load so reopening the
-   * confirmation link after an uncertain/fraud_suspected review shows the
-   * locked "sent to owner" state instead of the upload form again.
+   * confirmation link after an uncertain review shows the locked "sent to
+   * owner" state instead of the upload form again. Operational rejection
+   * states still show the upload form so Carson can collect a corrected proof.
    */
   qualityReviewStatus: "approved" | "correction_required" | "uncertain" | "fraud_suspected" | null;
   qualityReviewNote: string | null;
@@ -132,7 +133,7 @@ export default function Confirm() {
         // load/reopen reflects the persisted state — see qualityReviewStatus
         // above. Without this, `outcome` only ever came from a submission
         // made during the same page visit, so reopening the link after an
-        // uncertain/fraud_suspected result lost the locked view and showed
+        // uncertain result lost the locked view and showed
         // the upload form again (the original bug).
         if (data.qualityReviewStatus) {
           setOutcome(data.qualityReviewStatus);
@@ -209,7 +210,7 @@ export default function Confirm() {
           : prev,
       );
 
-      if (data.qualityReviewStatus === "uncertain" || data.qualityReviewStatus === "fraud_suspected") {
+      if (data.qualityReviewStatus === "uncertain") {
         setOutcome(data.qualityReviewStatus);
         setCorrectionNote(data.qualityReviewNote ?? null);
         return null;
@@ -244,7 +245,7 @@ export default function Confirm() {
       // single-use and may already be exhausted. Refresh them synchronously so
       // a corrected proof never depends on the non-blocking background refresh.
       const activeProofUploadSlots =
-        outcome === "correction_required"
+        outcome === "correction_required" || outcome === "fraud_suspected"
           ? await refreshProofUploadSlotsForRetry()
           : info.proofUploadSlots;
 
@@ -326,9 +327,9 @@ export default function Confirm() {
       setCorrectionNote(data.correctionNote ?? null);
 
       // Quality Intelligence V1 — only an "approved" outcome marks the task
-      // done. correction_required leaves it pending for the recipient to
-      // resubmit; uncertain / fraud_suspected leave it pending but lock the
-      // link because the proof has moved to owner review.
+      // done. correction_required / fraud_suspected leave it pending for
+      // Carson's correction loop; uncertain locks because owner input is
+      // genuinely required.
       const submittedPreviewUrls = proofPhotos.map((p) => p.previewUrl);
       setInfo((prev) =>
         prev
@@ -376,13 +377,14 @@ export default function Confirm() {
   }
 
   const isBusy = confirming || proofUploading;
-  // After a correction_required verdict, the assignee must attach new proof
-  // photos before resubmitting. This prevents bypassing QI by clicking
-  // "Mark done" without a photo (which would skip the review entirely since
-  // needsReview = proofImagePaths.length > 0 on the server).
+  // After an operational rejection, the assignee must attach new proof photos
+  // before resubmitting. This prevents bypassing QI by clicking "Mark done"
+  // without a photo (which would skip the review entirely since needsReview =
+  // proofImagePaths.length > 0 on the server).
   const needsNewProof =
-    ((info?.proofRequired === true && outcome !== "uncertain" && outcome !== "fraud_suspected") ||
-      outcome === "correction_required") &&
+    ((info?.proofRequired === true && outcome !== "uncertain") ||
+      outcome === "correction_required" ||
+      outcome === "fraud_suspected") &&
     proofPhotos.length === 0;
 
   return (
@@ -475,16 +477,10 @@ export default function Confirm() {
                 Thanks — this has been sent to the owner for a quick review.
               </AuthNotice>
             </div>
-          ) : outcome === "fraud_suspected" ? (
-            <div className="space-y-3">
-              <AuthNotice kind="error">
-                Carson flagged this proof for owner review. The task is still open while the owner checks it.
-              </AuthNotice>
-            </div>
           ) : (
             <>
               {/* Quality Intelligence — task stayed open; new proof photos are needed */}
-              {outcome === "correction_required" && (
+              {(outcome === "correction_required" || outcome === "fraud_suspected") && (
                 <AuthNotice kind="error">
                   {correctionNote
                     ? correctionNote

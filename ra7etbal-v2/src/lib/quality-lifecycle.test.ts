@@ -68,15 +68,18 @@ describe("Quality Intelligence lifecycle state machine", () => {
     expect(lifecycle.badge).not.toBe("Waiting for confirmation");
   });
 
-  it("flagged and suspicious proof never show Proof submitted", () => {
+  it("flagged and suspicious proof stay Waiting for worker correction, not owner review", () => {
     for (const quality_review_status of ["correction_required", "fraud_suspected"] as const) {
       const lifecycle = resolveQualityLifecycle(task({
         proof_image_path: "task-images/u/t/proof/0.jpg",
         quality_review_status,
       }));
 
-      expect(lifecycle.badge).toBe("Needs your review");
+      expect(lifecycle.badge).toBe("Waiting for confirmation");
       expect(lifecycle.badge).not.toBe("Proof submitted");
+      expect(lifecycle.requiresNewProof).toBe(true);
+      expect(lifecycle.blocksGenericFollowup).toBe(true);
+      expect(lifecycle.needsOwnerReview).toBe(false);
     }
   });
 
@@ -109,9 +112,21 @@ describe("Quality Intelligence lifecycle state machine", () => {
       quality_review_status: "correction_required",
     }));
 
-    expect(lifecycle.badge).toBe("Needs your review");
+    expect(lifecycle.badge).toBe("Waiting for confirmation");
     expect(lifecycle.requiresNewProof).toBe(true);
     expect(lifecycle.blocksGenericFollowup).toBe(true);
     expect(lifecycle.needsOwnerReview).toBe(false);
+  });
+
+  it("uncertain proof is the owner-review escalation state", () => {
+    const lifecycle = resolveQualityLifecycle(task({
+      proof_image_path: "task-images/u/t/proof/0.jpg",
+      quality_review_status: "uncertain",
+    }));
+
+    expect(lifecycle.badge).toBe("Needs your review");
+    expect(lifecycle.requiresNewProof).toBe(false);
+    expect(lifecycle.blocksGenericFollowup).toBe(true);
+    expect(lifecycle.needsOwnerReview).toBe(true);
   });
 });

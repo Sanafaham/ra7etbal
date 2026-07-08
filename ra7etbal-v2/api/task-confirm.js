@@ -21,10 +21,9 @@
  *     - uncertain: task stays pending; the owner gets pushed to review
  *       manually instead of a "confirmed" notification.
  *     - fraud_suspected: task stays pending; the photo itself looks like it
- *       isn't genuine proof (screenshot, reused reference image, etc). The
- *       owner gets pushed to review — the assignee never receives an
- *       automatic correction message for this outcome; only the owner can
- *       decide to follow up.
+ *       isn't genuine proof (screenshot, reused reference image, etc). Carson
+ *       asks the assignee for a new live proof unless repeated attempts mean
+ *       owner input is genuinely required.
  *   Photo delegations require proof before completion. Non-photo tasks, or a
  *   task with no assignee (assigned_to null), keep the original no-review
  *   completion behavior.
@@ -42,6 +41,7 @@ export const config = { maxDuration: 60 };
 // reference photos use), discriminated by the previously-unused file_name
 // column set to 'proof' (reference-photo rows never set file_name).
 const MAX_PROOF_PHOTOS = 5;
+const MAX_AUTOMATED_CORRECTION_ATTEMPTS = 3;
 
 function taskConfirmErrorMessageForStep(step) {
   if (step === 'load_review_images') {
@@ -166,15 +166,10 @@ async function handleGet(req, res) {
       if (legacyUrl) proofImageUrls = [legacyUrl];
     }
 
-    // Locked for owner review — Carson already sent this proof to the owner
-    // (uncertain / fraud_suspected) and the assignee's turn is over. Unlike
-    // correction_required (where Carson explicitly asked for a new photo),
-    // there is nothing left for the recipient to do here, so no fresh
-    // upload slots are issued — the confirmation link must not offer another
-    // upload after this outcome. This is the single source of truth the
-    // confirm page's locked/final state is derived from.
-    const isLockedForOwnerReview =
-      task.quality_review_status === 'uncertain' || task.quality_review_status === 'fraud_suspected';
+    // Locked for owner review only when Carson genuinely needs owner input.
+    // Operational rejection states (correction_required / fraud_suspected)
+    // stay with Carson + assignee so a corrected proof can be uploaded.
+    const isLockedForOwnerReview = task.quality_review_status === 'uncertain';
 
     // Fresh signed upload URLs for up to 5 proof-photo slots. Each slot's
     // signed URL is created with x-upsert so resubmitting to the same index
@@ -204,9 +199,9 @@ async function handleGet(req, res) {
       proofUploadSlots,
       proofRequired: Boolean(task.assigned_to && (task.image_path || Number(task.attachment_count || 0) > 0)),
       // Source of truth for the confirm page's post-reload state — without
-      // this, reopening the link after an uncertain/fraud_suspected outcome
-      // lost the "sent to owner" locked view and showed the normal upload
-      // form again, allowing endless re-upload.
+      // this, reopening the link after an uncertain outcome lost the "sent
+      // to owner" locked view. Operational proof failures intentionally keep
+      // upload slots open for Carson's correction loop.
       qualityReviewStatus: task.quality_review_status ?? null,
       qualityReviewNote: task.quality_review_note ?? null,
     });
@@ -344,6 +339,14 @@ async function handlePost(req, res) {
       // outcome as a lifetime record of how many rounds this task needed.
       // It is never reset on approval.
       const cycleCount = (task.quality_review_cycle_count || 0) + 1;
+      const isOperationalCorrection =
+        review.status === 'correction_required' || review.status === 'fraud_suspected';
+      const correctionLimitReached =
+        isOperationalCorrection && cycleCount >= MAX_AUTOMATED_CORRECTION_ATTEMPTS;
+      const savedReviewStatus = correctionLimitReached ? 'uncertain' : review.status;
+      const savedReviewNote = correctionLimitReached
+        ? `Multiple proof attempts still need owner review. Latest issue: ${review.note || 'The proof was not valid.'}`
+        : review.note;
 
       step = 'save_review';
       const patchRes = await fetch(
@@ -355,8 +358,8 @@ async function handlePost(req, res) {
             // Primary/back-compat column — TaskCard, HistoryCard, and
             // ConfirmationNotices all read this single column for a thumbnail.
             proof_image_path: proofImagePaths[0] ?? null,
-            quality_review_status: review.status,
-            quality_review_note: review.note,
+            quality_review_status: savedReviewStatus,
+            quality_review_note: savedReviewNote,
             quality_reviewed_at: now,
             quality_review_cycle_count: cycleCount,
           }),
@@ -368,7 +371,7 @@ async function handlePost(req, res) {
           taskId,
           status: patchRes.status,
           body: await responseSnippet(patchRes),
-          outcome: review.status,
+          outcome: savedReviewStatus,
         });
         return res.status(500).json({ error: taskConfirmErrorMessageForStep(step) });
       }
@@ -388,11 +391,21 @@ async function handlePost(req, res) {
         console.error('[task-confirm] replaceProofAttachments failed (non-fatal):', err?.message || err),
       );
 
-      // Owner push only when manual owner review is required.
-      // correction_required is sent directly to the assignee through the
-      // existing direct-message WhatsApp path; uncertain and fraud_suspected
-      // require the owner to step in.
-      if (review.status === 'correction_required') {
+      // Owner push only when manual owner review is required. Clear proof
+      // failures stay in Carson's operational loop: the assignee receives a
+      // correction request and the owner continues to see the task as Waiting.
+      if (correctionLimitReached) {
+        await sendOwnerPush({
+          supabaseUrl,
+          serviceKey,
+          userId: task.user_id,
+          description: task.description,
+          assignedTo: task.assigned_to,
+          variant: 'correction_limit',
+        }).catch((err) =>
+          console.error('[task-confirm] correction-limit owner push failed (non-fatal):', err?.message || err),
+        );
+      } else if (isOperationalCorrection) {
         await sendCorrectionRequest({
           req,
           supabaseUrl,
@@ -400,11 +413,11 @@ async function handlePost(req, res) {
           userId: task.user_id,
           taskId,
           assignedTo: task.assigned_to,
-          correctionNote: review.note,
+          correctionNote: buildWorkerCorrectionNote(review),
         }).catch((err) =>
           console.error('[task-confirm] correction WhatsApp failed (non-fatal):', err?.message || err),
         );
-      } else if (review.status === 'uncertain' || review.status === 'fraud_suspected') {
+      } else if (review.status === 'uncertain') {
         await sendOwnerPush({
           supabaseUrl,
           serviceKey,
@@ -419,11 +432,11 @@ async function handlePost(req, res) {
 
       return res.status(200).json({
         success: true,
-        outcome: review.status,
+        outcome: savedReviewStatus,
         description: task.description,
         // The QI note for correction_required is shown inline on the
         // confirmation page so the assignee knows exactly what to fix.
-        correctionNote: review.status === 'correction_required' ? review.note : null,
+        correctionNote: isOperationalCorrection && !correctionLimitReached ? buildWorkerCorrectionNote(review) : null,
         correctionCycleCount: cycleCount,
       });
     }
@@ -591,14 +604,8 @@ export function buildOwnerPushBody({ description, assignedTo, variant }) {
   if (variant === 'uncertain') {
     return `${assignee || 'Someone'} submitted proof for review: ${description}`;
   }
-  if (variant === 'fraud_suspected') {
-    return `Carson flagged ${proofOwner} proof for: ${description}. The photo doesn't look like genuine proof — please review.`;
-  }
   if (variant === 'correction_limit') {
-    return `${proofOwner.charAt(0).toUpperCase()}${proofOwner.slice(1)} proof for "${description}" still needs correction after a follow-up attempt. Carson stopped messaging — please review.`;
-  }
-  if (variant === 'correction_required') {
-    return `Carson flagged ${proofOwner} proof for: ${description}. Carson messaged them to resubmit.`;
+    return `${proofOwner.charAt(0).toUpperCase()}${proofOwner.slice(1)} proof for "${description}" still needs correction after multiple attempts. Carson stopped messaging — please review.`;
   }
   return assignee
     ? `${assignee} confirmed: ${description}`
@@ -610,7 +617,17 @@ function normalizeQualityReviewStatus(status) {
 }
 
 function isOwnerReviewLockedStatus(status) {
-  return status === 'uncertain' || status === 'fraud_suspected';
+  return status === 'uncertain';
+}
+
+function buildWorkerCorrectionNote(review) {
+  const note = String(review?.note || '').trim();
+  if (review?.status === 'fraud_suspected') {
+    return note
+      ? `${note} Please upload a new live proof photo.`
+      : 'This proof does not look like a live completion photo. Please upload a new live proof photo.';
+  }
+  return note || 'This proof does not match the requested task. Please upload a new proof photo.';
 }
 
 // ── Quality Intelligence V1 helpers ───────────────────────────────────────────

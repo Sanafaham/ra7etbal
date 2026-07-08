@@ -31,16 +31,10 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 /**
- * Production incident: Christopher uploaded the wrong proof photo (correctly
- * flagged, task stayed Waiting), then uploaded a corrected photo — but
- * Carson's automated review came back "uncertain" (not clearly approved), so
- * the task remained in Waiting for Confirmation indefinitely, indistinguishable
- * from a task Christopher simply hadn't responded to yet. In reality the ball
- * had already moved to the owner (Sana) — Carson explicitly pushes the owner
- * for a manual decision on uncertain/fraud_suspected outcomes and never
- * messages the assignee again for those two outcomes. "Waiting" must mean
- * "waiting on the other person"; once quality review escalates to the owner,
- * the task belongs in "Needs You" instead.
+ * Product rule: Waiting means Carson is still working on getting completion.
+ * Clear proof failures stay in the operational correction loop with the
+ * assignee. Only uncertainty or repeated failure should create owner work in
+ * Needs You.
  */
 describe("daily-brief — quality-review-aware Waiting / Needs You classification", () => {
   it("an uncertain proof review moves the task out of Waiting and into Needs You", () => {
@@ -50,18 +44,18 @@ describe("daily-brief — quality-review-aware Waiting / Needs You classificatio
     expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
   });
 
-  it("a fraud_suspected proof review moves the task out of Waiting and into Needs You", () => {
+  it("a fraud_suspected proof review stays Waiting while Carson requests a new proof", () => {
     const task = makeTask({ quality_review_status: "fraud_suspected", quality_review_note: "This is the reference image, not a new photo." });
     const brief = buildDailyBrief([task], NOW);
-    expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
-    expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
+    expect(brief.waitingOnOthers.map((t) => t.id)).toContain(task.id);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
   });
 
-  it("a correction_required proof review is visible in Needs You and not hidden in ordinary Waiting", () => {
+  it("a correction_required proof review stays Waiting while Carson requests a new proof", () => {
     const task = makeTask({ quality_review_status: "correction_required", quality_review_note: "Please center the chicken." });
     const brief = buildDailyBrief([task], NOW);
-    expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
-    expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
+    expect(brief.waitingOnOthers.map((t) => t.id)).toContain(task.id);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
   });
 
   it("protected: a normal delegation with no quality review yet is unaffected — still Waiting, not Needs You", () => {

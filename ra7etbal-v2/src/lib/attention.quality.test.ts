@@ -45,7 +45,7 @@ describe("Home attention — Quality Intelligence lifecycle labels", () => {
     expect(item.state).toBe("proof_submitted");
   });
 
-  it("flagged proof shows Needs your review", () => {
+  it("flagged proof stays Waiting while Carson asks for a new proof", () => {
     const [item] = getNeedsAttentionItems([
       delegation({
         proof_image_path: "task-images/u/t/proof/0.jpg",
@@ -53,7 +53,7 @@ describe("Home attention — Quality Intelligence lifecycle labels", () => {
       }),
     ]);
 
-    expect(item.label).toBe("Needs your review");
-    expect(item.state).toBe("needs_owner_review");
+    expect(item.label).toBe("Waiting for confirmation");
+    expect(item.state).toBe("waiting_confirmation");
   });
 });

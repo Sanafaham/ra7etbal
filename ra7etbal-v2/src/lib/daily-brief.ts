@@ -1,5 +1,5 @@
 import { formatReminderDue, isReminderOverdue } from "./reminder-time";
-import { isQualityFlaggedStatus, isQualityOwnerReviewStatus } from "./quality-lifecycle";
+import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
 import type { Task } from "../types/task";
 
 export interface DailyBrief {
@@ -171,10 +171,9 @@ function isNeedsYouTask(task: Task, waitingIds: Set<string>, now: Date): boolean
 
 function isWaitingTask(task: Task): boolean {
   if (task.status === "done" || task.status === "cancelled") return false;
-  // Any active flagged/reviewed proof has already left the plain "waiting
-  // for confirmation" state. Show it in Needs You with one QI badge instead
-  // of hiding it among ordinary pending delegations.
-  if (isQualityOwnerReviewStatus(task.quality_review_status) || isQualityFlaggedStatus(task.quality_review_status)) {
+  // Only proof states that genuinely need owner input leave Waiting. Clear
+  // proof failures stay operational: Carson keeps working with the assignee.
+  if (isQualityOwnerReviewStatus(task.quality_review_status)) {
     return false;
   }
   if (task.needs_follow_up) return true;
@@ -185,7 +184,7 @@ function isWaitingTask(task: Task): boolean {
 function isWaitingInterventionTask(task: Task): boolean {
   if (task.type !== "delegation" && task.type !== "followup") return false;
   if (task.status === "cancelled") return true;
-  return isQualityOwnerReviewStatus(task.quality_review_status) || isQualityFlaggedStatus(task.quality_review_status);
+  return isQualityOwnerReviewStatus(task.quality_review_status);
 }
 
 function isLaterTask(

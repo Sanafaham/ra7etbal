@@ -37,7 +37,7 @@ function isQualityDelegation(task: QualityTaskInput): boolean {
 
 export function isQualityOwnerReviewStatus(status: Task["quality_review_status"] | string | null | undefined): boolean {
   const normalized = normalizeReviewStatus(status);
-  return normalized === "uncertain" || normalized === "fraud_suspected";
+  return normalized === "uncertain";
 }
 
 export function isQualityFlaggedStatus(status: Task["quality_review_status"] | string | null | undefined): boolean {
@@ -75,14 +75,25 @@ export function resolveQualityLifecycle(task: QualityTaskInput): QualityLifecycl
     };
   }
 
-  if (hasProof && isQualityFlaggedStatus(reviewStatus)) {
+  if (hasProof && isQualityOwnerReviewStatus(reviewStatus)) {
     return {
       state: "needs_owner_review",
       badge: "Needs your review",
       hasActiveBadge: true,
-      requiresNewProof: reviewStatus === "correction_required",
+      requiresNewProof: false,
       blocksGenericFollowup: true,
-      needsOwnerReview: reviewStatus !== "correction_required",
+      needsOwnerReview: true,
+    };
+  }
+
+  if (hasProof && isQualityFlaggedStatus(reviewStatus)) {
+    return {
+      state: "waiting_for_confirmation",
+      badge: "Waiting for confirmation",
+      hasActiveBadge: true,
+      requiresNewProof: true,
+      blocksGenericFollowup: true,
+      needsOwnerReview: false,
     };
   }
 
@@ -93,7 +104,7 @@ export function resolveQualityLifecycle(task: QualityTaskInput): QualityLifecycl
       hasActiveBadge: true,
       requiresNewProof: false,
       blocksGenericFollowup: true,
-      needsOwnerReview: isQualityOwnerReviewStatus(reviewStatus),
+      needsOwnerReview: false,
     };
   }
 
@@ -101,7 +112,7 @@ export function resolveQualityLifecycle(task: QualityTaskInput): QualityLifecycl
     state: "waiting_for_confirmation",
     badge: "Waiting for confirmation",
     hasActiveBadge: true,
-    requiresNewProof: reviewStatus === "correction_required",
+    requiresNewProof: isQualityFlaggedStatus(reviewStatus),
     blocksGenericFollowup: reviewStatus !== "" && reviewStatus !== "approved",
     needsOwnerReview: false,
   };

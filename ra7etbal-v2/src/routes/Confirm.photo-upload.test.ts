@@ -68,6 +68,7 @@ describe("Confirm — proof photo upload (up to 5, remove/replace, honest failur
 
     const confirmBlock = functionBlock("handleConfirm");
     expect(confirmBlock).toContain('outcome === "correction_required"');
+    expect(confirmBlock).toContain('outcome === "fraud_suspected"');
     expect(confirmBlock).toContain("await refreshProofUploadSlotsForRetry()");
     expect(confirmBlock).toContain("const slot = activeProofUploadSlots[i]");
     expect(confirmBlock).not.toContain("const slot = info.proofUploadSlots[i]");
@@ -106,8 +107,9 @@ describe("Confirm — proof photo upload (up to 5, remove/replace, honest failur
     expect(block).toContain("d.proofUploadSlots");
   });
 
-  it("blocks Mark done after a correction_required verdict until a new photo is attached", () => {
+  it("blocks Mark done after an operational rejection verdict until a new photo is attached", () => {
     expect(SOURCE).toContain('outcome === "correction_required"');
+    expect(SOURCE).toContain('outcome === "fraud_suspected"');
     expect(SOURCE).toContain("disabled={isBusy || needsNewProof}");
   });
 

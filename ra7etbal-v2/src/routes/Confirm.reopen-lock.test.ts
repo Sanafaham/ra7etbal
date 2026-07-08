@@ -17,7 +17,7 @@ const SOURCE = readFileSync(join(__dirname, "Confirm.tsx"), "utf-8");
  * state. Root cause: GET /api/task-confirm never returned the persisted
  * quality_review_status at all, so the client had no way to know.
  */
-describe("Confirm — reopening the link after a final proof-review outcome stays locked", () => {
+describe("Confirm — reopening the link after proof review uses the persisted state", () => {
   it("the load effect rehydrates outcome/correctionNote from the server's persisted quality review status", () => {
     const useEffectsSource = SOURCE.slice(SOURCE.indexOf("useEffect(() => {\n    if (!taskId)"));
     const loadEffect = useEffectsSource.slice(0, useEffectsSource.indexOf("\n  }, [taskId]);"));
@@ -44,43 +44,40 @@ describe("Confirm — reopening the link after a final proof-review outcome stay
     // matters, since this is a ternary chain, not independent conditionals.
     const doneIdx = SOURCE.indexOf('info.status === "done" ?');
     const uncertainIdx = SOURCE.indexOf('outcome === "uncertain" ?');
-    const fraudIdx = SOURCE.indexOf('outcome === "fraud_suspected" ?');
     const uploadSectionIdx = SOURCE.indexOf('{/* Proof photo section — shown before Mark done */}');
     expect(doneIdx).toBeGreaterThan(-1);
     expect(uncertainIdx).toBeGreaterThan(doneIdx);
-    expect(fraudIdx).toBeGreaterThan(uncertainIdx);
-    expect(uploadSectionIdx).toBeGreaterThan(fraudIdx);
-    expect(SOURCE.slice(uncertainIdx, fraudIdx)).toContain(
+    expect(uploadSectionIdx).toBeGreaterThan(uncertainIdx);
+    expect(SOURCE.slice(uncertainIdx, uploadSectionIdx)).toContain(
       "Thanks — this has been sent to the owner for a quick review.",
     );
   });
 
-  it("a fraud_suspected outcome renders flagged proof copy, not the generic quick-review success copy", () => {
-    const fraudIdx = SOURCE.indexOf('outcome === "fraud_suspected" ?');
-    const correctionIdx = SOURCE.indexOf('outcome === "correction_required"', fraudIdx);
-    const fraudBranch = SOURCE.slice(fraudIdx, correctionIdx);
-    expect(fraudBranch).toContain("Carson flagged this proof for owner review.");
-    expect(fraudBranch).toContain("The task is still open while the owner checks it.");
-    expect(fraudBranch).not.toContain("Thanks — this has been sent to the owner for a quick review.");
+  it("a fraud_suspected outcome stays in the correction upload flow, not owner review", () => {
+    const uploadSectionIdx = SOURCE.indexOf('{/* Proof photo section — shown before Mark done */}');
+    const correctionBannerIdx = SOURCE.indexOf('(outcome === "correction_required" || outcome === "fraud_suspected")');
+    const uploadBranch = SOURCE.slice(correctionBannerIdx, uploadSectionIdx);
+    expect(correctionBannerIdx).toBeGreaterThan(-1);
+    expect(uploadBranch).toContain('outcome === "fraud_suspected"');
+    expect(uploadBranch).toContain("upload new photo(s) below");
+    expect(uploadBranch).not.toContain("Thanks — this has been sent to the owner for a quick review.");
+    expect(SOURCE).not.toContain("Carson flagged this proof for owner review.");
   });
 
-  it("needsNewProof does not force a fresh photo while the link is locked for owner review", () => {
+  it("needsNewProof forces a fresh photo for operational failures, but not true owner review", () => {
     const needsNewProofIdx = SOURCE.indexOf("const needsNewProof =");
     const needsNewProofBlock = SOURCE.slice(needsNewProofIdx, SOURCE.indexOf(";", SOURCE.indexOf("proofPhotos.length === 0", needsNewProofIdx)) + 1);
     expect(needsNewProofBlock).toContain('outcome !== "uncertain"');
-    expect(needsNewProofBlock).toContain('outcome !== "fraud_suspected"');
+    expect(needsNewProofBlock).toContain('outcome === "fraud_suspected"');
+    expect(needsNewProofBlock).toContain('outcome === "correction_required"');
   });
 
   it("protected: correction_required is NOT treated as locked — the recipient can still resubmit", () => {
     const uncertainIdx = SOURCE.indexOf('outcome === "uncertain" ?');
-    const fraudIdx = SOURCE.indexOf('outcome === "fraud_suspected" ?');
-    const correctionIdx = SOURCE.indexOf('outcome === "correction_required"', fraudIdx);
-    // Only the uncertain branch's own JSX (up to where the fraud_suspected
-    // condition starts) must be locked-message-only; correction_required's
-    // banner belongs to the fallthrough upload-form branch, not this one.
-    const uncertainBranch = SOURCE.slice(uncertainIdx, fraudIdx);
+    const correctionIdx = SOURCE.indexOf('outcome === "correction_required"', uncertainIdx);
+    const uncertainBranch = SOURCE.slice(uncertainIdx, correctionIdx);
     expect(uncertainBranch).not.toContain("correction_required");
-    expect(correctionIdx).toBeGreaterThan(fraudIdx);
+    expect(correctionIdx).toBeGreaterThan(uncertainIdx);
     expect(SOURCE.slice(correctionIdx, SOURCE.indexOf('{/* Proof photo section', correctionIdx))).not.toContain(
       "Thanks — this has been sent to the owner for a quick review.",
     );

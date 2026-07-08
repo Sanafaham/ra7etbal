@@ -36,28 +36,6 @@ beforeEach(async () => {
 });
 
 describe('Quality Intelligence owner push copy source of truth', () => {
-  it('rejected QI proof uses flagged owner push copy', () => {
-    const body = buildOwnerPushBody({
-      description: 'make the salad bowl',
-      assignedTo: 'Christopher',
-      variant: 'correction_required',
-    });
-
-    expect(body).toContain("Carson flagged Christopher's proof");
-    expect(body).not.toMatch(/confirmed|submitted proof for review|hasn't confirmed/i);
-  });
-
-  it('suspicious QI proof uses flagged owner push copy', () => {
-    const body = buildOwnerPushBody({
-      description: 'make the salad bowl',
-      assignedTo: 'Christopher',
-      variant: 'fraud_suspected',
-    });
-
-    expect(body).toContain("Carson flagged Christopher's proof");
-    expect(body).not.toMatch(/confirmed|submitted proof for review|hasn't confirmed/i);
-  });
-
   it('proof submitted for owner review does not use flagged or has-not-confirmed copy', () => {
     const body = buildOwnerPushBody({
       description: 'make the salad bowl',
@@ -79,22 +57,31 @@ describe('Quality Intelligence owner push copy source of truth', () => {
     expect(body).not.toMatch(/flagged|hasn't confirmed|submitted proof for review/i);
   });
 
+  it('repeated invalid proof escalation uses review copy, not first-failure flagged copy', () => {
+    const body = buildOwnerPushBody({
+      description: 'make the salad bowl',
+      assignedTo: 'Christopher',
+      variant: 'correction_limit',
+    });
+
+    expect(body).toContain("Christopher's proof");
+    expect(body).toContain('still needs correction');
+    expect(body).not.toMatch(/Carson flagged|confirmed|hasn't confirmed/i);
+  });
+
   it('push notification copy maps to exactly one lifecycle variant', () => {
     const variants = [
-      buildOwnerPushBody({ description: 'make the salad bowl', assignedTo: 'Christopher', variant: 'correction_required' }),
-      buildOwnerPushBody({ description: 'make the salad bowl', assignedTo: 'Christopher', variant: 'fraud_suspected' }),
       buildOwnerPushBody({ description: 'make the salad bowl', assignedTo: 'Christopher', variant: 'uncertain' }),
+      buildOwnerPushBody({ description: 'make the salad bowl', assignedTo: 'Christopher', variant: 'correction_limit' }),
       buildOwnerPushBody({ description: 'make the salad bowl', assignedTo: 'Christopher' }),
     ];
 
-    expect(variants[0]).toMatch(/flagged/i);
-    expect(variants[0]).not.toMatch(/submitted proof for review|confirmed|hasn't confirmed/i);
-    expect(variants[1]).toMatch(/flagged/i);
-    expect(variants[1]).not.toMatch(/submitted proof for review|confirmed|hasn't confirmed/i);
-    expect(variants[2]).toMatch(/submitted proof for review/i);
-    expect(variants[2]).not.toMatch(/flagged|confirmed|hasn't confirmed/i);
-    expect(variants[3]).toMatch(/confirmed/i);
-    expect(variants[3]).not.toMatch(/flagged|submitted proof for review|hasn't confirmed/i);
+    expect(variants[0]).toMatch(/submitted proof for review/i);
+    expect(variants[0]).not.toMatch(/flagged|confirmed|hasn't confirmed/i);
+    expect(variants[1]).toMatch(/still needs correction/i);
+    expect(variants[1]).not.toMatch(/Carson flagged|confirmed|hasn't confirmed/i);
+    expect(variants[2]).toMatch(/confirmed/i);
+    expect(variants[2]).not.toMatch(/flagged|submitted proof for review|hasn't confirmed/i);
   });
 });
 
@@ -475,6 +462,58 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/send-whatsapp-task'))).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+
+  it('repeated invalid proofs escalate to owner review after the automated correction limit', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'fraud_suspected',
+      note: 'This still looks like a screenshot, not a live completion photo.',
+    });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'check the closet outfit',
+        assigned_to: 'Grace',
+        image_path: 'task-images/u/t/photo.jpg',
+        quality_review_cycle_count: 2,
+      }]))
+      .mockResolvedValueOnce(jsonResponse([])) // messages lookup
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> escalated owner review
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // owner push
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof3.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        outcome: 'uncertain',
+        correctionNote: null,
+        correctionCycleCount: 3,
+      }),
+    );
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.status).toBeUndefined();
+    expect(patchBody.quality_review_status).toBe('uncertain');
+    expect(patchBody.quality_review_note).toContain('Multiple proof attempts still need owner review');
+    expect(patchBody.quality_review_note).toContain('screenshot');
+    expect(patchBody.quality_review_cycle_count).toBe(3);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/send-whatsapp-task'))).toBe(false);
+    expect(String(fetchMock.mock.calls[5][0])).toContain('/rest/v1/push_subscriptions');
+    const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls.at(-1)[1]);
+    expect(pushPayload.body).toContain("Grace's proof");
+    expect(pushPayload.body).toContain('still needs correction');
+    expect(pushPayload.body).not.toMatch(/Carson flagged|hasn't confirmed/i);
   });
 
   it('regression: wrong pizza proof rejected, corrected salad proof accepted, stale correction state cannot carry forward', async () => {
@@ -885,7 +924,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(correctionMessageInserts).toHaveLength(0);
   });
 
-  it('fraud_suspected review (reused reference image): keeps the task pending, notifies the owner only, never the assignee', async () => {
+  it('fraud_suspected review (reused reference image): keeps the task pending, asks the assignee for new proof, and does not notify the owner', async () => {
     runQualityReviewMock.mockResolvedValue({
       status: 'fraud_suspected',
       note: 'This is the same image as the reference photo, not a new photo of the completed task.',
@@ -896,26 +935,39 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(jsonResponse([])) // no messages row
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
-      .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Grace', phone: '+971500000009' }])) // people lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'correction-message-1' }])) // correction messages insert
+      .mockResolvedValueOnce(jsonResponse({ success: true, messageId: 'wamid.correction' })); // direct_message send
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ success: true, outcome: 'fraud_suspected' }),
+      expect.objectContaining({
+        success: true,
+        outcome: 'fraud_suspected',
+        correctionNote: 'This is the same image as the reference photo, not a new photo of the completed task. Please upload a new live proof photo.',
+      }),
     );
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
     expect(patchBody.quality_review_status).toBe('fraud_suspected');
     expect(patchBody.status).toBeUndefined();
-    // Never sends a WhatsApp message to the assignee for fraud_suspected —
-    // only the owner is notified, and only the owner decides whether to
-    // follow up with the assignee.
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+    const correctionSend = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/send-whatsapp-task'));
+    expect(correctionSend).toBeDefined();
+    expect(JSON.parse(correctionSend[1].body)).toMatchObject({
+      to: '+971500000009',
+      messageText: 'This is the same image as the reference photo, not a new photo of the completed task. Please upload a new live proof photo.',
+      confirmationLink: null,
+      sourceType: 'quality_correction',
+      recipientName: 'Grace',
+    });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
   });
 
-  it('fraud_suspected review (screenshot proof): same owner-only routing as a reused reference image', async () => {
+  it('fraud_suspected review (screenshot proof): same worker-correction routing as a reused reference image', async () => {
     runQualityReviewMock.mockResolvedValue({
       status: 'fraud_suspected',
       note: 'This looks like a screenshot of a product listing, not a photo of the item.',
@@ -926,16 +978,24 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(jsonResponse([])) // no messages row
       .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
       .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
-      .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Grace', phone: '+971500000009' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'correction-message-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ success: true }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(createReq({ taskId: 'task-2', proofImagePaths: ['task-images/u/t2/proof/0.jpg'] }), res);
 
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ success: true, outcome: 'fraud_suspected' }),
+      expect.objectContaining({
+        success: true,
+        outcome: 'fraud_suspected',
+        correctionNote: 'This looks like a screenshot of a product listing, not a photo of the item. Please upload a new live proof photo.',
+      }),
     );
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
   });
 
   // ── The 4 required production scenarios ──────────────────────────────────
@@ -1387,7 +1447,7 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
     expect(signingCalls).toHaveLength(0);
   });
 
-  it('locks the confirmation link: no upload slots are generated once quality review is "fraud_suspected"', async () => {
+  it('protected: upload slots are still generated for "fraud_suspected" — Carson can collect a new live proof', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(
@@ -1401,14 +1461,20 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
       )
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
       .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
-      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }));
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/0.jpg?token=t0' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/1.jpg?token=t1' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/2.jpg?token=t2' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/3.jpg?token=t3' }))
+      .mockResolvedValueOnce(jsonResponse({ url: '/object/upload/sign/x/4.jpg?token=t4' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
 
     const body = res.json.mock.calls[0][0];
-    expect(body.proofUploadSlots).toEqual([]);
+    expect(body.proofUploadSlots).toHaveLength(5);
+    expect(body.qualityReviewStatus).toBe('fraud_suspected');
   });
 
   it('protected: upload slots are still generated for "correction_required" — the recipient must still be able to resubmit', async () => {
@@ -1484,12 +1550,13 @@ describe('Quality Intelligence safety lockdown — source-of-truth invariants', 
     );
   });
 
-  it('GET exposes persisted review status as the confirmation page source of truth and locks owner-review states', () => {
+  it('GET exposes persisted review status as the confirmation page source of truth and locks only owner-review states', () => {
     const getBlock = TASK_CONFIRM_SOURCE.slice(
       TASK_CONFIRM_SOURCE.indexOf('async function handleGet'),
       TASK_CONFIRM_SOURCE.indexOf('// ── POST: confirm the task'),
     );
-    expect(getBlock).toContain("task.quality_review_status === 'uncertain' || task.quality_review_status === 'fraud_suspected'");
+    expect(getBlock).toContain("task.quality_review_status === 'uncertain'");
+    expect(getBlock).not.toContain("task.quality_review_status === 'uncertain' || task.quality_review_status === 'fraud_suspected'");
     expect(getBlock).toContain('task.status !== \'done\' && !isLockedForOwnerReview');
     expect(getBlock).toContain('qualityReviewStatus: task.quality_review_status ?? null');
     expect(getBlock).toContain('qualityReviewNote: task.quality_review_note ?? null');

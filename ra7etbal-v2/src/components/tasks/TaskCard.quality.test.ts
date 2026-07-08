@@ -21,17 +21,17 @@ describe("TaskCard — Quality Intelligence owner surface", () => {
   });
 
   it("does not show correction-required proof or correction detail on owner active cards", () => {
-    expect(SOURCE).toContain('const isCorrectionRequired = task.quality_review_status === "correction_required"');
-    expect(SOURCE).toContain("const showProofImage = Boolean(signedProofImageUrl && !isCorrectionRequired)");
+    expect(SOURCE).toContain('task.quality_review_status === "correction_required"');
+    expect(SOURCE).toContain('task.quality_review_status === "fraud_suspected"');
+    expect(SOURCE).toContain("const showProofImage = Boolean(signedProofImageUrl && !isOperationalProofCorrection)");
     expect(SOURCE).not.toContain('task.quality_review_status === "correction_required" && (');
     expect(SOURCE).not.toContain("Correction requested");
   });
 
-  it("keeps owner-review detail states visible for uncertain and fraud-suspected proof", () => {
+  it("keeps only true owner-review uncertainty visible on owner cards", () => {
     expect(SOURCE).toContain('task.quality_review_status === "uncertain"');
-    expect(SOURCE).toContain('task.quality_review_status === "fraud_suspected"');
     expect(SOURCE).toContain("Carson is unsure");
-    expect(SOURCE).toContain("Possible issue with this proof photo");
+    expect(SOURCE).not.toContain("Possible issue with this proof photo");
   });
 
   it("renders exactly one lifecycle badge branch before non-lifecycle badges", () => {

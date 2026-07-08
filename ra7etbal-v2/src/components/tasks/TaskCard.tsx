@@ -69,9 +69,11 @@ export default function TaskCard({
   const isDone = task.status === "done";
   const isWaitingDelegation = task.type === "delegation" && !isDone;
   const hasConfirmLink = !!task.confirmation_url && isWaitingDelegation;
-  const isCorrectionRequired = task.quality_review_status === "correction_required";
+  const isOperationalProofCorrection =
+    task.quality_review_status === "correction_required" ||
+    task.quality_review_status === "fraud_suspected";
   const qualityLifecycle = resolveQualityLifecycle(task);
-  const showProofImage = Boolean(signedProofImageUrl && !isCorrectionRequired);
+  const showProofImage = Boolean(signedProofImageUrl && !isOperationalProofCorrection);
   const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;
 
   async function toggle() {
@@ -226,13 +228,6 @@ export default function TaskCard({
       {task.quality_review_status === "uncertain" && (
         <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           <p className="font-medium">Carson is unsure — needs your review</p>
-          {task.quality_review_note && <p className="mt-0.5">{task.quality_review_note}</p>}
-        </div>
-      )}
-
-      {task.quality_review_status === "fraud_suspected" && (
-        <div className="rounded-lg border border-red-400 bg-red-50 px-3 py-2 text-sm text-red-900">
-          <p className="font-medium">Possible issue with this proof photo — needs your review</p>
           {task.quality_review_note && <p className="mt-0.5">{task.quality_review_note}</p>}
         </div>
       )}
