@@ -428,6 +428,35 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 
+  it('first invalid proof does not send an owner flagged notification even when push is configured', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'correction_required',
+      note: 'Grace, this is not the requested outfit. Please send a new photo.',
+    });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'check the closet outfit', assigned_to: 'Grace', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1' }])) // PATCH tasks -> correction_required
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Grace', phone: '+971500000009' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'correction-message-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ success: true }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required' }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
+    expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
+  });
+
   it('correction_required second submission: sends another correction, no owner push, cycle count increments', async () => {
     runQualityReviewMock.mockResolvedValue({
       status: 'correction_required',
@@ -922,6 +951,109 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       ([url, options]) => String(url).endsWith('/rest/v1/messages') && options?.method === 'POST',
     );
     expect(correctionMessageInserts).toHaveLength(0);
+  });
+
+  it('corrected valid proof sends only the completion owner notification, never stale flagged copy', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Correct outfit proof confirmed.' });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'check the closet outfit',
+        assigned_to: 'Grace',
+        image_path: 'task-images/u/t/photo.jpg',
+        quality_review_cycle_count: 1,
+        quality_review_status: 'correction_required',
+        quality_review_note: 'Wrong proof.',
+      }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> clear old correction before fresh review
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', status: 'done' }])) // PATCH tasks -> approved
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // confirmations insert
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    expect(vi.mocked(webpush.sendNotification)).toHaveBeenCalledTimes(1);
+    const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
+    expect(pushPayload.body).toBe('Grace confirmed: check the closet outfit');
+    expect(pushPayload.body).not.toMatch(/Carson flagged|flagged|submitted proof for review|hasn't confirmed/i);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/send-whatsapp-task'))).toBe(false);
+  });
+
+  it('duplicate approved submit does not duplicate confirmations or owner notifications when pending guard matches zero rows', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Correct proof confirmed.' });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'check the closet outfit',
+        assigned_to: 'Grace',
+        image_path: 'task-images/u/t/photo.jpg',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
+      .mockResolvedValueOnce(jsonResponse([])); // PATCH tasks -> duplicate lost the pending race
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, already_done: true, outcome: 'approved', duplicate: true }),
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
+    expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
+  });
+
+  it('stale invalid review cannot send a flagged owner notification after a corrected proof already completed the task', async () => {
+    const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    runQualityReviewMock.mockResolvedValue({
+      status: 'fraud_suspected',
+      note: 'This old request should not win after approval.',
+    });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'check the closet outfit', assigned_to: 'Grace', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
+      .mockResolvedValueOnce(jsonResponse([])); // pending-only PATCH matched 0 rows because newer request completed first
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/old-proof.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, already_done: true, outcome: 'approved', stale: true }),
+    );
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[task-confirm] stale non-approved review ignored after task left pending state',
+      expect.objectContaining({ taskId: 'task-1', outcome: 'fraud_suspected' }),
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/send-whatsapp-task'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+    expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
   });
 
   it('fraud_suspected review (reused reference image): keeps the task pending, asks the assignee for new proof, and does not notify the owner', async () => {
@@ -1548,6 +1680,9 @@ describe('Quality Intelligence safety lockdown — source-of-truth invariants', 
     expect(TASK_CONFIRM_SOURCE).toContain(
       "supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId) + '&status=eq.pending'",
     );
+    expect(TASK_CONFIRM_SOURCE).toContain("headers: { ...headers, Prefer: 'return=representation' }");
+    expect(TASK_CONFIRM_SOURCE).toContain('stale non-approved review ignored after task left pending state');
+    expect(TASK_CONFIRM_SOURCE).toContain('duplicate approval ignored after task left pending state');
   });
 
   it('GET exposes persisted review status as the confirmation page source of truth and locks only owner-review states', () => {

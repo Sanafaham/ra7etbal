@@ -24,6 +24,8 @@ import { resizeImage } from "../lib/image-upload";
 
 const MAX_PROOF_PHOTOS = 5;
 const PROOF_LIMIT_MESSAGE = "You can attach up to 5 photos.";
+const PROOF_UPLOAD_TIMEOUT_MS = 45000;
+const CONFIRM_REQUEST_TIMEOUT_MS = 75000;
 
 interface ProofUploadSlot {
   index: number;
@@ -63,6 +65,24 @@ interface TaskInfo {
    */
   qualityReviewStatus: "approved" | "correction_required" | "uncertain" | "fraud_suspected" | null;
   qualityReviewNote: string | null;
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function isAbortError(err: unknown): boolean {
+  return err instanceof DOMException && err.name === "AbortError";
 }
 
 export default function Confirm() {
@@ -266,11 +286,11 @@ export default function Confirm() {
         const slot = activeProofUploadSlots[i];
         try {
           const blob = await resizeImage(proofPhotos[i].file);
-          const uploadRes = await fetch(slot.uploadUrl, {
+          const uploadRes = await fetchWithTimeout(slot.uploadUrl, {
             method: "PUT",
             headers: { "Content-Type": "image/jpeg" },
             body: blob,
-          });
+          }, PROOF_UPLOAD_TIMEOUT_MS);
           if (!uploadRes.ok) {
             throw new Error(`Upload failed (${uploadRes.status})`);
           }
@@ -278,7 +298,9 @@ export default function Confirm() {
         } catch (err) {
           setProofUploading(false);
           setProofError(
-            err instanceof Error
+            isAbortError(err)
+              ? `Photo ${i + 1} of ${proofPhotos.length}: Upload timed out. Please try again.`
+              : err instanceof Error
               ? `Photo ${i + 1} of ${proofPhotos.length}: ${err.message}`
               : `Could not upload photo ${i + 1} of ${proofPhotos.length}. You can still mark done without proof, or try again.`,
           );
@@ -291,14 +313,14 @@ export default function Confirm() {
     }
 
     try {
-      const res = await fetch("/api/task-confirm", {
+      const res = await fetchWithTimeout("/api/task-confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           taskId,
           ...(savedProofPaths.length > 0 ? { proofImagePaths: savedProofPaths } : {}),
         }),
-      });
+      }, CONFIRM_REQUEST_TIMEOUT_MS);
       const rawBody = await res.text();
       let data: {
         success?: boolean;
@@ -367,7 +389,9 @@ export default function Confirm() {
     } catch (err) {
       confirmedRef.current = false;
       setConfirmError(
-        err instanceof TypeError
+        isAbortError(err)
+          ? "Carson is still confirming. Please refresh this page in a moment; if it is not marked done, try again."
+          : err instanceof TypeError
           ? "Network issue. Please check your connection."
           : "Could not confirm. Please try again.",
       );

@@ -56,7 +56,8 @@ describe("Confirm — proof photo upload (up to 5, remove/replace, honest failur
   it("uploads each photo to its own signed slot, matched by index", () => {
     const block = functionBlock("handleConfirm");
     expect(block).toContain("const slot = activeProofUploadSlots[i]");
-    expect(block).toContain('fetch(slot.uploadUrl, {\n            method: "PUT"');
+    expect(block).toContain('fetchWithTimeout(slot.uploadUrl, {\n            method: "PUT"');
+    expect(block).toContain("PROOF_UPLOAD_TIMEOUT_MS");
     expect(block).toContain("savedProofPaths.push(slot.storagePath)");
   });
 
@@ -87,6 +88,7 @@ describe("Confirm — proof photo upload (up to 5, remove/replace, honest failur
   it("aborts the whole submission and reports honestly which photo failed, instead of silently sending a partial set", () => {
     const block = functionBlock("handleConfirm");
     expect(block).toContain("throw new Error(`Upload failed (${uploadRes.status})`)");
+    expect(block).toContain("Upload timed out. Please try again.");
     expect(block).toContain("`Photo ${i + 1} of ${proofPhotos.length}: ${err.message}`");
     // On failure it returns immediately — never falls through to the POST confirm call.
     const failureBranchIndex = block.indexOf("confirmedRef.current = false;\n          setConfirming(false);\n          return;");
@@ -138,9 +140,14 @@ describe("Confirm — proof photo upload (up to 5, remove/replace, honest failur
 
   it("non-JSON task-confirm failures show an HTTP-specific error and reset loading state", () => {
     const block = functionBlock("handleConfirm");
+    expect(SOURCE).toContain("const CONFIRM_REQUEST_TIMEOUT_MS = 75000");
+    expect(SOURCE).toContain("function isAbortError");
+    expect(block).toContain('fetchWithTimeout("/api/task-confirm", {');
+    expect(block).toContain("CONFIRM_REQUEST_TIMEOUT_MS");
     expect(block).toContain("const rawBody = await res.text()");
     expect(block).toContain('console.error("[confirm] /api/task-confirm returned non-JSON"');
     expect(block).toContain('`Could not confirm (HTTP ${res.status}). Please try again.`');
+    expect(block).toContain("Carson is still confirming. Please refresh this page in a moment; if it is not marked done, try again.");
     expect(block).toContain("confirmedRef.current = false;");
     expect(block).toContain("setConfirming(false);");
   });

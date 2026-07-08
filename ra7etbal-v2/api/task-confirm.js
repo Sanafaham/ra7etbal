@@ -353,7 +353,7 @@ async function handlePost(req, res) {
         supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId) + '&status=eq.pending',
         {
           method: 'PATCH',
-          headers: { ...headers, Prefer: 'return=minimal' },
+          headers: { ...headers, Prefer: 'return=representation' },
           body: JSON.stringify({
             // Primary/back-compat column — TaskCard, HistoryCard, and
             // ConfirmationNotices all read this single column for a thumbnail.
@@ -374,6 +374,20 @@ async function handlePost(req, res) {
           outcome: savedReviewStatus,
         });
         return res.status(500).json({ error: taskConfirmErrorMessageForStep(step) });
+      }
+      const savedReviewRows = await readSupabaseRows(patchRes);
+      if (Array.isArray(savedReviewRows) && savedReviewRows.length === 0) {
+        console.warn('[task-confirm] stale non-approved review ignored after task left pending state', {
+          taskId,
+          outcome: savedReviewStatus,
+        });
+        return res.status(200).json({
+          success: true,
+          already_done: true,
+          outcome: 'approved',
+          description: task.description,
+          stale: true,
+        });
       }
 
       // Persist the full submitted proof set (up to 5) for the confirmation
@@ -445,10 +459,10 @@ async function handlePost(req, res) {
     // APPROVED review outcome when one was run.
     step = 'save_approval';
     const updateRes = await fetch(
-      supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId),
+      supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId) + '&status=eq.pending',
       {
         method: 'PATCH',
-        headers: { ...headers, Prefer: 'return=minimal' },
+        headers: { ...headers, Prefer: 'return=representation' },
         body: JSON.stringify({
           status: 'done',
           confirmed_at: now,
@@ -468,6 +482,17 @@ async function handlePost(req, res) {
         outcome: review?.status ?? null,
       });
       return res.status(500).json({ error: taskConfirmErrorMessageForStep(step) });
+    }
+    const approvedRows = await readSupabaseRows(updateRes);
+    if (Array.isArray(approvedRows) && approvedRows.length === 0) {
+      console.warn('[task-confirm] duplicate approval ignored after task left pending state', { taskId });
+      return res.status(200).json({
+        success: true,
+        already_done: true,
+        outcome: 'approved',
+        description: task.description,
+        duplicate: true,
+      });
     }
 
     if (proofImagePaths.length > 0) {
@@ -614,6 +639,16 @@ export function buildOwnerPushBody({ description, assignedTo, variant }) {
 
 function normalizeQualityReviewStatus(status) {
   return typeof status === 'string' ? status.trim().toLowerCase() : '';
+}
+
+async function readSupabaseRows(response) {
+  const text = await response.text().catch(() => '');
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 function isOwnerReviewLockedStatus(status) {
