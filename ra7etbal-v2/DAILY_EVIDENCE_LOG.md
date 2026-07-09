@@ -234,3 +234,116 @@ Not touched:
 • No app code changed.
 • No Vercel, DNS, Supabase, auth, WhatsApp, ElevenLabs, secrets, env vars, or
   production app settings changed.
+
+──────────────────────────────
+
+CLEAR MY HEAD ROUTING + DUPLICATE SUBMIT BUTTON FIX
+
+Date:
+2026-07-10
+
+Status:
+Fixed, deployed, production reachable (HTTP 200 verified). Live interactive
+verification (real account, real photo upload, real iPhone PWA keyboard
+state) not performed this session — no browser session/credentials
+available in this environment.
+
+Regressions confirmed reproducible:
+
+1. Clear My Head routing regression — "Ask Christopher to make this for
+   lunch" with a photo attached did not reliably route to delegation.
+2. Clear My Head duplicate submit button on iPhone PWA.
+
+Root cause 1 — Routing:
+
+The deterministic direct-recipient safety net in
+src/lib/ai/role-precedence.ts (getDirectRecipientInstruction) used regex
+patterns ending in `(?<rest>.*)$` without the dotAll flag. Home.tsx appends
+"\n\nAttached image:\n<description>" to the extraction text whenever a
+photo is attached. Once that blank line was present, `.` could never cross
+it and `$` could never be reached, so the match silently failed. Without
+that safety net firing, the item fell through to whatever the raw model
+extraction guessed, which was observed to land on "parked" (Inbox) instead
+of delegation. This is a different bug from the one fixed in commit
+dbb20be (which fixed missing note/todo routing for the photo-only
+extraction path in extract-photo.ts) — role-precedence.ts was untouched by
+that earlier fix and had zero regression coverage before this session.
+
+Root cause 2 — Duplicate submit button:
+
+Home.tsx always rendered the inline `home-submit-button`, and separately
+rendered a floating `home-sticky-cta-button` whenever `keyboardOpen` was
+true (textarea focused or visualViewport shrunk). Nothing hid the inline
+button when the sticky one appeared, so both were mounted and visible at
+once. This pattern has existed since the sticky CTA was first introduced
+(long-standing, not a recent regression).
+
+Fix:
+
+• role-precedence.ts — getDirectRecipientInstruction now matches only
+  against the first paragraph of sourceText (split on the first blank
+  line), so appended photo-description context can never break the match,
+  and appended text can never leak into the generated recipient message.
+• Home.tsx — the inline submit button is now gated on `!keyboardOpen`, so
+  exactly one "Clear My Head" submit control is ever visible; the sticky
+  CTA (gated on `keyboardOpen`) remains reachable above the iOS keyboard.
+
+Tests added:
+
+• src/lib/ai/role-precedence.test.ts (new) — 5 tests: plain "ask X to..."
+  still routes to delegation; routes to delegation with an appended photo
+  description; appended description text does not leak into the generated
+  message; "remind me to ask X..." exclusion still holds with a photo
+  attached; role+topic promotion (Cook + dinner) still fires with a photo
+  attached.
+• src/routes/Home.test.ts (new) — 3 tests, source-scan pattern matching the
+  existing Review.no-persistence.test.ts / Updates.test.ts convention:
+  inline button gated on !keyboardOpen, sticky CTA gated on keyboardOpen,
+  mutual exclusion of the two gates.
+
+Commands run:
+
+• npx vitest run src/lib/ai/role-precedence.test.ts src/routes/Home.test.ts — 8/8 passed
+• npx vitest run src/lib/ai src/routes/Review.no-persistence.test.ts src/lib/save.test.ts src/routes/Home.test.ts — 55/55 passed
+• npm run typecheck — passed
+• npm test (full suite) — 1166/1166 passed across 92 files
+• npm run build — passed (only pre-existing routine:* CSS and bundle-size warnings)
+
+Commit:
+cb2d9f4 — "Fix Clear My Head photo-context routing and duplicate submit button"
+
+Deployment:
+dpl_31CX3gy7AdptsGGymQMdHcvssz5P — READY, aliased to production
+(ra7etbal-v2.vercel.app, ra7etbal.com). https://ra7etbal-v2.vercel.app
+returns HTTP 200 after deploy.
+
+Not touched:
+
+• QI, WhatsApp templates, scheduler/cron, push subscription logic, Carson
+  voice, Supabase auth/RLS, schema — none modified.
+
+Vault note (unrelated to this fix, flagged for awareness):
+
+Ra7etBal_Docs/CURRENT/01_ACTIVE/CURRENT_STATUS.md and
+MASTER_PLAN_CURRENT.md (dated 2026-07-09) claim Phase 8.1 is next and that
+Quality Intelligence still has open bugs (notification wording, attach-
+another-photo). This is stale — actual git history through commit c132c32
+(the session's starting HEAD) shows Phase 8 QI work is complete and past
+those two items; RA7ETBAL_PROJECT_STATUS_CURRENT.md (the vault's own
+higher-priority source of truth per _CLAUDE.md's ordering) is itself stale
+at 2026-07-09, and was last actually updated 2026-06-29 and does not
+reflect QI work at all. Vault docs were not edited this session per "docs
+updated manually only when requested."
+
+Remaining risks:
+
+• Live interactive verification not performed (no signed-in browser
+  session in this environment) — recommend Sana manually verify: (a) type
+  "Ask Christopher to make this for lunch", attach a food photo, submit,
+  and confirm the Review screen shows it as a delegation to Christopher;
+  (b) on iPhone PWA, focus the Clear My Head textarea and confirm only one
+  submit button is visible/reachable above the keyboard.
+• The first-paragraph restriction assumes the user's actual instruction is
+  always the first paragraph of extraction text — true for every current
+  caller (Home.tsx, text-carson.ts) but would need revisiting if a future
+  caller prepends context before the user's text.
