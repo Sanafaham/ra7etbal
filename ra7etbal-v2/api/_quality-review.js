@@ -63,7 +63,12 @@ Important duplicate-image boundary:
 - The system already performs an exact byte-for-byte duplicate check before you see the images.
 - If a proof photo is the exact same uploaded file as the reference image, the system will classify it before calling you.
 - Do NOT claim "pixel-for-pixel identical", "same image as the reference", or "reused reference image" based only on visual similarity.
-- A correct proof photo may look very similar to the reference because the assignee completed the task correctly. If it is a live-looking photo and satisfies the requested outcome, choose APPROVED.
+- A correct proof photo may look very similar to the reference because the assignee completed the task correctly — that is expected and is a GOOD sign, not suspicious. Judge whether the proof satisfies the requested outcome, never how much it resembles the reference or how polished it looks.
+
+Reference and proof photo style — read carefully, this is a common source of wrongly rejecting a correct proof:
+- The reference image can be any kind of image the user chose to show what they want: a real photo, a screenshot, a studio product photo, an AI-generated image, a stock/web image, or a photo found online. That the reference looks staged, AI-generated, or stock-like says nothing about the proof.
+- The submitted proof does NOT have to look "live," casual, or amateur to be valid. Clean lighting, a white/neutral background, professional composition, high image quality, or a proof that closely resembles the reference in style are all normal and are NEVER by themselves a reason to reject.
+- NEVER choose CORRECTION_REQUIRED or FRAUD_SUSPECTED only because the proof looks polished, studio-like, stock-like, AI-generated, too clean, or too similar in composition/style to the reference. Judge only whether the item/outcome shown is what the task actually asked for.
 
 Item-vs-location judgment:
 - For "find this item and send a photo" tasks, approve when the correct item is clearly visible and matches the requested/reference item, even if the item is photographed on a neutral surface, fabric, couch, table, floor, or a different background than the reference photo.
@@ -72,10 +77,10 @@ Item-vs-location judgment:
 - Examples that DO require location proof: "Show me the perfume inside the cabinet", "Verify it is in the cabinet", "Send proof that it is on the shelf." For these, reject if the correct item is visible but the required location is not shown.
 
 Decide exactly one outcome:
-- APPROVED: the proof photo clearly satisfies the task as described.
-- CORRECTION_REQUIRED: you can clearly see what's wrong and describe it specifically — wrong required placement/location, missing item, visibly incomplete, or an entirely different/mismatched item than what was asked for (e.g. the wrong product, wrong color, wrong object altogether). A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible. Do not reject the correct item merely because it is on a different neutral surface/background unless location proof was explicitly requested.
+- APPROVED: the requested item/outcome is clearly correct, materially matches the task, and is a reasonable fulfillment of the request. This applies regardless of the proof photo's style, polish, or resemblance to the reference.
+- CORRECTION_REQUIRED: you can clearly see what's wrong and describe it specifically — wrong required placement/location, missing item, visibly incomplete, or an entirely different/mismatched item than what was asked for (e.g. the wrong product, wrong color/variant when the exact variant matters, wrong object altogether). A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible, and never treat polish, studio quality, or resemblance to the reference as a problem. Do not reject the correct item merely because it is on a different neutral surface/background unless location proof was explicitly requested.
 - UNCERTAIN: reserve this only for genuine ambiguity where you cannot tell what's in the photo or whether it matches — for example the photo itself is blurry, too dark, or cropped so the relevant item isn't visible, the angle makes it impossible to judge, or there's no reference image and the task description is too vague to judge against. If you can clearly see the item and can clearly see that it does not match, that is CORRECTION_REQUIRED, never UNCERTAIN.
-- FRAUD_SUSPECTED: the proof photo itself is not a genuine, live photo of the completed task — it's not just wrong or unclear, it's not real proof at all. Use this when the photo is a screenshot (product listing, marketplace page, menu, app UI, etc.), is a stock/web image rather than a photo taken of a real physical item, or otherwise shows clear signs of not being a live photo of the actual completed task. This is about the photo's authenticity as proof, not about whether the item looks right — a real photo of the wrong item is CORRECTION_REQUIRED; a live-looking photo of the correct item is APPROVED.
+- FRAUD_SUSPECTED: the proof photo itself is not genuine proof of the completed task — not just wrong or unclear, but not real evidence of the task at all. Use this ONLY when there is strong, concrete evidence, such as the photo being a screenshot (product listing, marketplace page, menu, app UI, etc.), or the proof being the exact same reference image re-uploaded when the task clearly requires the assignee to do actual work (find, make, buy, or complete something) rather than just forward the reference back. This is about strong evidence the image isn't genuine proof, NOT about how polished, professional, stock-like, or AI-generated it looks — those are never sufficient evidence on their own. A real photo of the wrong item is CORRECTION_REQUIRED; a correct, well-composed, professional-looking photo of the right item is APPROVED.
 
 If CORRECTION_REQUIRED, write a short, specific message addressed directly to the assignee by name, describing only the visible difference and what to do about it. One or two sentences, friendly but direct. Do not invent issues that are not visible in the photo.
 
@@ -131,15 +136,15 @@ function isUnsupportedReferenceReuseClaim(note) {
     /\breused\b/.test(text) ||
     /\bre-use(?:d)?\b/.test(text);
   const tiesClaimToReference = /\breference\b/.test(text);
+  // "stock"/"web image"/style-based wording is deliberately excluded here —
+  // per product rule, looking stock-like or polished is never on its own
+  // concrete evidence of fraud, so it must not block this safety net either.
   const independentlyNonLive =
     /\bscreenshot\b/.test(text) ||
     /\bscreen shot\b/.test(text) ||
     /\bproduct listing\b/.test(text) ||
     /\bmenu\b/.test(text) ||
-    /\bapp ui\b/.test(text) ||
-    /\bweb image\b/.test(text) ||
-    /\bstock\b/.test(text) ||
-    /\bnon[-\s]?live\b/.test(text);
+    /\bapp ui\b/.test(text);
   return claimsExactIdentity && tiesClaimToReference && !independentlyNonLive;
 }
 
@@ -151,13 +156,39 @@ function isConcreteNonLiveProofReason(note) {
     /\bproduct listing\b/.test(text) ||
     /\bmenu\b/.test(text) ||
     /\bapp ui\b/.test(text) ||
-    /\bweb image\b/.test(text) ||
-    /\bstock\b/.test(text) ||
-    /\bnon[-\s]?live\b/.test(text) ||
-    /\bnot a live photo\b/.test(text) ||
     /\bnot a new photo\b/.test(text) ||
     /\bexactly the same uploaded image\b/.test(text)
   );
+}
+
+/**
+ * True when a rejection's stated reason is purely about visual style —
+ * polished, studio-like, stock-like, AI-generated, too clean/professional,
+ * or similar in composition to the reference — with no concrete mismatch
+ * (isVisibleMismatchReason) or concrete non-live evidence
+ * (isConcreteNonLiveProofReason) also present. Product rule: style alone is
+ * never a valid reason to reject a proof.
+ */
+function isStyleOnlyRejectionReason(note) {
+  const text = String(note || '').toLowerCase();
+  if (!text) return false;
+
+  const stylistic =
+    /\bpolished\b/.test(text) ||
+    /\bstudio\b/.test(text) ||
+    /\bstock\b/.test(text) ||
+    /\bai[-\s]?generated\b/.test(text) ||
+    /\btoo (?:clean|perfect|professional|good)\b/.test(text) ||
+    /\bprofessional(?:ly)?[-\s]?(?:lit|lighting|composition|photo|looking)\b/.test(text) ||
+    /\bwhite background\b/.test(text) ||
+    /\bclean background\b/.test(text) ||
+    /\bsimilar(?:ity)? (?:to|in) (?:the )?(?:composition|reference|style)\b/.test(text) ||
+    /\bresembles? the reference\b/.test(text) ||
+    /\blooks like (?:a )?(?:stock|studio|product) (?:photo|image)\b/.test(text);
+
+  if (!stylistic) return false;
+
+  return !(isVisibleMismatchReason(text) || isConcreteNonLiveProofReason(text));
 }
 
 function isVisibleMismatchReason(note) {
@@ -238,6 +269,16 @@ function isLocationOnlyCorrection(note) {
 }
 
 function normalizeReviewResult(parsed) {
+  if (
+    (parsed.status === 'correction_required' || parsed.status === 'fraud_suspected') &&
+    isStyleOnlyRejectionReason(parsed.note)
+  ) {
+    return {
+      status: 'approved',
+      note: 'Proof shows the correct result; image style or polish is not a valid reason to reject.',
+    };
+  }
+
   if (
     parsed.status === 'correction_required' &&
     isLocationOnlyCorrection(parsed.note) &&

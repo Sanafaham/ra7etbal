@@ -539,6 +539,180 @@ describe('runQualityReview', () => {
     expect(promptText).toMatch(/is CORRECTION_REQUIRED, not UNCERTAIN/i);
     expect(promptText).toMatch(/never UNCERTAIN/i);
   });
+
+  describe('production fix: studio/polished/stock-looking proof is not grounds for rejection', () => {
+    it('1. approves a correct pepperoni pizza proof even though the model notes it resembles the reference', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          anthropicResponse(
+            '{"result":"APPROVED","correction_message":null,"reasoning":"The proof shows a pepperoni pizza matching the reference."}',
+          ),
+        ),
+      );
+
+      const result = await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'Ask Christopher to make this for lunch.',
+        delegationMessage: 'Christopher, please make this pizza for lunch.',
+        referenceImageBase64: 'pizza-reference-base64',
+        proofImagesBase64: ['pepperoni-pizza-proof-base64'],
+      });
+
+      expect(result).toEqual({
+        status: 'approved',
+        note: 'The proof shows a pepperoni pizza matching the reference.',
+      });
+    });
+
+    it('2. rejects a salad submitted for a pizza task', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          anthropicResponse(
+            '{"result":"CORRECTION_REQUIRED","correction_message":"Christopher, this is a salad, not the pizza that was requested. Please make and photograph the pizza instead.","reasoning":"Wrong item — salad instead of pizza."}',
+          ),
+        ),
+      );
+
+      const result = await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'Ask Christopher to make this for lunch.',
+        delegationMessage: 'Christopher, please make this pizza for lunch.',
+        referenceImageBase64: 'pizza-reference-base64',
+        proofImagesBase64: ['salad-proof-base64'],
+      });
+
+      expect(result.status).toBe('correction_required');
+      expect(result.note).toContain('salad');
+    });
+
+    it('3. approves a correct product proof the model itself flags as studio-looking/polished', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          anthropicResponse(
+            '{"result":"CORRECTION_REQUIRED","correction_message":"The correct TEREA Silver pack is shown, but the proof looks like a polished studio product photo rather than a live photo.","reasoning":"Studio-looking proof."}',
+          ),
+        ),
+      );
+
+      const result = await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'Buy a pack of TEREA Silver and send a photo.',
+        delegationMessage: 'Please buy TEREA Silver and send a photo.',
+        referenceImageBase64: 'terea-silver-reference-base64',
+        proofImagesBase64: ['terea-silver-studio-proof-base64'],
+      });
+
+      expect(result).toEqual({
+        status: 'approved',
+        note: 'Proof shows the correct result; image style or polish is not a valid reason to reject.',
+      });
+    });
+
+    it('4. rejects when the model cites only similar composition/style to the reference, nothing concrete', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          anthropicResponse(
+            '{"result":"FRAUD_SUSPECTED","correction_message":null,"reasoning":"The composition and lighting are very similar to the reference image, which is suspicious."}',
+          ),
+        ),
+      );
+
+      const result = await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'Find the black blouse and send a photo.',
+        delegationMessage: 'Please find the black blouse and send a photo.',
+        referenceImageBase64: 'blouse-reference-base64',
+        proofImagesBase64: ['blouse-proof-base64'],
+      });
+
+      expect(result.status).toBe('approved');
+    });
+
+    it('5. still rejects the exact same reference image re-uploaded as proof when the task requires real work', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'Buy this bracelet and send a photo of it.',
+        delegationMessage: 'Please buy this and send a photo.',
+        referenceImageBase64: 'bracelet-reference-base64',
+        proofImagesBase64: ['bracelet-reference-base64'],
+      });
+
+      expect(result.status).toBe('fraud_suspected');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('6. instructs the model that AI-generated/stock-style images are valid references, not a reason to doubt the proof', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'task',
+        delegationMessage: 'message',
+        referenceImageBase64: 'ref-base64',
+        proofImagesBase64: ['proof-base64'],
+      });
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
+      expect(promptText).toMatch(/AI-generated image, a stock\/web image/i);
+      expect(promptText).toMatch(/does NOT have to look "live," casual, or amateur/i);
+      expect(promptText).toMatch(/NEVER choose CORRECTION_REQUIRED or FRAUD_SUSPECTED only because the proof looks polished/i);
+    });
+
+    it('7. protected: a genuinely wrong/unrelated object is still rejected, not waved through by the style guard', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          anthropicResponse(
+            '{"result":"CORRECTION_REQUIRED","correction_message":"Grace, this is a different, unrelated object, not the perfume that was requested. Please send a photo of the correct item.","reasoning":"Unrelated object."}',
+          ),
+        ),
+      );
+
+      const result = await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist and send a photo.',
+        delegationMessage: 'Grace, please find the perfume and send Sana a photo.',
+        referenceImageBase64: 'cheirosa-68-reference-base64',
+        proofImagesBase64: ['unrelated-object-base64'],
+      });
+
+      expect(result.status).toBe('correction_required');
+      expect(result.note).toContain('different, unrelated object');
+    });
+
+    it('wrong color/variant is still rejected when the exact variant matters, even if the proof looks polished', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          anthropicResponse(
+            '{"result":"CORRECTION_REQUIRED","correction_message":"This is the wrong color — a white blouse instead of the requested black blouse. Please send the black one.","reasoning":"Wrong color variant."}',
+          ),
+        ),
+      );
+
+      const result = await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'Find the black blouse shown and send a photo.',
+        delegationMessage: 'Please find the black blouse and send a photo.',
+        referenceImageBase64: 'black-blouse-reference-base64',
+        proofImagesBase64: ['white-blouse-proof-base64'],
+      });
+
+      expect(result.status).toBe('correction_required');
+      expect(result.note).toContain('wrong color');
+    });
+  });
 });
 
 describe('downloadImageAsBase64', () => {
