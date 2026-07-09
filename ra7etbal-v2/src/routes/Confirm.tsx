@@ -603,9 +603,7 @@ export default function Confirm() {
                     : confirming
                       ? "Confirming…"
                       : needsNewProof
-                        ? outcome === "correction_required" || outcome === "fraud_suspected"
-                          ? "Attach a new photo to continue"
-                          : "Attach proof photo to continue"
+                        ? "Attach a new photo to continue"
                         : proofPhotos.length > 0
                           ? "Mark done with proof"
                           : "Mark done"}
