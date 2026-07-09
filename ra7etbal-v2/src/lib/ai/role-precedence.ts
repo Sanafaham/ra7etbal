@@ -211,7 +211,16 @@ function getDirectRecipientInstruction(
 ): DirectRecipientInstruction | null {
   const text = sourceText.trim();
   if (!text) return null;
-  if (/\bremind\s+me\s+to\s+(tell|ask|remind|have|let|message|send)\b/i.test(text)) {
+
+  // Extraction text can have contextual content appended after the user's
+  // actual instruction (e.g. Home.tsx appends "\n\nAttached image:\n<description>"
+  // when a photo is attached). The patterns below use `.` without the dotAll
+  // flag, so once a blank line separates the instruction from appended
+  // context, `.*$` can never reach the end of string and the match silently
+  // fails. Restrict matching to the first paragraph — the user's actual
+  // typed instruction — so a photo attachment can't break this detection.
+  const primaryText = text.split(/\n\s*\n/)[0]?.trim() || text;
+  if (/\bremind\s+me\s+to\s+(tell|ask|remind|have|let|message|send)\b/i.test(primaryText)) {
     return null;
   }
 
@@ -223,7 +232,7 @@ function getDirectRecipientInstruction(
     ];
 
     for (const pattern of patterns) {
-      const match = text.match(pattern);
+      const match = primaryText.match(pattern);
       const rest = match?.groups?.rest?.trim() ?? "";
       if (!match) continue;
 

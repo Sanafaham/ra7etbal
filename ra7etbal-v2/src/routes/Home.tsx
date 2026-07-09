@@ -495,19 +495,21 @@ export default function Home() {
                 <path d="M21 15l-5-5L5 21" />
               </svg>
             </button>
-            <button
-              data-testid="home-submit-button"
-              type="button"
-              onClick={handleNext}
-              onMouseDown={(e) => e.preventDefault()}
-              onTouchStart={(e) => e.stopPropagation()}
-              disabled={!canSubmit}
-              aria-busy={submitting}
-              className="inline-flex flex-1 min-h-[48px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold tracking-[-0.005em] text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-100 disabled:text-stone-400 disabled:shadow-none"
-            >
-              {submitting && <Spinner size={14} />}
-              <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
-            </button>
+            {!keyboardOpen && (
+              <button
+                data-testid="home-submit-button"
+                type="button"
+                onClick={handleNext}
+                onMouseDown={(e) => e.preventDefault()}
+                onTouchStart={(e) => e.stopPropagation()}
+                disabled={!canSubmit}
+                aria-busy={submitting}
+                className="inline-flex flex-1 min-h-[48px] items-center justify-center gap-2 rounded-full border border-charcoal/15 bg-charcoal px-4 text-sm font-semibold tracking-[-0.005em] text-ivory shadow-sm transition hover:bg-espresso disabled:cursor-not-allowed disabled:border-stone-300 disabled:bg-stone-100 disabled:text-stone-400 disabled:shadow-none"
+              >
+                {submitting && <Spinner size={14} />}
+                <span>{submitting ? "Organizing..." : "Clear My Head"}</span>
+              </button>
+            )}
           </div>
         </div>
 
