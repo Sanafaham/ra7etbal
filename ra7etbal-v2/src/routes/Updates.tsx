@@ -63,6 +63,18 @@ export default function Updates() {
   const chipAutoPausedRef = useRef(false);
   const chipResumeTimerRef = useRef<number | null>(null);
   const chipReducedMotionRef = useRef(false);
+  // Setting scrollLeft below fires a native `scroll` event indistinguishable
+  // from a user-driven one. Without this guard, the onScroll handler treated
+  // the auto-scroll's own movement as user interaction and paused it on the
+  // very next frame, every frame — net effect: the chip row nudged a
+  // fraction of a pixel, stalled for the whole resume cooldown, and repeated,
+  // which looked like (and was reported as) "moves once then stops," and
+  // meant it never actually cycled the off-screen tabs (Inbox, Automations,
+  // History) into view. This flag lets onScroll recognize and ignore scroll
+  // events the auto-scroll itself caused, while still pausing for genuine
+  // user interaction — including keyboard-driven scroll, which is the one
+  // case the pointer/touch/wheel handlers below don't cover.
+  const chipProgrammaticScrollRef = useRef(false);
 
   useEffect(() => {
     const el = chipScrollerRef.current;
@@ -90,6 +102,7 @@ export default function Updates() {
       lastTs = ts;
       const loopWidth = el.scrollWidth / 2;
       if (loopWidth <= 0) return;
+      chipProgrammaticScrollRef.current = true;
       el.scrollLeft += PIXELS_PER_MS * dt;
       if (el.scrollLeft >= loopWidth) el.scrollLeft -= loopWidth;
     };
@@ -122,6 +135,16 @@ export default function Updates() {
   function pauseChipAutoScroll() {
     chipAutoPausedRef.current = true;
     if (chipResumeTimerRef.current) window.clearTimeout(chipResumeTimerRef.current);
+  }
+
+  function handleChipScroll() {
+    if (chipProgrammaticScrollRef.current) {
+      // Our own auto-scroll caused this event — not user interaction.
+      chipProgrammaticScrollRef.current = false;
+      return;
+    }
+    pauseChipAutoScroll();
+    scheduleChipAutoScrollResume();
   }
 
   function scheduleChipAutoScrollResume() {
@@ -247,7 +270,7 @@ export default function Updates() {
           role="tablist"
           aria-label="Updates sections"
           style={{ scrollbarWidth: "none" }}
-          onScroll={() => { pauseChipAutoScroll(); scheduleChipAutoScrollResume(); }}
+          onScroll={handleChipScroll}
           onPointerDown={pauseChipAutoScroll}
           onPointerUp={scheduleChipAutoScrollResume}
           onPointerCancel={scheduleChipAutoScrollResume}
