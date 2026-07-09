@@ -593,3 +593,154 @@ Remaining risks:
 • None beyond the original pre-fix state — the confusing "Attach a new
   photo to continue" wording before a first proof photo is back, by
   explicit request, pending a future decision on how to address it.
+
+──────────────────────────────
+
+QI: STOP REJECTING PROOFS FOR MATCHING/DUPLICATING THE REFERENCE
+
+Date:
+2026-07-10
+
+Status:
+Fixed, deployed. Explicitly authorized: reproduced production bug +
+Sana's direct approval, per the QI V1 stability rule (do not modify QI
+unless there is a reproduced production bug or explicit approval).
+
+Problem:
+
+A worker's proof photo was rejected as fraud_suspected — "exactly the
+same uploaded image as the reference, not a new photo of the completed
+task" — with the correction message telling the worker to "upload a new
+live proof photo." The correct item (a bowl) was shown; its state
+genuinely had not changed. An earlier production test with the
+identical pattern (a pepperoni pizza re-uploaded as its own proof) had
+been approved.
+
+Root cause:
+
+Commit `765887a` ("Prevent proof duplicate false positives",
+2026-07-07) added `hasExactReferenceDuplicate()` — a deterministic
+byte-for-byte comparison of the proof's base64 against the reference's
+base64 — to `api/_quality-review.js`. When a proof photo was byte-
+identical to the reference, `runQualityReview()` short-circuited to
+`fraud_suspected` with a hardcoded "exactly the same uploaded image as
+the reference" note, *before the Anthropic model was ever called*.
+This bypassed every existing safety net (`isUnsupportedReferenceReuseClaim`,
+`isStyleOnlyRejectionReason`, etc.) since those only run on model output.
+The pizza test predates this commit (went straight to the model, which
+approved it); the bowl test postdates it (hit the new deterministic
+path and was auto-rejected regardless of outcome correctness).
+Separately, the prompt's FRAUD_SUSPECTED definition also explicitly
+listed "the exact same reference image re-uploaded... rather than just
+forward the reference back" as valid fraud evidence on its own — a
+second, independent way the same wrong signal could reach a rejection.
+
+QI V1 product policy (per this fix): approve when the proof matches the
+requested outcome; reject only clear wrong outcomes (wrong item). Same
+image, similar image, polished/studio/internet-looking, not-live
+suspicion, and duplicate-image suspicion must never cause rejection on
+their own.
+
+Fix — api/_quality-review.js:
+
+• Removed `hasExactReferenceDuplicate()` and its call site entirely.
+  Every proof, including a byte-identical one, now goes to the model.
+• Removed "or the proof being the exact same reference image
+  re-uploaded... rather than just forward the reference back" from the
+  FRAUD_SUSPECTED prompt definition — the model is no longer told this
+  is valid evidence.
+• Removed the now-false "the system already performs an exact
+  byte-for-byte duplicate check" prompt claim; rewrote the identity/
+  similarity guidance to state plainly that identical/near-identical
+  proofs are a GOOD sign, never suspicious on their own.
+• Narrowed `isConcreteNonLiveProofReason()` — dropped "not a new photo"
+  and "exactly the same uploaded image" as valid non-live evidence, so
+  the existing style-only-rejection safety net can no longer be blocked
+  by same-reference wording.
+• Closed a related gap: added "internet"/"web image"/"online" to the
+  style-only-rejection safety net (`isStyleOnlyRejectionReason`) and to
+  the prompt's NEVER-reject-for-this list — "internet-looking" wasn't
+  previously caught alongside "stock"/"studio"/"polished".
+• Updated the stale note text on the model-claim downgrade path
+  (`isUnsupportedReferenceReuseClaim`) from "no deterministic duplicate
+  was detected" to "identity or similarity to the reference is not a
+  valid reason to reject", since there's no more deterministic check to
+  reference.
+
+Deliberately unchanged:
+
+• Screenshot/product-listing/menu/app-UI FRAUD_SUSPECTED detection —
+  genuine non-photographic evidence, unrelated to this complaint.
+• CORRECTION_REQUIRED for a clearly wrong/mismatched item.
+• `isUnsupportedReferenceReuseClaim()` itself — still a useful safety
+  net catching the model's own hallucinated "same as reference" claims
+  and downgrading them to approved.
+• Worker confirmation UI, upload UI (Sana's explicit "do not touch"
+  scope from the prior task).
+• `task-confirm.js`'s WhatsApp-sending logic and `buildWorkerCorrectionNote()`
+  — untouched; the same-reference correction message stops appearing
+  only because the classification path that produced it no longer
+  exists, not because the WhatsApp template was edited.
+
+Tests added/updated (api/_quality-review.test.js):
+
+• New describe block "production fix (2026-07-10): same-reference/
+  duplicate-image/live-proof suspicion is not grounds for rejection"
+  with Sana's 4 required regression tests:
+  1. Same reference/proof image with a matching requested outcome
+     (a bowl) must approve.
+  2. A polished/internet-looking matching food proof (a pizza) must
+     approve.
+  3. A clear wrong food proof (pizza submitted for a salad task) must
+     still reject with correction_required.
+  4. Existing correction WhatsApp still sends for a clear wrong outcome
+     — protected by the pre-existing, untouched
+     api/task-confirm.test.js test "correction_required review: keeps
+     task pending, creates a message row, and sends WhatsApp through
+     direct_message" (mocks runQualityReview directly, so it already
+     proves the WhatsApp path is unaffected by this fix).
+• Inverted 2 pre-existing tests that had asserted the now-wrong
+  deterministic-rejection behavior (one of these was itself a
+  "protected behavior" test from the prior c132c32 fix — explicitly
+  reversed here per Sana's direct instruction).
+• Updated 1 prompt-instruction test's assertions to match the new
+  prompt wording (removed "exact byte-for-byte duplicate check" /
+  "exact same reference image re-uploaded" claims; added assertions
+  for the new identity/similarity guidance).
+
+Commands run:
+
+• npx vitest run api/_quality-review.test.js — 39/39 passed
+• npx vitest run api/task-confirm.test.js — 54/54 passed (unaffected —
+  confirms WhatsApp/upload/submission logic untouched)
+• npm run typecheck — passed
+• npm test (full suite) — 1175/1175 passed across 92 files
+• npm run build — passed; client JS/CSS bundle hashes unchanged from
+  the prior build, confirming this was a pure backend/API change with
+  zero frontend impact (only api/_quality-review.js and its test file
+  changed)
+
+Commit:
+44b18fd — "Stop QI from rejecting proofs for matching/duplicating the
+reference"
+
+Not touched:
+
+• Worker confirmation UI, upload UI, WhatsApp template/send logic,
+  scheduler/cron, push subscription logic, Clear My Head, Supabase
+  auth/RLS, schema.
+
+Remaining risks:
+
+• Live interactive verification with a real task/photo not performed by
+  Claude in this environment (no signed-in browser session or live
+  Anthropic-backed review call) — recommend Sana manually re-run the
+  bowl scenario (same reference/proof image) and confirm it now
+  approves, and separately confirm a genuinely wrong-item proof still
+  gets correction_required.
+• This fix relies more heavily on the model's own judgment (no
+  deterministic backstop for exact duplicates) — if a genuinely
+  malicious "just re-forward the reference" pattern becomes a real
+  problem in practice, that would need a different, outcome-aware
+  detection approach, not a reintroduction of the blanket byte-identity
+  check this fix removes.
