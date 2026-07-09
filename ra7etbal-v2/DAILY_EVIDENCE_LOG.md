@@ -532,3 +532,64 @@ Remaining risks:
   this environment — recommend Sana manually confirm the button reads
   "Attach proof photo to continue" before any photo, and still reads
   "Attach a new photo to continue" after a real QI rejection.
+
+──────────────────────────────
+
+REVERT: CONFIRMATION PAGE PROOF-PHOTO BUTTON COPY FIX
+
+Date:
+2026-07-10
+
+Status:
+Reverted at Sana's request. Confirm.tsx restored exactly to its
+pre-fix state; Confirm.proof-copy.test.ts removed.
+
+Reason:
+
+Sana asked to revert the proof-copy cleanup above and restore the prior
+wording/state exactly, with explicit scope: Confirm.tsx copy/state only,
+no QI, no WhatsApp, no upload logic, no Clear My Head. This entry is
+added per the append-only log convention — the original fix entry above
+is left in place as historical record, not deleted.
+
+What was reverted:
+
+Commit `01e6249` ("Fix confirmation page proof-photo button copy before a
+first photo") via `git revert`. The submit button's disabled label is
+restored to the single unconditional string "Attach a new photo to
+continue" for every `needsNewProof` case (first-ever proof and
+post-rejection re-upload alike) — the same wording that was live in
+production before this session's cleanup.
+
+Verification the revert is exact:
+
+`git diff --cached` on Confirm.tsx showed only the label ternary reverting
+to its prior three-line form; `git revert` applied cleanly with zero
+conflicts; the resulting Confirm.tsx blob hash (`c567b0a`) matches the
+pre-fix blob hash exactly, byte-for-byte.
+
+Commands run:
+
+• npx vitest run src/routes/Confirm.photo-upload.test.ts
+  src/routes/Confirm.reopen-lock.test.ts — 23/23 passed
+• npm run typecheck — passed
+• npm test (full suite) — 1172/1172 passed across 92 files (test count
+  and file count match the pre-fix baseline exactly)
+• npm run build — passed (only pre-existing routine:* CSS and
+  bundle-size warnings; CSS bundle hash unchanged, confirming the copy
+  change was JS-only)
+
+Commit:
+6046c32 — Revert "Fix confirmation page proof-photo button copy before a
+first photo"
+
+Not touched:
+
+• QI review logic, upload limits, confirmation submission handling,
+  WhatsApp flow, Clear My Head, schema, auth/RLS.
+
+Remaining risks:
+
+• None beyond the original pre-fix state — the confusing "Attach a new
+  photo to continue" wording before a first proof photo is back, by
+  explicit request, pending a future decision on how to address it.
