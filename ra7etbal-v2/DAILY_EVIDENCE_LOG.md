@@ -347,3 +347,103 @@ Remaining risks:
   always the first paragraph of extraction text — true for every current
   caller (Home.tsx, text-carson.ts) but would need revisiting if a future
   caller prepends context before the user's text.
+
+──────────────────────────────
+
+STICKY CLEAR MY HEAD CTA — KEYBOARD POSITIONING FIX
+
+Date:
+2026-07-10
+
+Status:
+Fixed, deployed, production reachable (HTTP 200 verified on
+ra7etbal-v2.vercel.app and www.ra7etbal.com).
+
+Manual verification from Sana (iPhone PWA), after the prior duplicate-
+submit-button fix:
+
+• Duplicate submit button: confirmed fixed, only one button shows.
+• New/remaining regression: the sticky CTA appears too low, is partly
+  hidden behind the iOS keyboard, and visibly jumps upward when tapped.
+  Explicitly scoped as a positioning regression only — no routing or
+  Clear My Head flow changes requested or made.
+
+Source of truth located:
+
+Home.tsx owns the entire keyboardOpen / visualViewport / safe-area
+pipeline; it's the only file in the codebase using window.visualViewport
+(confirmed via repo-wide grep — no shared helper existed to reuse).
+
+Root cause:
+
+The sticky CTA used a static `bottom: calc(env(safe-area-inset-bottom) +
+132px)` offset — a guessed constant standing in for the iOS keyboard's
+height. Real keyboard heights vary (compact ~216px vs. QuickType/emoji
+~290-350px+), so the guess routinely left the button behind the keyboard.
+Separately, iOS pans the visual viewport (visualViewport.offsetTop) to
+keep a focused input in view; the existing visualViewport resize/scroll
+listener only tracked `window.innerHeight - vv.height` and ignored
+offsetTop, so the CTA's `position: fixed` offset didn't account for that
+pan — producing the reported "jumps upward when tapped."
+
+Fix:
+
+Extracted the inset math into a pure, exported function,
+computeKeyboardInset(innerHeight, visualViewportHeight,
+visualViewportOffsetTop), which returns
+max(0, innerHeight - visualViewportHeight - visualViewportOffsetTop) —
+the real, current gap between the layout and visual viewports. Wired into
+the existing visualViewport resize/scroll effect (no new listeners
+added), stored in new keyboardInset state, and used to position the
+sticky CTA: `bottom: calc(env(safe-area-inset-bottom) +
+${keyboardInset + 16}px)`. The keyboardOpen trigger threshold (viewport
+shrink > 120px) is unchanged — only the CTA's position now reflects the
+real keyboard/pan state instead of a guessed constant. Routing
+(role-precedence.ts) and the rest of the Clear My Head flow were not
+touched.
+
+Tests added (src/routes/Home.test.ts, 6 new tests):
+
+• computeKeyboardInset returns 0 with no keyboard open.
+• Returns the real keyboard height for both a compact and a tall
+  (QuickType/emoji) keyboard — proving a static 132px guess would have
+  undershot both.
+• Accounts for visualViewport.offsetTop panning.
+• Never returns a negative inset.
+• Source-scan: the compute effect wires computeKeyboardInset() in and
+  preserves the unchanged 120px viewportShrunk threshold.
+• Source-scan: the sticky CTA's bottom style uses the dynamic
+  keyboardInset and no longer contains the old 132px constant.
+
+Commands run:
+
+• npx vitest run src/routes/Home.test.ts — 9/9 passed
+• npm run typecheck — passed
+• npm test (full suite) — 1172/1172 passed across 92 files
+• npm run build — passed (only pre-existing routine:* CSS and
+  bundle-size warnings)
+
+Commit:
+0afab6a — "Fix sticky Clear My Head CTA positioning above iOS keyboard"
+
+Deployment:
+dpl_9GBsyTqqCkDqyb8kDmgh2HmPwLXe — READY, aliased to production
+(ra7etbal-v2.vercel.app, ra7etbal.com/www.ra7etbal.com). Both return
+HTTP 200 after deploy.
+
+Not touched:
+
+• Clear My Head routing/extraction (role-precedence.ts untouched this
+  fix), QI, WhatsApp templates, scheduler/cron, push subscription logic,
+  Carson voice, Supabase auth/RLS, schema.
+
+Remaining risks:
+
+• Live interactive verification on a real iPhone PWA not performed by
+  Claude in this environment (no signed-in browser session) — recommend
+  Sana manually confirm the CTA sits fully visible just above the
+  keyboard and does not jump when tapped, across a couple of keyboard
+  types (default QWERTY, with/without QuickType/predictive bar).
+• The `+ 16px` gap above the computed keyboard edge is a small fixed
+  padding choice, not derived from any design token — adjust if it looks
+  visually too tight or too loose in practice.
