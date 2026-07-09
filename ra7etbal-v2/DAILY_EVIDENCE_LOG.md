@@ -744,3 +744,116 @@ Remaining risks:
   problem in practice, that would need a different, outcome-aware
   detection approach, not a reintroduction of the blanket byte-identity
   check this fix removes.
+
+──────────────────────────────
+
+UPDATES MOBILE TAB REACHABILITY FIX
+
+Date:
+2026-07-10
+
+Status:
+Fixed, deployed. Phase 11 reliability item — Updates mobile tab row not
+fully reachable.
+
+Problem:
+
+On iPhone PWA, Updates only visibly showed Needs You / Waiting / To-do
+/ Notes. Inbox / Automations / History were not reaching the visible
+area. Related, previously-known symptom: "Updates carousel moves once
+then stops."
+
+Audit performed first, per instructions:
+
+• Source of truth: Updates.tsx's TABS array (7 tabs: needs-you,
+  waiting, todo, inbox="Notes", clear-my-head="Inbox",
+  routines="Automations", history) + its chip scroller. Single
+  implementation — confirmed no duplicate/parallel/fallback tab-bar via
+  repo-wide grep. BottomNav.tsx is a separate, unrelated app-level
+  4-tab nav (Home/Updates/People/Carson), not a duplicate of this.
+• Horizontal scroll: confirmed present and mechanically functional —
+  `overflow-x-auto` with `shrink-0` children; no blocking global CSS
+  (`body { overflow-x: hidden }` only guards the page itself and
+  doesn't affect this inner scroll container; `touch-action:
+  manipulation` explicitly permits panning). Manual swipe already
+  worked before this fix.
+
+Root cause:
+
+The chip row's auto-scroll (a slow, looping marquee meant to cycle all
+7 tabs into view when idle) self-pauses every frame it moves. Setting
+`el.scrollLeft` inside the `tick()` rAF loop fires a native `scroll`
+event that is indistinguishable from a user-driven one. The `onScroll`
+handler called `pauseChipAutoScroll()` unconditionally on every scroll
+event — including ones the auto-scroll caused itself — so it advanced
+by a fraction of a pixel, immediately paused itself for the whole
+1200ms resume cooldown, then repeated. Over any short observation
+window this looks exactly like "moves once then stops," and the
+practical effect was that the app's own mechanism for surfacing
+off-screen tabs never actually cycled Inbox/Automations/History into
+view on a narrow iPhone-width screen.
+
+Fix — src/routes/Updates.tsx:
+
+Added `chipProgrammaticScrollRef`, a guard flag set to `true`
+immediately before the auto-scroll's own `el.scrollLeft` mutation.
+The scroll handler (renamed `handleChipScroll`) checks this flag first:
+if set, it means the scroll event was self-caused, so it clears the
+flag and returns without pausing; otherwise it pauses as before. The
+`onScroll` handler itself was kept (not removed) because it's the only
+path that catches keyboard-driven scroll — the pointer/touch/wheel
+handlers don't cover that, and removing it would have been an
+accessibility regression. Genuine user-interaction handlers
+(onPointerDown, onTouchStart, onWheel, etc.) are unchanged.
+
+Live device testing note: attempted to start the dev server via the
+preview tool for interactive/visual verification on a simulated mobile
+viewport, but the tool could not locate .claude/launch.json in this
+environment despite the file existing and being valid JSON in both the
+Desktop working directory and the project directory — likely an
+environment/sandboxing limitation, not a config problem. Proceeded with
+a thorough static/code-level audit and reasoning-based verification
+instead, and disclosed this limitation rather than claiming live
+verification that didn't happen.
+
+Tests added (src/routes/Updates.test.ts, 4 new tests):
+
+• All 7 tabs present and doubled for the seamless auto-scroll loop.
+• The auto-scroll tick() sets the programmatic-scroll guard immediately
+  before mutating scrollLeft.
+• onScroll is routed through handleChipScroll, which skips pausing for
+  self-caused events and still pauses for genuine ones.
+• Genuine user-interaction handlers (pointer/touch/wheel) still pause
+  directly, unaffected by the guard.
+
+Commands run:
+
+• npx vitest run src/routes/Updates.test.ts — 8/8 passed
+• npm run typecheck — passed
+• npm test (full suite) — 1179/1179 passed across 92 files
+• npm run build — passed (only pre-existing routine:* CSS and
+  bundle-size warnings)
+
+Commit:
+a54db87 — "Fix Updates chip row auto-scroll self-pausing so all tabs
+stay reachable"
+
+Deployment:
+dpl_GgXK7niTZUi2t3e5axngJB9ho5r8 — READY, aliased to production
+(ra7etbal-v2.vercel.app, ra7etbal.com/www.ra7etbal.com).
+
+Not touched:
+
+• Updates data logic (buildDailyBrief, task fetching), task state
+  logic, notifications, QI, Clear My Head, WhatsApp, schema, auth/RLS.
+
+Remaining risks:
+
+• No live device/browser verification performed in this environment
+  (preview tool could not locate launch.json — see note above).
+  Recommend Sana manually confirm on iPhone PWA that the chip row now
+  visibly auto-cycles through all 7 tabs when idle, and that manual
+  swipe still reaches Inbox/Automations/History directly.
+• The fix only changes *when* the auto-scroll pauses, not its speed or
+  loop mechanics — if the row still feels too slow to reach the later
+  tabs in practice, that would be a separate, subsequent tuning task.
