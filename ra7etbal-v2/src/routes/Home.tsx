@@ -51,6 +51,7 @@ export default function Home() {
   const [redirectMessage, setRedirectMessage] = useState<string | null>(null);
   const [textareaFocused, setTextareaFocused] = useState(false);
   const [viewportShrunk, setViewportShrunk] = useState(false);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const submittingRef = useRef(false);
 
@@ -111,11 +112,15 @@ export default function Home() {
     return () => window.clearInterval(intervalId);
   }, []);
 
+  // See computeKeyboardInset() below for why this tracks the visual
+  // viewport directly instead of guessing a fixed keyboard height.
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
     const vv = window.visualViewport;
     function compute() {
-      setViewportShrunk(window.innerHeight - vv.height > 120);
+      const inset = computeKeyboardInset(window.innerHeight, vv.height, vv.offsetTop);
+      setViewportShrunk(inset > 120);
+      setKeyboardInset(inset);
     }
     compute();
     vv.addEventListener("resize", compute);
@@ -556,7 +561,7 @@ export default function Home() {
           data-testid="home-sticky-cta"
           className="fixed z-50"
           style={{
-            bottom: "calc(env(safe-area-inset-bottom) + 132px)",
+            bottom: `calc(env(safe-area-inset-bottom) + ${keyboardInset + 16}px)`,
             right: "24px",
           }}
         >
@@ -610,6 +615,23 @@ function looksLikeQuestion(input: string): boolean {
   if (/^(?:can you|do you|could you|would you)\b/.test(lower)) return true;
 
   return false;
+}
+
+/**
+ * Gap between the layout viewport (window.innerHeight) and the visible
+ * visual viewport, including how far the visual viewport has panned down
+ * (offsetTop) to keep a focused input in view. On iOS Safari this equals
+ * the on-screen keyboard's real height — unlike a static guess, it adapts
+ * to QuickType/emoji/third-party keyboards and to viewport panning, so a
+ * `position: fixed` element can sit directly above the keyboard instead of
+ * jumping around a fixed constant. Zero when no keyboard is showing.
+ */
+export function computeKeyboardInset(
+  innerHeight: number,
+  visualViewportHeight: number,
+  visualViewportOffsetTop: number,
+): number {
+  return Math.max(0, innerHeight - visualViewportHeight - visualViewportOffsetTop);
 }
 
 function buildGreeting(now: Date, displayName: string | null): string {
