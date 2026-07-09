@@ -447,3 +447,88 @@ Remaining risks:
 • The `+ 16px` gap above the computed keyboard edge is a small fixed
   padding choice, not derived from any design token — adjust if it looks
   visually too tight or too loose in practice.
+
+──────────────────────────────
+
+CONFIRMATION PAGE PROOF-PHOTO BUTTON COPY FIX
+
+Date:
+2026-07-10
+
+Status:
+Fixed, deployed. Copy/state cleanup only.
+
+Issue:
+
+On the worker task confirmation page, before any proof photo was
+attached, the disabled "Mark done" submit button said "Attach a new
+photo to continue" — confusing manual testing, since "new photo" implies
+a prior photo exists to replace, but none did yet.
+
+Source of truth:
+
+src/routes/Confirm.tsx. `needsNewProof` (line ~408) is true in two
+distinct cases: (1) a task's first-ever proof (proofRequired === true,
+outcome not yet set) and (2) a genuine post-rejection re-upload (outcome
+"correction_required" or "fraud_suspected", where a previously submitted
+photo was reviewed and rejected). The submit button's disabled label used
+one unconditional string for both. The secondary upload control (line
+~562) already correctly distinguished "Attach proof photo" (no photos
+yet) vs. "Add another photo" (photos already attached) — only the submit
+button needed the fix.
+
+Fix:
+
+Submit button label now branches on the same
+`outcome === "correction_required" || outcome === "fraud_suspected"`
+condition already used elsewhere in the file (lines ~268, ~507) for the
+rejection state:
+• First-ever proof (no rejection yet): "Attach proof photo to continue".
+• Genuine post-rejection re-upload: "Attach a new photo to continue"
+  (unchanged — accurate here, a prior photo really was rejected).
+
+No changes to `needsNewProof`'s truthiness, QI logic, upload limits,
+submission handling, or WhatsApp flow — purely a label branch.
+
+Tests added (src/routes/Confirm.proof-copy.test.ts, new file, 4 tests):
+
+• Submit button contains "Attach proof photo to continue" for the
+  first-proof case.
+• Submit button still says "Attach a new photo to continue" only inside
+  the outcome-gated branch (regex match on the exact ternary structure).
+• Confirms the upload control's existing correct copy is unchanged.
+• Guards against a future regression reintroducing an unconditional
+  "Attach a new photo to continue" string (asserts exactly one occurrence
+  in the file, inside the gated branch).
+
+Commands run:
+
+• npx vitest run src/routes/Confirm.proof-copy.test.ts
+  src/routes/Confirm.photo-upload.test.ts src/routes/Confirm.reopen-lock.test.ts
+  — 27/27 passed
+• npm run typecheck — passed
+• npm test (full suite) — 1176/1176 passed across 93 files
+• npm run build — passed (only pre-existing routine:* CSS and
+  bundle-size warnings)
+
+Commit:
+01e6249 — "Fix confirmation page proof-photo button copy before a first photo"
+
+Deployment:
+dpl_AqiwUAF4otByK13TcsiiMMyCgf94 — READY, aliased to production
+(ra7etbal-v2.vercel.app, ra7etbal.com/www.ra7etbal.com). Both return
+HTTP 200 after deploy.
+
+Not touched:
+
+• QI review logic, upload limits (MAX_PROOF_PHOTOS), confirmation
+  submission handling, WhatsApp flow, upload control copy (already
+  correct), schema, auth/RLS.
+
+Remaining risks:
+
+• Live interactive verification on the real confirmation page (a real
+  task with proofRequired, no outcome yet) not performed by Claude in
+  this environment — recommend Sana manually confirm the button reads
+  "Attach proof photo to continue" before any photo, and still reads
+  "Attach a new photo to continue" after a real QI rejection.
