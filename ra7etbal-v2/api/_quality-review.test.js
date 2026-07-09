@@ -323,23 +323,29 @@ describe('runQualityReview', () => {
     expect(result.status).not.toBe('approved');
   });
 
-  it('returns fraud_suspected deterministically when the proof is the exact same uploaded image as the reference', async () => {
-    const fetchMock = vi.fn();
+  it('production fix (2026-07-10): a proof that is the exact same uploaded image as the reference is judged by the model, not auto-rejected', async () => {
+    // Was: a deterministic byte-for-byte check auto-classified this as
+    // fraud_suspected before the model ever saw the images. Production bug:
+    // this rejected a bowl task where the correct state genuinely matched
+    // the reference. QI V1 now has no deterministic duplicate check — every
+    // proof, including an exact-duplicate one, goes to the model.
+    const fetchMock = vi.fn().mockResolvedValue(
+      anthropicResponse(
+        '{"result":"APPROVED","correction_message":null,"reasoning":"The bowl matches the requested result."}',
+      ),
+    );
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await runQualityReview({
       apiKey: 'test-key',
-      taskDescription: 'look for this in the closet',
-      delegationMessage: 'Please find this and confirm.',
-      referenceImageBase64: 'ref-base64',
-      proofImagesBase64: ['ref-base64'],
+      taskDescription: 'confirm the bowl is on the shelf',
+      delegationMessage: 'Please confirm the bowl is on the shelf.',
+      referenceImageBase64: 'bowl-reference-base64',
+      proofImagesBase64: ['bowl-reference-base64'],
     });
 
-    expect(result).toEqual({
-      status: 'fraud_suspected',
-      note: 'The proof photo is exactly the same uploaded image as the reference, not a new photo of the completed task.',
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalled();
+    expect(result).toEqual({ status: 'approved', note: 'The bowl matches the requested result.' });
   });
 
   it('guards against unsupported model claims that a non-identical proof is pixel-for-pixel the reference', async () => {
@@ -362,7 +368,7 @@ describe('runQualityReview', () => {
 
     expect(result).toEqual({
       status: 'approved',
-      note: 'Proof matches the requested result; no deterministic duplicate was detected.',
+      note: 'Proof matches the requested result; identity or similarity to the reference is not a valid reason to reject.',
     });
   });
 
@@ -409,7 +415,7 @@ describe('runQualityReview', () => {
     expect(result.status).toBe('fraud_suspected');
   });
 
-  it('instructs the model that screenshots are FRAUD_SUSPECTED but reference-reuse claims are deterministic only', async () => {
+  it('instructs the model that screenshots are FRAUD_SUSPECTED but identity/similarity to the reference is never grounds for rejection', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
     );
@@ -427,10 +433,15 @@ describe('runQualityReview', () => {
     const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
     expect(promptText).toMatch(/FRAUD_SUSPECTED/);
     expect(promptText).toMatch(/screenshot/i);
-    expect(promptText).toMatch(/exact byte-for-byte duplicate check/i);
     expect(promptText).toMatch(/Do NOT claim "pixel-for-pixel identical"/i);
-    expect(promptText).toMatch(/A correct proof photo may look very similar to the reference/i);
+    expect(promptText).toMatch(/Identity or similarity to the reference is never evidence of anything on its own/i);
+    expect(promptText).toMatch(/A correct proof photo may look very similar to, or exactly like, the reference/i);
+    // Production fix (2026-07-10): the prompt no longer claims a
+    // deterministic duplicate check exists, and no longer lists exact
+    // reference reuse as valid FRAUD_SUSPECTED evidence.
+    expect(promptText).not.toMatch(/exact byte-for-byte duplicate check/i);
     expect(promptText).not.toMatch(/reused as if it were new proof/i);
+    expect(promptText).not.toMatch(/exact same reference image re-uploaded/i);
   });
 
   it('falls back to uncertain when the Anthropic API call fails', async () => {
@@ -632,8 +643,19 @@ describe('runQualityReview', () => {
       expect(result.status).toBe('approved');
     });
 
-    it('5. still rejects the exact same reference image re-uploaded as proof when the task requires real work', async () => {
-      const fetchMock = vi.fn();
+    it('5. (superseded 2026-07-10) the exact same reference image re-uploaded as proof is judged by the model, not auto-rejected — see "same-reference/duplicate-image/live-proof suspicion" below', async () => {
+      // This test previously asserted the opposite: a deterministic
+      // byte-for-byte check auto-rejected exact-duplicate proofs as
+      // fraud_suspected without ever calling the model. That behavior
+      // itself caused a production false-positive rejection (a bowl task
+      // where the correct state genuinely matched the reference) and was
+      // reversed per explicit product decision. See the describe block
+      // below for the full regression suite covering this reversal.
+      const fetchMock = vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"APPROVED","correction_message":null,"reasoning":"The correct bracelet is shown, matching the reference."}',
+        ),
+      );
       vi.stubGlobal('fetch', fetchMock);
 
       const result = await runQualityReview({
@@ -644,8 +666,8 @@ describe('runQualityReview', () => {
         proofImagesBase64: ['bracelet-reference-base64'],
       });
 
-      expect(result.status).toBe('fraud_suspected');
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalled();
+      expect(result.status).toBe('approved');
     });
 
     it('6. instructs the model that AI-generated/stock-style images are valid references, not a reason to doubt the proof', async () => {
@@ -712,6 +734,90 @@ describe('runQualityReview', () => {
       expect(result.status).toBe('correction_required');
       expect(result.note).toContain('wrong color');
     });
+  });
+
+  describe('production fix (2026-07-10): same-reference/duplicate-image/live-proof suspicion is not grounds for rejection', () => {
+    // Production bug: a reference bowl photo re-uploaded as proof (correct
+    // outcome — the bowl genuinely hadn't changed) was auto-rejected as
+    // fraud_suspected with "exactly the same uploaded image as the
+    // reference" / "upload a new live proof photo", by a deterministic
+    // byte-for-byte duplicate check that ran before the model ever saw the
+    // images. An earlier pizza test (same pattern) had been approved before
+    // that deterministic check was introduced (commit 765887a). QI V1
+    // policy: approve when the proof matches the requested outcome; reject
+    // only clear wrong outcomes. Same/similar/polished/internet-looking/
+    // not-live/duplicate-image suspicion must never cause rejection.
+
+    it('1. same reference/proof image with a matching requested outcome must approve', async () => {
+      const fetchMock = vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"APPROVED","correction_message":null,"reasoning":"The bowl shown matches the requested item exactly."}',
+        ),
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'confirm the bowl is on the shelf',
+        delegationMessage: 'Please confirm the bowl is on the shelf and send a photo.',
+        referenceImageBase64: 'bowl-reference-base64',
+        proofImagesBase64: ['bowl-reference-base64'],
+      });
+
+      expect(fetchMock).toHaveBeenCalled();
+      expect(result.status).toBe('approved');
+    });
+
+    it('2. a polished or internet-looking matching food proof must approve', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          anthropicResponse(
+            '{"result":"FRAUD_SUSPECTED","correction_message":null,"reasoning":"This looks like an internet-looking, polished photo rather than a casual live photo, even though the correct pizza is shown."}',
+          ),
+        ),
+      );
+
+      const result = await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'Ask Christopher to make this for lunch.',
+        delegationMessage: 'Christopher, please make this pizza for lunch.',
+        referenceImageBase64: 'pizza-reference-base64',
+        proofImagesBase64: ['internet-looking-pizza-proof-base64'],
+      });
+
+      expect(result.status).toBe('approved');
+    });
+
+    it('3. a clear wrong food proof must still reject (asked for salad, proof is pizza)', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(
+          anthropicResponse(
+            '{"result":"CORRECTION_REQUIRED","correction_message":"Christopher, this is a pizza, not the salad that was requested. Please make and photograph the salad instead.","reasoning":"Wrong item — pizza instead of salad."}',
+          ),
+        ),
+      );
+
+      const result = await runQualityReview({
+        apiKey: 'test-key',
+        taskDescription: 'Ask Christopher to make a salad for lunch.',
+        delegationMessage: 'Christopher, please make a salad for lunch.',
+        referenceImageBase64: 'salad-reference-base64',
+        proofImagesBase64: ['pizza-proof-base64'],
+      });
+
+      expect(result.status).toBe('correction_required');
+      expect(result.note).toContain('pizza');
+    });
+
+    // 4. "Existing correction WhatsApp still sends for clear wrong outcome"
+    // is protected by api/task-confirm.test.js's
+    // "correction_required review: keeps task pending, creates a message
+    // row, and sends WhatsApp through direct_message" — task-confirm.js's
+    // WhatsApp-sending logic is untouched by this fix (only this file's
+    // classification logic changed), and that test mocks runQualityReview
+    // directly, so it already proves the WhatsApp path is unaffected.
   });
 });
 
