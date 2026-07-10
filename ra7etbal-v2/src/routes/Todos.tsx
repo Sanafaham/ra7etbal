@@ -408,11 +408,30 @@ export default function Todos({ headerless = false }: { headerless?: boolean } =
               </summary>
               <ul className="mt-2 space-y-2">
                 {completedTodos.map((todo) => (
-                  <li key={todo.id} className="flex items-center justify-between rounded-xl border border-sage/15 bg-white/50 px-3 py-2">
+                  <li key={todo.id} className="flex items-center justify-between gap-2 rounded-xl border border-sage/15 bg-white/50 px-3 py-2">
                     <span className="text-sm text-ink/50 line-through">{todo.title}</span>
-                    <button type="button" onClick={() => void handleToggleDone(todo)} disabled={togglingId === todo.id} className="text-xs font-medium text-sage underline disabled:opacity-50">
-                      Reopen
-                    </button>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleDone(todo)}
+                        disabled={togglingId === todo.id || deletingId === todo.id}
+                        className="text-xs font-medium text-sage underline disabled:opacity-50"
+                      >
+                        Reopen
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDelete(todo)}
+                        disabled={deletingId === todo.id || togglingId === todo.id}
+                        className="text-xs font-medium text-danger underline disabled:opacity-50"
+                      >
+                        {deletingId === todo.id
+                          ? "Deleting…"
+                          : confirmingDeleteId === todo.id
+                            ? "Tap again to confirm"
+                            : "Delete"}
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>

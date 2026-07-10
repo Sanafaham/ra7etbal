@@ -47,6 +47,7 @@ import {
   createTodo,
   listActiveTodos,
   completeTodo,
+  deleteTodo,
   formatTodosForContext,
   findTodoMatches,
   type CarsonTodo,
@@ -118,6 +119,21 @@ describe("carson-todos: completion", () => {
 
   it("no-ops on an empty id", async () => {
     await expect(completeTodo("   ")).resolves.toBeUndefined();
+  });
+});
+
+describe("carson-todos: deletion", () => {
+  it("resolves without throwing when the delete succeeds", async () => {
+    await expect(deleteTodo("t1")).resolves.toBeUndefined();
+  });
+
+  it("throws when the delete fails, instead of silently succeeding", async () => {
+    state.deleteResult = { error: { message: "delete failed" } };
+    await expect(deleteTodo("t1")).rejects.toEqual({ message: "delete failed" });
+  });
+
+  it("no-ops on an empty id without hitting the network", async () => {
+    await expect(deleteTodo("   ")).resolves.toBeUndefined();
   });
 });
 
