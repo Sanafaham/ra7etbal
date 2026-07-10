@@ -8,7 +8,7 @@ export default function Privacy() {
           ← Back
         </Link>
         <h1 className="text-3xl font-semibold text-ink">Privacy Policy</h1>
-        <p className="text-sm text-ink/50">Last updated: June 2026</p>
+        <p className="text-sm text-ink/50">Last updated: July 2026</p>
       </header>
 
       <div className="space-y-6 text-sm leading-relaxed text-ink/80">
@@ -60,7 +60,31 @@ export default function Privacy() {
         </section>
 
         <section className="space-y-2">
-          <h2 className="text-base font-semibold text-ink">4. How We Use Your Data</h2>
+          <h2 className="text-base font-semibold text-ink">4. Google API Services User Data Policy</h2>
+          <p>
+            The use and transfer of information received from Google APIs by Ra7etBal will adhere
+            to the{" "}
+            <a
+              href="https://developers.google.com/terms/api-services-user-data-policy"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-sage hover:underline"
+            >
+              Google API Services User Data Policy
+            </a>
+            , including the Limited Use requirements.
+          </p>
+          <p>
+            This applies to any data Ra7etBal receives from Google Workspace APIs, including
+            Google Calendar. We use this data only to provide and improve the calendar features
+            you see inside the app, as described in Section 3 above — never for advertising, and
+            never to train generalized AI/ML models unrelated to providing or improving Ra7etBal's
+            own features.
+          </p>
+        </section>
+
+        <section className="space-y-2">
+          <h2 className="text-base font-semibold text-ink">5. How We Use Your Data</h2>
           <p>Your data is used solely to operate the Ra7etBal service for you:</p>
           <ul className="ml-4 list-disc space-y-1">
             <li>To power Carson's voice assistant and memory.</li>
@@ -72,7 +96,7 @@ export default function Privacy() {
         </section>
 
         <section className="space-y-2">
-          <h2 className="text-base font-semibold text-ink">5. We Do Not Sell Your Data</h2>
+          <h2 className="text-base font-semibold text-ink">6. We Do Not Sell Your Data</h2>
           <p>
             We do not sell, rent, or share your personal data with any third party for commercial
             purposes. We will never sell your data.
@@ -80,7 +104,7 @@ export default function Privacy() {
         </section>
 
         <section className="space-y-2">
-          <h2 className="text-base font-semibold text-ink">6. Data Storage and Security</h2>
+          <h2 className="text-base font-semibold text-ink">7. Data Storage and Security</h2>
           <p>
             Your data is stored in Supabase, a secure cloud database. All data is encrypted in
             transit (HTTPS) and at rest. Access is protected by row-level security policies so
@@ -89,7 +113,7 @@ export default function Privacy() {
         </section>
 
         <section className="space-y-2">
-          <h2 className="text-base font-semibold text-ink">7. Data Deletion</h2>
+          <h2 className="text-base font-semibold text-ink">8. Data Deletion</h2>
           <p>
             You can request deletion of your account and all associated data at any time by
             contacting us at{" "}
@@ -101,7 +125,7 @@ export default function Privacy() {
         </section>
 
         <section className="space-y-2">
-          <h2 className="text-base font-semibold text-ink">8. Third-Party Services</h2>
+          <h2 className="text-base font-semibold text-ink">9. Third-Party Services</h2>
           <p>Ra7etBal uses the following third-party services to operate:</p>
           <ul className="ml-4 list-disc space-y-1">
             <li>Supabase — database and authentication</li>
@@ -115,7 +139,7 @@ export default function Privacy() {
         </section>
 
         <section className="space-y-2">
-          <h2 className="text-base font-semibold text-ink">9. Contact</h2>
+          <h2 className="text-base font-semibold text-ink">10. Contact</h2>
           <p>
             For any privacy questions or data requests, contact us at{" "}
             <a href="mailto:support@ra7etbal.com" className="text-sage hover:underline">
