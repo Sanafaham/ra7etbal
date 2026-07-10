@@ -857,3 +857,157 @@ Remaining risks:
 • The fix only changes *when* the auto-scroll pauses, not its speed or
   loop mechanics — if the row still feels too slow to reach the later
   tabs in practice, that would be a separate, subsequent tuning task.
+
+──────────────────────────────
+
+PRODUCTION VERIFICATION FAILED: STICKY CTA FALSE POSITIVE + UPDATES
+CAROUSEL RE-AUDIT
+
+Date:
+2026-07-10
+
+Status:
+Fixed, deployed. Sana's manual verification of the two prior fixes
+above found the Updates carousel fix insufficient and a new regression
+in the sticky CTA fix. Not claiming the Updates carousel item closed.
+
+── A. Clear My Head sticky CTA regression ──────────────────────────
+
+Observed: the sticky CTA appeared on Home even with the keyboard
+closed, floating over the page near the stats section.
+
+Root cause: `keyboardOpen` was `textareaFocused || viewportShrunk`.
+`viewportShrunk` is a visualViewport-derived heuristic
+(computeKeyboardInset() > 120) that has been observed to read true on
+iOS PWA with no real keyboard involved — a known category of iOS
+standalone-PWA visualViewport quirks (window.innerHeight and
+visualViewport.height/offsetTop have been reported to disagree
+persistently in standalone display mode on some iOS versions). Since
+`viewportShrunk` alone (OR'd with textareaFocused) was sufficient to
+open the CTA, a misread with the textarea never focused was enough —
+and the CTA then positioned itself using the same (also heuristic)
+`keyboardInset` value, landing wherever that number placed it rather
+than near the bottom.
+
+`viewportShrunk` itself predates this session by a large margin (git
+blame: commit dd922df, "Home: float Next button above iOS keyboard +
+Safari URL bar"). The earlier CTA-positioning fix in this session did
+not change *when* viewportShrunk misreads — it changed the CTA from a
+small fixed 132px offset (quiet, easy to miss if triggered by mistake)
+to a large dynamically-computed offset, which is what made a
+pre-existing quiet false positive suddenly land somewhere
+objectionable (near the stats section) instead of near the bottom.
+
+Fix — src/routes/Home.tsx:
+
+Added `recentlyFocused` state, true while the textarea is focused and
+for a 600ms grace window after blur (to avoid the CTA vanishing mid
+focus→blur→keyboard-closing transitions, e.g. tapping attach-photo).
+`keyboardOpen` is now `textareaFocused || (recentlyFocused &&
+viewportShrunk)` — viewportShrunk can never open the CTA on its own
+without a real focus event having happened, regardless of what causes
+it to misread. New `handleTextareaFocus`/`handleTextareaBlur` handlers
+wired to the textarea's onFocus/onBlur replace the raw inline setters.
+
+── B. Updates carousel — deeper re-audit ────────────────────────────
+
+Observed: after the self-pause fix (previous entry), the carousel
+still did not visibly auto-cycle on iPhone PWA — only Needs You /
+Waiting / To-do / Notes reachable without touching the row.
+
+Re-audited every candidate per the instructions:
+
+• Scroll container / duplicated tabs / max scroll: re-confirmed sound
+  (unchanged from the prior audit) — not the cause.
+• Selected-tab reset: the auto-scroll effect has an empty dependency
+  array (mount-only); nothing resets scrollLeft on re-render or tab
+  change.
+• Animation speed: the inherited 0.03px/ms (0.6px/20ms) speed meant a
+  realistic ~800px loop width (7 tabs' worth of chips) took ~25-30
+  real seconds for one full cycle. Even with the self-pause bug fixed,
+  a few seconds of observation would show only ~100-150px of movement
+  — very plausibly imperceptible as "moving" rather than static noise.
+  This is very likely the dominant remaining cause. Raised to
+  0.09px/ms (~90px/s), a full loop in well under 10 seconds.
+• prefers-reduced-motion: re-verified the check itself character by
+  character — it correctly reads the OS accessibility setting via
+  `matchMedia("(prefers-reduced-motion: reduce)")` with a live change
+  listener (not just a one-time mount read), no inverted logic found.
+  If reduced motion is enabled on the test device, the marquee is
+  *intentionally* disabled per the original Phase 11 spec ("respect
+  reduced-motion") — that is correct, accessibility-compliant
+  behavior, not a bug, and reachability for those users is served by
+  manual swipe (already confirmed working). Flagged explicitly rather
+  than silently assumed either way — recommend Sana check iOS
+  Settings > Accessibility > Motion > Reduce Motion if the carousel
+  still doesn't move after this deploy.
+
+Fix — extracted testable logic instead of trusting source-scan tests
+alone (per instruction "do not rely only on source-scan tests"):
+
+New src/lib/chip-auto-scroll.ts — pure, DOM-free functions:
+• `advanceChipScrollLeft(scrollLeft, scrollWidth, dtMs, pixelsPerMs)` —
+  the advance/wrap math.
+• `shouldAdvanceChipAutoScroll({ hidden, reducedMotion, paused })` —
+  the gating logic.
+
+Updates.tsx's tick() now calls these instead of inlining the math, and
+the speed constant was raised to 0.09.
+
+Tests added:
+
+• src/lib/chip-auto-scroll.test.ts (new, 11 tests) — real behavioral
+  tests: proportional advancement, exact loop-boundary wraparound,
+  no-op when scrollWidth is 0, frame-accumulation consistency (many
+  small frames sum to the same distance as one large frame), a full
+  loop completes within 10 real seconds at the new speed, and each
+  gate (hidden/reducedMotion/paused) individually and combined blocks
+  movement.
+• src/routes/Home.test.ts (+4 tests) — keyboardOpen requires
+  textareaFocused or (recentlyFocused && viewportShrunk), never
+  viewportShrunk alone; handleTextareaFocus sets both flags;
+  handleTextareaBlur clears textareaFocused immediately but
+  recentlyFocused only after the 600ms grace timeout; textarea wired
+  to the new handlers, not raw setters.
+• src/routes/Updates.test.ts (+4 tests, 1 updated) — Updates.tsx wires
+  in the tested pure functions (not inline math); all three gates
+  (hidden/reducedMotion/paused) are passed through, none dropped;
+  speed constant raised from the old value; reduced-motion still
+  re-evaluated live via a change listener.
+
+Commands run:
+
+• npx vitest run src/routes/Updates.test.ts src/lib/chip-auto-scroll.test.ts
+  src/routes/Home.test.ts — 36/36 passed
+• npm run typecheck — passed
+• npm test (full suite) — 1198/1198 passed across 93 files
+• npm run build — passed (only pre-existing routine:* CSS and
+  bundle-size warnings)
+
+Commit:
+9963b19 — "Fix sticky CTA false-positive and re-audit Updates carousel
+visibility"
+
+Not touched:
+
+• Clear My Head routing, QI, WhatsApp, task state logic, Updates data
+  logic, notifications, schema, auth/RLS.
+
+Remaining risks:
+
+• No live device verification performed in this environment (same
+  preview-tool limitation as the prior entry) — this is now the third
+  attempt at the Updates carousel item without a real device in the
+  loop; recommend Sana re-verify on the actual iPhone PWA before this
+  is considered closed.
+• If the carousel still doesn't move after this deploy, the most
+  likely remaining explanation is OS-level Reduce Motion being enabled
+  on the test device (see prefers-reduced-motion note above) — that
+  would be correct behavior per the original spec, not a bug, and
+  would need a product decision (e.g., a manual "jump to more tabs"
+  affordance) rather than another code fix to the auto-scroll itself.
+• The sticky-CTA fix assumes viewportShrunk's false-positive is
+  transient/environmental rather than a permanent stuck-true state —
+  if visualViewport genuinely never settles back down on some device,
+  the 600ms grace window bounds the worst case but does not diagnose
+  the underlying iOS viewport-reporting quirk itself.
