@@ -1011,3 +1011,99 @@ Remaining risks:
   if visualViewport genuinely never settles back down on some device,
   the 600ms grace window bounds the worst case but does not diagnose
   the underlying iOS viewport-reporting quirk itself.
+
+──────────────────────────────
+
+MANUAL VERIFICATION: UPDATES CAROUSEL CONFIRMED WORKING
+
+Date:
+2026-07-10
+
+Status:
+Verified by Sana on iPhone PWA. The carousel now visibly auto-cycles
+and Inbox / Automations / History are reachable. Marking the Updates
+mobile tab reachability / carousel item as closed after three attempts
+(a54db87 self-pause fix, 9963b19 speed + gating re-audit). No further
+action needed unless a new regression is reproduced.
+
+──────────────────────────────
+
+COMPLETED TO-DO DELETE OPTION
+
+Date:
+2026-07-10
+
+Status:
+Fixed, deployed.
+
+Problem:
+
+In Updates > To-do > Done, completed items only offered "Reopen" — no
+way to delete a finished to-do from the list.
+
+Audit — source of truth:
+
+src/routes/Todos.tsx. Active to-dos render through the full `TodoCard`
+component, whose overflow menu already has a working Delete action
+(wired to `handleDelete` → `deleteTodo()` in `src/lib/carson-todos.ts`,
+which only touches the `carson_todos` table). The completed ("Done")
+list, however, renders a separate, simplified inline `<li>` — not
+TodoCard — with only a "Reopen" button wired to `handleToggleDone`.
+No duplicate/parallel to-do-deletion implementation exists anywhere
+else; `deleteTodo` has exactly one call site (inside `handleDelete`).
+
+Fix:
+
+Added a Delete button next to Reopen in the same Done `<li>`, wired to
+the already-existing `handleDelete(todo)` — no new deletion logic
+introduced. Reuses the existing `deletingId`/`confirmingDeleteId`
+state (already declared and used for active items), so the Done
+Delete button shows the same "Delete" → "Tap again to confirm" →
+"Deleting…" sequence as the active-item Delete action, for
+consistency. `handleDelete` already removes the item from the shared
+`todos` state array on success, so the completed item disappears from
+`completedTodos` (a `useMemo` filter over `todos`) automatically —
+no additional state wiring needed.
+
+Confirmed unaffected by construction: `deleteTodo()` only issues
+`supabase.from("carson_todos").delete().eq("id", ...)` — no cascading
+writes to `tasks`, `messages`, WhatsApp send paths, or QI review state,
+all of which live in entirely separate tables/systems.
+
+Tests added:
+
+• src/lib/carson-todos.test.ts (+3 tests, "carson-todos: deletion") —
+  deleteTodo resolves on success, throws (does not swallow) on a
+  Supabase error, no-ops on an empty id without hitting the network.
+  Mirrors the existing "completion" describe block's pattern exactly;
+  the delete mock chain already existed in this file's Supabase mock
+  but had never actually been exercised by a test.
+• src/routes/Todos.test.ts (new, 4 tests, source-scan) — Done list
+  still offers Reopen wired to handleToggleDone; now offers Delete
+  wired to the existing handleDelete; shows the same confirm/in-flight
+  states as the active-item Delete action; deleteTodo has exactly one
+  import + one call site (guards against a future duplicate deletion
+  path being introduced).
+
+Commands run:
+
+• npx vitest run src/routes/Todos.test.ts src/lib/carson-todos.test.ts — 23/23 passed
+• npm run typecheck — passed
+• npm test (full suite) — 1205/1205 passed across 94 files
+• npm run build — passed (only pre-existing routine:* CSS and
+  bundle-size warnings)
+
+Commit:
+4eb16d2 — "Add Delete to completed to-do items in Updates > To-do > Done"
+
+Not touched:
+
+• Active to-dos, tasks, delegations, Waiting, QI, WhatsApp, schema,
+  auth/RLS.
+
+Remaining risks:
+
+• No live device/browser verification performed in this environment
+  (same preview-tool limitation noted in prior entries) — recommend
+  Sana manually confirm Delete works in the Done list on iPhone PWA
+  and that active to-dos/tasks are unaffected.
