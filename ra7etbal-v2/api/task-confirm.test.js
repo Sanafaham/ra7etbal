@@ -1904,23 +1904,99 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
-  it('Approve Alternative: claims, completes atomically, sends no WhatsApp', async () => {
+  it('Approve Alternative accepted: sends exactly one WhatsApp message with an approval meaning, then completes through the shared custom_instruction pipeline — never completes with no message', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' })) // auth/v1/user
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }])) // task fetch
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: 'I only found turquoise' }])) // task fetch
       .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' })) // claim RPC
-      .mockResolvedValueOnce(emptyResponse()); // complete_approved_alternative RPC
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Ghulam', phone: '+15551234567' }])) // findAssigneePerson
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }])) // reserve_custom_instruction RPC (shared)
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }])) // fetchDeliveryStatus
+      .mockResolvedValueOnce(emptyResponse()) // reserve_send_window RPC
+      .mockResolvedValueOnce(metaAcceptedResponse()) // Meta send
+      .mockResolvedValueOnce(emptyResponse()) // markMessageAccepted PATCH messages
+      .mockResolvedValueOnce(emptyResponse()) // markWhatsappDeliveryAccepted PATCH whatsapp_deliveries
+      .mockResolvedValueOnce(emptyResponse()); // complete_custom_instruction RPC
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, decision: 'approved_alternative', outcome: 'approved' }));
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
-    expect(String(fetchMock.mock.calls[2][0])).toContain('/rest/v1/rpc/claim_substitute_decision');
-    expect(String(fetchMock.mock.calls[3][0])).toContain('/rest/v1/rpc/complete_approved_alternative');
+    const metaCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('graph.facebook.com'));
+    expect(metaCalls).toHaveLength(1); // exactly one WhatsApp message
+    const metaCallBody = JSON.parse(metaCalls[0][1].body);
+    expect(metaCallBody.template.components[0].parameters[0].text).toMatch(/approved/i); // worker receives approval meaning
+    // Completes through the shared pipeline, never the old no-message RPC.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/reserve_custom_instruction'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/complete_custom_instruction'))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/complete_approved_alternative'))).toBe(false);
+  });
+
+  it('Approve Alternative immediate send failure: does not complete — task stays in Needs You, retry available, no duplicate message', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Ghulam', phone: '+15551234567' }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }])) // reserve_custom_instruction RPC
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+      .mockResolvedValueOnce(emptyResponse()) // reserve_send_window RPC
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'ecosystem engagement' } }, 400)) // Meta send rejects synchronously
+      .mockResolvedValueOnce(emptyResponse()); // markWhatsappDeliveryFailed PATCH
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    expect(res.status).toHaveBeenCalledWith(502);
+    // Never reaches complete — the task's quality_review_status is untouched by this
+    // request, so it stays exactly as substitute_review (still in Needs You).
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/complete_custom_instruction'))).toBe(false);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('graph.facebook.com'))).toHaveLength(1); // one attempt, no duplicate
+  });
+
+  it('Approve Alternative retry after the message was already accepted: skips the Meta send, does not duplicate the message, still completes exactly once', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Ghulam', phone: '+15551234567' }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }])) // reserve_custom_instruction — same message/delivery reused
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'accepted' }])) // fetchDeliveryStatus — already accepted from a prior attempt
+      .mockResolvedValueOnce(emptyResponse()); // complete_custom_instruction RPC — goes straight here
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, decision: 'approved_alternative', outcome: 'approved' }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false); // no second send
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/reserve_send_window'))).toBe(false); // fence skipped too
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+
+  it('Custom Instruction immediate send failure: does not complete — task stays in Needs You, retry available, no state loss', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'custom_instruction' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+15551234567' }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+      .mockResolvedValueOnce(emptyResponse()) // reserve_send_window
+      .mockRejectedValueOnce(new Error('network down')); // Meta send throws
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'custom_instruction', instructionText: 'Ok get the Turquoise', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/complete_custom_instruction'))).toBe(false);
   });
 
   it('Reject Alternative: reserves, fences before send, sends one WhatsApp message, completes', async () => {
@@ -2007,12 +2083,13 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
   });
 
   it('maps a lease_lost RPC error to a 409 with a friendly retry message, never a silent success', async () => {
+    // Fails at the claim step itself — decision-agnostic, and avoids modeling
+    // the full reserve/send flow just to exercise generic RPC-error mapping.
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: null, quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' })) // claim RPC
-      .mockResolvedValueOnce(jsonResponse({ message: 'lease_lost' }, 400)); // complete RPC fails — superseded lease
+      .mockResolvedValueOnce(jsonResponse({ message: 'lease_lost' }, 400)); // claim RPC fails — superseded lease
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -2020,6 +2097,24 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
 
     expect(res.status).toHaveBeenCalledWith(409);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.stringMatching(/superseded/i) }));
+  });
+
+  it('Approve Alternative and Custom Instruction share the same completion RPC — the shared SQL never sets tasks.status or confirmed_at (source-level regression guard)', () => {
+    const migrationSource = readFileSync(
+      join(__dirname, '..', 'supabase', 'migrations', '20260712_approve_alternative_message_first.sql'),
+      'utf-8',
+    );
+    const fnBody = migrationSource.slice(
+      migrationSource.indexOf('CREATE OR REPLACE FUNCTION public.complete_custom_instruction'),
+      migrationSource.indexOf('DROP FUNCTION IF EXISTS public.complete_approved_alternative'),
+    );
+    expect(fnBody).toContain("v_decision.decision NOT IN ('custom_instruction', 'approved_alternative')");
+    expect(fnBody).toContain('quality_review_status = NULL, quality_review_note = NULL, quality_reviewed_at = NULL, worker_reply = NULL');
+    expect(fnBody).not.toMatch(/status\s*=\s*'done'/);
+    expect(fnBody).not.toMatch(/confirmed_at\s*=\s*now\(\)/);
+    expect(fnBody).not.toMatch(/needs_follow_up\s*=\s*false/);
+    // The old no-message completion path is dropped, not left reachable.
+    expect(migrationSource).toContain('DROP FUNCTION IF EXISTS public.complete_approved_alternative(uuid, uuid, uuid);');
   });
 
   it('maps a decision_conflict RPC error to a 409 — never executes the second decision', async () => {

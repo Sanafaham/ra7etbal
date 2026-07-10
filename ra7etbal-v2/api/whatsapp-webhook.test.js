@@ -615,15 +615,34 @@ describe('updateWhatsappDeliveryStatus — Bug #1 fix: reopen substitute_review 
     expect(taskConfirmMocks.sendOwnerPush).not.toHaveBeenCalled();
   });
 
-  it('Approve Alternative is structurally unaffected: complete_approved_alternative never sets delivery_id, so this WHERE clause can never match it', () => {
+  it('reopens substitute_review and sends exactly one owner push when an Approve Alternative delivery fails asynchronously (2026-07-12: Approve now sends a real message, so it needs the same reopen coverage)', async () => {
+    mockLookupPatchAndRpc({
+      rpcResponse: [{ task_id: 'task-3', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', reopened: true }],
+    });
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.3',
+      status: 'failed',
+      updatedAt: '2026-07-10T18:00:00Z',
+      failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failureCode: 131049,
+      failureSubcode: null,
+    });
+
+    expect(taskConfirmMocks.sendOwnerPush).toHaveBeenCalledTimes(1);
+    expect(taskConfirmMocks.sendOwnerPush).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1', assignedTo: 'Ghulam', variant: 'substitute_delivery_failed' }),
+    );
+  });
+
+  it('the live reopen filter now covers all three decision types, including approved_alternative (2026-07-12 fix — source-level regression guard against the premature-completion bug reappearing)', () => {
     const migrationSource = readFileSync(
-      join(__dirname, '..', 'supabase', 'migrations', '20260711_reopen_substitute_on_async_delivery_failure.sql'),
+      join(__dirname, '..', 'supabase', 'migrations', '20260712_approve_alternative_message_first.sql'),
       'utf-8',
     );
-    expect(migrationSource).toContain("decision in ('rejected_alternative', 'custom_instruction')");
-    // The WHERE clause enumerates exactly the two decision types that ever send a
-    // message — 'approved_alternative' only appears in explanatory comments below.
-    expect(migrationSource.split('\n').filter((line) => line.includes('approved_alternative')).every((line) => line.trim().startsWith('*'))).toBe(true);
+    expect(migrationSource).toContain("decision IN ('rejected_alternative', 'custom_instruction', 'approved_alternative')");
   });
 });
 

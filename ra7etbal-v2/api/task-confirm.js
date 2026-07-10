@@ -38,8 +38,15 @@
  *   than a new api/*.js file to stay within the Vercel Hobby
  *   12-serverless-function limit (see the merge note above). Uses the
  *   claim/reserve/reserve_send_window/complete SECURITY DEFINER functions
- *   from supabase/migrations/20260710_quality_substitute_review.sql for
- *   lease-fenced, idempotent, retry-safe decisions.
+ *   from supabase/migrations/20260710_quality_substitute_review.sql (plus
+ *   20260712_approve_alternative_message_first.sql) for lease-fenced,
+ *   idempotent, retry-safe decisions.
+ *   All three decisions — Approve Alternative, Reject Alternative, Custom
+ *   Instruction — send exactly one WhatsApp message to the assignee and only
+ *   leave Needs You once Meta accepts it (2026-07-12: Approve Alternative
+ *   previously completed the task with no message at all — an owner
+ *   decision is not task completion; the task stays pending/open until the
+ *   worker confirms it through the normal flow below).
  *   Photo delegations require proof before completion. Non-photo tasks, or a
  *   task with no assignee (assigned_to null), keep the original no-review
  *   completion behavior.
@@ -676,18 +683,11 @@ async function handleOwnerDecision(req, res) {
       return res.status(200).json(buildCompletedResponse(decisionRow));
     }
 
-    // Approve Alternative — no external message, fully atomic.
-    if (decision === 'approved_alternative') {
-      const complete = await callRpcVoid(supabaseUrl, serviceKey, 'complete_approved_alternative', {
-        p_decision_id: decisionRow.id,
-        p_lease_token: decisionRow.lease_token,
-        p_user_id: userId,
-      });
-      if (complete.error) return respondRpcError(res, complete.error);
-      return res.status(200).json({ success: true, decision, outcome: 'approved' });
-    }
-
-    // Reject Alternative / Custom Instruction — need one WhatsApp send.
+    // Approve Alternative / Reject Alternative / Custom Instruction — every
+    // owner decision needs exactly one WhatsApp send before the task can
+    // leave Needs You. An owner decision is not task completion: the worker
+    // must be told first, and the task stays open until the worker actually
+    // confirms it through the normal flow.
     const assigneePerson = await findAssigneePerson({
       supabaseUrl, serviceKey, userId, assignedTo: task.assigned_to,
     });
@@ -699,6 +699,8 @@ async function handleOwnerDecision(req, res) {
     const messageContent =
       decision === 'rejected_alternative'
         ? buildRejectionMessageText({ recipientName, taskDescription: task.description, substituteNote: task.quality_review_note })
+        : decision === 'approved_alternative'
+        ? buildApprovalMessageText({ recipientName, taskDescription: task.description })
         : instructionText;
 
     const reserveFn = decision === 'rejected_alternative' ? 'reserve_rejected_alternative' : 'reserve_custom_instruction';
@@ -802,7 +804,12 @@ async function handleOwnerDecision(req, res) {
     return res.status(200).json({
       success: true,
       decision,
-      outcome: decision === 'rejected_alternative' ? 'correction_required' : 'custom_instruction_sent',
+      outcome:
+        decision === 'rejected_alternative'
+          ? 'correction_required'
+          : decision === 'approved_alternative'
+          ? 'approved'
+          : 'custom_instruction_sent',
     });
   } catch (err) {
     console.error('[task-confirm] owner decision failed', {
@@ -913,6 +920,10 @@ function buildRejectionMessageText({ recipientName, taskDescription, substituteN
   const note = String(substituteNote || '').trim();
   const suffix = note ? ` ${note}` : '';
   return `${recipientName}, the exact item is needed for "${taskDescription}" instead of the alternative.${suffix} Please try again.`;
+}
+
+function buildApprovalMessageText({ recipientName, taskDescription }) {
+  return `${recipientName}, the alternative for "${taskDescription}" was approved — please go ahead.`;
 }
 
 async function fetchDeliveryStatus({ supabaseUrl, serviceKey, deliveryId }) {
