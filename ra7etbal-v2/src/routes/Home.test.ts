@@ -89,3 +89,49 @@ describe("Home.tsx — sticky CTA keyboard positioning", () => {
     expect(stickyStyleBlock).not.toMatch(/132px/);
   });
 });
+
+/**
+ * Regression guard (2026-07-10): the sticky CTA appeared on Home with the
+ * keyboard closed and the textarea never focused, floating over the stats
+ * section. `viewportShrunk` is a visualViewport-derived heuristic that has
+ * been observed to read true on iOS PWA without any real keyboard —
+ * previously this alone (`textareaFocused || viewportShrunk`) was enough to
+ * open the sticky CTA. keyboardOpen must now require the textarea to have
+ * been focused — currently, or within a short grace window after blur (so
+ * the CTA doesn't flicker away mid focus→blur→keyboard-closing transitions,
+ * e.g. tapping the attach-photo button) — so viewportShrunk alone, with no
+ * focus event ever having happened, can never open it.
+ */
+describe("Home.tsx — sticky CTA requires the textarea to have been focused", () => {
+  it("keyboardOpen is textareaFocused OR (recentlyFocused AND viewportShrunk) — never viewportShrunk alone", () => {
+    expect(SOURCE).toMatch(
+      /const keyboardOpen = textareaFocused \|\| \(recentlyFocused && viewportShrunk\);/,
+    );
+    expect(SOURCE).not.toMatch(/const keyboardOpen = textareaFocused \|\| viewportShrunk;/);
+  });
+
+  it("focusing the textarea sets both textareaFocused and recentlyFocused", () => {
+    const fnSource = SOURCE.slice(
+      SOURCE.indexOf("function handleTextareaFocus()"),
+      SOURCE.indexOf("function handleTextareaBlur()"),
+    );
+    expect(fnSource).toMatch(/setTextareaFocused\(true\)/);
+    expect(fnSource).toMatch(/setRecentlyFocused\(true\)/);
+  });
+
+  it("blurring the textarea clears textareaFocused immediately but only clears recentlyFocused after a grace-window timeout", () => {
+    const fnSource = SOURCE.slice(
+      SOURCE.indexOf("function handleTextareaBlur()"),
+      SOURCE.indexOf("useEffect(() => {\n    return () => {\n      if (recentlyFocusedTimerRef.current)"),
+    );
+    expect(fnSource).toMatch(/setTextareaFocused\(false\)/);
+    expect(fnSource).toMatch(/window\.setTimeout\(\(\) => \{\s*setRecentlyFocused\(false\);\s*\}, 600\)/);
+  });
+
+  it("wires the textarea's onFocus/onBlur to the gated handlers, not raw setTextareaFocused calls", () => {
+    expect(SOURCE).toMatch(/onFocus=\{handleTextareaFocus\}/);
+    expect(SOURCE).toMatch(/onBlur=\{handleTextareaBlur\}/);
+    expect(SOURCE).not.toMatch(/onFocus=\{\(\) => setTextareaFocused\(true\)\}/);
+    expect(SOURCE).not.toMatch(/onBlur=\{\(\) => setTextareaFocused\(false\)\}/);
+  });
+});

@@ -20,6 +20,7 @@ import Inbox from "./Inbox";
 import Todos from "./Todos";
 import Routines from "./Routines";
 import ClearMyHeadInbox from "./ClearMyHeadInbox";
+import { advanceChipScrollLeft, shouldAdvanceChipAutoScroll } from "../lib/chip-auto-scroll";
 
 type Tab = "needs-you" | "waiting" | "todo" | "inbox" | "clear-my-head" | "routines" | "history";
 
@@ -87,24 +88,33 @@ export default function Updates() {
     };
     mq?.addEventListener?.("change", handleMotionPrefChange);
 
-    const PIXELS_PER_MS = 0.6 / 20; // same speed as the previous 0.6px/20ms tick
+    // Raised from the original 0.03px/ms (0.6px/20ms, ~30px/s — a full loop
+    // took ~25-30s) to ~0.09px/ms (~90px/s, a full loop in under 10s) after a
+    // real-device report that the row "did not visibly auto-cycle" even
+    // after the self-pause fix below: at the old speed, a few seconds of
+    // observation genuinely produced too little movement to register as
+    // motion rather than noise.
+    const PIXELS_PER_MS = 0.09;
     let rafId: number;
     let lastTs: number | null = null;
 
     const tick = (ts: number) => {
       rafId = window.requestAnimationFrame(tick);
-      if (document.hidden || chipReducedMotionRef.current || chipAutoPausedRef.current) {
+      const shouldAdvance = shouldAdvanceChipAutoScroll({
+        hidden: document.hidden,
+        reducedMotion: chipReducedMotionRef.current,
+        paused: chipAutoPausedRef.current,
+      });
+      if (!shouldAdvance) {
         lastTs = null; // drop the stale delta so we don't jump on resume
         return;
       }
       if (lastTs == null) { lastTs = ts; return; }
       const dt = ts - lastTs;
       lastTs = ts;
-      const loopWidth = el.scrollWidth / 2;
-      if (loopWidth <= 0) return;
+      if (el.scrollWidth <= 0) return; // not laid out yet
       chipProgrammaticScrollRef.current = true;
-      el.scrollLeft += PIXELS_PER_MS * dt;
-      if (el.scrollLeft >= loopWidth) el.scrollLeft -= loopWidth;
+      el.scrollLeft = advanceChipScrollLeft(el.scrollLeft, el.scrollWidth, dt, PIXELS_PER_MS);
     };
     rafId = window.requestAnimationFrame(tick);
 

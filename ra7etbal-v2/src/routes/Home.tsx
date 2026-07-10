@@ -55,6 +55,38 @@ export default function Home() {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
   const submittingRef = useRef(false);
 
+  // viewportShrunk is a visualViewport-derived heuristic and has been
+  // observed to read true on iOS PWA even with the textarea never
+  // focused (no real keyboard involved) — regression report 2026-07-10:
+  // the sticky CTA appeared on Home with the keyboard closed. Gating it
+  // behind "the textarea was focused recently" makes the sticky CTA
+  // impossible to show without a real focus/blur event ever happening,
+  // regardless of what causes viewportShrunk to misread — while still
+  // keeping it visible through the brief focus→blur→keyboard-closing
+  // transition (e.g. tapping the attach-photo button).
+  const [recentlyFocused, setRecentlyFocused] = useState(false);
+  const recentlyFocusedTimerRef = useRef<number | null>(null);
+
+  function handleTextareaFocus() {
+    if (recentlyFocusedTimerRef.current) window.clearTimeout(recentlyFocusedTimerRef.current);
+    setTextareaFocused(true);
+    setRecentlyFocused(true);
+  }
+
+  function handleTextareaBlur() {
+    setTextareaFocused(false);
+    if (recentlyFocusedTimerRef.current) window.clearTimeout(recentlyFocusedTimerRef.current);
+    recentlyFocusedTimerRef.current = window.setTimeout(() => {
+      setRecentlyFocused(false);
+    }, 600);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (recentlyFocusedTimerRef.current) window.clearTimeout(recentlyFocusedTimerRef.current);
+    };
+  }, []);
+
   // Photo attachment for Clear My Head — up to 5 photos. The first is described
   // before extraction so the AI sees image context; all are carried to the first
   // delegation item and uploaded as task_attachments on save.
@@ -165,7 +197,7 @@ export default function Home() {
 
   const trimmed = text.trim();
   const canSubmit = !submitting && (trimmed.length > 0 || draftImageFiles.length > 0) && !!userId;
-  const keyboardOpen = textareaFocused || viewportShrunk;
+  const keyboardOpen = textareaFocused || (recentlyFocused && viewportShrunk);
 
   async function handleNext() {
     if (submittingRef.current) return;
@@ -417,8 +449,8 @@ export default function Home() {
           ref={textareaRef}
           value={text}
           onChange={(e) => { setText(e.target.value); setRedirectMessage(null); }}
-          onFocus={() => setTextareaFocused(true)}
-          onBlur={() => setTextareaFocused(false)}
+          onFocus={handleTextareaFocus}
+          onBlur={handleTextareaBlur}
           placeholder="Say what you're carrying. Tasks, reminders, people to message, things to follow up on."
           autoComplete="off"
           spellCheck

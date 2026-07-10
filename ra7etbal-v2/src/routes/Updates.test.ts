@@ -59,7 +59,7 @@ describe("Updates.tsx — chip auto-scroll does not self-pause", () => {
 
   it("sets a programmatic-scroll guard immediately before mutating scrollLeft in the auto-scroll tick", () => {
     const tickSource = SOURCE.slice(SOURCE.indexOf("const tick = (ts: number) => {"), SOURCE.indexOf("rafId = window.requestAnimationFrame(tick);\n\n    return () => {"));
-    expect(tickSource).toMatch(/chipProgrammaticScrollRef\.current = true;\s*\n\s*el\.scrollLeft \+=/);
+    expect(tickSource).toMatch(/chipProgrammaticScrollRef\.current = true;\s*\n\s*el\.scrollLeft = advanceChipScrollLeft\(/);
   });
 
   it("onScroll is routed through handleChipScroll, which skips pausing for self-caused scroll events", () => {
@@ -78,5 +78,44 @@ describe("Updates.tsx — chip auto-scroll does not self-pause", () => {
     expect(SOURCE).toMatch(/onPointerDown=\{pauseChipAutoScroll\}/);
     expect(SOURCE).toMatch(/onTouchStart=\{pauseChipAutoScroll\}/);
     expect(SOURCE).toMatch(/onWheel=\{\(\) => \{ pauseChipAutoScroll\(\); scheduleChipAutoScrollResume\(\); \}\}/);
+  });
+});
+
+/**
+ * Re-audit (2026-07-10): the self-pause fix alone was not enough — real
+ * iPhone testing still showed no visible cycling. The actual advance/wrap
+ * math and gating conditions are now extracted to src/lib/chip-auto-scroll.ts
+ * and covered there with real behavioral tests (not source-scanning). These
+ * tests only verify Updates.tsx wires the tested functions in correctly and
+ * that the speed was actually raised, since a source-scan test alone missed
+ * the "not fast enough to perceive" and "self-pausing" failure modes before.
+ */
+describe("Updates.tsx — chip auto-scroll wiring after the real-device re-audit", () => {
+  it("imports and uses the tested pure functions for advancing and gating, not inline math", () => {
+    expect(SOURCE).toMatch(
+      /import \{ advanceChipScrollLeft, shouldAdvanceChipAutoScroll \} from ["']\.\.\/lib\/chip-auto-scroll["']/,
+    );
+    expect(SOURCE).toMatch(/shouldAdvanceChipAutoScroll\(\{/);
+    expect(SOURCE).toMatch(/el\.scrollLeft = advanceChipScrollLeft\(el\.scrollLeft, el\.scrollWidth, dt, PIXELS_PER_MS\)/);
+  });
+
+  it("gating passes through hidden, reducedMotion, and paused — no gate silently dropped", () => {
+    const gatesSource = SOURCE.slice(
+      SOURCE.indexOf("shouldAdvanceChipAutoScroll({"),
+      SOURCE.indexOf("});", SOURCE.indexOf("shouldAdvanceChipAutoScroll({")),
+    );
+    expect(gatesSource).toMatch(/hidden: document\.hidden/);
+    expect(gatesSource).toMatch(/reducedMotion: chipReducedMotionRef\.current/);
+    expect(gatesSource).toMatch(/paused: chipAutoPausedRef\.current/);
+  });
+
+  it("raised the auto-scroll speed from the imperceptibly slow original (0.03px/ms)", () => {
+    expect(SOURCE).toMatch(/const PIXELS_PER_MS = 0\.09;/);
+    expect(SOURCE).not.toMatch(/const PIXELS_PER_MS = 0\.6 \/ 20;/);
+  });
+
+  it("still re-evaluates prefers-reduced-motion live via a change listener, not just once at mount", () => {
+    expect(SOURCE).toMatch(/window\.matchMedia\?\.\("\(prefers-reduced-motion: reduce\)"\)/);
+    expect(SOURCE).toMatch(/mq\?\.addEventListener\?\.\("change", handleMotionPrefChange\)/);
   });
 });
