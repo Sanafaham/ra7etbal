@@ -5,6 +5,7 @@ export type QualityLifecycleState =
   | "waiting_for_confirmation"
   | "proof_submitted"
   | "needs_owner_review"
+  | "needs_owner_decision"
   | "completed";
 
 export type QualityLifecycleBadge =
@@ -37,7 +38,15 @@ function isQualityDelegation(task: QualityTaskInput): boolean {
 
 export function isQualityOwnerReviewStatus(status: Task["quality_review_status"] | string | null | undefined): boolean {
   const normalized = normalizeReviewStatus(status);
-  return normalized === "uncertain";
+  // substitute_review (Phase 8.1) hands a single judgment call to the owner,
+  // exactly like uncertain — both pull the task out of Waiting into Needs
+  // You. Additive only: the uncertain check itself is unchanged.
+  return normalized === "uncertain" || normalized === "substitute_review";
+}
+
+/** True only for substitute_review specifically — used where the "Needs your review" badge must be distinguished from uncertain's generic owner-review box (e.g. rendering the Approve/Reject/Custom Instruction actions). */
+export function isQualitySubstituteReviewStatus(status: Task["quality_review_status"] | string | null | undefined): boolean {
+  return normalizeReviewStatus(status) === "substitute_review";
 }
 
 export function isQualityFlaggedStatus(status: Task["quality_review_status"] | string | null | undefined): boolean {
@@ -72,6 +81,17 @@ export function resolveQualityLifecycle(task: QualityTaskInput): QualityLifecycl
       requiresNewProof: false,
       blocksGenericFollowup: false,
       needsOwnerReview: false,
+    };
+  }
+
+  if (hasProof && isQualitySubstituteReviewStatus(reviewStatus)) {
+    return {
+      state: "needs_owner_decision",
+      badge: "Needs your review",
+      hasActiveBadge: true,
+      requiresNewProof: false,
+      blocksGenericFollowup: true,
+      needsOwnerReview: true,
     };
   }
 

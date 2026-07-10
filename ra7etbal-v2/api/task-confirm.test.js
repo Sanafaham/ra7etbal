@@ -629,6 +629,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       quality_review_status: null,
       quality_review_note: null,
       quality_reviewed_at: null,
+      worker_reply: null,
     });
     expect(fetchMock.mock.calls[9][1].method).toBe('PATCH');
     expect(runQualityReviewMock).toHaveBeenNthCalledWith(
@@ -692,6 +693,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       quality_review_status: null,
       quality_review_note: null,
       quality_reviewed_at: null,
+      worker_reply: null,
     });
     const patchBody = JSON.parse(fetchMock.mock.calls[3][1].body);
     expect(patchBody.status).toBeUndefined();
@@ -811,6 +813,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       quality_review_status: null,
       quality_review_note: null,
       quality_reviewed_at: null,
+      worker_reply: null,
     });
     expect(runQualityReviewMock).toHaveBeenCalledWith(
       expect.objectContaining({ referenceImageBase64: 'ref-salad', proofImagesBase64: ['fresh-salad-proof'] }),
@@ -861,6 +864,110 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
     expect(pushPayload.body).toContain('Grace submitted proof for review');
     expect(pushPayload.body).not.toMatch(/flagged|hasn't confirmed/i);
+  });
+
+  it('Phase 8.1 — substitute_review: keeps the task pending, sends no correction WhatsApp, does not increment the cycle count, saves the worker reply, and pushes the owner', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'substitute_review',
+      note: 'TEREA Silver was requested; the assignee sent TEREA Turquoise, a different variant.',
+    });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1', user_id: 'user-1', status: 'pending', description: 'buy TEREA Silver',
+        assigned_to: 'Ghulam', image_path: 'task-images/u/t/terea.jpg', quality_review_cycle_count: 2,
+      }]))
+      .mockResolvedValueOnce(jsonResponse([])) // no messages row
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        taskId: 'task-1',
+        proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+        workerReply: 'Could not find TEREA Silver, found Turquoise instead.',
+      }),
+      res,
+    );
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, outcome: 'substitute_review' }),
+    );
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.quality_review_status).toBe('substitute_review');
+    expect(patchBody.worker_reply).toBe('Could not find TEREA Silver, found Turquoise instead.');
+    // Narrow additive branch: does not consume the automated correction-attempt budget.
+    expect(patchBody.quality_review_cycle_count).toBe(2);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+    const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
+    expect(pushPayload.body).toContain('sent an alternative for review');
+  });
+
+  it('Phase 8.1 — worker reply is stored on an approved outcome too (never required, but not discarded)', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Matches the reference.' });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof2.jpg'], workerReply: 'Found it in the garage.' }),
+      res,
+    );
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.worker_reply).toBe('Found it in the garage.');
+  });
+
+  it('Phase 8.1 — regression: a duplicate proof resubmission while substitute_review is pending is caught by the same guard as uncertain, protecting an in-flight owner decision', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'substitute_review',
+      note: 'This should not run for a duplicate owner-review submission.',
+    });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'buy TEREA Silver',
+        assigned_to: 'Ghulam',
+        image_path: 'task-images/u/t/terea.jpg',
+        proof_image_path: 'task-images/u/t/proof/0.jpg',
+        quality_review_status: 'substitute_review',
+        quality_review_note: 'TEREA Silver requested; Turquoise sent.',
+      }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      outcome: 'substitute_review',
+      duplicate: true,
+    }));
+    // Never reaches a fresh review — the pending owner decision (whose lease
+    // is keyed on quality_reviewed_at) must not be invalidated by a replay.
+    expect(runQualityReviewMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('duplicate owner-review proof submit does not create a duplicate owner push', async () => {
@@ -1588,6 +1695,35 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
     expect(signingCalls).toHaveLength(0);
   });
 
+  it('Phase 8.1 — locks the confirmation link for substitute_review too: the owner decides next, not an automatic worker retry', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', status: 'pending',
+            confirmed_at: null, image_path: 'task-images/u/t/terea.jpg', proof_image_path: 'task-images/u/t/proof/0.jpg',
+            attachment_count: 0, quality_review_status: 'substitute_review',
+            quality_review_note: 'TEREA Silver requested; Turquoise sent.', worker_reply: 'Could not find Silver, found Turquoise instead.',
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }])) // proof attachments
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=a' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.proofUploadSlots).toEqual([]);
+    expect(body.qualityReviewStatus).toBe('substitute_review');
+    expect(body.workerReply).toBe('Could not find Silver, found Turquoise instead.');
+    const signingCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/object/upload/sign/'));
+    expect(signingCalls).toHaveLength(0);
+  });
+
   it('protected: upload slots are still generated for "fraud_suspected" — Carson can collect a new live proof', async () => {
     const fetchMock = vi
       .fn()
@@ -1704,6 +1840,201 @@ describe('Quality Intelligence safety lockdown — source-of-truth invariants', 
     expect(getBlock).toContain('task.status !== \'done\' && !isLockedForOwnerReview');
     expect(getBlock).toContain('qualityReviewStatus: task.quality_review_status ?? null');
     expect(getBlock).toContain('qualityReviewNote: task.quality_review_note ?? null');
+  });
+
+  it('Phase 8.1 — GET also locks for substitute_review (owner decides, not an automatic worker retry), but still not for correction_required/fraud_suspected', () => {
+    const getBlock = TASK_CONFIRM_SOURCE.slice(
+      TASK_CONFIRM_SOURCE.indexOf('async function handleGet'),
+      TASK_CONFIRM_SOURCE.indexOf('// ── POST: confirm the task'),
+    );
+    expect(getBlock).toContain("task.quality_review_status === 'uncertain' || task.quality_review_status === 'substitute_review'");
+    expect(getBlock).not.toContain("=== 'correction_required'");
+    expect(getBlock).not.toContain("=== 'fraud_suspected'");
+  });
+});
+
+describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
+  function patchReq(body, headers = { authorization: 'Bearer good-token' }) {
+    return { method: 'PATCH', headers, body };
+  }
+
+  function metaAcceptedResponse(messageId = 'wamid.123') {
+    return {
+      ok: true,
+      status: 200,
+      text: vi.fn().mockResolvedValue(JSON.stringify({ messages: [{ id: messageId }] })),
+    };
+  }
+
+  beforeEach(() => {
+    vi.stubEnv('SUPABASE_ANON_KEY', 'anon-key');
+    vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'meta-token');
+    vi.stubEnv('WHATSAPP_PHONE_NUMBER_ID', 'phone-id');
+  });
+
+  it('rejects without an Authorization header', async () => {
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative' }, {}), res);
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  it('rejects when the bearer token does not resolve to a user', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false }));
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative' }), res);
+    expect(res.status).toHaveBeenCalledWith(401);
+  });
+
+  it('rejects when the authenticated user does not own the task — prevents deciding someone else\'s task', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-999' })) // auth/v1/user
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }])); // task fetch
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative' }), res);
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+
+  it('rejects custom_instruction without instruction text', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(jsonResponse({ id: 'user-1' })));
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'custom_instruction' }), res);
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it('Approve Alternative: claims, completes atomically, sends no WhatsApp', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' })) // auth/v1/user
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }])) // task fetch
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' })) // claim RPC
+      .mockResolvedValueOnce(emptyResponse()); // complete_approved_alternative RPC
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, decision: 'approved_alternative', outcome: 'approved' }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+    expect(String(fetchMock.mock.calls[2][0])).toContain('/rest/v1/rpc/claim_substitute_decision');
+    expect(String(fetchMock.mock.calls[3][0])).toContain('/rest/v1/rpc/complete_approved_alternative');
+  });
+
+  it('Reject Alternative: reserves, fences before send, sends one WhatsApp message, completes', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' })) // auth/v1/user
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }])) // task fetch
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'rejected_alternative' })) // claim RPC
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+15551234567' }])) // findAssigneePerson
+      .mockResolvedValueOnce(jsonResponse([{ outcome: 'correction_required', message_id: 'msg-1', delivery_id: 'delivery-1' }])) // reserve_rejected_alternative RPC
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }])) // fetchDeliveryStatus
+      .mockResolvedValueOnce(emptyResponse()) // reserve_send_window RPC
+      .mockResolvedValueOnce(metaAcceptedResponse()) // Meta send
+      .mockResolvedValueOnce(emptyResponse()) // markMessageAccepted PATCH messages
+      .mockResolvedValueOnce(emptyResponse()) // markWhatsappDeliveryAccepted PATCH whatsapp_deliveries
+      .mockResolvedValueOnce(emptyResponse()); // complete_rejected_alternative RPC
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'rejected_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, decision: 'rejected_alternative', outcome: 'correction_required' }));
+    const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
+    expect(metaCall).toBeDefined();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('graph.facebook.com'))).toHaveLength(1);
+  });
+
+  it('Custom Instruction: sends the owner\'s exact text, does not touch the correction cycle count', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'custom_instruction' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+15551234567' }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }])) // reserve_custom_instruction RPC
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+      .mockResolvedValueOnce(emptyResponse()) // reserve_send_window
+      .mockResolvedValueOnce(metaAcceptedResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse()); // complete_custom_instruction RPC
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'custom_instruction', instructionText: 'Turquoise is fine, thanks!', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, decision: 'custom_instruction', outcome: 'custom_instruction_sent' }));
+    const metaCallBody = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
+    expect(metaCallBody.template.components[0].parameters[0].text).toBe('Turquoise is fine, thanks!');
+  });
+
+  it('correction-limit fallback: no WhatsApp send when reserve resolves fallback_to_uncertain', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'rejected_alternative' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+15551234567' }]))
+      .mockResolvedValueOnce(jsonResponse([{ outcome: 'fallback_to_uncertain', message_id: null, delivery_id: null }])); // reserve_rejected_alternative RPC — limit hit
+    vi.stubGlobal('fetch', fetchMock);
+    // VAPID left unset so sendOwnerPush short-circuits before any fetch.
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'rejected_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, decision: 'rejected_alternative', outcome: 'fallback_to_uncertain' }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('idempotent completed short-circuit: a completed decision is returned without any further RPC calls', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'approved', quality_review_note: null, quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-9', status: 'completed', decision: 'approved_alternative', outcome: 'approved' })); // claim RPC returns already-completed
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved', already_completed: true }));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('maps a lease_lost RPC error to a 409 with a friendly retry message, never a silent success', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: null, quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' })) // claim RPC
+      .mockResolvedValueOnce(jsonResponse({ message: 'lease_lost' }, 400)); // complete RPC fails — superseded lease
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.stringMatching(/superseded/i) }));
+  });
+
+  it('maps a decision_conflict RPC error to a 409 — never executes the second decision', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: null, quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ message: 'decision_conflict' }, 400)); // claim RPC — a different decision already won
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'rejected_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    expect(res.status).toHaveBeenCalledWith(409);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
 

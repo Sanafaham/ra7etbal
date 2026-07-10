@@ -821,6 +821,145 @@ describe('runQualityReview', () => {
   });
 });
 
+describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
+  it('reasonable substitute with a worker note classifies as substitute_review', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"TEREA Silver was requested but the assignee sent TEREA Turquoise, a different variant."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Buy a pack of TEREA Silver and send a photo.',
+      delegationMessage: 'Please buy TEREA Silver and send a photo.',
+      referenceImageBase64: 'terea-silver-reference-base64',
+      proofImagesBase64: ['terea-turquoise-proof-base64'],
+      workerReply: 'Could not find TEREA Silver, found Turquoise instead.',
+    });
+
+    expect(result.status).toBe('substitute_review');
+    expect(result.note).toContain('TEREA Turquoise');
+  });
+
+  it('a clear substitute is classified even without a worker note — the note is evidence, not a requirement', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      anthropicResponse(
+        '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"A different, equivalent brand was sent since the requested brand was unavailable."}',
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Buy the usual flowers and send a photo.',
+      delegationMessage: null,
+      referenceImageBase64: 'flowers-reference-base64',
+      proofImagesBase64: ['different-flowers-proof-base64'],
+    });
+
+    expect(result.status).toBe('substitute_review');
+    // No workerReply was passed — must not appear as a note line in the prompt.
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
+    expect(promptText).not.toMatch(/The assignee added this note/);
+  });
+
+  it('includes the worker reply as context in the prompt when present', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'task',
+      delegationMessage: 'message',
+      referenceImageBase64: null,
+      proofImagesBase64: ['proof-base64'],
+      workerReply: 'Could not find the exact item, sent a similar one.',
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
+    expect(promptText).toContain('The assignee added this note when submitting proof');
+    expect(promptText).toContain('Could not find the exact item, sent a similar one.');
+  });
+
+  it('normal variation (different plate/background/lighting/angle/portion) must never become substitute_review', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"APPROVED","correction_message":null,"reasoning":"Same dish, different plate and background — a normal home-made version of the reference."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'make the pasta like the reference photo',
+      delegationMessage: 'Please make this pasta for dinner.',
+      referenceImageBase64: 'pasta-reference-base64',
+      proofImagesBase64: ['home-made-pasta-different-plate-base64'],
+    });
+
+    expect(result.status).toBe('approved');
+    expect(result.status).not.toBe('substitute_review');
+  });
+
+  it('clearly wrong/unrelated outcome is still correction_required, never substitute_review', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"CORRECTION_REQUIRED","correction_message":"Christopher, this is a salad, not the pizza that was requested. Please make and photograph the pizza instead.","reasoning":"Wrong item — salad instead of pizza, not a reasonable substitute."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to make this for lunch.',
+      delegationMessage: 'Christopher, please make this pizza for lunch.',
+      referenceImageBase64: 'pizza-reference-base64',
+      proofImagesBase64: ['salad-proof-base64'],
+    });
+
+    expect(result.status).toBe('correction_required');
+    expect(result.status).not.toBe('substitute_review');
+  });
+
+  it('prompt instructs the model on the exact 3-step decision order and narrow substitute_review boundary', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'task',
+      delegationMessage: 'message',
+      referenceImageBase64: null,
+      proofImagesBase64: ['proof-base64'],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
+    expect(promptText).toMatch(/check APPROVED first, then SUBSTITUTE_REVIEW, then CORRECTION_REQUIRED/i);
+    expect(promptText).toMatch(/Do NOT use SUBSTITUTE_REVIEW for normal variation/i);
+    expect(promptText).toMatch(/Do NOT use SUBSTITUTE_REVIEW for a wrong or unrelated item/i);
+    expect(promptText).toMatch(/"SUBSTITUTE_REVIEW"/);
+    // Frozen: the existing four-outcome definitions are untouched substrings.
+    expect(promptText).toContain(
+      'APPROVED: the requested item/outcome is clearly correct, materially matches the task, and is a reasonable fulfillment of the request.',
+    );
+  });
+});
+
 describe('downloadImageAsBase64', () => {
   it('returns null when imagePath is missing', async () => {
     const result = await downloadImageAsBase64({

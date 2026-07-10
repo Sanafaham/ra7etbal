@@ -33,9 +33,12 @@ describe("Confirm — reopening the link after proof review uses the persisted s
       SOURCE.indexOf("interface TaskInfo {"),
       SOURCE.indexOf("\n}", SOURCE.indexOf("interface TaskInfo {")),
     );
-    expect(interfaceBlock).toContain(
-      'qualityReviewStatus: "approved" | "correction_required" | "uncertain" | "fraud_suspected" | null;',
-    );
+    expect(interfaceBlock).toContain('| "approved"');
+    expect(interfaceBlock).toContain('| "correction_required"');
+    expect(interfaceBlock).toContain('| "uncertain"');
+    expect(interfaceBlock).toContain('| "fraud_suspected"');
+    // Phase 8.1 — narrow additive outcome, added without removing any frozen ones above.
+    expect(interfaceBlock).toContain('| "substitute_review"');
     expect(interfaceBlock).toContain("qualityReviewNote: string | null;");
   });
 

@@ -9,8 +9,19 @@ export type TaskType = Exclude<ItemType, "message" | "todo">;
 
 export type TaskStatus = "pending" | "done" | "cancelled";
 
-/** Outcome of Carson's automated proof-photo review. Null = not yet reviewed. */
-export type QualityReviewStatus = "approved" | "correction_required" | "uncertain" | "fraud_suspected";
+/**
+ * Outcome of Carson's automated proof-photo review. Null = not yet reviewed.
+ * substitute_review (Phase 8.1) is a narrow additive outcome: the assignee
+ * found a reasonable but different alternative to the exact requested item.
+ * It hands a single judgment call to the owner (Approve Alternative / Reject
+ * Alternative / Custom Instruction) — it does not mean the proof failed.
+ */
+export type QualityReviewStatus =
+  | "approved"
+  | "correction_required"
+  | "uncertain"
+  | "fraud_suspected"
+  | "substitute_review";
 
 export interface Task {
   id: string;
@@ -51,6 +62,8 @@ export interface Task {
   quality_review_note: string | null;
   /** Timestamp of the most recent automated review. Null until one runs. */
   quality_reviewed_at: string | null;
+  /** Optional note the assignee submitted with proof (e.g. explaining a substitute item). Null until submitted. */
+  worker_reply: string | null;
 }
 
 export interface TaskDraft {

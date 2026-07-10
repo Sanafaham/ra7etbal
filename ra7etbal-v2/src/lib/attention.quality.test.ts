@@ -24,6 +24,7 @@ function delegation(overrides: Partial<Task> = {}): Task {
     quality_review_status: null,
     quality_review_note: null,
     quality_reviewed_at: null,
+    worker_reply: null,
     ...overrides,
   };
 }

@@ -63,8 +63,16 @@ interface TaskInfo {
    * owner" state instead of the upload form again. Operational rejection
    * states still show the upload form so Carson can collect a corrected proof.
    */
-  qualityReviewStatus: "approved" | "correction_required" | "uncertain" | "fraud_suspected" | null;
+  qualityReviewStatus:
+    | "approved"
+    | "correction_required"
+    | "uncertain"
+    | "fraud_suspected"
+    | "substitute_review"
+    | null;
   qualityReviewNote: string | null;
+  /** Worker's own note submitted with proof (e.g. explaining a substitute item). Optional. */
+  workerReply: string | null;
 }
 
 async function fetchWithTimeout(
@@ -97,8 +105,13 @@ export default function Confirm() {
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const confirmedRef = useRef(false);
-  const [outcome, setOutcome] = useState<"approved" | "correction_required" | "uncertain" | "fraud_suspected" | null>(null);
+  const [outcome, setOutcome] = useState<
+    "approved" | "correction_required" | "uncertain" | "fraud_suspected" | "substitute_review" | null
+  >(null);
   const [correctionNote, setCorrectionNote] = useState<string | null>(null);
+  // Optional note the worker can add explaining a substitute/alternative.
+  // Never required for a normal successful completion.
+  const [workerReplyText, setWorkerReplyText] = useState("");
 
   // Proof photo state — mirrors the reference-photo PendingPhoto[] pattern
   // (ElevenLabsAgentWidget.tsx): accumulate up to MAX_PROOF_PHOTOS, remove
@@ -148,6 +161,7 @@ export default function Confirm() {
           proofRequired: data.proofRequired === true,
           qualityReviewStatus: data.qualityReviewStatus ?? null,
           qualityReviewNote: data.qualityReviewNote ?? null,
+          workerReply: data.workerReply ?? null,
         });
         // Rehydrate the review outcome from the server so a fresh page
         // load/reopen reflects the persisted state — see qualityReviewStatus
@@ -319,6 +333,7 @@ export default function Confirm() {
         body: JSON.stringify({
           taskId,
           ...(savedProofPaths.length > 0 ? { proofImagePaths: savedProofPaths } : {}),
+          ...(workerReplyText.trim() ? { workerReply: workerReplyText.trim() } : {}),
         }),
       }, CONFIRM_REQUEST_TIMEOUT_MS);
       const rawBody = await res.text();
@@ -326,7 +341,7 @@ export default function Confirm() {
         success?: boolean;
         already_done?: boolean;
         error?: string;
-        outcome?: "approved" | "correction_required" | "uncertain" | "fraud_suspected";
+        outcome?: "approved" | "correction_required" | "uncertain" | "fraud_suspected" | "substitute_review";
         correctionNote?: string | null;
       } = {};
       try {
@@ -347,6 +362,9 @@ export default function Confirm() {
       const resolvedOutcome = data.already_done ? "approved" : data.outcome ?? "approved";
       setOutcome(resolvedOutcome);
       setCorrectionNote(data.correctionNote ?? null);
+      // Already sent for this submission — never silently resend a stale
+      // note (about a now-replaced photo) on a later retry attempt.
+      setWorkerReplyText("");
 
       // Quality Intelligence V1 — only an "approved" outcome marks the task
       // done. correction_required / fraud_suspected leave it pending for
@@ -501,6 +519,12 @@ export default function Confirm() {
                 Thanks — this has been sent to the owner for a quick review.
               </AuthNotice>
             </div>
+          ) : outcome === "substitute_review" ? (
+            <div className="space-y-3">
+              <AuthNotice kind="success">
+                Thanks — this has been sent to the owner to review the alternative.
+              </AuthNotice>
+            </div>
           ) : (
             <>
               {/* Quality Intelligence — task stayed open; new proof photos are needed */}
@@ -585,6 +609,29 @@ export default function Confirm() {
                 {proofError && (
                   <p className="text-xs text-rose-700">{proofError}</p>
                 )}
+              </div>
+
+              {/* Optional note — never required for a normal successful
+                  completion. Lets the assignee explain a substitute (e.g.
+                  "Could not find TEREA Silver, found Turquoise instead"). */}
+              <div className="space-y-1">
+                <label
+                  htmlFor="worker-reply"
+                  className="text-xs font-medium uppercase tracking-wide text-ink/50"
+                >
+                  Note for the owner
+                  <span className="ml-1 normal-case text-ink/35">(optional)</span>
+                </label>
+                <textarea
+                  id="worker-reply"
+                  value={workerReplyText}
+                  onChange={(e) => setWorkerReplyText(e.target.value)}
+                  disabled={isBusy}
+                  maxLength={1000}
+                  rows={2}
+                  placeholder="e.g. Could not find the exact item, sent a similar one instead"
+                  className="w-full rounded-xl border border-sage/25 bg-white/70 px-3 py-2 text-sm text-ink placeholder:text-ink/35 focus:border-sage/50 focus:outline-none disabled:opacity-50"
+                />
               </div>
 
               {confirmError && <AuthNotice kind="error">{confirmError}</AuthNotice>}

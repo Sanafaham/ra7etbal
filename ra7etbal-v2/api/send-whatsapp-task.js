@@ -733,7 +733,7 @@ export function buildRoutineMessagePayload({
   };
 }
 
-async function sendMetaMessage({ url, accessToken, payload }) {
+export async function sendMetaMessage({ url, accessToken, payload }) {
   console.log('[send-whatsapp-task] Meta request', {
     url: redactGraphUrl(url),
     payload,
@@ -805,7 +805,7 @@ function sendFailure(res, result, freeFormError = null, deliveryId = null) {
   });
 }
 
-function normalizeWhatsAppPhone(phone) {
+export function normalizeWhatsAppPhone(phone) {
   const raw = String(phone || '').trim();
   if (!raw) return null;
 
@@ -885,7 +885,7 @@ function redactGraphUrl(url) {
   });
 }
 
-async function markMessageAccepted({
+export async function markMessageAccepted({
   supabaseUrl,
   serviceKey,
   messageRecordId,

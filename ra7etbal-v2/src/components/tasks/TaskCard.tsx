@@ -8,6 +8,8 @@ import {
 } from "../../lib/reminder-time";
 import { resolveQualityLifecycle } from "../../lib/quality-lifecycle";
 import { openWhatsAppMessage, sendWhatsAppTask } from "../../lib/whatsapp";
+import { submitSubstituteDecision, type SubstituteDecision } from "../../lib/quality-substitute-decision";
+import { useTasksStore } from "../../stores/tasks";
 import type { Task, TaskType } from "../../types/task";
 
 interface Props {
@@ -232,6 +234,10 @@ export default function TaskCard({
         </div>
       )}
 
+      {task.quality_review_status === "substitute_review" && (
+        <SubstituteReviewCard task={task} assignedLabel={assignedLabel} />
+      )}
+
       {message?.content && (
         <p className="mt-2 whitespace-pre-wrap rounded-lg border border-border bg-cream/40 px-3 py-2 text-sm italic text-ink/75">
           "{message.content}"
@@ -412,6 +418,128 @@ function ProofPhotoThumbnail({ url }: { url: string }) {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * Needs You card for a substitute_review outcome — Phase 8.1. Shown when
+ * the assignee could not find the exact requested item and Carson
+ * identified a reasonable alternative. Surfaces Carson's note, the
+ * assignee's own reply (if any), and the three owner actions: Approve
+ * Alternative (completes the task, no message), Reject Alternative (one
+ * correction message, task returns to Waiting), Custom Instruction (one
+ * message in the owner's own words, task returns to Waiting). All three go
+ * through the lease-fenced, idempotent /api/task-confirm PATCH endpoint —
+ * safe to retry after a network error without a duplicate send.
+ */
+function SubstituteReviewCard({ task, assignedLabel }: { task: Task; assignedLabel: string }) {
+  const [busyAction, setBusyAction] = useState<SubstituteDecision | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showCustomInput, setShowCustomInput] = useState(false);
+  const [customText, setCustomText] = useState("");
+
+  async function refreshTasks() {
+    const userId = useTasksStore.getState().loadedForUserId;
+    if (userId) await useTasksStore.getState().loadFor(userId, { force: true });
+  }
+
+  async function runDecision(decision: SubstituteDecision, instructionText?: string) {
+    if (busyAction) return;
+    setBusyAction(decision);
+    setError(null);
+    const result = await submitSubstituteDecision({
+      taskId: task.id,
+      decision,
+      instructionText,
+      reviewedAt: task.quality_reviewed_at,
+    });
+    setBusyAction(null);
+    if (!result.success) {
+      setError(result.error || "Could not process this decision. Please try again.");
+      return;
+    }
+    setShowCustomInput(false);
+    setCustomText("");
+    await refreshTasks();
+  }
+
+  function submitCustomInstruction() {
+    const trimmed = customText.trim();
+    if (!trimmed) {
+      setError("Please type a message to send.");
+      return;
+    }
+    void runDecision("custom_instruction", trimmed);
+  }
+
+  const isBusy = !!busyAction;
+
+  return (
+    <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+      <p className="font-medium">
+        {assignedLabel === "Me" ? "Someone" : assignedLabel} sent an alternative — needs your review
+      </p>
+      {task.quality_review_note && <p className="mt-0.5">{task.quality_review_note}</p>}
+      {task.worker_reply && (
+        <p className="mt-1 italic">
+          {assignedLabel === "Me" ? "Their" : `${assignedLabel}'s`} note: "{task.worker_reply}"
+        </p>
+      )}
+
+      {error && <p className="mt-1.5 text-xs font-medium text-rose-700">{error}</p>}
+
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        <button
+          type="button"
+          onClick={() => void runDecision("approved_alternative")}
+          disabled={isBusy}
+          className="inline-flex items-center gap-1.5 rounded-full border border-sage/40 bg-sage px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-105 disabled:opacity-50"
+        >
+          {busyAction === "approved_alternative" && <Spinner size={12} />}
+          <span>Approve Alternative</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => void runDecision("rejected_alternative")}
+          disabled={isBusy}
+          className="inline-flex items-center gap-1.5 rounded-full border border-rose-400 bg-white px-3 py-1.5 text-xs font-medium text-rose-800 shadow-sm transition hover:bg-rose-100 disabled:opacity-50"
+        >
+          {busyAction === "rejected_alternative" && <Spinner size={12} />}
+          <span>Reject Alternative</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowCustomInput((v) => !v)}
+          disabled={isBusy}
+          className="inline-flex items-center gap-1.5 rounded-full border border-rose-300 bg-white px-3 py-1.5 text-xs font-medium text-rose-800 shadow-sm transition hover:bg-rose-100 disabled:opacity-50"
+        >
+          Custom Instruction
+        </button>
+      </div>
+
+      {showCustomInput && (
+        <div className="mt-2 space-y-1.5">
+          <textarea
+            value={customText}
+            onChange={(e) => setCustomText(e.target.value)}
+            disabled={isBusy}
+            maxLength={1000}
+            rows={2}
+            placeholder="Type a message to send to the assignee"
+            className="w-full rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-sm text-ink placeholder:text-ink/35 focus:border-rose-400 focus:outline-none disabled:opacity-50"
+          />
+          <button
+            type="button"
+            onClick={submitCustomInstruction}
+            disabled={isBusy}
+            className="inline-flex items-center gap-1.5 rounded-full border border-rose-400 bg-rose-800 px-3 py-1.5 text-xs font-medium text-white shadow-sm transition hover:brightness-110 disabled:opacity-50"
+          >
+            {busyAction === "custom_instruction" && <Spinner size={12} />}
+            <span>Send instruction</span>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

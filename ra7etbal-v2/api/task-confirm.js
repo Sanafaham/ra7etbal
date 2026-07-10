@@ -24,6 +24,22 @@
  *       isn't genuine proof (screenshot, reused reference image, etc). Carson
  *       asks the assignee for a new live proof unless repeated attempts mean
  *       owner input is genuinely required.
+ *     - substitute_review (Phase 8.1): task stays pending, locked for owner
+ *       review like uncertain; the assignee found a reasonable but different
+ *       alternative to the exact requested item. No WhatsApp to the
+ *       assignee and no correction-cycle increment here — the owner decides
+ *       via Approve Alternative / Reject Alternative / Custom Instruction
+ *       (PATCH handler below), not an automated retry loop.
+ *
+ * PATCH /api/task-confirm  { taskId, decision, instructionText?, reviewedAt? }
+ *   Phase 8.1 owner decision endpoint for a substitute_review outcome.
+ *   Authenticated (Authorization: Bearer <supabase access token>) — the
+ *   resolved user id must match the task's owner. Kept in this file rather
+ *   than a new api/*.js file to stay within the Vercel Hobby
+ *   12-serverless-function limit (see the merge note above). Uses the
+ *   claim/reserve/reserve_send_window/complete SECURITY DEFINER functions
+ *   from supabase/migrations/20260710_quality_substitute_review.sql for
+ *   lease-fenced, idempotent, retry-safe decisions.
  *   Photo delegations require proof before completion. Non-photo tasks, or a
  *   task with no assignee (assigned_to null), keep the original no-review
  *   completion behavior.
@@ -31,6 +47,8 @@
 
 import webpush from 'web-push';
 import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
+import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
+import { sendMetaMessage, buildRoutineMessagePayload, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 
 // Quality Intelligence vision review can legitimately take longer than the
 // default Vercel function window, especially with several proof photos.
@@ -64,6 +82,7 @@ async function responseSnippet(response) {
 export default async function handler(req, res) {
   if (req.method === 'GET') return handleGet(req, res);
   if (req.method === 'POST') return handlePost(req, res);
+  if (req.method === 'PATCH') return handleOwnerDecision(req, res);
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
@@ -86,7 +105,7 @@ async function handleGet(req, res) {
   try {
     const response = await fetch(
       supabaseUrl + '/rest/v1/tasks?id=eq.' + taskId +
-        '&select=id,user_id,description,assigned_to,status,confirmed_at,image_path,proof_image_path,attachment_count,quality_review_status,quality_review_note',
+        '&select=id,user_id,description,assigned_to,status,confirmed_at,image_path,proof_image_path,attachment_count,quality_review_status,quality_review_note,worker_reply',
       {
         headers: {
           apikey: serviceKey,
@@ -169,7 +188,11 @@ async function handleGet(req, res) {
     // Locked for owner review only when Carson genuinely needs owner input.
     // Operational rejection states (correction_required / fraud_suspected)
     // stay with Carson + assignee so a corrected proof can be uploaded.
-    const isLockedForOwnerReview = task.quality_review_status === 'uncertain';
+    // substitute_review also locks: the owner, not the assignee, decides
+    // next (Approve Alternative / Reject Alternative / Custom Instruction) —
+    // this is not an automatic worker-retry loop.
+    const isLockedForOwnerReview =
+      task.quality_review_status === 'uncertain' || task.quality_review_status === 'substitute_review';
 
     // Fresh signed upload URLs for up to 5 proof-photo slots. Each slot's
     // signed URL is created with x-upsert so resubmitting to the same index
@@ -204,6 +227,7 @@ async function handleGet(req, res) {
       // upload slots open for Carson's correction loop.
       qualityReviewStatus: task.quality_review_status ?? null,
       qualityReviewNote: task.quality_review_note ?? null,
+      workerReply: task.worker_reply ?? null,
     });
   } catch (err) {
     return res.status(500).json({ error: 'Something went wrong. Please try again.' });
@@ -213,10 +237,16 @@ async function handleGet(req, res) {
 // ── POST: confirm the task ────────────────────────────────────────────────────
 
 async function handlePost(req, res) {
-  const { taskId, confirmedBy, proofImagePaths: rawProofImagePaths } = req.body;
+  const { taskId, confirmedBy, proofImagePaths: rawProofImagePaths, workerReply: rawWorkerReply } = req.body;
   const proofImagePaths = (Array.isArray(rawProofImagePaths) ? rawProofImagePaths : [])
     .filter((p) => typeof p === 'string' && p.trim())
     .slice(0, MAX_PROOF_PHOTOS);
+  // Optional worker note (e.g. "Could not find TEREA Silver, found Turquoise
+  // instead"). Never required for a normal successful completion.
+  const workerReply =
+    typeof rawWorkerReply === 'string' && rawWorkerReply.trim()
+      ? rawWorkerReply.trim().slice(0, 1000)
+      : null;
   let step = 'init';
 
   if (!taskId) {
@@ -327,6 +357,7 @@ async function handlePost(req, res) {
         delegationMessage,
         referenceImageBase64,
         proofImagesBase64,
+        workerReply,
       });
     }
 
@@ -337,8 +368,16 @@ async function handlePost(req, res) {
       //
       // quality_review_cycle_count is incremented on every non-approved
       // outcome as a lifetime record of how many rounds this task needed.
-      // It is never reset on approval.
-      const cycleCount = (task.quality_review_cycle_count || 0) + 1;
+      // It is never reset on approval. substitute_review is the one
+      // exception: it is not a "wrong photo, try again" cycle — it hands a
+      // single judgment call to the owner — so it must not consume the
+      // automated correction-attempt budget. The budget is only spent later,
+      // if the owner explicitly rejects the alternative (handled by
+      // reserve_rejected_alternative in the decision endpoint).
+      const isSubstituteReview = review.status === 'substitute_review';
+      const cycleCount = isSubstituteReview
+        ? (task.quality_review_cycle_count || 0)
+        : (task.quality_review_cycle_count || 0) + 1;
       const isOperationalCorrection =
         review.status === 'correction_required' || review.status === 'fraud_suspected';
       const correctionLimitReached =
@@ -362,6 +401,7 @@ async function handlePost(req, res) {
             quality_review_note: savedReviewNote,
             quality_reviewed_at: now,
             quality_review_cycle_count: cycleCount,
+            worker_reply: workerReply,
           }),
         },
       );
@@ -442,6 +482,20 @@ async function handlePost(req, res) {
         }).catch((err) =>
           console.error(`[task-confirm] ${review.status}-review owner push failed (non-fatal):`, err?.message || err),
         );
+      } else if (isSubstituteReview) {
+        // Narrow additive branch: hand a single judgment call to the owner.
+        // No WhatsApp to the assignee — the owner decides via Approve
+        // Alternative / Reject Alternative / Custom Instruction.
+        await sendOwnerPush({
+          supabaseUrl,
+          serviceKey,
+          userId: task.user_id,
+          description: task.description,
+          assignedTo: task.assigned_to,
+          variant: 'substitute_review',
+        }).catch((err) =>
+          console.error('[task-confirm] substitute_review owner push failed (non-fatal):', err?.message || err),
+        );
       }
 
       return res.status(200).json({
@@ -470,7 +524,7 @@ async function handlePost(req, res) {
           updated_at: now,
           ...(proofImagePaths.length > 0 ? { proof_image_path: proofImagePaths[0] } : {}),
           ...(review
-            ? { quality_review_status: 'approved', quality_review_note: review.note, quality_reviewed_at: now }
+            ? { quality_review_status: 'approved', quality_review_note: review.note, quality_reviewed_at: now, worker_reply: workerReply }
             : {}),
         }),
       },
@@ -547,6 +601,331 @@ async function handlePost(req, res) {
   }
 }
 
+// ── PATCH: Phase 8.1 owner decision (substitute_review) ──────────────────────
+
+const VALID_SUBSTITUTE_DECISIONS = ['approved_alternative', 'rejected_alternative', 'custom_instruction'];
+
+async function handleOwnerDecision(req, res) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !serviceKey || !anonKey) {
+    return res.status(500).json({ error: 'Server configuration error.' });
+  }
+
+  const auth = await requireOwnerUser(req, { supabaseUrl, anonKey });
+  if (auth.error) {
+    return res.status(401).json({ error: auth.error });
+  }
+  const userId = auth.uid;
+
+  const {
+    taskId,
+    decision,
+    instructionText: rawInstructionText,
+    reviewedAt: rawReviewedAt,
+  } = req.body || {};
+
+  if (!taskId || !decision || !VALID_SUBSTITUTE_DECISIONS.includes(decision)) {
+    return res.status(400).json({ error: 'taskId and a valid decision are required.' });
+  }
+
+  const instructionText =
+    typeof rawInstructionText === 'string' && rawInstructionText.trim()
+      ? rawInstructionText.trim().slice(0, 1000)
+      : null;
+  if (decision === 'custom_instruction' && !instructionText) {
+    return res.status(400).json({ error: 'Custom instruction text is required.' });
+  }
+  const reviewedAt = typeof rawReviewedAt === 'string' && rawReviewedAt.trim() ? rawReviewedAt : null;
+
+  const headers = {
+    apikey: serviceKey,
+    Authorization: 'Bearer ' + serviceKey,
+    'Content-Type': 'application/json',
+  };
+
+  try {
+    const taskRes = await fetch(
+      supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId) +
+        '&select=id,user_id,description,assigned_to,confirmation_url,quality_review_status,quality_review_note,quality_reviewed_at,worker_reply',
+      { headers },
+    );
+    const taskRows = await taskRes.json().catch(() => []);
+    if (!taskRes.ok || !Array.isArray(taskRows) || taskRows.length === 0) {
+      return res.status(404).json({ error: 'Task not found.' });
+    }
+    const task = taskRows[0];
+    if (task.user_id !== userId) {
+      return res.status(403).json({ error: 'Not authorized for this task.' });
+    }
+
+    const claim = await callRpcSingle(supabaseUrl, serviceKey, 'claim_substitute_decision', {
+      p_task_id: taskId,
+      p_user_id: userId,
+      p_decision: decision,
+      p_reviewed_at: reviewedAt ?? task.quality_reviewed_at ?? null,
+      p_qi_note: task.quality_review_note ?? null,
+      p_worker_reply: task.worker_reply ?? null,
+      p_requested_instruction: decision === 'custom_instruction' ? instructionText : null,
+    });
+    if (claim.error) return respondRpcError(res, claim.error);
+    const decisionRow = claim.data;
+
+    if (decisionRow.status === 'completed') {
+      return res.status(200).json(buildCompletedResponse(decisionRow));
+    }
+
+    // Approve Alternative — no external message, fully atomic.
+    if (decision === 'approved_alternative') {
+      const complete = await callRpcVoid(supabaseUrl, serviceKey, 'complete_approved_alternative', {
+        p_decision_id: decisionRow.id,
+        p_lease_token: decisionRow.lease_token,
+        p_user_id: userId,
+      });
+      if (complete.error) return respondRpcError(res, complete.error);
+      return res.status(200).json({ success: true, decision, outcome: 'approved' });
+    }
+
+    // Reject Alternative / Custom Instruction — need one WhatsApp send.
+    const assigneePerson = await findAssigneePerson({
+      supabaseUrl, serviceKey, userId, assignedTo: task.assigned_to,
+    });
+    if (!assigneePerson?.phone) {
+      return res.status(400).json({ error: 'No phone number on file for the assignee.' });
+    }
+    const recipientName = assigneePerson.name || task.assigned_to || 'there';
+
+    const messageContent =
+      decision === 'rejected_alternative'
+        ? buildRejectionMessageText({ recipientName, taskDescription: task.description, substituteNote: task.quality_review_note })
+        : instructionText;
+
+    const reserveFn = decision === 'rejected_alternative' ? 'reserve_rejected_alternative' : 'reserve_custom_instruction';
+    const reserve = await callRpcRows(supabaseUrl, serviceKey, reserveFn, {
+      p_decision_id: decisionRow.id,
+      p_lease_token: decisionRow.lease_token,
+      p_user_id: userId,
+      p_message_content: messageContent,
+      p_confirmation_url: task.confirmation_url ?? null,
+      p_recipient: assigneePerson.phone,
+      p_recipient_name: recipientName,
+    });
+    if (reserve.error) return respondRpcError(res, reserve.error);
+    const reserveResult = reserve.data[0];
+
+    // Reject-only: the correction-attempt ceiling was hit — task already
+    // fell back to uncertain atomically inside the reserve call, no send.
+    if (decision === 'rejected_alternative' && reserveResult.outcome === 'fallback_to_uncertain') {
+      await sendOwnerPush({
+        supabaseUrl, serviceKey, userId: task.user_id, description: task.description,
+        assignedTo: task.assigned_to, variant: 'correction_limit',
+      }).catch((err) =>
+        console.error('[task-confirm] substitute-review correction-limit owner push failed (non-fatal):', err?.message || err),
+      );
+      return res.status(200).json({ success: true, decision, outcome: 'fallback_to_uncertain' });
+    }
+
+    const { message_id: messageId, delivery_id: deliveryId } = reserveResult;
+
+    // Skip the send entirely if a prior attempt under this same lease
+    // already got an accepted delivery (retry resuming after the task
+    // transition failed, not the send).
+    const deliveryStatus = await fetchDeliveryStatus({ supabaseUrl, serviceKey, deliveryId });
+    if (deliveryStatus !== 'accepted') {
+      // Mandatory fenced checkpoint immediately before the irreversible Meta
+      // call — a superseded lease is rejected here and never reaches Meta.
+      const fence = await callRpcVoid(supabaseUrl, serviceKey, 'reserve_send_window', {
+        p_decision_id: decisionRow.id, p_lease_token: decisionRow.lease_token, p_user_id: userId, p_delivery_id: deliveryId,
+      });
+      if (fence.error) return respondRpcError(res, fence.error);
+
+      const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+      const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+      if (!accessToken || !phoneNumberId) {
+        await markWhatsappDeliveryFailed({
+          supabaseUrl, serviceKey, deliveryId, failureStage: 'configuration', reason: 'WhatsApp is not configured.',
+        });
+        return res.status(500).json({ error: 'WhatsApp is not configured.' });
+      }
+
+      const templateName = (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || 'ra7etbal_routine_message').trim();
+      const templateLanguage = (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
+      const normalizedPhone = normalizeWhatsAppPhone(assigneePerson.phone);
+      if (!normalizedPhone) {
+        await markWhatsappDeliveryFailed({
+          supabaseUrl, serviceKey, deliveryId, failureStage: 'validation', reason: 'Recipient phone number is missing or invalid.',
+        });
+        return res.status(400).json({ error: 'No valid phone number on file for the assignee.' });
+      }
+      const cleanMessageContent = String(messageContent).replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+      const payload = buildRoutineMessagePayload({
+        to: normalizedPhone, message: cleanMessageContent, templateName, templateLanguage,
+      });
+
+      let sendResult;
+      try {
+        sendResult = await sendMetaMessage({
+          url: `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+          accessToken,
+          payload,
+        });
+      } catch (err) {
+        await markWhatsappDeliveryFailed({
+          supabaseUrl, serviceKey, deliveryId, failureStage: 'network',
+          reason: err instanceof Error ? err.message : String(err), templateName,
+        });
+        return res.status(502).json({ error: 'Could not send WhatsApp message. Please retry.' });
+      }
+
+      if (!sendResult.ok) {
+        const failure = getMetaFailure(sendResult);
+        await markWhatsappDeliveryFailed({ supabaseUrl, serviceKey, deliveryId, failureStage: 'meta_api', ...failure, templateName });
+        return res.status(502).json({ error: 'Could not send WhatsApp message. Please retry.' });
+      }
+
+      await markMessageAccepted({ supabaseUrl, serviceKey, messageRecordId: messageId, messageId: sendResult.messageId }).catch(() => {});
+      await markWhatsappDeliveryAccepted({
+        supabaseUrl, serviceKey, deliveryId, metaMessageId: sendResult.messageId, templateName,
+        metadata: { send_mode: 'direct_message', decision },
+      });
+    }
+
+    // Complete — validates lease + delivery ownership + accepted status once
+    // more before applying the task transition. Idempotent on retry.
+    const completeFn = decision === 'rejected_alternative' ? 'complete_rejected_alternative' : 'complete_custom_instruction';
+    const complete = await callRpcVoid(supabaseUrl, serviceKey, completeFn, {
+      p_decision_id: decisionRow.id, p_lease_token: decisionRow.lease_token, p_user_id: userId, p_delivery_id: deliveryId,
+    });
+    if (complete.error) return respondRpcError(res, complete.error);
+
+    return res.status(200).json({
+      success: true,
+      decision,
+      outcome: decision === 'rejected_alternative' ? 'correction_required' : 'custom_instruction_sent',
+    });
+  } catch (err) {
+    console.error('[task-confirm] owner decision failed', {
+      taskId, decision, message: err?.message || String(err),
+    });
+    return res.status(500).json({ error: 'Could not process this decision. Please try again.' });
+  }
+}
+
+/** Verifies the Bearer JWT, returns { uid } or { error }. Same auth/v1/user pattern as api/automations.js's requireUser(). */
+async function requireOwnerUser(req, { supabaseUrl, anonKey }) {
+  const authHeader = req.headers?.['authorization'] ?? req.headers?.['Authorization'] ?? '';
+  if (!authHeader.startsWith('Bearer ')) {
+    return { error: 'Unauthorized' };
+  }
+  const jwt = authHeader.slice(7);
+  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { apikey: anonKey, Authorization: `Bearer ${jwt}` },
+  });
+  if (!userRes.ok) return { error: 'Unauthorized' };
+  const user = await userRes.json().catch(() => null);
+  if (!user?.id) return { error: 'Unauthorized' };
+  return { uid: user.id };
+}
+
+async function callRpcRaw(supabaseUrl, serviceKey, fnName, args) {
+  const response = await fetch(`${supabaseUrl}/rest/v1/rpc/${fnName}`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(args),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    return { error: { status: response.status, message: body?.message || body?.error || 'rpc_failed', body } };
+  }
+  const text = await response.text();
+  return { data: text ? JSON.parse(text) : null };
+}
+
+/** For functions returning a single composite row (PostgREST returns a JSON object). */
+async function callRpcSingle(supabaseUrl, serviceKey, fnName, args) {
+  const result = await callRpcRaw(supabaseUrl, serviceKey, fnName, args);
+  if (result.error) return result;
+  return { data: result.data };
+}
+
+/** For functions returning TABLE(...) (PostgREST returns a JSON array). */
+async function callRpcRows(supabaseUrl, serviceKey, fnName, args) {
+  const result = await callRpcRaw(supabaseUrl, serviceKey, fnName, args);
+  if (result.error) return result;
+  return { data: Array.isArray(result.data) ? result.data : [result.data] };
+}
+
+/** For functions returning void. */
+async function callRpcVoid(supabaseUrl, serviceKey, fnName, args) {
+  const result = await callRpcRaw(supabaseUrl, serviceKey, fnName, args);
+  if (result.error) return result;
+  return { data: null };
+}
+
+function respondRpcError(res, error) {
+  const message = error?.message || 'unknown_error';
+  const statusMap = {
+    not_authorized: 403,
+    stale_review: 409,
+    decision_conflict: 409,
+    still_processing: 409,
+    lease_lost: 409,
+    delivery_superseded: 409,
+    delivery_not_pending: 409,
+    delivery_mismatch: 409,
+    delivery_not_accepted: 409,
+    invalid_decision: 400,
+    wrong_outcome_path: 400,
+  };
+  const friendlyMap = {
+    not_authorized: 'Not authorized for this task.',
+    stale_review: 'This review is no longer current — please reload and try again.',
+    decision_conflict: 'A different decision already exists for this review.',
+    still_processing: 'This decision is already being processed — please wait a moment and try again.',
+    lease_lost: 'This action was superseded by another attempt — please reload and try again.',
+    delivery_superseded: 'This send was superseded by another attempt — please reload and try again.',
+    delivery_not_pending: 'This message has already been handled — please reload and try again.',
+    delivery_mismatch: 'This message does not match the current decision — please reload and try again.',
+    delivery_not_accepted: 'The message was not confirmed sent — please try again.',
+    invalid_decision: 'This decision is not valid for this task.',
+    wrong_outcome_path: 'This decision was already resolved differently — please reload.',
+  };
+  return res
+    .status(statusMap[message] || 500)
+    .json({ error: friendlyMap[message] || 'Could not process this decision. Please try again.' });
+}
+
+function buildCompletedResponse(decisionRow) {
+  return {
+    success: true,
+    decision: decisionRow.decision,
+    outcome: decisionRow.outcome || 'approved',
+    already_completed: true,
+  };
+}
+
+function buildRejectionMessageText({ recipientName, taskDescription, substituteNote }) {
+  const note = String(substituteNote || '').trim();
+  const suffix = note ? ` ${note}` : '';
+  return `${recipientName}, the exact item is needed for "${taskDescription}" instead of the alternative.${suffix} Please try again.`;
+}
+
+async function fetchDeliveryStatus({ supabaseUrl, serviceKey, deliveryId }) {
+  if (!deliveryId) return null;
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/whatsapp_deliveries?id=eq.${encodeURIComponent(deliveryId)}&select=delivery_status`,
+    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+  );
+  if (!response.ok) return null;
+  const rows = await response.json().catch(() => []);
+  return Array.isArray(rows) && rows[0] ? rows[0].delivery_status : null;
+}
+
 // ── Push helper ───────────────────────────────────────────────────────────────
 
 async function clearPreviousQualityReviewForFreshProof({ supabaseUrl, headers, taskId, proofImagePath }) {
@@ -560,6 +939,7 @@ async function clearPreviousQualityReviewForFreshProof({ supabaseUrl, headers, t
         quality_review_status: null,
         quality_review_note: null,
         quality_reviewed_at: null,
+        worker_reply: null,
       }),
     },
   );
@@ -634,6 +1014,9 @@ export function buildOwnerPushBody({ description, assignedTo, variant }) {
   if (variant === 'correction_limit') {
     return `${proofOwner.charAt(0).toUpperCase()}${proofOwner.slice(1)} proof for "${description}" still needs correction after multiple attempts. Carson stopped messaging — please review.`;
   }
+  if (variant === 'substitute_review') {
+    return `${assignee || 'Someone'} sent an alternative for review: ${description}`;
+  }
   return assignee
     ? `${assignee} confirmed: ${description}`
     : `Task confirmed: ${description}`;
@@ -654,7 +1037,11 @@ async function readSupabaseRows(response) {
 }
 
 function isOwnerReviewLockedStatus(status) {
-  return status === 'uncertain';
+  // Phase 8.1: substitute_review locks the same way uncertain does — the
+  // owner, not the assignee, decides next. Without this, a replayed/duplicate
+  // POST while a decision is pending would clear the task's review state out
+  // from under an in-flight Approve/Reject/Custom Instruction action.
+  return status === 'uncertain' || status === 'substitute_review';
 }
 
 function buildWorkerCorrectionNote(review) {

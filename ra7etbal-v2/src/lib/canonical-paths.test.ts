@@ -75,6 +75,7 @@ function insertRows(table: TableName, payload: unknown): any[] {
         quality_review_status: null,
         quality_review_note: null,
         quality_reviewed_at: null,
+        worker_reply: null,
         ...base,
       };
     } else if (table === "messages") {

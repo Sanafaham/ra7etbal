@@ -24,6 +24,7 @@ function task(overrides: Partial<Task> = {}): Task {
     quality_review_status: null,
     quality_review_note: null,
     quality_reviewed_at: null,
+    worker_reply: null,
     ...overrides,
   };
 }
@@ -128,5 +129,26 @@ describe("Quality Intelligence lifecycle state machine", () => {
     expect(lifecycle.requiresNewProof).toBe(false);
     expect(lifecycle.blocksGenericFollowup).toBe(true);
     expect(lifecycle.needsOwnerReview).toBe(true);
+  });
+
+  it("Phase 8.1 — substitute_review is a narrow additive owner-decision state, distinct from uncertain", () => {
+    const lifecycle = resolveQualityLifecycle(task({
+      proof_image_path: "task-images/u/t/proof/0.jpg",
+      quality_review_status: "substitute_review",
+    }));
+
+    expect(lifecycle.state).toBe("needs_owner_decision");
+    expect(lifecycle.badge).toBe("Needs your review");
+    expect(lifecycle.requiresNewProof).toBe(false);
+    expect(lifecycle.blocksGenericFollowup).toBe(true);
+    expect(lifecycle.needsOwnerReview).toBe(true);
+  });
+
+  it("Phase 8.1 — frozen uncertain state is untouched by the substitute_review addition", () => {
+    const lifecycle = resolveQualityLifecycle(task({
+      proof_image_path: "task-images/u/t/proof/0.jpg",
+      quality_review_status: "uncertain",
+    }));
+    expect(lifecycle.state).toBe("needs_owner_review");
   });
 });

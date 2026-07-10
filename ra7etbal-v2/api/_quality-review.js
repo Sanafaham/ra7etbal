@@ -9,7 +9,7 @@
 const BUCKET = 'task-images';
 const QUALITY_MODEL = 'claude-sonnet-4-6';
 
-export const QUALITY_RESULTS = ['approved', 'correction_required', 'uncertain', 'fraud_suspected'];
+export const QUALITY_RESULTS = ['approved', 'correction_required', 'uncertain', 'fraud_suspected', 'substitute_review'];
 
 /**
  * Downloads a Supabase Storage object directly (service role bypasses RLS)
@@ -46,13 +46,13 @@ export async function downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath
   }
 }
 
-function buildReviewPrompt({ taskDescription, delegationMessage, hasReferenceImage, proofImageCount }) {
+function buildReviewPrompt({ taskDescription, delegationMessage, hasReferenceImage, proofImageCount, workerReply }) {
   const proofLabel = proofImageCount === 1 ? 'a proof photo' : `${proofImageCount} proof photos`;
   return `You are Carson, a meticulous quality reviewer for household/work task proof photos.
 
 Task: "${taskDescription}"
 Delegation message sent to the assignee: "${delegationMessage || 'none'}"
-${
+${workerReply ? `The assignee added this note when submitting proof: "${workerReply}"\n` : ''}${
   hasReferenceImage
     ? `A reference image showing what the result should look like is attached first, followed by ${proofLabel} submitted by the assignee.`
     : `No reference image was provided for this task. Only ${proofLabel} submitted by the assignee ${proofImageCount === 1 ? 'is' : 'are'} attached. Judge them against the task description and delegation message alone.`
@@ -75,8 +75,9 @@ Item-vs-location judgment:
 - Examples that do NOT require location proof: "Find the perfume and send a photo", "Take a photo of the Cheirosa 68 mist", "Find this in the closet and send a photo." For these, approve a live photo of the correct item on a couch/table/fabric.
 - Examples that DO require location proof: "Show me the perfume inside the cabinet", "Verify it is in the cabinet", "Send proof that it is on the shelf." For these, reject if the correct item is visible but the required location is not shown.
 
-Decide exactly one outcome:
+Decide exactly one outcome, in this order — check APPROVED first, then SUBSTITUTE_REVIEW, then CORRECTION_REQUIRED:
 - APPROVED: the requested item/outcome is clearly correct, materially matches the task, and is a reasonable fulfillment of the request. This applies regardless of the proof photo's style, polish, or resemblance to the reference.
+- SUBSTITUTE_REVIEW: use ONLY when the assignee could not obtain the exact requested item/brand/variant and instead clearly sends a different, reasonable alternative — for example a different flavor/color/variant of the same product line when the exact one was unavailable (e.g. TEREA Silver requested, TEREA Turquoise sent), an equivalent brand when the requested brand was unavailable, or a similar arrangement when the exact flowers were unavailable. The assignee's note (if present) is strong evidence for this, but is not required — the photo alone can make the substitution clear (e.g. a visibly different product variant than the reference). Do NOT use SUBSTITUTE_REVIEW for normal variation of the SAME item — a different plate, background, lighting, angle, portion, garnish, arrangement, or a home-made version of a reference dish is still the same requested item and is APPROVED, not a substitute. Do NOT use SUBSTITUTE_REVIEW for a wrong or unrelated item — that is CORRECTION_REQUIRED. If you are not confident the photo shows a genuinely different item/variant than requested, prefer APPROVED. This outcome hands the decision to the task owner — it does not mean the proof failed.
 - CORRECTION_REQUIRED: you can clearly see what's wrong and describe it specifically — wrong required placement/location, missing item, visibly incomplete, or an entirely different/mismatched item than what was asked for (e.g. the wrong product, wrong color/variant when the exact variant matters, wrong object altogether). A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible, and never treat polish, studio quality, or resemblance to the reference as a problem. Do not reject the correct item merely because it is on a different neutral surface/background unless location proof was explicitly requested.
 - UNCERTAIN: reserve this only for genuine ambiguity where you cannot tell what's in the photo or whether it matches — for example the photo itself is blurry, too dark, or cropped so the relevant item isn't visible, the angle makes it impossible to judge, or there's no reference image and the task description is too vague to judge against. If you can clearly see the item and can clearly see that it does not match, that is CORRECTION_REQUIRED, never UNCERTAIN.
 - FRAUD_SUSPECTED: the proof photo itself is not genuine proof of the completed task — not just wrong or unclear, but not real evidence of the task at all. Use this ONLY when there is strong, concrete evidence that the image is not a photo of a real physical item or scene at all, such as the photo being a screenshot (product listing, marketplace page, menu, app UI, etc.). This is about strong evidence the image isn't a photo, NOT about how polished, professional, stock-like, AI-generated, similar to, or identical to the reference it looks — those are never sufficient evidence on their own, and identity or similarity to the reference is never grounds for FRAUD_SUSPECTED. A real photo of the wrong item is CORRECTION_REQUIRED; a correct, well-composed, professional-looking, or reference-identical photo of the right item is APPROVED.
@@ -86,7 +87,7 @@ If CORRECTION_REQUIRED, write a short, specific message addressed directly to th
 If FRAUD_SUSPECTED, write one short sentence in "reasoning" explaining specifically why the photo does not look like genuine proof (e.g. "this looks like a screenshot of a product listing, not a photo of the item"). Never justify FRAUD_SUSPECTED by describing the proof as identical, nearly identical, or similar to the reference — that is never valid evidence.
 
 Respond with ONLY this JSON and nothing else — no markdown fences, no commentary:
-{"result":"APPROVED"|"CORRECTION_REQUIRED"|"UNCERTAIN"|"FRAUD_SUSPECTED","correction_message":"string or null","reasoning":"one short sentence"}`;
+{"result":"APPROVED"|"SUBSTITUTE_REVIEW"|"CORRECTION_REQUIRED"|"UNCERTAIN"|"FRAUD_SUSPECTED","correction_message":"string or null","reasoning":"one short sentence"}`;
 }
 
 function parseReviewResponse(text) {
@@ -310,6 +311,7 @@ export async function runQualityReview({
   delegationMessage,
   referenceImageBase64,
   proofImagesBase64,
+  workerReply,
 }) {
   const fallback = { status: 'uncertain', note: 'Could not complete an automated review — please check manually.' };
 
@@ -329,6 +331,7 @@ export async function runQualityReview({
         delegationMessage,
         hasReferenceImage: !!referenceImageBase64,
         proofImageCount: proofImages.length,
+        workerReply,
       }),
     },
   ];

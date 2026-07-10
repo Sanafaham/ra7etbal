@@ -26,6 +26,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     quality_review_status: null,
     quality_review_note: null,
     quality_reviewed_at: null,
+    worker_reply: null,
     ...overrides,
   };
 }
@@ -39,6 +40,13 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 describe("daily-brief — quality-review-aware Waiting / Needs You classification", () => {
   it("an uncertain proof review moves the task out of Waiting and into Needs You", () => {
     const task = makeTask({ quality_review_status: "uncertain", quality_review_note: "No reference image to compare against." });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("Phase 8.1 — a substitute_review outcome moves the task out of Waiting and into Needs You, blocking escalation while awaiting the owner's decision", () => {
+    const task = makeTask({ quality_review_status: "substitute_review", quality_review_note: "TEREA Silver requested; Turquoise sent.", worker_reply: "Could not find Silver, found Turquoise instead." });
     const brief = buildDailyBrief([task], NOW);
     expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
     expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
