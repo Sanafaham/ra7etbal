@@ -39,21 +39,13 @@ export interface TasksState {
   upsert: (row: Task) => void;
 }
 
-export const useTasksStore = create<TasksState>((set, get) => ({
-  status: "idle",
-  items: [],
-  error: null,
-  loadedForUserId: null,
+export const useTasksStore = create<TasksState>((set, get) => {
+  // Tracks the in-flight loadFor fetch, if any. Not part of the public
+  // state — purely a concurrency guard local to this store instance (same
+  // pattern as the inFlight guard in tasks-live-refresh.ts).
+  let loadingPromise: Promise<void> | null = null;
 
-  reset: () =>
-    set({ status: "idle", items: [], error: null, loadedForUserId: null }),
-
-  async loadFor(userId, opts) {
-    const { status, loadedForUserId } = get();
-    const sameUser = loadedForUserId === userId;
-    if (sameUser && status === "ready" && !opts?.force) return;
-    if (sameUser && status === "loading") return;
-
+  async function fetchAndApply(userId: string) {
     set({ status: "loading", error: null });
     try {
       const items = await apiList();
@@ -68,139 +60,172 @@ export const useTasksStore = create<TasksState>((set, get) => ({
             : "Could not load tasks.",
       });
     }
-  },
+  }
 
-  async add(draft) {
-    const row = await apiCreate(draft);
-    set((s) => ({ items: [row, ...s.items] }));
-    return row;
-  },
+  return {
+    status: "idle",
+    items: [],
+    error: null,
+    loadedForUserId: null,
 
-  push(rows) {
-    if (rows.length === 0) return;
-    set((s) => ({ items: [...rows, ...s.items] }));
-  },
+    reset: () =>
+      set({ status: "idle", items: [], error: null, loadedForUserId: null }),
 
-  async update(id, patch) {
-    const prev = get().items.find((t) => t.id === id);
-    if (!prev) throw new Error("Task not found");
-    const optimistic = { ...prev, ...patch } as Task;
-    set((s) => ({ items: s.items.map((t) => (t.id === id ? optimistic : t)) }));
-    try {
-      const updated = await apiUpdate(id, patch);
-      set((s) => ({ items: s.items.map((t) => (t.id === id ? updated : t)) }));
-      // If due_at changed on a reminder, reschedule the QStash job.
-      if (
-        updated.type === "reminder" &&
-        "due_at" in patch &&
-        patch.due_at !== prev.due_at &&
-        updated.status === "pending"
-      ) {
-        if (updated.due_at) {
-          void rescheduleReminderPush(id, updated.due_at);
-        } else {
+    async loadFor(userId, opts) {
+      const { status, loadedForUserId } = get();
+      const sameUser = loadedForUserId === userId;
+      if (sameUser && status === "ready" && !opts?.force) return;
+      if (sameUser && status === "loading") {
+        if (!opts?.force) return;
+        // A forced refresh (e.g. right after the owner completes a Needs You
+        // decision) must never be silently dropped just because a background
+        // poll's fetch happens to already be in flight — that previously let
+        // the poll's (possibly pre-decision) snapshot win with no guarantee
+        // the caller's own request was ever honored. Wait for the in-flight
+        // fetch, then issue a fresh one so the caller can rely on the result.
+        if (loadingPromise) await loadingPromise;
+      }
+      const promise = fetchAndApply(userId);
+      loadingPromise = promise;
+      try {
+        await promise;
+      } finally {
+        if (loadingPromise === promise) loadingPromise = null;
+      }
+    },
+
+    async add(draft) {
+      const row = await apiCreate(draft);
+      set((s) => ({ items: [row, ...s.items] }));
+      return row;
+    },
+
+    push(rows) {
+      if (rows.length === 0) return;
+      set((s) => ({ items: [...rows, ...s.items] }));
+    },
+
+    async update(id, patch) {
+      const prev = get().items.find((t) => t.id === id);
+      if (!prev) throw new Error("Task not found");
+      const optimistic = { ...prev, ...patch } as Task;
+      set((s) => ({ items: s.items.map((t) => (t.id === id ? optimistic : t)) }));
+      try {
+        const updated = await apiUpdate(id, patch);
+        set((s) => ({ items: s.items.map((t) => (t.id === id ? updated : t)) }));
+        // If due_at changed on a reminder, reschedule the QStash job.
+        if (
+          updated.type === "reminder" &&
+          "due_at" in patch &&
+          patch.due_at !== prev.due_at &&
+          updated.status === "pending"
+        ) {
+          if (updated.due_at) {
+            void rescheduleReminderPush(id, updated.due_at);
+          } else {
+            void cancelReminderPush(id);
+          }
+        }
+        return updated;
+      } catch (err) {
+        set((s) => ({ items: s.items.map((t) => (t.id === id ? prev : t)) }));
+        throw err;
+      }
+    },
+
+    async remove(id) {
+      const task = get().items.find((t) => t.id === id);
+      const prev = get().items;
+      set({ items: prev.filter((t) => t.id !== id) });
+      try {
+        await apiDelete(id);
+        // Cancel the QStash job so the push doesn't fire after deletion.
+        if (task?.type === "reminder" && task.due_at) {
           void cancelReminderPush(id);
         }
+      } catch (err) {
+        set({ items: prev });
+        throw err;
       }
-      return updated;
-    } catch (err) {
-      set((s) => ({ items: s.items.map((t) => (t.id === id ? prev : t)) }));
-      throw err;
-    }
-  },
+    },
 
-  async remove(id) {
-    const task = get().items.find((t) => t.id === id);
-    const prev = get().items;
-    set({ items: prev.filter((t) => t.id !== id) });
-    try {
-      await apiDelete(id);
-      // Cancel the QStash job so the push doesn't fire after deletion.
+    async removeMany(ids) {
+      const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+      if (uniqueIds.length === 0) return;
+
+      const uniqueIdSet = new Set(uniqueIds);
+      const prev = get().items;
+      const removedReminderIds = prev
+        .filter((t) => uniqueIdSet.has(t.id) && t.type === "reminder" && t.due_at)
+        .map((t) => t.id);
+      set({
+        items: prev.filter(
+          (task) => !(uniqueIdSet.has(task.id) && task.status === "done"),
+        ),
+      });
+
+      try {
+        await apiDeleteMany(uniqueIds);
+        for (const id of removedReminderIds) void cancelReminderPush(id);
+      } catch (err) {
+        set({ items: prev });
+        throw err;
+      }
+    },
+
+    async markDone(id) {
+      const task = get().items.find((t) => t.id === id);
+      const result = await get().update(id, {
+        status: "done",
+        confirmed_at: new Date().toISOString(),
+      });
+      // Cancel the QStash job so no push fires for a completed reminder.
       if (task?.type === "reminder" && task.due_at) {
         void cancelReminderPush(id);
       }
-    } catch (err) {
-      set({ items: prev });
-      throw err;
-    }
-  },
+      return result;
+    },
 
-  async removeMany(ids) {
-    const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
-    if (uniqueIds.length === 0) return;
+    async markPending(id) {
+      const result = await get().update(id, {
+        status: "pending",
+        confirmed_at: null,
+      });
+      // Re-arm the QStash job if the reminder's due_at is still in the future.
+      if (result.type === "reminder" && result.due_at) {
+        void scheduleReminderPush(result.id, result.due_at);
+      }
+      return result;
+    },
 
-    const uniqueIdSet = new Set(uniqueIds);
-    const prev = get().items;
-    const removedReminderIds = prev
-      .filter((t) => uniqueIdSet.has(t.id) && t.type === "reminder" && t.due_at)
-      .map((t) => t.id);
-    set({
-      items: prev.filter(
-        (task) => !(uniqueIdSet.has(task.id) && task.status === "done"),
-      ),
-    });
+    async archiveDone(ids) {
+      const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+      if (uniqueIds.length === 0) return [];
 
-    try {
-      await apiDeleteMany(uniqueIds);
-      for (const id of removedReminderIds) void cancelReminderPush(id);
-    } catch (err) {
-      set({ items: prev });
-      throw err;
-    }
-  },
+      const uniqueIdSet = new Set(uniqueIds);
+      const prev = get().items;
+      set({
+        items: prev.filter(
+          (task) => !(uniqueIdSet.has(task.id) && task.status === "done"),
+        ),
+      });
 
-  async markDone(id) {
-    const task = get().items.find((t) => t.id === id);
-    const result = await get().update(id, {
-      status: "done",
-      confirmed_at: new Date().toISOString(),
-    });
-    // Cancel the QStash job so no push fires for a completed reminder.
-    if (task?.type === "reminder" && task.due_at) {
-      void cancelReminderPush(id);
-    }
-    return result;
-  },
+      try {
+        return await apiArchiveDone(uniqueIds);
+      } catch (err) {
+        set({ items: prev });
+        throw err;
+      }
+    },
 
-  async markPending(id) {
-    const result = await get().update(id, {
-      status: "pending",
-      confirmed_at: null,
-    });
-    // Re-arm the QStash job if the reminder's due_at is still in the future.
-    if (result.type === "reminder" && result.due_at) {
-      void scheduleReminderPush(result.id, result.due_at);
-    }
-    return result;
-  },
-
-  async archiveDone(ids) {
-    const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
-    if (uniqueIds.length === 0) return [];
-
-    const uniqueIdSet = new Set(uniqueIds);
-    const prev = get().items;
-    set({
-      items: prev.filter(
-        (task) => !(uniqueIdSet.has(task.id) && task.status === "done"),
-      ),
-    });
-
-    try {
-      return await apiArchiveDone(uniqueIds);
-    } catch (err) {
-      set({ items: prev });
-      throw err;
-    }
-  },
-
-  upsert(row) {
-    set((s) => {
-      const idx = s.items.findIndex((t) => t.id === row.id);
-      if (idx === -1) return { items: [row, ...s.items] };
-      const next = s.items.slice();
-      next[idx] = row;
-      return { items: next };
-    });
-  },
-}));
+    upsert(row) {
+      set((s) => {
+        const idx = s.items.findIndex((t) => t.id === row.id);
+        if (idx === -1) return { items: [row, ...s.items] };
+        const next = s.items.slice();
+        next[idx] = row;
+        return { items: next };
+      });
+    },
+  };
+});

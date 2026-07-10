@@ -119,3 +119,34 @@ describe("Updates.tsx — chip auto-scroll wiring after the real-device re-audit
     expect(SOURCE).toMatch(/mq\?\.addEventListener\?\.\("change", handleMotionPrefChange\)/);
   });
 });
+
+/**
+ * Phase 8.1 production Bug #1 fix (2026-07-10): the Needs You and Waiting
+ * lists were gated on `tasksStatus === "ready"` alone. Every background
+ * refresh (useTaskList's 15s poll + focus/visibilitychange, and the separate
+ * 60s safety-net poll in tasks-live-refresh.ts) flips tasksStatus to
+ * "loading" for the duration of the fetch — even though cached tasks are
+ * already on screen — which unmounted and remounted the whole list on every
+ * tick. That wiped any local state inside a task card, most visibly the
+ * Custom Instruction textarea in SubstituteReviewCard, before the owner
+ * could finish typing. Fixed by keeping the list mounted through a
+ * background "loading" tick once tasks are already cached.
+ */
+describe("Updates.tsx — Needs You / Waiting stay mounted through background refreshes (Bug #1)", () => {
+  it("derives a listReady flag that stays true during a background loading tick once tasks are cached", () => {
+    expect(SOURCE).toMatch(
+      /const listReady = tasksStatus === "ready" \|\| \(tasksStatus === "loading" && tasks\.length > 0\);/,
+    );
+  });
+
+  it("Needs You and Waiting render gates use listReady, not a bare tasksStatus === \"ready\" check", () => {
+    expect(SOURCE).toMatch(/\{activeTab === "needs-you" && !initialLoading && listReady && \(/);
+    expect(SOURCE).toMatch(/\{activeTab === "waiting" && !initialLoading && listReady && \(/);
+    expect(SOURCE).not.toMatch(/activeTab === "needs-you" && !initialLoading && tasksStatus === "ready"/);
+    expect(SOURCE).not.toMatch(/activeTab === "waiting" && !initialLoading && tasksStatus === "ready"/);
+  });
+
+  it("the true first-load spinner gate (initialLoading) is untouched — still requires loading with zero cached tasks", () => {
+    expect(SOURCE).toMatch(/const initialLoading = tasksStatus === "loading" && tasks\.length === 0;/);
+  });
+});

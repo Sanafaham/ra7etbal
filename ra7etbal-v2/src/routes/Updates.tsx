@@ -207,6 +207,15 @@ export default function Updates() {
   const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
   const doneTasks = useMemo(() => tasks.filter((t) => t.status === "done"), [tasks]);
   const initialLoading = tasksStatus === "loading" && tasks.length === 0;
+  // Background refreshes (15s/30s/60s polls, focus, visibilitychange, and the
+  // post-decision refresh after a Needs You action) set tasksStatus back to
+  // "loading" even though cached tasks are already on screen. Gating the list
+  // on tasksStatus === "ready" alone unmounted and remounted it on every one
+  // of those polls, resetting any in-progress local state inside a task card
+  // (e.g. the Custom Instruction textarea) before the owner could finish
+  // typing. Once we have cached tasks, keep the list mounted through a
+  // background "loading" tick instead of tearing it down.
+  const listReady = tasksStatus === "ready" || (tasksStatus === "loading" && tasks.length > 0);
 
   // Pending reminders due in the next 14 days. Reminders already shown in
   // Needs You stay there only, so one reminder never renders in both sections.
@@ -336,7 +345,7 @@ export default function Updates() {
       {/* ══════════════════════════════════════════════════════════════
           NEEDS YOU
       ══════════════════════════════════════════════════════════════ */}
-      {activeTab === "needs-you" && !initialLoading && tasksStatus === "ready" && (
+      {activeTab === "needs-you" && !initialLoading && listReady && (
         <div className="space-y-3">
           {brief.needsAttention.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
@@ -411,7 +420,7 @@ export default function Updates() {
       {/* ══════════════════════════════════════════════════════════════
           WAITING
       ══════════════════════════════════════════════════════════════ */}
-      {activeTab === "waiting" && !initialLoading && tasksStatus === "ready" && (
+      {activeTab === "waiting" && !initialLoading && listReady && (
         <div className="space-y-3">
           {brief.waitingOnOthers.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
