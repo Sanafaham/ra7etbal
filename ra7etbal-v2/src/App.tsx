@@ -184,7 +184,7 @@ function useGlobalTasksRefresh() {
     return registerTasksLiveRefresh({
       documentApi: document,
       serviceWorkerApi: "serviceWorker" in navigator ? navigator.serviceWorker : null,
-      refetch: () => void useTasksStore.getState().loadFor(userId, { force: true }),
+      refetch: () => useTasksStore.getState().loadFor(userId, { force: true }),
     });
   }, [status, user?.id]);
 }

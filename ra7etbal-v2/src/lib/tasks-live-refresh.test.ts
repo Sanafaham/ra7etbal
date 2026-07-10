@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PUSH_RECEIVED_MESSAGE_TYPE, registerTasksLiveRefresh } from "./tasks-live-refresh";
 
 function makeFakeDocument(initialVisibility: DocumentVisibilityState = "visible") {
@@ -116,5 +116,111 @@ describe("registerTasksLiveRefresh — owner tab freshness after server-side tas
     expect(refetch).not.toHaveBeenCalled();
     expect(documentApi.listenerCount("visibilitychange")).toBe(0);
     expect(serviceWorkerApi.listenerCount()).toBe(0);
+  });
+});
+
+describe("registerTasksLiveRefresh — safety-net poll (Bug #2: stale client state)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("polls every pollIntervalMs while the tab is visible at registration", async () => {
+    const documentApi = makeFakeDocument("visible");
+    const refetch = vi.fn();
+    registerTasksLiveRefresh({ documentApi, serviceWorkerApi: null, refetch, pollIntervalMs: 1000 });
+
+    expect(refetch).not.toHaveBeenCalled(); // no immediate refetch just from registering
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(refetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(refetch).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not poll while the tab starts hidden", () => {
+    const documentApi = makeFakeDocument("hidden");
+    const refetch = vi.fn();
+    registerTasksLiveRefresh({ documentApi, serviceWorkerApi: null, refetch, pollIntervalMs: 1000 });
+
+    vi.advanceTimersByTime(5000);
+    expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it("pauses polling when the tab becomes hidden", () => {
+    const documentApi = makeFakeDocument("visible");
+    const refetch = vi.fn();
+    registerTasksLiveRefresh({ documentApi, serviceWorkerApi: null, refetch, pollIntervalMs: 1000 });
+
+    vi.advanceTimersByTime(1000);
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    documentApi.visibilityState = "hidden";
+    documentApi.fire("visibilitychange");
+    refetch.mockClear();
+
+    vi.advanceTimersByTime(5000);
+    expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it("refreshes immediately and resumes polling when the tab becomes visible again", async () => {
+    const documentApi = makeFakeDocument("hidden");
+    const refetch = vi.fn();
+    registerTasksLiveRefresh({ documentApi, serviceWorkerApi: null, refetch, pollIntervalMs: 1000 });
+
+    documentApi.visibilityState = "visible";
+    documentApi.fire("visibilitychange");
+    await Promise.resolve(); // let the immediate safeRefetch's in-flight guard clear
+    expect(refetch).toHaveBeenCalledTimes(1); // immediate refresh on regaining visibility
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(refetch).toHaveBeenCalledTimes(2); // polling resumed
+  });
+
+  it("cleanup stops the poll timer", () => {
+    const documentApi = makeFakeDocument("visible");
+    const refetch = vi.fn();
+    const cleanup = registerTasksLiveRefresh({ documentApi, serviceWorkerApi: null, refetch, pollIntervalMs: 1000 });
+
+    cleanup();
+    vi.advanceTimersByTime(10_000);
+    expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it("prevents overlapping refresh requests — a slow in-flight refetch blocks the next trigger until it resolves", async () => {
+    const documentApi = makeFakeDocument("visible");
+    let resolveFirst: () => void = () => {};
+    const refetch = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    registerTasksLiveRefresh({ documentApi, serviceWorkerApi: null, refetch, pollIntervalMs: 1000 });
+
+    vi.advanceTimersByTime(1000); // first poll tick starts a slow refetch
+    expect(refetch).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(1000); // second tick fires while the first is still in flight
+    expect(refetch).toHaveBeenCalledTimes(1); // skipped, not queued or stacked
+
+    resolveFirst();
+    await Promise.resolve(); // let the .finally() microtask run
+    await Promise.resolve();
+
+    vi.advanceTimersByTime(1000); // now a fresh tick is allowed through
+    expect(refetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("default poll interval is 60 seconds when not overridden", () => {
+    const documentApi = makeFakeDocument("visible");
+    const refetch = vi.fn();
+    registerTasksLiveRefresh({ documentApi, serviceWorkerApi: null, refetch });
+
+    vi.advanceTimersByTime(59_000);
+    expect(refetch).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 });

@@ -945,7 +945,7 @@ async function clearPreviousQualityReviewForFreshProof({ supabaseUrl, headers, t
   );
 }
 
-async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant }) {
+export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant }) {
   if (!userId) return;
 
   const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY;
@@ -1016,6 +1016,9 @@ export function buildOwnerPushBody({ description, assignedTo, variant }) {
   }
   if (variant === 'substitute_review') {
     return `${assignee || 'Someone'} sent an alternative for review: ${description}`;
+  }
+  if (variant === 'substitute_delivery_failed') {
+    return `${assignee ? `${assignee}'s` : 'The'} message about "${description}" could not be delivered — please review again.`;
   }
   return assignee
     ? `${assignee} confirmed: ${description}`

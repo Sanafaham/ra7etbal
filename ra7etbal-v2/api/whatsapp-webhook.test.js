@@ -1,13 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const smsMocks = vi.hoisted(() => ({
   buildSmsBody: vi.fn(({ messageText }) => `SMS: ${messageText}`),
   sendTwilioSms: vi.fn(async () => ({ ok: true, sid: 'SM123', error: null })),
 }));
 
+const taskConfirmMocks = vi.hoisted(() => ({
+  sendOwnerPush: vi.fn(async () => {}),
+}));
+
 vi.mock('./send-whatsapp-task.js', () => ({
   buildSmsBody: smsMocks.buildSmsBody,
   sendTwilioSms: smsMocks.sendTwilioSms,
+}));
+
+vi.mock('./task-confirm.js', () => ({
+  sendOwnerPush: taskConfirmMocks.sendOwnerPush,
 }));
 
 import {
@@ -23,6 +36,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
   smsMocks.buildSmsBody.mockClear();
   smsMocks.sendTwilioSms.mockClear();
+  taskConfirmMocks.sendOwnerPush.mockClear();
 });
 
 describe('WhatsApp delivery status progression', () => {
@@ -469,6 +483,148 @@ describe('updateWhatsappDeliveryStatus — SMS fallback trigger gating', () => {
     vi.stubEnv('TWILIO_AUTH_TOKEN', 'token123');
     vi.stubEnv('TWILIO_FROM_NUMBER', '+15550001111');
   }
+});
+
+describe('updateWhatsappDeliveryStatus — Bug #1 fix: reopen substitute_review after async delivery failure', () => {
+  function mockLookupPatchAndRpc({ rpcResponse, sourceType = 'message', currentStatus = 'accepted' }) {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([
+        {
+          id: 'delivery-1',
+          user_id: 'user-1',
+          delivery_status: currentStatus,
+          last_status_at: '2026-07-10T04:49:27Z',
+          automation_run_id: null,
+          source_type: sourceType,
+          recipient_phone: '+905010589614',
+          metadata: {},
+        },
+      ])) // lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }])) // delivery PATCH (CAS) — matched, updated
+      .mockResolvedValueOnce(jsonResponse(rpcResponse)); // reopen_substitute_decision_on_delivery_failure RPC
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('reopens substitute_review and sends exactly one owner push when a Custom Instruction delivery fails asynchronously', async () => {
+    const fetchMock = mockLookupPatchAndRpc({
+      rpcResponse: [{ task_id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', reopened: true }],
+    });
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.1',
+      status: 'failed',
+      updatedAt: '2026-07-10T04:49:27Z',
+      failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failureCode: 131049,
+      failureSubcode: null,
+    });
+
+    const rpcCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes('/rpc/reopen_substitute_decision_on_delivery_failure'),
+    );
+    expect(rpcCall).toBeDefined();
+    expect(JSON.parse(rpcCall[1].body)).toEqual({ p_delivery_id: 'delivery-1' });
+    expect(taskConfirmMocks.sendOwnerPush).toHaveBeenCalledTimes(1);
+    expect(taskConfirmMocks.sendOwnerPush).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1', assignedTo: 'Ghulam', variant: 'substitute_delivery_failed' }),
+    );
+  });
+
+  it('reopens substitute_review and sends exactly one owner push when a Reject Alternative delivery fails asynchronously', async () => {
+    // The decision-type gate (rejected_alternative vs custom_instruction) lives in the
+    // SQL function itself and was verified live against the deployed migration; this
+    // test only proves the JS-side RPC/push wiring is agnostic to which one reopened.
+    mockLookupPatchAndRpc({
+      rpcResponse: [{ task_id: 'task-2', user_id: 'user-1', description: 'buy the flowers', assigned_to: 'Grace', reopened: true }],
+    });
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.2',
+      status: 'failed',
+      updatedAt: '2026-07-10T05:00:00Z',
+      failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failureCode: 131049,
+      failureSubcode: null,
+    });
+
+    expect(taskConfirmMocks.sendOwnerPush).toHaveBeenCalledTimes(1);
+    expect(taskConfirmMocks.sendOwnerPush).toHaveBeenCalledWith(
+      expect.objectContaining({ assignedTo: 'Grace', variant: 'substitute_delivery_failed' }),
+    );
+  });
+
+  it('an unrelated ordinary WhatsApp failure (no linked substitute decision) is a safe RPC no-op — existing failure handling is unaffected', async () => {
+    const result = await (async () => {
+      mockLookupPatchAndRpc({
+        rpcResponse: [{ task_id: null, user_id: null, description: null, assigned_to: null, reopened: false }],
+        sourceType: 'delegation',
+      });
+      return updateWhatsappDeliveryStatus({
+        supabaseUrl: 'https://example.supabase.co',
+        serviceKey: 'service-key',
+        messageId: 'wamid.4',
+        status: 'failed',
+        updatedAt: '2026-07-10T05:00:00Z',
+        failureReason: 'Recipient number invalid.',
+        failureCode: 131026,
+        failureSubcode: null,
+      });
+    })();
+
+    expect(result).toEqual(expect.objectContaining({ matched: true, updated: true }));
+    expect(taskConfirmMocks.sendOwnerPush).not.toHaveBeenCalled();
+  });
+
+  it('duplicate Meta failure callback for an already-failed delivery never calls the reopen RPC or sends a second push (idempotent via the existing terminal-failed CAS gate)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([
+        {
+          id: 'delivery-1',
+          user_id: 'user-1',
+          delivery_status: 'failed', // already terminal
+          last_status_at: '2026-07-10T04:49:27Z',
+          automation_run_id: null,
+          source_type: 'message',
+          recipient_phone: '+905010589614',
+          metadata: {},
+        },
+      ]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.1',
+      status: 'failed',
+      updatedAt: '2026-07-10T04:50:00Z',
+      failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failureCode: 131049,
+      failureSubcode: null,
+    });
+
+    // buildDeliveryStatusPatch returns null once currentStatus is already 'failed' —
+    // no PATCH call, no reopen RPC call, no duplicate push.
+    expect(fetchMock).toHaveBeenCalledTimes(1); // lookup only
+    expect(taskConfirmMocks.sendOwnerPush).not.toHaveBeenCalled();
+  });
+
+  it('Approve Alternative is structurally unaffected: complete_approved_alternative never sets delivery_id, so this WHERE clause can never match it', () => {
+    const migrationSource = readFileSync(
+      join(__dirname, '..', 'supabase', 'migrations', '20260711_reopen_substitute_on_async_delivery_failure.sql'),
+      'utf-8',
+    );
+    expect(migrationSource).toContain("decision in ('rejected_alternative', 'custom_instruction')");
+    // The WHERE clause enumerates exactly the two decision types that ever send a
+    // message — 'approved_alternative' only appears in explanatory comments below.
+    expect(migrationSource.split('\n').filter((line) => line.includes('approved_alternative')).every((line) => line.trim().startsWith('*'))).toBe(true);
+  });
 });
 
 function jsonResponse(body, status = 200) {

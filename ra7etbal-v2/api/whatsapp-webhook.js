@@ -1,4 +1,5 @@
 import { buildSmsBody, sendTwilioSms } from './send-whatsapp-task.js';
+import { sendOwnerPush } from './task-confirm.js';
 
 const ALLOWED_STATUSES = new Set(['sent', 'delivered', 'read', 'failed']);
 const DELIVERY_STATUS_RANK = {
@@ -448,6 +449,27 @@ export async function updateWhatsappDeliveryStatus({
         await attemptAutomationMessageSmsFallback({ supabaseUrl, serviceKey, delivery });
       } catch (err) {
         console.warn('[whatsapp-webhook] automation_message SMS fallback threw', {
+          deliveryId: delivery.id,
+          error: err?.message ?? String(err),
+        });
+      }
+    }
+
+    // Phase 8.1 bug fix — a substitute-review decision (Reject Alternative /
+    // Custom Instruction) completes on Meta's synchronous accept, but Meta
+    // can still report a genuine async failure afterward (as it did here:
+    // error 131049). `updated` is only true the first time this delivery
+    // transitions to 'failed' (buildDeliveryStatusPatch treats 'failed' as
+    // terminal and returns null on any later callback), so this reopen path
+    // is naturally idempotent — no separate dedup key needed. Scoped to
+    // exactly the deliveries linked to a completed rejected_alternative/
+    // custom_instruction decision; every other WhatsApp failure (including
+    // Approve Alternative, which never has a linked delivery) is untouched.
+    if (updated && status === 'failed') {
+      try {
+        await reopenSubstituteReviewIfApplicable({ supabaseUrl, serviceKey, deliveryId: delivery.id });
+      } catch (err) {
+        console.warn('[whatsapp-webhook] substitute-review reopen threw (non-fatal)', {
           deliveryId: delivery.id,
           error: err?.message ?? String(err),
         });
@@ -907,6 +929,54 @@ export async function attemptAutomationMessageSmsFallback({
   });
 
   return { attempted: true, sent: smsResult.ok };
+}
+
+/**
+ * Reopens a substitute_review owner decision when the WhatsApp message it
+ * sent (Reject Alternative or Custom Instruction) turns out to have failed
+ * asynchronously, after the decision had already completed on Meta's
+ * synchronous accept. No-ops for every unrelated delivery (ordinary
+ * delegations/corrections/automations have no linked decision row at all;
+ * Approve Alternative never has a delivery_id). See
+ * supabase/migrations/20260711_reopen_substitute_on_async_delivery_failure.sql.
+ */
+async function reopenSubstituteReviewIfApplicable({ supabaseUrl, serviceKey, deliveryId }) {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/rpc/reopen_substitute_decision_on_delivery_failure`,
+    {
+      method: 'POST',
+      headers: { ...serviceHeaders(serviceKey) },
+      body: JSON.stringify({ p_delivery_id: deliveryId }),
+    },
+  );
+  if (!response.ok) {
+    const details = await response.text().catch(() => '');
+    console.warn('[whatsapp-webhook] reopen_substitute_decision_on_delivery_failure RPC failed', {
+      deliveryId,
+      status: response.status,
+      details,
+    });
+    return;
+  }
+
+  const rows = await response.json().catch(() => []);
+  const row = Array.isArray(rows) ? rows[0] : rows;
+  if (!row?.reopened) return; // not applicable, or the task already moved on for an unrelated reason
+
+  console.log('[whatsapp-webhook] substitute_review reopened after async delivery failure', {
+    taskId: row.task_id,
+  });
+
+  await sendOwnerPush({
+    supabaseUrl,
+    serviceKey,
+    userId: row.user_id,
+    description: row.description,
+    assignedTo: row.assigned_to,
+    variant: 'substitute_delivery_failed',
+  }).catch((err) =>
+    console.warn('[whatsapp-webhook] substitute-review reopen owner push failed (non-fatal):', err?.message || err),
+  );
 }
 
 async function recordSmsFallbackOutcome({ supabaseUrl, serviceKey, deliveryId, existingMetadata, outcome }) {
