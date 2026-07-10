@@ -30,6 +30,17 @@ import { parseMultiRecipientDelegation } from "./multi-recipient-delegation";
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 500;
 
+/**
+ * The highest-risk point in the extraction pipeline for altering visible
+ * text: Home.tsx's text+image submission branch calls this to summarize a
+ * reference photo BEFORE the main extraction model ever runs — the main
+ * model (extractItems, ./ai/extract) never sees the actual image in that
+ * branch, only this one-sentence description. A brand/product name misread
+ * or paraphrased here is unrecoverable downstream (confirmed production
+ * bug: a TEREA Silver reference photo produced "OTEREA Silver" in the final
+ * task). The prompt below explicitly requires exact transcription of any
+ * visible text for this reason.
+ */
 export async function describeImageForTextCarson(file: File): Promise<string | null> {
   try {
     // Normalize phone camera uploads to JPEG before vision. Raw iPhone/large
@@ -51,7 +62,7 @@ export async function describeImageForTextCarson(file: File): Promise<string | n
             { type: "image", source: { type: "base64", media_type: "image/jpeg", data: base64 } },
             {
               type: "text",
-              text: "Describe this image in one sentence, focusing on the main subject and any actionable details relevant to a task or delegation. Be concise.",
+              text: "Describe this image in one sentence, focusing on the main subject and any actionable details relevant to a task or delegation. Be concise. If any brand name, product name, model name/number, variant, color, or other printed text is visible, transcribe it exactly as printed, character-for-character — never invent characters, correct spelling, or substitute a more familiar-looking name, even if it looks unusual. This description is the only thing the task-extraction step will ever see of this image, so any text you alter here can't be recovered later. If a specific name is too unclear to read with confidence, say so plainly (e.g. \"a pack labeled something like 'TEREA' (unclear)\") rather than guessing.",
             },
           ],
         },

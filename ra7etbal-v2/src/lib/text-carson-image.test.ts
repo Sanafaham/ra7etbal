@@ -27,7 +27,7 @@ vi.mock("./tasks", () => ({
 }));
 
 vi.mock("./image-upload", () => ({
-  resizeImage: vi.fn(),
+  resizeImage: vi.fn(async (file: File) => new Blob([await file.arrayBuffer()], { type: "image/jpeg" })),
 }));
 
 vi.mock("./calendar", () => ({
@@ -983,6 +983,75 @@ describe("executeDelegationFromText image pipeline", () => {
 
       expect(deliverTaskMessageMock).toHaveBeenCalledTimes(1);
       expect(result).toContain("Christopher has it");
+    });
+  });
+
+  // ── describeImageForTextCarson — exact brand/product text preservation ────
+  // Production bug (2026-07-10): a reference photo of "TEREA Silver" produced
+  // the task "Buy OTEREA Silver cigarettes." This is the highest-risk point
+  // in the pipeline for that class of bug — Home.tsx's text+image submission
+  // branch summarizes the photo here BEFORE the main extraction model ever
+  // runs, so the main model never sees the actual image, only this one
+  // sentence. Any brand/product text altered here can never be recovered
+  // downstream.
+  describe("describeImageForTextCarson — exact brand/product text preservation", () => {
+    it("sends a prompt requiring exact, character-for-character transcription of visible text", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ content: [{ text: "A pack of TEREA Silver cigarettes." }] }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { describeImageForTextCarson } = await import("./text-carson");
+      const file = new File(["bytes"], "photo.jpg", { type: "image/jpeg" });
+      const result = await describeImageForTextCarson(file);
+
+      expect(result).toBe("A pack of TEREA Silver cigarettes.");
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      const promptText = body.messages[0].content.find((c: { type: string }) => c.type === "text").text;
+      expect(promptText).toMatch(/transcribe it exactly as printed, character-for-character/i);
+      expect(promptText).toMatch(/never invent characters, correct spelling, or substitute/i);
+      expect(promptText).toMatch(/this description is the only thing the task-extraction step will ever see/i);
+    });
+
+    it("still asks for one concise sentence — the fix does not change output format or length expectations", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ content: [{ text: "A bowl of soup." }] }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { describeImageForTextCarson } = await import("./text-carson");
+      await describeImageForTextCarson(new File(["bytes"], "photo.jpg", { type: "image/jpeg" }));
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      const promptText = body.messages[0].content.find((c: { type: string }) => c.type === "text").text;
+      expect(promptText).toMatch(/describe this image in one sentence/i);
+      expect(promptText).toMatch(/be concise/i);
+      expect(body.max_tokens).toBe(120);
+      expect(body.model).toBe("claude-haiku-4-5-20251001");
+    });
+
+    it("directs unclear reads to be flagged rather than guessed", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ content: [{ text: "text" }] }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { describeImageForTextCarson } = await import("./text-carson");
+      await describeImageForTextCarson(new File(["bytes"], "photo.jpg", { type: "image/jpeg" }));
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      const promptText = body.messages[0].content.find((c: { type: string }) => c.type === "text").text;
+      expect(promptText).toMatch(/too unclear to read with confidence.*say so plainly.*rather than guessing/is);
+    });
+
+    it("unchanged: returns null on a failed request, unaffected by the prompt change", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
+      const { describeImageForTextCarson } = await import("./text-carson");
+      const result = await describeImageForTextCarson(new File(["bytes"], "photo.jpg", { type: "image/jpeg" }));
+      expect(result).toBeNull();
     });
   });
 });
