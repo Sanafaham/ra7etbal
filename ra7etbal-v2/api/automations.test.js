@@ -192,6 +192,37 @@ describe("api/automations POST", () => {
       expect(res.statusCode).toBe(201);
       expect(warnSpy.mock.calls.some(([label]) => label === "[automations POST] rejected")).toBe(false);
     });
+
+    // CodeRabbit finding: automation_type/cadence_type are client-controlled
+    // strings and must never be copied into logs verbatim — only logged when
+    // they match a known allowlisted value.
+    it("never logs an untrusted automation_type/cadence_type value verbatim", async () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse({ id: "user-1" })));
+      const res = mockRes();
+
+      await handler(
+        mockReq({
+          method: "POST",
+          body: {
+            title: "Daily check",
+            instruction: "Check something.",
+            cadence_type: "<script>alert(1)</script>",
+            next_run_at: "2026-07-12T17:30:00.000Z",
+            automation_type: "not-a-real-type",
+          },
+        }),
+        res,
+      );
+
+      expect(res.statusCode).toBe(400);
+      const rejectionLog = warnSpy.mock.calls.find(([label]) => label === "[automations POST] rejected");
+      expect(rejectionLog).toBeTruthy();
+      expect(rejectionLog[1]).toMatchObject({ cadenceType: null, automationType: null });
+      const serialized = JSON.stringify(warnSpy.mock.calls);
+      expect(serialized).not.toContain("<script>");
+      expect(serialized).not.toContain("not-a-real-type");
+    });
   });
 });
 

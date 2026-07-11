@@ -258,6 +258,28 @@ describe("resolveCarsonDisplayMessage — tool-failure truthfulness", () => {
     expect(result).toBe("Done, that's all set.");
   });
 
+  // CodeRabbit finding: "doesn't sound like failure" was too broad a trigger
+  // for the failure-override — a neutral follow-up unrelated to the failed
+  // action also doesn't sound like failure, but overriding it with stale
+  // failure text would itself be an untruthful, out-of-context correction.
+  it("does not override a neutral follow-up message that isn't claiming success", () => {
+    const result = resolveCarsonDisplayMessage(
+      "What would you like me to do next?",
+      failureResult(),
+      NOW,
+    );
+    expect(result).toBe("What would you like me to do next?");
+  });
+
+  it("does not override a neutral acknowledgement that isn't claiming success", () => {
+    const result = resolveCarsonDisplayMessage(
+      "Anything else I can help with?",
+      failureResult(),
+      NOW,
+    );
+    expect(result).toBe("Anything else I can help with?");
+  });
+
   it("does not override a failure once it is outside the time window (stale result does not leak into a later reply)", () => {
     const result = resolveCarsonDisplayMessage(
       "I've set that reminder for you.",

@@ -1847,6 +1847,11 @@ export default function ElevenLabsAgentWidget({
       // "description" is create_reminder's existing exact key — tried first,
       // then the same note-shaped fallbacks as save_note.
       const text = extractStringField(params, ["description", "note", "text", "content"]).trim();
+      // Clear any prior tool's recorded outcome immediately — this call has
+      // not verified anything yet, so a stale success/failure from a
+      // previous, unrelated tool call must not be eligible to override
+      // Carson's reply to THIS request (see carson-direct-tool-override.ts).
+      lastDirectToolSuccessRef.current = null;
       if (!text) {
         return "I did not receive a reminder description. Ask the user what they want to be reminded about.";
       }
@@ -1918,7 +1923,9 @@ export default function ElevenLabsAgentWidget({
         );
 
         const successes = results.filter(Boolean) as string[];
-        if (successes.length > 0) {
+        const allSchedulesSucceeded = successes.length === recurringSchedules.length;
+
+        if (successes.length > 0 && allSchedulesSucceeded) {
           const reply = successes.join(" ");
           createdReminderKeysRef.current.set(recurringKey, reply);
           sessionActionsRef.current.push(`Automation(s) created: ${recurringSource}`);
@@ -1932,6 +1939,31 @@ export default function ElevenLabsAgentWidget({
             inputSummary: { description: text, recurring: true },
           };
           return reply;
+        }
+
+        if (successes.length > 0 && !allSchedulesSucceeded) {
+          // Partial: e.g. "every Monday and Thursday" created one schedule
+          // but not the other. This is not a clean success — never cache it
+          // (a cached reply would suppress a retry of the failed schedule)
+          // and never dispatch the refresh event as if everything worked.
+          // Recorded as a failure outcome so the override system corrects
+          // Carson if it over-claims a fully successful recurring reminder.
+          const partialReply = `${successes.join(" ")} I could not create the recurring reminder for the rest of what you asked — please try again for that part.`;
+          console.warn("[create_reminder:PARTIAL_SUCCESS]", {
+            recurringSource,
+            requested: recurringSchedules.length,
+            created: successes.length,
+          });
+          sessionActionsRef.current.push(`Automation(s) partially created: ${recurringSource}`);
+          window.dispatchEvent(new CustomEvent("ra7etbal:routine-created"));
+          lastDirectToolSuccessRef.current = {
+            toolName: "create_reminder",
+            resultText: partialReply,
+            at: new Date().toISOString(),
+            outcome: "failure",
+            inputSummary: { description: text, recurring: true, partial: true },
+          };
+          return partialReply;
         }
 
         // Hard-block: recurring language detected but automation creation
@@ -2100,6 +2132,13 @@ export default function ElevenLabsAgentWidget({
       // "instruction" is the existing exact key — tried first, with the same
       // task-shaped fallbacks used elsewhere (task/description/text).
       const instrTrimmed = extractAutomationInstructionParam(params).trim();
+      // Clear any prior tool's recorded outcome immediately — this call has
+      // not verified anything yet, so a stale success (or failure) from a
+      // previous, unrelated tool call must not be eligible to override
+      // Carson's reply to THIS request. Guards against a definite failure
+      // further down this function (missing fields, failed assignee lookup,
+      // not signed in) leaving an old result active for the override system.
+      lastDirectToolSuccessRef.current = null;
       if (!titleTrimmed) return "I did not receive a title. Ask the user what to call this automation.";
       if (!instrTrimmed) return "I did not receive an instruction. Ask the user what Carson should do.";
       if (!cadence_phrase?.trim()) return "I did not receive a cadence. Ask the user how often this should run.";
@@ -2163,46 +2202,58 @@ export default function ElevenLabsAgentWidget({
         cadenceValue = { ...cadenceValue, time: `${hh}:${mm}` };
       }
 
-      // ── Resolve optional assignee ───────────────────────────────────────
+      // The full setup (assignee lookup, session fetch) through the POST is
+      // one try/catch: the async setup calls (loadFor, getSession) can throw
+      // just as easily as the fetch itself, and an uncaught rejection here
+      // would escape the tool handler with no clean failure message and no
+      // recorded outcome — exactly the kind of unclear result this tool must
+      // never let through.
       let assigneeId: string | null = null;
-      if (assignee_name?.trim()) {
-        const authUserId = useAuthStore.getState().user?.id;
-        if (authUserId) {
-          const peopleState = usePeopleStore.getState();
-          if (peopleState.status === "idle" || peopleState.items.length === 0) {
-            await usePeopleStore.getState().loadFor(authUserId);
-          }
-          const people = usePeopleStore.getState().items;
-          const match = people.find(
-            (p) => p.name.trim().toLowerCase() === assignee_name.trim().toLowerCase(),
-          );
-          if (!match) {
-            return `I could not find "${assignee_name}" in your contacts. Ask the user to add them first, or create the automation without an assignee.`;
-          }
-          assigneeId = match.id;
-        }
-      }
-
-      // ── POST to /api/automations ────────────────────────────────────────
-      const { data: sessionData } = await supabase.auth.getSession();
-      const jwt = sessionData?.session?.access_token;
-      if (!jwt) return "You are not signed in. Please sign in and try again.";
-
-      const body = {
-        title: titleTrimmed,
-        instruction: instrTrimmed,
-        cadence_type: cadenceType,
-        cadence_value: cadenceValue,
-        next_run_at: nextRunAt,
-        timezone,
-        assignee_id: assigneeId,
-        created_by: "carson",
-        proof_required: proof_required === true,
-        proof_type: proof_type ?? null,
-      };
-
       let result: { automation?: { id: string; title: string } };
       try {
+        // ── Resolve optional assignee ─────────────────────────────────────
+        if (assignee_name?.trim()) {
+          const authUserId = useAuthStore.getState().user?.id;
+          if (authUserId) {
+            const peopleState = usePeopleStore.getState();
+            if (peopleState.status === "idle" || peopleState.items.length === 0) {
+              await usePeopleStore.getState().loadFor(authUserId);
+            }
+            const people = usePeopleStore.getState().items;
+            const match = people.find(
+              (p) => p.name.trim().toLowerCase() === assignee_name.trim().toLowerCase(),
+            );
+            if (!match) {
+              const failureText = `I could not find "${assignee_name}" in your contacts. Ask the user to add them first, or create the automation without an assignee.`;
+              recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+              return failureText;
+            }
+            assigneeId = match.id;
+          }
+        }
+
+        // ── POST to /api/automations ──────────────────────────────────────
+        const { data: sessionData } = await supabase.auth.getSession();
+        const jwt = sessionData?.session?.access_token;
+        if (!jwt) {
+          const failureText = "You are not signed in. Please sign in and try again.";
+          recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+          return failureText;
+        }
+
+        const body = {
+          title: titleTrimmed,
+          instruction: instrTrimmed,
+          cadence_type: cadenceType,
+          cadence_value: cadenceValue,
+          next_run_at: nextRunAt,
+          timezone,
+          assignee_id: assigneeId,
+          created_by: "carson",
+          proof_required: proof_required === true,
+          proof_type: proof_type ?? null,
+        };
+
         const res = await fetch("/api/automations", {
           method: "POST",
           headers: {
@@ -2226,7 +2277,8 @@ export default function ElevenLabsAgentWidget({
           recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
           return failureText;
         }
-      } catch {
+      } catch (err) {
+        console.error("[create_automation] unexpected error", err);
         const failureText = "I could not reach the server. Please check your connection and try again.";
         recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
         return failureText;

@@ -98,6 +98,11 @@ describe("detectAllRecurringSchedules — open-ended 'until told to stop' phrasi
     expect(detectAllRecurringSchedules("Keep reminding me until told otherwise.")).toEqual([{ schedule: "daily" }]);
     expect(detectAllRecurringSchedules("Remind me about this until further notice.")).toEqual([{ schedule: "daily" }]);
   });
+
+  it("detects 'until I hear otherwise' as recurring (not just 'until you hear otherwise')", () => {
+    expect(detectAllRecurringSchedules("Remind me every day until I hear otherwise.")).toEqual([{ schedule: "daily" }]);
+    expect(detectAllRecurringSchedules("Remind me about this until I hear otherwise.")).toEqual([{ schedule: "daily" }]);
+  });
 });
 
 describe("findPersonInInstruction — self vs third-party detection", () => {

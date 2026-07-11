@@ -43,14 +43,22 @@ const STATUS_ORDER = { active: 0, paused: 1, stopped: 2, archived: 3 };
  * validation branches logged anything before returning — only structural
  * signals are logged here, never title/instruction text, tokens, or the raw
  * body, so a future rejection can be root-caused without exposing reminder
- * content.
+ * content. automation_type/cadence_type are client-controlled strings — only
+ * logged when they match a known allowlisted value, never copied verbatim,
+ * so an arbitrary/oversized/malformed value can't land in server logs.
  */
 function logAutomationPostRejection(reasonCode, uid, body) {
+  const automationType = VALID_AUTOMATION_TYPES.includes(body?.automation_type)
+    ? body.automation_type
+    : null;
+  const cadenceType = VALID_CADENCE_TYPES.includes(body?.cadence_type)
+    ? body.cadence_type
+    : null;
   console.warn('[automations POST] rejected', {
     reasonCode,
     ownerId: uid ?? null,
-    automationType: body?.automation_type ?? null,
-    cadenceType: body?.cadence_type ?? null,
+    automationType,
+    cadenceType,
     hasAssigneeId: Boolean(body?.assignee_id),
     hasTitle: Boolean(body?.title?.trim?.()),
     hasInstruction: Boolean(body?.instruction?.trim?.()),

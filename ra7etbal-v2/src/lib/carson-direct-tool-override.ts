@@ -53,17 +53,29 @@ const GENERIC_KNOWLEDGE_ANSWER_PATTERN =
 const REMINDER_CONFIRMATION_PATTERN =
   /\b(?:i(?:'|’)ll remind you|reminder (?:created|set|saved)|created (?:the )?reminder|set (?:the )?reminder)\b/i;
 
+// Only used on the failure-outcome side, to distinguish a fabricated success
+// claim from a neutral follow-up ("Anything else?", "What would you like me
+// to do next?"). "Doesn't sound like failure" is too broad a net — a neutral
+// message also doesn't sound like failure, but overriding it with stale
+// failure text would itself be an untruthful, out-of-context correction.
+const SUCCESS_LANGUAGE_PATTERN =
+  /\b(?:i(?:'|’)ve|i(?:'|’)ll|i have|done\b|all set|set up|created|added|scheduled|that(?:'|’)s (?:taken care of|handled|set)|got that (?:running|set|done)|reminder (?:created|set|saved))\b/i;
+
 function shouldOverrideAgentMessage(
   agentMessage: string,
   lastSuccess: DirectToolSuccessResult,
 ): boolean {
   if (lastSuccess.outcome === "failure") {
-    // The tool call is verified to have failed. If the agent's own message
-    // doesn't already read as a failure, it's a fabricated success and must
-    // be corrected with the tool's own truthful result. If the agent's
-    // message already sounds like a failure, leave it — it's already
-    // truthful, and forcing the canned tool text over it isn't necessary.
-    return !FAILURE_LANGUAGE_PATTERN.test(agentMessage);
+    // The tool call is verified to have failed. Only override when the
+    // agent's own message positively reads as a completion/success claim —
+    // never on the mere absence of failure language, which would also
+    // wrongly catch neutral follow-ups unrelated to the failed action. If
+    // the agent's message already sounds like a failure, leave it; it's
+    // already truthful.
+    return (
+      SUCCESS_LANGUAGE_PATTERN.test(agentMessage) &&
+      !FAILURE_LANGUAGE_PATTERN.test(agentMessage)
+    );
   }
 
   if (

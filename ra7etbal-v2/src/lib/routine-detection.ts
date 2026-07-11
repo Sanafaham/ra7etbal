@@ -69,7 +69,7 @@ export function detectAllRecurringSchedules(text: string): RecurringSchedule[] {
   // while preserving another in the same utterance.
   if (
     /\buntil\s+(?:i\s+)?tell\s+you\s+to\s+stop\b/.test(lower) ||
-    /\buntil\s+(?:you\s+)?(?:hear|told)\s+otherwise\b/.test(lower) ||
+    /\buntil\s+(?:(?:i|you)\s+)?(?:hear|told)\s+otherwise\b/.test(lower) ||
     /\buntil\s+further\s+notice\b/.test(lower)
   ) {
     return [{ schedule: "daily" }];
@@ -148,7 +148,7 @@ export function resolveRecurringAutomationPerson(
 
 // Recurring language to strip from the task message before storing in payload.
 const RECURRING_CLEAN_RE =
-  /\b(every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|day|week|morning|evening|night|afternoon|\d+\s+days?|[a-z]+\s+days?)|each\s+(morning|evening|night|afternoon|day)|daily|weekly|as\s+a\s+routine\s+task|as\s+a\s+routine|on\s+a\s+recurring\s+basis|recurring\s+basis|routine\s+task|regularly|until\s+(?:i\s+)?tell\s+you\s+to\s+stop|until\s+(?:you\s+)?(?:hear|told)\s+otherwise|until\s+further\s+notice)\b/gi;
+  /\b(every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|day|week|morning|evening|night|afternoon|\d+\s+days?|[a-z]+\s+days?)|each\s+(morning|evening|night|afternoon|day)|daily|weekly|as\s+a\s+routine\s+task|as\s+a\s+routine|on\s+a\s+recurring\s+basis|recurring\s+basis|routine\s+task|regularly|until\s+(?:i\s+)?tell\s+you\s+to\s+stop|until\s+(?:(?:i|you)\s+)?(?:hear|told)\s+otherwise|until\s+further\s+notice)\b/gi;
 
 /**
  * Strips recurring language and the routing prefix ("ask Grace to") from an
