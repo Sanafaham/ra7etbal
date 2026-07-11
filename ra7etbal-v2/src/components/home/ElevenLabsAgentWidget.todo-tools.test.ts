@@ -104,18 +104,47 @@ describe("ElevenLabsAgentWidget — createTodoTool failure message", () => {
 });
 
 describe("ElevenLabsAgentWidget — createReminder success override", () => {
-  it("records create_reminder as override-eligible only after the reminder task is created", () => {
-    const start = SOURCE.indexOf("const createReminder = useCallback(");
-    const end = SOURCE.indexOf("// ------------------------------------------------------------------\n  // Client tool: get_calendar_events", start);
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
+  const start = SOURCE.indexOf("const createReminder = useCallback(");
+  const recurringStart = SOURCE.indexOf(
+    "// ── Recurring-language detection (owner reminder path)",
+    start,
+  );
+  const oneTimeStart = SOURCE.indexOf(
+    "// ── Resolve due time (one-time reminder path)",
+    start,
+  );
+  const end = SOURCE.indexOf("// ------------------------------------------------------------------\n  // Client tool: get_calendar_events", start);
 
-    const block = SOURCE.slice(start, end);
+  it("records create_reminder as override-eligible only after the reminder task is created (one-time path)", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(oneTimeStart).toBeGreaterThan(start);
+    expect(end).toBeGreaterThan(oneTimeStart);
+
+    const block = SOURCE.slice(oneTimeStart, end);
     const createIndex = block.indexOf("await createReminderTask({");
     const overrideIndex = block.indexOf('toolName: "create_reminder"');
 
     expect(createIndex).toBeGreaterThan(-1);
     expect(overrideIndex).toBeGreaterThan(createIndex);
+  });
+
+  it("records create_reminder as override-eligible only after the automation is persisted (recurring path)", () => {
+    expect(recurringStart).toBeGreaterThan(-1);
+    expect(oneTimeStart).toBeGreaterThan(recurringStart);
+
+    const block = SOURCE.slice(recurringStart, oneTimeStart);
+    const createIndex = block.indexOf("createReminderRoutineFromInstruction(");
+    const successesCheckIndex = block.indexOf("successes.length > 0");
+    const overrideIndex = block.indexOf('toolName: "create_reminder"');
+
+    expect(createIndex).toBeGreaterThan(-1);
+    expect(successesCheckIndex).toBeGreaterThan(createIndex);
+    expect(overrideIndex).toBeGreaterThan(successesCheckIndex);
+  });
+
+  it("never falls through to the one-time task path when recurring language is detected but automation creation fails", () => {
+    const block = SOURCE.slice(recurringStart, oneTimeStart);
+    expect(block).toContain('return "I could not create the recurring reminder.";');
   });
 });
 
