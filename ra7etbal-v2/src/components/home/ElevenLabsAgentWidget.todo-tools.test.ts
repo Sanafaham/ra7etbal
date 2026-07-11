@@ -154,9 +154,16 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
     const oneTimeBlock = SOURCE.slice(oneTimeStart, end);
     const recurringBlock = SOURCE.slice(recurringStart, oneTimeStart);
 
-    // One-time path: cache-hit + the genuine success recording.
+    // One-time path: cache-hit + the genuine success recording are still
+    // inline object literals (unchanged). The five failure branches
+    // (parseVoiceTime failure, invalid due_at, missing time, not-signed-in,
+    // createReminderTask-threw) now go through the recordCreateReminderFailure
+    // helper instead — see the "confirmed production failure" regression
+    // tests below for why, and for per-branch verification.
     const oneTimeOccurrences = oneTimeBlock.split('toolName: "create_reminder"').length - 1;
     expect(oneTimeOccurrences).toBe(2);
+    const oneTimeFailureHelperOccurrences = oneTimeBlock.split("recordCreateReminderFailure(failureText").length - 1;
+    expect(oneTimeFailureHelperOccurrences).toBe(5);
 
     // Recurring path: cache-hit, full-success, partial-success-as-failure,
     // and the zero-success hard-block — four distinct, individually-verified
@@ -165,6 +172,97 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
     expect(recurringOccurrences).toBe(4);
     expect(recurringBlock).toContain('outcome: "success"');
     expect((recurringBlock.match(/outcome: "failure"/g) ?? []).length).toBe(2); // partial + hard-block
+  });
+
+  // Regression: confirmed production failure. A one-time reminder request
+  // ("remind me at 1:40 AM to check on Google Council") produced no
+  // persisted task row and no server-side trace of any kind, yet Carson
+  // still spoke a "done" confirmation. Root cause: lastDirectToolSuccessRef
+  // is cleared to null at the top of every create_reminder call (so a stale
+  // prior tool's result can never leak into a new request), but the
+  // one-time path's five failure returns — unlike the recurring path's
+  // hard-block, and unlike every create_automation failure branch — never
+  // re-recorded an outcome:"failure" before returning. With the ref left
+  // null, carson-direct-tool-override.ts's resolveCarsonDisplayMessage has
+  // nothing to correct against (`if (!lastSuccess) return agentMessage;`),
+  // so a fabricated success from the agent's own separate generation could
+  // never be caught. Every one-time-path failure return must now record a
+  // failure outcome before returning, exactly like create_automation.
+  describe("confirmed production failure: one-time path failures must be overridable", () => {
+    function oneTimeBlock(): string {
+      return SOURCE.slice(oneTimeStart, end);
+    }
+
+    // Each test below bounds recordIndex with this branch's own
+    // returnIndex (not just "greater than failureIndex" with no upper
+    // limit) — otherwise, if this specific branch's recording call were
+    // accidentally removed, the unbounded search could still find a LATER
+    // branch's recordCreateReminderFailure call and wrongly pass.
+    it("records a failure outcome when parseVoiceTime cannot resolve time_text", () => {
+      const block = oneTimeBlock();
+      const failureIndex = block.indexOf('I could not understand the time "${time_text}"');
+      const returnIndex = block.indexOf("return failureText;", failureIndex);
+      const recordIndex = block.indexOf("recordCreateReminderFailure(failureText", failureIndex);
+      expect(failureIndex).toBeGreaterThan(-1);
+      expect(returnIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeLessThan(returnIndex);
+    });
+
+    it("records a failure outcome when the agent-supplied due_at is not a valid timestamp", () => {
+      const block = oneTimeBlock();
+      const failureIndex = block.indexOf("I did not receive a valid due time.");
+      const returnIndex = block.indexOf("return failureText;", failureIndex);
+      const recordIndex = block.indexOf("recordCreateReminderFailure(failureText", failureIndex);
+      expect(failureIndex).toBeGreaterThan(-1);
+      expect(returnIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeLessThan(returnIndex);
+    });
+
+    it("records a failure outcome when neither time_text nor due_at is provided", () => {
+      const block = oneTimeBlock();
+      const failureIndex = block.indexOf("I did not receive a time for the reminder.");
+      const returnIndex = block.indexOf("return failureText;", failureIndex);
+      const recordIndex = block.indexOf("recordCreateReminderFailure(failureText", failureIndex);
+      expect(failureIndex).toBeGreaterThan(-1);
+      expect(returnIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeLessThan(returnIndex);
+    });
+
+    it("records a failure outcome when the user is not signed in", () => {
+      const block = oneTimeBlock();
+      const failureIndex = block.indexOf("You are not signed in. Please sign in and try again.");
+      const returnIndex = block.indexOf("return failureText;", failureIndex);
+      const recordIndex = block.indexOf("recordCreateReminderFailure(failureText", failureIndex);
+      expect(failureIndex).toBeGreaterThan(-1);
+      expect(returnIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeLessThan(returnIndex);
+    });
+
+    it("records a failure outcome when createReminderTask throws (the exact branch implicated in the confirmed production failure)", () => {
+      const block = oneTimeBlock();
+      const catchIndex = block.indexOf("} catch (err) {");
+      const failureIndex = block.indexOf("Could not save the reminder.", catchIndex);
+      const recordIndex = block.indexOf("recordCreateReminderFailure(failureText", catchIndex);
+      const returnIndex = block.indexOf("return failureText;", catchIndex);
+      expect(catchIndex).toBeGreaterThan(-1);
+      expect(failureIndex).toBeGreaterThan(catchIndex);
+      expect(recordIndex).toBeGreaterThan(failureIndex);
+      expect(returnIndex).toBeGreaterThan(recordIndex);
+    });
+
+    it("defines recordCreateReminderFailure mirroring the existing recordCreateAutomationFailure pattern, recording outcome: failure", () => {
+      const start = SOURCE.indexOf("function recordCreateReminderFailure(");
+      const end2 = SOURCE.indexOf("const createReminder = useCallback(");
+      expect(start).toBeGreaterThan(-1);
+      expect(end2).toBeGreaterThan(start);
+      const block = SOURCE.slice(start, end2);
+      expect(block).toContain('toolName: "create_reminder"');
+      expect(block).toContain('outcome: "failure"');
+    });
   });
 
   it("never falls through to the one-time task path when recurring language is detected but automation creation fails", () => {
@@ -354,6 +452,58 @@ describe("ElevenLabsAgentWidget — create_automation self-directed assignee sco
     );
     expect(block).toContain("await useProfileStore.getState().loadFor(authUserId);");
     expect(block).toContain("profileState = useProfileStore.getState();");
+  });
+});
+
+// Regression: confirmed production failure. A daily automation requested
+// ~2 minutes ahead ("charge your phone" at 1:36 AM, created at 1:34 AM) was
+// scheduled for the following day instead of firing that morning. Root
+// cause (reproduced directly against parseVoiceTime with the real
+// timestamps): first_run_text — Carson's own tool-call argument — contained
+// the literal word "tomorrow", which parseVoiceTime's absolute-time branch
+// always honors literally (documented, intentional behavior for its
+// general one-time-task contract, used unchanged by other tools). For a
+// recurring loop specifically, silently skipping a whole day when the
+// requested time is still safely ahead today is never correct.
+//
+// CodeRabbit finding: the actual date-adjustment logic (including
+// DST-safety) is behaviorally tested against its real output in
+// parse-voice-time.test.ts (resolveRecurringAutomationFirstRun), a pure,
+// standalone, dependency-free function extracted specifically so it could
+// be tested that way rather than only via source-pattern matching. This
+// block only verifies createAutomation actually wires nextRunAt through
+// that tested helper, using the resolved cadenceType and parsed result —
+// not a reimplementation of the date logic itself.
+describe("ElevenLabsAgentWidget — create_automation prefers today's occurrence for recurring first runs", () => {
+  function createAutomationBlock(): string {
+    const start = SOURCE.indexOf("const createAutomation = useCallback(");
+    const end = SOURCE.indexOf("[create_automation] created id=", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return SOURCE.slice(start, end);
+  }
+
+  it("imports resolveRecurringAutomationFirstRun from parse-voice-time, alongside parseVoiceTime", () => {
+    expect(SOURCE).toContain(
+      'import { parseVoiceTime, resolveRecurringAutomationFirstRun } from "../../lib/parse-voice-time";',
+    );
+  });
+
+  it("assigns nextRunAt from resolveRecurringAutomationFirstRun(parsed, cadenceType), called after cadenceType is resolved", () => {
+    const block = createAutomationBlock();
+    const cadenceTypeIndex = block.lastIndexOf('let cadenceType: CadenceType = "once";');
+    const callIndex = block.indexOf(
+      "nextRunAt = resolveRecurringAutomationFirstRun(parsed, cadenceType);",
+      cadenceTypeIndex,
+    );
+    expect(cadenceTypeIndex).toBeGreaterThan(-1);
+    expect(callIndex).toBeGreaterThan(cadenceTypeIndex);
+  });
+
+  it("declares nextRunAt as mutable (let), not const, since it is reassigned after parseVoiceTime resolves it", () => {
+    const block = createAutomationBlock();
+    expect(block).toContain("let nextRunAt = parsed.dueAt;");
+    expect(block).not.toContain("const nextRunAt = parsed.dueAt;");
   });
 });
 

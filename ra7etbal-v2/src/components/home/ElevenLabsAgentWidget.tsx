@@ -43,7 +43,7 @@ import {
   SESSION_RECAP_PREFIX,
   type TranscriptMessage,
 } from "../../lib/carson-summarize";
-import { parseVoiceTime } from "../../lib/parse-voice-time";
+import { parseVoiceTime, resolveRecurringAutomationFirstRun } from "../../lib/parse-voice-time";
 import { buildCarsonOpeningLine } from "../../lib/carson-opening";
 import { createReminderTask } from "../../lib/reminders";
 import {
@@ -1832,6 +1832,26 @@ export default function ElevenLabsAgentWidget({
     ],
   );
 
+  // Records a verified create_reminder one-time-path failure so the display-
+  // override system can correct Carson's own separately-generated spoken
+  // reply if it claims success anyway — mirrors recordCreateAutomationFailure
+  // below. Confirmed production failure: a one-time reminder request with no
+  // corresponding persisted task row and no server trace of any kind still
+  // got a spoken "done" from Carson — this path's failure returns never
+  // recorded outcome:"failure" the way the recurring sub-path (and every
+  // create_automation failure branch) already does, so lastDirectToolSuccessRef
+  // stayed null (cleared at the top of this call) and the override system had
+  // nothing to correct against.
+  function recordCreateReminderFailure(resultText: string, description: string) {
+    lastDirectToolSuccessRef.current = {
+      toolName: "create_reminder",
+      resultText,
+      at: new Date().toISOString(),
+      outcome: "failure",
+      inputSummary: { description },
+    };
+  }
+
   // ------------------------------------------------------------------
   // Client tool: create_reminder
   // ------------------------------------------------------------------
@@ -1853,7 +1873,9 @@ export default function ElevenLabsAgentWidget({
       // Carson's reply to THIS request (see carson-direct-tool-override.ts).
       lastDirectToolSuccessRef.current = null;
       if (!text) {
-        return "I did not receive a reminder description. Ask the user what they want to be reminded about.";
+        const failureText = "I did not receive a reminder description. Ask the user what they want to be reminded about.";
+        recordCreateReminderFailure(failureText, text);
+        return failureText;
       }
 
       const time_text = extractTimeTextParam(params);
@@ -2007,7 +2029,9 @@ export default function ElevenLabsAgentWidget({
           console.error(
             `[create_reminder] parseVoiceTime failed: raw="${time_text}" error="${parsed.error}"`,
           );
-          return `I could not understand the time "${time_text}". Ask the user to repeat when they want to be reminded.`;
+          const failureText = `I could not understand the time "${time_text}". Ask the user to repeat when they want to be reminded.`;
+          recordCreateReminderFailure(failureText, text);
+          return failureText;
         }
         console.log(
           `[create_reminder] time resolved: raw="${time_text}" parsedAs="${parsed.parsedAs}" dueAt=${parsed.dueAt} tz=${parsed.timezone}`,
@@ -2016,16 +2040,24 @@ export default function ElevenLabsAgentWidget({
       } else if (due_at) {
         const dueMs = new Date(due_at).getTime();
         if (Number.isNaN(dueMs)) {
-          return "I did not receive a valid due time. Ask the user when they want to be reminded.";
+          const failureText = "I did not receive a valid due time. Ask the user when they want to be reminded.";
+          recordCreateReminderFailure(failureText, text);
+          return failureText;
         }
         console.log(`[create_reminder] using agent-supplied due_at=${due_at} (no time_text)`);
         resolvedDueAt = due_at;
       } else {
-        return "I did not receive a time for the reminder. Ask the user when they want to be reminded.";
+        const failureText = "I did not receive a time for the reminder. Ask the user when they want to be reminded.";
+        recordCreateReminderFailure(failureText, text);
+        return failureText;
       }
 
       const userId = useAuthStore.getState().user?.id;
-      if (!userId) return "You are not signed in. Please sign in and try again.";
+      if (!userId) {
+        const failureText = "You are not signed in. Please sign in and try again.";
+        recordCreateReminderFailure(failureText, text);
+        return failureText;
+      }
 
       const reminderKey = normalizeReminderKey(text, resolvedDueAt);
       const existingReminderReply = createdReminderKeysRef.current.get(reminderKey);
@@ -2062,7 +2094,9 @@ export default function ElevenLabsAgentWidget({
           type: task.type,
         };
       } catch (err) {
-        return `Could not save the reminder. ${sanitizeCarsonErrorDetail(err)}`;
+        const failureText = `Could not save the reminder. ${sanitizeCarsonErrorDetail(err)}`;
+        recordCreateReminderFailure(failureText, text);
+        return failureText;
       }
 
       // Human-readable confirmation for the agent to speak back.
@@ -2184,7 +2218,7 @@ export default function ElevenLabsAgentWidget({
       if (parsed.error || !parsed.dueAt) {
         return `I could not understand "${first_run_text}" as a time. Ask the user when this should first fire.`;
       }
-      const nextRunAt = parsed.dueAt;
+      let nextRunAt = parsed.dueAt;
       const timezone = parsed.timezone;
 
       // ── Parse cadence phrase → (cadence_type, cadence_value) ───────────
@@ -2221,6 +2255,18 @@ export default function ElevenLabsAgentWidget({
           cadenceType = "daily";
         }
       }
+
+      // ── Prefer today's occurrence for a recurring loop's first run ──────
+      // Confirmed production failure: a daily automation requested ~2
+      // minutes ahead ("charge your phone" at 1:36 AM, created at 1:34 AM)
+      // was scheduled for the following day instead, because first_run_text
+      // — Carson's own tool-call argument, not something the user
+      // necessarily asked for — contained the literal word "tomorrow". See
+      // resolveRecurringAutomationFirstRun's own doc comment (parse-voice-
+      // time.ts) for the full reasoning and DST-safety details; pulled out
+      // as a standalone pure function so it can be tested against its
+      // actual output rather than only via source-pattern matching.
+      nextRunAt = resolveRecurringAutomationFirstRun(parsed, cadenceType);
 
       // ── Store wall-clock time in cadence_value so runner can snap back ──
       // Extract HH:MM from the resolved first-run timestamp in the user's timezone.
