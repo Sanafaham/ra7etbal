@@ -1906,6 +1906,16 @@ export default function ElevenLabsAgentWidget({
           console.info("[create_reminder] duplicate recurring tool call suppressed", {
             recurringSource,
           });
+          // This cached reply reflects an already-verified success — restore
+          // override eligibility (cleared at the top of this call) so it can
+          // still correct a contradictory agent message for this cache hit.
+          lastDirectToolSuccessRef.current = {
+            toolName: "create_reminder",
+            resultText: existingRecurringReply,
+            at: new Date().toISOString(),
+            outcome: "success",
+            inputSummary: { description: text, recurring: true },
+          };
           return existingRecurringReply;
         }
 
@@ -2024,6 +2034,16 @@ export default function ElevenLabsAgentWidget({
           description: text,
           dueAt: resolvedDueAt,
         });
+        // This cached reply reflects an already-verified success — restore
+        // override eligibility (cleared at the top of this call) so it can
+        // still correct a contradictory agent message for this cache hit.
+        lastDirectToolSuccessRef.current = {
+          toolName: "create_reminder",
+          resultText: existingReminderReply,
+          at: new Date().toISOString(),
+          outcome: "success",
+          inputSummary: { description: text, dueAt: resolvedDueAt },
+        };
         return existingReminderReply;
       }
 
@@ -2211,36 +2231,41 @@ export default function ElevenLabsAgentWidget({
       let assigneeId: string | null = null;
       let result: { automation?: { id: string; title: string } };
       try {
-        // ── Resolve optional assignee ─────────────────────────────────────
-        if (assignee_name?.trim()) {
-          const authUserId = useAuthStore.getState().user?.id;
-          if (authUserId) {
-            const peopleState = usePeopleStore.getState();
-            if (peopleState.status === "idle" || peopleState.items.length === 0) {
-              await usePeopleStore.getState().loadFor(authUserId);
-            }
-            const people = usePeopleStore.getState().items;
-            const match = people.find(
-              (p) => p.name.trim().toLowerCase() === assignee_name.trim().toLowerCase(),
-            );
-            if (!match) {
-              const failureText = `I could not find "${assignee_name}" in your contacts. Ask the user to add them first, or create the automation without an assignee.`;
-              recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
-              return failureText;
-            }
-            assigneeId = match.id;
-          }
-        }
-
-        // ── POST to /api/automations ──────────────────────────────────────
+        // ── Resolve session once, reused for both assignee lookup and the
+        // POST — previously the assignee lookup used useAuthStore's cached
+        // user id while the POST independently fetched a fresh Supabase
+        // session. If the store was stale or not yet hydrated, authUserId
+        // could be empty, silently skipping the whole assignee-resolution
+        // block and turning an explicitly staff-delegated request into an
+        // owner-only automation with no error at all.
         const { data: sessionData } = await supabase.auth.getSession();
         const jwt = sessionData?.session?.access_token;
-        if (!jwt) {
+        const authUserId = sessionData?.session?.user?.id;
+        if (!jwt || !authUserId) {
           const failureText = "You are not signed in. Please sign in and try again.";
           recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
           return failureText;
         }
 
+        // ── Resolve optional assignee ─────────────────────────────────────
+        if (assignee_name?.trim()) {
+          const peopleState = usePeopleStore.getState();
+          if (peopleState.status === "idle" || peopleState.items.length === 0) {
+            await usePeopleStore.getState().loadFor(authUserId);
+          }
+          const people = usePeopleStore.getState().items;
+          const match = people.find(
+            (p) => p.name.trim().toLowerCase() === assignee_name.trim().toLowerCase(),
+          );
+          if (!match) {
+            const failureText = `I could not find "${assignee_name}" in your contacts. Ask the user to add them first, or create the automation without an assignee.`;
+            recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+            return failureText;
+          }
+          assigneeId = match.id;
+        }
+
+        // ── POST to /api/automations ──────────────────────────────────────
         const body = {
           title: titleTrimmed,
           instruction: instrTrimmed,

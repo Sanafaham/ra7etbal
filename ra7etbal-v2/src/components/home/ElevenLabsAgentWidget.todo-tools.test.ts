@@ -122,7 +122,11 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
 
     const block = SOURCE.slice(oneTimeStart, end);
     const createIndex = block.indexOf("await createReminderTask({");
-    const overrideIndex = block.indexOf('toolName: "create_reminder"');
+    // lastIndexOf: an earlier occurrence now legitimately exists in the
+    // duplicate-cache-hit branch (restores override eligibility for an
+    // already-verified cached reply) — this test cares about the genuine
+    // creation path's own recording, which is always the later occurrence.
+    const overrideIndex = block.lastIndexOf('toolName: "create_reminder"');
 
     expect(createIndex).toBeGreaterThan(-1);
     expect(overrideIndex).toBeGreaterThan(createIndex);
@@ -135,11 +139,32 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
     const block = SOURCE.slice(recurringStart, oneTimeStart);
     const createIndex = block.indexOf("createReminderRoutineFromInstruction(");
     const successesCheckIndex = block.indexOf("successes.length > 0");
-    const overrideIndex = block.indexOf('toolName: "create_reminder"');
+    // lastIndexOf: an earlier occurrence now legitimately exists in the
+    // duplicate-cache-hit branch (restores override eligibility for an
+    // already-verified cached reply) — this test cares about the genuine
+    // creation path's own recording, which is always the later occurrence.
+    const overrideIndex = block.lastIndexOf('toolName: "create_reminder"');
 
     expect(createIndex).toBeGreaterThan(-1);
     expect(successesCheckIndex).toBeGreaterThan(createIndex);
     expect(overrideIndex).toBeGreaterThan(successesCheckIndex);
+  });
+
+  it("restores override eligibility for a cached duplicate reply, without weakening the genuine-creation recording above", () => {
+    const oneTimeBlock = SOURCE.slice(oneTimeStart, end);
+    const recurringBlock = SOURCE.slice(recurringStart, oneTimeStart);
+
+    // One-time path: cache-hit + the genuine success recording.
+    const oneTimeOccurrences = oneTimeBlock.split('toolName: "create_reminder"').length - 1;
+    expect(oneTimeOccurrences).toBe(2);
+
+    // Recurring path: cache-hit, full-success, partial-success-as-failure,
+    // and the zero-success hard-block — four distinct, individually-verified
+    // outcome recordings, one per real branch of the recurring flow.
+    const recurringOccurrences = recurringBlock.split('toolName: "create_reminder"').length - 1;
+    expect(recurringOccurrences).toBe(4);
+    expect(recurringBlock).toContain('outcome: "success"');
+    expect((recurringBlock.match(/outcome: "failure"/g) ?? []).length).toBe(2); // partial + hard-block
   });
 
   it("never falls through to the one-time task path when recurring language is detected but automation creation fails", () => {
