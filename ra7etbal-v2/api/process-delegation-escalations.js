@@ -1633,11 +1633,10 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
       });
     }
   } else {
-    // No assignee or no phone — task created for owner review, no WhatsApp needed.
-    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
-      current_state: 'sent',
-      sent_at:       now.toISOString(),
-    });
+    // No assignee or no phone — task created for owner review, notify via push.
+    // The push send is the actual delivery for an owner-only reminder (there is
+    // no WhatsApp leg here), so current_state must reflect whether it actually
+    // reached a subscription — never mark 'sent' before knowing that.
     const pushed = await sendOwnerPush({
       userId: automation.user_id,
       title: 'Ra7etBal · Reminder',
@@ -1645,18 +1644,25 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
       supabaseUrl,
       serviceKey,
     });
-    if (!pushed) {
-      console.warn('[automations] owner-only push not delivered', {
+    if (pushed) {
+      await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+        current_state: 'sent',
+        sent_at:       now.toISOString(),
+      });
+      console.log('[automations] owner-only task created and push delivered', {
+        automationId: automation.id,
+        taskId,
+      });
+    } else {
+      await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+        current_state:  'failed',
+        failure_reason: 'Owner push notification was not delivered (no enabled subscription or every send failed).',
+      });
+      console.warn('[automations] owner-only push not delivered — run marked failed', {
         automationId: automation.id,
         taskId,
       });
     }
-    console.log('[automations] owner-only task created (no WhatsApp)', {
-      automationId: automation.id,
-      taskId,
-      hasAssignee: Boolean(assignee),
-      hasPhone: Boolean(assignee?.phone),
-    });
   }
 
   // ── Step 6: Advance next_run_at / stop ────────────────────────────────────
@@ -1823,7 +1829,7 @@ async function advanceNextRunAt(supabaseUrl, serviceKey, automation, now) {
  *   null        — cadence=once, stop the automation
  *   'invalid'   — unrecognised cadence or bad cadence_value, caller should pause
  */
-function computeNextRunAt(automation) {
+export function computeNextRunAt(automation) {
   const base = new Date(automation.next_run_at);
   const { cadence_type: type, cadence_value: val = {}, timezone } = automation;
   const timeStr = typeof val?.time === 'string' ? val.time : null; // e.g. "09:00"
@@ -1874,7 +1880,7 @@ function computeNextRunAt(automation) {
  * to measure the actual UTC offset, then subtract that offset.
  * Accurate for all fixed-offset and DST timezones via Intl.DateTimeFormat.
  */
-function nextRunAtWithTime(base, daysToAdd, timeStr, timezone) {
+export function nextRunAtWithTime(base, daysToAdd, timeStr, timezone) {
   const next = new Date(base);
   next.setUTCDate(next.getUTCDate() + daysToAdd);
   const dateParts = getDatePartsInTz(next, timezone);
