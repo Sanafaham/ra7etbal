@@ -193,36 +193,53 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
       return SOURCE.slice(oneTimeStart, end);
     }
 
+    // Each test below bounds recordIndex with this branch's own
+    // returnIndex (not just "greater than failureIndex" with no upper
+    // limit) — otherwise, if this specific branch's recording call were
+    // accidentally removed, the unbounded search could still find a LATER
+    // branch's recordCreateReminderFailure call and wrongly pass.
     it("records a failure outcome when parseVoiceTime cannot resolve time_text", () => {
       const block = oneTimeBlock();
       const failureIndex = block.indexOf('I could not understand the time "${time_text}"');
+      const returnIndex = block.indexOf("return failureText;", failureIndex);
       const recordIndex = block.indexOf("recordCreateReminderFailure(failureText", failureIndex);
       expect(failureIndex).toBeGreaterThan(-1);
+      expect(returnIndex).toBeGreaterThan(failureIndex);
       expect(recordIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeLessThan(returnIndex);
     });
 
     it("records a failure outcome when the agent-supplied due_at is not a valid timestamp", () => {
       const block = oneTimeBlock();
       const failureIndex = block.indexOf("I did not receive a valid due time.");
+      const returnIndex = block.indexOf("return failureText;", failureIndex);
       const recordIndex = block.indexOf("recordCreateReminderFailure(failureText", failureIndex);
       expect(failureIndex).toBeGreaterThan(-1);
+      expect(returnIndex).toBeGreaterThan(failureIndex);
       expect(recordIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeLessThan(returnIndex);
     });
 
     it("records a failure outcome when neither time_text nor due_at is provided", () => {
       const block = oneTimeBlock();
       const failureIndex = block.indexOf("I did not receive a time for the reminder.");
+      const returnIndex = block.indexOf("return failureText;", failureIndex);
       const recordIndex = block.indexOf("recordCreateReminderFailure(failureText", failureIndex);
       expect(failureIndex).toBeGreaterThan(-1);
+      expect(returnIndex).toBeGreaterThan(failureIndex);
       expect(recordIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeLessThan(returnIndex);
     });
 
     it("records a failure outcome when the user is not signed in", () => {
       const block = oneTimeBlock();
       const failureIndex = block.indexOf("You are not signed in. Please sign in and try again.");
+      const returnIndex = block.indexOf("return failureText;", failureIndex);
       const recordIndex = block.indexOf("recordCreateReminderFailure(failureText", failureIndex);
       expect(failureIndex).toBeGreaterThan(-1);
+      expect(returnIndex).toBeGreaterThan(failureIndex);
       expect(recordIndex).toBeGreaterThan(failureIndex);
+      expect(recordIndex).toBeLessThan(returnIndex);
     });
 
     it("records a failure outcome when createReminderTask throws (the exact branch implicated in the confirmed production failure)", () => {
@@ -448,6 +465,15 @@ describe("ElevenLabsAgentWidget — create_automation self-directed assignee sco
 // general one-time-task contract, used unchanged by other tools). For a
 // recurring loop specifically, silently skipping a whole day when the
 // requested time is still safely ahead today is never correct.
+//
+// CodeRabbit finding: the actual date-adjustment logic (including
+// DST-safety) is behaviorally tested against its real output in
+// parse-voice-time.test.ts (resolveRecurringAutomationFirstRun), a pure,
+// standalone, dependency-free function extracted specifically so it could
+// be tested that way rather than only via source-pattern matching. This
+// block only verifies createAutomation actually wires nextRunAt through
+// that tested helper, using the resolved cadenceType and parsed result —
+// not a reimplementation of the date logic itself.
 describe("ElevenLabsAgentWidget — create_automation prefers today's occurrence for recurring first runs", () => {
   function createAutomationBlock(): string {
     const start = SOURCE.indexOf("const createAutomation = useCallback(");
@@ -457,38 +483,27 @@ describe("ElevenLabsAgentWidget — create_automation prefers today's occurrence
     return SOURCE.slice(start, end);
   }
 
-  it("only snaps back when parseVoiceTime resolved an explicit tomorrow day-word, for a recurring cadence", () => {
-    const block = createAutomationBlock();
-    expect(block).toContain(
-      'if (cadenceType !== "once" && parsed.parsedAs.includes(\'day="tomorrow"\')) {',
+  it("imports resolveRecurringAutomationFirstRun from parse-voice-time, alongside parseVoiceTime", () => {
+    expect(SOURCE).toContain(
+      'import { parseVoiceTime, resolveRecurringAutomationFirstRun } from "../../lib/parse-voice-time";',
     );
   });
 
-  it("subtracts exactly one day rather than reusing today's date components (immune to next-Friday/next-week miscorrection)", () => {
+  it("assigns nextRunAt from resolveRecurringAutomationFirstRun(parsed, cadenceType), called after cadenceType is resolved", () => {
     const block = createAutomationBlock();
-    expect(block).toContain(
-      "const oneDayEarlier = new Date(new Date(nextRunAt).getTime() - 24 * 60 * 60 * 1000);",
+    const cadenceTypeIndex = block.lastIndexOf('let cadenceType: CadenceType = "once";');
+    const callIndex = block.indexOf(
+      "nextRunAt = resolveRecurringAutomationFirstRun(parsed, cadenceType);",
+      cadenceTypeIndex,
     );
+    expect(cadenceTypeIndex).toBeGreaterThan(-1);
+    expect(callIndex).toBeGreaterThan(cadenceTypeIndex);
   });
 
-  it("never snaps the first run earlier than now (would make the runner treat it as immediately overdue)", () => {
+  it("declares nextRunAt as mutable (let), not const, since it is reassigned after parseVoiceTime resolves it", () => {
     const block = createAutomationBlock();
-    expect(block).toContain("if (oneDayEarlier.getTime() > Date.now() + 60_000) {");
-    expect(block).toContain("nextRunAt = oneDayEarlier.toISOString();");
-  });
-
-  it("does not apply the snap-back to a one-time (cadenceType === \"once\") automation", () => {
-    const block = createAutomationBlock();
-    const guardIndex = block.indexOf('parsed.parsedAs.includes(\'day="tomorrow"\')');
-    expect(guardIndex).toBeGreaterThan(-1);
-    // The same line's condition must require cadenceType !== "once" — a
-    // "once" automation is a genuinely one-time task, where an explicit
-    // "tomorrow" from the user must be respected exactly as parseVoiceTime
-    // resolved it.
-    const guardLineStart = block.lastIndexOf("if (cadenceType", guardIndex);
-    expect(guardLineStart).toBeGreaterThan(-1);
-    const guardLine = block.slice(guardLineStart, guardIndex + 40);
-    expect(guardLine).toContain('cadenceType !== "once"');
+    expect(block).toContain("let nextRunAt = parsed.dueAt;");
+    expect(block).not.toContain("const nextRunAt = parsed.dueAt;");
   });
 });
 

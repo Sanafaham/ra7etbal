@@ -320,3 +320,56 @@ export function parseVoiceTime(
   console.error(`[parse-voice-time] FAILED: ${error}`);
   return { dueAt: "", timezone, localNow, rawText: timeText, parsedAs: "failed", error };
 }
+
+/**
+ * resolveRecurringAutomationFirstRun
+ *
+ * Confirmed production failure: a daily automation requested ~2 minutes
+ * ahead ("charge your phone" at 1:36 AM, created at 1:34 AM) was scheduled
+ * for the following day instead of firing that morning, because the
+ * first_run_text passed to create_automation contained the literal word
+ * "tomorrow" (the tool caller's own argument, not necessarily what the
+ * user asked for). parseVoiceTime's "absolute, day=tomorrow" branch always
+ * honors that literally — correct, intentional behavior for a one-time
+ * task (see its own "critical fix" comment above), left unchanged here.
+ *
+ * For a recurring loop specifically, "first run" means "the next time this
+ * cadence's time of day happens" — silently skipping a whole day when that
+ * time is still safely ahead today is never correct. This prefers today's
+ * occurrence in exactly that one case.
+ *
+ * Scoped narrowly via parsedAs (parseVoiceTime's only machine-readable
+ * signal of which branch fired) to the literal "day=tomorrow" branch —
+ * never touches "next Friday", "next week", "in N days", or any other
+ * genuinely multi-day-ahead result, which must keep landing on their real
+ * target day. Never moves a run earlier than "now" either (would make the
+ * automation runner treat it as immediately overdue). Uses local
+ * calendar-day construction (year/month/day + the resolved hour/minute),
+ * not a fixed 24-hour subtraction, so the result stays correct across a
+ * DST transition.
+ */
+export function resolveRecurringAutomationFirstRun(
+  parsed: Pick<VoiceTimeResult, "dueAt" | "parsedAs">,
+  cadenceType: string,
+  now: Date = new Date(),
+): string {
+  if (cadenceType === "once" || !parsed.parsedAs.includes('day="tomorrow"')) {
+    return parsed.dueAt;
+  }
+
+  const tomorrowDate = new Date(parsed.dueAt);
+  const todayAtSameLocalTime = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+    tomorrowDate.getHours(),
+    tomorrowDate.getMinutes(),
+    0,
+    0,
+  );
+
+  if (todayAtSameLocalTime.getTime() > now.getTime() + 60_000) {
+    return todayAtSameLocalTime.toISOString();
+  }
+  return parsed.dueAt;
+}

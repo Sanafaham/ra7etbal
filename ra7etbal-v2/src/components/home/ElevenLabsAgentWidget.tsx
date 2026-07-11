@@ -43,7 +43,7 @@ import {
   SESSION_RECAP_PREFIX,
   type TranscriptMessage,
 } from "../../lib/carson-summarize";
-import { parseVoiceTime } from "../../lib/parse-voice-time";
+import { parseVoiceTime, resolveRecurringAutomationFirstRun } from "../../lib/parse-voice-time";
 import { buildCarsonOpeningLine } from "../../lib/carson-opening";
 import { createReminderTask } from "../../lib/reminders";
 import {
@@ -2261,29 +2261,12 @@ export default function ElevenLabsAgentWidget({
       // minutes ahead ("charge your phone" at 1:36 AM, created at 1:34 AM)
       // was scheduled for the following day instead, because first_run_text
       // — Carson's own tool-call argument, not something the user
-      // necessarily asked for — contained the literal word "tomorrow", and
-      // parseVoiceTime (correctly, for its general one-time-task contract
-      // used by other tools — see its own "critical fix" comment) always
-      // honors an explicit "tomorrow" literally. For a recurring loop
-      // specifically, "first run" means "the next time this cadence's time
-      // of day happens" — silently skipping a whole day when that time is
-      // still safely ahead today is never the intended behavior.
-      //
-      // Scoped narrowly to exactly parseVoiceTime's "absolute, day=tomorrow"
-      // branch (checked via parsedAs, its only machine-readable signal of
-      // which branch fired) — never touches "next Friday", "next week",
-      // "in N days", or any other genuinely-intentional multi-day-ahead
-      // result, which must keep landing on their real target day. Never
-      // moves a run earlier than "now" either (no snapping into the past,
-      // which would make the runner treat it as immediately overdue). A
-      // "once" automation keeps parseVoiceTime's literal resolution
-      // unchanged.
-      if (cadenceType !== "once" && parsed.parsedAs.includes('day="tomorrow"')) {
-        const oneDayEarlier = new Date(new Date(nextRunAt).getTime() - 24 * 60 * 60 * 1000);
-        if (oneDayEarlier.getTime() > Date.now() + 60_000) {
-          nextRunAt = oneDayEarlier.toISOString();
-        }
-      }
+      // necessarily asked for — contained the literal word "tomorrow". See
+      // resolveRecurringAutomationFirstRun's own doc comment (parse-voice-
+      // time.ts) for the full reasoning and DST-safety details; pulled out
+      // as a standalone pure function so it can be tested against its
+      // actual output rather than only via source-pattern matching.
+      nextRunAt = resolveRecurringAutomationFirstRun(parsed, cadenceType);
 
       // ── Store wall-clock time in cadence_value so runner can snap back ──
       // Extract HH:MM from the resolved first-run timestamp in the user's timezone.
