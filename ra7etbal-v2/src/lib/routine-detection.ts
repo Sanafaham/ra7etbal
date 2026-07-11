@@ -60,6 +60,21 @@ export function detectAllRecurringSchedules(text: string): RecurringSchedule[] {
     return [{ schedule: "daily" }];
   }
 
+  // Open-ended recurring intent — "every day UNTIL I TELL YOU TO STOP",
+  // "until told otherwise", "until further notice". Checked independently of
+  // the "every day" match above (not just as a fallback) so this phrase alone
+  // still triggers recurring detection even if "every day" itself is absent
+  // from whichever candidate source is being checked — voice transcription
+  // and LLM rewriting have both been observed to drop one cadence phrase
+  // while preserving another in the same utterance.
+  if (
+    /\buntil\s+(?:i\s+)?tell\s+you\s+to\s+stop\b/.test(lower) ||
+    /\buntil\s+(?:(?:i|you)\s+)?(?:hear|told)\s+otherwise\b/.test(lower) ||
+    /\buntil\s+further\s+notice\b/.test(lower)
+  ) {
+    return [{ schedule: "daily" }];
+  }
+
   // every morning / every evening / every night / every afternoon
   // "each morning" etc. — all map to daily
   if (/\b(every|each)\s+(morning|evening|night|afternoon)\b/.test(lower)) {
@@ -133,7 +148,7 @@ export function resolveRecurringAutomationPerson(
 
 // Recurring language to strip from the task message before storing in payload.
 const RECURRING_CLEAN_RE =
-  /\b(every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|day|week|morning|evening|night|afternoon|\d+\s+days?|[a-z]+\s+days?)|each\s+(morning|evening|night|afternoon|day)|daily|weekly|as\s+a\s+routine\s+task|as\s+a\s+routine|on\s+a\s+recurring\s+basis|recurring\s+basis|routine\s+task|regularly)\b/gi;
+  /\b(every\s+(sunday|monday|tuesday|wednesday|thursday|friday|saturday|day|week|morning|evening|night|afternoon|\d+\s+days?|[a-z]+\s+days?)|each\s+(morning|evening|night|afternoon|day)|daily|weekly|as\s+a\s+routine\s+task|as\s+a\s+routine|on\s+a\s+recurring\s+basis|recurring\s+basis|routine\s+task|regularly|until\s+(?:i\s+)?tell\s+you\s+to\s+stop|until\s+(?:(?:i|you)\s+)?(?:hear|told)\s+otherwise|until\s+further\s+notice)\b/gi;
 
 /**
  * Strips recurring language and the routing prefix ("ask Grace to") from an

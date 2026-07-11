@@ -16,6 +16,16 @@ function successResult(overrides: Partial<DirectToolSuccessResult> = {}): Direct
   };
 }
 
+function failureResult(overrides: Partial<DirectToolSuccessResult> = {}): DirectToolSuccessResult {
+  return {
+    toolName: "create_reminder",
+    resultText: "I could not create the recurring reminder.",
+    at: "2026-06-28T00:02:18.943Z",
+    outcome: "failure",
+    ...overrides,
+  };
+}
+
 describe("resolveCarsonDisplayMessage", () => {
   it("overrides a contradictory failure message with the successful create_todo result", () => {
     const result = resolveCarsonDisplayMessage(
@@ -195,6 +205,100 @@ describe("resolveCarsonDisplayMessage", () => {
     expect(resolveCarsonDisplayMessage(failureMessage, successResult(), NOW)).toBe(
       "Added to your to-do list.",
     );
+  });
+});
+
+// Regression: a production recurring-reminder request was rejected with a
+// verified tool failure (HTTP 400 from /api/automations), yet Carson still
+// spoke a fabricated success ("I've set a nightly reminder..."). The
+// override system previously only corrected the opposite direction (tool
+// succeeded, agent wrongly sounds like it failed) — these tests lock in the
+// new symmetric direction: tool failed, agent wrongly sounds successful.
+describe("resolveCarsonDisplayMessage — tool-failure truthfulness", () => {
+  it("overrides a fabricated success reply with the verified create_reminder failure", () => {
+    const result = resolveCarsonDisplayMessage(
+      "I've set a nightly reminder at 9:10 PM to check on Google Console — starting tonight.",
+      failureResult({ resultText: "I could not create the recurring reminder." }),
+      NOW,
+    );
+    expect(result).toBe("I could not create the recurring reminder.");
+  });
+
+  it("overrides a fabricated success reply with the verified create_automation failure", () => {
+    const result = resolveCarsonDisplayMessage(
+      "I've got that running. First check is tonight at 9:10 PM.",
+      failureResult({
+        toolName: "create_automation",
+        resultText: "I could not create that automation. Recurring WhatsApp automations are currently disabled.",
+      }),
+      NOW,
+    );
+    expect(result).toBe(
+      "I could not create that automation. Recurring WhatsApp automations are currently disabled.",
+    );
+  });
+
+  it("does not override an agent reply that already truthfully reads as a failure", () => {
+    // Carson failure speech after a real tool failure must remain as-is —
+    // it's already truthful, forcing the canned tool text isn't necessary.
+    const result = resolveCarsonDisplayMessage(
+      "I wasn't able to set that up. Please try again.",
+      failureResult(),
+      NOW,
+    );
+    expect(result).toBe("I wasn't able to set that up. Please try again.");
+  });
+
+  it("does not override for tools outside the allow-list, even on a recorded failure", () => {
+    const result = resolveCarsonDisplayMessage(
+      "Done, that's all set.",
+      failureResult({ toolName: "save_note", resultText: "Could not save the note." }),
+      NOW,
+    );
+    expect(result).toBe("Done, that's all set.");
+  });
+
+  // CodeRabbit finding: "doesn't sound like failure" was too broad a trigger
+  // for the failure-override — a neutral follow-up unrelated to the failed
+  // action also doesn't sound like failure, but overriding it with stale
+  // failure text would itself be an untruthful, out-of-context correction.
+  it("does not override a neutral follow-up message that isn't claiming success", () => {
+    const result = resolveCarsonDisplayMessage(
+      "What would you like me to do next?",
+      failureResult(),
+      NOW,
+    );
+    expect(result).toBe("What would you like me to do next?");
+  });
+
+  it("does not override a neutral acknowledgement that isn't claiming success", () => {
+    const result = resolveCarsonDisplayMessage(
+      "Anything else I can help with?",
+      failureResult(),
+      NOW,
+    );
+    expect(result).toBe("Anything else I can help with?");
+  });
+
+  it("does not override a failure once it is outside the time window (stale result does not leak into a later reply)", () => {
+    const result = resolveCarsonDisplayMessage(
+      "I've set that reminder for you.",
+      failureResult({ at: "2026-06-28T00:01:00.000Z" }),
+      NOW,
+    );
+    expect(result).toBe("I've set that reminder for you.");
+  });
+
+  it("a successful create_automation result still overrides a contradictory failure-sounding agent reply (allow-list coverage)", () => {
+    const result = resolveCarsonDisplayMessage(
+      "I wasn't able to create that automation.",
+      successResult({
+        toolName: "create_automation",
+        resultText: "I've got that running for Grace. First check is tomorrow at 9:00 AM.",
+      }),
+      NOW,
+    );
+    expect(result).toBe("I've got that running for Grace. First check is tomorrow at 9:00 AM.");
   });
 });
 

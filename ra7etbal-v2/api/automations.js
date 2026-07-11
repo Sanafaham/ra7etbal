@@ -36,6 +36,36 @@ const ALLOWED_UPDATE_FIELDS = new Set([
 // Sort order: active → paused → stopped → archived
 const STATUS_ORDER = { active: 0, paused: 1, stopped: 2, archived: 3 };
 
+/**
+ * Privacy-safe rejection diagnostics for POST /api/automations. A production
+ * incident (a live create_automation call rejected with 400) was
+ * undiagnosable from server logs alone, because none of this handler's
+ * validation branches logged anything before returning — only structural
+ * signals are logged here, never title/instruction text, tokens, or the raw
+ * body, so a future rejection can be root-caused without exposing reminder
+ * content. automation_type/cadence_type are client-controlled strings — only
+ * logged when they match a known allowlisted value, never copied verbatim,
+ * so an arbitrary/oversized/malformed value can't land in server logs.
+ */
+function logAutomationPostRejection(reasonCode, uid, body) {
+  const automationType = VALID_AUTOMATION_TYPES.includes(body?.automation_type)
+    ? body.automation_type
+    : null;
+  const cadenceType = VALID_CADENCE_TYPES.includes(body?.cadence_type)
+    ? body.cadence_type
+    : null;
+  console.warn('[automations POST] rejected', {
+    reasonCode,
+    ownerId: uid ?? null,
+    automationType,
+    cadenceType,
+    hasAssigneeId: Boolean(body?.assignee_id),
+    hasTitle: Boolean(body?.title?.trim?.()),
+    hasInstruction: Boolean(body?.instruction?.trim?.()),
+    hasNextRunAt: Boolean(body?.next_run_at),
+  });
+}
+
 export default async function handler(req, res) {
   if (req.method === 'GET')   return handleGet(req, res);
   if (req.method === 'POST')  return handlePost(req, res);
@@ -141,30 +171,37 @@ async function handlePost(req, res) {
   const { title, instruction, cadence_type, cadence_value, next_run_at } = body;
 
   if (!title?.trim()) {
+    logAutomationPostRejection('title_missing', uid, body);
     return res.status(400).json({ error: 'title is required.' });
   }
   if (!instruction?.trim()) {
+    logAutomationPostRejection('instruction_missing', uid, body);
     return res.status(400).json({ error: 'instruction is required.' });
   }
   if (!cadence_type || !VALID_CADENCE_TYPES.includes(cadence_type)) {
+    logAutomationPostRejection('cadence_type_invalid', uid, body);
     return res.status(400).json({
       error: `cadence_type must be one of: ${VALID_CADENCE_TYPES.join(', ')}.`,
     });
   }
   if (cadence_value !== undefined && (typeof cadence_value !== 'object' || Array.isArray(cadence_value))) {
+    logAutomationPostRejection('cadence_value_invalid', uid, body);
     return res.status(400).json({ error: 'cadence_value must be an object.' });
   }
   if (!next_run_at) {
+    logAutomationPostRejection('next_run_at_missing', uid, body);
     return res.status(400).json({ error: 'next_run_at is required.' });
   }
   const nextRunDate = new Date(next_run_at);
   if (isNaN(nextRunDate.getTime())) {
+    logAutomationPostRejection('next_run_at_invalid', uid, body);
     return res.status(400).json({ error: 'next_run_at must be a valid ISO timestamp.' });
   }
 
   // ── Optional field validation ─────────────────────────────────────────────
   const proof_type = body.proof_type ?? null;
   if (proof_type !== null && !VALID_PROOF_TYPES.includes(proof_type)) {
+    logAutomationPostRejection('proof_type_invalid', uid, body);
     return res.status(400).json({
       error: `proof_type must be null or one of: ${VALID_PROOF_TYPES.join(', ')}.`,
     });
@@ -172,6 +209,7 @@ async function handlePost(req, res) {
 
   const automation_type = body.automation_type ?? 'delegation';
   if (!VALID_AUTOMATION_TYPES.includes(automation_type)) {
+    logAutomationPostRejection('automation_type_invalid', uid, body);
     return res.status(400).json({
       error: `automation_type must be one of: ${VALID_AUTOMATION_TYPES.join(', ')}.`,
     });
@@ -181,6 +219,7 @@ async function handlePost(req, res) {
     assignee_id: body.assignee_id ?? null,
     cadence_type,
   })) {
+    logAutomationPostRejection('unsupported_recurring_whatsapp', uid, body);
     return res.status(400).json({ error: UNSUPPORTED_RECURRING_WHATSAPP_MESSAGE });
   }
 
@@ -188,12 +227,15 @@ async function handlePost(req, res) {
   const escalate_after_min  = body.escalate_after_min  ?? 360;
 
   if (!Number.isInteger(followup_after_min) || followup_after_min <= 0) {
+    logAutomationPostRejection('followup_after_min_invalid', uid, body);
     return res.status(400).json({ error: 'followup_after_min must be a positive integer.' });
   }
   if (!Number.isInteger(escalate_after_min) || escalate_after_min <= 0) {
+    logAutomationPostRejection('escalate_after_min_invalid', uid, body);
     return res.status(400).json({ error: 'escalate_after_min must be a positive integer.' });
   }
   if (escalate_after_min <= followup_after_min) {
+    logAutomationPostRejection('escalate_not_greater_than_followup', uid, body);
     return res.status(400).json({
       error: 'escalate_after_min must be greater than followup_after_min.',
     });

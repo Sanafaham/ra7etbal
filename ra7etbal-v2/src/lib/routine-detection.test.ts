@@ -73,6 +73,38 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+// Regression: production request "Remind me every day until I tell you to
+// stop to check the Meta template approval" was not detected as recurring by
+// one candidate source and silently fell through to a one-time reminder that
+// fired once and moved to History, with no automation ever created. "until I
+// tell you to stop" is now an independent recurring signal, not solely
+// reliant on "every day" also surviving in the same source.
+describe("detectAllRecurringSchedules — open-ended 'until told to stop' phrasing", () => {
+  it("detects recurring intent from 'every day until I tell you to stop' as a daily cadence", () => {
+    const schedules = detectAllRecurringSchedules(
+      "Remind me every day until I tell you to stop to check the Meta template approval.",
+    );
+    expect(schedules).toEqual([{ schedule: "daily" }]);
+  });
+
+  it("detects recurring intent from 'until I tell you to stop' alone, even without 'every day' surviving in the source", () => {
+    const schedules = detectAllRecurringSchedules(
+      "Remind me until I tell you to stop to check the Meta template approval.",
+    );
+    expect(schedules).toEqual([{ schedule: "daily" }]);
+  });
+
+  it("detects 'until told otherwise' and 'until further notice' as recurring", () => {
+    expect(detectAllRecurringSchedules("Keep reminding me until told otherwise.")).toEqual([{ schedule: "daily" }]);
+    expect(detectAllRecurringSchedules("Remind me about this until further notice.")).toEqual([{ schedule: "daily" }]);
+  });
+
+  it("detects 'until I hear otherwise' as recurring (not just 'until you hear otherwise')", () => {
+    expect(detectAllRecurringSchedules("Remind me every day until I hear otherwise.")).toEqual([{ schedule: "daily" }]);
+    expect(detectAllRecurringSchedules("Remind me about this until I hear otherwise.")).toEqual([{ schedule: "daily" }]);
+  });
+});
+
 describe("findPersonInInstruction — self vs third-party detection", () => {
   it("finds no person for self-directed reminders", () => {
     expect(findPersonInInstruction("Remind me every day to take my medication.", [CHRISTOPHER, GRACE])).toBeNull();
@@ -199,6 +231,39 @@ describe("createReminderRoutineFromInstruction", () => {
     expect(payload.cadence_value.time).toBe("20:30");
     // Valid future next_run_at — the automation is schedulable, i.e. active.
     expect(new Date(payload.next_run_at).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  // Regression: production request "Remind me every day until I tell you to
+  // stop to check the Meta template approval" silently became a one-time
+  // reminder. This locks in the full owner-only automation shape for that
+  // exact phrase, end to end.
+  it("creates an owner-only automation for 'every day until I tell you to stop', never a one-time task", async () => {
+    const schedules = detectAllRecurringSchedules(
+      "Remind me every day until I tell you to stop to check the Meta template approval.",
+    );
+    expect(schedules).toEqual([{ schedule: "daily" }]);
+
+    const summary = await createReminderRoutineFromInstruction(
+      "Remind me every day until I tell you to stop to check the Meta template approval.",
+      schedules[0],
+    );
+
+    expect(summary).toBeTruthy();
+    expect(summary).toContain("You can manage it in Automations.");
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    const payload = JSON.parse(String(init?.body));
+    expect(payload).toMatchObject({
+      cadence_type: "daily",
+      assignee_id: null,
+      created_by: "carson",
+      automation_type: "delegation",
+    });
+    expect(payload.instruction.toLowerCase()).toContain("meta template approval");
+    // Never a one-time task — this path only ever POSTs to /api/automations.
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/automations",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 
   it("defaults to 9 AM when no explicit time is spoken, without dropping the recurrence", async () => {

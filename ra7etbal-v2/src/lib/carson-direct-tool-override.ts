@@ -20,12 +20,23 @@ export interface DirectToolSuccessResult {
   resultText: string;
   at: string;
   inputSummary?: unknown;
+  /**
+   * "success" (default, for backward compatibility with every call site that
+   * predates this field) or "failure". A tool records "failure" only at its
+   * own verified failure return points (hard-blocks, non-2xx responses,
+   * unconfirmed persistence) — never a guess. This lets the override system
+   * correct the opposite direction from what it originally shipped for: the
+   * agent's own separately-generated spoken reply claiming success when the
+   * tool call is known to have failed.
+   */
+  outcome?: "success" | "failure";
 }
 
 const OVERRIDABLE_TOOL_NAMES = new Set([
   "create_todo",
   "complete_todo",
   "create_reminder",
+  "create_automation",
   "execute_instruction",
   "control_task",
   "send_delegation",
@@ -42,10 +53,31 @@ const GENERIC_KNOWLEDGE_ANSWER_PATTERN =
 const REMINDER_CONFIRMATION_PATTERN =
   /\b(?:i(?:'|’)ll remind you|reminder (?:created|set|saved)|created (?:the )?reminder|set (?:the )?reminder)\b/i;
 
+// Only used on the failure-outcome side, to distinguish a fabricated success
+// claim from a neutral follow-up ("Anything else?", "What would you like me
+// to do next?"). "Doesn't sound like failure" is too broad a net — a neutral
+// message also doesn't sound like failure, but overriding it with stale
+// failure text would itself be an untruthful, out-of-context correction.
+const SUCCESS_LANGUAGE_PATTERN =
+  /\b(?:i(?:'|’)ve|i(?:'|’)ll|i have|done\b|all set|set up|created|added|scheduled|that(?:'|’)s (?:taken care of|handled|set)|got that (?:running|set|done)|reminder (?:created|set|saved))\b/i;
+
 function shouldOverrideAgentMessage(
   agentMessage: string,
   lastSuccess: DirectToolSuccessResult,
 ): boolean {
+  if (lastSuccess.outcome === "failure") {
+    // The tool call is verified to have failed. Only override when the
+    // agent's own message positively reads as a completion/success claim —
+    // never on the mere absence of failure language, which would also
+    // wrongly catch neutral follow-ups unrelated to the failed action. If
+    // the agent's message already sounds like a failure, leave it; it's
+    // already truthful.
+    return (
+      SUCCESS_LANGUAGE_PATTERN.test(agentMessage) &&
+      !FAILURE_LANGUAGE_PATTERN.test(agentMessage)
+    );
+  }
+
   if (
     lastSuccess.toolName === "execute_instruction" &&
     isDelegationCoveragePartialSuccess(lastSuccess.inputSummary)

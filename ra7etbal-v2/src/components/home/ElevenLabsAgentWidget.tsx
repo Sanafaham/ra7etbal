@@ -1847,6 +1847,11 @@ export default function ElevenLabsAgentWidget({
       // "description" is create_reminder's existing exact key — tried first,
       // then the same note-shaped fallbacks as save_note.
       const text = extractStringField(params, ["description", "note", "text", "content"]).trim();
+      // Clear any prior tool's recorded outcome immediately — this call has
+      // not verified anything yet, so a stale success/failure from a
+      // previous, unrelated tool call must not be eligible to override
+      // Carson's reply to THIS request (see carson-direct-tool-override.ts).
+      lastDirectToolSuccessRef.current = null;
       if (!text) {
         return "I did not receive a reminder description. Ask the user what they want to be reminded about.";
       }
@@ -1901,6 +1906,16 @@ export default function ElevenLabsAgentWidget({
           console.info("[create_reminder] duplicate recurring tool call suppressed", {
             recurringSource,
           });
+          // This cached reply reflects an already-verified success — restore
+          // override eligibility (cleared at the top of this call) so it can
+          // still correct a contradictory agent message for this cache hit.
+          lastDirectToolSuccessRef.current = {
+            toolName: "create_reminder",
+            resultText: existingRecurringReply,
+            at: new Date().toISOString(),
+            outcome: "success",
+            inputSummary: { description: text, recurring: true },
+          };
           return existingRecurringReply;
         }
 
@@ -1918,7 +1933,9 @@ export default function ElevenLabsAgentWidget({
         );
 
         const successes = results.filter(Boolean) as string[];
-        if (successes.length > 0) {
+        const allSchedulesSucceeded = successes.length === recurringSchedules.length;
+
+        if (successes.length > 0 && allSchedulesSucceeded) {
           const reply = successes.join(" ");
           createdReminderKeysRef.current.set(recurringKey, reply);
           sessionActionsRef.current.push(`Automation(s) created: ${recurringSource}`);
@@ -1928,9 +1945,35 @@ export default function ElevenLabsAgentWidget({
             toolName: "create_reminder",
             resultText: reply,
             at: new Date().toISOString(),
+            outcome: "success",
             inputSummary: { description: text, recurring: true },
           };
           return reply;
+        }
+
+        if (successes.length > 0 && !allSchedulesSucceeded) {
+          // Partial: e.g. "every Monday and Thursday" created one schedule
+          // but not the other. This is not a clean success — never cache it
+          // (a cached reply would suppress a retry of the failed schedule)
+          // and never dispatch the refresh event as if everything worked.
+          // Recorded as a failure outcome so the override system corrects
+          // Carson if it over-claims a fully successful recurring reminder.
+          const partialReply = `${successes.join(" ")} I could not create the recurring reminder for the rest of what you asked — please try again for that part.`;
+          console.warn("[create_reminder:PARTIAL_SUCCESS]", {
+            recurringSource,
+            requested: recurringSchedules.length,
+            created: successes.length,
+          });
+          sessionActionsRef.current.push(`Automation(s) partially created: ${recurringSource}`);
+          window.dispatchEvent(new CustomEvent("ra7etbal:routine-created"));
+          lastDirectToolSuccessRef.current = {
+            toolName: "create_reminder",
+            resultText: partialReply,
+            at: new Date().toISOString(),
+            outcome: "failure",
+            inputSummary: { description: text, recurring: true, partial: true },
+          };
+          return partialReply;
         }
 
         // Hard-block: recurring language detected but automation creation
@@ -1938,7 +1981,18 @@ export default function ElevenLabsAgentWidget({
         // one-time task path below — that would silently drop the recurrence
         // and let Carson claim a false "every night" success.
         console.warn("[create_reminder:HARD_BLOCK] recurring automation creation failed", { recurringSource });
-        return "I could not create the recurring reminder.";
+        const recurringFailureText = "I could not create the recurring reminder.";
+        // Record the verified failure so the display-override system can
+        // correct Carson's own separately-generated spoken reply if it
+        // claims success anyway — see carson-direct-tool-override.ts.
+        lastDirectToolSuccessRef.current = {
+          toolName: "create_reminder",
+          resultText: recurringFailureText,
+          at: new Date().toISOString(),
+          outcome: "failure",
+          inputSummary: { description: text, recurring: true },
+        };
+        return recurringFailureText;
       }
 
       // ── Resolve due time (one-time reminder path) ───────────────────────────
@@ -1980,6 +2034,16 @@ export default function ElevenLabsAgentWidget({
           description: text,
           dueAt: resolvedDueAt,
         });
+        // This cached reply reflects an already-verified success — restore
+        // override eligibility (cleared at the top of this call) so it can
+        // still correct a contradictory agent message for this cache hit.
+        lastDirectToolSuccessRef.current = {
+          toolName: "create_reminder",
+          resultText: existingReminderReply,
+          at: new Date().toISOString(),
+          outcome: "success",
+          inputSummary: { description: text, dueAt: resolvedDueAt },
+        };
         return existingReminderReply;
       }
 
@@ -2031,6 +2095,20 @@ export default function ElevenLabsAgentWidget({
     [],
   );
 
+  // Records a verified create_automation failure so the display-override
+  // system (carson-direct-tool-override.ts) can correct Carson's own
+  // separately-generated spoken reply if it claims success anyway. Never
+  // called except at create_automation's own definite-failure return points.
+  function recordCreateAutomationFailure(resultText: string, title: string, cadenceType: string) {
+    lastDirectToolSuccessRef.current = {
+      toolName: "create_automation",
+      resultText,
+      at: new Date().toISOString(),
+      outcome: "failure",
+      inputSummary: { title, cadenceType },
+    };
+  }
+
   // ------------------------------------------------------------------
   // Client tool: create_automation
   // Carson calls this to schedule a recurring task loop.
@@ -2060,11 +2138,27 @@ export default function ElevenLabsAgentWidget({
       proof_type?: "photo" | "confirmation" | "text" | null;
     }): Promise<string> => {
       const { cadence_phrase, first_run_text, proof_required, proof_type } = params;
-      const assignee_name = params?.assignee_name ?? extractPersonNameParam(params, "assignee_name");
+      // Exact key only — no generic name/to/recipient_name/person_name
+      // fallback here. Unlike tools whose whole purpose requires a person
+      // (send_direct_whatsapp_message, control_task, etc., where a missing
+      // person just fails to match), create_automation is routinely
+      // self-directed with no person at all. A fuzzy fallback risks pulling
+      // an unrelated stray field (e.g. a duplicated title) into assignee_name
+      // and silently turning an owner-only reminder into a rejected/
+      // misattributed staff automation. Only delegate when the request
+      // explicitly names an assignee under this tool's own declared key.
+      const assignee_name = typeof params?.assignee_name === "string" ? params.assignee_name : "";
       const titleTrimmed = (params?.title ?? "").trim();
       // "instruction" is the existing exact key — tried first, with the same
       // task-shaped fallbacks used elsewhere (task/description/text).
       const instrTrimmed = extractAutomationInstructionParam(params).trim();
+      // Clear any prior tool's recorded outcome immediately — this call has
+      // not verified anything yet, so a stale success (or failure) from a
+      // previous, unrelated tool call must not be eligible to override
+      // Carson's reply to THIS request. Guards against a definite failure
+      // further down this function (missing fields, failed assignee lookup,
+      // not signed in) leaving an old result active for the override system.
+      lastDirectToolSuccessRef.current = null;
       if (!titleTrimmed) return "I did not receive a title. Ask the user what to call this automation.";
       if (!instrTrimmed) return "I did not receive an instruction. Ask the user what Carson should do.";
       if (!cadence_phrase?.trim()) return "I did not receive a cadence. Ask the user how often this should run.";
@@ -2128,11 +2222,33 @@ export default function ElevenLabsAgentWidget({
         cadenceValue = { ...cadenceValue, time: `${hh}:${mm}` };
       }
 
-      // ── Resolve optional assignee ───────────────────────────────────────
+      // The full setup (assignee lookup, session fetch) through the POST is
+      // one try/catch: the async setup calls (loadFor, getSession) can throw
+      // just as easily as the fetch itself, and an uncaught rejection here
+      // would escape the tool handler with no clean failure message and no
+      // recorded outcome — exactly the kind of unclear result this tool must
+      // never let through.
       let assigneeId: string | null = null;
-      if (assignee_name?.trim()) {
-        const authUserId = useAuthStore.getState().user?.id;
-        if (authUserId) {
+      let result: { automation?: { id: string; title: string } };
+      try {
+        // ── Resolve session once, reused for both assignee lookup and the
+        // POST — previously the assignee lookup used useAuthStore's cached
+        // user id while the POST independently fetched a fresh Supabase
+        // session. If the store was stale or not yet hydrated, authUserId
+        // could be empty, silently skipping the whole assignee-resolution
+        // block and turning an explicitly staff-delegated request into an
+        // owner-only automation with no error at all.
+        const { data: sessionData } = await supabase.auth.getSession();
+        const jwt = sessionData?.session?.access_token;
+        const authUserId = sessionData?.session?.user?.id;
+        if (!jwt || !authUserId) {
+          const failureText = "You are not signed in. Please sign in and try again.";
+          recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+          return failureText;
+        }
+
+        // ── Resolve optional assignee ─────────────────────────────────────
+        if (assignee_name?.trim()) {
           const peopleState = usePeopleStore.getState();
           if (peopleState.status === "idle" || peopleState.items.length === 0) {
             await usePeopleStore.getState().loadFor(authUserId);
@@ -2142,32 +2258,27 @@ export default function ElevenLabsAgentWidget({
             (p) => p.name.trim().toLowerCase() === assignee_name.trim().toLowerCase(),
           );
           if (!match) {
-            return `I could not find "${assignee_name}" in your contacts. Ask the user to add them first, or create the automation without an assignee.`;
+            const failureText = `I could not find "${assignee_name}" in your contacts. Ask the user to add them first, or create the automation without an assignee.`;
+            recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+            return failureText;
           }
           assigneeId = match.id;
         }
-      }
 
-      // ── POST to /api/automations ────────────────────────────────────────
-      const { data: sessionData } = await supabase.auth.getSession();
-      const jwt = sessionData?.session?.access_token;
-      if (!jwt) return "You are not signed in. Please sign in and try again.";
+        // ── POST to /api/automations ──────────────────────────────────────
+        const body = {
+          title: titleTrimmed,
+          instruction: instrTrimmed,
+          cadence_type: cadenceType,
+          cadence_value: cadenceValue,
+          next_run_at: nextRunAt,
+          timezone,
+          assignee_id: assigneeId,
+          created_by: "carson",
+          proof_required: proof_required === true,
+          proof_type: proof_type ?? null,
+        };
 
-      const body = {
-        title: titleTrimmed,
-        instruction: instrTrimmed,
-        cadence_type: cadenceType,
-        cadence_value: cadenceValue,
-        next_run_at: nextRunAt,
-        timezone,
-        assignee_id: assigneeId,
-        created_by: "carson",
-        proof_required: proof_required === true,
-        proof_type: proof_type ?? null,
-      };
-
-      let result: { automation?: { id: string; title: string } };
-      try {
         const res = await fetch("/api/automations", {
           method: "POST",
           headers: {
@@ -2178,17 +2289,24 @@ export default function ElevenLabsAgentWidget({
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          return `I could not create that automation. ${(err as { error?: string }).error ?? "Please try again."}`;
+          const failureText = `I could not create that automation. ${(err as { error?: string }).error ?? "Please try again."}`;
+          recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+          return failureText;
         }
         result = await res.json().catch(() => ({}));
         if (!result?.automation?.id) {
           // A 2xx with no echoed automation id is not persistence
           // confirmation — never report success for an unclear response.
           console.error("[create_automation] unconfirmed — no automation id in response");
-          return "I could not confirm that automation was saved. Please try again.";
+          const failureText = "I could not confirm that automation was saved. Please try again.";
+          recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+          return failureText;
         }
-      } catch {
-        return "I could not reach the server. Please check your connection and try again.";
+      } catch (err) {
+        console.error("[create_automation] unexpected error", err);
+        const failureText = "I could not reach the server. Please check your connection and try again.";
+        recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+        return failureText;
       }
 
       // ── Confirmation for Carson to speak back ───────────────────────────
@@ -2209,7 +2327,15 @@ export default function ElevenLabsAgentWidget({
 
       sessionActionsRef.current.push(`Created automation: ${titleTrimmed} (${cadenceLabel[cadenceType]})`);
       console.log("[create_automation] created id=", result.automation?.id, "cadence=", cadenceType);
-      return `I've got that running${assigneeLabel}. First check is ${dateLabel} at ${timeStr}.`;
+      const successText = `I've got that running${assigneeLabel}. First check is ${dateLabel} at ${timeStr}.`;
+      lastDirectToolSuccessRef.current = {
+        toolName: "create_automation",
+        resultText: successText,
+        at: new Date().toISOString(),
+        outcome: "success",
+        inputSummary: { title: titleTrimmed, cadenceType },
+      };
+      return successText;
     },
     [],
   );
