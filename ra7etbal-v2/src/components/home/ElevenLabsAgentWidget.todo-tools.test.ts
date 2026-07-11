@@ -291,7 +291,7 @@ describe("ElevenLabsAgentWidget — create_automation self-directed assignee sco
   it("resolves assignee_name from its own exact key only, not the generic multi-key person extractor", () => {
     const block = createAutomationBlock();
     expect(block).toContain(
-      'const assignee_name = typeof params?.assignee_name === "string" ? params.assignee_name : "";',
+      'const rawAssigneeName = typeof params?.assignee_name === "string" ? params.assignee_name : "";',
     );
     expect(block).not.toContain('extractPersonNameParam(params, "assignee_name")');
   });
@@ -301,6 +301,59 @@ describe("ElevenLabsAgentWidget — create_automation self-directed assignee sco
     expect(block).toMatch(/if \(assignee_name\?\.trim\(\)\)\s*\{/);
     expect(block).toContain("people.find(");
     expect(block).toContain("assigneeId = match.id;");
+  });
+
+  // Regression: confirmed production failure. Carson called create_automation
+  // with assignee_name set to the account owner's own name for a
+  // self-directed "remind me" request. The owner also had a People contact
+  // literally named the same as her own display name (profiles.display_name),
+  // so the exact-match lookup resolved a real assignee_id, and the resulting
+  // request was rejected server-side as an unsupported recurring WhatsApp
+  // automation — Carson never created the owner's reminder at all. A name
+  // matching the owner's own display name must never be treated as a
+  // delegation target.
+  //
+  // This is asserted via source-pattern matching, consistent with every other
+  // test in this file (createReminder, execute_instruction, send_delegation,
+  // etc.) — createAutomation is a private useCallback inside this ~5000-line
+  // component with Supabase auth, the ElevenLabs SDK, and browser media APIs
+  // as dependencies, so behaviorally invoking it in isolation would require
+  // extracting it into a standalone module, which is out of scope for this
+  // fix. The assertions below are structural rather than a single loose
+  // substring check specifically so a change to the comparison's polarity,
+  // trim/case handling, or which store field is read would fail this test.
+  it("treats an assignee_name matching the owner's own display name as no assignee at all", () => {
+    const block = createAutomationBlock();
+    expect(block).toContain(
+      "if (profileState.status === \"ready\" && profileState.loadedForUserId === authUserId) {",
+    );
+    expect(block).toContain("const ownerDisplayName = (profileState.displayName ?? \"\").trim();");
+    expect(block).toMatch(
+      /assignee_name\.trim\(\) !== ""\s*&&\s*ownerDisplayName !== ""\s*&&\s*assignee_name\.trim\(\)\.toLowerCase\(\) === ownerDisplayName\.toLowerCase\(\)/,
+    );
+    // The self-referential branch must clear assignee_name entirely, so the
+    // downstream lookup (if (assignee_name?.trim())) is skipped — never a
+    // definite person for the owner's own name.
+    expect(block).toMatch(/\{\s*assignee_name = "";\s*\}/);
+  });
+
+  // Regression (CodeRabbit finding on this fix's first pass): the owner-name
+  // comparison must only run against a profile actually loaded for the
+  // current signed-in user. useProfileStore's displayName can be null (not
+  // yet loaded this session) or, in principle, stale from a previous account
+  // if the store isn't fully reset on sign-out — comparing against either
+  // would either silently reintroduce the original bug (profile not yet
+  // loaded when the very first request of a session is self-directed) or
+  // wrongly null out a genuine third-party assignee_name (stale cross-account
+  // name coincidentally matching this request). loadedForUserId exists on
+  // the store precisely to detect this ("Re-fetch when it changes").
+  it("only trusts the profile store once it is ready and loaded for the current signed-in user", () => {
+    const block = createAutomationBlock();
+    expect(block).toContain(
+      "if (profileState.loadedForUserId !== authUserId || profileState.status !== \"ready\") {",
+    );
+    expect(block).toContain("await useProfileStore.getState().loadFor(authUserId);");
+    expect(block).toContain("profileState = useProfileStore.getState();");
   });
 });
 
