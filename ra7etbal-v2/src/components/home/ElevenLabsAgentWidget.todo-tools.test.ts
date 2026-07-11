@@ -291,7 +291,7 @@ describe("ElevenLabsAgentWidget — create_automation self-directed assignee sco
   it("resolves assignee_name from its own exact key only, not the generic multi-key person extractor", () => {
     const block = createAutomationBlock();
     expect(block).toContain(
-      'const assignee_name = typeof params?.assignee_name === "string" ? params.assignee_name : "";',
+      'const rawAssigneeName = typeof params?.assignee_name === "string" ? params.assignee_name : "";',
     );
     expect(block).not.toContain('extractPersonNameParam(params, "assignee_name")');
   });
@@ -301,6 +301,27 @@ describe("ElevenLabsAgentWidget — create_automation self-directed assignee sco
     expect(block).toMatch(/if \(assignee_name\?\.trim\(\)\)\s*\{/);
     expect(block).toContain("people.find(");
     expect(block).toContain("assigneeId = match.id;");
+  });
+
+  // Regression: confirmed production failure. Carson called create_automation
+  // with assignee_name set to the account owner's own name for a
+  // self-directed "remind me" request. The owner also had a People contact
+  // literally named the same as her own display name (profiles.display_name),
+  // so the exact-match lookup resolved a real assignee_id, and the resulting
+  // request was rejected server-side as an unsupported recurring WhatsApp
+  // automation — Carson never created the owner's reminder at all. A name
+  // matching the owner's own display name must never be treated as a
+  // delegation target.
+  it("treats an assignee_name matching the owner's own display name as no assignee at all", () => {
+    const block = createAutomationBlock();
+    expect(block).toContain("const ownerDisplayName = (useProfileStore.getState().displayName ?? \"\").trim();");
+    expect(block).toContain(
+      "rawAssigneeName.trim().toLowerCase() === ownerDisplayName.toLowerCase()",
+    );
+    // The self-referential branch must resolve to no assignee, so the
+    // downstream lookup (if (assignee_name?.trim())) is skipped entirely —
+    // never a definite person for the owner's own name.
+    expect(block).toMatch(/rawAssigneeName\.trim\(\)[\s\S]{0,80}ownerDisplayName[\s\S]{0,40}\?\s*""\s*:\s*rawAssigneeName/);
   });
 });
 

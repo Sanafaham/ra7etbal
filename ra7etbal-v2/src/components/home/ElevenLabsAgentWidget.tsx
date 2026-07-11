@@ -2147,7 +2147,24 @@ export default function ElevenLabsAgentWidget({
       // and silently turning an owner-only reminder into a rejected/
       // misattributed staff automation. Only delegate when the request
       // explicitly names an assignee under this tool's own declared key.
-      const assignee_name = typeof params?.assignee_name === "string" ? params.assignee_name : "";
+      const rawAssigneeName = typeof params?.assignee_name === "string" ? params.assignee_name : "";
+      // Confirmed production failure: a self-directed "remind me" request
+      // reached this tool with assignee_name set to the owner's own name
+      // (Carson's context carries the caller's display name and can fill it
+      // in even with no third party mentioned). If that name also happens to
+      // match a contact — including the owner having added herself, or a
+      // real contact sharing her first name — the exact-match lookup below
+      // would resolve a real assignee_id, silently turning an owner-only
+      // reminder into a request that looks like (and gets rejected as) a
+      // staff delegation. A name matching the owner's own display name is
+      // never a delegation target; treat it as no assignee at all.
+      const ownerDisplayName = (useProfileStore.getState().displayName ?? "").trim();
+      const assignee_name =
+        rawAssigneeName.trim() !== "" &&
+        ownerDisplayName !== "" &&
+        rawAssigneeName.trim().toLowerCase() === ownerDisplayName.toLowerCase()
+          ? ""
+          : rawAssigneeName;
       const titleTrimmed = (params?.title ?? "").trim();
       // "instruction" is the existing exact key — tried first, with the same
       // task-shaped fallbacks used elsewhere (task/description/text).
