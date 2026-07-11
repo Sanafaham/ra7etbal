@@ -191,3 +191,45 @@ describe("ElevenLabsAgentWidget — guest plan proposal regression guards", () =
     expect(block).not.toMatch(/If plan building fails,\s*fall through to normal delegation/i);
   });
 });
+
+// CodeRabbit finding (PR #1): send_delegation, execute_instruction, and
+// create_automation each POST to /api/automations and previously treated any
+// 2xx response as success without checking that the body actually echoed
+// back a persisted automation id — the same class of false-success bug
+// already fixed in routine-detection.ts's createReminderRoutineFromInstruction
+// for the recurring-reminder path. Locks in that all three call sites now
+// require result.automation?.id before reporting success.
+describe("ElevenLabsAgentWidget — /api/automations POST responses require a confirmed automation id", () => {
+  it("send_delegation's recurring-automation POST checks result.automation.id before returning summary", () => {
+    const start = SOURCE.indexOf('[automation:SEND_DELEGATION_FAILED]');
+    const end = SOURCE.indexOf('[automation:SEND_DELEGATION_ERROR]', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("if (!result?.automation?.id)");
+    expect(block).toContain("return null;");
+  });
+
+  it("execute_instruction's recurring-automation POST checks result.automation.id before returning summary", () => {
+    const start = SOURCE.indexOf('[automation:CREATE_FAILED]');
+    const end = SOURCE.indexOf('[automation:CREATE_ERROR]', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("if (!result?.automation?.id)");
+    expect(block).toContain("return null;");
+  });
+
+  it("create_automation checks result.automation.id before speaking a success confirmation", () => {
+    const start = SOURCE.indexOf("const createAutomation = useCallback(");
+    const end = SOURCE.indexOf("[create_automation] created id=", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("if (!result?.automation?.id)");
+    expect(block).toMatch(/return "I could not confirm that automation was saved\./);
+  });
+});

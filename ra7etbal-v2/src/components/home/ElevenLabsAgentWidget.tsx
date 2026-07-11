@@ -1714,8 +1714,14 @@ export default function ElevenLabsAgentWidget({
                 console.error("[automation:SEND_DELEGATION_FAILED]", err);
                 return null;
               }
-              const result = await res.json();
-              console.log("[automation:SEND_DELEGATION_CREATED]", { id: result.automation?.id, title, cadenceType });
+              const result = await res.json().catch(() => null);
+              if (!result?.automation?.id) {
+                // A 2xx with no echoed automation id is not persistence
+                // confirmation — never report success for an unclear response.
+                console.error("[automation:SEND_DELEGATION_UNCONFIRMED]", { title, cadenceType });
+                return null;
+              }
+              console.log("[automation:SEND_DELEGATION_CREATED]", { id: result.automation.id, title, cadenceType });
               return summary;
             } catch (err) {
               console.error("[automation:SEND_DELEGATION_ERROR]", err);
@@ -2174,7 +2180,13 @@ export default function ElevenLabsAgentWidget({
           const err = await res.json().catch(() => ({}));
           return `I could not create that automation. ${(err as { error?: string }).error ?? "Please try again."}`;
         }
-        result = await res.json();
+        result = await res.json().catch(() => ({}));
+        if (!result?.automation?.id) {
+          // A 2xx with no echoed automation id is not persistence
+          // confirmation — never report success for an unclear response.
+          console.error("[create_automation] unconfirmed — no automation id in response");
+          return "I could not confirm that automation was saved. Please try again.";
+        }
       } catch {
         return "I could not reach the server. Please check your connection and try again.";
       }
@@ -3853,8 +3865,14 @@ export default function ElevenLabsAgentWidget({
                   return null;
                 }
 
-                const result = await res.json();
-                console.log("[automation:CREATED]", { id: result.automation?.id, title, cadenceType });
+                const result = await res.json().catch(() => null);
+                if (!result?.automation?.id) {
+                  // A 2xx with no echoed automation id is not persistence
+                  // confirmation — never report success for an unclear response.
+                  console.error("[automation:CREATE_UNCONFIRMED]", { title, cadenceType });
+                  return null;
+                }
+                console.log("[automation:CREATED]", { id: result.automation.id, title, cadenceType });
                 return summary;
               } catch (err) {
                 console.error("[automation:CREATE_ERROR]", err);

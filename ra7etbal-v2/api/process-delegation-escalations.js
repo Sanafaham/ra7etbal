@@ -1713,8 +1713,15 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
  * in-memory state:
  *
  *   1. Terminal state (sent/confirmed/completed/failed/skipped) — the owner
- *      already finished this cycle (and already advanced next_run_at as part
- *      of finishing). Truthful no-op: report duplicate, do nothing further.
+ *      already finished this cycle. Normally the owner also already advanced
+ *      next_run_at as its very next step, but a crash between recording the
+ *      terminal state and calling advanceNextRunAt would strand the schedule
+ *      forever with no non-terminal run left to trigger recovery. So this
+ *      branch also attempts a *guarded* advance — safe to call unconditionally
+ *      here (not gated by staleness, unlike case 3) because the owner has
+ *      already finished its work; the guard's next_run_at=eq.<value> check
+ *      makes this a pure no-op in the normal case where the owner really did
+ *      advance already, and only actually applies in the rare stranded case.
  *   2. Non-terminal but recent (< STALE_RUN_THRESHOLD_MS old) — the owner is
  *      plausibly still actively processing this cycle right now. Do nothing;
  *      a later tick will re-check.
@@ -1724,7 +1731,9 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
  *      reason (never silently discard it), then attempt recovery via the
  *      *guarded* advanceNextRunAt — safe even if another invocation is
  *      attempting the same recovery concurrently, since only one guarded
- *      write can ever apply.
+ *      write can ever apply. If marking the run 'failed' does not itself
+ *      succeed, abort without advancing — advancing past a run whose real
+ *      outcome was never durably recorded would erase that record's meaning.
  */
 async function handleDuplicateRunCycle({ automation, runFor, supabaseUrl, serviceKey, now }) {
   const existingRes = await fetch(
@@ -1750,10 +1759,15 @@ async function handleDuplicateRunCycle({ automation, runFor, supabaseUrl, servic
   }
 
   if (TERMINAL_RUN_STATES.has(existing.current_state)) {
+    // Guarded — a no-op in the normal case (owner already advanced); only
+    // applies if the owner crashed between its terminal-state write and its
+    // own advanceNextRunAt call, so this cycle wouldn't otherwise recover.
+    const recovered = await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
     console.log('[automations] duplicate invocation — cycle already completed by the owner', {
       automationId: automation.id,
       runFor,
       currentState: existing.current_state,
+      recoveredStrandedAdvance: recovered,
     });
     return 'skipped';
   }
@@ -1775,10 +1789,19 @@ async function handleDuplicateRunCycle({ automation, runFor, supabaseUrl, servic
     currentState: existing.current_state,
     ageMs,
   });
-  await patchAutomationRun(supabaseUrl, serviceKey, existing.id, {
+  const markedFailed = await patchAutomationRun(supabaseUrl, serviceKey, existing.id, {
     current_state:  'failed',
     failure_reason: `Abandoned: run stayed in "${existing.current_state}" for ${Math.round(ageMs / 1000)}s with no terminal state (likely a crashed or timed-out invocation).`,
   });
+  if (!markedFailed) {
+    // The real outcome could not be durably recorded — do not advance past
+    // a cycle whose record we failed to write. Leave it for the next tick.
+    console.error('[automations] could not mark abandoned run failed — not advancing', {
+      automationId: automation.id,
+      runFor,
+    });
+    return 'skipped';
+  }
   const recovered = await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
   console.log('[automations] stale run recovery advance', { automationId: automation.id, runFor, recovered });
   return 'skipped';
@@ -2108,6 +2131,7 @@ async function patchAutomationRun(supabaseUrl, serviceKey, runId, fields) {
       runId, fields, status: res.status, body,
     });
   }
+  return res.ok;
 }
 
 async function patchTask(supabaseUrl, serviceKey, taskId, fields) {

@@ -276,13 +276,22 @@ describe('processAutomation owner-only automations', () => {
 describe('processAutomation — overlapping invocation / duplicate-cycle safety', () => {
   // Required test 2 & 6: "Second overlapping invocation detects duplicate" /
   // "Retry after a sent cycle does not execute or advance again."
-  it('a duplicate invocation whose cycle already completed (terminal state) does not push and does not advance', async () => {
+  //
+  // A terminal-state duplicate still ATTEMPTS a guarded advance (CodeRabbit
+  // finding: a crash between the owner's terminal-state write and its own
+  // advanceNextRunAt call would otherwise strand the automation forever with
+  // no non-terminal run left to trigger recovery). In the normal case — the
+  // owner really did already advance — the guard rejects the write (0 rows),
+  // so the schedule itself is never actually touched twice.
+  it('a duplicate invocation whose cycle already completed (terminal state) does not push, and its guarded advance attempt is rejected because the owner already advanced', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse([], 200)) // ignore-duplicates conflict
       .mockResolvedValueOnce(jsonResponse([
         { id: 'existing-run-1', current_state: 'sent', created_at: '2026-06-26T14:29:50.000Z' },
-      ]));
+      ]))
+      // Guard rejects: next_run_at no longer matches — the owner already advanced.
+      .mockResolvedValueOnce(jsonResponse([], 200));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await processAutomation({
@@ -296,23 +305,26 @@ describe('processAutomation — overlapping invocation / duplicate-cycle safety'
     expect(result).toBe('skipped');
     expect(webpush.sendNotification).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/tasks'))).toBe(false);
-    // No write to automations at all — a completed cycle's owner already advanced it.
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/automations?'))).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The guarded attempt IS made (proves the recovery path runs)...
+    expect(String(fetchMock.mock.calls[2][0])).toContain('/rest/v1/automations?');
+    expect(String(fetchMock.mock.calls[2][0])).toContain('next_run_at=eq.2026-06-26T14%3A30%3A00.000Z');
+    // ...but the schedule itself is never actually changed by it (rejected).
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  // Required test 7: "Retry after a failed push follows the documented policy."
-  // Policy: 'failed' is a terminal state — a retry sees it and does nothing.
-  // The owner already advanced next_run_at when it recorded the failure, so
-  // the automation gets another attempt at its next natural cadence instead
-  // of a second push attempt for the same spent cycle.
-  it('a duplicate invocation whose cycle already failed (terminal state) does not re-attempt the push and does not advance again', async () => {
+  // CodeRabbit finding: closes the crash-window gap above. If the owner
+  // recorded a terminal state but crashed before advancing, the schedule is
+  // genuinely stuck on the stale next_run_at — the guarded recovery attempt
+  // from the terminal-state branch must actually apply in that case.
+  it('a duplicate invocation whose cycle is terminal but was never actually advanced (owner crashed mid-write) recovers the stranded schedule', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse([], 200))
       .mockResolvedValueOnce(jsonResponse([
-        { id: 'existing-run-1', current_state: 'failed', created_at: '2026-06-26T14:29:50.000Z' },
-      ]));
+        { id: 'existing-run-1', current_state: 'sent', created_at: '2026-06-26T14:29:50.000Z' },
+      ]))
+      // Guard applies: next_run_at still matches — nobody advanced it.
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z'));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await processAutomation({
@@ -325,7 +337,35 @@ describe('processAutomation — overlapping invocation / duplicate-cycle safety'
 
     expect(result).toBe('skipped');
     expect(webpush.sendNotification).not.toHaveBeenCalled();
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/automations?'))).toBe(false);
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({
+      next_run_at: '2026-06-27T14:30:00.000Z',
+    });
+  });
+
+  // Required test 7: "Retry after a failed push follows the documented policy."
+  // Policy: 'failed' is a terminal state — a retry sees it and does nothing,
+  // but still attempts (and here, has rejected) the same guarded recovery
+  // check as any other terminal state.
+  it('a duplicate invocation whose cycle already failed (terminal state) does not re-attempt the push', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([], 200))
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'existing-run-1', current_state: 'failed', created_at: '2026-06-26T14:29:50.000Z' },
+      ]))
+      .mockResolvedValueOnce(jsonResponse([], 200));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('skipped');
+    expect(webpush.sendNotification).not.toHaveBeenCalled();
   });
 
   // A concurrent invocation whose cycle is non-terminal but recent must
@@ -417,6 +457,36 @@ describe('processAutomation — overlapping invocation / duplicate-cycle safety'
     // is a safe no-op, and the cycle is still correctly reported as skipped.
     expect(result).toBe('skipped');
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  // CodeRabbit finding: patchAutomationRun previously had no return value, so
+  // a failed "mark abandoned run as failed" write was silently ignored and
+  // recovery advanced next_run_at anyway — leaving the old run permanently
+  // stuck in a non-terminal state with no accurate record of what happened.
+  it('does not advance when marking the abandoned run failed does not itself succeed', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([], 200))
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'existing-run-1', current_state: 'scheduled', created_at: '2026-06-26T14:27:30.000Z' },
+      ]))
+      // Marking the abandoned run 'failed' itself fails.
+      .mockResolvedValueOnce(jsonResponse({ message: 'db error' }, 500));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('skipped');
+    expect(webpush.sendNotification).not.toHaveBeenCalled();
+    // No advance attempt at all — never advance past a cycle whose real
+    // outcome could not be durably recorded.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('does not guess when the conflicting run cannot be inspected — leaves the cycle for the next tick instead of advancing blindly', async () => {
