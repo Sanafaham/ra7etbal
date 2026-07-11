@@ -1341,17 +1341,56 @@ async function disableRoutine(supabaseUrl, serviceKey, routineId) {
 // Called on every escalation cron tick (every 10 min).
 // Also callable directly via { action: "run-automations" } for manual testing.
 //
-// Duplicate-run prevention:
+// Duplicate-run / overlapping-invocation prevention:
 //   automation_runs has a UNIQUE(automation_id, run_for) constraint.
-//   The runner inserts with Prefer: resolution=ignore-duplicates.
-//   If a run already exists for this cycle, PostgREST returns [] and
-//   processAutomation() exits early. Guarantees exactly-once per cycle
-//   even if the cron fires twice within a 10-minute window.
+//   The runner inserts with Prefer: resolution=ignore-duplicates. Exactly one
+//   concurrent/retried invocation gets the inserted row back (the "owner" for
+//   this cycle); every other invocation gets []. Only the owner may create the
+//   task and send the notification — see processAutomation Step 1.
+//
+// ── SAFETY INVARIANT — do not regress ────────────────────────────────────────
+// A duplicate invocation must never itself advance next_run_at as a matter of
+// course. An earlier version of this runner advanced next_run_at from inside
+// the duplicate branch unconditionally, using its own (possibly stale)
+// in-memory `automation.next_run_at`. That is a lost-update race: if the true
+// owner's advance and a duplicate's advance are both in flight, whichever one
+// applies last wins, and — worse — a duplicate invocation that has been
+// delayed long enough can land AFTER a later, genuinely new cycle has already
+// advanced the schedule, silently regressing next_run_at back to an earlier
+// value and causing the same cycle to fire again.
+//
+// Fix: advanceNextRunAt is a *guarded* conditional UPDATE
+// (`next_run_at=eq.<value the caller read>`), the same claim-before-write
+// pattern as claimFollowupGuard above. Postgres only applies it if
+// automations.next_run_at still equals what the caller believes it is: the
+// true owner applies it normally (nothing else has touched the row yet); a
+// stale/duplicate caller's write is silently rejected (0 rows) because the
+// row has already moved on. This makes calling it from more than one place
+// safe by construction — no in-memory lock, no second scheduler.
+//
+// A duplicate invocation only ever calls advanceNextRunAt for exactly one
+// reason: STALE_RUN_RECOVERY below — the existing run for this cycle is still
+// non-terminal (owner likely crashed mid-execution) and old enough that it is
+// not plausibly still being processed. That recovery advance is guarded the
+// same way, so at most one recovering invocation's write actually applies.
+// A duplicate invocation whose existing run is terminal (cycle genuinely
+// already completed) or merely recent (owner is still actively working) never
+// calls advanceNextRunAt at all.
 // ═══════════════════════════════════════════════════════════════════════════
 
 const AUTOMATIONS_BATCH_SIZE = 25;
 const UNSUPPORTED_RECURRING_WHATSAPP_REASON =
   'Recurring WhatsApp automations are currently disabled; no task or WhatsApp message was created.';
+
+// A non-terminal automation_run (state 'scheduled' or 'task_created') older
+// than this is treated as an abandoned/crashed invocation rather than one
+// still actively in flight. processAutomation's own full cycle completes in
+// well under a few seconds under normal conditions; this margin is generous
+// enough to never mistake a genuinely active owner for a stuck one, while
+// still self-healing within one extra cron tick (cron runs every 10 min).
+const STALE_RUN_THRESHOLD_MS = 2 * 60 * 1000; // 2 minutes
+
+const TERMINAL_RUN_STATES = new Set(['sent', 'confirmed', 'completed', 'failed', 'skipped']);
 
 /** Action dispatch handler — wraps runAutomationsCore with an HTTP response. */
 async function runAutomationsDispatch(req, res, { supabaseUrl, serviceKey, appBaseUrl }) {
@@ -1482,14 +1521,10 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
 
   const run = Array.isArray(insertedRuns) && insertedRuns.length > 0 ? insertedRuns[0] : null;
   if (!run) {
-    // Empty array = duplicate — this cycle was already handled.
-    // Advance next_run_at so the stale run_for value does not block every future tick.
-    console.log('[automations] duplicate run detected — advancing next_run_at to unblock', {
-      automationId: automation.id,
-      runFor,
-    });
-    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
-    return 'skipped';
+    // Empty array = duplicate — another invocation already claimed this cycle.
+    // Never execute (no task, no push) and never advance as a matter of
+    // course from here — see the SAFETY INVARIANT comment above this section.
+    return await handleDuplicateRunCycle({ automation, runFor, supabaseUrl, serviceKey, now });
   }
 
   const runId = run.id;
@@ -1633,11 +1668,10 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
       });
     }
   } else {
-    // No assignee or no phone — task created for owner review, no WhatsApp needed.
-    await patchAutomationRun(supabaseUrl, serviceKey, runId, {
-      current_state: 'sent',
-      sent_at:       now.toISOString(),
-    });
+    // No assignee or no phone — task created for owner review, notify via push.
+    // The push send is the actual delivery for an owner-only reminder (there is
+    // no WhatsApp leg here), so current_state must reflect whether it actually
+    // reached a subscription — never mark 'sent' before knowing that.
     const pushed = await sendOwnerPush({
       userId: automation.user_id,
       title: 'Ra7etBal · Reminder',
@@ -1645,24 +1679,132 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
       supabaseUrl,
       serviceKey,
     });
-    if (!pushed) {
-      console.warn('[automations] owner-only push not delivered', {
+    if (pushed) {
+      await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+        current_state: 'sent',
+        sent_at:       now.toISOString(),
+      });
+      console.log('[automations] owner-only task created and push delivered', {
+        automationId: automation.id,
+        taskId,
+      });
+    } else {
+      await patchAutomationRun(supabaseUrl, serviceKey, runId, {
+        current_state:  'failed',
+        failure_reason: 'Owner push notification was not delivered (no enabled subscription or every send failed).',
+      });
+      console.warn('[automations] owner-only push not delivered — run marked failed', {
         automationId: automation.id,
         taskId,
       });
     }
-    console.log('[automations] owner-only task created (no WhatsApp)', {
-      automationId: automation.id,
-      taskId,
-      hasAssignee: Boolean(assignee),
-      hasPhone: Boolean(assignee?.phone),
-    });
   }
 
   // ── Step 6: Advance next_run_at / stop ────────────────────────────────────
   await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
 
   return 'ok';
+}
+
+/**
+ * Handles a duplicate automation_run insert (another invocation already owns
+ * this cycle). Never executes (no task, no push). Decides between three
+ * outcomes by reading the existing run's own state — never trusts timing or
+ * in-memory state:
+ *
+ *   1. Terminal state (sent/confirmed/completed/failed/skipped) — the owner
+ *      already finished this cycle. Normally the owner also already advanced
+ *      next_run_at as its very next step, but a crash between recording the
+ *      terminal state and calling advanceNextRunAt would strand the schedule
+ *      forever with no non-terminal run left to trigger recovery. So this
+ *      branch also attempts a *guarded* advance — safe to call unconditionally
+ *      here (not gated by staleness, unlike case 3) because the owner has
+ *      already finished its work; the guard's next_run_at=eq.<value> check
+ *      makes this a pure no-op in the normal case where the owner really did
+ *      advance already, and only actually applies in the rare stranded case.
+ *   2. Non-terminal but recent (< STALE_RUN_THRESHOLD_MS old) — the owner is
+ *      plausibly still actively processing this cycle right now. Do nothing;
+ *      a later tick will re-check.
+ *   3. Non-terminal and stale — the owner almost certainly crashed mid-cycle
+ *      (function timeout, deploy, uncaught error) before ever reaching its
+ *      own advanceNextRunAt call. Mark the abandoned run 'failed' with a
+ *      reason (never silently discard it), then attempt recovery via the
+ *      *guarded* advanceNextRunAt — safe even if another invocation is
+ *      attempting the same recovery concurrently, since only one guarded
+ *      write can ever apply. If marking the run 'failed' does not itself
+ *      succeed, abort without advancing — advancing past a run whose real
+ *      outcome was never durably recorded would erase that record's meaning.
+ */
+async function handleDuplicateRunCycle({ automation, runFor, supabaseUrl, serviceKey, now }) {
+  const existingRes = await fetch(
+    `${supabaseUrl}/rest/v1/automation_runs` +
+      `?automation_id=eq.${encodeURIComponent(automation.id)}` +
+      `&run_for=eq.${encodeURIComponent(runFor)}` +
+      `&select=id,current_state,created_at&limit=1`,
+    { headers: supabaseHeaders(serviceKey) },
+  );
+  const existingRows = await existingRes.json().catch(() => []);
+  const existing = Array.isArray(existingRows) && existingRows.length > 0 ? existingRows[0] : null;
+
+  if (!existingRes.ok || !existing) {
+    // Could not inspect the conflicting row (transient read error, or it was
+    // deleted between the failed insert and this read). Do not guess — leave
+    // it for the next tick rather than risk a wrong advance.
+    console.warn('[automations] duplicate detected but could not inspect existing run — leaving for next tick', {
+      automationId: automation.id,
+      runFor,
+      inspectOk: existingRes.ok,
+    });
+    return 'skipped';
+  }
+
+  if (TERMINAL_RUN_STATES.has(existing.current_state)) {
+    // Guarded — a no-op in the normal case (owner already advanced); only
+    // applies if the owner crashed between its terminal-state write and its
+    // own advanceNextRunAt call, so this cycle wouldn't otherwise recover.
+    const recovered = await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+    console.log('[automations] duplicate invocation — cycle already completed by the owner', {
+      automationId: automation.id,
+      runFor,
+      currentState: existing.current_state,
+      recoveredStrandedAdvance: recovered,
+    });
+    return 'skipped';
+  }
+
+  const ageMs = now.getTime() - new Date(existing.created_at).getTime();
+  if (ageMs < STALE_RUN_THRESHOLD_MS) {
+    console.log('[automations] duplicate invocation — owner still actively processing this cycle', {
+      automationId: automation.id,
+      runFor,
+      currentState: existing.current_state,
+      ageMs,
+    });
+    return 'skipped';
+  }
+
+  console.warn('[automations] stale non-terminal run detected — recovering abandoned cycle', {
+    automationId: automation.id,
+    runFor,
+    currentState: existing.current_state,
+    ageMs,
+  });
+  const markedFailed = await patchAutomationRun(supabaseUrl, serviceKey, existing.id, {
+    current_state:  'failed',
+    failure_reason: `Abandoned: run stayed in "${existing.current_state}" for ${Math.round(ageMs / 1000)}s with no terminal state (likely a crashed or timed-out invocation).`,
+  });
+  if (!markedFailed) {
+    // The real outcome could not be durably recorded — do not advance past
+    // a cycle whose record we failed to write. Leave it for the next tick.
+    console.error('[automations] could not mark abandoned run failed — not advancing', {
+      automationId: automation.id,
+      runFor,
+    });
+    return 'skipped';
+  }
+  const recovered = await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+  console.log('[automations] stale run recovery advance', { automationId: automation.id, runFor, recovered });
+  return 'skipped';
 }
 
 /**
@@ -1776,43 +1918,89 @@ export async function processMessageAutomation({
  * every_n_days → +N days (reads cadence_value.n)
  * monthly     → +1 month (same day, next calendar month)
  * invalid     → pause with reason; do not crash
+ *
+ * Guarded: every write is a conditional UPDATE keyed on
+ * `next_run_at=eq.<automation.next_run_at>` — the value the caller read
+ * before computing what comes next. Postgres only applies it if that is still
+ * true. This is what makes it safe for this function to be called from more
+ * than one place (the true cycle owner, and — only for an abandoned/stale
+ * cycle — a recovering duplicate invocation) without an in-memory lock: at
+ * most one caller's write can ever actually apply for a given prior value.
+ *
+ * Returns true if this call's write applied, false if the guard found
+ * next_run_at already changed by someone else (safe no-op).
  */
 async function advanceNextRunAt(supabaseUrl, serviceKey, automation, now) {
   const nextRunAt = computeNextRunAt(automation);
 
   if (nextRunAt === null) {
     // once: stop after first run
-    await patchAutomation(supabaseUrl, serviceKey, automation.id, {
+    return guardedPatchAutomation(supabaseUrl, serviceKey, automation, {
       status:     'stopped',
       updated_at: now.toISOString(),
-    });
-    console.log('[automations] once automation stopped', { automationId: automation.id });
-    return;
+    }, () => console.log('[automations] once automation stopped', { automationId: automation.id }));
   }
 
   if (nextRunAt === 'invalid') {
-    await patchAutomation(supabaseUrl, serviceKey, automation.id, {
+    return guardedPatchAutomation(supabaseUrl, serviceKey, automation, {
       status:        'paused',
       paused_reason: `Invalid cadence_value for cadence_type "${automation.cadence_type}". Check automation configuration.`,
       updated_at:    now.toISOString(),
-    });
-    console.error('[automations] invalid cadence, automation paused', {
+    }, () => console.error('[automations] invalid cadence, automation paused', {
       automationId:  automation.id,
       cadenceType:   automation.cadence_type,
       cadenceValue:  automation.cadence_value,
-    });
-    return;
+    }));
   }
 
-  await patchAutomation(supabaseUrl, serviceKey, automation.id, {
+  return guardedPatchAutomation(supabaseUrl, serviceKey, automation, {
     next_run_at: nextRunAt,
     updated_at:  now.toISOString(),
-  });
-  console.log('[automations] next_run_at advanced', {
+  }, () => console.log('[automations] next_run_at advanced', {
     automationId: automation.id,
     cadenceType:  automation.cadence_type,
     nextRunAt,
-  });
+  }));
+}
+
+/**
+ * Conditional UPDATE on automations — succeeds (returns exactly one row) only
+ * if next_run_at still equals `automation.next_run_at` (the value the caller
+ * read before computing `fields`) at the moment Postgres applies it. Same
+ * claim-before-write pattern as claimFollowupGuard, applied to the automation
+ * row itself so next_run_at can never be lost-update-raced by an overlapping
+ * or stale invocation. onApplied runs only when this call's write actually
+ * took effect, so log lines stay accurate about what happened.
+ */
+async function guardedPatchAutomation(supabaseUrl, serviceKey, automation, fields, onApplied) {
+  const res = await fetch(
+    `${supabaseUrl}/rest/v1/automations` +
+      `?id=eq.${encodeURIComponent(automation.id)}` +
+      `&next_run_at=eq.${encodeURIComponent(automation.next_run_at)}`,
+    {
+      method:  'PATCH',
+      headers: { ...supabaseHeaders(serviceKey), Prefer: 'return=representation' },
+      body:    JSON.stringify(fields),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    console.error('[automations] guardedPatchAutomation failed', {
+      automationId: automation.id, fields, status: res.status, body,
+    });
+    return false;
+  }
+  const rows = await res.json().catch(() => []);
+  const applied = Array.isArray(rows) && rows.length === 1;
+  if (applied) {
+    onApplied();
+  } else {
+    console.log('[automations] advance skipped — next_run_at already changed by another invocation', {
+      automationId:      automation.id,
+      expectedNextRunAt: automation.next_run_at,
+    });
+  }
+  return applied;
 }
 
 /**
@@ -1823,7 +2011,7 @@ async function advanceNextRunAt(supabaseUrl, serviceKey, automation, now) {
  *   null        — cadence=once, stop the automation
  *   'invalid'   — unrecognised cadence or bad cadence_value, caller should pause
  */
-function computeNextRunAt(automation) {
+export function computeNextRunAt(automation) {
   const base = new Date(automation.next_run_at);
   const { cadence_type: type, cadence_value: val = {}, timezone } = automation;
   const timeStr = typeof val?.time === 'string' ? val.time : null; // e.g. "09:00"
@@ -1874,7 +2062,7 @@ function computeNextRunAt(automation) {
  * to measure the actual UTC offset, then subtract that offset.
  * Accurate for all fixed-offset and DST timezones via Intl.DateTimeFormat.
  */
-function nextRunAtWithTime(base, daysToAdd, timeStr, timezone) {
+export function nextRunAtWithTime(base, daysToAdd, timeStr, timezone) {
   const next = new Date(base);
   next.setUTCDate(next.getUTCDate() + daysToAdd);
   const dateParts = getDatePartsInTz(next, timezone);
@@ -1943,6 +2131,7 @@ async function patchAutomationRun(supabaseUrl, serviceKey, runId, fields) {
       runId, fields, status: res.status, body,
     });
   }
+  return res.ok;
 }
 
 async function patchTask(supabaseUrl, serviceKey, taskId, fields) {

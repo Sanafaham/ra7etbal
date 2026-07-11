@@ -1714,8 +1714,14 @@ export default function ElevenLabsAgentWidget({
                 console.error("[automation:SEND_DELEGATION_FAILED]", err);
                 return null;
               }
-              const result = await res.json();
-              console.log("[automation:SEND_DELEGATION_CREATED]", { id: result.automation?.id, title, cadenceType });
+              const result = await res.json().catch(() => null);
+              if (!result?.automation?.id) {
+                // A 2xx with no echoed automation id is not persistence
+                // confirmation — never report success for an unclear response.
+                console.error("[automation:SEND_DELEGATION_UNCONFIRMED]", { title, cadenceType });
+                return null;
+              }
+              console.log("[automation:SEND_DELEGATION_CREATED]", { id: result.automation.id, title, cadenceType });
               return summary;
             } catch (err) {
               console.error("[automation:SEND_DELEGATION_ERROR]", err);
@@ -1845,12 +1851,101 @@ export default function ElevenLabsAgentWidget({
         return "I did not receive a reminder description. Ask the user what they want to be reminded about.";
       }
 
-      // ── Resolve due time ──────────────────────────────────────────────────
+      const time_text = extractTimeTextParam(params);
+
+      // ── Recurring-language detection (owner reminder path) ─────────────────
+      // create_reminder is the tool ElevenLabs selects for self-directed
+      // "remind me" requests, including recurring ones ("remind me every
+      // night..."). It previously had no recurrence awareness at all, so a
+      // recurring request silently became a single one-time task while Carson
+      // still confirmed "I'll remind you every night" — a reminder that never
+      // persisted as recurring and never appeared in Automations. Mirrors the
+      // candidate-source + hard-block pattern already proven in
+      // execute_instruction / send_delegation (recurringRawRef first, since
+      // the ElevenLabs LLM often strips cadence words when it rewrites the
+      // description/time_text params) and reuses the same owner-only
+      // automation creator those paths use — one source of truth, no new
+      // reminder system.
+      const lastUserMessage = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((m) => m.role === "user")?.message?.trim();
+      const timeTextTrimmed = time_text?.trim();
+      const timeFragment = timeTextTrimmed
+        ? /^at\b/i.test(timeTextTrimmed)
+          ? timeTextTrimmed
+          : `at ${timeTextTrimmed}`
+        : null;
+      const recurringCandidateSources = [
+        recurringRawRef.current,
+        lastUserMessage ?? null,
+        timeFragment ? `${text} ${timeFragment}` : text,
+      ].filter((source): source is string => !!source);
+
+      let recurringSource: string | null = null;
+      let recurringSchedules: ReturnType<typeof detectAllRecurringSchedules> = [];
+      for (const source of recurringCandidateSources) {
+        const schedules = detectAllRecurringSchedules(source);
+        if (schedules.length > 0) {
+          recurringSource = source;
+          recurringSchedules = schedules;
+          break;
+        }
+      }
+
+      if (recurringSchedules.length > 0 && recurringSource) {
+        recurringRawRef.current = null;
+
+        const recurringKey = `recurring:${recurringSource.toLowerCase().replace(/\s+/g, " ").trim()}`;
+        const existingRecurringReply = createdReminderKeysRef.current.get(recurringKey);
+        if (existingRecurringReply) {
+          console.info("[create_reminder] duplicate recurring tool call suppressed", {
+            recurringSource,
+          });
+          return existingRecurringReply;
+        }
+
+        console.log("[create_reminder:RECURRING_DETECTED]", { recurringSource, recurringSchedules });
+
+        const results = await Promise.all(
+          recurringSchedules.map(async (sched) => {
+            try {
+              return await createReminderRoutineFromInstruction(recurringSource!, sched);
+            } catch (err) {
+              console.error("[create_reminder:AUTOMATION_CREATE_ERROR]", err);
+              return null;
+            }
+          }),
+        );
+
+        const successes = results.filter(Boolean) as string[];
+        if (successes.length > 0) {
+          const reply = successes.join(" ");
+          createdReminderKeysRef.current.set(recurringKey, reply);
+          sessionActionsRef.current.push(`Automation(s) created: ${recurringSource}`);
+          console.log("[automation:DISPATCH_REFRESH] dispatching ra7etbal:routine-created");
+          window.dispatchEvent(new CustomEvent("ra7etbal:routine-created"));
+          lastDirectToolSuccessRef.current = {
+            toolName: "create_reminder",
+            resultText: reply,
+            at: new Date().toISOString(),
+            inputSummary: { description: text, recurring: true },
+          };
+          return reply;
+        }
+
+        // Hard-block: recurring language detected but automation creation
+        // failed or returned no usable title. Never fall through to the
+        // one-time task path below — that would silently drop the recurrence
+        // and let Carson claim a false "every night" success.
+        console.warn("[create_reminder:HARD_BLOCK] recurring automation creation failed", { recurringSource });
+        return "I could not create the recurring reminder.";
+      }
+
+      // ── Resolve due time (one-time reminder path) ───────────────────────────
       // Prefer parsing the raw phrase; fall back to agent-supplied ISO only when
       // time_text is absent. This ensures "tomorrow at 5 PM" always resolves
       // using the browser's local clock, not the agent's arithmetic.
       let resolvedDueAt: string;
-      const time_text = extractTimeTextParam(params);
 
       if (time_text?.trim()) {
         const parsed = parseVoiceTime(time_text.trim());
@@ -2085,7 +2180,13 @@ export default function ElevenLabsAgentWidget({
           const err = await res.json().catch(() => ({}));
           return `I could not create that automation. ${(err as { error?: string }).error ?? "Please try again."}`;
         }
-        result = await res.json();
+        result = await res.json().catch(() => ({}));
+        if (!result?.automation?.id) {
+          // A 2xx with no echoed automation id is not persistence
+          // confirmation — never report success for an unclear response.
+          console.error("[create_automation] unconfirmed — no automation id in response");
+          return "I could not confirm that automation was saved. Please try again.";
+        }
       } catch {
         return "I could not reach the server. Please check your connection and try again.";
       }
@@ -3764,8 +3865,14 @@ export default function ElevenLabsAgentWidget({
                   return null;
                 }
 
-                const result = await res.json();
-                console.log("[automation:CREATED]", { id: result.automation?.id, title, cadenceType });
+                const result = await res.json().catch(() => null);
+                if (!result?.automation?.id) {
+                  // A 2xx with no echoed automation id is not persistence
+                  // confirmation — never report success for an unclear response.
+                  console.error("[automation:CREATE_UNCONFIRMED]", { title, cadenceType });
+                  return null;
+                }
+                console.log("[automation:CREATED]", { id: result.automation.id, title, cadenceType });
                 return summary;
               } catch (err) {
                 console.error("[automation:CREATE_ERROR]", err);

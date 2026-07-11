@@ -333,8 +333,17 @@ export async function createReminderRoutineFromInstruction(
   }
   const result = await res.json().catch(() => null);
 
+  // A 2xx status is not persistence confirmation by itself — only a response
+  // that actually echoes the created automation's id counts as verified
+  // persistence. Without this check, an empty/malformed 200 body would still
+  // return a success summary for the agent to speak, i.e. a false "done".
+  const automationId = result?.automation?.id ?? null;
+  if (!automationId) {
+    throw new Error("Automation response did not confirm persistence.");
+  }
+
   console.log("[automation:REMINDER_AUTOMATION_CREATED]", {
-    automationId: result?.automation?.id ?? null,
+    automationId,
     title,
   });
 

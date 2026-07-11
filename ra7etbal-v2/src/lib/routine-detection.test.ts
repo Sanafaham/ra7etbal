@@ -167,6 +167,91 @@ describe("createReminderRoutineFromInstruction", () => {
     expect(globalThis.fetch).not.toHaveBeenCalled();
     expect(routinesMocks.createRoutine).not.toHaveBeenCalled();
   });
+
+  // Regression: production bug — a nightly personal reminder Carson confirmed
+  // out loud never appeared in Automations because the create_reminder tool
+  // never routed recurring language here at all. These lock in the actual
+  // persisted shape for the exact "every night" phrasing from that bug report.
+  it("creates a nightly owner reminder with the correct recurrence, local time, timezone, and active automation shape", async () => {
+    const schedules = detectAllRecurringSchedules("Remind me every night at 8:30 PM to take my medication.");
+    expect(schedules.length).toBeGreaterThan(0);
+
+    const summary = await createReminderRoutineFromInstruction(
+      "Remind me every night at 8:30 PM to take my medication.",
+      schedules[0],
+    );
+
+    expect(summary).toBeTruthy();
+    expect(summary).toContain("You can manage it in Automations.");
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    const payload = JSON.parse(String(init?.body));
+    expect(payload).toMatchObject({
+      instruction: "To take my medication.",
+      cadence_type: "daily",
+      cadence_value: { time: "20:30" },
+      assignee_id: null, // owner-only — no staff/assignee involved
+      created_by: "carson",
+      automation_type: "delegation", // supported owner-reminder shape (not blocked by the WhatsApp-message gate)
+    });
+    // Correct timezone — the browser's real local IANA zone, not hardcoded.
+    expect(payload.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    // Correct local time persisted (not lost/defaulted).
+    expect(payload.cadence_value.time).toBe("20:30");
+    // Valid future next_run_at — the automation is schedulable, i.e. active.
+    expect(new Date(payload.next_run_at).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("defaults to 9 AM when no explicit time is spoken, without dropping the recurrence", async () => {
+    const schedules = detectAllRecurringSchedules("Remind me every night to take my medication.");
+    expect(schedules.length).toBeGreaterThan(0);
+
+    await createReminderRoutineFromInstruction(
+      "Remind me every night to take my medication.",
+      schedules[0],
+    );
+
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0];
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.cadence_type).toBe("daily");
+    expect(payload.cadence_value.time).toBe("09:00");
+  });
+
+  it("throws (never returns a success summary) when the server rejects persistence", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        json: async () => ({ error: "Failed to create automation." }),
+      })),
+    );
+
+    const schedules = detectAllRecurringSchedules("Remind me every night to take my medication.");
+    await expect(
+      createReminderRoutineFromInstruction(
+        "Remind me every night to take my medication.",
+        schedules[0],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("throws (never returns a success summary) when the server responds 200 OK but does not confirm the automation was persisted", async () => {
+    // Unclear/empty response body — must not be treated as success.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({}),
+      })),
+    );
+
+    const schedules = detectAllRecurringSchedules("Remind me every night to take my medication.");
+    await expect(
+      createReminderRoutineFromInstruction(
+        "Remind me every night to take my medication.",
+        schedules[0],
+      ),
+    ).rejects.toThrow();
+  });
 });
 
 describe("third-party recurring automation routing", () => {

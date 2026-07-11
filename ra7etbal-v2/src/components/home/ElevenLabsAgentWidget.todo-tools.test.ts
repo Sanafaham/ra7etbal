@@ -104,18 +104,47 @@ describe("ElevenLabsAgentWidget — createTodoTool failure message", () => {
 });
 
 describe("ElevenLabsAgentWidget — createReminder success override", () => {
-  it("records create_reminder as override-eligible only after the reminder task is created", () => {
-    const start = SOURCE.indexOf("const createReminder = useCallback(");
-    const end = SOURCE.indexOf("// ------------------------------------------------------------------\n  // Client tool: get_calendar_events", start);
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
+  const start = SOURCE.indexOf("const createReminder = useCallback(");
+  const recurringStart = SOURCE.indexOf(
+    "// ── Recurring-language detection (owner reminder path)",
+    start,
+  );
+  const oneTimeStart = SOURCE.indexOf(
+    "// ── Resolve due time (one-time reminder path)",
+    start,
+  );
+  const end = SOURCE.indexOf("// ------------------------------------------------------------------\n  // Client tool: get_calendar_events", start);
 
-    const block = SOURCE.slice(start, end);
+  it("records create_reminder as override-eligible only after the reminder task is created (one-time path)", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(oneTimeStart).toBeGreaterThan(start);
+    expect(end).toBeGreaterThan(oneTimeStart);
+
+    const block = SOURCE.slice(oneTimeStart, end);
     const createIndex = block.indexOf("await createReminderTask({");
     const overrideIndex = block.indexOf('toolName: "create_reminder"');
 
     expect(createIndex).toBeGreaterThan(-1);
     expect(overrideIndex).toBeGreaterThan(createIndex);
+  });
+
+  it("records create_reminder as override-eligible only after the automation is persisted (recurring path)", () => {
+    expect(recurringStart).toBeGreaterThan(-1);
+    expect(oneTimeStart).toBeGreaterThan(recurringStart);
+
+    const block = SOURCE.slice(recurringStart, oneTimeStart);
+    const createIndex = block.indexOf("createReminderRoutineFromInstruction(");
+    const successesCheckIndex = block.indexOf("successes.length > 0");
+    const overrideIndex = block.indexOf('toolName: "create_reminder"');
+
+    expect(createIndex).toBeGreaterThan(-1);
+    expect(successesCheckIndex).toBeGreaterThan(createIndex);
+    expect(overrideIndex).toBeGreaterThan(successesCheckIndex);
+  });
+
+  it("never falls through to the one-time task path when recurring language is detected but automation creation fails", () => {
+    const block = SOURCE.slice(recurringStart, oneTimeStart);
+    expect(block).toContain('return "I could not create the recurring reminder.";');
   });
 });
 
@@ -160,5 +189,47 @@ describe("ElevenLabsAgentWidget — guest plan proposal regression guards", () =
 
     expect(failureIndex).toBeGreaterThan(-1);
     expect(block).not.toMatch(/If plan building fails,\s*fall through to normal delegation/i);
+  });
+});
+
+// CodeRabbit finding (PR #1): send_delegation, execute_instruction, and
+// create_automation each POST to /api/automations and previously treated any
+// 2xx response as success without checking that the body actually echoed
+// back a persisted automation id — the same class of false-success bug
+// already fixed in routine-detection.ts's createReminderRoutineFromInstruction
+// for the recurring-reminder path. Locks in that all three call sites now
+// require result.automation?.id before reporting success.
+describe("ElevenLabsAgentWidget — /api/automations POST responses require a confirmed automation id", () => {
+  it("send_delegation's recurring-automation POST checks result.automation.id before returning summary", () => {
+    const start = SOURCE.indexOf('[automation:SEND_DELEGATION_FAILED]');
+    const end = SOURCE.indexOf('[automation:SEND_DELEGATION_ERROR]', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("if (!result?.automation?.id)");
+    expect(block).toContain("return null;");
+  });
+
+  it("execute_instruction's recurring-automation POST checks result.automation.id before returning summary", () => {
+    const start = SOURCE.indexOf('[automation:CREATE_FAILED]');
+    const end = SOURCE.indexOf('[automation:CREATE_ERROR]', start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("if (!result?.automation?.id)");
+    expect(block).toContain("return null;");
+  });
+
+  it("create_automation checks result.automation.id before speaking a success confirmation", () => {
+    const start = SOURCE.indexOf("const createAutomation = useCallback(");
+    const end = SOURCE.indexOf("[create_automation] created id=", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("if (!result?.automation?.id)");
+    expect(block).toMatch(/return "I could not confirm that automation was saved\./);
   });
 });
