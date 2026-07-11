@@ -37,7 +37,7 @@ describe('processMessageAutomation', () => {
         delivery_id: 'delivery-1',
       }))
       .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z'));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await processMessageAutomation({
@@ -87,7 +87,7 @@ describe('processMessageAutomation', () => {
         400,
       ))
       .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z'));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await processMessageAutomation({
@@ -111,7 +111,8 @@ describe('processMessageAutomation', () => {
 });
 
 describe('processAutomation owner-only automations', () => {
-  it('creates an owner task and sends an owner push', async () => {
+  // Required test 1: "First invocation claims and executes."
+  it('creates an owner task and sends an owner push, and advances next_run_at exactly once', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }], 201))
@@ -122,7 +123,7 @@ describe('processAutomation owner-only automations', () => {
         { id: 'sub-1', endpoint: 'https://push.example/a', p256dh: 'p', auth: 'a' },
       ]))
       .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z'));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await processAutomation({
@@ -159,9 +160,14 @@ describe('processAutomation owner-only automations', () => {
       current_state: 'sent',
       sent_at: '2026-06-26T14:30:00.000Z',
     });
+    // The advance write is guarded on next_run_at=eq.<the value this
+    // invocation read> — proves the claim, not just that a PATCH fired.
+    expect(String(fetchMock.mock.calls[6][0])).toContain('next_run_at=eq.2026-06-26T14%3A30%3A00.000Z');
     expect(JSON.parse(fetchMock.mock.calls[6][1].body)).toMatchObject({
       next_run_at: '2026-06-27T14:30:00.000Z',
     });
+    // Exactly one write to the automations table for this cycle.
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/rest/v1/automations?')).length).toBe(1);
   });
 
   // Regression: this test previously asserted the OPPOSITE — that a failed
@@ -170,7 +176,8 @@ describe('processAutomation owner-only automations', () => {
   // for an owner-only reminder, the push IS the delivery (there is no WhatsApp
   // leg), so reporting 'sent' when nothing was actually delivered is a false
   // success. Corrected so current_state accurately reflects delivery.
-  it('marks owner-only automation failed (not sent) when owner push fails', async () => {
+  // Required test 8: "Failed push is not recorded as sent."
+  it('marks owner-only automation failed (not sent) when owner push fails, but still advances next_run_at', async () => {
     vi.mocked(webpush.sendNotification).mockRejectedValueOnce(Object.assign(new Error('push rejected'), {
       statusCode: 500,
     }));
@@ -184,7 +191,7 @@ describe('processAutomation owner-only automations', () => {
         { id: 'sub-1', endpoint: 'https://push.example/a', p256dh: 'p', auth: 'a' },
       ]))
       .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z'));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await processAutomation({
@@ -219,7 +226,7 @@ describe('processAutomation owner-only automations', () => {
       .mockResolvedValueOnce(emptyResponse())
       .mockResolvedValueOnce(jsonResponse([])) // zero push_subscriptions rows
       .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z'));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await processAutomation({
@@ -250,7 +257,7 @@ describe('processAutomation owner-only automations', () => {
         { id: 'sub-1', endpoint: 'https://push.example/a', p256dh: 'p', auth: 'a' },
       ]))
       .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z'));
     vi.stubGlobal('fetch', fetchMock);
 
     await processAutomation({
@@ -264,18 +271,18 @@ describe('processAutomation owner-only automations', () => {
     expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ user_id: 'user-owner-42' });
     expect(String(fetchMock.mock.calls[4][0])).toContain('user_id=eq.user-owner-42');
   });
+});
 
-  // Required test: "Retry does not duplicate a completed execution" /
-  // "Concurrent runners do not duplicate execution." The unique(automation_id,
-  // run_for) constraint + Prefer: resolution=ignore-duplicates on the
-  // automation_run insert is the actual lock — PostgREST returns [] when a
-  // run for this cycle already exists, whether from a true concurrent
-  // invocation or a retried cron tick.
-  it('skips and never sends a push when this cycle already has an automation_run (duplicate/concurrent invocation)', async () => {
+describe('processAutomation — overlapping invocation / duplicate-cycle safety', () => {
+  // Required test 2 & 6: "Second overlapping invocation detects duplicate" /
+  // "Retry after a sent cycle does not execute or advance again."
+  it('a duplicate invocation whose cycle already completed (terminal state) does not push and does not advance', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([], 200)) // ignore-duplicates conflict → empty array
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(jsonResponse([], 200)) // ignore-duplicates conflict
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'existing-run-1', current_state: 'sent', created_at: '2026-06-26T14:29:50.000Z' },
+      ]));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await processAutomation({
@@ -289,10 +296,146 @@ describe('processAutomation owner-only automations', () => {
     expect(result).toBe('skipped');
     expect(webpush.sendNotification).not.toHaveBeenCalled();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/tasks'))).toBe(false);
-    // Still advances next_run_at so a stale run_for can't block every future tick.
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({
-      next_run_at: '2026-06-27T14:30:00.000Z',
+    // No write to automations at all — a completed cycle's owner already advanced it.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/automations?'))).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // Required test 7: "Retry after a failed push follows the documented policy."
+  // Policy: 'failed' is a terminal state — a retry sees it and does nothing.
+  // The owner already advanced next_run_at when it recorded the failure, so
+  // the automation gets another attempt at its next natural cadence instead
+  // of a second push attempt for the same spent cycle.
+  it('a duplicate invocation whose cycle already failed (terminal state) does not re-attempt the push and does not advance again', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([], 200))
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'existing-run-1', current_state: 'failed', created_at: '2026-06-26T14:29:50.000Z' },
+      ]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
     });
+
+    expect(result).toBe('skipped');
+    expect(webpush.sendNotification).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/automations?'))).toBe(false);
+  });
+
+  // A concurrent invocation whose cycle is non-terminal but recent must
+  // assume the true owner is still actively working — do nothing, not even
+  // an advance attempt.
+  it('a duplicate invocation whose cycle is non-terminal but recent (owner still working) does not push or advance', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([], 200))
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'existing-run-1', current_state: 'scheduled', created_at: '2026-06-26T14:29:45.000Z' }, // 15s old
+      ]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('skipped');
+    expect(webpush.sendNotification).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/automations?'))).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  // Required test 13: "Cron retry after process restart does not duplicate
+  // the cycle." A "restart" looks identical to any other retry from the
+  // runner's stateless perspective: the caller re-reads the automation and
+  // tries again with no memory of the first attempt. Proves across two
+  // separate processAutomation invocations that only one push and one
+  // automations-table write happen for the same cycle.
+  it('a stale/abandoned non-terminal cycle is recovered (marked failed) and next_run_at advances exactly once', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([], 200)) // ignore-duplicates conflict
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'existing-run-1', current_state: 'scheduled', created_at: '2026-06-26T14:27:30.000Z' }, // 150s old > 120s threshold
+      ]))
+      .mockResolvedValueOnce(emptyResponse()) // mark stale run 'failed'
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z')); // guarded recovery advance succeeds
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('skipped');
+    // Never executes the action for a duplicate — no task, no push — even
+    // though it is recovering the stuck schedule.
+    expect(webpush.sendNotification).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/tasks'))).toBe(false);
+    // The abandoned run's real outcome is preserved, not silently discarded.
+    expect(String(fetchMock.mock.calls[2][0])).toContain('/rest/v1/automation_runs?id=eq.existing-run-1');
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({ current_state: 'failed' });
+    expect(JSON.parse(fetchMock.mock.calls[2][1].body).failure_reason).toMatch(/Abandoned/);
+    // Recovery advance is the same guarded write, keyed on the same next_run_at.
+    expect(String(fetchMock.mock.calls[3][0])).toContain('next_run_at=eq.2026-06-26T14%3A30%3A00.000Z');
+    expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toMatchObject({ next_run_at: '2026-06-27T14:30:00.000Z' });
+  });
+
+  it('a second recovery attempt for the same stale cycle is rejected by the guard (no double-advance)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([], 200))
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'existing-run-1', current_state: 'scheduled', created_at: '2026-06-26T14:27:30.000Z' },
+      ]))
+      .mockResolvedValueOnce(emptyResponse())
+      // Guard rejects: another recovering invocation already advanced it first.
+      .mockResolvedValueOnce(jsonResponse([], 200));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    // The function itself never throws or double-writes — the rejected guard
+    // is a safe no-op, and the cycle is still correctly reported as skipped.
+    expect(result).toBe('skipped');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not guess when the conflicting run cannot be inspected — leaves the cycle for the next tick instead of advancing blindly', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([], 200))
+      .mockResolvedValueOnce(jsonResponse({ message: 'read error' }, 500));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('skipped');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/automations?'))).toBe(false);
   });
 });
 
@@ -311,7 +454,7 @@ describe('processAutomation — invalid recurrence fails safely', () => {
         { id: 'sub-1', endpoint: 'https://push.example/a', p256dh: 'p', auth: 'a' },
       ]))
       .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(jsonResponse([{ id: 'automation-1', status: 'paused' }]));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await processAutomation({
@@ -355,6 +498,7 @@ describe('runAutomationsCore — due-automation query scoping', () => {
     expect(queriedUrl).toMatch(/next_run_at=lte\./);
   });
 
+  // Required test 9: "Concurrent processing of different automations remains independent."
   it('processes each due automation independently — one failure does not stop the others', async () => {
     const fetchMock = vi
       .fn()
@@ -373,7 +517,7 @@ describe('runAutomationsCore — due-automation query scoping', () => {
         { id: 'sub-1', endpoint: 'https://push.example/a', p256dh: 'p', auth: 'a' },
       ]))
       .mockResolvedValueOnce(emptyResponse())
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z', 'automation-ok'));
     vi.stubGlobal('fetch', fetchMock);
 
     const stats = await runAutomationsCore({
@@ -383,6 +527,7 @@ describe('runAutomationsCore — due-automation query scoping', () => {
     });
 
     expect(stats).toMatchObject({ checked: 2, fired: 1, failed: 1 });
+    expect(webpush.sendNotification).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -465,6 +610,7 @@ describe('computeNextRunAt — recurrence, local time, and timezone/DST correctn
 });
 
 describe('processAutomation unsupported recurring WhatsApp automations', () => {
+  // Required test 10: "Staff automation behavior remains unchanged."
   it('skips and pauses delegated recurring automations before creating tasks or WhatsApp deliveries', async () => {
     const fetchMock = vi
       .fn()
@@ -573,4 +719,14 @@ function emptyResponse(status = 204) {
     json: async () => null,
     text: async () => '',
   };
+}
+
+/**
+ * Simulates a successful guarded advance: PostgREST's
+ * `Prefer: return=representation` on a conditional PATCH that matched exactly
+ * one row. This is what proves the write actually *applied*, not merely that
+ * a PATCH request was sent — see guardedPatchAutomation.
+ */
+function advancedAutomationResponse(nextRunAt, id = 'automation-1') {
+  return jsonResponse([{ id, next_run_at: nextRunAt }], 200);
 }
