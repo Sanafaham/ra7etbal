@@ -2157,14 +2157,12 @@ export default function ElevenLabsAgentWidget({
       // would resolve a real assignee_id, silently turning an owner-only
       // reminder into a request that looks like (and gets rejected as) a
       // staff delegation. A name matching the owner's own display name is
-      // never a delegation target; treat it as no assignee at all.
-      const ownerDisplayName = (useProfileStore.getState().displayName ?? "").trim();
-      const assignee_name =
-        rawAssigneeName.trim() !== "" &&
-        ownerDisplayName !== "" &&
-        rawAssigneeName.trim().toLowerCase() === ownerDisplayName.toLowerCase()
-          ? ""
-          : rawAssigneeName;
+      // never a delegation target; treat it as no assignee at all. Resolved
+      // below (inside the try block, once authUserId is known) rather than
+      // here, so it is checked against the current signed-in user's own
+      // profile — not a stale or not-yet-loaded cache from a previous
+      // account.
+      let assignee_name = rawAssigneeName;
       const titleTrimmed = (params?.title ?? "").trim();
       // "instruction" is the existing exact key — tried first, with the same
       // task-shaped fallbacks used elsewhere (task/description/text).
@@ -2262,6 +2260,28 @@ export default function ElevenLabsAgentWidget({
           const failureText = "You are not signed in. Please sign in and try again.";
           recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
           return failureText;
+        }
+
+        // ── Filter a self-referential assignee_name ─────────────────────────
+        // Only compare against a profile actually loaded for THIS signed-in
+        // user — a stale cache from a previous account (or one that simply
+        // hasn't loaded yet this session) must never suppress a genuine
+        // third-party assignee_name, and must never be skipped just because
+        // it happens to still be "idle" at the moment this tool fires.
+        let profileState = useProfileStore.getState();
+        if (profileState.loadedForUserId !== authUserId || profileState.status !== "ready") {
+          await useProfileStore.getState().loadFor(authUserId);
+          profileState = useProfileStore.getState();
+        }
+        if (profileState.status === "ready" && profileState.loadedForUserId === authUserId) {
+          const ownerDisplayName = (profileState.displayName ?? "").trim();
+          if (
+            assignee_name.trim() !== "" &&
+            ownerDisplayName !== "" &&
+            assignee_name.trim().toLowerCase() === ownerDisplayName.toLowerCase()
+          ) {
+            assignee_name = "";
+          }
         }
 
         // ── Resolve optional assignee ─────────────────────────────────────

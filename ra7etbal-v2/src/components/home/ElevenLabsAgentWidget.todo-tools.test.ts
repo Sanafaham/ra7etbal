@@ -312,16 +312,48 @@ describe("ElevenLabsAgentWidget — create_automation self-directed assignee sco
   // automation — Carson never created the owner's reminder at all. A name
   // matching the owner's own display name must never be treated as a
   // delegation target.
+  //
+  // This is asserted via source-pattern matching, consistent with every other
+  // test in this file (createReminder, execute_instruction, send_delegation,
+  // etc.) — createAutomation is a private useCallback inside this ~5000-line
+  // component with Supabase auth, the ElevenLabs SDK, and browser media APIs
+  // as dependencies, so behaviorally invoking it in isolation would require
+  // extracting it into a standalone module, which is out of scope for this
+  // fix. The assertions below are structural rather than a single loose
+  // substring check specifically so a change to the comparison's polarity,
+  // trim/case handling, or which store field is read would fail this test.
   it("treats an assignee_name matching the owner's own display name as no assignee at all", () => {
     const block = createAutomationBlock();
-    expect(block).toContain("const ownerDisplayName = (useProfileStore.getState().displayName ?? \"\").trim();");
     expect(block).toContain(
-      "rawAssigneeName.trim().toLowerCase() === ownerDisplayName.toLowerCase()",
+      "if (profileState.status === \"ready\" && profileState.loadedForUserId === authUserId) {",
     );
-    // The self-referential branch must resolve to no assignee, so the
-    // downstream lookup (if (assignee_name?.trim())) is skipped entirely —
-    // never a definite person for the owner's own name.
-    expect(block).toMatch(/rawAssigneeName\.trim\(\)[\s\S]{0,80}ownerDisplayName[\s\S]{0,40}\?\s*""\s*:\s*rawAssigneeName/);
+    expect(block).toContain("const ownerDisplayName = (profileState.displayName ?? \"\").trim();");
+    expect(block).toMatch(
+      /assignee_name\.trim\(\) !== ""\s*&&\s*ownerDisplayName !== ""\s*&&\s*assignee_name\.trim\(\)\.toLowerCase\(\) === ownerDisplayName\.toLowerCase\(\)/,
+    );
+    // The self-referential branch must clear assignee_name entirely, so the
+    // downstream lookup (if (assignee_name?.trim())) is skipped — never a
+    // definite person for the owner's own name.
+    expect(block).toMatch(/\{\s*assignee_name = "";\s*\}/);
+  });
+
+  // Regression (CodeRabbit finding on this fix's first pass): the owner-name
+  // comparison must only run against a profile actually loaded for the
+  // current signed-in user. useProfileStore's displayName can be null (not
+  // yet loaded this session) or, in principle, stale from a previous account
+  // if the store isn't fully reset on sign-out — comparing against either
+  // would either silently reintroduce the original bug (profile not yet
+  // loaded when the very first request of a session is self-directed) or
+  // wrongly null out a genuine third-party assignee_name (stale cross-account
+  // name coincidentally matching this request). loadedForUserId exists on
+  // the store precisely to detect this ("Re-fetch when it changes").
+  it("only trusts the profile store once it is ready and loaded for the current signed-in user", () => {
+    const block = createAutomationBlock();
+    expect(block).toContain(
+      "if (profileState.loadedForUserId !== authUserId || profileState.status !== \"ready\") {",
+    );
+    expect(block).toContain("await useProfileStore.getState().loadFor(authUserId);");
+    expect(block).toContain("profileState = useProfileStore.getState();");
   });
 });
 
