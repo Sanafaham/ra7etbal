@@ -20,12 +20,23 @@ export interface DirectToolSuccessResult {
   resultText: string;
   at: string;
   inputSummary?: unknown;
+  /**
+   * "success" (default, for backward compatibility with every call site that
+   * predates this field) or "failure". A tool records "failure" only at its
+   * own verified failure return points (hard-blocks, non-2xx responses,
+   * unconfirmed persistence) — never a guess. This lets the override system
+   * correct the opposite direction from what it originally shipped for: the
+   * agent's own separately-generated spoken reply claiming success when the
+   * tool call is known to have failed.
+   */
+  outcome?: "success" | "failure";
 }
 
 const OVERRIDABLE_TOOL_NAMES = new Set([
   "create_todo",
   "complete_todo",
   "create_reminder",
+  "create_automation",
   "execute_instruction",
   "control_task",
   "send_delegation",
@@ -46,6 +57,15 @@ function shouldOverrideAgentMessage(
   agentMessage: string,
   lastSuccess: DirectToolSuccessResult,
 ): boolean {
+  if (lastSuccess.outcome === "failure") {
+    // The tool call is verified to have failed. If the agent's own message
+    // doesn't already read as a failure, it's a fabricated success and must
+    // be corrected with the tool's own truthful result. If the agent's
+    // message already sounds like a failure, leave it — it's already
+    // truthful, and forcing the canned tool text over it isn't necessary.
+    return !FAILURE_LANGUAGE_PATTERN.test(agentMessage);
+  }
+
   if (
     lastSuccess.toolName === "execute_instruction" &&
     isDelegationCoveragePartialSuccess(lastSuccess.inputSummary)

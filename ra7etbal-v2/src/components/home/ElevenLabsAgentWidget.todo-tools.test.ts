@@ -144,7 +144,19 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
 
   it("never falls through to the one-time task path when recurring language is detected but automation creation fails", () => {
     const block = SOURCE.slice(recurringStart, oneTimeStart);
-    expect(block).toContain('return "I could not create the recurring reminder.";');
+    expect(block).toContain('const recurringFailureText = "I could not create the recurring reminder.";');
+    expect(block).toContain("return recurringFailureText;");
+  });
+
+  it("records the recurring-path failure as an overridable outcome so a fabricated success can be corrected", () => {
+    const block = SOURCE.slice(recurringStart, oneTimeStart);
+    const failureConstIndex = block.indexOf('const recurringFailureText = "I could not create the recurring reminder.";');
+    const failureRecordIndex = block.indexOf('outcome: "failure"', failureConstIndex);
+    const returnIndex = block.indexOf("return recurringFailureText;", failureConstIndex);
+
+    expect(failureConstIndex).toBeGreaterThan(-1);
+    expect(failureRecordIndex).toBeGreaterThan(failureConstIndex);
+    expect(returnIndex).toBeGreaterThan(failureRecordIndex);
   });
 });
 
@@ -230,6 +242,91 @@ describe("ElevenLabsAgentWidget — /api/automations POST responses require a co
 
     const block = SOURCE.slice(start, end);
     expect(block).toContain("if (!result?.automation?.id)");
-    expect(block).toMatch(/return "I could not confirm that automation was saved\./);
+    expect(block).toMatch(/I could not confirm that automation was saved\./);
+    expect(block).toContain("return failureText;");
+  });
+});
+
+// Regression (Part C, self-directed automation safety): create_automation's
+// assignee resolution previously fell back through a generic multi-key
+// extractor (name/person_name/recipient_name/to) shared with genuinely
+// person-directed tools. For create_automation specifically — routinely
+// self-directed, unlike those other tools — that fallback risked pulling an
+// unrelated stray field into assignee_name and silently misrouting an
+// owner-only reminder into a rejected/misattributed staff automation.
+describe("ElevenLabsAgentWidget — create_automation self-directed assignee scoping", () => {
+  function createAutomationBlock(): string {
+    const start = SOURCE.indexOf("const createAutomation = useCallback(");
+    const end = SOURCE.indexOf("[create_automation] created id=", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return SOURCE.slice(start, end);
+  }
+
+  it("resolves assignee_name from its own exact key only, not the generic multi-key person extractor", () => {
+    const block = createAutomationBlock();
+    expect(block).toContain(
+      'const assignee_name = typeof params?.assignee_name === "string" ? params.assignee_name : "";',
+    );
+    expect(block).not.toContain('extractPersonNameParam(params, "assignee_name")');
+  });
+
+  it("still resolves an explicitly-provided assignee_name against People (staff automation behavior unchanged)", () => {
+    const block = createAutomationBlock();
+    expect(block).toMatch(/if \(assignee_name\?\.trim\(\)\)\s*\{/);
+    expect(block).toContain("people.find(");
+    expect(block).toContain("assigneeId = match.id;");
+  });
+});
+
+// Regression (Part A, tool-failure truthfulness): create_automation's three
+// definite-failure return points must record a verified failure outcome so
+// the display-override system can correct a fabricated success — mirroring
+// what create_reminder's recurring path already does.
+describe("ElevenLabsAgentWidget — create_automation records verified outcomes", () => {
+  function createAutomationBlock(): string {
+    const start = SOURCE.indexOf("const createAutomation = useCallback(");
+    const end = SOURCE.indexOf("[create_automation] created id=", start);
+    return SOURCE.slice(start, end);
+  }
+
+  it("records a failure outcome when the API rejects the request", () => {
+    const block = createAutomationBlock();
+    const failIndex = block.indexOf("I could not create that automation.");
+    const recordIndex = block.indexOf("recordCreateAutomationFailure(failureText", failIndex);
+    expect(failIndex).toBeGreaterThan(-1);
+    expect(recordIndex).toBeGreaterThan(failIndex);
+  });
+
+  it("records a failure outcome when persistence is unconfirmed (2xx with no automation id)", () => {
+    const block = createAutomationBlock();
+    const unconfirmedIndex = block.indexOf("I could not confirm that automation was saved");
+    const recordIndex = block.indexOf("recordCreateAutomationFailure(failureText", unconfirmedIndex);
+    expect(unconfirmedIndex).toBeGreaterThan(-1);
+    expect(recordIndex).toBeGreaterThan(unconfirmedIndex);
+  });
+
+  it("records a failure outcome when the network request itself throws", () => {
+    const block = createAutomationBlock();
+    const networkFailIndex = block.indexOf("I could not reach the server");
+    const recordIndex = block.indexOf("recordCreateAutomationFailure(failureText", networkFailIndex);
+    expect(networkFailIndex).toBeGreaterThan(-1);
+    expect(recordIndex).toBeGreaterThan(networkFailIndex);
+  });
+
+  it("records a success outcome only at the verified success return", () => {
+    const start = SOURCE.indexOf("const createAutomation = useCallback(");
+    const end = SOURCE.indexOf("  );\n\n  // ------------------------------------------------------------------\n  // Client tool: send_direct_whatsapp_message", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const block = SOURCE.slice(start, end);
+
+    const successTextIndex = block.indexOf("const successText = ");
+    const outcomeIndex = block.indexOf('outcome: "success"', successTextIndex);
+    const returnIndex = block.indexOf("return successText;", outcomeIndex);
+
+    expect(successTextIndex).toBeGreaterThan(-1);
+    expect(outcomeIndex).toBeGreaterThan(successTextIndex);
+    expect(returnIndex).toBeGreaterThan(outcomeIndex);
   });
 });
