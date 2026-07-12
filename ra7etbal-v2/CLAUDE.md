@@ -137,3 +137,168 @@ tasks key columns: image_path (reference), proof_image_path (proof), followup_se
 - Prioritize stability over new features
 - Mobile experience is critical
 - Mental load reduction is the primary product goal
+
+---
+
+## PERMANENT RA7ETBAL SAFETY ENGINEERING STANDARD
+
+### RA7ETBAL TOKEN AND TIME BUDGET RULE
+
+Primary objective:
+Preserve enough tokens and time to complete the task end to end.
+
+Completion has priority over narration, repeated investigation, and procedural ceremony.
+
+**1. READ ONCE**
+
+Read the required project documents and relevant code once.
+Do not repeatedly reread the same files unless a specific inconsistency requires it.
+
+**2. INVESTIGATE WITH A LIMIT**
+
+Identify the root cause before editing, but keep investigation focused.
+
+For a normal bug:
+- Inspect the affected path
+- Inspect the source of truth
+- Inspect nearby duplicate or fallback paths
+- Then implement
+
+Do not perform a broad repository audit unless the task requires it.
+
+**3. IMPLEMENT EARLY**
+
+Once the root cause is confirmed, begin the fix.
+Do not spend most of the context window planning or narrating before implementation.
+
+**4. MINIMAL PROGRESS UPDATES**
+
+Do not narrate every command, file read, wait, or thought.
+
+Only report:
+- A genuine blocker
+- A risky decision requiring approval
+- A material change in direction
+- Final evidence
+
+**5. TARGETED TESTS DURING DEVELOPMENT**
+
+After implementation and small review fixes, run only the relevant targeted tests.
+Do not run the entire suite and build after every minor edit.
+
+**6. FULL VALIDATION MAXIMUM**
+
+For normal low-risk work:
+- One full validation before the PR
+- One final full validation after all legitimate review findings are fixed
+
+Do not exceed two full validation cycles unless a serious regression, security issue, data-integrity issue, or architectural change requires it.
+
+**7. BATCH REVIEW FINDINGS**
+
+Wait for CodeRabbit to complete its review.
+Collect all legitimate findings.
+Fix them in one batch.
+Do not enter repeated fix, full-test, push, wait cycles for each trivial comment.
+
+**8. REVIEW ROUND LIMIT**
+
+For normal work:
+- One initial review
+- One final re-review
+
+If the final re-review contains only low-risk style, naming, test-cleanup, or documentation comments, merge without another review cycle after targeted verification.
+
+Continue additional review rounds only for:
+- Security
+- Authentication
+- Database integrity
+- Duplicate execution
+- Secret exposure
+- Production configuration
+- Destructive behavior
+- Major architecture risks
+
+**9. NO ACTIVE POLLING**
+
+Do not repeatedly check CodeRabbit or deployment status every few minutes while consuming tokens.
+Use a reasonable wait, then check once.
+
+**10. RESERVE COMPLETION BUDGET**
+
+Before beginning, reserve enough budget for:
+- Implementation
+- Tests
+- Review fixes
+- Commit and push
+- Merge
+- Deployment verification
+- Production test
+- Final evidence report
+
+If the remaining budget becomes limited, reduce narration and optional investigation first.
+Never sacrifice implementation or production verification to preserve commentary.
+
+**11. STOP CONDITIONS**
+
+Pause only for:
+- Human approval on a genuinely risky change
+- Required login or browser authorization
+- Missing secret or external credential
+- An unclear product decision that changes behavior
+- A real technical blocker
+
+Do not pause for routine coding decisions.
+
+**12. FINAL REPORT ONLY**
+
+The final report should contain:
+- Root cause
+- Fix
+- Files changed
+- Tests run
+- Commit or PR
+- Deployment status
+- Production verification
+- Remaining risk
+
+Do not produce repeated long interim reports.
+
+### RA7ETBAL TOKEN AND TIME BUDGET RULE UPDATE
+
+Add the following to the existing rule.
+
+Applies by default unless the task explicitly requires:
+
+- Deep research
+- Architecture design
+- Security review
+- Authentication review
+- Database design
+- Major refactor
+- Production-risk assessment
+
+**ONE-PASS DEFAULT**
+
+For normal low-risk Ra7etBal work:
+
+DISCOVER → Identify root cause
+EXECUTE → Implement safest fix
+VERIFY → Run targeted tests
+REVIEW → CodeRabbit review
+FIX → Batch legitimate findings
+VALIDATE → Final validation
+DEPLOY → Production verification
+REPORT → Evidence
+
+Do not split normal work into investigation-only phases.
+Complete the task end-to-end unless a Stop Condition is reached.
+Success is a verified outcome, not a completed investigation.
+
+### SUCCESS DEFINITION
+
+A task is successful only when the requested behavior is fixed, verified, deployed where relevant, and reported with evidence.
+
+A long investigation without completion is not success.
+A fully tested PR that is never merged is not success.
+A merged change that is not verified in production is not success.
