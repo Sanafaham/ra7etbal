@@ -2,19 +2,30 @@
  * POST /api/qstash-reminder
  *
  * Manages QStash delayed jobs for reminder push notifications.
- * Called from the browser after task mutations — never directly by QStash.
+ * The default HTTP handler below is called from the browser after task
+ * mutations — never directly by QStash. This file also exports
+ * scheduleAutomationRunWakeup, a server-only helper imported directly by
+ * api/automations.js and api/process-delegation-escalations.js (not
+ * reached via HTTP) to schedule exact-time wake-ups for recurring
+ * automations. See its own doc comment for why this is a plain import
+ * rather than another HTTP action: this file's HTTP handler authenticates
+ * the caller as a signed-in end user and verifies task ownership, a model
+ * that doesn't fit a server-to-server call with no originating end-user
+ * request (automation creation and the automation runner both already
+ * operate under the service role key, impersonating no one).
  *
  * Body: { action: 'schedule' | 'cancel' | 'reschedule', taskId, dueAt? }
  *
  * Auth: Supabase access token in Authorization: Bearer <token> header.
  *       Verified server-side; only the task owner may schedule/cancel.
  *
- * SAFETY NOTE: the 'schedule-escalation' action below only PUBLISHES a
- * timed wake-up call to /api/process-delegation-escalations — it grants no
- * authority. That handler always re-derives eligibility from the database
- * (ageMs + guard column) before doing anything, regardless of when or why it
- * was invoked. See process-delegation-escalations.js's own header for the
- * full rule and docs/SAFETY-duplicate-follow-up-prevention.md.
+ * SAFETY NOTE: the 'schedule-escalation' action below, and
+ * scheduleAutomationRunWakeup, only PUBLISH a timed wake-up call — neither
+ * grants any authority. The receiving handler
+ * (/api/process-delegation-escalations) always re-derives eligibility from
+ * the database before doing anything, regardless of when or why it was
+ * invoked. See process-delegation-escalations.js's own header for the full
+ * rule and docs/SAFETY-duplicate-follow-up-prevention.md.
  */
 
 const QSTASH_BASE = 'https://qstash.upstash.io/v2';
@@ -43,13 +54,7 @@ export default async function handler(req, res) {
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const qstashToken = process.env.QSTASH_TOKEN;
   const cronSecret = process.env.CRON_SECRET;
-  let appBaseUrl = (process.env.APP_BASE_URL || 'https://ra7etbal.com').trim();
-  // Ensure the URL has a scheme — QStash rejects destinations without https://
-  if (appBaseUrl && !appBaseUrl.startsWith('http://') && !appBaseUrl.startsWith('https://')) {
-    appBaseUrl = `https://${appBaseUrl}`;
-  }
-  // Strip any trailing slash for clean URL construction
-  appBaseUrl = appBaseUrl.replace(/\/$/, '');
+  const appBaseUrl = resolveAppBaseUrl();
 
   const missingVars = [];
   if (!supabaseUrl) missingVars.push('SUPABASE_URL');
@@ -191,6 +196,89 @@ export default async function handler(req, res) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+/** Normalises APP_BASE_URL the same way for every caller in this file — a
+ * scheme is required (QStash rejects destinations without https://) and no
+ * trailing slash, so URL concatenation elsewhere never produces "//api". */
+export function resolveAppBaseUrl() {
+  let appBaseUrl = (process.env.APP_BASE_URL || 'https://ra7etbal.com').trim();
+  if (appBaseUrl && !appBaseUrl.startsWith('http://') && !appBaseUrl.startsWith('https://')) {
+    appBaseUrl = `https://${appBaseUrl}`;
+  }
+  return appBaseUrl.replace(/\/$/, '');
+}
+
+/**
+ * Publishes a one-shot QStash wake-up for the exact moment a recurring
+ * automation's next cycle becomes due. Targets the SAME endpoint the
+ * existing 10-minute cron already calls, with the same
+ * `{ action: 'run-automations' }` dispatch — so runAutomationsCore always
+ * re-derives which automation(s) are actually due fresh from the database
+ * regardless of what triggered this invocation (automationId/nextRunAt
+ * below are for logging only, never trusted for selection — see
+ * process-delegation-escalations.js's own "scheduled triggers are wake-up
+ * signals only" safety note).
+ *
+ * Deterministic dedup ID (automation-run-{automationId}-{nextRunAt}) means a
+ * duplicate publish for the same cycle is a safe no-op at the QStash layer,
+ * on top of the existing automation_runs unique-constraint idempotency
+ * inside runAutomationsCore itself.
+ *
+ * Throws on any failure (missing QSTASH_TOKEN, invalid nextRunAt, QStash
+ * rejecting the publish). Callers — api/automations.js after creation, and
+ * advanceNextRunAt in process-delegation-escalations.js after a successful
+ * advance — must treat a thrown error here as "exact scheduling failed,
+ * cron fallback active," never as a reason to fail or roll back the
+ * already-persisted automation row.
+ */
+export async function scheduleAutomationRunWakeup({ appBaseUrl, automationId, nextRunAt, requestId = 'srv' }) {
+  const qstashToken = process.env.QSTASH_TOKEN;
+  const cronSecret = process.env.CRON_SECRET;
+  if (!qstashToken) {
+    throw new Error('QSTASH_TOKEN not configured.');
+  }
+  if (!cronSecret) {
+    // Matches the existing schedule-escalation warning below — without this,
+    // the publish itself still succeeds (QStash returns 200/202 for a valid
+    // publish regardless of the forwarded auth header's contents), but the
+    // wake-up would fail auth at /api/process-delegation-escalations when it
+    // actually fires, with the failure invisible to this caller.
+    console.warn(`[qstash-reminder][${requestId}] CRON_SECRET not set — automation-run wake-up will fail auth at target`);
+  }
+  const notBeforeMs = new Date(nextRunAt).getTime();
+  if (Number.isNaN(notBeforeMs)) {
+    throw new Error(`Invalid nextRunAt: ${nextRunAt}`);
+  }
+  // This call forwards CRON_SECRET via Upstash-Forward-Authorization to
+  // appBaseUrl — a caller-supplied value (process-delegation-escalations.js
+  // passes raw process.env.APP_BASE_URL). A misconfigured http:// deployment
+  // would send that secret in plaintext. Enforced here specifically, rather
+  // than in the shared resolveAppBaseUrl() above, so the three pre-existing
+  // actions on the default HTTP handler (schedule/cancel/reschedule, none of
+  // which forward CRON_SECRET) keep their exact current behavior unchanged.
+  if (!appBaseUrl?.startsWith('https://')) {
+    throw new Error(`appBaseUrl must use https:// — refusing to forward CRON_SECRET over an insecure scheme: ${appBaseUrl}`);
+  }
+
+  return publishEscalationMessage({
+    targetUrl: `${appBaseUrl}/api/process-delegation-escalations`,
+    qstashToken,
+    cronSecret,
+    dedupId: `automation-run-${automationId}-${nextRunAt}`,
+    // Round UP, never down: a fractional-second nextRunAt (e.g. "...:00.500Z")
+    // floored to "...:00" would make QStash invoke the wake-up up to 999ms
+    // before the automation is actually due. runAutomationsCore's own query
+    // (next_run_at<=now()) would then correctly find nothing yet due, so the
+    // wake-up would silently no-op — the exact cycle it was meant to catch
+    // falls through to the 10-minute cron fallback instead. Firing up to
+    // ~1s late is fine (the whole point is "as close as technically
+    // possible," not a guaranteed exact second); firing early defeats it.
+    notBefore: Math.ceil(notBeforeMs / 1000),
+    payload: { action: 'run-automations' },
+    requestId,
+    label: 'automation-run',
+  });
+}
 
 async function scheduleMessage(appBaseUrl, taskId, dueAt, qstashToken, requestId) {
   const dueMs = new Date(dueAt).getTime();

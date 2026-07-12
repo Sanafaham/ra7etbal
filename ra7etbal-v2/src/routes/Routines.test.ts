@@ -94,10 +94,10 @@ describe("owner-only automation UI status", () => {
     expect(name).toBe("Grace");
   });
 
-  it("shows Reminder created for sent owner-only automations", () => {
+  it("shows Reminder sent for sent owner-only automations (genuinely represents a delivered push, not just setup)", () => {
     const state = resolveStateConfig("sent", "delegation", true);
 
-    expect(state.label).toBe("Reminder created");
+    expect(state.label).toBe("Reminder sent");
     expect(state.label).not.toBe("Waiting for confirmation");
   });
 

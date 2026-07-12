@@ -170,6 +170,112 @@ describe('processAutomation owner-only automations', () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/rest/v1/automations?')).length).toBe(1);
   });
 
+  // Regression: exact-time recurring reminder wake-ups. Confirms the
+  // following occurrence's wake-up is published only after next_run_at's
+  // guarded write actually applied — never before, never regardless of it.
+  it('publishes the following exact wake-up only after next_run_at successfully advances', async () => {
+    vi.stubEnv('QSTASH_TOKEN', 'qstash-token');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }], 201))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1' }], 201))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'sub-1', endpoint: 'https://push.example/a', p256dh: 'p', auth: 'a' },
+      ]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z'))
+      .mockResolvedValueOnce(jsonResponse({ messageId: 'msg-1' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('ok');
+    // The wake-up publish is the 8th call — strictly after the guarded
+    // advance (7th call) whose write it depends on.
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+    const [qstashUrl, qstashInit] = fetchMock.mock.calls[7];
+    expect(String(qstashUrl)).toContain('/api/process-delegation-escalations');
+    expect(qstashInit.headers['Upstash-Deduplication-Id']).toBe(
+      'automation-run-automation-1-2026-06-27T14:30:00.000Z',
+    );
+  });
+
+  // A publish failure must never affect the return value of processAutomation
+  // or undo the already-durable next_run_at advance — the existing
+  // 10-minute cron remains the fallback either way.
+  it('does not block or fail the run when wake-up publishing fails after a successful advance', async () => {
+    vi.stubEnv('QSTASH_TOKEN', 'qstash-token');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }], 201))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1' }], 201))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'sub-1', endpoint: 'https://push.example/a', p256dh: 'p', auth: 'a' },
+      ]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z'))
+      .mockResolvedValueOnce(jsonResponse({ error: 'QStash down' }, 500));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('ok');
+    const failureLog = errorSpy.mock.calls.find(
+      ([label]) => label === '[automations] exact wake-up scheduling failed for next cycle — cron fallback active',
+    );
+    expect(failureLog).toBeTruthy();
+    expect(failureLog[1]).toMatchObject({ automationId: 'automation-1' });
+  });
+
+  // Guarded advance no-op (another invocation already owns this cycle) must
+  // never publish a duplicate wake-up — QStash's own dedup ID would make a
+  // second publish for the same cycle harmless anyway, but this confirms the
+  // guard itself (applied === false) already prevents the attempt.
+  it('does not publish a wake-up when the guarded advance is a no-op (already advanced by another invocation)', async () => {
+    vi.stubEnv('QSTASH_TOKEN', 'qstash-token');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }], 201))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1' }], 201))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'sub-1', endpoint: 'https://push.example/a', p256dh: 'p', auth: 'a' },
+      ]))
+      .mockResolvedValueOnce(emptyResponse())
+      // Guard finds next_run_at already changed by someone else — empty array.
+      .mockResolvedValueOnce(jsonResponse([], 200));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      automation: ownerOnlyAutomationRow(),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('ok');
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+
   // Regression: this test previously asserted the OPPOSITE — that a failed
   // owner push was still reported as a successful ('sent') run, on the theory
   // that task creation alone counted as success. That was a truthfulness bug:
@@ -566,6 +672,68 @@ describe('runAutomationsCore — due-automation query scoping', () => {
     expect(queriedUrl).toContain('/rest/v1/automations');
     expect(queriedUrl).toContain('status=eq.active');
     expect(queriedUrl).toMatch(/next_run_at=lte\./);
+  });
+
+  // Regression: exact-time recurring reminder wake-ups. A QStash one-shot
+  // wake-up (targeting this same endpoint with { action: 'run-automations' })
+  // carries no automation-specific data the handler trusts for selection —
+  // runAutomationsDispatch/runAutomationsCore always re-derive which
+  // automation(s) are due fresh from this same status=active AND
+  // next_run_at<=now() query, regardless of what triggered the invocation.
+  // These two tests prove a stale wake-up genuinely cannot execute anything
+  // it shouldn't, by exercising this exact query path directly — not by
+  // trusting that a payload field was ignored, but by proving the automation
+  // it targeted is absent from what the query actually returns.
+  it('a paused/stopped automation is never selected — a stale wake-up for it published before it was paused finds nothing to run', async () => {
+    // The query itself filters status=eq.active server-side; a paused
+    // automation simply never appears in the result set PostgREST returns,
+    // regardless of any wake-up that arrives after the fact.
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const stats = await runAutomationsCore({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+    });
+
+    expect(stats).toMatchObject({ checked: 0, fired: 0 });
+    expect(String(fetchMock.mock.calls[0][0])).toContain('status=eq.active');
+  });
+
+  // CodeRabbit finding: the original version of this test mocked the exact
+  // same empty response and asserted the exact same stats as the test above,
+  // with only the prose distinguishing it — never actually exercising the
+  // "stale target" scenario it claimed to. Strengthened to assert on the
+  // query's own next_run_at=lte.<timestamp> parameter: the cutoff is a
+  // freshly-computed "now" at query time (parseable, within a tight bound of
+  // Date.now()), never a value the wake-up call could have supplied — proof
+  // the query re-derives eligibility itself rather than trusting anything
+  // about what triggered this invocation.
+  it('an automation whose next_run_at has already advanced past a stale wake-up target is not re-executed — the query cutoff is always freshly computed, never wake-up-supplied', async () => {
+    const beforeCall = Date.now();
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const stats = await runAutomationsCore({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+    });
+    const afterCall = Date.now();
+
+    const queriedUrl = String(fetchMock.mock.calls[0][0]);
+    const cutoffMatch = queriedUrl.match(/next_run_at=lte\.([^&]+)/);
+    expect(cutoffMatch).not.toBeNull();
+    const cutoffMs = new Date(decodeURIComponent(cutoffMatch[1])).getTime();
+    // A wake-up scheduled for cycle N's stale next_run_at has no way to
+    // inject that value here — the cutoff this call actually used is bounded
+    // tightly around the real invocation time, proving it was computed fresh
+    // rather than read from any external input.
+    expect(cutoffMs).toBeGreaterThanOrEqual(beforeCall);
+    expect(cutoffMs).toBeLessThanOrEqual(afterCall);
+
+    expect(stats).toMatchObject({ checked: 0, fired: 0 });
   });
 
   // Required test 9: "Concurrent processing of different automations remains independent."

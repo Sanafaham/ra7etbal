@@ -95,6 +95,7 @@
 
 import webpush from 'web-push';
 import { Receiver } from '@upstash/qstash';
+import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -1524,7 +1525,7 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
     // Empty array = duplicate — another invocation already claimed this cycle.
     // Never execute (no task, no push) and never advance as a matter of
     // course from here — see the SAFETY INVARIANT comment above this section.
-    return await handleDuplicateRunCycle({ automation, runFor, supabaseUrl, serviceKey, now });
+    return await handleDuplicateRunCycle({ automation, runFor, supabaseUrl, serviceKey, appBaseUrl, now });
   }
 
   const runId = run.id;
@@ -1598,7 +1599,7 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
     // Leave next_run_at unchanged — let the next cron tick retry (once run uniqueness allows).
     // Actually, since we already created the run row, we need to advance next_run_at
     // so the automation isn't permanently stuck. Advance and fail gracefully.
-    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now, appBaseUrl);
     return 'failed';
   }
 
@@ -1701,7 +1702,7 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
   }
 
   // ── Step 6: Advance next_run_at / stop ────────────────────────────────────
-  await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+  await advanceNextRunAt(supabaseUrl, serviceKey, automation, now, appBaseUrl);
 
   return 'ok';
 }
@@ -1735,7 +1736,7 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
  *      succeed, abort without advancing — advancing past a run whose real
  *      outcome was never durably recorded would erase that record's meaning.
  */
-async function handleDuplicateRunCycle({ automation, runFor, supabaseUrl, serviceKey, now }) {
+async function handleDuplicateRunCycle({ automation, runFor, supabaseUrl, serviceKey, appBaseUrl, now }) {
   const existingRes = await fetch(
     `${supabaseUrl}/rest/v1/automation_runs` +
       `?automation_id=eq.${encodeURIComponent(automation.id)}` +
@@ -1762,7 +1763,7 @@ async function handleDuplicateRunCycle({ automation, runFor, supabaseUrl, servic
     // Guarded — a no-op in the normal case (owner already advanced); only
     // applies if the owner crashed between its terminal-state write and its
     // own advanceNextRunAt call, so this cycle wouldn't otherwise recover.
-    const recovered = await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+    const recovered = await advanceNextRunAt(supabaseUrl, serviceKey, automation, now, appBaseUrl);
     console.log('[automations] duplicate invocation — cycle already completed by the owner', {
       automationId: automation.id,
       runFor,
@@ -1802,7 +1803,7 @@ async function handleDuplicateRunCycle({ automation, runFor, supabaseUrl, servic
     });
     return 'skipped';
   }
-  const recovered = await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+  const recovered = await advanceNextRunAt(supabaseUrl, serviceKey, automation, now, appBaseUrl);
   console.log('[automations] stale run recovery advance', { automationId: automation.id, runFor, recovered });
   return 'skipped';
 }
@@ -1826,7 +1827,7 @@ export async function processMessageAutomation({
       current_state:  'failed',
       failure_reason: 'Message automation has no assignee.',
     });
-    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now, appBaseUrl);
     return 'failed';
   }
 
@@ -1840,7 +1841,7 @@ export async function processMessageAutomation({
       current_state:  'failed',
       failure_reason: 'Assignee not found or has no phone number.',
     });
-    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+    await advanceNextRunAt(supabaseUrl, serviceKey, automation, now, appBaseUrl);
     return 'failed';
   }
 
@@ -1905,7 +1906,7 @@ export async function processMessageAutomation({
     });
   }
 
-  await advanceNextRunAt(supabaseUrl, serviceKey, automation, now);
+  await advanceNextRunAt(supabaseUrl, serviceKey, automation, now, appBaseUrl);
   return sent ? 'ok' : 'failed';
 }
 
@@ -1930,7 +1931,7 @@ export async function processMessageAutomation({
  * Returns true if this call's write applied, false if the guard found
  * next_run_at already changed by someone else (safe no-op).
  */
-async function advanceNextRunAt(supabaseUrl, serviceKey, automation, now) {
+async function advanceNextRunAt(supabaseUrl, serviceKey, automation, now, appBaseUrl) {
   const nextRunAt = computeNextRunAt(automation);
 
   if (nextRunAt === null) {
@@ -1953,7 +1954,7 @@ async function advanceNextRunAt(supabaseUrl, serviceKey, automation, now) {
     }));
   }
 
-  return guardedPatchAutomation(supabaseUrl, serviceKey, automation, {
+  const applied = await guardedPatchAutomation(supabaseUrl, serviceKey, automation, {
     next_run_at: nextRunAt,
     updated_at:  now.toISOString(),
   }, () => console.log('[automations] next_run_at advanced', {
@@ -1961,6 +1962,27 @@ async function advanceNextRunAt(supabaseUrl, serviceKey, automation, now) {
     cadenceType:  automation.cadence_type,
     nextRunAt,
   }));
+
+  // Exact-time wake-up for the newly-advanced cycle — only when THIS call's
+  // write actually applied. A guarded no-op means some other invocation
+  // already owns this advance (and, if its own write applied, already
+  // scheduled this same wake-up itself — scheduling it twice here would be
+  // wrong, not just redundant). A failed publish must never affect the
+  // return value or undo the already-durable next_run_at advance; the
+  // existing 10-minute cron remains the fallback either way.
+  if (applied) {
+    try {
+      await scheduleAutomationRunWakeup({ appBaseUrl, automationId: automation.id, nextRunAt });
+    } catch (err) {
+      console.error('[automations] exact wake-up scheduling failed for next cycle — cron fallback active', {
+        automationId: automation.id,
+        nextRunAt,
+        error: err?.message,
+      });
+    }
+  }
+
+  return applied;
 }
 
 /**

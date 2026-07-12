@@ -1007,8 +1007,11 @@ export function resolveStateConfig(
         };
       }
       if (ownerOnly) {
+        // "sent" here is only ever set after sendOwnerPush() verifiably
+        // delivered the push (processAutomation's owner-only branch) — this
+        // genuinely represents a delivered reminder, not just a setup step.
         return {
-          label: "Reminder created",
+          label: "Reminder sent",
           dot:   "bg-sage",
           text:  "text-sage",
           border: "border-l-sage/40",
