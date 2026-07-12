@@ -110,6 +110,7 @@ import {
 import {
   addLatencyStageDuration,
   createExecuteInstructionLatencyTrace,
+  createToolFreeTurnLatencyTrace,
   roundDuration,
   type ExecuteInstructionLatencyTrace,
 } from "../../lib/carson-latency";
@@ -121,6 +122,14 @@ import { useTasksStore } from "../../stores/tasks";
 
 type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
+// Truthful processing indicator, layered on top of the SDK-driven `mode`
+// (which only reports listening/speaking, with no signal for the gap in
+// between). "idle" = no app-level signal yet for this turn (renders as
+// "Listening…"); "heard"/"thinking" are set the instant a valid user
+// transcript arrives, before any tool or spoken reply exists yet; "acting"
+// is set only while a client tool is actually executing. Every transition
+// is driven by a real SDK/app event — never a synthetic delay.
+type CarsonTurnPhase = "idle" | "heard" | "thinking" | "acting";
 type ExecuteInstructionParams =
   | string
   | {
@@ -801,6 +810,7 @@ export default function ElevenLabsAgentWidget({
 
   const [status, setStatus] = useState<CallStatus>("idle");
   const [mode, setMode] = useState<AgentMode>("listening");
+  const [turnPhase, setTurnPhase] = useState<CarsonTurnPhase>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [sessionEndedMsg, setSessionEndedMsg] = useState<string | null>(null);
   const [audioDiagnosticsEnabled, setAudioDiagnosticsEnabled] = useState(
@@ -1116,6 +1126,23 @@ export default function ElevenLabsAgentWidget({
     toolStartedPerf: number;
     toolCompletedPerf: number | null;
   } | null>(null);
+  // "Heard you" is shown the instant a valid transcript arrives; this timer
+  // flips the label to "Thinking…" after a short, fixed interval if nothing
+  // else (a tool starting, or Carson speaking) has already moved the turn
+  // phase on. It never delays the underlying tool call or spoken reply —
+  // it only decides when the still-waiting label changes.
+  const turnPhaseThinkingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Dedupes the tool-free latency log below so a turn with multiple
+  // "speaking" mode-changes (e.g. multi-sentence TTS) only logs once per
+  // distinct user transcript.
+  const turnLatencyLoggedForEventIdRef = useRef<number | null>(null);
+
+  const clearTurnPhaseThinkingTimeout = useCallback(() => {
+    if (turnPhaseThinkingTimeoutRef.current) {
+      clearTimeout(turnPhaseThinkingTimeoutRef.current);
+      turnPhaseThinkingTimeoutRef.current = null;
+    }
+  }, []);
 
   /** Accumulates finalized transcript messages (both user and agent) for
    *  this session. Summarised by Haiku at disconnect for conversational memory. */
@@ -3573,47 +3600,58 @@ export default function ElevenLabsAgentWidget({
     ): Promise<TResult> => {
       const startedAt = new Date().toISOString();
       const startedPerf = performance.now();
+      // Truthful processing state: this is the shared entry point for the
+      // large majority of client tools, so setting/clearing "acting" here
+      // once covers all of them without touching every clientTools
+      // registration individually. Cleared in `finally` — including on a
+      // thrown error — so a failed tool can never leave the UI stuck on
+      // "Acting…" (see rule: failed tool does not remain stuck on Acting).
+      setTurnPhase("acting");
       try {
-        const result = await runTool();
         try {
-          recordCarsonDiagnostic(
-            "carson-direct-tool",
-            buildCarsonDirectToolDiagnosticEvent({
-              toolName,
-              startedAt,
-              durationMs: performance.now() - startedPerf,
-              success: true,
-              result,
-              input,
-            }),
-          );
-        } catch (diagnosticErr) {
-          console.warn("[carson_direct_tool:DIAGNOSTIC_ERROR]", diagnosticErr);
+          const result = await runTool();
+          try {
+            recordCarsonDiagnostic(
+              "carson-direct-tool",
+              buildCarsonDirectToolDiagnosticEvent({
+                toolName,
+                startedAt,
+                durationMs: performance.now() - startedPerf,
+                success: true,
+                result,
+                input,
+              }),
+            );
+          } catch (diagnosticErr) {
+            console.warn("[carson_direct_tool:DIAGNOSTIC_ERROR]", diagnosticErr);
+          }
+          // NOTE: do not record lastDirectToolSuccessRef here — a string return
+          // from runTool() only means the tool didn't throw, not that it
+          // genuinely succeeded (createTodoTool's "no title received" early
+          // return is also a string). create_todo/complete_todo record their
+          // own override-eligible success directly, only on their real
+          // success path, right before returning.
+          return typeof result === "string" ? (sanitizeCarsonReplyText(result) as TResult) : result;
+        } catch (err) {
+          try {
+            recordCarsonDiagnostic(
+              "carson-direct-tool",
+              buildCarsonDirectToolDiagnosticEvent({
+                toolName,
+                startedAt,
+                durationMs: performance.now() - startedPerf,
+                success: false,
+                input,
+                error: err,
+              }),
+            );
+          } catch (diagnosticErr) {
+            console.warn("[carson_direct_tool:DIAGNOSTIC_ERROR]", diagnosticErr);
+          }
+          throw err;
         }
-        // NOTE: do not record lastDirectToolSuccessRef here — a string return
-        // from runTool() only means the tool didn't throw, not that it
-        // genuinely succeeded (createTodoTool's "no title received" early
-        // return is also a string). create_todo/complete_todo record their
-        // own override-eligible success directly, only on their real
-        // success path, right before returning.
-        return typeof result === "string" ? (sanitizeCarsonReplyText(result) as TResult) : result;
-      } catch (err) {
-        try {
-          recordCarsonDiagnostic(
-            "carson-direct-tool",
-            buildCarsonDirectToolDiagnosticEvent({
-              toolName,
-              startedAt,
-              durationMs: performance.now() - startedPerf,
-              success: false,
-              input,
-              error: err,
-            }),
-          );
-        } catch (diagnosticErr) {
-          console.warn("[carson_direct_tool:DIAGNOSTIC_ERROR]", diagnosticErr);
-        }
-        throw err;
+      } finally {
+        setTurnPhase((prev) => (prev === "acting" ? "thinking" : prev));
       }
     },
     [],
@@ -4963,6 +5001,7 @@ export default function ElevenLabsAgentWidget({
             const captureBlock = guardCurrentVoiceCapture("execute_instruction");
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "execute_instruction";
+            setTurnPhase("acting");
             const toolStartedPerf = performance.now();
             const toolStartedAt = new Date().toISOString();
             const transcriptTiming = lastUserTranscriptTimingRef.current;
@@ -4997,6 +5036,7 @@ export default function ElevenLabsAgentWidget({
                 activeExecuteLatencyRef.current.toolCompletedPerf = toolCompletedPerf;
               }
               toolInFlightRef.current = null;
+              setTurnPhase((prev) => (prev === "acting" ? "thinking" : prev));
             }
           },
           // ── Legacy/simple fallbacks ──────────────────────────────────────
@@ -5039,7 +5079,10 @@ export default function ElevenLabsAgentWidget({
           create_automation: (params: Parameters<typeof createAutomation>[0]) => {
             const captureBlock = guardCurrentVoiceCapture("create_automation");
             if (captureBlock) return captureBlock;
-            return createAutomation(params);
+            setTurnPhase("acting");
+            return createAutomation(params).finally(() => {
+              setTurnPhase((prev) => (prev === "acting" ? "thinking" : prev));
+            });
           },
           send_direct_whatsapp_message: async (params: { recipient_name: string; message: string }) => {
             const captureBlock = guardCurrentVoiceCapture("send_direct_whatsapp_message");
@@ -5166,7 +5209,37 @@ export default function ElevenLabsAgentWidget({
               console.info("[carson-latency]", active.trace);
               recordCarsonDiagnostic("carson-latency", active.trace);
               activeExecuteLatencyRef.current = null;
+            } else {
+              // Tool-free turn (a direct conversational reply — no client
+              // tool ran): the only latency signal available is transcript
+              // receipt to this "speaking" mode-change. Deduped per
+              // transcript eventId so a turn with multiple speaking-mode
+              // transitions (e.g. multi-sentence TTS) logs once, not
+              // repeatedly. Privacy-safe: no transcript text, only ids,
+              // timestamps, and a duration.
+              const timing = lastUserTranscriptTimingRef.current;
+              if (
+                timing?.eventId != null &&
+                turnLatencyLoggedForEventIdRef.current !== timing.eventId
+              ) {
+                const trace = createToolFreeTurnLatencyTrace({
+                  transcriptEventId: timing.eventId,
+                  transcriptReceivedAt: timing.receivedAt,
+                  transcriptReceivedPerf: timing.receivedPerf,
+                  respondedPerf: performance.now(),
+                });
+                console.info("[carson-latency]", trace);
+                recordCarsonDiagnostic("carson-latency", trace);
+                turnLatencyLoggedForEventIdRef.current = timing.eventId;
+              }
             }
+          } else {
+            // Back to listening: a real event marking a fresh turn boundary
+            // (Carson finished speaking, or this is the very first turn) —
+            // clear any leftover heard/thinking/acting phase and its
+            // pending label timer so the next turn never inherits it.
+            clearTurnPhaseThinkingTimeout();
+            setTurnPhase("idle");
           }
           // No app-level setMicMuted() here. WebRTC/LiveKit already runs
           // full-duplex with its own echo cancellation and native barge-in;
@@ -5248,6 +5321,16 @@ export default function ElevenLabsAgentWidget({
               setLastUserTranscript(null);
               userTranscriptTimerRef.current = null;
             }, 8_000);
+            // Truthful processing state: a valid final transcript just
+            // arrived, so the user is genuinely "heard" — new turn, so any
+            // stale phase/timer from a previous turn is cleared first.
+            turnLatencyLoggedForEventIdRef.current = null;
+            clearTurnPhaseThinkingTimeout();
+            setTurnPhase("heard");
+            turnPhaseThinkingTimeoutRef.current = setTimeout(() => {
+              turnPhaseThinkingTimeoutRef.current = null;
+              setTurnPhase((prev) => (prev === "heard" ? "thinking" : prev));
+            }, 600);
 
             // Capture recurring language from the raw user utterance BEFORE the
             // LLM processes it. The ElevenLabs dashboard LLM often strips recurring
@@ -5358,6 +5441,11 @@ export default function ElevenLabsAgentWidget({
           currentTaskContextRef.current = null;
           setStatus("idle");
           setMode("listening");
+          // Truthful processing state: a disconnect must never leave the UI
+          // stuck showing "Heard you"/"Thinking…"/"Acting…" from whatever
+          // turn was in progress.
+          clearTurnPhaseThinkingTimeout();
+          setTurnPhase("idle");
           setSessionEndedMsg("Session ended.");
           setLastUserTranscript(null);
           clearPendingPhotoPreviews();
@@ -5394,6 +5482,8 @@ export default function ElevenLabsAgentWidget({
           clearCarsonSessionTimers();
           currentTaskContextRef.current = null;
           setStatus("error");
+          clearTurnPhaseThinkingTimeout();
+          setTurnPhase("idle");
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
           // Save whatever transcript we have so the session isn't lost.
@@ -5748,8 +5838,23 @@ export default function ElevenLabsAgentWidget({
             ) : (
               <PulsingDot color="bg-sage" />
             )}
+            {/* Truthful processing label: each state is driven by a real
+                event (transcript received / tool started / tool cleared /
+                mode change) — never a state without a backing event, and
+                never an artificial delay before the underlying work
+                proceeds. See turnPhase transitions in onMessage,
+                runDirectToolWithDiagnostic, execute_instruction,
+                create_automation, and onModeChange. */}
             <span className="text-[13px] font-semibold text-charcoal">
-              {mode === "speaking" ? "Speaking…" : "Listening…"}
+              {mode === "speaking"
+                ? "Speaking…"
+                : turnPhase === "acting"
+                  ? "Acting…"
+                  : turnPhase === "thinking"
+                    ? "Thinking…"
+                    : turnPhase === "heard"
+                      ? "Heard you"
+                      : "Listening…"}
             </span>
             <span className="ml-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-text">
               End

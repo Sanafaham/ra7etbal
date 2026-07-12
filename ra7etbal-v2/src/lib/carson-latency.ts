@@ -68,3 +68,45 @@ export function roundDuration(durationMs: number): number {
   return Math.max(0, Math.round(durationMs * 10) / 10);
 }
 
+/**
+ * Latency trace for a voice turn where no client tool was invoked — a
+ * direct conversational reply. ExecuteInstructionLatencyTrace only exists
+ * for turns that call execute_instruction; this covers every other turn, so
+ * response-time visibility isn't limited to tool-invoking turns. Privacy-safe
+ * by construction: only ids, timestamps, and a computed duration — never
+ * transcript text.
+ */
+export interface ToolFreeTurnLatencyTrace {
+  trace_id: string;
+  kind: "tool_free_turn";
+  transcript_event_id: number | null;
+  transcript_received_at: string | null;
+  first_response_at: string;
+  stages: {
+    transcript_to_speaking_ms: number;
+  };
+}
+
+export function createToolFreeTurnLatencyTrace({
+  transcriptEventId,
+  transcriptReceivedAt,
+  transcriptReceivedPerf,
+  respondedPerf,
+}: {
+  transcriptEventId: number | null;
+  transcriptReceivedAt: string | null;
+  transcriptReceivedPerf: number;
+  respondedPerf: number;
+}): ToolFreeTurnLatencyTrace {
+  return {
+    trace_id: crypto.randomUUID(),
+    kind: "tool_free_turn",
+    transcript_event_id: transcriptEventId,
+    transcript_received_at: transcriptReceivedAt,
+    first_response_at: new Date().toISOString(),
+    stages: {
+      transcript_to_speaking_ms: roundDuration(respondedPerf - transcriptReceivedPerf),
+    },
+  };
+}
+
