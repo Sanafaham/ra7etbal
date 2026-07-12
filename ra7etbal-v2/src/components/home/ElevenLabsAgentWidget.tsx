@@ -105,6 +105,7 @@ import { CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD } from "../../lib/cars
 import {
   CARSON_REPEAT_PROMPT,
   evaluateCarsonTranscriptCapture,
+  matchCarsonSocialAcknowledgment,
   type CarsonTranscriptGuardReason,
 } from "../../lib/carson-transcript-guard";
 import {
@@ -3679,6 +3680,12 @@ export default function ElevenLabsAgentWidget({
     const reason = latestInvalid?.reason ?? latestEvaluation.reason;
     if (!latestInvalid && latestEvaluation.valid) return null;
 
+    // A closing/social phrase ("Thank you.", "Okay.") is a genuinely heard,
+    // non-actionable turn — not a capture failure. Answer it naturally
+    // instead of the misleading "I didn't catch that" repeat prompt.
+    const socialAck = matchCarsonSocialAcknowledgment(latestUserMessage);
+    if (socialAck) return socialAck;
+
     const guardInfo = {
       toolName,
       reason,
@@ -3753,6 +3760,20 @@ export default function ElevenLabsAgentWidget({
 
       const instructionCapture = evaluateCarsonTranscriptCapture(rawInstruction);
       if (!instructionCapture.valid) {
+        // Confirmed production bug: the LLM sometimes calls execute_instruction
+        // on a purely social/closing turn ("Thank you.") with no real
+        // instruction content. rawInstruction (the tool-call arg, or vague
+        // fallback) then fails capture — but the actual verbatim transcript
+        // (lastUserMessage) was heard fine and simply isn't actionable.
+        // Answer naturally instead of the misleading repeat prompt, and
+        // don't fall through to extraction/save/send for a phrase like this.
+        const socialAck = matchCarsonSocialAcknowledgment(lastUserMessage);
+        if (socialAck) {
+          console.log("[carson-social-ack:execute_instruction]", { lastUserMessage, reply: socialAck });
+          lastDirectToolSuccessRef.current = null;
+          return socialAck;
+        }
+
         const guardInfo = {
           source: "execute_instruction",
           reason: instructionCapture.reason,

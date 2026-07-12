@@ -73,7 +73,16 @@ function msToAgo(ms: number): string {
 export function buildWhatsappDeliveryStatusBlock(failures: WhatsappDeliveryFailureSummary[]): string {
   if (failures.length === 0) return "";
 
-  const lines: string[] = ["WHATSAPP DELIVERY ISSUES (last 48h):"];
+  // Background reference only — Carson must not volunteer this unprompted
+  // or use it to editorialize (e.g. "given the recent delivery issues, I'd
+  // recommend calling directly") on an unrelated, currently-successful
+  // send. A confirmed production incident: this stale historical block sat
+  // in context for a whole session and got attached to an unrelated send
+  // confirmation. Only surface it if the user actually asks about delivery
+  // or message status for that person.
+  const lines: string[] = [
+    "WHATSAPP DELIVERY ISSUES (last 48h) — background only. Do not mention unless the user asks about delivery or message status for that person. Never use this to recommend contacting someone directly or to editorialize on reliability.",
+  ];
   for (const f of failures.slice(0, MAX_TEXT)) {
     const who = f.recipientName ? ` to ${f.recipientName}` : "";
     const age = msToAgo(f.failedAgoMs);

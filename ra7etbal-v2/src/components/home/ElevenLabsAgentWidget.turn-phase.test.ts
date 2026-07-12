@@ -329,3 +329,47 @@ describe("ElevenLabsAgentWidget — existing iPhone teardown and mute behavior i
     expect(SOURCE).toMatch(/connectionDelay:\s*\{\s*default:\s*0,\s*android:\s*3_000,\s*ios:\s*500\s*\}/);
   });
 });
+
+// Phase 1 production follow-up: "Thank you." was correctly heard (a valid
+// transcript, per evaluateCarsonTranscriptCapture), but the tool the LLM
+// called on it ended up with invalid/empty content, and the capture guard
+// answered "I didn't catch that. Please say it again." — misleading, since
+// the transcript WAS heard fine; there was simply nothing to act on. Fixed
+// by checking the verbatim transcript against matchCarsonSocialAcknowledgment
+// before falling back to the repeat prompt, at both guard points.
+describe("ElevenLabsAgentWidget — a heard-but-non-actionable social phrase gets a natural reply, not the repeat prompt", () => {
+  it("imports matchCarsonSocialAcknowledgment from the shared transcript guard", () => {
+    expect(SOURCE).toContain("matchCarsonSocialAcknowledgment,");
+    expect(SOURCE).toContain('from "../../lib/carson-transcript-guard";');
+  });
+
+  it("guardCurrentVoiceCapture (shared by all client tools) answers a social phrase naturally before falling back to the repeat prompt", () => {
+    const start = SOURCE.indexOf("const guardCurrentVoiceCapture = useCallback(");
+    const end = SOURCE.indexOf("const executeInstruction = useCallback(", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const block = SOURCE.slice(start, end);
+    const ackIndex = block.indexOf("const socialAck = matchCarsonSocialAcknowledgment(latestUserMessage);");
+    const returnAckIndex = block.indexOf("if (socialAck) return socialAck;", ackIndex);
+    const repeatPromptIndex = block.indexOf("return CARSON_REPEAT_PROMPT;");
+    expect(ackIndex).toBeGreaterThan(-1);
+    expect(returnAckIndex).toBeGreaterThan(ackIndex);
+    expect(returnAckIndex).toBeLessThan(repeatPromptIndex);
+  });
+
+  it("execute_instruction's own capture guard answers a social phrase naturally using the verbatim transcript, without falling through to extraction/save/send", () => {
+    const start = SOURCE.indexOf("const executeInstruction = useCallback(");
+    const end = SOURCE.indexOf("const guardInfo = {\n          source: \"execute_instruction\"", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("const socialAck = matchCarsonSocialAcknowledgment(lastUserMessage);");
+    const ackIndex = block.indexOf("const socialAck = matchCarsonSocialAcknowledgment(lastUserMessage);");
+    const returnIndex = block.indexOf("return socialAck;", ackIndex);
+    expect(returnIndex).toBeGreaterThan(ackIndex);
+    // `block` is bounded by the start of the guardInfo/repeat-prompt
+    // fallback itself, so finding the social-ack return inside it already
+    // proves the short-circuit happens strictly before that fallback (and
+    // before any extraction/save/send call further down the function).
+  });
+});
