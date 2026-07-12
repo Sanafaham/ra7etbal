@@ -51,6 +51,74 @@ export interface VoiceTimeResult {
   error?: string;
 }
 
+export interface RecurringFirstRunTextResult {
+  timeText: string;
+  error?: string;
+}
+
+function extractExplicitClockTime(text: string): string {
+  const raw = text.trim();
+  const withAmPm = raw.match(/\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b/i);
+  if (withAmPm) return withAmPm[0].replace(/\s+/g, " ").trim();
+
+  const twentyFourHour = raw.match(/\b([01]?\d|2[0-3]):([0-5]\d)\b/);
+  if (twentyFourHour) return twentyFourHour[0].trim();
+
+  return "";
+}
+
+function containsClockTime(text: string): boolean {
+  return extractExplicitClockTime(text) !== "";
+}
+
+function isAmbiguousRecurringPeriod(text: string): boolean {
+  return /\b(tonight|before bed|later today|tomorrow(?:\s+(?:morning|afternoon|evening))?)\b/i.test(text);
+}
+
+/**
+ * Resolves the exact text create_automation should pass to parseVoiceTime for
+ * recurring automations.
+ *
+ * Recurring owner reminders must never silently turn period words into default
+ * times. The live failure this protects: "every night at 11:40 PM" reached the
+ * tool as first_run_text="tonight"; parseVoiceTime correctly maps "tonight" to
+ * 21:00, but for this recurring path that meant a wrong 9 PM automation that
+ * was already due and fired immediately. If the cadence phrase still carries an
+ * explicit clock, use that. If no explicit clock survives anywhere, fail closed
+ * so Carson asks for the exact time instead of creating the wrong loop.
+ */
+export function resolveRecurringFirstRunTextForParsing({
+  firstRunText,
+  cadencePhrase,
+  cadenceType,
+}: {
+  firstRunText: string;
+  cadencePhrase: string;
+  cadenceType: string;
+}): RecurringFirstRunTextResult {
+  const trimmedFirstRunText = firstRunText.trim();
+  if (cadenceType === "once") return { timeText: trimmedFirstRunText };
+
+  const firstRunHasClock = containsClockTime(trimmedFirstRunText);
+  const cadenceClock = extractExplicitClockTime(cadencePhrase);
+  let timeText = firstRunHasClock ? trimmedFirstRunText : cadenceClock || trimmedFirstRunText;
+
+  if (!containsClockTime(timeText) && isAmbiguousRecurringPeriod(timeText)) {
+    return {
+      timeText: "",
+      error: `Recurring automation first run "${firstRunText}" needs an exact clock time.`,
+    };
+  }
+
+  const cadencePhraseSuggestsMorning = /\bmorning\b/i.test(cadencePhrase);
+  const timeTextHasExplicitAmPm = /\b(am|pm)\b/i.test(timeText);
+  if (cadencePhraseSuggestsMorning && containsClockTime(timeText) && !timeTextHasExplicitAmPm) {
+    timeText = `${timeText} AM`;
+  }
+
+  return { timeText };
+}
+
 export function parseVoiceTime(
   timeText: string,
   now = new Date(),

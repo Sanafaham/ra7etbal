@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseVoiceTime, resolveRecurringAutomationFirstRun } from "./parse-voice-time";
+import {
+  parseVoiceTime,
+  resolveRecurringAutomationFirstRun,
+  resolveRecurringFirstRunTextForParsing,
+} from "./parse-voice-time";
 
 // Confirmed production failure: a daily automation requested ~2 minutes
 // ahead ("charge your phone" at 1:36 AM, created at 1:34 AM Europe/Istanbul)
@@ -140,6 +144,43 @@ describe("resolveRecurringAutomationFirstRun", () => {
       ).toISOString();
       expect(naiveOneDayEarlier).not.toBe(expected);
     });
+  });
+});
+
+describe("resolveRecurringFirstRunTextForParsing", () => {
+  it('recovers the explicit clock from cadence_phrase when first_run_text is only "tonight" (live 11:40 PM regression)', () => {
+    const result = resolveRecurringFirstRunTextForParsing({
+      firstRunText: "tonight",
+      cadencePhrase: "every night at 11:40 PM",
+      cadenceType: "daily",
+    });
+
+    expect(result).toEqual({ timeText: "11:40 PM" });
+
+    const parsed = parseVoiceTime(result.timeText, new Date("2026-07-12T23:17:00"));
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.dueAt).toBe(new Date("2026-07-12T23:40:00").toISOString());
+  });
+
+  it("fails closed for recurring period defaults when no exact clock survives", () => {
+    const result = resolveRecurringFirstRunTextForParsing({
+      firstRunText: "tonight",
+      cadencePhrase: "every night",
+      cadenceType: "daily",
+    });
+
+    expect(result.timeText).toBe("");
+    expect(result.error).toMatch(/exact clock time/i);
+  });
+
+  it("keeps the existing morning disambiguation by appending AM to a bare clock", () => {
+    const result = resolveRecurringFirstRunTextForParsing({
+      firstRunText: "3:15",
+      cadencePhrase: "every morning",
+      cadenceType: "daily",
+    });
+
+    expect(result).toEqual({ timeText: "3:15 AM" });
   });
 });
 

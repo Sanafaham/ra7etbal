@@ -43,7 +43,11 @@ import {
   SESSION_RECAP_PREFIX,
   type TranscriptMessage,
 } from "../../lib/carson-summarize";
-import { parseVoiceTime, resolveRecurringAutomationFirstRun } from "../../lib/parse-voice-time";
+import {
+  parseVoiceTime,
+  resolveRecurringAutomationFirstRun,
+  resolveRecurringFirstRunTextForParsing,
+} from "../../lib/parse-voice-time";
 import { buildCarsonOpeningLine } from "../../lib/carson-opening";
 import { createReminderTask } from "../../lib/reminders";
 import {
@@ -2250,38 +2254,6 @@ export default function ElevenLabsAgentWidget({
       if (!cadence_phrase?.trim()) return "I did not receive a cadence. Ask the user how often this should run.";
       if (!first_run_text?.trim()) return "I did not receive a first-run time. Ask the user when this should first fire.";
 
-      // ── Resolve first run time ──────────────────────────────────────────
-      // Confirmed production failure: "remind me every morning ... at 3:15
-      // AM" was correctly heard and correctly spoken back by Carson ("I'll
-      // remind you every morning at 3:15 AM..."), but the stored automation
-      // ran at 3:15 PM instead. Reproduced exactly against parseVoiceTime
-      // with the real creation timestamp: a first_run_text of "3:15" (no
-      // AM/PM marker) hits parseVoiceTime's own documented ambiguous-hour
-      // heuristic — "no AM/PM and hour 1–7 almost always means PM for a
-      // reminder" — which is right for a one-time evening request like
-      // "remind me at 5" but wrong here: Carson's tool-call argument (a
-      // separate LLM generation from its own spoken confirmation) evidently
-      // dropped the AM/PM marker for an explicitly morning-cadenced
-      // recurring reminder. When cadence_phrase itself says "morning" and
-      // first_run_text carries no explicit am/pm, disambiguate toward AM
-      // before parsing — using parseVoiceTime's own correct, tested
-      // am-handling rather than fighting its heuristic after the fact.
-      // Never touches phrases that already state am/pm explicitly, or
-      // named/relative phrases ("tonight", "next Friday", "in 5 minutes")
-      // — appending " AM" to those doesn't change which branch matches.
-      const cadencePhraseSuggestsMorning = /\bmorning\b/i.test(cadence_phrase ?? "");
-      const firstRunTextHasExplicitAmPm = /\b(am|pm)\b/i.test(first_run_text);
-      const disambiguatedFirstRunText =
-        cadencePhraseSuggestsMorning && !firstRunTextHasExplicitAmPm
-          ? `${first_run_text.trim()} AM`
-          : first_run_text.trim();
-      const parsed = parseVoiceTime(disambiguatedFirstRunText);
-      if (parsed.error || !parsed.dueAt) {
-        return `I could not understand "${first_run_text}" as a time. Ask the user when this should first fire.`;
-      }
-      let nextRunAt = parsed.dueAt;
-      const timezone = parsed.timezone;
-
       // ── Parse cadence phrase → (cadence_type, cadence_value) ───────────
       const raw = cadence_phrase.trim().toLowerCase();
 
@@ -2316,6 +2288,27 @@ export default function ElevenLabsAgentWidget({
           cadenceType = "daily";
         }
       }
+
+      // ── Resolve first run time ──────────────────────────────────────────
+      const firstRunTextForParsing = resolveRecurringFirstRunTextForParsing({
+        firstRunText: first_run_text,
+        cadencePhrase: cadence_phrase,
+        cadenceType,
+      });
+      if (firstRunTextForParsing.error) {
+        const failureText = "I need the exact clock time for that recurring reminder. Ask the user what time it should run.";
+        recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+        return failureText;
+      }
+
+      const parsed = parseVoiceTime(firstRunTextForParsing.timeText);
+      if (parsed.error || !parsed.dueAt) {
+        const failureText = `I could not understand "${first_run_text}" as a time. Ask the user when this should first fire.`;
+        recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+        return failureText;
+      }
+      let nextRunAt = parsed.dueAt;
+      const timezone = parsed.timezone;
 
       // ── Prefer today's occurrence for a recurring loop's first run ──────
       // Confirmed production failure: a daily automation requested ~2
