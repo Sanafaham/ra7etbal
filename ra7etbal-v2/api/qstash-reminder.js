@@ -264,7 +264,14 @@ export async function scheduleAutomationRunWakeup({ appBaseUrl, automationId, ne
     targetUrl: `${appBaseUrl}/api/process-delegation-escalations`,
     qstashToken,
     cronSecret,
-    dedupId: `automation-run-${automationId}-${nextRunAt}`,
+    // Confirmed production bug: QStash rejects a Deduplication-Id containing
+    // ':' — the raw ISO nextRunAt (e.g. "2026-07-13T12:15:00.000Z") has
+    // several, so every publish failed and silently fell back to the
+    // 10-minute cron poll, defeating exact-time scheduling entirely. Use the
+    // already-computed epoch-ms value instead: digits only, and still
+    // deterministic for the same (automationId, nextRunAt) pair, so the
+    // dedup guarantee documented above is unchanged.
+    dedupId: `automation-run-${automationId}-${notBeforeMs}`,
     // Round UP, never down: a fractional-second nextRunAt (e.g. "...:00.500Z")
     // floored to "...:00" would make QStash invoke the wake-up up to 999ms
     // before the automation is actually due. runAutomationsCore's own query

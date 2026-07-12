@@ -295,9 +295,12 @@ describe("api/automations POST", () => {
       expect(fetchMock).toHaveBeenCalledTimes(3);
       const [qstashUrl, qstashInit] = fetchMock.mock.calls[2];
       expect(String(qstashUrl)).toContain("/api/process-delegation-escalations");
+      // Epoch ms, not the raw ISO string — QStash rejects dedup IDs
+      // containing ':' (confirmed production bug).
       expect(qstashInit.headers["Upstash-Deduplication-Id"]).toBe(
-        "automation-run-automation-1-2026-07-12T04:29:00.000Z",
+        `automation-run-automation-1-${new Date("2026-07-12T04:29:00.000Z").getTime()}`,
       );
+      expect(qstashInit.headers["Upstash-Deduplication-Id"]).not.toContain(":");
     });
 
     it("does not block persistence when wake-up publishing fails — automation is still created, exactWakeupScheduled: false", async () => {

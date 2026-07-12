@@ -89,20 +89,43 @@ describe("scheduleAutomationRunWakeup", () => {
     expect(init.headers["Upstash-Not-Before"]).not.toBe(String(flooredNotBefore));
   });
 
-  it("uses the deterministic deduplication ID format automation-run-{automationId}-{nextRunAt}", async () => {
+  it("uses the deterministic deduplication ID format automation-run-{automationId}-{nextRunAt epoch ms}, with no colons (QStash rejects them)", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ messageId: "msg-1" }));
     vi.stubGlobal("fetch", fetchMock);
 
+    const nextRunAt = "2026-07-12T04:29:00.000Z";
     await scheduleAutomationRunWakeup({
       appBaseUrl: "https://ra7etbal.com",
       automationId: "automation-1",
-      nextRunAt: "2026-07-12T04:29:00.000Z",
+      nextRunAt,
     });
 
     const [, init] = fetchMock.mock.calls[0];
+    const expectedEpochMs = new Date(nextRunAt).getTime();
     expect(init.headers["Upstash-Deduplication-Id"]).toBe(
-      "automation-run-automation-1-2026-07-12T04:29:00.000Z",
+      `automation-run-automation-1-${expectedEpochMs}`,
     );
+    expect(init.headers["Upstash-Deduplication-Id"]).not.toContain(":");
+  });
+
+  it("produces the same dedup ID for repeated calls with the same automationId/nextRunAt (duplicate publish is a safe no-op)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ messageId: "msg-1" }))
+      .mockResolvedValueOnce(jsonResponse({ messageId: "msg-2" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const args = {
+      appBaseUrl: "https://ra7etbal.com",
+      automationId: "automation-1",
+      nextRunAt: "2026-07-12T04:29:00.000Z",
+    };
+    await scheduleAutomationRunWakeup(args);
+    await scheduleAutomationRunWakeup(args);
+
+    const firstDedupId = fetchMock.mock.calls[0][1].headers["Upstash-Deduplication-Id"];
+    const secondDedupId = fetchMock.mock.calls[1][1].headers["Upstash-Deduplication-Id"];
+    expect(firstDedupId).toBe(secondDedupId);
   });
 
   it("targets /api/process-delegation-escalations with a payload the handler never trusts for selection", async () => {

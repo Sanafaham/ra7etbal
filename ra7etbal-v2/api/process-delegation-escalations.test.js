@@ -203,9 +203,12 @@ describe('processAutomation owner-only automations', () => {
     expect(fetchMock).toHaveBeenCalledTimes(8);
     const [qstashUrl, qstashInit] = fetchMock.mock.calls[7];
     expect(String(qstashUrl)).toContain('/api/process-delegation-escalations');
+    // Epoch ms, not the raw ISO string — QStash rejects dedup IDs
+    // containing ':' (confirmed production bug).
     expect(qstashInit.headers['Upstash-Deduplication-Id']).toBe(
-      'automation-run-automation-1-2026-06-27T14:30:00.000Z',
+      `automation-run-automation-1-${new Date('2026-06-27T14:30:00.000Z').getTime()}`,
     );
+    expect(qstashInit.headers['Upstash-Deduplication-Id']).not.toContain(':');
   });
 
   // A publish failure must never affect the return value of processAutomation
