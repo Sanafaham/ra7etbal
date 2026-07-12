@@ -370,7 +370,52 @@ describe("ElevenLabsAgentWidget — /api/automations POST responses require a co
 
     const block = SOURCE.slice(start, end);
     expect(block).toContain("if (!result?.automation?.id)");
-    expect(block).toContain("return null;");
+    expect(block).toContain("return { summary: null, error: \"Automation create response was unconfirmed.\" };");
+  });
+
+  it("execute_instruction returns the exact-clock prompt when its recurring fallback cannot create an ambiguous owner reminder", () => {
+    const start = SOURCE.indexOf('const results = await Promise.all(', SOURCE.indexOf("[routine:VOICE_INPUT]"));
+    const end = SOURCE.indexOf("// ── FINAL SAFETY BLOCK", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = SOURCE.slice(start, end);
+    const exactClockIndex = block.indexOf("const exactClockFailure = results.some");
+    const failuresIndex = block.indexOf("const failures = results.filter");
+    const failureTextIndex = block.indexOf("const automationFailureText = exactClockFailure");
+    const overrideIndex = block.indexOf('outcome: "failure"', failureTextIndex);
+    const returnIndex = block.indexOf("return automationFailureText;", overrideIndex);
+
+    expect(block).toContain("err instanceof Error ? err.message : String(err)");
+    expect(exactClockIndex).toBeGreaterThan(-1);
+    expect(failuresIndex).toBeGreaterThan(exactClockIndex);
+    expect(block).toContain("I need the exact clock time for that recurring reminder.");
+    expect(failureTextIndex).toBeGreaterThan(failuresIndex);
+    expect(overrideIndex).toBeGreaterThan(failureTextIndex);
+    expect(returnIndex).toBeGreaterThan(overrideIndex);
+  });
+
+  it("execute_instruction classifies no-person and mixed recurring results as failures, not clean success", () => {
+    const start = SOURCE.indexOf('const results = await Promise.all(', SOURCE.indexOf("[routine:VOICE_INPUT]"));
+    const end = SOURCE.indexOf("// ── FINAL SAFETY BLOCK", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = SOURCE.slice(start, end);
+    const noPersonIndex = block.indexOf("[automation:NO_PERSON]");
+    const failuresIndex = block.indexOf("const failures = results.filter");
+    const partialIndex = block.indexOf("const partialFailureText =", failuresIndex);
+    const partialOverrideIndex = block.indexOf('outcome: "failure"', partialIndex);
+    const cleanSuccessIndex = block.indexOf("if (successes.length > 0 && failures.length === 0)");
+
+    expect(noPersonIndex).toBeGreaterThan(-1);
+    expect(block.slice(noPersonIndex, failuresIndex)).toContain("summary: null");
+    expect(block.slice(noPersonIndex, failuresIndex)).toContain("error: \"I could not find a person in your contacts");
+    expect(cleanSuccessIndex).toBeGreaterThan(failuresIndex);
+    expect(partialIndex).toBeGreaterThan(cleanSuccessIndex);
+    expect(block).toContain("successes.length > 0 && failures.length > 0");
+    expect(block).toContain("I could not create the recurring reminder for the rest of what you asked");
+    expect(partialOverrideIndex).toBeGreaterThan(partialIndex);
   });
 
   it("create_automation checks result.automation.id before speaking a success confirmation", () => {
