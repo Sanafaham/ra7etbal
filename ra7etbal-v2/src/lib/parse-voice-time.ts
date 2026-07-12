@@ -99,9 +99,12 @@ export function resolveRecurringFirstRunTextForParsing({
   const trimmedFirstRunText = firstRunText.trim();
   if (cadenceType === "once") return { timeText: trimmedFirstRunText };
 
-  const firstRunHasClock = containsClockTime(trimmedFirstRunText);
+  const firstRunClock = extractExplicitClockTime(trimmedFirstRunText);
   const cadenceClock = extractExplicitClockTime(cadencePhrase);
-  let timeText = firstRunHasClock ? trimmedFirstRunText : cadenceClock || trimmedFirstRunText;
+  let timeText =
+    firstRunClock ||
+    (isAmbiguousRecurringPeriod(trimmedFirstRunText) ? cadenceClock : "") ||
+    trimmedFirstRunText;
 
   if (!containsClockTime(timeText) && isAmbiguousRecurringPeriod(timeText)) {
     return {

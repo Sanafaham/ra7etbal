@@ -173,6 +173,30 @@ describe("resolveRecurringFirstRunTextForParsing", () => {
     expect(result.error).toMatch(/exact clock time/i);
   });
 
+  it('extracts an explicit clock from an ambiguous first_run_text wrapper like "tonight at 9:15 PM"', () => {
+    const result = resolveRecurringFirstRunTextForParsing({
+      firstRunText: "tonight at 9:15 PM",
+      cadencePhrase: "every night",
+      cadenceType: "daily",
+    });
+
+    expect(result).toEqual({ timeText: "9:15 PM" });
+
+    const parsed = parseVoiceTime(result.timeText, new Date("2026-07-12T20:00:00"));
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.dueAt).toBe(new Date("2026-07-12T21:15:00").toISOString());
+  });
+
+  it("preserves a valid first_run_text day reference instead of replacing it with cadence_phrase's bare clock", () => {
+    const result = resolveRecurringFirstRunTextForParsing({
+      firstRunText: "next Monday",
+      cadencePhrase: "every Monday at 8 AM",
+      cadenceType: "weekly",
+    });
+
+    expect(result).toEqual({ timeText: "next Monday" });
+  });
+
   it("keeps the existing morning disambiguation by appending AM to a bare clock", () => {
     const result = resolveRecurringFirstRunTextForParsing({
       firstRunText: "3:15",

@@ -257,6 +257,10 @@ function buildReminderRoutineSummary(title: string, schedule: RecurringSchedule)
   );
 }
 
+function needsExactClockForRecurringPeriod(instruction: string): boolean {
+  return /\b(every|each)\s+(morning|afternoon|evening|night)\b/i.test(instruction);
+}
+
 function computeOwnerAutomationNextRunAt(schedule: RecurringSchedule, scheduleTime: string): string {
   const [hh, mm] = scheduleTime.split(":").map((part) => parseInt(part, 10));
   const now = new Date();
@@ -301,7 +305,11 @@ export async function createReminderRoutineFromInstruction(
   const title = extractReminderTitle(rawInstruction);
   if (!title) return null;
 
-  const scheduleTime = extractTimeFromInstruction(rawInstruction) ?? "09:00";
+  const exactTime = extractTimeFromInstruction(rawInstruction);
+  if (!exactTime && needsExactClockForRecurringPeriod(rawInstruction)) {
+    throw new Error("Recurring reminder needs an exact clock time.");
+  }
+  const scheduleTime = exactTime ?? "09:00";
   const shortTitle = title.length > 40 ? title.slice(0, 40).trimEnd() + "…" : title;
   const routineName = `${scheduleDisplayLabel(schedule)}: ${shortTitle}`;
 

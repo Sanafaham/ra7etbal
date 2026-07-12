@@ -150,6 +150,20 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
     expect(overrideIndex).toBeGreaterThan(successesCheckIndex);
   });
 
+  it("uses a clear verified failure when a recurring reminder needs an exact clock time", () => {
+    expect(recurringStart).toBeGreaterThan(-1);
+    expect(oneTimeStart).toBeGreaterThan(recurringStart);
+
+    const block = SOURCE.slice(recurringStart, oneTimeStart);
+    const exactClockFailureIndex = block.indexOf("I need the exact clock time for that recurring reminder");
+    const outcomeIndex = block.indexOf('outcome: "failure"', exactClockFailureIndex);
+    const returnIndex = block.indexOf("return recurringFailureText;", outcomeIndex);
+
+    expect(exactClockFailureIndex).toBeGreaterThan(-1);
+    expect(outcomeIndex).toBeGreaterThan(exactClockFailureIndex);
+    expect(returnIndex).toBeGreaterThan(outcomeIndex);
+  });
+
   it("restores override eligibility for a cached duplicate reply, without weakening the genuine-creation recording above", () => {
     const oneTimeBlock = SOURCE.slice(oneTimeStart, end);
     const recurringBlock = SOURCE.slice(recurringStart, oneTimeStart);
@@ -267,13 +281,15 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
 
   it("never falls through to the one-time task path when recurring language is detected but automation creation fails", () => {
     const block = SOURCE.slice(recurringStart, oneTimeStart);
-    expect(block).toContain('const recurringFailureText = "I could not create the recurring reminder.";');
+    expect(block).toContain("const recurringFailureText = exactClockFailure");
+    expect(block).toContain("I need the exact clock time for that recurring reminder.");
+    expect(block).toContain("I could not create the recurring reminder.");
     expect(block).toContain("return recurringFailureText;");
   });
 
   it("records the recurring-path failure as an overridable outcome so a fabricated success can be corrected", () => {
     const block = SOURCE.slice(recurringStart, oneTimeStart);
-    const failureConstIndex = block.indexOf('const recurringFailureText = "I could not create the recurring reminder.";');
+    const failureConstIndex = block.indexOf("const recurringFailureText = exactClockFailure");
     const failureRecordIndex = block.indexOf('outcome: "failure"', failureConstIndex);
     const returnIndex = block.indexOf("return recurringFailureText;", failureConstIndex);
 

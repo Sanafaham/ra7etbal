@@ -1987,16 +1987,25 @@ export default function ElevenLabsAgentWidget({
         const results = await Promise.all(
           recurringSchedules.map(async (sched) => {
             try {
-              return await createReminderRoutineFromInstruction(recurringSource!, sched);
+              return {
+                summary: await createReminderRoutineFromInstruction(recurringSource!, sched),
+                error: null,
+              };
             } catch (err) {
               console.error("[create_reminder:AUTOMATION_CREATE_ERROR]", err);
-              return null;
+              return {
+                summary: null,
+                error: err instanceof Error ? err.message : String(err),
+              };
             }
           }),
         );
 
-        const successes = results.filter(Boolean) as string[];
+        const successes = results.map((result) => result.summary).filter(Boolean) as string[];
         const allSchedulesSucceeded = successes.length === recurringSchedules.length;
+        const exactClockFailure = results.some((result) =>
+          /exact clock time/i.test(result.error ?? ""),
+        );
 
         if (successes.length > 0 && allSchedulesSucceeded) {
           const reply = successes.join(" ");
@@ -2044,7 +2053,9 @@ export default function ElevenLabsAgentWidget({
         // one-time task path below — that would silently drop the recurrence
         // and let Carson claim a false "every night" success.
         console.warn("[create_reminder:HARD_BLOCK] recurring automation creation failed", { recurringSource });
-        const recurringFailureText = "I could not create the recurring reminder.";
+        const recurringFailureText = exactClockFailure
+          ? "I need the exact clock time for that recurring reminder. Ask the user what time it should run."
+          : "I could not create the recurring reminder.";
         // Record the verified failure so the display-override system can
         // correct Carson's own separately-generated spoken reply if it
         // claims success anyway — see carson-direct-tool-override.ts.
@@ -2296,6 +2307,7 @@ export default function ElevenLabsAgentWidget({
         cadenceType,
       });
       if (firstRunTextForParsing.error) {
+        console.warn("[create_automation] first-run resolution failed", firstRunTextForParsing.error);
         const failureText = "I need the exact clock time for that recurring reminder. Ask the user what time it should run.";
         recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
         return failureText;
