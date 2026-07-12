@@ -2080,6 +2080,31 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     });
   });
 
+  it('owner-decision template set but confirmation_url missing: falls back to the old no-button template', async () => {
+    vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'ra7etbal_owner_decision');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Ghulam', phone: '+15551234567' }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(metaAcceptedResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    const metaPayload = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
+    expect(metaPayload.template.name).toBe('ra7etbal_routine_message');
+    expect(metaPayload.template.components.every((component) => component.type !== 'button')).toBe(true);
+  });
+
   it('Reject Alternative with owner-decision template set: uses the Utility template and preserves the task link button', async () => {
     vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'ra7etbal_owner_decision');
     const fetchMock = vi

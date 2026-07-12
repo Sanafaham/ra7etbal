@@ -752,8 +752,12 @@ async function handleOwnerDecision(req, res) {
       }
 
       const ownerDecisionTemplate = (process.env.WHATSAPP_OWNER_DECISION_TEMPLATE || '').trim();
-      const templateName = ownerDecisionTemplate
-        || (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || 'ra7etbal_routine_message').trim();
+      const ownerDecisionButtonUrlSuffix = ownerDecisionTemplate
+        ? (buildButtonLinkValue(task.confirmation_url, 'task') || '')
+        : '';
+      const templateName = ownerDecisionButtonUrlSuffix
+        ? ownerDecisionTemplate
+        : (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || 'ra7etbal_routine_message').trim();
       const templateLanguage = (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
       const normalizedPhone = normalizeWhatsAppPhone(assigneePerson.phone);
       if (!normalizedPhone) {
@@ -763,9 +767,7 @@ async function handleOwnerDecision(req, res) {
         return res.status(400).json({ error: 'No valid phone number on file for the assignee.' });
       }
       const cleanMessageContent = String(messageContent).replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
-      const buttonUrlSuffix = ownerDecisionTemplate
-        ? (buildButtonLinkValue(task.confirmation_url, 'task') || undefined)
-        : undefined;
+      const buttonUrlSuffix = ownerDecisionButtonUrlSuffix || undefined;
       const payload = buildRoutineMessagePayload({
         to: normalizedPhone, message: cleanMessageContent, templateName, templateLanguage, buttonUrlSuffix,
       });
