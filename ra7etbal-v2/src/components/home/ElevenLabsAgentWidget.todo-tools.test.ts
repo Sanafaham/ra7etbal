@@ -507,6 +507,57 @@ describe("ElevenLabsAgentWidget — create_automation prefers today's occurrence
   });
 });
 
+// Regression: confirmed production failure. "Remind me every morning ...
+// at 3:15 AM" was correctly heard and correctly spoken back by Carson
+// ("I'll remind you every morning at 3:15 AM..."), but the stored
+// automation ran at 3:15 PM instead (automations.id=2b0153f2,
+// cadence_value.time "15:15" — confirmed via Supabase). Reproduced
+// exactly against parseVoiceTime with the real creation timestamp: a
+// first_run_text of "3:15" (no AM/PM marker) hits parseVoiceTime's own
+// documented ambiguous-hour heuristic — "no AM/PM and hour 1–7 almost
+// always means PM" — see parse-voice-time.test.ts for the underlying
+// AM/PM-resolution tests this fix depends on. create_automation now
+// disambiguates toward AM before calling parseVoiceTime when
+// cadence_phrase itself says "morning" and first_run_text has no explicit
+// am/pm marker.
+describe("ElevenLabsAgentWidget — create_automation disambiguates morning cadence toward AM", () => {
+  function createAutomationBlock(): string {
+    const start = SOURCE.indexOf("const createAutomation = useCallback(");
+    const end = SOURCE.indexOf("[create_automation] created id=", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return SOURCE.slice(start, end);
+  }
+
+  it("detects a morning cadence phrase and an absent am/pm marker before calling parseVoiceTime", () => {
+    const block = createAutomationBlock();
+    expect(block).toContain('const cadencePhraseSuggestsMorning = /\\bmorning\\b/i.test(cadence_phrase ?? "");');
+    expect(block).toContain("const firstRunTextHasExplicitAmPm = /\\b(am|pm)\\b/i.test(first_run_text);");
+  });
+
+  it("appends AM to first_run_text only when both conditions hold (morning cadence AND no explicit am/pm)", () => {
+    const block = createAutomationBlock();
+    expect(block).toMatch(
+      /cadencePhraseSuggestsMorning && !firstRunTextHasExplicitAmPm\s*\n\s*\?\s*`\$\{first_run_text\.trim\(\)\} AM`\s*\n\s*:\s*first_run_text\.trim\(\);/,
+    );
+  });
+
+  it("calls parseVoiceTime with the disambiguated text, not the raw first_run_text — this is the actual fix", () => {
+    const block = createAutomationBlock();
+    const disambiguatedIndex = block.indexOf("const disambiguatedFirstRunText =");
+    const parseCallIndex = block.indexOf("const parsed = parseVoiceTime(disambiguatedFirstRunText);", disambiguatedIndex);
+    expect(disambiguatedIndex).toBeGreaterThan(-1);
+    expect(parseCallIndex).toBeGreaterThan(disambiguatedIndex);
+    // Never regress back to parsing the raw, possibly-ambiguous text directly.
+    expect(block).not.toContain("const parsed = parseVoiceTime(first_run_text.trim());");
+  });
+
+  it("the error message shown to the user still quotes the original first_run_text, not the internally-disambiguated version", () => {
+    const block = createAutomationBlock();
+    expect(block).toContain('I could not understand "${first_run_text}" as a time.');
+  });
+});
+
 // Regression (Part A, tool-failure truthfulness): create_automation's three
 // definite-failure return points must record a verified failure outcome so
 // the display-override system can correct a fabricated success — mirroring
