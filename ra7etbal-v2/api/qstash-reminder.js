@@ -249,13 +249,31 @@ export async function scheduleAutomationRunWakeup({ appBaseUrl, automationId, ne
   if (Number.isNaN(notBeforeMs)) {
     throw new Error(`Invalid nextRunAt: ${nextRunAt}`);
   }
+  // This call forwards CRON_SECRET via Upstash-Forward-Authorization to
+  // appBaseUrl — a caller-supplied value (process-delegation-escalations.js
+  // passes raw process.env.APP_BASE_URL). A misconfigured http:// deployment
+  // would send that secret in plaintext. Enforced here specifically, rather
+  // than in the shared resolveAppBaseUrl() above, so the three pre-existing
+  // actions on the default HTTP handler (schedule/cancel/reschedule, none of
+  // which forward CRON_SECRET) keep their exact current behavior unchanged.
+  if (!appBaseUrl?.startsWith('https://')) {
+    throw new Error(`appBaseUrl must use https:// — refusing to forward CRON_SECRET over an insecure scheme: ${appBaseUrl}`);
+  }
 
   return publishEscalationMessage({
     targetUrl: `${appBaseUrl}/api/process-delegation-escalations`,
     qstashToken,
     cronSecret,
     dedupId: `automation-run-${automationId}-${nextRunAt}`,
-    notBefore: Math.floor(notBeforeMs / 1000),
+    // Round UP, never down: a fractional-second nextRunAt (e.g. "...:00.500Z")
+    // floored to "...:00" would make QStash invoke the wake-up up to 999ms
+    // before the automation is actually due. runAutomationsCore's own query
+    // (next_run_at<=now()) would then correctly find nothing yet due, so the
+    // wake-up would silently no-op — the exact cycle it was meant to catch
+    // falls through to the 10-minute cron fallback instead. Firing up to
+    // ~1s late is fine (the whole point is "as close as technically
+    // possible," not a guaranteed exact second); firing early defeats it.
+    notBefore: Math.ceil(notBeforeMs / 1000),
     payload: { action: 'run-automations' },
     requestId,
     label: 'automation-run',

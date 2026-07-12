@@ -58,8 +58,35 @@ describe("scheduleAutomationRunWakeup", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain("/publish/https://ra7etbal.com/api/process-delegation-escalations");
     expect(init.headers["Upstash-Not-Before"]).toBe(
-      String(Math.floor(new Date("2026-07-12T04:29:00.000Z").getTime() / 1000)),
+      String(Math.ceil(new Date("2026-07-12T04:29:00.000Z").getTime() / 1000)),
     );
+  });
+
+  // CodeRabbit finding: flooring a fractional-second nextRunAt truncates it
+  // to a value up to 999ms BEFORE the automation is actually due. Since
+  // runAutomationsCore's own query is next_run_at<=now(), a wake-up that
+  // fires even 1ms early finds nothing due yet and silently no-ops — the
+  // exact cycle it was meant to catch falls through to the 10-minute cron
+  // fallback instead of firing exactly, defeating the point of scheduling it
+  // at all. Rounding up (never down) means it fires at or slightly after the
+  // true due time, never before.
+  it("rounds a fractional-second nextRunAt UP, never down — a wake-up must never fire before the automation is due", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ messageId: "msg-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fractionalNextRunAt = "2026-07-12T04:29:00.500Z";
+    await scheduleAutomationRunWakeup({
+      appBaseUrl: "https://ra7etbal.com",
+      automationId: "automation-1",
+      nextRunAt: fractionalNextRunAt,
+    });
+
+    const [, init] = fetchMock.mock.calls[0];
+    const expectedNotBefore = Math.ceil(new Date(fractionalNextRunAt).getTime() / 1000);
+    expect(init.headers["Upstash-Not-Before"]).toBe(String(expectedNotBefore));
+    // A floored value would be one second earlier — explicitly rule it out.
+    const flooredNotBefore = Math.floor(new Date(fractionalNextRunAt).getTime() / 1000);
+    expect(init.headers["Upstash-Not-Before"]).not.toBe(String(flooredNotBefore));
   });
 
   it("uses the deterministic deduplication ID format automation-run-{automationId}-{nextRunAt}", async () => {
@@ -155,6 +182,28 @@ describe("scheduleAutomationRunWakeup", () => {
         nextRunAt: "not-a-date",
       }),
     ).rejects.toThrow(/Invalid nextRunAt/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // CodeRabbit finding: this call forwards CRON_SECRET via
+  // Upstash-Forward-Authorization to appBaseUrl. process-delegation-
+  // escalations.js passes raw process.env.APP_BASE_URL through, so a
+  // misconfigured http:// deployment would send that secret in plaintext.
+  // Enforced specifically here (not in the shared resolveAppBaseUrl(), which
+  // stays unchanged) so the three pre-existing actions on the default HTTP
+  // handler — none of which forward CRON_SECRET — keep their exact current
+  // behavior.
+  it("refuses to publish (and never forwards CRON_SECRET) when appBaseUrl is not https://, without calling fetch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      scheduleAutomationRunWakeup({
+        appBaseUrl: "http://ra7etbal.com",
+        automationId: "automation-1",
+        nextRunAt: "2026-07-12T04:29:00.000Z",
+      }),
+    ).rejects.toThrow(/https:\/\//);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
