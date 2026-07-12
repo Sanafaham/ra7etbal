@@ -72,7 +72,9 @@ describe("buildWhatsappDeliveryStatusBlock", () => {
     const nasiraLine = block.split("\n").find((l) => l.includes("Nasira"));
     expect(ghulamLine).toContain("reason A");
     expect(ghulamLine).not.toContain("Nasira");
+    expect(ghulamLine).not.toContain("reason B");
     expect(nasiraLine).toContain("reason B");
     expect(nasiraLine).not.toContain("Ghulam");
+    expect(nasiraLine).not.toContain("reason A");
   });
 });
