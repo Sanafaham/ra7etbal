@@ -43,4 +43,36 @@ describe("buildWhatsappDeliveryStatusBlock", () => {
     expect(block).toContain("Failed —");
     expect(block).not.toContain("to null");
   });
+
+  // Production bug: this block sat in Carson's context for a whole session
+  // and got attached, unprompted, to an unrelated successful send ("Given
+  // the recent delivery issues, I'd recommend calling him directly").
+  // Requirement: only mention when asked, never editorialize/recommend.
+  it("carries an explicit usage guardrail so Carson doesn't volunteer it or recommend contacting someone directly", () => {
+    const block = buildWhatsappDeliveryStatusBlock([makeFailure()]);
+    expect(block).toMatch(/background only/i);
+    expect(block).toMatch(/do not mention unless the user asks/i);
+    expect(block).toMatch(/never use this to recommend contacting someone directly/i);
+  });
+
+  it("still reports real per-recipient failure data accurately (the guardrail hides nothing when Carson legitimately needs it)", () => {
+    const block = buildWhatsappDeliveryStatusBlock([
+      makeFailure({ recipientName: "Ghulam", failedAgoMs: 20 * 3_600_000 }),
+    ]);
+    expect(block).toContain("Ghulam");
+    expect(block).toContain("20h ago");
+  });
+
+  it("attributes each failure to its own recipient — one recipient's failures are never merged into another's line", () => {
+    const block = buildWhatsappDeliveryStatusBlock([
+      makeFailure({ recipientName: "Ghulam", failureReason: "reason A" }),
+      makeFailure({ recipientName: "Nasira", failureReason: "reason B" }),
+    ]);
+    const ghulamLine = block.split("\n").find((l) => l.includes("Ghulam"));
+    const nasiraLine = block.split("\n").find((l) => l.includes("Nasira"));
+    expect(ghulamLine).toContain("reason A");
+    expect(ghulamLine).not.toContain("Nasira");
+    expect(nasiraLine).toContain("reason B");
+    expect(nasiraLine).not.toContain("Ghulam");
+  });
 });
