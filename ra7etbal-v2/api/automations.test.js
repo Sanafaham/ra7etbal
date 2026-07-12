@@ -79,7 +79,11 @@ describe("api/automations POST", () => {
     );
 
     expect(res.statusCode).toBe(201);
-    expect(res.payload).toEqual({ automation: { id: "automation-1" } });
+    // exactWakeupScheduled is false here because QSTASH_TOKEN is not stubbed
+    // in this test (scheduleAutomationRunWakeup throws before any fetch) —
+    // see the dedicated "exact-time wake-up scheduling" describe block below
+    // for coverage of the actual scheduling behavior.
+    expect(res.payload).toEqual({ automation: { id: "automation-1" }, exactWakeupScheduled: false });
     expect(fetchMock.mock.calls[1][0]).toContain("/rest/v1/automations");
     const insertedRow = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(insertedRow).toMatchObject({
@@ -222,6 +226,195 @@ describe("api/automations POST", () => {
       const serialized = JSON.stringify(warnSpy.mock.calls);
       expect(serialized).not.toContain("<script>");
       expect(serialized).not.toContain("not-a-real-type");
+    });
+  });
+
+  // Regression: exact-time recurring reminder wake-ups. IMPORTANT ARCHITECTURE
+  // CORRECTION — the first wake-up must be scheduled server-side, right here
+  // in handlePost, never by the browser after the fact. A closed app,
+  // interrupted connection, or client crash right after the 201 response must
+  // not leave a persisted automation without its exact wake-up.
+  describe("exact-time wake-up scheduling", () => {
+    beforeEach(() => {
+      process.env.QSTASH_TOKEN = "qstash-token";
+      process.env.CRON_SECRET = "cron-secret";
+      process.env.APP_BASE_URL = "https://ra7etbal.com";
+    });
+
+    function qstashOkResponse() {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ messageId: "msg-1" }),
+        text: async () => JSON.stringify({ messageId: "msg-1" }),
+      };
+    }
+
+    function qstashFailResponse() {
+      return {
+        ok: false,
+        status: 500,
+        json: async () => ({ error: "QStash unavailable" }),
+        text: async () => JSON.stringify({ error: "QStash unavailable" }),
+      };
+    }
+
+    it("publishes the first wake-up only after the automation is confirmed persisted, and reports exactWakeupScheduled: true", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+        .mockResolvedValueOnce(jsonResponse([{ id: "automation-1", next_run_at: "2026-07-12T04:29:00.000Z" }]))
+        .mockResolvedValueOnce(qstashOkResponse());
+      vi.stubGlobal("fetch", fetchMock);
+      const res = mockRes();
+
+      await handler(
+        mockReq({
+          method: "POST",
+          body: {
+            title: "Daily mail check",
+            instruction: "Check your mail for Google",
+            cadence_type: "daily",
+            cadence_value: { time: "04:29" },
+            next_run_at: "2026-07-12T04:29:00.000Z",
+            timezone: "Europe/Istanbul",
+            created_by: "carson",
+          },
+        }),
+        res,
+      );
+
+      expect(res.statusCode).toBe(201);
+      expect(res.payload).toEqual({
+        automation: { id: "automation-1", next_run_at: "2026-07-12T04:29:00.000Z" },
+        exactWakeupScheduled: true,
+      });
+
+      // Wake-up publish is the third fetch — strictly after persistence (the
+      // second call, the insert) — never before it.
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      const [qstashUrl, qstashInit] = fetchMock.mock.calls[2];
+      expect(String(qstashUrl)).toContain("/api/process-delegation-escalations");
+      expect(qstashInit.headers["Upstash-Deduplication-Id"]).toBe(
+        "automation-run-automation-1-2026-07-12T04:29:00.000Z",
+      );
+    });
+
+    it("does not block persistence when wake-up publishing fails — automation is still created, exactWakeupScheduled: false", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+        .mockResolvedValueOnce(jsonResponse([{ id: "automation-1", next_run_at: "2026-07-12T04:29:00.000Z" }]))
+        .mockResolvedValueOnce(qstashFailResponse());
+      vi.stubGlobal("fetch", fetchMock);
+      const res = mockRes();
+
+      await handler(
+        mockReq({
+          method: "POST",
+          body: {
+            title: "Daily mail check",
+            instruction: "Check your mail for Google",
+            cadence_type: "daily",
+            cadence_value: { time: "04:29" },
+            next_run_at: "2026-07-12T04:29:00.000Z",
+          },
+        }),
+        res,
+      );
+
+      expect(res.statusCode).toBe(201);
+      expect(res.payload).toEqual({
+        automation: { id: "automation-1", next_run_at: "2026-07-12T04:29:00.000Z" },
+        exactWakeupScheduled: false,
+      });
+    });
+
+    it("logs a wake-up publish failure truthfully, without claiming exact scheduling succeeded", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+        .mockResolvedValueOnce(jsonResponse([{ id: "automation-1", next_run_at: "2026-07-12T04:29:00.000Z" }]))
+        .mockResolvedValueOnce(qstashFailResponse());
+      vi.stubGlobal("fetch", fetchMock);
+      const res = mockRes();
+
+      await handler(
+        mockReq({
+          method: "POST",
+          body: {
+            title: "Daily mail check",
+            instruction: "Check your mail for Google",
+            cadence_type: "daily",
+            cadence_value: { time: "04:29" },
+            next_run_at: "2026-07-12T04:29:00.000Z",
+          },
+        }),
+        res,
+      );
+
+      const failureLog = errorSpy.mock.calls.find(
+        ([label]) => label === "[automations POST] exact wake-up scheduling failed — cron fallback active",
+      );
+      expect(failureLog).toBeTruthy();
+      expect(failureLog[1]).toMatchObject({ automationId: "automation-1" });
+      expect(res.payload.exactWakeupScheduled).toBe(false);
+    });
+
+    it("schedules the wake-up for an owner-only recurring automation (assignee_id null)", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+        .mockResolvedValueOnce(jsonResponse([{ id: "automation-1", next_run_at: "2026-07-12T04:29:00.000Z" }]))
+        .mockResolvedValueOnce(qstashOkResponse());
+      vi.stubGlobal("fetch", fetchMock);
+      const res = mockRes();
+
+      await handler(
+        mockReq({
+          method: "POST",
+          body: {
+            title: "Daily mail check",
+            instruction: "Check your mail for Google",
+            cadence_type: "daily",
+            cadence_value: { time: "04:29" },
+            next_run_at: "2026-07-12T04:29:00.000Z",
+          },
+        }),
+        res,
+      );
+
+      const insertedRow = JSON.parse(fetchMock.mock.calls[1][1].body);
+      expect(insertedRow.assignee_id).toBeNull();
+      expect(res.payload.exactWakeupScheduled).toBe(true);
+    });
+
+    it("returns 500 without attempting to schedule a wake-up when the insert response does not confirm an automation id", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+        .mockResolvedValueOnce(jsonResponse([]));
+      vi.stubGlobal("fetch", fetchMock);
+      const res = mockRes();
+
+      await handler(
+        mockReq({
+          method: "POST",
+          body: {
+            title: "Daily mail check",
+            instruction: "Check your mail for Google",
+            cadence_type: "daily",
+            cadence_value: { time: "04:29" },
+            next_run_at: "2026-07-12T04:29:00.000Z",
+          },
+        }),
+        res,
+      );
+
+      expect(res.statusCode).toBe(500);
+      expect(res.payload).toEqual({ error: "Automation was not confirmed as saved." });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
     });
   });
 });

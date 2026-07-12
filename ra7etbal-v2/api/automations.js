@@ -17,6 +17,8 @@
  * Ownership: users can only read/write their own automations.
  */
 
+import { scheduleAutomationRunWakeup, resolveAppBaseUrl } from './qstash-reminder.js';
+
 const VALID_CADENCE_TYPES = ['once', 'daily', 'weekly', 'every_n_days', 'monthly'];
 const VALID_PROOF_TYPES   = ['photo', 'confirmation', 'text'];
 const VALID_STATUSES      = ['active', 'paused', 'stopped', 'archived'];
@@ -279,7 +281,36 @@ async function handlePost(req, res) {
   const created    = await insertRes.json().catch(() => null);
   const automation = Array.isArray(created) ? created[0] : created;
 
-  return res.status(201).json({ automation });
+  if (!automation?.id) {
+    console.error('[automations POST] insert succeeded but no automation id was returned');
+    return res.status(500).json({ error: 'Automation was not confirmed as saved.' });
+  }
+
+  // ── Exact-time wake-up — server-side only ─────────────────────────────────
+  // The browser must never be responsible for operational scheduling: a
+  // closed app, an interrupted connection, or a client crash right after
+  // this response must not leave a persisted automation without its exact
+  // wake-up. A publish failure here is never a reason to fail or roll back
+  // the already-persisted automation row — the existing 10-minute cron
+  // (runAutomationsCore) still discovers and processes it as a fallback.
+  // The response distinguishes the two truthful outcomes so nothing above
+  // this layer can claim exact scheduling succeeded when it did not.
+  let exactWakeupScheduled = false;
+  try {
+    await scheduleAutomationRunWakeup({
+      appBaseUrl: resolveAppBaseUrl(),
+      automationId: automation.id,
+      nextRunAt: automation.next_run_at,
+    });
+    exactWakeupScheduled = true;
+  } catch (err) {
+    console.error('[automations POST] exact wake-up scheduling failed — cron fallback active', {
+      automationId: automation.id,
+      error: err?.message,
+    });
+  }
+
+  return res.status(201).json({ automation, exactWakeupScheduled });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
