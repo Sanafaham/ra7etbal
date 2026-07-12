@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import handler, { buildRoutineMessagePayload } from './send-whatsapp-task.js';
+import handler, { buildRoutineMessagePayload, buildButtonLinkValue } from './send-whatsapp-task.js';
 
 beforeEach(() => {
   vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'test-token');
@@ -47,6 +47,50 @@ describe('routine message shared boundary', () => {
         ],
       },
     });
+  });
+
+  it('adds a dynamic URL button only when a button suffix is provided', () => {
+    expect(
+      buildRoutineMessagePayload({
+        to: '971500000000',
+        message: 'The alternative was approved. Please visit the task.',
+        templateName: 'ra7etbal_owner_decision',
+        templateLanguage: 'en_US',
+        buttonUrlSuffix: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
+      }),
+    ).toEqual({
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: '971500000000',
+      type: 'template',
+      template: {
+        name: 'ra7etbal_owner_decision',
+        language: { code: 'en_US' },
+        components: [
+          {
+            type: 'body',
+            parameters: [
+              {
+                type: 'text',
+                text: 'The alternative was approved. Please visit the task.',
+              },
+            ],
+          },
+          {
+            type: 'button',
+            sub_type: 'url',
+            index: '0',
+            parameters: [{ type: 'text', text: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed' }],
+          },
+        ],
+      },
+    });
+  });
+
+  it('extracts only the task UUID for owner-decision dynamic URL buttons', () => {
+    expect(
+      buildButtonLinkValue('https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed', 'task'),
+    ).toBe('3dbe480a-c4a0-4680-a5e0-921984a4c0ed');
   });
 
   it('rejects task/delegation sends without a confirmation link', async () => {

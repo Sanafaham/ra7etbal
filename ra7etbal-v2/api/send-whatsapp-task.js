@@ -714,7 +714,24 @@ export function buildRoutineMessagePayload({
   message,
   templateName,
   templateLanguage,
+  buttonUrlSuffix,
 }) {
+  const components = [
+    {
+      type: 'body',
+      parameters: [{ type: 'text', text: message }],
+    },
+  ];
+
+  if (buttonUrlSuffix) {
+    components.push({
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: buttonUrlSuffix }],
+    });
+  }
+
   return {
     messaging_product: 'whatsapp',
     recipient_type: 'individual',
@@ -723,12 +740,7 @@ export function buildRoutineMessagePayload({
     template: {
       name: templateName,
       language: { code: templateLanguage },
-      components: [
-        {
-          type: 'body',
-          parameters: [{ type: 'text', text: message }],
-        },
-      ],
+      components,
     },
   };
 }
@@ -814,7 +826,7 @@ export function normalizeWhatsAppPhone(phone) {
   return digits.length >= 7 ? digits : null;
 }
 
-function buildButtonLinkValue(link, mode) {
+export function buildButtonLinkValue(link, mode) {
   const value = String(link || '').trim();
   if (!value) return value;
   if (mode === 'full') return value;

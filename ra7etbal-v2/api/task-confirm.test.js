@@ -2024,6 +2024,117 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('graph.facebook.com'))).toHaveLength(1);
   });
 
+  it('owner-decision template unset: keeps the old routine template with no button', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: 'https://www.ra7etbal.com/confirm?task=task-1', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'rejected_alternative' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+15551234567' }]))
+      .mockResolvedValueOnce(jsonResponse([{ outcome: 'correction_required', message_id: 'msg-1', delivery_id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(metaAcceptedResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'rejected_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
+    const metaPayload = JSON.parse(metaCall[1].body);
+    expect(metaPayload.template.name).toBe('ra7etbal_routine_message');
+    expect(metaPayload.template.components.every((component) => component.type !== 'button')).toBe(true);
+  });
+
+  it('owner-decision template set: uses the Utility template with only the task UUID as the button suffix', async () => {
+    vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'ra7etbal_owner_decision');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', confirmation_url: 'https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Ghulam', phone: '+15551234567' }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(metaAcceptedResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
+    const metaPayload = JSON.parse(metaCall[1].body);
+    expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
+    expect(metaPayload.template.components.find((component) => component.type === 'button')).toEqual({
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed' }],
+    });
+  });
+
+  it('Reject Alternative with owner-decision template set: uses the Utility template and preserves the task link button', async () => {
+    vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'ra7etbal_owner_decision');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: 'https://www.ra7etbal.com/confirm?task=8b7bd641-e67e-4bc5-9188-19f02e097b7b', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'rejected_alternative' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+15551234567' }]))
+      .mockResolvedValueOnce(jsonResponse([{ outcome: 'correction_required', message_id: 'msg-1', delivery_id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(metaAcceptedResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'rejected_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    const metaPayload = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
+    expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
+    expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([
+      { type: 'text', text: '8b7bd641-e67e-4bc5-9188-19f02e097b7b' },
+    ]);
+  });
+
+  it('Custom Instruction with owner-decision template set: preserves exact owner wording and uses the Utility template button', async () => {
+    vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'ra7etbal_owner_decision');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: 'https://www.ra7etbal.com/confirm?task=6911e5e4-4515-43fb-8062-1a1824f59574', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'custom_instruction' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+15551234567' }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(metaAcceptedResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ taskId: 'task-1', decision: 'custom_instruction', instructionText: 'Please get TEREA Turquoise exactly.', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+    const metaPayload = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
+    expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
+    expect(metaPayload.template.components[0].parameters[0].text).toBe('Please get TEREA Turquoise exactly.');
+    expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([
+      { type: 'text', text: '6911e5e4-4515-43fb-8062-1a1824f59574' },
+    ]);
+  });
+
   it('Custom Instruction: sends the owner\'s exact text, does not touch the correction cycle count', async () => {
     const fetchMock = vi
       .fn()
