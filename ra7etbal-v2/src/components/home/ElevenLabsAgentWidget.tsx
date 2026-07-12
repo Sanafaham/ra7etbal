@@ -5476,9 +5476,15 @@ export default function ElevenLabsAgentWidget({
           setMode("listening");
           // Truthful processing state: a disconnect must never leave the UI
           // stuck showing "Heard you"/"Thinking…"/"Acting…" from whatever
-          // turn was in progress.
+          // turn was in progress. Also clear the latency refs — otherwise a
+          // NEXT session's first "speaking" event could log or complete a
+          // trace using this session's stale timing (CodeRabbit finding).
           clearTurnPhaseThinkingTimeout();
           setTurnPhase("idle");
+          activeExecuteLatencyRef.current = null;
+          lastUserTranscriptTimingRef.current = null;
+          turnLatencyLoggedForEventIdRef.current = null;
+          toolRanForCurrentTranscriptRef.current = false;
           setSessionEndedMsg("Session ended.");
           setLastUserTranscript(null);
           clearPendingPhotoPreviews();
@@ -5517,6 +5523,12 @@ export default function ElevenLabsAgentWidget({
           setStatus("error");
           clearTurnPhaseThinkingTimeout();
           setTurnPhase("idle");
+          // See onDisconnect: clear latency refs so a later session can't
+          // inherit this one's stale timing.
+          activeExecuteLatencyRef.current = null;
+          lastUserTranscriptTimingRef.current = null;
+          turnLatencyLoggedForEventIdRef.current = null;
+          toolRanForCurrentTranscriptRef.current = false;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
           // Save whatever transcript we have so the session isn't lost.

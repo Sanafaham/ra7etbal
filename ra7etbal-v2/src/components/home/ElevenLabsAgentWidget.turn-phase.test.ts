@@ -207,7 +207,7 @@ describe("ElevenLabsAgentWidget — speaking event changes UI to Speaking; new t
 });
 
 describe("ElevenLabsAgentWidget — disconnect, error, and forced cleanup all clear the processing state", () => {
-  it("onDisconnect clears the thinking timer and resets turnPhase to idle", () => {
+  it("onDisconnect clears the thinking timer, resets turnPhase to idle, and clears the latency refs so a later session cannot inherit stale timing", () => {
     const start = SOURCE.indexOf('onDisconnect: (details?: {');
     const end = SOURCE.indexOf("onError: (msg, context?: unknown) => {", start);
     expect(start).toBeGreaterThan(-1);
@@ -215,9 +215,18 @@ describe("ElevenLabsAgentWidget — disconnect, error, and forced cleanup all cl
     const block = SOURCE.slice(start, end);
     expect(block).toContain("clearTurnPhaseThinkingTimeout();");
     expect(block).toContain('setTurnPhase("idle");');
+    // CodeRabbit finding: onDisconnect reset only the visual phase, leaving
+    // activeExecuteLatencyRef/lastUserTranscriptTimingRef/
+    // turnLatencyLoggedForEventIdRef populated with this session's data —
+    // a later session's first "speaking" event could log or complete a
+    // trace against stale timing.
+    expect(block).toContain("activeExecuteLatencyRef.current = null;");
+    expect(block).toContain("lastUserTranscriptTimingRef.current = null;");
+    expect(block).toContain("turnLatencyLoggedForEventIdRef.current = null;");
+    expect(block).toContain("toolRanForCurrentTranscriptRef.current = false;");
   });
 
-  it("onError clears the thinking timer and resets turnPhase to idle", () => {
+  it("onError clears the thinking timer, resets turnPhase to idle, and clears the latency refs so a later session cannot inherit stale timing", () => {
     const start = SOURCE.indexOf("onError: (msg, context?: unknown) => {");
     const end = SOURCE.indexOf("onConnect: () => {", start);
     expect(start).toBeGreaterThan(-1);
@@ -225,6 +234,10 @@ describe("ElevenLabsAgentWidget — disconnect, error, and forced cleanup all cl
     const block = SOURCE.slice(start, end);
     expect(block).toContain("clearTurnPhaseThinkingTimeout();");
     expect(block).toContain('setTurnPhase("idle");');
+    expect(block).toContain("activeExecuteLatencyRef.current = null;");
+    expect(block).toContain("lastUserTranscriptTimingRef.current = null;");
+    expect(block).toContain("turnLatencyLoggedForEventIdRef.current = null;");
+    expect(block).toContain("toolRanForCurrentTranscriptRef.current = false;");
   });
 
   // CodeRabbit finding: forceCleanupSession (manual end, pagehide,
