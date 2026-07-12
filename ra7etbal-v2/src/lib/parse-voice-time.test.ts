@@ -142,3 +142,98 @@ describe("resolveRecurringAutomationFirstRun", () => {
     });
   });
 });
+
+// Regression: confirmed production failure. "Remind me every morning ...
+// at 3:15 AM" was correctly heard and correctly spoken back by Carson
+// ("I'll remind you every morning at 3:15 AM..."), but the stored
+// automation ran at 3:15 PM instead (automations.id=2b0153f2,
+// cadence_value.time "15:15", next_run_at 2026-07-12 12:15:00+00 = 15:15
+// Europe/Istanbul). Reproduced exactly: parseVoiceTime("3:15", <the real
+// creation timestamp>) — i.e. first_run_text with no AM/PM marker — hits
+// this function's own documented ambiguous-hour heuristic ("no AM/PM and
+// hour 1–7 almost always means PM") and produces the identical 15:15
+// result. These tests lock in correct AM/PM resolution — explicit markers
+// must never invert — as a baseline the createAutomation-level
+// disambiguation fix (ElevenLabsAgentWidget.tsx) builds on; that fix
+// (verified in the todo-tools test suite) ensures an explicit "AM" marker
+// reaches this function in the first place for a morning-cadenced request.
+describe("parseVoiceTime — AM/PM resolution (regression: confirmed 3:15 AM → 3:15 PM production inversion)", () => {
+  // 2026-07-12 00:03:34 UTC = 2026-07-12 03:03:34 Europe/Istanbul — the
+  // real creation timestamp for automations.id=2b0153f2.
+  const now = new Date("2026-07-12T03:03:34");
+
+  it("exact reproduction: a bare hour with no AM/PM marker (\"3:15\") is forced to PM by the ambiguous-hour heuristic", () => {
+    const result = parseVoiceTime("3:15", now);
+    expect(result.error).toBeUndefined();
+    // Matches the real stored production row exactly: 15:15 local, today.
+    expect(result.dueAt).toBe(new Date("2026-07-12T15:15:00").toISOString());
+  });
+
+  it('"3:15 AM" resolves to 03:15, never 15:15', () => {
+    const result = parseVoiceTime("3:15 AM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dueAt).toBe(new Date("2026-07-12T03:15:00").toISOString());
+  });
+
+  it('"3:15 PM" resolves to 15:15, never 03:15', () => {
+    const result = parseVoiceTime("3:15 PM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dueAt).toBe(new Date("2026-07-12T15:15:00").toISOString());
+  });
+
+  it('"12:15 AM" resolves to the 00:15 (midnight hour), not 12:15 (noon) — rolls to tomorrow since 00:15 today has already passed relative to "now" (03:03)', () => {
+    const result = parseVoiceTime("12:15 AM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dueAt).toBe(new Date("2026-07-13T00:15:00").toISOString());
+  });
+
+  it('"12:15 PM" resolves to 12:15 (noon), not 00:15 (midnight)', () => {
+    const result = parseVoiceTime("12:15 PM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dueAt).toBe(new Date("2026-07-12T12:15:00").toISOString());
+  });
+
+  it('"1:05 AM" resolves to 01:05, never 13:05', () => {
+    const result = parseVoiceTime("1:05 AM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dueAt).toBe(new Date("2026-07-13T01:05:00").toISOString());
+  });
+
+  it('"1:05 PM" resolves to 13:05, never 01:05', () => {
+    const result = parseVoiceTime("1:05 PM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dueAt).toBe(new Date("2026-07-12T13:05:00").toISOString());
+  });
+
+  it("near-midnight creation: requesting a time just after midnight, created just before midnight, still resolves to the correct AM hour today/tomorrow — never inverted to PM", () => {
+    // now: 2026-07-11 23:58:00 local — 2 minutes before midnight.
+    const nearMidnightNow = new Date("2026-07-11T23:58:00");
+    const result = parseVoiceTime("12:01 AM", nearMidnightNow);
+    expect(result.error).toBeUndefined();
+    // 00:01 today (2026-07-11) has already passed (it's 23:58) — the "no
+    // day specified" branch correctly rolls to tomorrow's 00:01, still AM.
+    expect(result.dueAt).toBe(new Date("2026-07-12T00:01:00").toISOString());
+  });
+
+  it("confirms Europe/Istanbul is the resolved timezone for all of the above (matches the real production account's timezone)", () => {
+    const result = parseVoiceTime("3:15 AM", now);
+    expect(result.timezone).toBe("Europe/Istanbul");
+  });
+
+  it("no 12-hour inversion: for every hour 1-12 with both AM and PM stated explicitly, the two results are always exactly 12 hours apart, never equal and never off by a different amount", () => {
+    for (let hour = 1; hour <= 12; hour++) {
+      const amResult = parseVoiceTime(`${hour}:00 AM`, now);
+      const pmResult = parseVoiceTime(`${hour}:00 PM`, now);
+      expect(amResult.error).toBeUndefined();
+      expect(pmResult.error).toBeUndefined();
+      const diffMs = new Date(pmResult.dueAt).getTime() - new Date(amResult.dueAt).getTime();
+      // Both may have independently rolled to the next day (the "no day
+      // specified" branch), so compare only the time-of-day component via
+      // modulo — the AM/PM offset itself must always be exactly 12 hours.
+      const twelveHoursMs = 12 * 60 * 60 * 1000;
+      const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+      const normalizedDiff = ((diffMs % twentyFourHoursMs) + twentyFourHoursMs) % twentyFourHoursMs;
+      expect(normalizedDiff === twelveHoursMs || normalizedDiff === -twelveHoursMs + twentyFourHoursMs).toBe(true);
+    }
+  });
+});
