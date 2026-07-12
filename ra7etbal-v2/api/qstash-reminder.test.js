@@ -122,6 +122,28 @@ describe("scheduleAutomationRunWakeup", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // CodeRabbit finding: without this warning, a missing CRON_SECRET produces
+  // malformed forwarded auth (Bearer undefined) silently — the publish
+  // itself still succeeds (QStash accepts it regardless of the forwarded
+  // header's contents), so the auth failure only surfaces later, invisibly,
+  // when the wake-up actually fires. Matches the existing warning already
+  // present in the schedule-escalation HTTP handler.
+  it("warns (but still publishes) when CRON_SECRET is not configured", async () => {
+    vi.stubEnv("CRON_SECRET", "");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ messageId: "msg-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await scheduleAutomationRunWakeup({
+      appBaseUrl: "https://ra7etbal.com",
+      automationId: "automation-1",
+      nextRunAt: "2026-07-12T04:29:00.000Z",
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("CRON_SECRET not set"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("throws on an invalid nextRunAt, without calling fetch", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

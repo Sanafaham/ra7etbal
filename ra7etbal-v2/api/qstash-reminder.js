@@ -237,6 +237,14 @@ export async function scheduleAutomationRunWakeup({ appBaseUrl, automationId, ne
   if (!qstashToken) {
     throw new Error('QSTASH_TOKEN not configured.');
   }
+  if (!cronSecret) {
+    // Matches the existing schedule-escalation warning below — without this,
+    // the publish itself still succeeds (QStash returns 200/202 for a valid
+    // publish regardless of the forwarded auth header's contents), but the
+    // wake-up would fail auth at /api/process-delegation-escalations when it
+    // actually fires, with the failure invisible to this caller.
+    console.warn(`[qstash-reminder][${requestId}] CRON_SECRET not set — automation-run wake-up will fail auth at target`);
+  }
   const notBeforeMs = new Date(nextRunAt).getTime();
   if (Number.isNaN(notBeforeMs)) {
     throw new Error(`Invalid nextRunAt: ${nextRunAt}`);
@@ -331,7 +339,7 @@ async function clearMessageId(supabaseUrl, serviceRoleKey, taskId, requestId) {
   await saveMessageId(supabaseUrl, serviceRoleKey, taskId, null, requestId);
 }
 
-export async function publishEscalationMessage({ targetUrl, qstashToken, cronSecret, dedupId, notBefore, payload, requestId, label }) {
+async function publishEscalationMessage({ targetUrl, qstashToken, cronSecret, dedupId, notBefore, payload, requestId, label }) {
   const response = await fetch(`${QSTASH_BASE}/publish/${targetUrl}`, {
     method: 'POST',
     headers: {

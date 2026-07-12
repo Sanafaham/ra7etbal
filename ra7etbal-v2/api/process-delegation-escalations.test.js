@@ -701,14 +701,17 @@ describe('runAutomationsCore — due-automation query scoping', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('status=eq.active');
   });
 
-  it('an automation whose next_run_at has already advanced past a stale wake-up target is not re-executed for the older cycle', async () => {
-    // A wake-up scheduled for cycle N's next_run_at that arrives late (after
-    // the automation has already been advanced to cycle N+1's next_run_at,
-    // e.g. by the 10-minute cron beating a delayed QStash delivery) queries
-    // the CURRENT next_run_at from the database, not the stale value the
-    // wake-up itself was scheduled for. Simulated here as "no due automations"
-    // because the automation's real next_run_at (now in the future) no
-    // longer satisfies next_run_at<=now() — the same filter proven above.
+  // CodeRabbit finding: the original version of this test mocked the exact
+  // same empty response and asserted the exact same stats as the test above,
+  // with only the prose distinguishing it — never actually exercising the
+  // "stale target" scenario it claimed to. Strengthened to assert on the
+  // query's own next_run_at=lte.<timestamp> parameter: the cutoff is a
+  // freshly-computed "now" at query time (parseable, within a tight bound of
+  // Date.now()), never a value the wake-up call could have supplied — proof
+  // the query re-derives eligibility itself rather than trusting anything
+  // about what triggered this invocation.
+  it('an automation whose next_run_at has already advanced past a stale wake-up target is not re-executed — the query cutoff is always freshly computed, never wake-up-supplied', async () => {
+    const beforeCall = Date.now();
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
@@ -717,6 +720,18 @@ describe('runAutomationsCore — due-automation query scoping', () => {
       serviceKey: 'service-key',
       appBaseUrl: 'https://ra7etbal.com',
     });
+    const afterCall = Date.now();
+
+    const queriedUrl = String(fetchMock.mock.calls[0][0]);
+    const cutoffMatch = queriedUrl.match(/next_run_at=lte\.([^&]+)/);
+    expect(cutoffMatch).not.toBeNull();
+    const cutoffMs = new Date(decodeURIComponent(cutoffMatch[1])).getTime();
+    // A wake-up scheduled for cycle N's stale next_run_at has no way to
+    // inject that value here — the cutoff this call actually used is bounded
+    // tightly around the real invocation time, proving it was computed fresh
+    // rather than read from any external input.
+    expect(cutoffMs).toBeGreaterThanOrEqual(beforeCall);
+    expect(cutoffMs).toBeLessThanOrEqual(afterCall);
 
     expect(stats).toMatchObject({ checked: 0, fired: 0 });
   });
