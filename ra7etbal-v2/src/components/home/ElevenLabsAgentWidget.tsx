@@ -4137,10 +4137,13 @@ export default function ElevenLabsAgentWidget({
                   // (push notification + task, no WhatsApp) instead of failing.
                   if (!findPersonInInstruction(routineInstruction, people)) {
                     const reminderSummary = await createReminderRoutineFromInstruction(routineInstruction, sched);
-                    if (reminderSummary) return reminderSummary;
+                    if (reminderSummary) return { summary: reminderSummary, error: null };
                   }
                   console.warn("[automation:NO_PERSON] no person found in instruction", { routineInstruction });
-                  return "I could not find a person in your contacts for that recurring instruction. Check their name in People and try again.";
+                  return {
+                    summary: null,
+                    error: "I could not find a person in your contacts for that recurring instruction. Check their name in People and try again.",
+                  };
                 }
 
                 const { assigneeId, cleanMessage, cadenceType, cadenceValue, title, summary, automationType } = input;
@@ -4169,7 +4172,10 @@ export default function ElevenLabsAgentWidget({
                 if (!res.ok) {
                   const err = await res.json().catch(() => ({}));
                   console.error("[automation:CREATE_FAILED]", err);
-                  return null;
+                  return {
+                    summary: null,
+                    error: typeof err?.error === "string" ? err.error : "Automation create failed.",
+                  };
                 }
 
                 const result = await res.json().catch(() => null);
@@ -4177,19 +4183,26 @@ export default function ElevenLabsAgentWidget({
                   // A 2xx with no echoed automation id is not persistence
                   // confirmation — never report success for an unclear response.
                   console.error("[automation:CREATE_UNCONFIRMED]", { title, cadenceType });
-                  return null;
+                  return { summary: null, error: "Automation create response was unconfirmed." };
                 }
                 console.log("[automation:CREATED]", { id: result.automation.id, title, cadenceType });
-                return summary;
+                return { summary, error: null };
               } catch (err) {
                 console.error("[automation:CREATE_ERROR]", err);
-                return null;
+                return {
+                  summary: null,
+                  error: err instanceof Error ? err.message : String(err),
+                };
               }
             }),
           );
 
-          const successes = results.filter(Boolean) as string[];
-          if (successes.length > 0) {
+          const successes = results.map((result) => result.summary).filter(Boolean) as string[];
+          const exactClockFailure = results.some((result) =>
+            /exact clock time/i.test(result.error ?? ""),
+          );
+          const failures = results.filter((result) => result.error);
+          if (successes.length > 0 && failures.length === 0) {
             sessionActionsRef.current.push(`Automation(s) created: ${rawInstruction}`);
             // Signal Automations list to refresh.
             console.log("[automation:DISPATCH_REFRESH] dispatching ra7etbal:routine-created");
@@ -4197,10 +4210,39 @@ export default function ElevenLabsAgentWidget({
             return successes.join(" ");
           }
 
+          if (successes.length > 0 && failures.length > 0) {
+            const partialFailureText = `${successes.join(" ")} I could not create the recurring reminder for the rest of what you asked — please try again for that part.`;
+            console.warn("[automation:PARTIAL_SUCCESS]", {
+              rawInstruction,
+              requested: recurringSchedules.length,
+              created: successes.length,
+            });
+            sessionActionsRef.current.push(`Automation(s) partially created: ${rawInstruction}`);
+            window.dispatchEvent(new CustomEvent("ra7etbal:routine-created"));
+            lastDirectToolSuccessRef.current = {
+              toolName: "execute_instruction",
+              resultText: partialFailureText,
+              at: new Date().toISOString(),
+              outcome: "failure",
+              inputSummary: { kind: "recurring_automation", instruction: rawInstruction.slice(0, 80), partial: true },
+            };
+            return partialFailureText;
+          }
+
           // Hard-block: recurring language detected but automation creation failed.
           // Never fall through to a one-time WhatsApp send.
           console.warn("[automation:HARD_BLOCK] all schedules failed — not sending as one-time", { rawInstruction });
-          return "I could not create that automation. I may not have found the person in your contacts. Check their name in People and try again.";
+          const automationFailureText = exactClockFailure
+            ? "I need the exact clock time for that recurring reminder. Ask the user what time it should run."
+            : "I could not create that automation. I may not have found the person in your contacts. Check their name in People and try again.";
+          lastDirectToolSuccessRef.current = {
+            toolName: "execute_instruction",
+            resultText: automationFailureText,
+            at: new Date().toISOString(),
+            outcome: "failure",
+            inputSummary: { kind: "recurring_automation", instruction: rawInstruction.slice(0, 80) },
+          };
+          return automationFailureText;
         }
 
         // ── FINAL SAFETY BLOCK ────────────────────────────────────────────
