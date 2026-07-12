@@ -168,12 +168,12 @@ describe("createReminderRoutineFromInstruction", () => {
     expect(payload.assignee_id).toBeNull();
   });
 
-  it("creates an owner-only automation for 'every morning' self-reminder", async () => {
-    const schedules = detectAllRecurringSchedules("Every morning remind me to check passport renewal.");
+  it("creates an owner-only automation for an exact-time 'every morning' self-reminder", async () => {
+    const schedules = detectAllRecurringSchedules("Every morning at 9 AM remind me to check passport renewal.");
     expect(schedules.length).toBeGreaterThan(0);
 
     const summary = await createReminderRoutineFromInstruction(
-      "Every morning remind me to check passport renewal.",
+      "Every morning at 9 AM remind me to check passport renewal.",
       schedules[0],
     );
 
@@ -266,12 +266,12 @@ describe("createReminderRoutineFromInstruction", () => {
     );
   });
 
-  it("defaults to 9 AM when no explicit time is spoken, without dropping the recurrence", async () => {
-    const schedules = detectAllRecurringSchedules("Remind me every night to take my medication.");
+  it("keeps the 9 AM default for non-period recurring reminders when no explicit time is spoken", async () => {
+    const schedules = detectAllRecurringSchedules("Remind me every day to take my medication.");
     expect(schedules.length).toBeGreaterThan(0);
 
     await createReminderRoutineFromInstruction(
-      "Remind me every night to take my medication.",
+      "Remind me every day to take my medication.",
       schedules[0],
     );
 
@@ -279,6 +279,19 @@ describe("createReminderRoutineFromInstruction", () => {
     const payload = JSON.parse(String(init?.body));
     expect(payload.cadence_type).toBe("daily");
     expect(payload.cadence_value.time).toBe("09:00");
+  });
+
+  it("fails truthfully for ambiguous period recurring reminders when no exact time is spoken", async () => {
+    const schedules = detectAllRecurringSchedules("Remind me every night to take my medication.");
+    expect(schedules.length).toBeGreaterThan(0);
+
+    await expect(
+      createReminderRoutineFromInstruction(
+        "Remind me every night to take my medication.",
+        schedules[0],
+      ),
+    ).rejects.toThrow(/exact clock time/i);
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it("throws (never returns a success summary) when the server rejects persistence", async () => {

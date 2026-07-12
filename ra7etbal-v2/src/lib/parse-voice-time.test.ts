@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseVoiceTime, resolveRecurringAutomationFirstRun } from "./parse-voice-time";
+import {
+  parseVoiceTime,
+  resolveRecurringAutomationFirstRun,
+  resolveRecurringFirstRunTextForParsing,
+} from "./parse-voice-time";
 
 // Confirmed production failure: a daily automation requested ~2 minutes
 // ahead ("charge your phone" at 1:36 AM, created at 1:34 AM Europe/Istanbul)
@@ -140,6 +144,67 @@ describe("resolveRecurringAutomationFirstRun", () => {
       ).toISOString();
       expect(naiveOneDayEarlier).not.toBe(expected);
     });
+  });
+});
+
+describe("resolveRecurringFirstRunTextForParsing", () => {
+  it('recovers the explicit clock from cadence_phrase when first_run_text is only "tonight" (live 11:40 PM regression)', () => {
+    const result = resolveRecurringFirstRunTextForParsing({
+      firstRunText: "tonight",
+      cadencePhrase: "every night at 11:40 PM",
+      cadenceType: "daily",
+    });
+
+    expect(result).toEqual({ timeText: "11:40 PM" });
+
+    const parsed = parseVoiceTime(result.timeText, new Date("2026-07-12T23:17:00"));
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.dueAt).toBe(new Date("2026-07-12T23:40:00").toISOString());
+  });
+
+  it("fails closed for recurring period defaults when no exact clock survives", () => {
+    const result = resolveRecurringFirstRunTextForParsing({
+      firstRunText: "tonight",
+      cadencePhrase: "every night",
+      cadenceType: "daily",
+    });
+
+    expect(result.timeText).toBe("");
+    expect(result.error).toMatch(/exact clock time/i);
+  });
+
+  it('extracts an explicit clock from an ambiguous first_run_text wrapper like "tonight at 9:15 PM"', () => {
+    const result = resolveRecurringFirstRunTextForParsing({
+      firstRunText: "tonight at 9:15 PM",
+      cadencePhrase: "every night",
+      cadenceType: "daily",
+    });
+
+    expect(result).toEqual({ timeText: "9:15 PM" });
+
+    const parsed = parseVoiceTime(result.timeText, new Date("2026-07-12T20:00:00"));
+    expect(parsed.error).toBeUndefined();
+    expect(parsed.dueAt).toBe(new Date("2026-07-12T21:15:00").toISOString());
+  });
+
+  it("preserves a valid first_run_text day reference instead of replacing it with cadence_phrase's bare clock", () => {
+    const result = resolveRecurringFirstRunTextForParsing({
+      firstRunText: "next Monday",
+      cadencePhrase: "every Monday at 8 AM",
+      cadenceType: "weekly",
+    });
+
+    expect(result).toEqual({ timeText: "next Monday" });
+  });
+
+  it("keeps the existing morning disambiguation by appending AM to a bare clock", () => {
+    const result = resolveRecurringFirstRunTextForParsing({
+      firstRunText: "3:15",
+      cadencePhrase: "every morning",
+      cadenceType: "daily",
+    });
+
+    expect(result).toEqual({ timeText: "3:15 AM" });
   });
 });
 

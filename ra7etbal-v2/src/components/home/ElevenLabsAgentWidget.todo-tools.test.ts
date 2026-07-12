@@ -150,6 +150,20 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
     expect(overrideIndex).toBeGreaterThan(successesCheckIndex);
   });
 
+  it("uses a clear verified failure when a recurring reminder needs an exact clock time", () => {
+    expect(recurringStart).toBeGreaterThan(-1);
+    expect(oneTimeStart).toBeGreaterThan(recurringStart);
+
+    const block = SOURCE.slice(recurringStart, oneTimeStart);
+    const exactClockFailureIndex = block.indexOf("I need the exact clock time for that recurring reminder");
+    const outcomeIndex = block.indexOf('outcome: "failure"', exactClockFailureIndex);
+    const returnIndex = block.indexOf("return recurringFailureText;", outcomeIndex);
+
+    expect(exactClockFailureIndex).toBeGreaterThan(-1);
+    expect(outcomeIndex).toBeGreaterThan(exactClockFailureIndex);
+    expect(returnIndex).toBeGreaterThan(outcomeIndex);
+  });
+
   it("restores override eligibility for a cached duplicate reply, without weakening the genuine-creation recording above", () => {
     const oneTimeBlock = SOURCE.slice(oneTimeStart, end);
     const recurringBlock = SOURCE.slice(recurringStart, oneTimeStart);
@@ -267,13 +281,15 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
 
   it("never falls through to the one-time task path when recurring language is detected but automation creation fails", () => {
     const block = SOURCE.slice(recurringStart, oneTimeStart);
-    expect(block).toContain('const recurringFailureText = "I could not create the recurring reminder.";');
+    expect(block).toContain("const recurringFailureText = exactClockFailure");
+    expect(block).toContain("I need the exact clock time for that recurring reminder.");
+    expect(block).toContain("I could not create the recurring reminder.");
     expect(block).toContain("return recurringFailureText;");
   });
 
   it("records the recurring-path failure as an overridable outcome so a fabricated success can be corrected", () => {
     const block = SOURCE.slice(recurringStart, oneTimeStart);
-    const failureConstIndex = block.indexOf('const recurringFailureText = "I could not create the recurring reminder.";');
+    const failureConstIndex = block.indexOf("const recurringFailureText = exactClockFailure");
     const failureRecordIndex = block.indexOf('outcome: "failure"', failureConstIndex);
     const returnIndex = block.indexOf("return recurringFailureText;", failureConstIndex);
 
@@ -483,10 +499,10 @@ describe("ElevenLabsAgentWidget — create_automation prefers today's occurrence
     return SOURCE.slice(start, end);
   }
 
-  it("imports resolveRecurringAutomationFirstRun from parse-voice-time, alongside parseVoiceTime", () => {
-    expect(SOURCE).toContain(
-      'import { parseVoiceTime, resolveRecurringAutomationFirstRun } from "../../lib/parse-voice-time";',
-    );
+  it("imports the recurring first-run helpers from parse-voice-time, alongside parseVoiceTime", () => {
+    expect(SOURCE).toContain("parseVoiceTime,");
+    expect(SOURCE).toContain("resolveRecurringAutomationFirstRun,");
+    expect(SOURCE).toContain("resolveRecurringFirstRunTextForParsing,");
   });
 
   it("assigns nextRunAt from resolveRecurringAutomationFirstRun(parsed, cadenceType), called after cadenceType is resolved", () => {
@@ -529,27 +545,29 @@ describe("ElevenLabsAgentWidget — create_automation disambiguates morning cade
     return SOURCE.slice(start, end);
   }
 
-  it("detects a morning cadence phrase and an absent am/pm marker before calling parseVoiceTime", () => {
+  it("resolves the recurring first-run parse text through the shared helper before calling parseVoiceTime", () => {
     const block = createAutomationBlock();
-    expect(block).toContain('const cadencePhraseSuggestsMorning = /\\bmorning\\b/i.test(cadence_phrase ?? "");');
-    expect(block).toContain("const firstRunTextHasExplicitAmPm = /\\b(am|pm)\\b/i.test(first_run_text);");
+    expect(block).toContain("const firstRunTextForParsing = resolveRecurringFirstRunTextForParsing({");
+    expect(block).toContain("firstRunText: first_run_text,");
+    expect(block).toContain("cadencePhrase: cadence_phrase,");
+    expect(block).toContain("cadenceType,");
   });
 
-  it("appends AM to first_run_text only when both conditions hold (morning cadence AND no explicit am/pm)", () => {
+  it("calls parseVoiceTime with the helper's exact time text, not the raw first_run_text", () => {
     const block = createAutomationBlock();
-    expect(block).toMatch(
-      /cadencePhraseSuggestsMorning && !firstRunTextHasExplicitAmPm\s*\n\s*\?\s*`\$\{first_run_text\.trim\(\)\} AM`\s*\n\s*:\s*first_run_text\.trim\(\);/,
-    );
-  });
-
-  it("calls parseVoiceTime with the disambiguated text, not the raw first_run_text — this is the actual fix", () => {
-    const block = createAutomationBlock();
-    const disambiguatedIndex = block.indexOf("const disambiguatedFirstRunText =");
-    const parseCallIndex = block.indexOf("const parsed = parseVoiceTime(disambiguatedFirstRunText);", disambiguatedIndex);
-    expect(disambiguatedIndex).toBeGreaterThan(-1);
-    expect(parseCallIndex).toBeGreaterThan(disambiguatedIndex);
-    // Never regress back to parsing the raw, possibly-ambiguous text directly.
+    const helperIndex = block.indexOf("const firstRunTextForParsing = resolveRecurringFirstRunTextForParsing({");
+    const parseCallIndex = block.indexOf("const parsed = parseVoiceTime(firstRunTextForParsing.timeText);", helperIndex);
+    expect(helperIndex).toBeGreaterThan(-1);
+    expect(parseCallIndex).toBeGreaterThan(helperIndex);
     expect(block).not.toContain("const parsed = parseVoiceTime(first_run_text.trim());");
+  });
+
+  it("records a verified failure when recurring first-run text lacks an exact clock", () => {
+    const block = createAutomationBlock();
+    const failClosedIndex = block.indexOf("I need the exact clock time for that recurring reminder");
+    const recordIndex = block.indexOf("recordCreateAutomationFailure(failureText", failClosedIndex);
+    expect(failClosedIndex).toBeGreaterThan(-1);
+    expect(recordIndex).toBeGreaterThan(failClosedIndex);
   });
 
   it("the error message shown to the user still quotes the original first_run_text, not the internally-disambiguated version", () => {
