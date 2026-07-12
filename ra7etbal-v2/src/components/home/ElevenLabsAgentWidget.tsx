@@ -1136,6 +1136,15 @@ export default function ElevenLabsAgentWidget({
   // "speaking" mode-changes (e.g. multi-sentence TTS) only logs once per
   // distinct user transcript.
   const turnLatencyLoggedForEventIdRef = useRef<number | null>(null);
+  // CodeRabbit finding: activeExecuteLatencyRef only reflects
+  // execute_instruction specifically — a turn that called any OTHER tool
+  // (create_reminder, create_todo, etc., via runDirectToolWithDiagnostic)
+  // would otherwise be mislabeled as "tool-free" and get a misleading
+  // transcript_to_speaking_ms trace that actually included tool execution
+  // time inside it. Set true the instant ANY client tool starts for the
+  // current transcript (same call sites as setTurnPhase("acting")); reset
+  // to false only when a fresh valid transcript arrives.
+  const toolRanForCurrentTranscriptRef = useRef(false);
 
   const clearTurnPhaseThinkingTimeout = useCallback(() => {
     if (turnPhaseThinkingTimeoutRef.current) {
@@ -3607,6 +3616,7 @@ export default function ElevenLabsAgentWidget({
       // thrown error — so a failed tool can never leave the UI stuck on
       // "Acting…" (see rule: failed tool does not remain stuck on Acting).
       setTurnPhase("acting");
+      toolRanForCurrentTranscriptRef.current = true;
       try {
         try {
           const result = await runTool();
@@ -4632,6 +4642,14 @@ export default function ElevenLabsAgentWidget({
       lastUserTranscriptTimingRef.current = null;
       recurringRawRef.current = null;
       invalidCaptureRef.current = null;
+      // Truthful processing state must not leak across a torn-down session —
+      // manual end, pagehide, and connection-timeout cleanup all route
+      // through here (CodeRabbit finding: this shared teardown path was
+      // missed when the turn-phase reset was added to onDisconnect/onError).
+      clearTurnPhaseThinkingTimeout();
+      setTurnPhase("idle");
+      turnLatencyLoggedForEventIdRef.current = null;
+      toolRanForCurrentTranscriptRef.current = false;
 
       if (conv) {
         muteConversationBeforeTeardown(conv, teardownReason);
@@ -5002,6 +5020,7 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "execute_instruction";
             setTurnPhase("acting");
+            toolRanForCurrentTranscriptRef.current = true;
             const toolStartedPerf = performance.now();
             const toolStartedAt = new Date().toISOString();
             const transcriptTiming = lastUserTranscriptTimingRef.current;
@@ -5080,6 +5099,7 @@ export default function ElevenLabsAgentWidget({
             const captureBlock = guardCurrentVoiceCapture("create_automation");
             if (captureBlock) return captureBlock;
             setTurnPhase("acting");
+            toolRanForCurrentTranscriptRef.current = true;
             return createAutomation(params).finally(() => {
               setTurnPhase((prev) => (prev === "acting" ? "thinking" : prev));
             });
@@ -5209,9 +5229,13 @@ export default function ElevenLabsAgentWidget({
               console.info("[carson-latency]", active.trace);
               recordCarsonDiagnostic("carson-latency", active.trace);
               activeExecuteLatencyRef.current = null;
-            } else {
-              // Tool-free turn (a direct conversational reply — no client
-              // tool ran): the only latency signal available is transcript
+            } else if (!toolRanForCurrentTranscriptRef.current) {
+              // Genuinely tool-free turn (a direct conversational reply —
+              // confirmed no client tool ran for this transcript, not just
+              // "execute_instruction specifically didn't run" — see
+              // toolRanForCurrentTranscriptRef's own comment for why
+              // activeExecuteLatencyRef alone isn't a reliable "no tool ran"
+              // signal). The only latency signal available is transcript
               // receipt to this "speaking" mode-change. Deduped per
               // transcript eventId so a turn with multiple speaking-mode
               // transitions (e.g. multi-sentence TTS) logs once, not
@@ -5293,6 +5317,14 @@ export default function ElevenLabsAgentWidget({
               recurringRawRef.current = null;
               lastDirectToolSuccessRef.current = null;
               activeExecuteLatencyRef.current = null;
+              // CodeRabbit finding: an invalid capture (TV/noise/silence)
+              // must not leave stale transcript timing around, or a later
+              // "speaking" mode-change could compute a tool-free latency
+              // trace against a transcript that was never a genuine turn.
+              // Also clear any pending heard->thinking timer from a PRIOR
+              // valid transcript so it can't fire at an unrelated moment.
+              lastUserTranscriptTimingRef.current = null;
+              clearTurnPhaseThinkingTimeout();
               console.warn("[carson-invalid-capture:user]", invalidCapture);
               recordCarsonDiagnostic("carson-direct-tool", {
                 kind: "invalid_capture_user_transcript",
@@ -5325,6 +5357,7 @@ export default function ElevenLabsAgentWidget({
             // arrived, so the user is genuinely "heard" — new turn, so any
             // stale phase/timer from a previous turn is cleared first.
             turnLatencyLoggedForEventIdRef.current = null;
+            toolRanForCurrentTranscriptRef.current = false;
             clearTurnPhaseThinkingTimeout();
             setTurnPhase("heard");
             turnPhaseThinkingTimeoutRef.current = setTimeout(() => {
