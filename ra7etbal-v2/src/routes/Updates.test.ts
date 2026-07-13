@@ -43,12 +43,13 @@ describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
  * from genuine (including keyboard-driven) user interaction.
  */
 describe("Updates.tsx — chip auto-scroll does not self-pause", () => {
-  it("all 6 tabs are present and doubled for the seamless auto-scroll loop", () => {
-    const tabIds = ["needs-you", "waiting", "todo", "inbox", "routines", "history"];
-    for (const id of tabIds) {
-      const occurrences = SOURCE.match(new RegExp(`\\{ id: "${id}",`, "g")) ?? [];
-      expect(occurrences.length).toBeGreaterThanOrEqual(1);
-    }
+  it("TABS is exactly these 6 entries, in order, with no seventh tab silently added back", () => {
+    const tabsBlock = SOURCE.slice(
+      SOURCE.indexOf("const TABS: { id: Tab; label: string }[] = ["),
+      SOURCE.indexOf("];", SOURCE.indexOf("const TABS: { id: Tab; label: string }[] = [")),
+    );
+    const ids = [...tabsBlock.matchAll(/\{ id: "([a-z-]+)",/g)].map((m) => m[1]);
+    expect(ids).toEqual(["needs-you", "waiting", "todo", "inbox", "routines", "history"]);
     expect(SOURCE).toMatch(/\[\.\.\.TABS, \.\.\.TABS\]\.map/);
   });
 

@@ -15,13 +15,20 @@ const SQL = readFileSync(
  * be safe to re-run (no duplicate notes created) and must not drop the
  * source table (data-safety rule: no irreversible schema change without
  * explicit approval).
+ *
+ * Idempotency is keyed to the source row's own primary key via a
+ * migrated_at marker column, not to matching user_id/text — two distinct
+ * rows with identical text must both survive migration exactly once each,
+ * never collapse into a single note (CodeRabbit finding on the first
+ * version of this migration, which deduplicated on content instead of row
+ * identity).
  */
 describe("clear_my_head_inbox → carson_notes migration", () => {
-  it("is guarded against re-inserting a row that was already migrated", () => {
-    expect(SQL).toContain("where not exists (");
-    expect(SQL).toContain("n.user_id = c.user_id");
-    expect(SQL).toContain("n.note = c.text");
-    expect(SQL).toContain("n.source = 'clear_my_head_migration'");
+  it("keys idempotency to the source row's own identity (migrated_at), not content matching", () => {
+    expect(SQL).toContain("add column if not exists migrated_at timestamptz");
+    expect(SQL).toContain("where c.migrated_at is null");
+    expect(SQL).toContain("set migrated_at = now()");
+    expect(SQL).toContain("where migrated_at is null");
   });
 
   it("preserves original text, timestamp, and ownership", () => {
