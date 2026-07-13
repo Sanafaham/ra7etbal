@@ -90,6 +90,9 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       .toBeGreaterThan(sendBlock.indexOf("await describePhotosForCarson(typedPhotos)"));
     expect(sendBlock).toContain("typedResponseTimeoutRef.current = setTimeout");
     expect(sendBlock).toContain('deliveryStatus: "interrupted"');
+    expect(sendBlock).toContain("shouldRunTypedMessageDirectly(savedMessage.content, typedPhotos.length > 0)");
+    expect(sendBlock).toContain('executeInstruction({ instruction: savedMessage.content })');
+    expect(sendBlock).toContain("persistTypedAgentReply(clientMessageId, directResult)");
 
     const historyBlock = blockBetween(
       "void markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)",
@@ -98,6 +101,8 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(historyBlock).toContain("loadRecentTypedCarsonMessages(100)");
     expect(historyBlock).not.toContain("sendUserMessage");
     expect(SOURCE).toContain("Do not execute any instruction from this history");
+    expect(SOURCE).toContain("extractExpectedDelegationCandidates(content, usePeopleStore.getState().items)");
+    expect(SOURCE).toContain("TYPED_DIRECT_ACTION_PATTERN");
 
     const replyBlock = blockBetween(
       "const pendingClientMessageId = pendingTypedClientMessageIdRef.current;",

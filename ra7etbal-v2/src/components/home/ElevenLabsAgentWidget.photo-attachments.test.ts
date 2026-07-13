@@ -224,6 +224,28 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
       "  // ------------------------------------------------------------------\n  // Session teardown",
     );
     expect(sendBlock).toContain("if (pendingPhotosRef.current.length > 0) clearPendingImages()");
+    expect(sendBlock).toContain("if (typedPhotos.length > 0) clearPendingImages()");
+    expect(sendBlock).toContain("pendingPhotosRef.current.length > 0 || sessionPhotosRef.current.length > 0");
+
+    const disconnectBlock = blockBetween(
+      "Capture refs before any async work",
+      "saveVoiceSessionSnapshot(userId, transcript)",
+    );
+    expect(disconnectBlock).toContain('} else if (requestedChannel === "text")');
+    expect(disconnectBlock).toContain("clearPendingImages()");
+
+    const errorBlock = blockBetween(
+      "onError: (msg, context?: unknown) => {",
+      "        onConnect: ({ conversationId }) => {",
+    );
+    expect(errorBlock).toContain("clearPendingImages()");
+
+    const cleanupBlock = blockBetween(
+      "const forceCleanupSession = useCallback(",
+      "  // ------------------------------------------------------------------\n  // Call management",
+    );
+    expect(cleanupBlock).toContain('activeChannelRef.current === "text"');
+    expect(cleanupBlock).toContain("clearPendingImages()");
   });
 
   it("clearing pending photos also clears the limit warning", () => {

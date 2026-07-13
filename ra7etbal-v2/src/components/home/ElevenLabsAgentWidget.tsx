@@ -104,6 +104,7 @@ import {
 import {
   buildDelegationCoveragePartialSuccessResponse,
   checkDelegationCoverage,
+  extractExpectedDelegationCandidates,
   type ExecutedDelegationRecord,
 } from "../../lib/carson-action-coverage";
 import { CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD } from "../../lib/carson-status-policy";
@@ -285,6 +286,8 @@ interface SentDelegationRecord {
 
 const MAX_VOICE_PHOTOS = 5;
 const PHOTO_LIMIT_MESSAGE = "You can attach up to 5 photos.";
+const TYPED_DIRECT_ACTION_PATTERN =
+  /\b(?:ask|tell|get|have|remind|message|whatsapp|text|send|create|add|save|mark|complete|delete|update|schedule|set)\b/i;
 const CARSON_AUDIO_DIAGNOSTICS_STORAGE_KEY = "carson:audio-diagnostics";
 const MID_SESSION_PHOTO_PENDING_CONTEXT =
   "The user attached a photo during this call. The current photos are available for delegation, but the visual description is still being generated. Use these current photos only and ignore any earlier removed photo.";
@@ -4835,7 +4838,11 @@ export default function ElevenLabsAgentWidget({
       if (activeChannelRef.current === "voice") {
         stopLocalAudioPlayback();
       }
-      clearPendingPhotoPreviews();
+      if (activeChannelRef.current === "text") {
+        clearPendingImages();
+      } else {
+        clearPendingPhotoPreviews();
+      }
 
       const pendingTypedId = pendingTypedClientMessageIdRef.current;
       if (activeChannelRef.current === "text" && pendingTypedId) {
@@ -4870,6 +4877,7 @@ export default function ElevenLabsAgentWidget({
     [
       checkForSessionChurn,
       clearCarsonSessionTimers,
+      clearPendingImages,
       clearPendingPhotoPreviews,
       endConversationSession,
       muteConversationBeforeTeardown,
@@ -5811,6 +5819,8 @@ export default function ElevenLabsAgentWidget({
           setLastUserTranscript(null);
           if (requestedChannel === "voice") {
             clearPendingPhotoPreviews();
+          } else if (requestedChannel === "text") {
+            clearPendingImages();
           }
           const pendingTypedId = pendingTypedClientMessageIdRef.current;
           if (requestedChannel === "text" && pendingTypedId) {
@@ -5872,6 +5882,9 @@ export default function ElevenLabsAgentWidget({
           const transcript = [...sessionTranscriptRef.current];
           if (userId && transcript.length > 0) {
             saveVoiceSessionSnapshot(userId, transcript);
+          }
+          if (requestedChannel === "text") {
+            clearPendingImages();
           }
           const pendingTypedId = pendingTypedClientMessageIdRef.current;
           if (requestedChannel === "text" && pendingTypedId) {
@@ -6016,8 +6029,11 @@ export default function ElevenLabsAgentWidget({
       // Do not auto-dismiss — the error persists until the user closes it.
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
+      if (requestedChannel === "text") {
+        clearPendingImages();
+      }
     }
-  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot]);
+  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingImages, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot]);
 
   const startCall = useCallback(() => {
     void startCarsonSession("voice");
@@ -6041,6 +6057,60 @@ export default function ElevenLabsAgentWidget({
       setTypedClearingHistory(false);
     }
   }, [typedAwaitingResponse, typedClearingHistory]);
+
+  const persistTypedAgentReply = useCallback(
+    async (replyToClientMessageId: string | null, content: string) => {
+      const optimisticId = `local-agent-${crypto.randomUUID()}`;
+      const optimisticCreatedAt = new Date().toISOString();
+      const optimisticMessage: CarsonTypedMessage = {
+        id: optimisticId,
+        session_id: typedSessionIdRef.current,
+        client_message_id: null,
+        reply_to_client_message_id: replyToClientMessageId,
+        role: "agent",
+        content,
+        delivery_status: "responded",
+        elevenlabs_conversation_id: typedConversationIdRef.current,
+        elevenlabs_event_id: null,
+        created_at: optimisticCreatedAt,
+        updated_at: optimisticCreatedAt,
+      };
+
+      setTypedMessages((current) => [...current, optimisticMessage]);
+      try {
+        const savedReply = await createTypedAgentMessage({
+          sessionId: typedSessionIdRef.current,
+          replyToClientMessageId,
+          content,
+          elevenlabsConversationId: typedConversationIdRef.current,
+          elevenlabsEventId: null,
+        });
+        setTypedMessages((current) =>
+          current.map((item) => {
+            if (item.id === optimisticId) return savedReply;
+            if (replyToClientMessageId && item.client_message_id === replyToClientMessageId) {
+              return { ...item, delivery_status: "responded" };
+            }
+            return item;
+          }),
+        );
+      } catch (err) {
+        setTypedError(
+          `Carson replied, but the conversation could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
+        );
+      }
+    },
+    [],
+  );
+
+  const shouldRunTypedMessageDirectly = useCallback((content: string, hasPhotos: boolean) => {
+    if (extractExpectedDelegationCandidates(content, usePeopleStore.getState().items).length > 0) {
+      return true;
+    }
+    if (/^\s*(?:tell|show|explain)\s+me\b/i.test(content)) return false;
+    if (hasPhotos && /\b(?:ask|tell|get|have)\b/i.test(content)) return true;
+    return TYPED_DIRECT_ACTION_PATTERN.test(content);
+  }, []);
 
   const sendTypedMessage = useCallback(async () => {
     const conversation = conversationRef.current;
@@ -6100,6 +6170,7 @@ export default function ElevenLabsAgentWidget({
       // restored history or photo-preparation event can invoke a tool. Start
       // the response clock only when this exact owner turn is ready to send.
       pendingTypedClientMessageIdRef.current = clientMessageId;
+      const runDirectly = shouldRunTypedMessageDirectly(savedMessage.content, typedPhotos.length > 0);
       typedResponseTimeoutRef.current = setTimeout(() => {
         if (pendingTypedClientMessageIdRef.current !== clientMessageId) return;
         typedResponseTimeoutRef.current = null;
@@ -6122,6 +6193,28 @@ export default function ElevenLabsAgentWidget({
           ),
         );
       }, 90_000);
+      if (runDirectly) {
+        // Explicit typed actions should not depend on the ElevenLabs text LLM
+        // choosing a tool from a large dynamic prompt. Run the same guarded
+        // client tool pipeline directly and persist its confirmed result as
+        // Carson's reply. The pending typed id remains set during execution,
+        // so restored history/context still cannot invoke tools.
+        const directResult = await executeInstruction({ instruction: savedMessage.content });
+        if (pendingTypedClientMessageIdRef.current !== clientMessageId) {
+          return;
+        }
+        if (typedResponseTimeoutRef.current) {
+          clearTimeout(typedResponseTimeoutRef.current);
+          typedResponseTimeoutRef.current = null;
+        }
+        pendingTypedClientMessageIdRef.current = null;
+        typedSubmitInFlightRef.current = false;
+        setTypedAwaitingResponse(false);
+        setTurnPhase("idle");
+        if (typedPhotos.length > 0) clearPendingImages();
+        await persistTypedAgentReply(clientMessageId, directResult);
+        return;
+      }
       conversation.sendUserMessage(agentMessage);
     } catch (err) {
       if (typedResponseTimeoutRef.current) {
@@ -6134,6 +6227,9 @@ export default function ElevenLabsAgentWidget({
       setTurnPhase("idle");
       setTypedInput((current) => current || content);
       setTypedError(sanitizeCarsonErrorDetail(err));
+      if (pendingPhotosRef.current.length > 0 || sessionPhotosRef.current.length > 0) {
+        clearPendingImages();
+      }
       void updateTypedUserMessage({
         clientMessageId,
         deliveryStatus: "failed",
@@ -6172,7 +6268,13 @@ export default function ElevenLabsAgentWidget({
           `Message sent, but its delivery status could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
         );
       });
-  }, [clearPendingImages, typedInput]);
+  }, [
+    clearPendingImages,
+    executeInstruction,
+    persistTypedAgentReply,
+    shouldRunTypedMessageDirectly,
+    typedInput,
+  ]);
 
   // ------------------------------------------------------------------
   // Session teardown

@@ -55,7 +55,7 @@ export function parseMultiRecipientDelegation(
 function stripLeadingBoundary(text: string): string {
   return text
     .replace(/^\s*[,;]\s*/i, "")
-    .replace(/^\s*and\s+/i, "")
+    .replace(/^\s*and\s+(?:(?:ask|tell|get|remind)\s+)?/i, "")
     .trim();
 }
 
@@ -70,7 +70,7 @@ function findNextPersonBoundary(text: string, people: string[]): number {
   let best = -1;
   for (const name of people) {
     const pattern = new RegExp(
-      `(?:[,;]\\s*(?:and\\s+)?|\\s+and\\s+)${escapeRegExp(name)}\\s+to\\b`,
+      `(?:[,;]\\s*(?:and\\s+)?|\\s+and\\s+)(?:(?:ask|tell|get|remind)\\s+)?${escapeRegExp(name)}\\s+to\\b`,
       "i",
     );
     const match = pattern.exec(text);

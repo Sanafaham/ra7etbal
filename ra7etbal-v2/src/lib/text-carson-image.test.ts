@@ -717,6 +717,62 @@ describe("executeDelegationFromText image pipeline", () => {
     expect(result).toContain("Grace, Christopher, Nasira, Ghulam have it");
   });
 
+  it("typed image multi-recipient incident routes three instructions and attaches the photo only to Christopher", async () => {
+    const { executeDelegationFromText } = await import("./text-carson");
+    const people = ["Christopher", "Nasira", "Ghulam"].map(person);
+    const file = new File(["pizza"], "pizza.jpg", { type: "image/jpeg" });
+
+    savePendingMock.mockImplementationOnce(async (items: ExtractedItem[]) => {
+      const result = saveResultForItems(items);
+      (result.tasks[0] as { image_path: string | null }).image_path =
+        "task-images/user-1/task-1/photo.jpg";
+      result.imagePathsByTaskId = new Map([
+        ["task-1", "task-images/user-1/task-1/photo.jpg"],
+      ]);
+      return result;
+    });
+    deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const result = await executeDelegationFromText(
+      "Ask Christopher to do this for snack now and tell Nasira to call me now and tell Ghulam to bring the car out",
+      {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people,
+        tasks: [],
+        imageFile: file,
+        allImageFiles: [file],
+        imageDescription: "A pepperoni pizza.",
+      },
+    );
+
+    expect(extractItemsMock).not.toHaveBeenCalled();
+    const savedItems = savePendingMock.mock.calls[0][0] as ExtractedItem[];
+    expect(savedItems.map((item) => [item.assignedTo, item.description])).toEqual([
+      ["Christopher", "do this for snack now"],
+      ["Nasira", "call me now"],
+      ["Ghulam", "bring the car out"],
+    ]);
+
+    const imageMap = savePendingMock.mock.calls[0][4] as Map<string, File>;
+    expect(imageMap.get(savedItems[0].id)).toBe(file);
+    expect(imageMap.has(savedItems[1].id)).toBe(false);
+    expect(imageMap.has(savedItems[2].id)).toBe(false);
+
+    expect(deliverTaskMessageMock).toHaveBeenCalledTimes(3);
+    expect(deliverTaskMessageMock.mock.calls.map(([payload]) => [
+      payload.recipientName,
+      payload.messageText,
+      payload.imagePath,
+    ])).toEqual([
+      ["Christopher", "do this for snack now", "task-images/user-1/task-1/photo.jpg"],
+      ["Nasira", "call me now", null],
+      ["Ghulam", "bring the car out", null],
+    ]);
+    expect(result).toContain("Christopher, Nasira, Ghulam have it");
+  });
+
   it("does not let one recipient receive another person's instruction", async () => {
     const { executeDelegationFromText } = await import("./text-carson");
     const people = ["Grace", "Christopher"].map(person);
