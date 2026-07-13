@@ -67,6 +67,7 @@ export const config = { maxDuration: 60 };
 // column set to 'proof' (reference-photo rows never set file_name).
 const MAX_PROOF_PHOTOS = 5;
 const MAX_AUTOMATED_CORRECTION_ATTEMPTS = 3;
+const CANONICAL_APP_BASE_URL = 'https://www.ra7etbal.com';
 
 function taskConfirmErrorMessageForStep(step) {
   if (step === 'load_review_images') {
@@ -79,6 +80,10 @@ function taskConfirmErrorMessageForStep(step) {
     return 'The proof uploaded, but Ra7etBal could not save the result. Please try again.';
   }
   return 'Could not confirm task. Please try again.';
+}
+
+function buildFreshWorkerConfirmationUrl(taskId) {
+  return `${CANONICAL_APP_BASE_URL}/confirm?task=${encodeURIComponent(taskId)}`;
 }
 
 async function responseSnippet(response) {
@@ -702,6 +707,7 @@ async function handleOwnerDecision(req, res) {
         : decision === 'approved_alternative'
         ? buildApprovalMessageText({ recipientName, taskDescription: task.description })
         : instructionText;
+    const workerConfirmationUrl = buildFreshWorkerConfirmationUrl(task.id || taskId);
 
     const reserveFn = decision === 'rejected_alternative' ? 'reserve_rejected_alternative' : 'reserve_custom_instruction';
     const reserve = await callRpcRows(supabaseUrl, serviceKey, reserveFn, {
@@ -709,7 +715,7 @@ async function handleOwnerDecision(req, res) {
       p_lease_token: decisionRow.lease_token,
       p_user_id: userId,
       p_message_content: messageContent,
-      p_confirmation_url: task.confirmation_url ?? null,
+      p_confirmation_url: workerConfirmationUrl,
       p_recipient: assigneePerson.phone,
       p_recipient_name: recipientName,
     });
@@ -753,7 +759,7 @@ async function handleOwnerDecision(req, res) {
 
       const ownerDecisionTemplate = (process.env.WHATSAPP_OWNER_DECISION_TEMPLATE || '').trim();
       const ownerDecisionButtonUrlSuffix = ownerDecisionTemplate
-        ? (buildButtonLinkValue(task.confirmation_url, 'task') || '')
+        ? (buildButtonLinkValue(workerConfirmationUrl, 'task') || '')
         : '';
       const templateName = ownerDecisionButtonUrlSuffix
         ? ownerDecisionTemplate

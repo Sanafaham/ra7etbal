@@ -2049,12 +2049,12 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(metaPayload.template.components.every((component) => component.type !== 'button')).toBe(true);
   });
 
-  it('owner-decision template set: uses the Utility template with only the task UUID as the button suffix', async () => {
+  it('owner-decision template set: uses a fresh task URL and only the task UUID as the button suffix', async () => {
     vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'ra7etbal_owner_decision');
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', confirmation_url: 'https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', confirmation_url: 'https://www.ra7etbal.com/confirm?task=stale-consumed-link', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
       .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' }))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Ghulam', phone: '+15551234567' }]))
       .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }]))
@@ -2078,14 +2078,16 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
       index: '0',
       parameters: [{ type: 'text', text: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed' }],
     });
+    const reserveBody = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_custom_instruction'))[1].body);
+    expect(reserveBody.p_confirmation_url).toBe('https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed');
   });
 
-  it('owner-decision template set but confirmation_url missing: falls back to the old no-button template', async () => {
+  it('owner-decision template set and stored confirmation_url missing: still sends the Utility template with a fresh Visit Task button', async () => {
     vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'ra7etbal_owner_decision');
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: '8b7bd641-e67e-4bc5-9188-19f02e097b7b', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
       .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' }))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Ghulam', phone: '+15551234567' }]))
       .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }]))
@@ -2101,8 +2103,10 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
 
     const metaPayload = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
-    expect(metaPayload.template.name).toBe('ra7etbal_routine_message');
-    expect(metaPayload.template.components.every((component) => component.type !== 'button')).toBe(true);
+    expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
+    expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([
+      { type: 'text', text: '8b7bd641-e67e-4bc5-9188-19f02e097b7b' },
+    ]);
   });
 
   it('Reject Alternative with owner-decision template set: uses the Utility template and preserves the task link button', async () => {
@@ -2128,7 +2132,7 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     const metaPayload = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
     expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
     expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([
-      { type: 'text', text: '8b7bd641-e67e-4bc5-9188-19f02e097b7b' },
+      { type: 'text', text: 'task-1' },
     ]);
   });
 
@@ -2156,7 +2160,7 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
     expect(metaPayload.template.components[0].parameters[0].text).toBe('Please get TEREA Turquoise exactly.');
     expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([
-      { type: 'text', text: '6911e5e4-4515-43fb-8062-1a1824f59574' },
+      { type: 'text', text: 'task-1' },
     ]);
   });
 

@@ -426,11 +426,11 @@ function ProofPhotoThumbnail({ url }: { url: string }) {
  * the assignee could not find the exact requested item and Carson
  * identified a reasonable alternative. Surfaces Carson's note, the
  * assignee's own reply (if any), and the three owner actions: Approve
- * Alternative (completes the task, no message), Reject Alternative (one
- * correction message, task returns to Waiting), Custom Instruction (one
- * message in the owner's own words, task returns to Waiting). All three go
- * through the lease-fenced, idempotent /api/task-confirm PATCH endpoint —
- * safe to retry after a network error without a duplicate send.
+ * Alternative, Reject Alternative, and Custom Instruction. All three send
+ * one owner-decision WhatsApp message with a Visit Task button, then return
+ * the task to the worker without marking it complete. The lease-fenced,
+ * idempotent /api/task-confirm PATCH endpoint is safe to retry after a
+ * network error without a duplicate send.
  */
 function SubstituteReviewCard({ task, assignedLabel }: { task: Task; assignedLabel: string }) {
   const [busyAction, setBusyAction] = useState<SubstituteDecision | null>(null);
