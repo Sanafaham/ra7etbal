@@ -1,5 +1,11 @@
-import { useEffect, useRef, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { CarsonTypedMessage } from "../../lib/carson-typed-messages";
+
+interface TypedPhotoPreview {
+  id: string;
+  previewUrl: string;
+  name: string;
+}
 
 interface Props {
   messages: CarsonTypedMessage[];
@@ -10,6 +16,13 @@ interface Props {
   awaitingResponse: boolean;
   loadingHistory: boolean;
   error: string | null;
+  photos: TypedPhotoPreview[];
+  onAttachPhoto: () => void;
+  onRemovePhoto: (id: string) => void;
+  photoLimitReached: boolean;
+  photoLimitMessage: string;
+  clearingHistory: boolean;
+  onClearHistory: () => void;
 }
 
 export default function CarsonTypedChat({
@@ -21,12 +34,24 @@ export default function CarsonTypedChat({
   awaitingResponse,
   loadingHistory,
   error,
+  photos,
+  onAttachPhoto,
+  onRemovePhoto,
+  photoLimitReached,
+  photoLimitMessage,
+  clearingHistory,
+  onClearHistory,
 }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [confirmingClear, setConfirmingClear] = useState(false);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: "nearest" });
   }, [messages.length, awaitingResponse]);
+
+  useEffect(() => {
+    if (messages.length === 0) setConfirmingClear(false);
+  }, [messages.length]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -35,6 +60,43 @@ export default function CarsonTypedChat({
 
   return (
     <div className="flex min-h-0 w-full max-w-xl flex-1 flex-col">
+      {messages.length > 0 && (
+        <div className="mb-2 flex min-h-8 items-center justify-end gap-2 px-1">
+          {confirmingClear ? (
+            <>
+              <span className="mr-auto text-[11px] text-ink/55">
+                Delete saved typed messages? Tasks and memory stay.
+              </span>
+              <button
+                type="button"
+                onClick={() => setConfirmingClear(false)}
+                disabled={clearingHistory}
+                className="rounded-full px-2.5 py-1.5 text-[11px] font-medium text-ink/55 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onClearHistory}
+                disabled={clearingHistory || awaitingResponse}
+                className="rounded-full border border-danger/25 bg-danger/5 px-2.5 py-1.5 text-[11px] font-semibold text-danger disabled:opacity-50"
+              >
+                {clearingHistory ? "Clearing…" : "Delete chat"}
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmingClear(true)}
+              disabled={awaitingResponse || clearingHistory}
+              className="rounded-full px-2.5 py-1.5 text-[11px] font-medium text-ink/45 transition hover:bg-charcoal/5 hover:text-ink/70 disabled:opacity-40"
+            >
+              Clear chat
+            </button>
+          )}
+        </div>
+      )}
+
       <div
         className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-2xl border border-charcoal/10 bg-white/70 p-3"
         aria-live="polite"
@@ -95,7 +157,51 @@ export default function CarsonTypedChat({
         </p>
       )}
 
+      {photos.length > 0 && (
+        <div className="mt-2 rounded-2xl border border-border bg-white/90 px-2.5 py-2">
+          <div className="flex items-center gap-2 overflow-x-auto">
+            {photos.map((photo, index) => (
+              <div key={photo.id} className="relative shrink-0">
+                <img
+                  src={photo.previewUrl}
+                  alt={`Attached photo ${index + 1}: ${photo.name}`}
+                  className="h-12 w-12 rounded-lg border border-border object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => onRemovePhoto(photo.id)}
+                  disabled={awaitingResponse}
+                  aria-label={`Remove attached photo ${index + 1}`}
+                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink/75 text-white shadow disabled:opacity-45"
+                >
+                  <svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+                    <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] text-ink/50">
+            {photos.length} photo{photos.length === 1 ? "" : "s"} attached to this Carson session.
+          </p>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} className="mt-3 flex items-end gap-2">
+        <button
+          type="button"
+          onClick={onAttachPhoto}
+          disabled={awaitingResponse || photoLimitReached}
+          aria-label={photoLimitReached ? photoLimitMessage : "Attach photo to typed Carson message"}
+          title={photoLimitReached ? photoLimitMessage : "Attach photo"}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-charcoal/15 bg-white text-ink/55 transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-35"
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <path d="M21 15l-5-5L5 21" />
+          </svg>
+        </button>
         <label className="sr-only" htmlFor="carson-typed-message">
           Message Carson
         </label>

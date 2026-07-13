@@ -40,6 +40,28 @@ export async function loadRecentTypedCarsonMessages(
   return ((data ?? []) as CarsonTypedMessage[]).reverse();
 }
 
+/**
+ * Permanently removes the authenticated owner's saved typed transcript.
+ * The explicit user filter is defense in depth on top of the table's RLS
+ * delete policy; tasks, memories, and voice-session records are untouched.
+ */
+export async function clearTypedCarsonMessages(): Promise<void> {
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError) throw new Error(authError.message);
+  if (!user) throw new Error("Sign in again before clearing this conversation.");
+
+  const { error } = await supabase
+    .from("carson_typed_messages")
+    .delete()
+    .eq("user_id", user.id);
+
+  if (error) throw new Error(error.message);
+}
+
 export async function createTypedUserMessage(input: {
   sessionId: string;
   clientMessageId: string;

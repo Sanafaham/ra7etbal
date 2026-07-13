@@ -5,6 +5,10 @@ import { join } from "node:path";
 const SOURCE = readFileSync(join(__dirname, "ElevenLabsAgentWidget.tsx"), "utf-8");
 const APP_SOURCE = readFileSync(join(__dirname, "../../App.tsx"), "utf-8");
 const TYPED_CHAT_SOURCE = readFileSync(join(__dirname, "CarsonTypedChat.tsx"), "utf-8");
+const TYPED_MESSAGES_SOURCE = readFileSync(
+  join(__dirname, "../../lib/carson-typed-messages.ts"),
+  "utf-8",
+);
 const MIGRATION = readFileSync(
   join(__dirname, "../../../supabase/migrations/20260713_create_carson_typed_messages.sql"),
   "utf-8",
@@ -89,6 +93,17 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
   it("blocks empty Enter submissions while preserving IME and Shift+Enter behavior", () => {
     expect(TYPED_CHAT_SOURCE).toContain("!event.nativeEvent.isComposing &&\n              value.trim()");
     expect(TYPED_CHAT_SOURCE).toContain("!event.shiftKey");
+  });
+
+  it("allows the owner to attach photos and permanently clear only their typed transcript", () => {
+    expect(TYPED_CHAT_SOURCE).toContain("Attach photo to typed Carson message");
+    expect(TYPED_CHAT_SOURCE).toContain("Clear chat");
+    expect(TYPED_CHAT_SOURCE).toContain("Delete saved typed messages? Tasks and memory stay.");
+    expect(SOURCE).toContain("await clearTypedCarsonMessages()");
+    expect(TYPED_MESSAGES_SOURCE).toContain('.from("carson_typed_messages")');
+    expect(TYPED_MESSAGES_SOURCE).toContain('.delete()');
+    expect(TYPED_MESSAGES_SOURCE).toContain('.eq("user_id", user.id)');
+    expect(TYPED_MESSAGES_SOURCE).toContain("supabase.auth.getUser()");
   });
 });
 

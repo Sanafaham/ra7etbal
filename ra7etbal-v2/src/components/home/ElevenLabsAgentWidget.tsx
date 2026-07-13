@@ -126,6 +126,7 @@ import { usePeopleStore } from "../../stores/people";
 import { useProfileStore } from "../../stores/profile";
 import { useTasksStore } from "../../stores/tasks";
 import {
+  clearTypedCarsonMessages,
   createTypedAgentMessage,
   createTypedUserMessage,
   loadRecentTypedCarsonMessages,
@@ -888,6 +889,7 @@ export default function ElevenLabsAgentWidget({
   const typedMessagesRef = useRef<CarsonTypedMessage[]>([]);
   const [typedInput, setTypedInput] = useState("");
   const [typedHistoryLoading, setTypedHistoryLoading] = useState(false);
+  const [typedClearingHistory, setTypedClearingHistory] = useState(false);
   const [typedAwaitingResponse, setTypedAwaitingResponse] = useState(false);
   const [typedError, setTypedError] = useState<string | null>(null);
   const typedSubmitInFlightRef = useRef(false);
@@ -4815,8 +4817,8 @@ export default function ElevenLabsAgentWidget({
 
       if (activeChannelRef.current === "voice") {
         stopLocalAudioPlayback();
-        clearPendingPhotoPreviews();
       }
+      clearPendingPhotoPreviews();
 
       const pendingTypedId = pendingTypedClientMessageIdRef.current;
       if (activeChannelRef.current === "text" && pendingTypedId) {
@@ -4952,7 +4954,7 @@ export default function ElevenLabsAgentWidget({
     // Snapshot pending photos NOW — before setStatus("connecting") causes any
     // potential DOM changes. On iOS Safari, a File from <input type="file"> can
     // become inaccessible if its source input unmounts.
-    sessionPhotosRef.current = requestedChannel === "voice" ? [...pendingPhotosRef.current] : [];
+    sessionPhotosRef.current = [...pendingPhotosRef.current];
     sessionPhotoContextRef.current = null;
 
     // If photos are attached, kick off description generation immediately —
@@ -5933,7 +5935,7 @@ export default function ElevenLabsAgentWidget({
       // Inject photo descriptions immediately after session opens — before the
       // user speaks. This is the critical path: Carson must know about the photos
       // from the first word, not only when execute_instruction fires later.
-      if (requestedChannel === "voice" && sessionPhotoContextRef.current) {
+      if (sessionPhotoContextRef.current) {
         conv.sendContextualUpdate(
           `The user has attached photos. Here are descriptions:\n${sessionPhotoContextRef.current}\nKeep this in mind for the entire conversation.`,
         );
@@ -5979,6 +5981,21 @@ export default function ElevenLabsAgentWidget({
   const startTypedSession = useCallback(() => {
     void startCarsonSession("text");
   }, [startCarsonSession]);
+
+  const clearTypedHistory = useCallback(async () => {
+    if (typedClearingHistory || typedAwaitingResponse) return;
+    setTypedClearingHistory(true);
+    setTypedError(null);
+    try {
+      await clearTypedCarsonMessages();
+      setTypedMessages([]);
+      setTypedInput("");
+    } catch (err) {
+      setTypedError(`Could not clear the typed conversation. ${sanitizeCarsonErrorDetail(err)}`);
+    } finally {
+      setTypedClearingHistory(false);
+    }
+  }, [typedAwaitingResponse, typedClearingHistory]);
 
   const sendTypedMessage = useCallback(async () => {
     const conversation = conversationRef.current;
@@ -6363,6 +6380,13 @@ export default function ElevenLabsAgentWidget({
           awaitingResponse={typedAwaitingResponse}
           loadingHistory={typedHistoryLoading}
           error={typedError}
+          photos={pendingPhotoPreviews}
+          onAttachPhoto={() => imageFileInputRef.current?.click()}
+          onRemovePhoto={removePendingPhoto}
+          photoLimitReached={pendingPhotoPreviews.length >= MAX_VOICE_PHOTOS}
+          photoLimitMessage={PHOTO_LIMIT_MESSAGE}
+          clearingHistory={typedClearingHistory}
+          onClearHistory={() => { void clearTypedHistory(); }}
         />
       )}
 
