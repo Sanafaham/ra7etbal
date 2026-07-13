@@ -443,7 +443,7 @@ export default function App() {
       </header>
 
       {/* ── Main content ────────────────────────────────────────────────── */}
-      <main className="mx-auto mt-3 max-w-3xl px-5" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 112px)" }}>
+      <main className="mx-auto mt-3 max-w-3xl px-5" style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 160px)" }}>
         <ConfirmationNotices />
 
         {/* Hidden Carson diagnostics — self-gates on /debug/carson or

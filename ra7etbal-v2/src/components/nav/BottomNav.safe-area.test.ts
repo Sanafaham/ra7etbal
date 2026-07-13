@@ -12,7 +12,7 @@ describe("BottomNav mobile safe-area layout", () => {
   });
 
   it("reserves enough bottom padding so Updates cards and actions do not sit under the nav", () => {
-    expect(APP_SOURCE).toContain('paddingBottom: "calc(env(safe-area-inset-bottom) + 112px)"');
+    expect(APP_SOURCE).toContain('paddingBottom: "calc(env(safe-area-inset-bottom) + 160px)"');
     expect(APP_SOURCE).toContain("{showNav && <BottomNav />}");
   });
 });
