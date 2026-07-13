@@ -2727,6 +2727,12 @@ export default function ElevenLabsAgentWidget({
   // Client tool: save_note
   // Explicit user notes and ideas. Not reminders, tasks, delegations, or
   // durable behavior rules.
+  //
+  // Records lastDirectToolSuccessRef and dispatches a "notes-changed" event
+  // so (a) resolveSanitizedCarsonDisplayMessage can correct the agent's own
+  // separately generated reply if it contradicts what actually happened, and
+  // (b) the Notes route refreshes instead of showing stale data after a
+  // successful save made from the Carson sheet.
   // ------------------------------------------------------------------
   const saveNote = useCallback(
     async (params: {
@@ -2742,9 +2748,36 @@ export default function ElevenLabsAgentWidget({
       try {
         await saveCarsonNote(trimmed, category ?? "general");
         sessionActionsRef.current.push(`Saved note: ${trimmed}`);
-        return "Saved.";
-      } catch {
-        return "I couldn't save that note right now. Please try again.";
+        const resultText = "Saved.";
+        lastDirectToolSuccessRef.current = {
+          toolName: "save_note",
+          resultText,
+          at: new Date().toISOString(),
+          inputSummary: { note: trimmed },
+          outcome: "success",
+        };
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("ra7etbal:notes-changed"));
+        }
+        return resultText;
+      } catch (err) {
+        const resultText = "I couldn't save that note right now. Please try again.";
+        lastDirectToolSuccessRef.current = {
+          toolName: "save_note",
+          resultText,
+          at: new Date().toISOString(),
+          inputSummary: { note: trimmed },
+          outcome: "failure",
+        };
+        try {
+          recordCarsonDiagnostic("carson-direct-tool", {
+            toolName: "save_note",
+            message: `save_note failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        } catch {
+          // diagnostic logging must never block the user-facing reply
+        }
+        return resultText;
       }
     },
     [],

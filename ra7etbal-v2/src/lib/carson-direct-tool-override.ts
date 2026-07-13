@@ -40,9 +40,26 @@ const OVERRIDABLE_TOOL_NAMES = new Set([
   "execute_instruction",
   "control_task",
   "send_delegation",
+  "save_note",
 ]);
 
 const OVERRIDE_WINDOW_MS = 15_000;
+
+// Production bug (2026-07-13): Carson replied "Saved." to an explicit note
+// request ("Note that I would like to make call Carson feature...") with no
+// corresponding carson_notes row ever created — no save_note tool call
+// succeeded (or ran at all) that turn, yet the agent's own separately
+// generated reply still claimed success. The override above only corrects a
+// contradiction against a tool call that DID run; it does nothing when no
+// tool ran at all. This pattern set is intentionally broader than (and
+// separate from) note-routing.ts's hasExplicitNoteIntent, which classifies
+// Clear My Head extraction items — this one only gates a safety-net
+// truthfulness check, not what gets created.
+const EXPLICIT_NOTE_REQUEST_PATTERN =
+  /\bnote\s+(?:that|to\s+\w+)\b|\bplease\s+note\b|\bmake\s+a\s+note\b|\bsave\s+(?:this|that)\s+(?:note|idea|thought)\b|\bremember\s+this\s+(?:idea|thought|information)\b|\bhold\s+this\s+thought\b|\badd\s+this\s+to\s+(?:my\s+)?notes\b/i;
+
+const NOTE_SAVE_CONFIRMATION_PATTERN =
+  /\b(?:saved|noted|added\s+(?:that|it)?\s*to\s+your\s+notes)\b/i;
 
 const FAILURE_LANGUAGE_PATTERN =
   /wasn['’]?t able|couldn['’]?t complete|don['’]?t have (?:the )?ability|cannot directly|can['’]?t directly|directly close|try again|technical issue|\bsupport\b/i;
@@ -119,6 +136,34 @@ export function resolveCarsonDisplayMessage(
   return lastSuccess.resultText;
 }
 
+function isRecentNonFailure(lastSuccess: DirectToolSuccessResult, now: number): boolean {
+  if (lastSuccess.outcome === "failure") return false;
+  const at = Date.parse(lastSuccess.at);
+  return !Number.isNaN(at) && now - at <= OVERRIDE_WINDOW_MS;
+}
+
+/**
+ * True when the previous owner message reads as an explicit note-saving
+ * request, the agent's reply claims that request was saved, and nothing
+ * verifiably succeeded this turn to back that claim up — i.e. Carson is
+ * about to (or did) narrate a save that never happened. Deliberately does
+ * NOT fire when ANY other tool genuinely succeeded this turn (the user's
+ * phrasing can be ambiguous between a note and another action; if something
+ * real happened, don't second-guess it just because the wording was
+ * generic).
+ */
+export function detectsUnconfirmedNoteSaveClaim(
+  agentMessage: string,
+  previousUserMessage: string,
+  lastSuccess: DirectToolSuccessResult | null,
+  now: number = Date.now(),
+): boolean {
+  if (!EXPLICIT_NOTE_REQUEST_PATTERN.test(previousUserMessage)) return false;
+  if (!NOTE_SAVE_CONFIRMATION_PATTERN.test(agentMessage)) return false;
+  if (lastSuccess && isRecentNonFailure(lastSuccess, now)) return false;
+  return true;
+}
+
 interface ResolveSanitizedCarsonDisplayMessageInput {
   agentMessage: string;
   previousUserMessage?: string;
@@ -126,12 +171,19 @@ interface ResolveSanitizedCarsonDisplayMessageInput {
   now?: number;
 }
 
+const UNCONFIRMED_NOTE_SAVE_REPLY =
+  "I couldn't confirm that was saved. Please say it again so I can save it properly.";
+
 export function resolveSanitizedCarsonDisplayMessage({
   agentMessage,
   previousUserMessage = "",
   lastSuccess,
   now = Date.now(),
 }: ResolveSanitizedCarsonDisplayMessageInput): string {
+  if (detectsUnconfirmedNoteSaveClaim(agentMessage, previousUserMessage, lastSuccess, now)) {
+    return sanitizeCarsonReplyText(UNCONFIRMED_NOTE_SAVE_REPLY);
+  }
+
   const toolAwareMessage = resolveCarsonDisplayMessage(agentMessage, lastSuccess, now);
   return sanitizeCarsonReplyText(
     isSocialAcknowledgement(previousUserMessage)

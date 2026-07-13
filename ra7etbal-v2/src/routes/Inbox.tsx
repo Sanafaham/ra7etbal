@@ -93,6 +93,20 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
+  // Carson's save_note tool (voice or typed, run from the bottom sheet on
+  // any route) dispatches this after a confirmed carson_notes insert, so
+  // this route isn't left showing stale data if it's already mounted
+  // underneath the Carson sheet.
+  useEffect(() => {
+    if (!userId) return;
+    function handleNotesChanged() {
+      void reload();
+    }
+    window.addEventListener("ra7etbal:notes-changed", handleNotesChanged);
+    return () => window.removeEventListener("ra7etbal:notes-changed", handleNotesChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
   async function handleSave() {
     if (!canSave) return;
     setSaving(true);

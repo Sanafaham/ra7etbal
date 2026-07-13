@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  detectsUnconfirmedNoteSaveClaim,
   resolveCarsonDisplayMessage,
   resolveSanitizedCarsonDisplayMessage,
   type DirectToolSuccessResult,
@@ -128,10 +129,22 @@ describe("resolveCarsonDisplayMessage", () => {
   it("does not override for tools outside the allow-list", () => {
     const result = resolveCarsonDisplayMessage(
       "I wasn't able to save that. Please try again.",
-      successResult({ toolName: "save_note", resultText: "Saved." }),
+      successResult({ toolName: "save_city", resultText: "Got it. I'll use Dubai for weather." }),
       NOW,
     );
     expect(result).toBe("I wasn't able to save that. Please try again.");
+  });
+
+  // save_note joined the allow-list (2026-07-14 production fix): a real
+  // save_note success must be able to correct a contradictory agent reply
+  // the same way create_todo/create_reminder/etc. already do.
+  it("overrides a contradictory failure message with the successful save_note result", () => {
+    const result = resolveCarsonDisplayMessage(
+      "I wasn't able to save that. Please try again.",
+      successResult({ toolName: "save_note", resultText: "Saved." }),
+      NOW,
+    );
+    expect(result).toBe("Saved.");
   });
 
   it("lets execute_instruction partial-success coverage override a fake all-done agent reply", () => {
@@ -252,10 +265,22 @@ describe("resolveCarsonDisplayMessage — tool-failure truthfulness", () => {
   it("does not override for tools outside the allow-list, even on a recorded failure", () => {
     const result = resolveCarsonDisplayMessage(
       "Done, that's all set.",
-      failureResult({ toolName: "save_note", resultText: "Could not save the note." }),
+      failureResult({ toolName: "save_city", resultText: "I couldn't save the city." }),
       NOW,
     );
     expect(result).toBe("Done, that's all set.");
+  });
+
+  // Production bug (2026-07-13): Carson said "Saved." after a verified
+  // save_note failure (or after no save_note call at all) — this locks in
+  // the failure-truthfulness half of the fix for save_note specifically.
+  it("overrides a fabricated success reply with a verified save_note failure", () => {
+    const result = resolveCarsonDisplayMessage(
+      "Done, that's all set.",
+      failureResult({ toolName: "save_note", resultText: "Could not save the note." }),
+      NOW,
+    );
+    expect(result).toBe("Could not save the note.");
   });
 
   // CodeRabbit finding: "doesn't sound like failure" was too broad a trigger
@@ -384,5 +409,115 @@ describe("resolveSanitizedCarsonDisplayMessage", () => {
     });
 
     expect(result).toBe("Anytime.");
+  });
+});
+
+// Production bug (2026-07-13): the user said "Note that I would like to
+// make call Carson feature in the app at a later stage", Carson replied
+// "Saved.", and no carson_notes row was ever created — no save_note tool
+// call succeeded (or ran at all) that turn. The override system previously
+// only corrected a reply that contradicted a tool call that DID run; it did
+// nothing when no tool ran at all for an explicit note request. These tests
+// lock in the new fabricated-success guard.
+describe("detectsUnconfirmedNoteSaveClaim", () => {
+  it("flags the exact reported production scenario: explicit note request, 'Saved.' reply, no tool ran", () => {
+    expect(
+      detectsUnconfirmedNoteSaveClaim(
+        "Saved.",
+        "Note that I would like to make call Carson feature in the app at a later stage",
+        null,
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag when a real save_note success backs up the claim", () => {
+    expect(
+      detectsUnconfirmedNoteSaveClaim(
+        "Saved.",
+        "Note that I want to build a flight simulator",
+        successResult({ toolName: "save_note", resultText: "Saved.", at: new Date(NOW).toISOString() }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not flag when a verified save_note failure is on record — that's the other override's job", () => {
+    expect(
+      detectsUnconfirmedNoteSaveClaim(
+        "Saved.",
+        "Note that I want to build a flight simulator",
+        failureResult({ toolName: "save_note", resultText: "Could not save the note.", at: new Date(NOW).toISOString() }),
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag when a different tool genuinely succeeded this turn (ambiguous phrasing, real action happened)", () => {
+    expect(
+      detectsUnconfirmedNoteSaveClaim(
+        "Saved.",
+        "Note: buy milk",
+        successResult({ toolName: "create_todo", resultText: "Added to your to-do list.", at: new Date(NOW).toISOString() }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not flag when the previous message isn't an explicit note request", () => {
+    expect(
+      detectsUnconfirmedNoteSaveClaim("Saved.", "What's on my to-do list?", null, NOW),
+    ).toBe(false);
+  });
+
+  it("does not flag when the agent's reply doesn't claim a save", () => {
+    expect(
+      detectsUnconfirmedNoteSaveClaim(
+        "Got it, anything else?",
+        "Note that I want to build a flight simulator",
+        null,
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not flag once the recorded success is outside the time window (stale success doesn't count either)", () => {
+    expect(
+      detectsUnconfirmedNoteSaveClaim(
+        "Saved.",
+        "Note that I want to build a flight simulator",
+        successResult({ toolName: "save_note", resultText: "Saved.", at: "2026-06-28T00:01:00.000Z" }),
+        NOW,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("resolveSanitizedCarsonDisplayMessage — unconfirmed note save", () => {
+  it("replaces a fabricated 'Saved.' reply with a truthful retry message", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "Saved.",
+      previousUserMessage:
+        "Note that I would like to make call Carson feature in the app at a later stage",
+      lastSuccess: null,
+      now: NOW,
+    });
+    expect(result).toBe(
+      "I couldn't confirm that was saved. Please say it again so I can save it properly.",
+    );
+  });
+
+  it("leaves a genuine save_note success reply untouched", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "Saved.",
+      previousUserMessage: "Note that I want to build a flight simulator",
+      lastSuccess: successResult({
+        toolName: "save_note",
+        resultText: "Saved.",
+        at: new Date(NOW).toISOString(),
+      }),
+      now: NOW,
+    });
+    expect(result).toBe("Saved.");
   });
 });
