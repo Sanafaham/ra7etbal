@@ -12,6 +12,7 @@ export const config = { maxDuration: 60 };
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
 const DEFAULT_PLAIN_MESSAGE_TEMPLATE = 'ra7etbal_routine_message';
+const OWNER_DECISION_TEMPLATE_NAME = 'ra7etbal_owner_decision';
 const TASK_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 const TASK_UUID_EXACT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEMPLATE_SPECS = {
@@ -718,6 +719,10 @@ export function buildRoutineMessagePayload({
   templateLanguage,
   buttonUrlSuffix,
 }) {
+  if (isOwnerDecisionTemplateName(templateName)) {
+    throw new Error('Owner decision WhatsApp template requires buildOwnerDecisionTemplatePayload.');
+  }
+
   const components = [
     {
       type: 'body',
@@ -745,6 +750,12 @@ export function buildRoutineMessagePayload({
       components,
     },
   };
+}
+
+function isOwnerDecisionTemplateName(templateName) {
+  const name = String(templateName || '').trim();
+  const configuredName = String(process.env.WHATSAPP_OWNER_DECISION_TEMPLATE || '').trim();
+  return name === OWNER_DECISION_TEMPLATE_NAME || (configuredName && name === configuredName);
 }
 
 /** Extracts one task UUID for a WhatsApp dynamic URL button, without preserving surrounding URL or body text. */

@@ -86,6 +86,51 @@ function buildFreshWorkerConfirmationUrl(taskId) {
   return `${CANONICAL_APP_BASE_URL}/confirm?task=${encodeURIComponent(taskId)}`;
 }
 
+function logOwnerDecisionMetaPayloadAudit({ taskId, decision, payload }) {
+  const components = Array.isArray(payload?.template?.components)
+    ? payload.template.components
+    : [];
+  const bodyComponent = components.find((component) => component?.type === 'body') || null;
+  const buttonComponent = components.find((component) => component?.type === 'button') || null;
+  const bodyParameter = bodyComponent?.parameters?.[0] || null;
+  const buttonParameter = buttonComponent?.parameters?.[0] || null;
+  const buttonSuffix = buttonParameter?.text || '';
+  const sanitizedPayload = {
+    ...payload,
+    to: '[redacted]',
+    template: {
+      ...(payload?.template || {}),
+      components,
+    },
+  };
+
+  console.log('[task-confirm] owner-decision Meta payload audit', JSON.stringify({
+    payloadBuilder: 'buildOwnerDecisionTemplatePayload',
+    usedRoutinePayloadBuilder: false,
+    taskId,
+    decision,
+    templateName: payload?.template?.name || null,
+    templateLanguage: payload?.template?.language?.code || null,
+    bodyParameter: bodyParameter
+      ? { type: bodyParameter.type || null, text: bodyParameter.text || '' }
+      : null,
+    buttonComponent: buttonComponent
+      ? {
+          type: buttonComponent.type || null,
+          sub_type: buttonComponent.sub_type || null,
+          index: buttonComponent.index || null,
+          parameter: buttonParameter
+            ? { type: buttonParameter.type || null, text: buttonParameter.text || '' }
+            : null,
+        }
+      : null,
+    computedFinalUrl: buttonSuffix
+      ? buildFreshWorkerConfirmationUrl(buttonSuffix)
+      : null,
+    payload: sanitizedPayload,
+  }));
+}
+
 function normalizeConfirmationTaskId(value) {
   let raw = Array.isArray(value) ? value[0] : value;
   if (raw == null) return '';
@@ -839,6 +884,14 @@ async function handleOwnerDecision(req, res) {
             templateName,
             templateLanguage,
           });
+
+      if (ownerDecisionTemplate) {
+        logOwnerDecisionMetaPayloadAudit({
+          taskId: task.id || taskId,
+          decision,
+          payload,
+        });
+      }
 
       let sendResult;
       try {

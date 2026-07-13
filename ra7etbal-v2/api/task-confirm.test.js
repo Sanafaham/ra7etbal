@@ -2102,6 +2102,7 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
 
   it('owner-decision template set: uses a fresh task URL and only the task UUID as the button suffix', async () => {
     vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'ra7etbal_owner_decision');
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
@@ -2147,6 +2148,27 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(`https://www.ra7etbal.com/confirm?task=${buttonSuffix}`).toBe(
       'https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
     );
+    const auditCall = logSpy.mock.calls.find(([label]) => label === '[task-confirm] owner-decision Meta payload audit');
+    expect(auditCall).toBeTruthy();
+    const auditPayload = JSON.parse(auditCall[1]);
+    expect(auditPayload).toMatchObject({
+      payloadBuilder: 'buildOwnerDecisionTemplatePayload',
+      usedRoutinePayloadBuilder: false,
+      taskId: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
+      decision: 'approved_alternative',
+      templateName: 'ra7etbal_owner_decision',
+      templateLanguage: 'en_US',
+      bodyParameter: { type: 'text', text: expectedMessage },
+      buttonComponent: {
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameter: { type: 'text', text: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed' },
+      },
+      computedFinalUrl: 'https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
+    });
+    expect(auditPayload.payload.to).toBe('[redacted]');
+    expect(auditPayload.payload.template.components).toEqual(metaPayload.template.components);
     const reserveBody = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_custom_instruction'))[1].body);
     expect(reserveBody.p_confirmation_url).toBe('https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed');
   });

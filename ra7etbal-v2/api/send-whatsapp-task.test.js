@@ -54,7 +54,7 @@ describe('routine message shared boundary', () => {
       buildRoutineMessagePayload({
         to: '971500000000',
         message: 'The alternative was approved. Please visit the task.',
-        templateName: 'ra7etbal_owner_decision',
+        templateName: 'ra7etbal_routine_with_button',
         templateLanguage: 'en_US',
         buttonUrlSuffix: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
       }),
@@ -64,7 +64,7 @@ describe('routine message shared boundary', () => {
       to: '971500000000',
       type: 'template',
       template: {
-        name: 'ra7etbal_owner_decision',
+        name: 'ra7etbal_routine_with_button',
         language: { code: 'en_US' },
         components: [
           {
@@ -85,6 +85,29 @@ describe('routine message shared boundary', () => {
         ],
       },
     });
+  });
+
+  it('does not allow the generic routine builder to send the owner-decision template', () => {
+    expect(() =>
+      buildRoutineMessagePayload({
+        to: '971500000000',
+        message: 'Ghulam, the alternative was approved. Please go ahead.',
+        templateName: 'ra7etbal_owner_decision',
+        templateLanguage: 'en_US',
+        buttonUrlSuffix: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
+      }),
+    ).toThrow('Owner decision WhatsApp template requires buildOwnerDecisionTemplatePayload.');
+
+    vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'custom_owner_decision_template');
+    expect(() =>
+      buildRoutineMessagePayload({
+        to: '971500000000',
+        message: 'Ghulam, the alternative was approved. Please go ahead.',
+        templateName: 'custom_owner_decision_template',
+        templateLanguage: 'en_US',
+        buttonUrlSuffix: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
+      }),
+    ).toThrow('Owner decision WhatsApp template requires buildOwnerDecisionTemplatePayload.');
   });
 
   it('extracts only the task UUID for owner-decision dynamic URL buttons', () => {
