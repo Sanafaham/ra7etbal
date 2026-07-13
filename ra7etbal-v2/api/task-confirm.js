@@ -86,6 +86,45 @@ function buildFreshWorkerConfirmationUrl(taskId) {
   return `${CANONICAL_APP_BASE_URL}/confirm?task=${encodeURIComponent(taskId)}`;
 }
 
+function normalizeConfirmationTaskId(value) {
+  let raw = Array.isArray(value) ? value[0] : value;
+  if (raw == null) return '';
+  let text = String(raw).trim();
+  if (!text) return '';
+
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      const decoded = decodeURIComponent(text);
+      if (decoded === text) break;
+      text = decoded.trim();
+    } catch {
+      break;
+    }
+  }
+
+  try {
+    const url = new URL(text);
+    const nestedTask = url.searchParams.get('task') || url.searchParams.get('task_id');
+    if (nestedTask && nestedTask !== text) return normalizeConfirmationTaskId(nestedTask);
+  } catch {
+    // Not a full URL; fall through to query-string and UUID recovery.
+  }
+
+  const queryIndex = text.indexOf('?');
+  if (queryIndex >= 0) {
+    const params = new URLSearchParams(text.slice(queryIndex + 1));
+    const nestedTask = params.get('task') || params.get('task_id');
+    if (nestedTask && nestedTask !== text) return normalizeConfirmationTaskId(nestedTask);
+  }
+
+  const uuidMatch = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+  if (uuidMatch && /(?:https?:|\/confirm|\?|=|%)/i.test(text)) {
+    return uuidMatch[0];
+  }
+
+  return text;
+}
+
 async function responseSnippet(response) {
   const text = await response.text().catch(() => '');
   return text.slice(0, 500);
@@ -101,7 +140,7 @@ export default async function handler(req, res) {
 // ── GET: load task for the Confirm page ──────────────────────────────────────
 
 async function handleGet(req, res) {
-  const { taskId } = req.query;
+  const taskId = normalizeConfirmationTaskId(req.query?.taskId);
 
   if (!taskId) {
     return res.status(400).json({ error: 'Task ID is required' });
@@ -116,7 +155,7 @@ async function handleGet(req, res) {
 
   try {
     const response = await fetch(
-      supabaseUrl + '/rest/v1/tasks?id=eq.' + taskId +
+      supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId) +
         '&select=id,user_id,description,assigned_to,status,confirmed_at,image_path,proof_image_path,attachment_count,quality_review_status,quality_review_note,worker_reply',
       {
         headers: {
@@ -249,7 +288,8 @@ async function handleGet(req, res) {
 // ── POST: confirm the task ────────────────────────────────────────────────────
 
 async function handlePost(req, res) {
-  const { taskId, confirmedBy, proofImagePaths: rawProofImagePaths, workerReply: rawWorkerReply } = req.body;
+  const { taskId: rawTaskId, confirmedBy, proofImagePaths: rawProofImagePaths, workerReply: rawWorkerReply } = req.body;
+  const taskId = normalizeConfirmationTaskId(rawTaskId);
   const proofImagePaths = (Array.isArray(rawProofImagePaths) ? rawProofImagePaths : [])
     .filter((p) => typeof p === 'string' && p.trim())
     .slice(0, MAX_PROOF_PHOTOS);
@@ -632,11 +672,12 @@ async function handleOwnerDecision(req, res) {
   const userId = auth.uid;
 
   const {
-    taskId,
+    taskId: rawTaskId,
     decision,
     instructionText: rawInstructionText,
     reviewedAt: rawReviewedAt,
   } = req.body || {};
+  const taskId = normalizeConfirmationTaskId(rawTaskId);
 
   if (!taskId || !decision || !VALID_SUBSTITUTE_DECISIONS.includes(decision)) {
     return res.status(400).json({ error: 'taskId and a valid decision are required.' });
