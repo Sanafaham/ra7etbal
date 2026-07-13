@@ -97,6 +97,17 @@ describe('routine message shared boundary', () => {
         buttonUrlSuffix: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
       }),
     ).toThrow('Owner decision WhatsApp template requires buildOwnerDecisionTemplatePayload.');
+
+    vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'custom_owner_decision_template');
+    expect(() =>
+      buildRoutineMessagePayload({
+        to: '971500000000',
+        message: 'Ghulam, the alternative was approved. Please go ahead.',
+        templateName: 'custom_owner_decision_template',
+        templateLanguage: 'en_US',
+        buttonUrlSuffix: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
+      }),
+    ).toThrow('Owner decision WhatsApp template requires buildOwnerDecisionTemplatePayload.');
   });
 
   it('extracts only the task UUID for owner-decision dynamic URL buttons', () => {

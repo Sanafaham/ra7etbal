@@ -125,7 +125,7 @@ function logOwnerDecisionMetaPayloadAudit({ taskId, decision, payload }) {
         }
       : null,
     computedFinalUrl: buttonSuffix
-      ? `${CANONICAL_APP_BASE_URL}/confirm?task=${buttonSuffix}`
+      ? buildFreshWorkerConfirmationUrl(buttonSuffix)
       : null,
     payload: sanitizedPayload,
   }));
