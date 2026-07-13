@@ -429,8 +429,9 @@ function ProofPhotoThumbnail({ url }: { url: string }) {
  * Alternative, Reject Alternative, and Custom Instruction. All three send
  * one owner-decision WhatsApp message with a Visit Task button, then return
  * the task to the worker without marking it complete. The lease-fenced,
- * idempotent /api/task-confirm PATCH endpoint is safe to retry after a
- * network error without a duplicate send.
+ * idempotent /api/task-confirm PATCH endpoint prevents duplicate accepted
+ * sends once delivery state is known; a transport failure after Meta accepts
+ * remains at-least-once like the rest of the WhatsApp delivery layer.
  */
 function SubstituteReviewCard({ task, assignedLabel }: { task: Task; assignedLabel: string }) {
   const [busyAction, setBusyAction] = useState<SubstituteDecision | null>(null);
