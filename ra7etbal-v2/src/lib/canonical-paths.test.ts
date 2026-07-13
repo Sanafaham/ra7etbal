@@ -439,9 +439,9 @@ describe("canonical path source adapters", () => {
   it("keeps voice direct tools wired to their canonical low-level helpers", () => {
     const widget = source("src/components/home/ElevenLabsAgentWidget.tsx");
 
-    expect(widget).toMatch(/save_note:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("save_note"\)[\s\S]*runDirectToolWithDiagnostic\("save_note",\s*params,\s*\(\)\s*=>\s*saveNote\(params\)\)/);
+    expect(widget).toMatch(/save_note:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentToolInvocation\("save_note"\)[\s\S]*runDirectToolWithDiagnostic\("save_note",\s*params,\s*\(\)\s*=>\s*saveNote\(params\)\)/);
     expect(widget).toMatch(/const saveNote = useCallback\([\s\S]*saveCarsonNote\(/);
-    expect(widget).toMatch(/create_todo:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("create_todo"\)[\s\S]*runDirectToolWithDiagnostic\("create_todo",\s*params,\s*\(\)\s*=>\s*createTodoTool\(params\)\)/);
+    expect(widget).toMatch(/create_todo:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentToolInvocation\("create_todo"\)[\s\S]*runDirectToolWithDiagnostic\("create_todo",\s*params,\s*\(\)\s*=>\s*createTodoTool\(params\)\)/);
     expect(widget).toMatch(/const createTodoTool = useCallback\([\s\S]*createTodo\(/);
   });
 
