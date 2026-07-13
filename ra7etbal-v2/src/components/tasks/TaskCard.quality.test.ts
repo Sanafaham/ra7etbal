@@ -63,4 +63,12 @@ describe("TaskCard — Quality Intelligence owner surface", () => {
     expect(block).toContain('qualityLifecycle.badge === "Completed"');
     expect(block).toContain(": isDone && task.type === \"delegation\" &&");
   });
+
+  it("uses a controlled Manual options disclosure for waiting delegations", () => {
+    expect(SOURCE).toContain("const [manualOptionsOpen, setManualOptionsOpen] = useState(false)");
+    expect(SOURCE).toContain("aria-expanded={manualOptionsOpen}");
+    expect(SOURCE).toContain("setManualOptionsOpen((open) => !open)");
+    expect(SOURCE).toContain("{manualOptionsOpen &&");
+    expect(SOURCE).not.toContain("<details className=\"mt-2 text-xs text-ink/55\">");
+  });
 });

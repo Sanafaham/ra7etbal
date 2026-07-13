@@ -120,6 +120,23 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it('normalizes a nested full confirmation URL in POST taskId before marking the task done', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: null, image_path: null }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'https://www.ra7etbal.com/confirm?task=task-1' }), res);
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/rest/v1/tasks?id=eq.task-1&');
+    expect(fetchMock.mock.calls[1][0]).toContain('/rest/v1/tasks?id=eq.task-1&status=eq.pending');
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
+  });
+
   it('rejects photo delegation completion when no proof photo is submitted', async () => {
     const fetchMock = vi
       .fn()
@@ -1510,6 +1527,40 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
 });
 
 describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
+  it('normalizes a nested full confirmation URL in taskId before querying the task row', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'done', confirmed_at: '2026-01-01', image_path: null, proof_image_path: null, attachment_count: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse([])); // proof attachments
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'https://www.ra7etbal.com/confirm?task=task-1' } }, res);
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/rest/v1/tasks?id=eq.task-1&');
+    expect(res.status).not.toHaveBeenCalledWith(404);
+    expect(res.json.mock.calls[0][0]).toEqual(expect.objectContaining({ id: 'task-1' }));
+  });
+
+  it('normalizes an encoded nested confirmation URL in taskId before querying the task row', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'd', assigned_to: 'Christopher', status: 'done', confirmed_at: '2026-01-01', image_path: null, proof_image_path: null, attachment_count: 0 }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({
+      method: 'GET',
+      query: { taskId: encodeURIComponent('https://www.ra7etbal.com/confirm?task=task-1') },
+    }, res);
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/rest/v1/tasks?id=eq.task-1&');
+    expect(res.status).not.toHaveBeenCalledWith(404);
+  });
+
   it('signs up to 5 proof-upload slots with x-upsert set, so a resubmission to the same slot never gets a 400', async () => {
     const fetchMock = vi
       .fn()
@@ -2134,6 +2185,8 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([
       { type: 'text', text: 'task-1' },
     ]);
+    const reserveBody = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_rejected_alternative'))[1].body);
+    expect(reserveBody.p_confirmation_url).toBe('https://www.ra7etbal.com/confirm?task=task-1');
   });
 
   it('Custom Instruction with owner-decision template set: preserves exact owner wording and uses the Utility template button', async () => {
@@ -2162,6 +2215,8 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([
       { type: 'text', text: 'task-1' },
     ]);
+    const reserveBody = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_custom_instruction'))[1].body);
+    expect(reserveBody.p_confirmation_url).toBe('https://www.ra7etbal.com/confirm?task=task-1');
   });
 
   it('Custom Instruction: sends the owner\'s exact text, does not touch the correction cycle count', async () => {

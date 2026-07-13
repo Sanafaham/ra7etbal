@@ -50,6 +50,7 @@ export default function TaskCard({
   const [copied, setCopied] = useState(false);
   const [signedImageUrl, setSignedImageUrl] = useState<string | null>(null);
   const [signedProofImageUrl, setSignedProofImageUrl] = useState<string | null>(null);
+  const [manualOptionsOpen, setManualOptionsOpen] = useState(false);
 
   useEffect(() => {
     if (!task.image_path) return;
@@ -322,25 +323,32 @@ export default function TaskCard({
       {/* Manual override hidden behind a small disclosure so it doesn't
           sit beside Send message as an equal action. */}
       {isWaitingDelegation && (
-        <details className="mt-2 text-xs text-ink/55">
-          <summary className="cursor-pointer select-none text-[11px] text-ink/55 transition hover:text-ink/80">
+        <div className="mt-2 text-xs text-ink/55">
+          <button
+            type="button"
+            aria-expanded={manualOptionsOpen}
+            onClick={() => setManualOptionsOpen((open) => !open)}
+            className="select-none text-[11px] text-ink/55 transition hover:text-ink/80"
+          >
             Manual options
-          </summary>
-          <div className="mt-2 flex flex-col gap-1.5">
-            <button
-              type="button"
-              onClick={() => void toggle()}
-              disabled={!!busy}
-              className="inline-flex w-fit items-center gap-2 rounded-full border border-sage/30 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-cream disabled:opacity-50"
-            >
-              {busy === "done" && <Spinner size={12} />}
-              <span>Mark done manually</span>
-            </button>
-            <p className="text-[11px] italic text-ink/45">
-              Use only if confirmed outside the app.
-            </p>
-          </div>
-        </details>
+          </button>
+          {manualOptionsOpen && (
+            <div className="mt-2 flex flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => void toggle()}
+                disabled={!!busy}
+                className="inline-flex w-fit items-center gap-2 rounded-full border border-sage/30 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm transition hover:bg-cream disabled:opacity-50"
+              >
+                {busy === "done" && <Spinner size={12} />}
+                <span>Mark done manually</span>
+              </button>
+              <p className="text-[11px] italic text-ink/45">
+                Use only if confirmed outside the app.
+              </p>
+            </div>
+          )}
+        </div>
       )}
     </article>
   );
