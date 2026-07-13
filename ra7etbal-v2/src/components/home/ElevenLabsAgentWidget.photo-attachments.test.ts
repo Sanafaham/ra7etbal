@@ -31,11 +31,12 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
     expect(SOURCE).toContain('const PHOTO_LIMIT_MESSAGE = "You can attach up to 5 photos."');
   });
 
-  it("keeps the pre-session images available to Carson at session start", () => {
+  it("keeps pre-session images available at voice start without pre-authorizing typed photos", () => {
     expect(SOURCE).toContain(
       "sessionPhotosRef.current = [...pendingPhotosRef.current]",
     );
     expect(SOURCE).toContain("describePhotosForCarson(sessionPhotosRef.current)");
+    expect(SOURCE).toContain('requestedChannel === "voice" && sessionPhotoContextRef.current');
     expect(SOURCE).toContain("Attached photos context (use this for the conversation)");
     expect(SOURCE).toContain("conv.sendContextualUpdate(");
     expect(SOURCE).toContain("The user has attached photos. Here are descriptions:");
@@ -75,7 +76,7 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
     expect(SOURCE).toContain("PHOTO_LIMIT_MESSAGE");
   });
 
-  it("adding a photo during an active session appends it and updates Carson's live context", () => {
+  it("updates live photo context only for voice and stages typed photos until Send", () => {
     const block = functionBlock("handleImageFileChange");
 
     expect(block).toContain("MID_SESSION_PHOTO_PENDING_CONTEXT");
@@ -83,6 +84,8 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
     expect(block).toContain('statusRef.current === "connected"');
     expect(block).toContain("describePhotosForCarson(newPhotos)");
     expect(block).toContain("if (photoRevisionRef.current !== revision) return");
+    expect(block).toContain('activeChannelRef.current === "voice"');
+    expect(block).toContain("Typed attachments are intentionally different");
     expect(block).toContain("Use these current photos only for the task they were referring to");
   });
 
@@ -96,6 +99,7 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
     expect(block).toContain("sessionPhotosRef.current = next");
     expect(block).toContain("sessionPhotoContextRef.current = null");
     expect(block).toContain("setPhotoLimitWarning(null)");
+    expect(block).toContain('activeChannelRef.current === "voice"');
     expect(block).toContain("next.length > 0");
     expect(block).toContain("remain attached");
     expect(block).toContain("The user removed the attached photo during this call.");
@@ -195,10 +199,29 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
     expect(startCallBlock).toContain("sessionPhotoContextRef.current = null");
   });
 
-  it("uses the same photo context and attachment controls in typed Carson", () => {
-    expect(SOURCE).toContain("if (sessionPhotoContextRef.current)");
+  it("binds typed photos atomically to the exact submitted message", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    expect(sendBlock).toContain("const typedPhotos = [");
+    expect(sendBlock).toContain("await describePhotosForCarson(typedPhotos)");
+    expect(sendBlock).toContain("Photos attached to this exact typed message only");
+    expect(sendBlock).toContain("Do not associate them with earlier conversation history");
+    expect(sendBlock).toContain("conversation.sendUserMessage(agentMessage)");
+    expect(sendBlock.indexOf("pendingTypedClientMessageIdRef.current = clientMessageId"))
+      .toBeLessThan(sendBlock.indexOf("conversation.sendUserMessage(agentMessage)"));
     expect(SOURCE).toContain("photos={pendingPhotoPreviews}");
     expect(SOURCE).toContain("onAttachPhoto={() => imageFileInputRef.current?.click()}");
+  });
+
+  it("clears one-turn typed photos after Carson replies or times out", () => {
+    expect(SOURCE).toContain("Typed photos belong to exactly one submitted turn");
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    expect(sendBlock).toContain("if (pendingPhotosRef.current.length > 0) clearPendingImages()");
   });
 
   it("clearing pending photos also clears the limit warning", () => {
