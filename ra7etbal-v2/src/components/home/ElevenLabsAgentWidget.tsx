@@ -8,10 +8,8 @@ import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
-import { saveCarsonNote, loadRecentNotes, findNoteMatches, type CarsonNote } from "../../lib/carson-notes";
+import { saveCarsonNote, loadRecentNotes, type CarsonNote } from "../../lib/carson-notes";
 import { createTodo, listActiveTodos, completeTodo, findTodoMatches, type CarsonTodo } from "../../lib/carson-todos";
-import { listClearMyHeadInboxItems, deleteClearMyHeadInboxItem } from "../../lib/clear-my-head-inbox";
-import { looksLikeTaskInstruction } from "../../lib/carson-inbox-action-quality";
 import {
   extractTodoTitleParam,
   extractTodoDescriptionParam,
@@ -3448,264 +3446,23 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
-  // Client tool: list_inbox_items
+  // Client tools: list_inbox_items / act_on_inbox_item
   //
-  // Carson Inbox Review V1 — read-only. Lists the user's Clear My Head
-  // Inbox (clear_my_head_inbox), summarizes it, and suggests conversion
-  // options. Never converts or deletes anything itself — the prompt must
-  // speak this return verbatim and wait for the user to say what they want
-  // done with a specific item before calling act_on_inbox_item.
+  // The internal Inbox surface (Clear My Head Review's "Leave here for
+  // now" queue) was removed from the product — capture now always
+  // resolves straight to a Note or a To-do via save_note/create_todo.
+  // These handlers are kept as harmless stubs (not deleted) only because
+  // the ElevenLabs agent's tool schema is configured in the dashboard,
+  // outside this repo, and may still list these tool names until that
+  // config is cleaned up separately.
   // ------------------------------------------------------------------
   const getInboxItems = useCallback(async (): Promise<string> => {
-    const items = await listClearMyHeadInboxItems(20);
-    if (items.length === 0) {
-      return "Your inbox is empty.";
-    }
-    const lines = items.map((item, i) => `${i + 1}. ${item.text}`).join("\n");
-    const count = items.length === 1 ? "1 inbox item" : `${items.length} inbox items`;
-    return (
-      `You have ${count}:\n${lines}\n\n` +
-      "I can help turn these into a note, to-do, reminder, delegation, message, or delete them. " +
-      "What do you want me to do first?"
-    );
+    return "There's no separate inbox anymore — just tell me what to save, and I'll add it as a note or a to-do.";
   }, []);
 
-  // ------------------------------------------------------------------
-  // Client tool: act_on_inbox_item
-  //
-  // Carson Inbox Review V1 — converts (or deletes) exactly one Clear My
-  // Head Inbox item, once the user has said what they want done with it.
-  // Mirrors act_on_note's keyword-lookup + dispatch-by-action shape exactly,
-  // reusing the same underlying save/create/send functions as every other
-  // Carson conversion path — no new storage, no new confirmation state
-  // machine. On success the item is removed from the inbox (it "became"
-  // the new object); on any missing input or failure, nothing is created,
-  // sent, or deleted, and the inbox item is left untouched.
-  // ------------------------------------------------------------------
-  const actOnInboxItem = useCallback(
-    async (params: {
-      /** Keyword(s) to match against inbox item text — case-insensitive substring. */
-      query: string;
-      action: "note" | "todo" | "reminder" | "delegate" | "message" | "delete";
-      /** Required for reminder. Raw time phrase as spoken, e.g. "tomorrow at 9am". */
-      time_text?: string;
-      /** Required for delegate + message. Exact person name. */
-      person_name?: string;
-    }): Promise<string> => {
-      const { action } = params;
-      const time_text = extractTimeTextParam(params);
-      const person_name = params?.person_name ?? extractPersonNameParam(params, "person_name");
-      const q = extractQueryParam(params).trim();
-      if (!q) {
-        return "I did not receive a search term. Ask the user which inbox item they mean.";
-      }
-
-      // ── Inbox item lookup ────────────────────────────────────────────────
-      const items = await listClearMyHeadInboxItems(100);
-      const matches = items.filter((item) => item.text.toLowerCase().includes(q.toLowerCase()));
-
-      if (matches.length === 0) {
-        return `I couldn't find an inbox item matching "${q}". Ask the user what it says exactly.`;
-      }
-
-      if (matches.length > 1) {
-        const snippets = matches
-          .slice(0, 4)
-          .map((item) => `"${item.text.slice(0, 45).trim()}${item.text.length > 45 ? "…" : ""}"`)
-          .join(", ");
-        return `I found ${matches.length} inbox items matching "${q}": ${snippets}. Ask the user which one they mean.`;
-      }
-
-      const item = matches[0];
-      const authUserId = useAuthStore.getState().user?.id;
-      if (!authUserId) return "You are not signed in. Please sign in and try again.";
-
-      // ── note ─────────────────────────────────────────────────────────────
-      // Duplicate check first: never create a second note for the same
-      // thought. On a match, the inbox item is left untouched — no delete,
-      // no create — so the user can still decide what to do with it.
-      if (action === "note") {
-        try {
-          const existingNotes = await loadRecentNotes(100);
-          const dupes = findNoteMatches(existingNotes, item.text);
-          if (dupes.length > 0) {
-            sessionActionsRef.current.push(`Inbox note skipped as duplicate: ${item.text}`);
-            return `You already have a note that says "${dupes[0].note}". I've left it in your inbox — say delete if you want it gone.`;
-          }
-          await saveCarsonNote(item.text, "general");
-          await deleteClearMyHeadInboxItem(item.id);
-          sessionActionsRef.current.push(`Turned inbox item into note: ${item.text}`);
-          return "Saved as a note.";
-        } catch (err) {
-          return `Couldn't save that as a note. ${sanitizeCarsonErrorDetail(err)}`;
-        }
-      }
-
-      // ── todo ─────────────────────────────────────────────────────────────
-      // Duplicate check first: never create a second to-do for the same
-      // thought. On a match, the inbox item is left untouched — no delete,
-      // no create — so the user can still decide what to do with it.
-      if (action === "todo") {
-        try {
-          const existingTodos = await listActiveTodos(100);
-          const dupes = findTodoMatches(existingTodos, item.text);
-          if (dupes.length > 0) {
-            sessionActionsRef.current.push(`Inbox to-do skipped as duplicate: ${item.text}`);
-            return `You already have "${dupes[0].title}" on your to-do list. I've left it in your inbox — say delete if you want it gone.`;
-          }
-          await createTodo(item.text);
-          await deleteClearMyHeadInboxItem(item.id);
-          sessionActionsRef.current.push(`Turned inbox item into to-do: ${item.text}`);
-          return "Added to your to-do list.";
-        } catch (err) {
-          return `Couldn't add that to your to-do list. ${sanitizeCarsonErrorDetail(err)}`;
-        }
-      }
-
-      // ── reminder ─────────────────────────────────────────────────────────
-      if (action === "reminder") {
-        const phrase = time_text?.trim();
-        if (!phrase) {
-          return "I need to know when to remind you. Ask the user for a time.";
-        }
-        const parsed = parseVoiceTime(phrase);
-        if (parsed.error || !parsed.dueAt) {
-          return `I couldn't understand the time "${phrase}". Ask the user to say when they want the reminder.`;
-        }
-        try {
-          const task = await createReminderTask({
-            userId: authUserId,
-            text: item.text,
-            dueAt: parsed.dueAt,
-            source: "clear_my_head_inbox",
-          });
-          // Intentionally does NOT delete the source inbox item — a
-          // reminder is a nudge to revisit later, not proof the underlying
-          // thought is resolved. The item stays until the user explicitly
-          // deletes it or converts it into something else.
-          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-          currentTaskContextRef.current = {
-            id: task.id,
-            description: task.description,
-            assigned_to: task.assigned_to,
-            type: task.type,
-          };
-          sessionActionsRef.current.push(`Set reminder from inbox item: ${item.text}`);
-          const d = new Date(parsed.dueAt);
-          const timeStr = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-          const isToday = d.toDateString() === new Date().toDateString();
-          const isTomorrow =
-            d.toDateString() === new Date(Date.now() + 86_400_000).toDateString();
-          const dateLabel = isToday
-            ? "today"
-            : isTomorrow
-            ? "tomorrow"
-            : d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
-          return `I'll remind you ${dateLabel} at ${timeStr}. I've kept it in your inbox too.`;
-        } catch (err) {
-          return `Couldn't set the reminder. ${sanitizeCarsonErrorDetail(err)}`;
-        }
-      }
-
-      // ── delegate ─────────────────────────────────────────────────────────
-      if (action === "delegate") {
-        const personNameInput = person_name?.trim();
-        if (!personNameInput) {
-          return "I need to know who to delegate this to. Ask the user for a name.";
-        }
-        const peopleState = usePeopleStore.getState();
-        if (peopleState.status === "idle" || peopleState.items.length === 0) {
-          await usePeopleStore.getState().loadFor(authUserId);
-        }
-        const people = usePeopleStore.getState().items;
-        const person = people.find(
-          (p) => p.name.trim().toLowerCase() === personNameInput.toLowerCase(),
-        );
-        if (!person) {
-          return `I couldn't find "${personNameInput}" in your contacts. Ask the user to add them first.`;
-        }
-        if (!person.phone) {
-          return `${person.name} has no phone number saved. Ask the user to add one in People settings.`;
-        }
-        try {
-          const result = await createAndSendDelegation({
-            userId: authUserId,
-            person,
-            taskText: item.text,
-            ownerName: displayName,
-          });
-          await deleteClearMyHeadInboxItem(item.id);
-          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-          currentTaskContextRef.current = result.taskContext;
-          sessionActionsRef.current.push(`Delegated inbox item to ${person.name}: ${item.text}`);
-          return `${person.name} has it. I'll follow up if needed.`;
-        } catch (err) {
-          return `Couldn't send the delegation. ${sanitizeCarsonErrorDetail(err)}`;
-        }
-      }
-
-      // ── message ──────────────────────────────────────────────────────────
-      // Task-like text ("Confirm the menu.", "Call Grace.") must not become
-      // a bare direct message — that path has no confirmation link and no
-      // follow-up/escalation coverage. Ask instead of silently converting it.
-      if (action === "message") {
-        if (looksLikeTaskInstruction(item.text)) {
-          return `"${item.text}" reads like something you want done, not just an FYI. Ask the user if they mean to delegate it as a task instead — only send it as a plain message if they confirm that's really what they want.`;
-        }
-        const personNameInput = person_name?.trim();
-        if (!personNameInput) {
-          return "I need to know who to send this message to. Ask the user for a name.";
-        }
-        const peopleState = usePeopleStore.getState();
-        if (peopleState.status === "idle" || peopleState.items.length === 0) {
-          await usePeopleStore.getState().loadFor(authUserId);
-        }
-        const people = usePeopleStore.getState().items;
-        const person = people.find(
-          (p) => p.name.trim().toLowerCase() === personNameInput.toLowerCase(),
-        );
-        if (!person) {
-          return `I couldn't find "${personNameInput}" in your contacts. Ask the user to add them first.`;
-        }
-        if (!person.phone?.trim()) {
-          return `I don't have a phone number for ${person.name}.`;
-        }
-        if (person.whatsapp_opted_in !== true) {
-          return `WhatsApp consent is not recorded for ${person.name}.`;
-        }
-        try {
-          await createAndSendDirectMessage({
-            source: "clear_my_head_inbox",
-            userId: authUserId,
-            recipient: person.name,
-            messageText: item.text,
-            phone: person.phone,
-            ownerName: displayName,
-            createMessageFn: createMessage,
-          });
-          await deleteClearMyHeadInboxItem(item.id);
-          sessionActionsRef.current.push(`Sent inbox item as a message to ${person.name}: ${item.text}`);
-          return `It's with ${person.name}.`;
-        } catch (err) {
-          return `Couldn't send that message. ${sanitizeCarsonErrorDetail(err)}`;
-        }
-      }
-
-      // ── delete ───────────────────────────────────────────────────────────
-      if (action === "delete") {
-        try {
-          await deleteClearMyHeadInboxItem(item.id);
-          sessionActionsRef.current.push(`Deleted inbox item: ${item.text}`);
-          return "Deleted from your inbox.";
-        } catch (err) {
-          return `Couldn't delete that. ${sanitizeCarsonErrorDetail(err)}`;
-        }
-      }
-
-      return "I don't know how to perform that action on an inbox item. Ask the user to clarify.";
-    },
-    [displayName],
-  );
+  const actOnInboxItem = useCallback(async (): Promise<string> => {
+    return "There's no separate inbox anymore — just tell me what to save, and I'll add it as a note or a to-do.";
+  }, []);
 
   const runDirectToolWithDiagnostic = useCallback(
     async <TResult,>(
@@ -5369,10 +5126,10 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("list_inbox_items", {}, () => getInboxItems());
           },
-          act_on_inbox_item: (params: Parameters<typeof actOnInboxItem>[0]) => {
+          act_on_inbox_item: () => {
             const captureBlock = guardCurrentToolInvocation("act_on_inbox_item");
             if (captureBlock) return captureBlock;
-            return runDirectToolWithDiagnostic("act_on_inbox_item", params, () => actOnInboxItem(params));
+            return runDirectToolWithDiagnostic("act_on_inbox_item", {}, () => actOnInboxItem());
           },
           create_todo: (params: Parameters<typeof createTodoTool>[0]) => {
             const captureBlock = guardCurrentToolInvocation("create_todo");

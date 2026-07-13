@@ -1,6 +1,6 @@
 /**
  * Updates — Carson operations center.
- * Tabs: Needs You / Waiting / To-do / Notes / Inbox / Automations / History
+ * Tabs: Needs You / Waiting / To-do / Notes / Automations / History
  * Deep-link: /updates?tab=needs-you (default)
  */
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -19,17 +19,15 @@ import type { Task } from "../types/task";
 import Inbox from "./Inbox";
 import Todos from "./Todos";
 import Routines from "./Routines";
-import ClearMyHeadInbox from "./ClearMyHeadInbox";
 import { advanceChipScrollLeft, shouldAdvanceChipAutoScroll } from "../lib/chip-auto-scroll";
 
-type Tab = "needs-you" | "waiting" | "todo" | "inbox" | "clear-my-head" | "routines" | "history";
+type Tab = "needs-you" | "waiting" | "todo" | "inbox" | "routines" | "history";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "needs-you",     label: "Needs You" },
   { id: "waiting",       label: "Waiting"   },
   { id: "todo",          label: "To-do"     },
   { id: "inbox",         label: "Notes"     },
-  { id: "clear-my-head", label: "Inbox"     },
   { id: "routines",      label: "Automations"  },
   { id: "history",       label: "History"   },
 ];
@@ -326,7 +324,7 @@ export default function Updates() {
       </div>
 
       {/* ── Error ── */}
-      {tasksError && tasksStatus !== "loading" && activeTab !== "inbox" && activeTab !== "clear-my-head" && activeTab !== "routines" && activeTab !== "todo" && (
+      {tasksError && tasksStatus !== "loading" && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && (
         <AuthNotice kind="error">
           {tasksError}{" "}
           <button type="button" onClick={reload} className="ml-1 underline">
@@ -336,7 +334,7 @@ export default function Updates() {
       )}
 
       {/* ── Initial loading (task-based tabs only) ── */}
-      {initialLoading && activeTab !== "inbox" && activeTab !== "clear-my-head" && activeTab !== "routines" && activeTab !== "todo" && (
+      {initialLoading && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && (
         <div className="flex items-center justify-center py-12 text-ink/60">
           <Spinner size={20} label="Loading" />
         </div>
@@ -449,14 +447,9 @@ export default function Updates() {
       {activeTab === "todo" && <Todos headerless />}
 
       {/* ══════════════════════════════════════════════════════════════
-          INBOX (Notes)
+          NOTES
       ══════════════════════════════════════════════════════════════ */}
       {activeTab === "inbox" && <Inbox headerless />}
-
-      {/* ══════════════════════════════════════════════════════════════
-          CLEAR MY HEAD INBOX
-      ══════════════════════════════════════════════════════════════ */}
-      {activeTab === "clear-my-head" && <ClearMyHeadInbox headerless />}
 
       {/* ══════════════════════════════════════════════════════════════
           ROUTINES

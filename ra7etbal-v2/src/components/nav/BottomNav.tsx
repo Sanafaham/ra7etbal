@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useCarsonStore } from "../../stores/carson";
-import { useBadgeStore } from "../../stores/badges";
 import { useTasksStore } from "../../stores/tasks";
 import { buildDailyBrief } from "../../lib/daily-brief";
 
@@ -21,13 +20,12 @@ function Badge({ count }: { count: number }) {
  * 4-tab bottom navigation bar.
  * Home / Updates / People / Carson
  *
- * Updates badge priority: needsAttention → waitingOnOthers → inboxCount
+ * Updates badge priority: needsAttention → waitingOnOthers
  * (highest-priority non-zero count shown, red pill).
  * Carson: pulsing green dot when connected.
  */
 export default function BottomNav() {
   const { setOpen: setCarsonOpen, callStatus, open: carsonOpen } = useCarsonStore();
-  const inboxCount = useBadgeStore((s) => s.inboxCount);
   const tasks = useTasksStore((s) => s.items);
   const { pathname } = useLocation();
 
@@ -37,9 +35,8 @@ export default function BottomNav() {
     const brief = buildDailyBrief(tasks, new Date());
     if (brief.needsAttention.length > 0) return brief.needsAttention.length;
     if (brief.waitingOnOthers.length > 0) return brief.waitingOnOthers.length;
-    if (inboxCount > 0) return inboxCount;
     return 0;
-  }, [tasks, inboxCount]);
+  }, [tasks]);
 
   return (
     <nav

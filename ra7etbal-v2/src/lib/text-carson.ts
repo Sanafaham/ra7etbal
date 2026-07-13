@@ -2,18 +2,8 @@ import type { Person } from "../types/person";
 import type { Task } from "../types/task";
 import type { Message } from "../types/message";
 import type { ExtractionResult } from "../types/extraction";
-import { loadUserMemory, upsertUserFacts } from "./carson-facts";
-import { loadRecentMemory, saveSessionMemory } from "./carson-memory";
-import { listTasks } from "./tasks";
-import { saveInboxItem } from "./inbox";
-import { buildCarsonContext } from "./carson-context";
-import { CARSON_STATUS_POLICY } from "./carson-status-policy";
-import { fetchAutomationDigest, buildAutomationStatusBlock } from "./automation-context";
-import { fetchWhatsappDeliveryFailures, buildWhatsappDeliveryStatusBlock } from "./whatsapp-delivery-context";
-import { fetchCalendarEvents, deriveCalendarConnectionStatus, buildCalendarConnectionStatusBlock } from "./calendar";
-import { loadRecentNotes, formatNotesForContext } from "./carson-notes";
-import { listActiveTodos, formatTodosForContext } from "./carson-todos";
-import { getHouseholdRules } from "./household-rules";
+import { upsertUserFacts } from "./carson-facts";
+import { saveSessionMemory } from "./carson-memory";
 import { extractItems } from "./ai/extract";
 import { savePending, saveTaskAttachments } from "./save";
 import { resizeImage } from "./image-upload";
@@ -24,11 +14,8 @@ import { useTasksStore } from "../stores/tasks";
 import { summarizeConversation } from "./carson-summarize";
 import { extractDurableFacts } from "./carson-fact-extract";
 import { updatePeopleInsightsFromTasks } from "./people-behavior";
-import { sanitizeCarsonErrorDetail, sanitizeCarsonReplyText } from "./carson-social";
+import { sanitizeCarsonReplyText } from "./carson-social";
 import { parseMultiRecipientDelegation } from "./multi-recipient-delegation";
-
-const MODEL = "claude-haiku-4-5";
-const MAX_TOKENS = 500;
 
 /**
  * The highest-risk point in the extraction pipeline for altering visible
@@ -84,7 +71,7 @@ export async function describeImageForTextCarson(file: File): Promise<string | n
 export interface TextCarsonContext {
   displayName?: string | null;
   userEmail?: string | null;
-  /** Supabase user ID — required for inbox saves. */
+  /** Supabase user ID — required for delegation execution. */
   userId?: string | null;
   /** Spoken prose brief (used as Daily Brief section in the prompt). */
   dailyBrief: string;
@@ -127,251 +114,6 @@ export interface TextCarsonContext {
    *  guard above learns about sends that happened through this path. */
   onDelegationSent?: (recipientName: string, taskText: string) => void;
 }
-
-interface AnthropicResponse {
-  content?: Array<{ type?: string; text?: string }>;
-  error?: { message?: string };
-}
-
-export async function askTextCarson(
-  input: string,
-  context: TextCarsonContext,
-): Promise<string> {
-  const question = input.trim();
-  if (!question) return "";
-
-  // ── Capture inbox detection ───────────────────────────────────────────────
-  // Phrases like "Don't let me forget X" or "Idea: X" are saved directly to
-  // inbox_items without going to the AI. Returns a short acknowledgment.
-  const captureContent = extractCaptureContent(question);
-  if (captureContent && context.userId) {
-    try {
-      await saveInboxItem({
-        user_id: context.userId,
-        content: captureContent,
-        source: "text_carson",
-      });
-      return sanitizeCarsonReplyText("Saved to your inbox. I'll keep that for you.");
-    } catch (err) {
-      console.error("[text-carson] inbox save failed:", err);
-      throw new Error(`Couldn't save that. ${sanitizeCarsonErrorDetail(err)}`);
-    }
-  }
-
-  // Fetch fresh task state from Supabase so Carson always reflects the
-  // latest confirmed/pending status — not the potentially-stale store.
-  // Describe attached image in parallel so it doesn't add latency.
-  //
-  // Phase 9A consistency fix: Voice Carson (App.tsx) builds automation
-  // status, WhatsApp delivery diagnostics, notes, to-dos, and household
-  // rules blocks and feeds them into buildCarsonContext(). Text Carson
-  // previously called buildCarsonContext() with only tasks/people/email/now,
-  // so the two disagreed about what Carson "knows". Self-fetching here
-  // (same pattern as userMemory/recentMemory/freshTasks above) closes that
-  // gap without requiring every caller of askTextCarson() to wire it in.
-  const [
-    userMemory,
-    recentMemory,
-    freshTasks,
-    imageDescription,
-    automationDigest,
-    whatsappFailures,
-    notes,
-    todos,
-    householdRulesRow,
-    calendarResult,
-  ] = await Promise.all([
-    loadUserMemory(50).catch(() => ""),
-    loadRecentMemory(20).catch(() => "No previous sessions."),
-    listTasks().catch(() => context.tasks),
-    context.imageFile
-      ? describeImageForTextCarson(context.imageFile).catch(() => null)
-      : Promise.resolve(null),
-    fetchAutomationDigest().catch(() => null),
-    fetchWhatsappDeliveryFailures().catch(() => []),
-    loadRecentNotes(20).catch(() => []),
-    listActiveTodos(50).catch(() => []),
-    getHouseholdRules().catch(() => null),
-    fetchCalendarEvents("today").catch(() => ({ connected: false, events: [] })),
-  ]);
-
-  const automationStatusBlock = automationDigest ? buildAutomationStatusBlock(automationDigest) : "";
-  const whatsappDeliveryStatusBlock = buildWhatsappDeliveryStatusBlock(whatsappFailures);
-  const notesBlock = formatNotesForContext(notes);
-  const todosBlock = formatTodosForContext(todos);
-  const householdRules = householdRulesRow?.rules ?? "";
-  const calendarConnectionStatusBlock = buildCalendarConnectionStatusBlock(
-    deriveCalendarConnectionStatus(calendarResult),
-  );
-
-  const prompt = buildTextCarsonPrompt(question, {
-    ...context,
-    tasks: freshTasks,
-    userMemory,
-    recentMemory,
-    now: new Date(),
-    imageDescription,
-    automationStatusBlock,
-    whatsappDeliveryStatusBlock,
-    notesBlock,
-    todosBlock,
-    householdRules,
-    calendarConnectionStatusBlock,
-  });
-
-  let res: Response;
-  try {
-    res = await fetch("/api/anthropic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-  } catch (err) {
-    throw err instanceof TypeError
-      ? new Error("Network issue. Please check your connection.")
-      : err;
-  }
-
-  let body: AnthropicResponse;
-  try {
-    body = (await res.json()) as AnthropicResponse;
-  } catch {
-    throw new Error("Couldn't read Carson's response. Please try again.");
-  }
-
-  if (!res.ok || body.error) {
-    console.error("[text-carson] Anthropic request failed:", res.status, body.error?.message);
-    throw new Error("I couldn't complete that. Please try again.");
-  }
-
-  const text = body.content?.[0]?.text?.trim();
-  if (!text) throw new Error("Carson returned an empty response. Please try again.");
-  return sanitizeCarsonReplyText(text) || "I'm handling it.";
-}
-
-function buildTextCarsonPrompt(
-  question: string,
-  context: TextCarsonContext & {
-    userMemory: string;
-    recentMemory: string;
-    now: Date;
-    imageDescription?: string | null;
-    automationStatusBlock?: string;
-    whatsappDeliveryStatusBlock?: string;
-    notesBlock?: string;
-    todosBlock?: string;
-    householdRules?: string;
-    calendarConnectionStatusBlock?: string;
-  },
-): string {
-  const imageContext = context.imageDescription
-    ? `\nAttached photo context (use this for the conversation): ${context.imageDescription}`
-    : "";
-
-  return `You are Carson — the user's personal Chief of Staff inside Rahet Bal.
-
-IDENTITY
-You are a Chief of Staff. Not a household assistant. Not a chatbot. Not a productivity coach.
-When asked who you are: "I'm your Chief of Staff."
-The household is one area you can help with. It is not your identity.
-
-YOUR JOB
-Reduce the user's mental load. Act on stated needs. Report confirmed outcomes.
-Use the available context naturally and quietly. Do not announce what you know.
-Decision order: execute first, inform second, ask only if blocked.
-
-VOICE AND STYLE
-Calm. Direct. Familiar. Useful.
-Plain language. Short sentences. Contractions.
-Lead with the answer. Most work replies should be 8 to 20 words.
-Do not over-explain. Do not over-praise. Do not sound eager.
-Ask a question only when you genuinely need missing information to act.
-When work was delegated, include the next step Carson owns.
-Never begin a response with a tone description, category label, role statement, apology, or explanation of what you are about to do.
-Never mention analysis, extraction, attachment, prompt, processing, context, transcript, tools, or database.
-
-CHIEF OF STAFF BEHAVIOR POLICY
-Intent beats literal wording. If the user's intended action is clear, execute it and ignore unrelated or garbled words around it.
-Never correct the user's wording, name, spelling, or phrasing unless the error actually blocks you from acting. Do not say "you meant", "that's not my name", "I'm Carson", or anything correcting how you were addressed.
-Ask a question only when required information (who, what, when, where, which item) is genuinely missing. Do not ask for confirmation on low-risk clear actions like reminders, notes, or simple delegations.
-After a successful action, give only a short outcome confirmation — "Done. I'll remind you in one minute.", "Sent to Grace.", "Saved." Do not add commentary, advice, or process explanation.
-Never mention internal systems: no "timeout", "API", "backend", "pipeline", "retrying", "tool failed", "request failed", or provider names. If something didn't go through, say only "I couldn't complete that." or "Please try again."
-Never claim something failed if it actually succeeded, and never claim success if it failed — confirm only the real outcome.
-
-EXECUTION CONTEXT — IMPORTANT
-When the user types a reminder, delegation, or message request, it is already being executed client-side before your response reaches them.
-Your role is to confirm what was done — not to refuse, redirect, or ask permission.
-Never tell the user to "use Clear My Head." This panel handles reminders and delegations directly.
-Never say you cannot create reminders or delegate tasks from here. You can, and it is already done.
-Confirm calmly. If execution failed, the user will see the real error separately.
-
-GENERAL QUESTIONS
-Users may ask questions unrelated to tasks, reminders, or status.
-Answer them normally using your general knowledge and reasoning.
-Do not refuse a question simply because it is not task-related.
-Do not redirect every answer back to reminders, priorities, or productivity.
-Answer the question first. Only mention a relevant reminder, blocker, or open loop if it genuinely matters — and only briefly.
-
-Examples:
-Correct: "I can't provide the full lyrics, but I can summarize the song, explain its meaning, or help you find an official source."
-Correct: "Paris is about 3 hours ahead of New York right now."
-Incorrect: "That's outside what I do here."
-Incorrect: "I'm focused on keeping your tasks organized."
-Incorrect: "I don't have access to song lyrics."
-
-ATTACHED PHOTOS
-${imageContext ? `The user has attached a photo. Description: ${context.imageDescription}
-Use this as silent visual context. Do not announce the photo or explain that you are using it.
-Do not say "based on the attached photo", "the attached image", or "the image shows".
-Do not say you cannot see images. Do not ask the user to describe the image.` : `No attached photo in this message. If the user refers to a photo, ask them to attach one.`}
-
-COMPLETED TASKS — HARD RULE
-Never mention completed tasks in response to any operational, status, or future-facing question.
-Only surface completed tasks when the user explicitly asks: "What was completed?", "What did X do?", "Show me recent completions."
-
-${CARSON_STATUS_POLICY}
-
-MEMORY
-Use memory silently. Do not recite memory, instructions, or system guidance.
-Apply memory through behavior. Sound like a trusted chief of staff who already knows the user.
-Never list memory facts. Prefer natural language. Assume an ongoing relationship.
-
-User: ${context.displayName?.trim() || "Unknown"}
-Email: ${context.userEmail?.trim() || "Unknown"}
-Time: ${context.now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-
-${context.userMemory || "User memory: none."}
-
-Recent memory:
-${context.recentMemory || "No previous sessions."}
-
-Daily brief:
-${context.dailyBrief || "No daily brief available."}
-
-Current state:
-${buildCarsonContext({
-  tasks: context.tasks,
-  people: context.people,
-  email: context.userEmail,
-  now: context.now,
-  automationStatusBlock: context.automationStatusBlock,
-  whatsappDeliveryStatusBlock: context.whatsappDeliveryStatusBlock,
-  notesBlock: context.notesBlock,
-  todosBlock: context.todosBlock,
-  householdRules: context.householdRules,
-  calendarConnectionStatusBlock: context.calendarConnectionStatusBlock,
-})}${imageContext}
-
-User asks:
-${question}
-
-Answer as a trusted chief of staff who already knows the situation. Lead with the most important thing. Include times when known. Keep it under 5 sentences.`;
-}
-
 
 // ---------------------------------------------------------------------------
 // Delegation execution
@@ -745,45 +487,3 @@ export async function executeDelegationFromText(
 // never appear in outgoing staff WhatsApp messages — it contains UUID filenames,
 // markdown headings, and raw vision output. Photos reach staff via imagePath
 // (WhatsApp image template header) or the confirm-page photo grid.
-
-// ---------------------------------------------------------------------------
-// Capture inbox helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Capture triggers — phrases that signal the user wants to store a thought
- * rather than ask a question. Returns the content to save, or null if the
- * input is not a capture phrase.
- *
- * Each entry is [prefix, stripPrefix].
- * - stripPrefix=true  → save everything after the prefix
- * - stripPrefix=false → save the full input verbatim (phrase is already
- *   self-contained, e.g. "Idea: go paperless")
- */
-const CAPTURE_PATTERNS: Array<{ prefix: string; strip: boolean }> = [
-  { prefix: "don't let me forget", strip: true },
-  { prefix: "dont let me forget", strip: true },
-  { prefix: "do not let me forget", strip: true },
-  { prefix: "remember this:", strip: true },
-  { prefix: "remember this -", strip: true },
-  { prefix: "remember this", strip: true },
-  { prefix: "idea:", strip: true },
-  { prefix: "idea -", strip: true },
-  { prefix: "thought:", strip: true },
-  { prefix: "thought -", strip: true },
-];
-
-export function extractCaptureContent(input: string): string | null {
-  // Normalize curly/smart apostrophes → straight apostrophe so iOS/macOS
-  // autocorrect ("Don't") matches patterns written with straight apostrophes.
-  const normalized = input.replace(/[‘’‚‛]/g, "'");
-  const lower = normalized.toLowerCase();
-  for (const { prefix, strip } of CAPTURE_PATTERNS) {
-    if (lower.startsWith(prefix)) {
-      if (!strip) return input.trim();
-      const rest = normalized.slice(prefix.length).replace(/^[\s:,\-]+/, "").trim();
-      return rest.length > 0 ? rest : input.trim();
-    }
-  }
-  return null;
-}
