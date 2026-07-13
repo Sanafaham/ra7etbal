@@ -109,7 +109,12 @@ export default function CarsonTypedChat({
           placeholder="Message Carson…"
           className="max-h-32 min-h-11 flex-1 resize-none rounded-2xl border border-charcoal/15 bg-white px-3.5 py-3 text-[14px] text-ink outline-none transition placeholder:text-ink/35 focus:border-sage disabled:opacity-60"
           onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing &&
+              value.trim()
+            ) {
               event.preventDefault();
               onSubmit();
             }

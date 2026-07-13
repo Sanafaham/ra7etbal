@@ -891,6 +891,7 @@ export default function ElevenLabsAgentWidget({
   const [typedAwaitingResponse, setTypedAwaitingResponse] = useState(false);
   const [typedError, setTypedError] = useState<string | null>(null);
   const typedSubmitInFlightRef = useRef(false);
+  const typedResponseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     typedMessagesRef.current = typedMessages;
@@ -4562,6 +4563,10 @@ export default function ElevenLabsAgentWidget({
       clearTimeout(visibilityTimerRef.current);
       visibilityTimerRef.current = null;
     }
+    if (typedResponseTimeoutRef.current) {
+      clearTimeout(typedResponseTimeoutRef.current);
+      typedResponseTimeoutRef.current = null;
+    }
   }, []);
 
   const stopLocalAudioPlayback = useCallback(() => {
@@ -5637,6 +5642,10 @@ export default function ElevenLabsAgentWidget({
             setLastCarsonMessage(displayMessage);
 
             if (requestedChannel === "text") {
+              if (typedResponseTimeoutRef.current) {
+                clearTimeout(typedResponseTimeoutRef.current);
+                typedResponseTimeoutRef.current = null;
+              }
               const pendingClientMessageId = pendingTypedClientMessageIdRef.current;
               const eventKey = event_id == null
                 ? `${pendingClientMessageId ?? "opening"}:${displayMessage}`
@@ -6006,8 +6015,33 @@ export default function ElevenLabsAgentWidget({
       // The durable row exists before this send. A refresh therefore never
       // has to guess whether it should replay the instruction; unanswered
       // rows are marked interrupted and shown to the owner instead.
+      typedResponseTimeoutRef.current = setTimeout(() => {
+        if (pendingTypedClientMessageIdRef.current !== clientMessageId) return;
+        typedResponseTimeoutRef.current = null;
+        pendingTypedClientMessageIdRef.current = null;
+        typedSubmitInFlightRef.current = false;
+        setTypedAwaitingResponse(false);
+        setTurnPhase("idle");
+        setTypedError("Carson did not finish replying. Your message was not resent.");
+        void updateTypedUserMessage({
+          clientMessageId,
+          deliveryStatus: "interrupted",
+          elevenlabsConversationId: typedConversationIdRef.current,
+        }).catch(() => {});
+        setTypedMessages((current) =>
+          current.map((item) =>
+            item.client_message_id === clientMessageId
+              ? { ...item, delivery_status: "interrupted" }
+              : item,
+          ),
+        );
+      }, 90_000);
       conversation.sendUserMessage(savedMessage.content);
     } catch (err) {
+      if (typedResponseTimeoutRef.current) {
+        clearTimeout(typedResponseTimeoutRef.current);
+        typedResponseTimeoutRef.current = null;
+      }
       pendingTypedClientMessageIdRef.current = null;
       typedSubmitInFlightRef.current = false;
       setTypedAwaitingResponse(false);
