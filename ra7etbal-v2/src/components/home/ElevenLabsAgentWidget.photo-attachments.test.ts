@@ -32,7 +32,9 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
   });
 
   it("keeps the pre-session images available to Carson at session start", () => {
-    expect(SOURCE).toContain("sessionPhotosRef.current = [...pendingPhotosRef.current]");
+    expect(SOURCE).toContain(
+      "sessionPhotosRef.current = [...pendingPhotosRef.current]",
+    );
     expect(SOURCE).toContain("describePhotosForCarson(sessionPhotosRef.current)");
     expect(SOURCE).toContain("Attached photos context (use this for the conversation)");
     expect(SOURCE).toContain("conv.sendContextualUpdate(");
@@ -180,14 +182,23 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
       "Capture refs before any async work",
       "saveVoiceSessionSnapshot(userId, transcript)",
     );
+    expect(disconnectBlock).toContain('if (requestedChannel === "voice")');
     expect(disconnectBlock).toContain("clearPendingPhotoPreviews()");
 
     const startCallBlock = blockBetween(
-      "const startCall = useCallback(async () => {",
+      'const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = "voice") => {',
       'setStatus("connecting");',
     );
-    expect(startCallBlock).toContain("sessionPhotosRef.current = [...pendingPhotosRef.current]");
+    expect(startCallBlock).toContain(
+      "sessionPhotosRef.current = [...pendingPhotosRef.current]",
+    );
     expect(startCallBlock).toContain("sessionPhotoContextRef.current = null");
+  });
+
+  it("uses the same photo context and attachment controls in typed Carson", () => {
+    expect(SOURCE).toContain("if (sessionPhotoContextRef.current)");
+    expect(SOURCE).toContain("photos={pendingPhotoPreviews}");
+    expect(SOURCE).toContain("onAttachPhoto={() => imageFileInputRef.current?.click()}");
   });
 
   it("clearing pending photos also clears the limit warning", () => {

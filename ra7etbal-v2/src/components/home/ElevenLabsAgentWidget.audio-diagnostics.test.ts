@@ -28,7 +28,7 @@ describe("ElevenLabsAgentWidget — iPhone PWA audio diagnostics", () => {
   it("keeps audio diagnostics opt-in through query/localStorage, not always visible", () => {
     expect(SOURCE).toContain('params.get("carson_audio_diag")');
     expect(SOURCE).toContain('const [audioDiagnosticsEnabled, setAudioDiagnosticsEnabled] = useState(');
-    expect(SOURCE).toContain("{audioDiagnosticsEnabled && (");
+    expect(SOURCE).toContain('{channel === "voice" && audioDiagnosticsEnabled && (');
     expect(SOURCE).toContain("Speaker test");
     expect(SOURCE).toContain("Mic loopback");
     expect(SOURCE).toContain("Copy packet");
@@ -50,7 +50,9 @@ describe("ElevenLabsAgentWidget — iPhone PWA audio diagnostics", () => {
     // The beta banner and the diagnostics panel (Speaker test / Mic loopback /
     // Copy packet) must both require audioDiagnosticsEnabled — never just
     // isIosStandalonePwa alone.
-    expect(SOURCE).toContain("{isIosStandalonePwa && audioDiagnosticsEnabled && (");
+    expect(SOURCE).toContain(
+      '{channel === "voice" && isIosStandalonePwa && audioDiagnosticsEnabled && (',
+    );
   });
 
   it("records environment, local probe, and session events in the existing diagnostics buffer", () => {

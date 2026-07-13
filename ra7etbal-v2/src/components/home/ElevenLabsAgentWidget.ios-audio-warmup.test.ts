@@ -44,8 +44,10 @@ function blockBetween(startNeedle: string, endNeedle: string): string {
  *      never stay stuck on.
  */
 describe("ElevenLabsAgentWidget — iOS audio-route warm-up mitigation", () => {
-  it("acquires the warm-up mic inside startCall before Conversation.startSession", () => {
-    const startCallIdx = SOURCE.indexOf("const startCall = useCallback(async () => {");
+  it("acquires the warm-up mic inside the shared session starter before Conversation.startSession, for voice only", () => {
+    const startCallIdx = SOURCE.indexOf(
+      'const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = "voice") => {',
+    );
     const warmupIdx = SOURCE.indexOf(
       "navigator.mediaDevices\n            .getUserMedia({ audio: true })",
       startCallIdx,
@@ -54,6 +56,8 @@ describe("ElevenLabsAgentWidget — iOS audio-route warm-up mitigation", () => {
     expect(startCallIdx).toBeGreaterThan(-1);
     expect(warmupIdx).toBeGreaterThan(startCallIdx);
     expect(startSessionIdx).toBeGreaterThan(warmupIdx);
+    const warmupBlock = SOURCE.slice(startCallIdx, startSessionIdx);
+    expect(warmupBlock).toContain('requestedChannel === "voice"');
   });
 
   it("awaits the warm-up before opening the session so startSession never begins mid-route-flip", () => {
