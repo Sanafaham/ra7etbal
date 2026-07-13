@@ -17,11 +17,11 @@ const SOURCE = readFileSync(join(__dirname, "ElevenLabsAgentWidget.tsx"), "utf-8
 
 describe("ElevenLabsAgentWidget — Inbox client tool registration", () => {
   it("registers list_inbox_items in the clientTools map, wired to getInboxItems", () => {
-    expect(SOURCE).toMatch(/list_inbox_items:\s*\(\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("list_inbox_items"\)[\s\S]*runDirectToolWithDiagnostic\("list_inbox_items",\s*\{\},\s*\(\)\s*=>\s*getInboxItems\(\)\)/);
+    expect(SOURCE).toMatch(/list_inbox_items:\s*\(\)\s*=>\s*\{[\s\S]*guardCurrentToolInvocation\("list_inbox_items"\)[\s\S]*runDirectToolWithDiagnostic\("list_inbox_items",\s*\{\},\s*\(\)\s*=>\s*getInboxItems\(\)\)/);
   });
 
   it("registers act_on_inbox_item in the clientTools map, wired to actOnInboxItem", () => {
-    expect(SOURCE).toMatch(/act_on_inbox_item:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("act_on_inbox_item"\)[\s\S]*runDirectToolWithDiagnostic\("act_on_inbox_item",\s*params,\s*\(\)\s*=>\s*actOnInboxItem\(params\)\)/);
+    expect(SOURCE).toMatch(/act_on_inbox_item:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentToolInvocation\("act_on_inbox_item"\)[\s\S]*runDirectToolWithDiagnostic\("act_on_inbox_item",\s*params,\s*\(\)\s*=>\s*actOnInboxItem\(params\)\)/);
   });
 
   it("imports the Clear My Head Inbox lib functions, not a new/duplicate storage module", () => {
@@ -213,15 +213,15 @@ describe("ElevenLabsAgentWidget — act_on_inbox_item requires explicit, matched
 
 describe("ElevenLabsAgentWidget — existing note/to-do/task tools are unchanged by the Inbox addition", () => {
   it("act_on_note is still registered and untouched", () => {
-    expect(SOURCE).toMatch(/act_on_note:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("act_on_note"\)[\s\S]*runDirectToolWithDiagnostic\("act_on_note",\s*params,\s*\(\)\s*=>\s*actOnNote\(params\)\)/);
+    expect(SOURCE).toMatch(/act_on_note:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentToolInvocation\("act_on_note"\)[\s\S]*runDirectToolWithDiagnostic\("act_on_note",\s*params,\s*\(\)\s*=>\s*actOnNote\(params\)\)/);
   });
 
   it("create_todo and complete_todo are still registered and untouched", () => {
-    expect(SOURCE).toMatch(/create_todo:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("create_todo"\)[\s\S]*runDirectToolWithDiagnostic\("create_todo",\s*params,\s*\(\)\s*=>\s*createTodoTool\(params\)\)/);
-    expect(SOURCE).toMatch(/complete_todo:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("complete_todo"\)[\s\S]*runDirectToolWithDiagnostic\("complete_todo",\s*params,\s*\(\)\s*=>\s*completeTodoTool\(params\)\)/);
+    expect(SOURCE).toMatch(/create_todo:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentToolInvocation\("create_todo"\)[\s\S]*runDirectToolWithDiagnostic\("create_todo",\s*params,\s*\(\)\s*=>\s*createTodoTool\(params\)\)/);
+    expect(SOURCE).toMatch(/complete_todo:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentToolInvocation\("complete_todo"\)[\s\S]*runDirectToolWithDiagnostic\("complete_todo",\s*params,\s*\(\)\s*=>\s*completeTodoTool\(params\)\)/);
   });
 
   it("save_note is still registered and untouched", () => {
-    expect(SOURCE).toMatch(/save_note:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentVoiceCapture\("save_note"\)[\s\S]*runDirectToolWithDiagnostic\("save_note",\s*params,\s*\(\)\s*=>\s*saveNote\(params\)\)/);
+    expect(SOURCE).toMatch(/save_note:\s*\(params[^)]*\)\s*=>\s*\{[\s\S]*guardCurrentToolInvocation\("save_note"\)[\s\S]*runDirectToolWithDiagnostic\("save_note",\s*params,\s*\(\)\s*=>\s*saveNote\(params\)\)/);
   });
 });
