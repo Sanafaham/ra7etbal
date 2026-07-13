@@ -831,7 +831,7 @@ async function handleOwnerDecision(req, res) {
             message: cleanMessageContent,
             templateName,
             templateLanguage,
-            taskId: ownerDecisionButtonTaskId,
+            taskUuid: ownerDecisionButtonTaskId,
           })
         : buildRoutineMessagePayload({
             to: normalizedPhone,
