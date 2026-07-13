@@ -172,7 +172,7 @@ export default function CarsonTypedChat({
                   onClick={() => onRemovePhoto(photo.id)}
                   disabled={awaitingResponse}
                   aria-label={`Remove attached photo ${index + 1}`}
-                  className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-ink/75 text-white shadow disabled:opacity-45"
+                  className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-ink/75 text-white shadow disabled:opacity-45"
                 >
                   <svg width="7" height="7" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
                     <line x1="1" y1="1" x2="9" y2="9" /><line x1="9" y1="1" x2="1" y2="9" />
