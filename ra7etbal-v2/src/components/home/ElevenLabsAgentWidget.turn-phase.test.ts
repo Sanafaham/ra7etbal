@@ -228,7 +228,7 @@ describe("ElevenLabsAgentWidget — disconnect, error, and forced cleanup all cl
 
   it("onError clears the thinking timer, resets turnPhase to idle, and clears the latency refs so a later session cannot inherit stale timing", () => {
     const start = SOURCE.indexOf("onError: (msg, context?: unknown) => {");
-    const end = SOURCE.indexOf("onConnect: () => {", start);
+    const end = SOURCE.indexOf("onConnect: ({ conversationId }) => {", start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const block = SOURCE.slice(start, end);

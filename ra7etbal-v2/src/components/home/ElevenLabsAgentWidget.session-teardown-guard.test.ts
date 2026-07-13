@@ -49,9 +49,9 @@ describe("ElevenLabsAgentWidget — session teardown guard (Carson voice race-co
     expect(SOURCE).toContain("const teardownInFlightRef = useRef(false);");
   });
 
-  it("startCall's reconnect guard blocks while a previous session's teardown is still in flight", () => {
+  it("the shared voice/text session guard blocks while a previous session's teardown is still in flight", () => {
     const guardBlock = blockBetween(
-      "const startCall = useCallback(async () => {\n    if (!agentId) return;\n    if (",
+      "const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = \"voice\") => {\n    if (!agentId) return;\n    if (",
       "      console.warn(\"[carson-lifecycle] reconnect attempt blocked\"",
     );
     expect(guardBlock).toContain("startInFlightRef.current ||");
@@ -61,7 +61,7 @@ describe("ElevenLabsAgentWidget — session teardown guard (Carson voice race-co
   });
 
   it("evaluates the real guard expression (byte-for-byte from source): blocked only when a flag is set, clear when idle", () => {
-    // Extract the literal boolean expression startCall actually guards on, so
+    // Extract the literal boolean expression the shared session starter guards on, so
     // this test fails if a future edit ever drops teardownInFlightRef (or any
     // other flag) from the real condition — not a hand-copied approximation.
     const exprBlock = blockBetween(

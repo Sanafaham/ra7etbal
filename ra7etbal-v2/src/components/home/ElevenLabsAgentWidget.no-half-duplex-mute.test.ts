@@ -88,10 +88,10 @@ describe("ElevenLabsAgentWidget — no app-level half-duplex mic muting", () => 
     expect(staleCleanupBlock.split(".setMicMuted(true)").length - 1).toBe(1);
   });
 
-  it("forceCleanupSession mutes through the shared helper immediately before ending the session — not inline", () => {
+  it("forceCleanupSession mutes only voice through the shared helper immediately before ending the session", () => {
     const conclusionBlock = blockBetween(
-      "if (conv) {\n        muteConversationBeforeTeardown(conv,",
-      "      stopLocalAudioPlayback();",
+      "if (conv) {\n        if (activeChannelRef.current === \"voice\") {",
+      "      if (activeChannelRef.current === \"voice\") {\n        stopLocalAudioPlayback();",
     );
     expect(conclusionBlock).toContain("muteConversationBeforeTeardown(conv, teardownReason);");
     expect(conclusionBlock).toContain("endConversationSession(conv,");

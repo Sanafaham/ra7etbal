@@ -195,11 +195,13 @@ function useGlobalTasksRefresh() {
  */
 function PersistentCarsonWidget({
   onCallStatusChange,
+  onChannelChange,
   onRequestClose,
   onCalendarRevokedChange,
   calendarDisconnectCount,
 }: {
   onCallStatusChange: (status: "idle" | "connecting" | "connected" | "error") => void;
+  onChannelChange: (channel: "voice" | "text") => void;
   onRequestClose: () => void;
   onCalendarRevokedChange: (revoked: boolean) => void;
   /** Incremented by App each time the user disconnects Google Calendar.
@@ -397,6 +399,7 @@ function PersistentCarsonWidget({
       calendarFetched={calendarFetched}
       onBeforeCallStart={handleBeforeCallStart}
       onCallStatusChange={onCallStatusChange}
+      onChannelChange={onChannelChange}
       onRequestClose={onRequestClose}
     />
   );
@@ -410,7 +413,14 @@ export default function App() {
   const [calendarRevoked, setCalendarRevoked] = useState(false);
   const [calendarDisconnectCount, setCalendarDisconnectCount] = useState(0);
   const { status: authStatus, user } = useAuth();
-  const { open: carsonOpen, setOpen: setCarsonOpen, callStatus: carsonCallStatus, setCallStatus: setCarsonCallStatus } = useCarsonStore();
+  const {
+    open: carsonOpen,
+    setOpen: setCarsonOpen,
+    callStatus: carsonCallStatus,
+    setCallStatus: setCarsonCallStatus,
+    channel: carsonChannel,
+    setChannel: setCarsonChannel,
+  } = useCarsonStore();
 
   const showNav = useShowNavInner();
 
@@ -498,7 +508,7 @@ export default function App() {
       <div
         className="fixed inset-x-0 bottom-0 z-50 flex flex-col rounded-t-3xl bg-warm-white shadow-2xl"
         style={{
-          top: carsonCallStatus === "idle" ? "48dvh" : "12dvh",
+          top: carsonCallStatus === "idle" ? "48dvh" : carsonChannel === "text" ? "8dvh" : "12dvh",
           transform: carsonOpen ? "translateY(0)" : "translateY(110%)",
           transition: "transform 0.3s cubic-bezier(0.32, 0.72, 0, 1), top 0.3s cubic-bezier(0.32, 0.72, 0, 1)",
           paddingBottom: "env(safe-area-inset-bottom)",
@@ -547,6 +557,7 @@ export default function App() {
           )}
           <PersistentCarsonWidget
             onCallStatusChange={setCarsonCallStatus}
+            onChannelChange={setCarsonChannel}
             onRequestClose={() => setCarsonOpen(false)}
             onCalendarRevokedChange={setCalendarRevoked}
             calendarDisconnectCount={calendarDisconnectCount}

@@ -74,7 +74,10 @@ describe("ElevenLabsAgentWidget — voice reliability hardening", () => {
 
     // Stamped at connect, read at every teardown path.
     expect(SOURCE).toContain("sessionConnectedAtRef.current = performance.now();");
-    const onConnectBlock = blockBetween("onConnect: () => {", "onConversationMetadata:");
+    const onConnectBlock = blockBetween(
+      "onConnect: ({ conversationId }) => {",
+      "onConversationMetadata:",
+    );
     expect(onConnectBlock).toContain("sessionConnectedAtRef.current = performance.now();");
   });
 
