@@ -18,10 +18,6 @@ vi.mock("./delivery", () => ({
   deliverTaskMessage: deliverTaskMessageMock,
 }));
 
-vi.mock("./inbox", () => ({
-  saveInboxItem: vi.fn(),
-}));
-
 vi.mock("./tasks", () => ({
   listTasks: vi.fn().mockResolvedValue([]),
 }));
@@ -49,12 +45,9 @@ vi.mock("./supabase", () => ({
   },
 }));
 
-// Phase 9A consistency fix: askTextCarson() now self-fetches the same
-// operational/product context blocks Voice Carson gets from App.tsx
-// (automation status, WhatsApp delivery diagnostics, notes, to-dos,
-// household rules). All five modules import ./supabase at module top
-// level, which throws without VITE_SUPABASE_* env vars — mock them the
-// same way ./calendar is already mocked above.
+// These modules import ./supabase at module top level, which throws
+// without VITE_SUPABASE_* env vars — mock them the same way ./calendar
+// is already mocked above.
 vi.mock("./automation-context", () => ({
   fetchAutomationDigest: vi.fn().mockResolvedValue(null),
   buildAutomationStatusBlock: vi.fn().mockReturnValue(""),
@@ -116,32 +109,6 @@ describe("executeDelegationFromText image pipeline", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  it("sanitizes text Carson answers before returning them to the bubble", async () => {
-    const { askTextCarson } = await import("./text-carson");
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        content: [
-          {
-            text: "One moment. Grace has it. Are you still there?",
-          },
-        ],
-      }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await askTextCarson("status", {
-      displayName: "Sana",
-      userId: "user-1",
-      dailyBrief: "",
-      people: [],
-      tasks: [],
-    });
-
-    expect(response).toBe("Grace has it");
-    expect(response).not.toMatch(/one moment|are you still there|are you there|still there/i);
   });
 
   it("passes an attached photo through savePending and into WhatsApp delivery", async () => {

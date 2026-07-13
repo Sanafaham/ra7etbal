@@ -448,12 +448,10 @@ describe("canonical path source adapters", () => {
   it("keeps note/to-do conversion reminder paths on task creation plus reminder scheduling", () => {
     const inbox = source("src/routes/Inbox.tsx");
     const todos = source("src/routes/Todos.tsx");
-    const inboxReview = source("src/components/home/InboxReviewPanel.tsx");
     const widget = source("src/components/home/ElevenLabsAgentWidget.tsx");
 
     expect(inbox).toMatch(/async function handleRemindSubmit[\s\S]*createReminderTask\(\{[\s\S]*source:\s*"inbox"/);
     expect(todos).toMatch(/async function handleRemindSubmit[\s\S]*createReminderTask\(\{[\s\S]*source:\s*"todos"/);
-    expect(inboxReview).toMatch(/async function handleRemindMe[\s\S]*createReminderTask\(\{[\s\S]*source:\s*"inbox-review"/);
     expect(widget).toMatch(/const createReminder = useCallback\([\s\S]*createReminderTask\(\{[\s\S]*source:\s*"create_reminder"/);
     expect(widget).toMatch(/if \(action === "reminder"\)[\s\S]*createReminderTask\(\{[\s\S]*source:\s*"act_on_note"/);
   });

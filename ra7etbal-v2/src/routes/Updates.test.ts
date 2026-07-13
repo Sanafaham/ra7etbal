@@ -5,19 +5,18 @@ import { join } from "node:path";
 const SOURCE = readFileSync(join(__dirname, "Updates.tsx"), "utf-8");
 
 /**
- * Clear My Head Inbox V1: a new "Inbox" tab in Updates, backed by the
- * ClearMyHeadInbox component. Source-scanning regression guard proving the
- * tab was added correctly and every pre-existing tab (Needs You / Waiting /
- * To-do / Notes / Automations / History) is untouched.
+ * Clear My Head and the internal Inbox tab were removed from the product.
+ * Updates now has exactly 6 tabs: Needs You / Waiting / To-do / Notes /
+ * Automations / History.
  */
-describe("Updates.tsx — Clear My Head Inbox tab", () => {
-  it("adds a tab labeled \"Inbox\" backed by ClearMyHeadInbox", () => {
-    expect(SOURCE).toMatch(/\{ id: "clear-my-head",\s*label: "Inbox"\s*\}/);
-    expect(SOURCE).toMatch(/import ClearMyHeadInbox from ["']\.\/ClearMyHeadInbox["']/);
-    expect(SOURCE).toMatch(/\{activeTab === "clear-my-head" && <ClearMyHeadInbox headerless \/>\}/);
+describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
+  it("no longer has a tab labeled \"Inbox\" or the clear-my-head tab id", () => {
+    expect(SOURCE).not.toMatch(/id: "clear-my-head"/);
+    expect(SOURCE).not.toContain("ClearMyHeadInbox");
+    expect(SOURCE).not.toMatch(/label: "Inbox"/);
   });
 
-  it("keeps every pre-existing tab untouched", () => {
+  it("keeps every remaining tab intact", () => {
     expect(SOURCE).toMatch(/\{ id: "needs-you",\s*label: "Needs You"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "waiting",\s*label: "Waiting"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "todo",\s*label: "To-do"\s*\}/);
@@ -26,12 +25,8 @@ describe("Updates.tsx — Clear My Head Inbox tab", () => {
     expect(SOURCE).toMatch(/\{ id: "history",\s*label: "History"\s*\}/);
   });
 
-  it("keeps the existing Notes tab rendering the pre-existing Inbox component (unrelated to Clear My Head)", () => {
+  it("keeps the Notes tab rendering the pre-existing Inbox component", () => {
     expect(SOURCE).toMatch(/\{activeTab === "inbox" && <Inbox headerless \/>\}/);
-  });
-
-  it("excludes the new tab from the tasks-store loading/error gates, like Notes/To-do/Automations", () => {
-    expect(SOURCE).toMatch(/activeTab !== "clear-my-head"/);
   });
 });
 
@@ -48,8 +43,8 @@ describe("Updates.tsx — Clear My Head Inbox tab", () => {
  * from genuine (including keyboard-driven) user interaction.
  */
 describe("Updates.tsx — chip auto-scroll does not self-pause", () => {
-  it("all 7 tabs are present and doubled for the seamless auto-scroll loop", () => {
-    const tabIds = ["needs-you", "waiting", "todo", "inbox", "clear-my-head", "routines", "history"];
+  it("all 6 tabs are present and doubled for the seamless auto-scroll loop", () => {
+    const tabIds = ["needs-you", "waiting", "todo", "inbox", "routines", "history"];
     for (const id of tabIds) {
       const occurrences = SOURCE.match(new RegExp(`\\{ id: "${id}",`, "g")) ?? [];
       expect(occurrences.length).toBeGreaterThanOrEqual(1);

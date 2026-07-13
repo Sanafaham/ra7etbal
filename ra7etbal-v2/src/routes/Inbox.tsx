@@ -1,12 +1,10 @@
 /**
- * Inbox — notes + unprocessed items.
- * Sections: Needs Processing (InboxReviewPanel) → Notes (searchable).
+ * Inbox — Notes (searchable).
  * Note actions: Remind Me + Delegate visible; Make Task / Add to Calendar / Delete in ··· overflow.
  * Refresh on mount only — no visible refresh button.
  */
 import { useEffect, useMemo, useState } from "react";
 import AuthNotice from "../components/auth/AuthNotice";
-import InboxReviewPanel from "../components/home/InboxReviewPanel";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import {
@@ -25,13 +23,10 @@ import { createDelegationTaskAndMessage } from "../lib/delegations";
 import { sendWhatsAppTask } from "../lib/whatsapp";
 import { usePeopleStore } from "../stores/people";
 import { useProfileStore } from "../stores/profile";
-import { useDraftStore } from "../stores/draft";
-import { useNavigate } from "react-router-dom";
 
 export default function Inbox({ headerless = false }: { headerless?: boolean } = {}) {
   const { user } = useAuth();
   const userId = user?.id ?? null;
-  const navigate = useNavigate();
 
   const [notes, setNotes] = useState<CarsonNote[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -292,15 +287,6 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
           className="w-full rounded-2xl border border-sage/20 bg-white/70 py-2.5 pl-9 pr-4 text-sm text-ink placeholder:text-ink/35 outline-none focus:border-sage/40 focus:bg-white"
         />
       </div>
-
-      {/* ── Unprocessed inbox items ── */}
-      <InboxReviewPanel
-        userId={userId}
-        onPrefill={(text) => {
-          useDraftStore.getState().setText(text);
-          navigate("/");
-        }}
-      />
 
       {/* ── Add a note ── */}
       {!searchQuery && (

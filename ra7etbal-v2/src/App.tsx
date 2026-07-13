@@ -20,7 +20,6 @@ import Landing from "./routes/Landing";
 import Reset from "./routes/Reset";
 import Privacy from "./routes/Privacy";
 import Terms from "./routes/Terms";
-import Review from "./routes/Review";
 import BottomNav from "./components/nav/BottomNav";
 import MoreSheet from "./components/nav/MoreSheet";
 import CarsonLivePill from "./components/carson/CarsonLivePill";
@@ -465,7 +464,7 @@ export default function App() {
           <Route path="/" element={<HomeRoute />} />
           <Route path="/auth" element={<AuthRoute />} />
           <Route path="/reset" element={<ResetRoute />} />
-          <Route path="/review" element={<ProtectedRoute><Review /></ProtectedRoute>} />
+          <Route path="/review" element={<Navigate to="/" replace />} />
           <Route path="/updates" element={<ProtectedRoute><Updates /></ProtectedRoute>} />
           {/* Legacy redirects */}
           <Route path="/active" element={<ProtectedRoute><Active /></ProtectedRoute>} />
