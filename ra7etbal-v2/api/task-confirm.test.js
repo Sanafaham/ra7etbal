@@ -2127,13 +2127,26 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(fetchMock.mock.calls[1][0]).toContain('/rest/v1/tasks?id=eq.task-1&');
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
     const metaPayload = JSON.parse(metaCall[1].body);
+    const expectedMessage = 'Ghulam, the alternative for "buy TEREA Silver" was approved — please go ahead.';
     expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
-    expect(metaPayload.template.components.find((component) => component.type === 'button')).toEqual({
-      type: 'button',
-      sub_type: 'url',
-      index: '0',
-      parameters: [{ type: 'text', text: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed' }],
-    });
+    expect(metaPayload.template.components).toEqual([
+      {
+        type: 'body',
+        parameters: [{ type: 'text', text: expectedMessage }],
+      },
+      {
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameters: [{ type: 'text', text: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed' }],
+      },
+    ]);
+    const buttonSuffix = metaPayload.template.components[1].parameters[0].text;
+    expect(buttonSuffix).not.toContain(expectedMessage);
+    expect(buttonSuffix).not.toContain('https://www.ra7etbal.com/confirm?task=');
+    expect(`https://www.ra7etbal.com/confirm?task=${buttonSuffix}`).toBe(
+      'https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
+    );
     const reserveBody = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_custom_instruction'))[1].body);
     expect(reserveBody.p_confirmation_url).toBe('https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed');
   });
@@ -2167,10 +2180,11 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
 
   it('Reject Alternative with owner-decision template set: uses the Utility template and preserves the task link button', async () => {
     vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'ra7etbal_owner_decision');
+    const taskUuid = 'd7d760b4-106a-4f83-9ced-06e73c650e60';
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: 'https://www.ra7etbal.com/confirm?task=8b7bd641-e67e-4bc5-9188-19f02e097b7b', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: taskUuid, user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: 'https://www.ra7etbal.com/confirm?task=8b7bd641-e67e-4bc5-9188-19f02e097b7b', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
       .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'rejected_alternative' }))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+15551234567' }]))
       .mockResolvedValueOnce(jsonResponse([{ outcome: 'correction_required', message_id: 'msg-1', delivery_id: 'delivery-1' }]))
@@ -2183,23 +2197,24 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(patchReq({ taskId: 'task-1', decision: 'rejected_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+    await handler(patchReq({ taskId: taskUuid, decision: 'rejected_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
 
     const metaPayload = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
     expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
     expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([
-      { type: 'text', text: 'task-1' },
+      { type: 'text', text: taskUuid },
     ]);
     const reserveBody = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_rejected_alternative'))[1].body);
-    expect(reserveBody.p_confirmation_url).toBe('https://www.ra7etbal.com/confirm?task=task-1');
+    expect(reserveBody.p_confirmation_url).toBe(`https://www.ra7etbal.com/confirm?task=${taskUuid}`);
   });
 
   it('Custom Instruction with owner-decision template set: preserves exact owner wording and uses the Utility template button', async () => {
     vi.stubEnv('WHATSAPP_OWNER_DECISION_TEMPLATE', 'ra7etbal_owner_decision');
+    const taskUuid = '6911e5e4-4515-43fb-8062-1a1824f59574';
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: 'https://www.ra7etbal.com/confirm?task=6911e5e4-4515-43fb-8062-1a1824f59574', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: taskUuid, user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: 'https://www.ra7etbal.com/confirm?task=stale-link', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
       .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'custom_instruction' }))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+15551234567' }]))
       .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }]))
@@ -2212,16 +2227,16 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(patchReq({ taskId: 'task-1', decision: 'custom_instruction', instructionText: 'Please get TEREA Turquoise exactly.', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+    await handler(patchReq({ taskId: taskUuid, decision: 'custom_instruction', instructionText: 'Please get TEREA Turquoise exactly.', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
 
     const metaPayload = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
     expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
     expect(metaPayload.template.components[0].parameters[0].text).toBe('Please get TEREA Turquoise exactly.');
     expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([
-      { type: 'text', text: 'task-1' },
+      { type: 'text', text: taskUuid },
     ]);
     const reserveBody = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_custom_instruction'))[1].body);
-    expect(reserveBody.p_confirmation_url).toBe('https://www.ra7etbal.com/confirm?task=task-1');
+    expect(reserveBody.p_confirmation_url).toBe(`https://www.ra7etbal.com/confirm?task=${taskUuid}`);
   });
 
   it('Custom Instruction: sends the owner\'s exact text, does not touch the correction cycle count', async () => {

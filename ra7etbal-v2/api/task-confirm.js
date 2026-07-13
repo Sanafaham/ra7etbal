@@ -55,7 +55,7 @@
 import webpush from 'web-push';
 import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
-import { sendMetaMessage, buildRoutineMessagePayload, buildButtonLinkValue, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
+import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 
 // Quality Intelligence vision review can legitimately take longer than the
 // default Vercel function window, especially with several proof photos.
@@ -799,10 +799,21 @@ async function handleOwnerDecision(req, res) {
       }
 
       const ownerDecisionTemplate = (process.env.WHATSAPP_OWNER_DECISION_TEMPLATE || '').trim();
-      const ownerDecisionButtonUrlSuffix = ownerDecisionTemplate
-        ? (buildButtonLinkValue(workerConfirmationUrl, 'task') || '')
+      const ownerDecisionButtonTaskId = ownerDecisionTemplate
+        ? normalizeTaskUuidForButton(task.id || taskId)
         : '';
-      const templateName = ownerDecisionButtonUrlSuffix
+      if (ownerDecisionTemplate && !ownerDecisionButtonTaskId) {
+        await markWhatsappDeliveryFailed({
+          supabaseUrl,
+          serviceKey,
+          deliveryId,
+          failureStage: 'validation',
+          reason: 'Owner decision Visit Task button requires a task UUID.',
+          templateName: ownerDecisionTemplate,
+        });
+        return res.status(500).json({ error: 'Could not build a valid Visit Task link. Please try again.' });
+      }
+      const templateName = ownerDecisionTemplate
         ? ownerDecisionTemplate
         : (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || 'ra7etbal_routine_message').trim();
       const templateLanguage = (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
@@ -814,10 +825,20 @@ async function handleOwnerDecision(req, res) {
         return res.status(400).json({ error: 'No valid phone number on file for the assignee.' });
       }
       const cleanMessageContent = String(messageContent).replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
-      const buttonUrlSuffix = ownerDecisionButtonUrlSuffix || undefined;
-      const payload = buildRoutineMessagePayload({
-        to: normalizedPhone, message: cleanMessageContent, templateName, templateLanguage, buttonUrlSuffix,
-      });
+      const payload = ownerDecisionTemplate
+        ? buildOwnerDecisionTemplatePayload({
+            to: normalizedPhone,
+            message: cleanMessageContent,
+            templateName,
+            templateLanguage,
+            taskId: ownerDecisionButtonTaskId,
+          })
+        : buildRoutineMessagePayload({
+            to: normalizedPhone,
+            message: cleanMessageContent,
+            templateName,
+            templateLanguage,
+          });
 
       let sendResult;
       try {
