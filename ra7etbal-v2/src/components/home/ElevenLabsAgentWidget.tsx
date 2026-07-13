@@ -1064,24 +1064,37 @@ export default function ElevenLabsAgentWidget({
         : null;
     setPhotoLimitWarning(overflowed ? PHOTO_LIMIT_MESSAGE : null);
 
-    // Mid-call attachment — pendingPhotosRef and sessionPhotosRef now hold all
-    // current images, so the next tool call sends every currently-attached
-    // photo. Update Carson's live context too; stale descriptions are ignored
-    // if the user adds/removes another photo before vision returns.
-    if (statusRef.current === "connected" && conversationRef.current) {
-      conversationRef.current.sendContextualUpdate(
-        `[Session photo update] ${MID_SESSION_PHOTO_PENDING_CONTEXT}`,
-      );
+    // Mid-call voice attachment — pendingPhotosRef and sessionPhotosRef now hold
+    // all current images, so the next tool call sends every currently-attached
+    // photo. Update Carson's live voice context too; stale descriptions are
+    // ignored if the user adds/removes another photo before vision returns.
+    //
+    // Typed attachments are intentionally different: keep them staged locally
+    // until the owner presses Send. Sending a contextual update here can make
+    // the agent associate a newly-selected photo with the previous typed turn
+    // and execute that old instruction before the new message exists.
+    if (
+      activeChannelRef.current === "voice" &&
+      statusRef.current === "connected" &&
+      conversationRef.current
+    ) {
       describePhotosForCarson(newPhotos)
         .then((description) => {
           if (photoRevisionRef.current !== revision) return;
           const currentDescription = description ?? MID_SESSION_PHOTO_PENDING_CONTEXT;
           sessionPhotoContextRef.current = currentDescription;
-          conversationRef.current?.sendContextualUpdate(
-            `The user just attached a photo during this call. Current photo description:\n${currentDescription}\nUse these current photos only for the task they were referring to. Ignore any earlier removed photo.`,
-          );
+          if (activeChannelRef.current === "voice") {
+            conversationRef.current?.sendContextualUpdate(
+              `The user just attached a photo during this call. Current photo description:\n${currentDescription}\nUse these current photos only for the task they were referring to. Ignore any earlier removed photo.`,
+            );
+          }
         })
         .catch((err) => console.error("[carson-photo-attach] mid-call describe failed (non-fatal):", err));
+      if (activeChannelRef.current === "voice") {
+        conversationRef.current.sendContextualUpdate(
+          `[Session photo update] ${MID_SESSION_PHOTO_PENDING_CONTEXT}`,
+        );
+      }
     }
   }
 
@@ -1094,7 +1107,11 @@ export default function ElevenLabsAgentWidget({
     sessionPhotosRef.current = next;
     sessionPhotoContextRef.current = null;
     setPhotoLimitWarning(null);
-    if (statusRef.current === "connected" && conversationRef.current) {
+    if (
+      statusRef.current === "connected" &&
+      conversationRef.current &&
+      activeChannelRef.current === "voice"
+    ) {
       const message =
         next.length > 0
           ? `The user removed a photo during this call. ${next.length} photo${
@@ -5091,7 +5108,7 @@ export default function ElevenLabsAgentWidget({
     const baseStateText = userMemory
       ? `${userMemory}\n\n${liveBriefStateText}`
       : liveBriefStateText;
-    const carsonStateText = sessionPhotoContextRef.current
+    const carsonStateText = requestedChannel === "voice" && sessionPhotoContextRef.current
       ? `${baseStateText}\n\nAttached photos context (use this for the conversation):\n${sessionPhotoContextRef.current}`
       : baseStateText;
     const channelInstructions = requestedChannel === "voice"
@@ -5148,6 +5165,23 @@ export default function ElevenLabsAgentWidget({
       startInFlightRef.current = false;
       return;
     }
+
+    // A restored typed transcript and photo-description updates are context,
+    // never authority to act. Only a durable, newly-submitted owner message
+    // opens the typed action window. Keep it open through the agent's reply so
+    // legitimate multi-action instructions can still call multiple tools.
+    const guardCurrentToolInvocation = (toolName: string): string | null => {
+      if (requestedChannel === "voice") {
+        return guardCurrentVoiceCapture(toolName);
+      }
+      if (pendingTypedClientMessageIdRef.current) return null;
+
+      console.warn("[carson-typed] blocked tool without an active owner turn", {
+        toolName,
+        at: new Date().toISOString(),
+      });
+      return "No new typed owner instruction is active. Do not act on chat history or contextual updates; wait for the owner's next message.";
+    };
 
     try {
       // ── ElevenLabs connection safety rule ────────────────────────────────
@@ -5215,7 +5249,7 @@ export default function ElevenLabsAgentWidget({
           // through the same shared Carson instruction pipeline. Use this for all
           // compound instructions, personal notes, and ambiguous cases.
           execute_instruction: async (params: ExecuteInstructionParams) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("execute_instruction") : null;
+            const captureBlock = guardCurrentToolInvocation("execute_instruction");
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "execute_instruction";
             setTurnPhase("acting");
@@ -5264,7 +5298,7 @@ export default function ElevenLabsAgentWidget({
           // Diagnostic wrappers only set/clear toolInFlightRef — behavior is
           // identical to calling sendFollowup / sendDelegation directly.
           send_followup: async (params: Parameters<typeof sendFollowup>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("send_followup") : null;
+            const captureBlock = guardCurrentToolInvocation("send_followup");
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_followup";
             try {
@@ -5276,7 +5310,7 @@ export default function ElevenLabsAgentWidget({
             }
           },
           send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("send_delegation") : null;
+            const captureBlock = guardCurrentToolInvocation("send_delegation");
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_delegation";
             try {
@@ -5288,14 +5322,14 @@ export default function ElevenLabsAgentWidget({
             }
           },
           create_reminder: (params: Parameters<typeof createReminder>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("create_reminder") : null;
+            const captureBlock = guardCurrentToolInvocation("create_reminder");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_reminder", params, () =>
               createReminder(params),
             );
           },
           create_automation: (params: Parameters<typeof createAutomation>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("create_automation") : null;
+            const captureBlock = guardCurrentToolInvocation("create_automation");
             if (captureBlock) return captureBlock;
             setTurnPhase("acting");
             toolRanForCurrentTranscriptRef.current = true;
@@ -5304,7 +5338,7 @@ export default function ElevenLabsAgentWidget({
             });
           },
           send_direct_whatsapp_message: async (params: { recipient_name: string; message: string }) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("send_direct_whatsapp_message") : null;
+            const captureBlock = guardCurrentToolInvocation("send_direct_whatsapp_message");
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_direct_whatsapp_message";
             try {
@@ -5316,68 +5350,68 @@ export default function ElevenLabsAgentWidget({
             }
           },
           save_city: (params: Parameters<typeof saveCity>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("save_city") : null;
+            const captureBlock = guardCurrentToolInvocation("save_city");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("save_city", params, () => saveCity(params));
           },
           save_note: (params: Parameters<typeof saveNote>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("save_note") : null;
+            const captureBlock = guardCurrentToolInvocation("save_note");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("save_note", params, () => saveNote(params));
           },
           act_on_note: (params: Parameters<typeof actOnNote>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("act_on_note") : null;
+            const captureBlock = guardCurrentToolInvocation("act_on_note");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("act_on_note", params, () => actOnNote(params));
           },
           list_inbox_items: () => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("list_inbox_items") : null;
+            const captureBlock = guardCurrentToolInvocation("list_inbox_items");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("list_inbox_items", {}, () => getInboxItems());
           },
           act_on_inbox_item: (params: Parameters<typeof actOnInboxItem>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("act_on_inbox_item") : null;
+            const captureBlock = guardCurrentToolInvocation("act_on_inbox_item");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("act_on_inbox_item", params, () => actOnInboxItem(params));
           },
           create_todo: (params: Parameters<typeof createTodoTool>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("create_todo") : null;
+            const captureBlock = guardCurrentToolInvocation("create_todo");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_todo", params, () => createTodoTool(params));
           },
           complete_todo: (params: Parameters<typeof completeTodoTool>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("complete_todo") : null;
+            const captureBlock = guardCurrentToolInvocation("complete_todo");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("complete_todo", params, () => completeTodoTool(params));
           },
           control_task: (params: Parameters<typeof controlTaskTool>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("control_task") : null;
+            const captureBlock = guardCurrentToolInvocation("control_task");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("control_task", params, () => controlTaskTool(params));
           },
           get_calendar_events: (params: Parameters<typeof getCalendarEvents>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("get_calendar_events") : null;
+            const captureBlock = guardCurrentToolInvocation("get_calendar_events");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("get_calendar_events", params, () =>
               getCalendarEvents(params),
             );
           },
           create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("create_calendar_event") : null;
+            const captureBlock = guardCurrentToolInvocation("create_calendar_event");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_calendar_event", params, () =>
               createCalendarEvent(params),
             );
           },
           update_calendar_event: (params: Parameters<typeof updateCalendarEventTool>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("update_calendar_event") : null;
+            const captureBlock = guardCurrentToolInvocation("update_calendar_event");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("update_calendar_event", params, () =>
               updateCalendarEventTool(params),
             );
           },
           delete_calendar_event: (params: Parameters<typeof deleteCalendarEventTool>[0]) => {
-            const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("delete_calendar_event") : null;
+            const captureBlock = guardCurrentToolInvocation("delete_calendar_event");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("delete_calendar_event", params, () =>
               deleteCalendarEventTool(params),
@@ -5391,7 +5425,7 @@ export default function ElevenLabsAgentWidget({
             category?: string;
           }) =>
             {
-              const captureBlock = requestedChannel === "voice" ? guardCurrentVoiceCapture("save_instruction") : null;
+              const captureBlock = guardCurrentToolInvocation("save_instruction");
               if (captureBlock) return captureBlock;
               return runDirectToolWithDiagnostic(
                 "save_instruction",
@@ -5649,6 +5683,20 @@ export default function ElevenLabsAgentWidget({
                 typedResponseTimeoutRef.current = null;
               }
               const pendingClientMessageId = pendingTypedClientMessageIdRef.current;
+              if (pendingTypedClientMessageIdRef.current === pendingClientMessageId) {
+                // Revoke this typed turn's tool authority synchronously when
+                // Carson's reply arrives. Persistence below is asynchronous;
+                // restored context must not be able to invoke another tool
+                // while that database write is still in flight.
+                pendingTypedClientMessageIdRef.current = null;
+              }
+              if (pendingClientMessageId && pendingPhotosRef.current.length > 0) {
+                // Typed photos belong to exactly one submitted turn. Once
+                // Carson answers, remove them so a later message cannot reuse
+                // an old image accidentally. Successful delegation paths may
+                // already have cleared them; clearPendingImages is idempotent.
+                clearPendingImages();
+              }
               const eventKey = event_id == null
                 ? `${pendingClientMessageId ?? "opening"}:${displayMessage}`
                 : String(event_id);
@@ -5697,9 +5745,6 @@ export default function ElevenLabsAgentWidget({
                     );
                   })
                   .finally(() => {
-                    if (pendingTypedClientMessageIdRef.current === pendingClientMessageId) {
-                      pendingTypedClientMessageIdRef.current = null;
-                    }
                     typedSubmitInFlightRef.current = false;
                     setTypedAwaitingResponse(false);
                     setTurnPhase("idle");
@@ -5932,10 +5977,10 @@ export default function ElevenLabsAgentWidget({
         }
       }
 
-      // Inject photo descriptions immediately after session opens — before the
-      // user speaks. This is the critical path: Carson must know about the photos
-      // from the first word, not only when execute_instruction fires later.
-      if (sessionPhotoContextRef.current) {
+      // Voice photos must be available before the owner speaks. Typed photos are
+      // bound atomically to the explicit typed message in sendTypedMessage;
+      // injecting them here could execute an instruction from restored history.
+      if (requestedChannel === "voice" && sessionPhotoContextRef.current) {
         conv.sendContextualUpdate(
           `The user has attached photos. Here are descriptions:\n${sessionPhotoContextRef.current}\nKeep this in mind for the entire conversation.`,
         );
@@ -6016,7 +6061,6 @@ export default function ElevenLabsAgentWidget({
     setTurnPhase("heard");
 
     const clientMessageId = crypto.randomUUID();
-    pendingTypedClientMessageIdRef.current = clientMessageId;
 
     let savedMessage: CarsonTypedMessage;
     try {
@@ -6029,9 +6073,33 @@ export default function ElevenLabsAgentWidget({
       setTypedInput("");
       setTurnPhase("thinking");
 
-      // The durable row exists before this send. A refresh therefore never
-      // has to guess whether it should replay the instruction; unanswered
-      // rows are marked interrupted and shown to the owner instead.
+      const typedPhotos = [
+        ...(pendingPhotosRef.current.length > 0
+          ? pendingPhotosRef.current
+          : sessionPhotosRef.current),
+      ];
+      const typedPhotoContext = typedPhotos.length > 0
+        ? await describePhotosForCarson(typedPhotos).catch(() => MID_SESSION_PHOTO_PENDING_CONTEXT)
+        : null;
+      if (typedPhotoContext) {
+        sessionPhotoContextRef.current = typedPhotoContext;
+      }
+      if (
+        conversationRef.current !== conversation ||
+        statusRef.current !== "connected" ||
+        activeChannelRef.current !== "text"
+      ) {
+        throw new Error("The Carson session ended before the message could be sent.");
+      }
+      const agentMessage = typedPhotoContext
+        ? `${savedMessage.content}\n\n[Photos attached to this exact typed message only. Do not associate them with earlier conversation history. Current photo description:\n${typedPhotoContext}]`
+        : savedMessage.content;
+
+      // The durable row and any photo description both exist before authority
+      // is opened. A refresh therefore never replays the instruction, and no
+      // restored history or photo-preparation event can invoke a tool. Start
+      // the response clock only when this exact owner turn is ready to send.
+      pendingTypedClientMessageIdRef.current = clientMessageId;
       typedResponseTimeoutRef.current = setTimeout(() => {
         if (pendingTypedClientMessageIdRef.current !== clientMessageId) return;
         typedResponseTimeoutRef.current = null;
@@ -6040,6 +6108,7 @@ export default function ElevenLabsAgentWidget({
         setTypedAwaitingResponse(false);
         setTurnPhase("idle");
         setTypedError("Carson did not finish replying. Your message was not resent.");
+        if (pendingPhotosRef.current.length > 0) clearPendingImages();
         void updateTypedUserMessage({
           clientMessageId,
           deliveryStatus: "interrupted",
@@ -6053,7 +6122,7 @@ export default function ElevenLabsAgentWidget({
           ),
         );
       }, 90_000);
-      conversation.sendUserMessage(savedMessage.content);
+      conversation.sendUserMessage(agentMessage);
     } catch (err) {
       if (typedResponseTimeoutRef.current) {
         clearTimeout(typedResponseTimeoutRef.current);
@@ -6103,7 +6172,7 @@ export default function ElevenLabsAgentWidget({
           `Message sent, but its delivery status could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
         );
       });
-  }, [typedInput]);
+  }, [clearPendingImages, typedInput]);
 
   // ------------------------------------------------------------------
   // Session teardown
