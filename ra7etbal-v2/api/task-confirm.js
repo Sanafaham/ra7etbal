@@ -155,7 +155,7 @@ async function handleGet(req, res) {
 
   try {
     const response = await fetch(
-      supabaseUrl + '/rest/v1/tasks?id=eq.' + taskId +
+      supabaseUrl + '/rest/v1/tasks?id=eq.' + encodeURIComponent(taskId) +
         '&select=id,user_id,description,assigned_to,status,confirmed_at,image_path,proof_image_path,attachment_count,quality_review_status,quality_review_note,worker_reply',
       {
         headers: {

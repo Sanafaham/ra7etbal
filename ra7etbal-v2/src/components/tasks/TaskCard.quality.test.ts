@@ -11,6 +11,13 @@ function headerLifecycleBlock(): string {
   );
 }
 
+function manualOptionsBlock(): string {
+  return SOURCE.slice(
+    SOURCE.indexOf("{isWaitingDelegation && ("),
+    SOURCE.indexOf("</article>", SOURCE.indexOf("{isWaitingDelegation && (")),
+  );
+}
+
 describe("TaskCard — Quality Intelligence owner surface", () => {
   it("uses the shared lifecycle resolver as the badge source of truth", () => {
     expect(SOURCE).toContain('import { resolveQualityLifecycle } from "../../lib/quality-lifecycle"');
@@ -65,10 +72,15 @@ describe("TaskCard — Quality Intelligence owner surface", () => {
   });
 
   it("uses a controlled Manual options disclosure for waiting delegations", () => {
+    const block = manualOptionsBlock();
     expect(SOURCE).toContain("const [manualOptionsOpen, setManualOptionsOpen] = useState(false)");
-    expect(SOURCE).toContain("aria-expanded={manualOptionsOpen}");
-    expect(SOURCE).toContain("setManualOptionsOpen((open) => !open)");
-    expect(SOURCE).toContain("{manualOptionsOpen &&");
-    expect(SOURCE).not.toContain("<details className=\"mt-2 text-xs text-ink/55\">");
+    expect(block).toContain('type="button"');
+    expect(block).toContain("aria-expanded={manualOptionsOpen}");
+    expect(block).toContain("onClick={() => setManualOptionsOpen((open) => !open)}");
+    expect(block).toContain("Manual options");
+    expect(block).toContain("{manualOptionsOpen &&");
+    expect(block).toContain("Mark done manually");
+    expect(block).not.toContain("<details");
+    expect(block).not.toContain("<summary");
   });
 });

@@ -2118,8 +2118,13 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+    await handler(patchReq({
+      taskId: encodeURIComponent('https://www.ra7etbal.com/confirm?task=task-1'),
+      decision: 'approved_alternative',
+      reviewedAt: '2026-07-10T00:00:00.000Z',
+    }), res);
 
+    expect(fetchMock.mock.calls[1][0]).toContain('/rest/v1/tasks?id=eq.task-1&');
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
     const metaPayload = JSON.parse(metaCall[1].body);
     expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
