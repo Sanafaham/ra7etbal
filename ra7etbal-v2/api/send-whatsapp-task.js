@@ -12,6 +12,8 @@ export const config = { maxDuration: 60 };
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
 const DEFAULT_PLAIN_MESSAGE_TEMPLATE = 'ra7etbal_routine_message';
+const TASK_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
+const TASK_UUID_EXACT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TEMPLATE_SPECS = {
   ra7etbal_task_v3: {
     bodyParams: ['owner', 'message'],
@@ -741,6 +743,79 @@ export function buildRoutineMessagePayload({
       name: templateName,
       language: { code: templateLanguage },
       components,
+    },
+  };
+}
+
+/** Extracts one task UUID for a WhatsApp dynamic URL button, without preserving surrounding URL or body text. */
+export function normalizeTaskUuidForButton(value) {
+  let text = String(value || '').trim();
+  if (!text) return '';
+
+  for (let depth = 0; depth < 4; depth += 1) {
+    for (let i = 0; i < 3; i += 1) {
+      try {
+        const decoded = decodeURIComponent(text);
+        if (decoded === text) break;
+        text = decoded.trim();
+      } catch {
+        break;
+      }
+    }
+
+    try {
+      const url = new URL(text);
+      const nestedTask = url.searchParams.get('task') || url.searchParams.get('task_id');
+      if (nestedTask && nestedTask.trim() !== text) {
+        text = nestedTask.trim();
+        continue;
+      }
+    } catch {
+      // Not a full URL; fall through to UUID extraction.
+    }
+
+    break;
+  }
+
+  return text.match(TASK_UUID_RE)?.[0] || '';
+}
+
+/** Builds the owner-decision Utility template with message text in body and UUID-only Visit Task suffix. */
+export function buildOwnerDecisionTemplatePayload({
+  to,
+  message,
+  templateName,
+  templateLanguage,
+  taskId,
+  taskUuid,
+}) {
+  const buttonTaskUuid = TASK_UUID_EXACT_RE.test(String(taskUuid || ''))
+    ? String(taskUuid).trim()
+    : normalizeTaskUuidForButton(taskId);
+  if (!buttonTaskUuid) {
+    throw new Error('Owner decision Visit Task button requires a task UUID.');
+  }
+
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: templateLanguage },
+      components: [
+        {
+          type: 'body',
+          parameters: [{ type: 'text', text: message }],
+        },
+        {
+          type: 'button',
+          sub_type: 'url',
+          index: '0',
+          parameters: [{ type: 'text', text: buttonTaskUuid }],
+        },
+      ],
     },
   };
 }

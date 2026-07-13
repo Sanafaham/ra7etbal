@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import handler, { buildRoutineMessagePayload, buildButtonLinkValue } from './send-whatsapp-task.js';
+import handler, { buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildButtonLinkValue } from './send-whatsapp-task.js';
 
 beforeEach(() => {
   vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'test-token');
@@ -91,6 +91,37 @@ describe('routine message shared boundary', () => {
     expect(
       buildButtonLinkValue('https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed', 'task'),
     ).toBe('3dbe480a-c4a0-4680-a5e0-921984a4c0ed');
+  });
+
+  it('builds owner-decision payload with body text only in body and UUID only in the URL button suffix', () => {
+    const taskId = 'd7d760b4-106a-4f83-9ced-06e73c650e60';
+    const message = 'Ghulam, the TEREA Turquoise alternative was approved. Please go ahead.';
+    const payload = buildOwnerDecisionTemplatePayload({
+      to: '905010589614',
+      message,
+      templateName: 'ra7etbal_owner_decision',
+      templateLanguage: 'en_US',
+      taskId: `https://www.ra7etbal.com/confirm?task=${taskId}`,
+    });
+
+    expect(payload.template.components).toEqual([
+      {
+        type: 'body',
+        parameters: [{ type: 'text', text: message }],
+      },
+      {
+        type: 'button',
+        sub_type: 'url',
+        index: '0',
+        parameters: [{ type: 'text', text: taskId }],
+      },
+    ]);
+    const buttonSuffix = payload.template.components[1].parameters[0].text;
+    expect(buttonSuffix).not.toContain(message);
+    expect(buttonSuffix).not.toContain('https://www.ra7etbal.com/confirm?task=');
+    expect(`https://www.ra7etbal.com/confirm?task=${buttonSuffix}`).toBe(
+      'https://www.ra7etbal.com/confirm?task=d7d760b4-106a-4f83-9ced-06e73c650e60',
+    );
   });
 
   it('rejects task/delegation sends without a confirmation link', async () => {
