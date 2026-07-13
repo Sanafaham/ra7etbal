@@ -83,6 +83,8 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
     expect(block).toContain("[Session photo update]");
     expect(block).toContain('statusRef.current === "connected"');
     expect(block).toContain("describePhotosForCarson(newPhotos)");
+    expect(block.indexOf('activeChannelRef.current === "voice"'))
+      .toBeLessThan(block.indexOf("describePhotosForCarson(newPhotos)"));
     expect(block).toContain("if (photoRevisionRef.current !== revision) return");
     expect(block).toContain('activeChannelRef.current === "voice"');
     expect(block).toContain("Typed attachments are intentionally different");
