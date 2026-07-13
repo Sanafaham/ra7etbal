@@ -1073,7 +1073,11 @@ export default function ElevenLabsAgentWidget({
     // until the owner presses Send. Sending a contextual update here can make
     // the agent associate a newly-selected photo with the previous typed turn
     // and execute that old instruction before the new message exists.
-    if (statusRef.current === "connected" && conversationRef.current) {
+    if (
+      activeChannelRef.current === "voice" &&
+      statusRef.current === "connected" &&
+      conversationRef.current
+    ) {
       describePhotosForCarson(newPhotos)
         .then((description) => {
           if (photoRevisionRef.current !== revision) return;
@@ -5679,6 +5683,13 @@ export default function ElevenLabsAgentWidget({
                 typedResponseTimeoutRef.current = null;
               }
               const pendingClientMessageId = pendingTypedClientMessageIdRef.current;
+              if (pendingTypedClientMessageIdRef.current === pendingClientMessageId) {
+                // Revoke this typed turn's tool authority synchronously when
+                // Carson's reply arrives. Persistence below is asynchronous;
+                // restored context must not be able to invoke another tool
+                // while that database write is still in flight.
+                pendingTypedClientMessageIdRef.current = null;
+              }
               if (pendingClientMessageId && pendingPhotosRef.current.length > 0) {
                 // Typed photos belong to exactly one submitted turn. Once
                 // Carson answers, remove them so a later message cannot reuse
@@ -5734,9 +5745,6 @@ export default function ElevenLabsAgentWidget({
                     );
                   })
                   .finally(() => {
-                    if (pendingTypedClientMessageIdRef.current === pendingClientMessageId) {
-                      pendingTypedClientMessageIdRef.current = null;
-                    }
                     typedSubmitInFlightRef.current = false;
                     setTypedAwaitingResponse(false);
                     setTurnPhase("idle");
