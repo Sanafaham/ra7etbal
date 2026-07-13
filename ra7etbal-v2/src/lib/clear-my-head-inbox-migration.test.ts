@@ -35,9 +35,10 @@ describe("clear_my_head_inbox → carson_notes migration", () => {
     expect(SQL).toMatch(/select c\.user_id, c\.text, 'general', 'clear_my_head_migration', c\.created_at/);
   });
 
-  it("does not drop or truncate the source table", () => {
-    expect(SQL.toLowerCase()).not.toContain("drop table");
-    expect(SQL.toLowerCase()).not.toContain("truncate");
-    expect(SQL.toLowerCase()).not.toContain("delete from clear_my_head_inbox");
+  it("does not drop, truncate, or delete rows from the source table", () => {
+    const lower = SQL.toLowerCase();
+    expect(lower).not.toContain("drop table");
+    expect(lower).not.toContain("truncate");
+    expect(lower).not.toMatch(/delete\s+from\s+(public\.)?clear_my_head_inbox/);
   });
 });
