@@ -161,6 +161,10 @@ const GUEST_COUNT_RE =
 const HOME_LOCATION_RE = /\b(?:at\s+home|in\s+the\s+(garden|dining\s+room|salon|majlis|kitchen|terrace|patio)|outside|inside|outdoors?|indoors?)\b/i;
 const SPECIFIC_LOCATION_RE = /\b(?:in|on|at)\s+(?:the\s+)?(garden|dining\s+room|salon|majlis|terrace|patio|pool\s+area|living\s+room|kitchen)\b/i;
 const MENU_RE = /\b(?:serve|serving|with|menu|food|prepare)\s+([^.!?;]+)/i;
+const MENU_ITEM_RE =
+  /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/i;
+const MENU_ITEM_TOKEN_RE =
+  /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/ig;
 const PERMISSION_TO_SUGGEST_MENU_RE =
   /\b(?:you choose|choose (?:the )?menu|suggest (?:a )?menu|carson chooses?|whatever you think|up to you|decide (?:the )?menu)\b/i;
 const DIETARY_RE =
@@ -219,8 +223,29 @@ function inferGuestCount(text: string): string | null {
 function inferMenu(text: string): string | null {
   if (PERMISSION_TO_SUGGEST_MENU_RE.test(text)) return "Carson may suggest or choose the menu";
   const menu = text.match(MENU_RE)?.[1];
-  if (!menu) return null;
-  const cleaned = cleanMatchedText(menu.replace(/\b(?:by|at|in|on)\s+\d.*$/i, ""));
+  if (menu) {
+    const cleaned = cleanMatchedText(menu.replace(/\b(?:by|at|in|on)\s+\d.*$/i, ""));
+    if (cleaned && cleaned.length >= 4) return cleaned;
+  }
+
+  const fallbackText = text.includes("Clarification details:")
+    ? text.slice(text.lastIndexOf("Clarification details:") + "Clarification details:".length)
+    : text;
+  const sentences = fallbackText
+    .split(/[.!?;]+/)
+    .map((sentence) => cleanMatchedText(sentence))
+    .filter((sentence): sentence is string => Boolean(sentence));
+  const menuSentence = sentences.find((sentence) => {
+    if (!MENU_ITEM_RE.test(sentence)) return false;
+    const menuItemCount = Array.from(sentence.matchAll(MENU_ITEM_TOKEN_RE)).length;
+    MENU_ITEM_TOKEN_RE.lastIndex = 0;
+    if (menuItemCount < 2 && !sentence.includes(",")) return false;
+    if (/\b(?:afternoon|high|morning)\s+tea\b/i.test(sentence)) return false;
+    if (/^(?:at|by|in|on|use|no dietary|dietary|allerg|with no dietary)\b/i.test(sentence)) return false;
+    if (CHINA_RE.test(sentence) && !MENU_ITEM_RE.test(sentence.replace(CHINA_RE, ""))) return false;
+    return true;
+  });
+  const cleaned = cleanMatchedText(menuSentence);
   if (!cleaned || cleaned.length < 4) return null;
   return cleaned;
 }
