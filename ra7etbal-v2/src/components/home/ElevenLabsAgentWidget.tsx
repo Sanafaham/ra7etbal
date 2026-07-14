@@ -6082,6 +6082,11 @@ export default function ElevenLabsAgentWidget({
           `Carson replied, but the conversation could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
         );
       } finally {
+        void updateTypedUserMessage({
+          clientMessageId: input.replyToClientMessageId,
+          deliveryStatus: "responded",
+          elevenlabsConversationId: typedConversationIdRef.current,
+        }).catch(() => {});
         pendingTypedClientMessageIdRef.current = null;
         typedSubmitInFlightRef.current = false;
         setTypedAwaitingResponse(false);

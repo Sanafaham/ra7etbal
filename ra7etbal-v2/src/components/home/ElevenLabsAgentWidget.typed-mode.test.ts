@@ -151,6 +151,33 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(sendBlock).toContain('turn.action === "cancelled"');
   });
 
+  it("marks local typed hosting replies responded in the durable user row", () => {
+    const helperBlock = blockBetween(
+      "const persistLocalTypedAgentReply = useCallback(",
+      "  const sendTypedMessage = useCallback(async () => {",
+    );
+    expect(helperBlock).toContain("updateTypedUserMessage({");
+    expect(helperBlock).toContain("clientMessageId: input.replyToClientMessageId");
+    expect(helperBlock).toContain('deliveryStatus: "responded"');
+    expect(helperBlock).toContain("elevenlabsConversationId: typedConversationIdRef.current");
+
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    for (const requiredText of [
+      "You are not signed in. Please sign in and try again.",
+      'turn.action === "executed"',
+      'turn.action === "cancelled"',
+      'hostingGate.status === "needs_clarification"',
+      "I couldn't put that guest plan together right now. Please try again.",
+      "content: plan.proposalSpeech",
+    ]) {
+      expect(sendBlock).toContain(requiredText);
+    }
+    expect(sendBlock.split("persistLocalTypedAgentReply({").length - 1).toBeGreaterThanOrEqual(6);
+  });
+
   it("blocks empty Enter submissions while preserving IME and Shift+Enter behavior", () => {
     expect(TYPED_CHAT_SOURCE).toContain("!event.nativeEvent.isComposing &&\n              value.trim()");
     expect(TYPED_CHAT_SOURCE).toContain("!event.shiftKey");
