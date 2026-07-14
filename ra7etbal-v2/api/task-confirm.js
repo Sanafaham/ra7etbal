@@ -446,10 +446,21 @@ async function handlePost(req, res) {
         }
       }
 
+      const activeCustomInstruction =
+        task.proof_image_path && !task.quality_review_status
+          ? await fetchLatestCompletedCustomInstruction({ supabaseUrl, serviceKey, taskId })
+          : null;
+      const reviewTaskDescription = activeCustomInstruction || task.description;
+      const reviewDelegationMessage = activeCustomInstruction || null;
+
       step = 'load_review_images';
       const [delegationMessage, referenceImageBase64, proofImagesBase64] = await Promise.all([
-        fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }),
-        downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath: task.image_path }),
+        reviewDelegationMessage
+          ? Promise.resolve(reviewDelegationMessage)
+          : fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }),
+        activeCustomInstruction
+          ? Promise.resolve(null)
+          : downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath: task.image_path }),
         Promise.all(
           proofImagePaths.map((imagePath) => downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath })),
         ),
@@ -458,7 +469,7 @@ async function handlePost(req, res) {
       step = 'quality_review';
       review = await runQualityReview({
         apiKey,
-        taskDescription: task.description,
+        taskDescription: reviewTaskDescription,
         delegationMessage,
         referenceImageBase64,
         proofImagesBase64,
@@ -1264,6 +1275,29 @@ async function fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }
     if (!response.ok) return null;
     const rows = await response.json();
     return Array.isArray(rows) && rows[0]?.content ? rows[0].content : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchLatestCompletedCustomInstruction({ supabaseUrl, serviceKey, taskId }) {
+  try {
+    const response = await fetch(
+      supabaseUrl + '/rest/v1/quality_substitute_decisions?task_id=eq.' + encodeURIComponent(taskId) +
+        '&decision=eq.custom_instruction&status=eq.completed&outcome=eq.custom_instruction_sent' +
+        '&select=requested_instruction&order=completed_at.desc&limit=1',
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: 'Bearer ' + serviceKey,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    if (!response.ok) return null;
+    const rows = await response.json();
+    const instruction = Array.isArray(rows) ? rows[0]?.requested_instruction : null;
+    return typeof instruction === 'string' && instruction.trim() ? instruction.trim() : null;
   } catch {
     return null;
   }

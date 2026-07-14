@@ -261,6 +261,76 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     ).toBe(false);
   });
 
+  it('Custom Instruction source of truth: "get two Turquoise" overrides the original Silver target and completes with one confirmed owner push', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Two TEREA Turquoise packs are shown.' });
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+    downloadImageAsBase64Mock
+      .mockReset()
+      .mockResolvedValueOnce('proof-turquoise-1')
+      .mockResolvedValueOnce('proof-turquoise-2');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'Buy TEREA Silver.',
+        assigned_to: 'Ghulam',
+        image_path: 'task-images/u/t/silver-reference.jpg',
+        proof_image_path: 'task-images/u/t/old-silver-alternative-proof.jpg',
+        attachment_count: 0,
+        quality_review_status: null,
+        quality_review_cycle_count: 0,
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ requested_instruction: 'Get two TEREA Turquoise.' }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done, approved
+      .mockResolvedValueOnce(emptyResponse()) // DELETE proof attachments
+      .mockResolvedValueOnce(emptyResponse()) // INSERT proof attachments
+      .mockResolvedValueOnce(emptyResponse()) // confirmations insert
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])); // completion owner push
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        taskId: 'task-1',
+        proofImagePaths: ['task-images/u/t/proof/0.jpg', 'task-images/u/t/proof/1.jpg'],
+      }),
+      res,
+    );
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
+    expect(runQualityReviewMock).toHaveBeenCalledTimes(1);
+    expect(runQualityReviewMock).toHaveBeenCalledWith(expect.objectContaining({
+      taskDescription: 'Get two TEREA Turquoise.',
+      delegationMessage: 'Get two TEREA Turquoise.',
+      referenceImageBase64: null,
+      proofImagesBase64: ['proof-turquoise-1', 'proof-turquoise-2'],
+    }));
+    expect(downloadImageAsBase64Mock).toHaveBeenCalledTimes(2);
+    expect(downloadImageAsBase64Mock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ imagePath: 'task-images/u/t/silver-reference.jpg' }),
+    );
+
+    const customInstructionLookup = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/quality_substitute_decisions'));
+    expect(String(customInstructionLookup?.[0])).toContain('decision=eq.custom_instruction');
+    expect(String(customInstructionLookup?.[0])).toContain('outcome=eq.custom_instruction_sent');
+
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.status).toBe('done');
+    expect(patchBody.needs_follow_up).toBe(false);
+    expect(patchBody.quality_review_status).toBe('approved');
+    expect(patchBody.quality_review_note).toBe('Two TEREA Turquoise packs are shown.');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(true);
+    expect(vi.mocked(webpush.sendNotification)).toHaveBeenCalledTimes(1);
+    const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
+    expect(pushPayload.body).toBe('Ghulam confirmed: Buy TEREA Silver.');
+    expect(pushPayload.body).not.toMatch(/sent an alternative/i);
+  });
+
   it('approved review with 3 proof photos: all 3 sent to the vision review together, all 3 persisted', async () => {
     runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'All three angles confirm it.' });
     downloadImageAsBase64Mock
