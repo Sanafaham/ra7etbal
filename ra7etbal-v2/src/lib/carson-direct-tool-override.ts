@@ -40,9 +40,26 @@ const OVERRIDABLE_TOOL_NAMES = new Set([
   "execute_instruction",
   "control_task",
   "send_delegation",
+  "save_note",
 ]);
 
 const OVERRIDE_WINDOW_MS = 15_000;
+
+// Production bug (2026-07-13): Carson replied "Saved." to an explicit note
+// request ("Note that I would like to make call Carson feature...") with no
+// corresponding carson_notes row ever created — no save_note tool call
+// succeeded (or ran at all) that turn, yet the agent's own separately
+// generated reply still claimed success. The override above only corrects a
+// contradiction against a tool call that DID run; it does nothing when no
+// tool ran at all. This pattern set is intentionally broader than (and
+// separate from) note-routing.ts's hasExplicitNoteIntent, which classifies
+// Clear My Head extraction items — this one only gates a safety-net
+// truthfulness check, not what gets created.
+const EXPLICIT_NOTE_REQUEST_PATTERN =
+  /\bnote\s+(?:that|to\s+\w+)\b|\bplease\s+note\b|\bmake\s+a\s+note\b|\bsave\s+(?:this|that)\s+(?:note|idea|thought)\b|\bremember\s+this\s+(?:idea|thought|information)\b|\bhold\s+this\s+thought\b|\badd\s+this\s+to\s+(?:my\s+)?notes\b/i;
+
+const NOTE_SAVE_CONFIRMATION_PATTERN =
+  /\b(?:saved|noted|added\s+(?:that|it)?\s*to\s+your\s+notes)\b/i;
 
 const FAILURE_LANGUAGE_PATTERN =
   /wasn['’]?t able|couldn['’]?t complete|don['’]?t have (?:the )?ability|cannot directly|can['’]?t directly|directly close|try again|technical issue|\bsupport\b/i;
@@ -119,19 +136,60 @@ export function resolveCarsonDisplayMessage(
   return lastSuccess.resultText;
 }
 
+/**
+ * save_note's outcome for the CURRENT user turn only. Deliberately NOT a
+ * DirectToolSuccessResult / time-window check: CodeRabbit correctly flagged
+ * that a shared 15-second window would let an unrelated tool's (or an
+ * earlier turn's) success suppress the fabrication check for a LATER note
+ * request inside that same window. The caller is responsible for resetting
+ * this to null at every new-turn boundary (voice: a fresh transcript
+ * arrives; typed: a message is submitted) — see noteSaveOutcomeRef in
+ * ElevenLabsAgentWidget.tsx.
+ */
+export interface NoteSaveOutcome {
+  outcome: "success" | "failure";
+  resultText: string;
+  at: string;
+}
+
+/**
+ * True when the previous owner message reads as an explicit note-saving
+ * request, the agent's reply claims that request was saved, and save_note
+ * did not verifiably succeed THIS turn — i.e. Carson is about to (or did)
+ * narrate a save that never happened.
+ */
+export function detectsUnconfirmedNoteSaveClaim(
+  agentMessage: string,
+  previousUserMessage: string,
+  noteSaveOutcome: NoteSaveOutcome | null,
+): boolean {
+  if (!EXPLICIT_NOTE_REQUEST_PATTERN.test(previousUserMessage)) return false;
+  if (!NOTE_SAVE_CONFIRMATION_PATTERN.test(agentMessage)) return false;
+  return noteSaveOutcome?.outcome !== "success";
+}
+
 interface ResolveSanitizedCarsonDisplayMessageInput {
   agentMessage: string;
   previousUserMessage?: string;
   lastSuccess: DirectToolSuccessResult | null;
+  noteSaveOutcome?: NoteSaveOutcome | null;
   now?: number;
 }
+
+const UNCONFIRMED_NOTE_SAVE_REPLY =
+  "I couldn't confirm that was saved. Please say it again so I can save it properly.";
 
 export function resolveSanitizedCarsonDisplayMessage({
   agentMessage,
   previousUserMessage = "",
   lastSuccess,
+  noteSaveOutcome = null,
   now = Date.now(),
 }: ResolveSanitizedCarsonDisplayMessageInput): string {
+  if (detectsUnconfirmedNoteSaveClaim(agentMessage, previousUserMessage, noteSaveOutcome)) {
+    return sanitizeCarsonReplyText(UNCONFIRMED_NOTE_SAVE_REPLY);
+  }
+
   const toolAwareMessage = resolveCarsonDisplayMessage(agentMessage, lastSuccess, now);
   return sanitizeCarsonReplyText(
     isSocialAcknowledgement(previousUserMessage)
