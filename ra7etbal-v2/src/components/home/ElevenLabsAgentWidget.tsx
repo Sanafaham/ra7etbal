@@ -89,7 +89,7 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
-import { resolveSanitizedCarsonDisplayMessage, type DirectToolSuccessResult } from "../../lib/carson-direct-tool-override";
+import { resolveSanitizedCarsonDisplayMessage, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
 import {
   executeVoiceTaskControl,
   resolveVoiceTaskControl,
@@ -1211,11 +1211,7 @@ export default function ElevenLabsAgentWidget({
    * check for a LATER turn's note request within that same window. This ref
    * can never leak across turns because it's nulled at every turn boundary.
    */
-  const noteSaveOutcomeRef = useRef<{
-    outcome: "success" | "failure";
-    resultText: string;
-    at: string;
-  } | null>(null);
+  const noteSaveOutcomeRef = useRef<NoteSaveOutcome | null>(null);
 
   /**
    * Last user utterance that contained recurring language, captured in onMessage
@@ -2756,6 +2752,10 @@ export default function ElevenLabsAgentWidget({
       note: string;
       category?: string;
     }): Promise<string> => {
+      // Clear any prior tool's recorded outcome immediately, matching
+      // createReminder/createAutomation — a validation failure below must
+      // never inherit a stale, unrelated success/failure result.
+      lastDirectToolSuccessRef.current = null;
       const trimmed = extractNoteParam(params).trim();
       const category = params?.category;
       if (!trimmed) {

@@ -90,7 +90,23 @@ describe("ElevenLabsAgentWidget — save_note truthfulness (2026-07-14 fix)", ()
     expect(block).toContain("noteSaveOutcomeRef.current = null");
   });
 
-  it("noteSaveOutcomeRef is a dedicated ref, separate from the shared lastDirectToolSuccessRef", () => {
-    expect(SOURCE).toContain("const noteSaveOutcomeRef = useRef<{");
+  it("noteSaveOutcomeRef is a dedicated ref, separate from the shared lastDirectToolSuccessRef, typed via the shared NoteSaveOutcome type", () => {
+    expect(SOURCE).toContain("const noteSaveOutcomeRef = useRef<NoteSaveOutcome | null>(null);");
+    expect(SOURCE).toContain("type NoteSaveOutcome } from \"../../lib/carson-direct-tool-override\"");
+  });
+
+  // CodeRabbit finding (2026-07-14): sibling tools (createReminder,
+  // createAutomation) clear lastDirectToolSuccessRef at entry so a
+  // validation failure can't inherit a stale, unrelated success/failure
+  // result. save_note must do the same.
+  it("clears lastDirectToolSuccessRef at entry, before the empty-note validation return", () => {
+    const block = blockBetween(
+      "const saveNote = useCallback(",
+      "  // ------------------------------------------------------------------\n  // Client tool: create_todo",
+    );
+    const clearIndex = block.indexOf("lastDirectToolSuccessRef.current = null;");
+    const validationIndex = block.indexOf("if (!trimmed) {");
+    expect(clearIndex).toBeGreaterThan(-1);
+    expect(clearIndex).toBeLessThan(validationIndex);
   });
 });
