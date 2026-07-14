@@ -419,6 +419,23 @@ describe("resolveSanitizedCarsonDisplayMessage", () => {
 // only corrected a reply that contradicted a tool call that DID run; it did
 // nothing when no tool ran at all for an explicit note request. These tests
 // lock in the new fabricated-success guard.
+//
+// noteSaveOutcome is turn-scoped by the CALLER (reset to null at every new
+// voice/typed turn boundary — see noteSaveOutcomeRef in
+// ElevenLabsAgentWidget.tsx), not by this function. A CodeRabbit finding on
+// the first version of this fix pointed out that reusing the shared,
+// time-windowed lastDirectToolSuccessRef here would let an unrelated tool's
+// (or an earlier turn's) success suppress this guard for a later turn's
+// note request within the same 15s window — this function intentionally
+// takes only the dedicated, turn-scoped outcome instead.
+function noteSaveSuccess(overrides: Partial<{ resultText: string; at: string }> = {}) {
+  return { outcome: "success" as const, resultText: "Saved.", at: new Date(NOW).toISOString(), ...overrides };
+}
+
+function noteSaveFailure(overrides: Partial<{ resultText: string; at: string }> = {}) {
+  return { outcome: "failure" as const, resultText: "Could not save the note.", at: new Date(NOW).toISOString(), ...overrides };
+}
+
 describe("detectsUnconfirmedNoteSaveClaim", () => {
   it("flags the exact reported production scenario: explicit note request, 'Saved.' reply, no tool ran", () => {
     expect(
@@ -426,47 +443,33 @@ describe("detectsUnconfirmedNoteSaveClaim", () => {
         "Saved.",
         "Note that I would like to make call Carson feature in the app at a later stage",
         null,
-        NOW,
       ),
     ).toBe(true);
   });
 
-  it("does not flag when a real save_note success backs up the claim", () => {
+  it("does not flag when a real save_note success backs up the claim this turn", () => {
     expect(
       detectsUnconfirmedNoteSaveClaim(
         "Saved.",
         "Note that I want to build a flight simulator",
-        successResult({ toolName: "save_note", resultText: "Saved.", at: new Date(NOW).toISOString() }),
-        NOW,
+        noteSaveSuccess(),
       ),
     ).toBe(false);
   });
 
-  it("does not flag when a verified save_note failure is on record — that's the other override's job", () => {
+  it("still flags when a verified save_note failure is on record this turn — the reply is fabricated either way", () => {
     expect(
       detectsUnconfirmedNoteSaveClaim(
         "Saved.",
         "Note that I want to build a flight simulator",
-        failureResult({ toolName: "save_note", resultText: "Could not save the note.", at: new Date(NOW).toISOString() }),
-        NOW,
+        noteSaveFailure(),
       ),
     ).toBe(true);
-  });
-
-  it("does not flag when a different tool genuinely succeeded this turn (ambiguous phrasing, real action happened)", () => {
-    expect(
-      detectsUnconfirmedNoteSaveClaim(
-        "Saved.",
-        "Note: buy milk",
-        successResult({ toolName: "create_todo", resultText: "Added to your to-do list.", at: new Date(NOW).toISOString() }),
-        NOW,
-      ),
-    ).toBe(false);
   });
 
   it("does not flag when the previous message isn't an explicit note request", () => {
     expect(
-      detectsUnconfirmedNoteSaveClaim("Saved.", "What's on my to-do list?", null, NOW),
+      detectsUnconfirmedNoteSaveClaim("Saved.", "What's on my to-do list?", null),
     ).toBe(false);
   });
 
@@ -476,20 +479,8 @@ describe("detectsUnconfirmedNoteSaveClaim", () => {
         "Got it, anything else?",
         "Note that I want to build a flight simulator",
         null,
-        NOW,
       ),
     ).toBe(false);
-  });
-
-  it("does not flag once the recorded success is outside the time window (stale success doesn't count either)", () => {
-    expect(
-      detectsUnconfirmedNoteSaveClaim(
-        "Saved.",
-        "Note that I want to build a flight simulator",
-        successResult({ toolName: "save_note", resultText: "Saved.", at: "2026-06-28T00:01:00.000Z" }),
-        NOW,
-      ),
-    ).toBe(true);
   });
 });
 
@@ -516,6 +507,7 @@ describe("resolveSanitizedCarsonDisplayMessage — unconfirmed note save", () =>
         resultText: "Saved.",
         at: new Date(NOW).toISOString(),
       }),
+      noteSaveOutcome: noteSaveSuccess(),
       now: NOW,
     });
     expect(result).toBe("Saved.");

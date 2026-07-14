@@ -1201,6 +1201,23 @@ export default function ElevenLabsAgentWidget({
   const lastDirectToolSuccessRef = useRef<DirectToolSuccessResult | null>(null);
 
   /**
+   * save_note's outcome for the CURRENT user turn only — reset to null the
+   * moment a new turn starts (a fresh voice transcript arrives, or a typed
+   * message is submitted) and set only by save_note itself. Deliberately
+   * separate from lastDirectToolSuccessRef, which is shared across every
+   * direct tool and only time-windowed (15s): CodeRabbit correctly flagged
+   * that time-windowing alone would let an unrelated tool's success from
+   * an earlier turn suppress detectsUnconfirmedNoteSaveClaim's fabrication
+   * check for a LATER turn's note request within that same window. This ref
+   * can never leak across turns because it's nulled at every turn boundary.
+   */
+  const noteSaveOutcomeRef = useRef<{
+    outcome: "success" | "failure";
+    resultText: string;
+    at: string;
+  } | null>(null);
+
+  /**
    * Last user utterance that contained recurring language, captured in onMessage
    * BEFORE the LLM processes it. ElevenLabs sometimes strips recurring language
    * from the `instruction` param passed to execute_instruction, so we capture the
@@ -2749,26 +2766,30 @@ export default function ElevenLabsAgentWidget({
         await saveCarsonNote(trimmed, category ?? "general");
         sessionActionsRef.current.push(`Saved note: ${trimmed}`);
         const resultText = "Saved.";
+        const at = new Date().toISOString();
         lastDirectToolSuccessRef.current = {
           toolName: "save_note",
           resultText,
-          at: new Date().toISOString(),
+          at,
           inputSummary: { note: trimmed },
           outcome: "success",
         };
+        noteSaveOutcomeRef.current = { outcome: "success", resultText, at };
         if (typeof window !== "undefined") {
           window.dispatchEvent(new CustomEvent("ra7etbal:notes-changed"));
         }
         return resultText;
       } catch (err) {
         const resultText = "I couldn't save that note right now. Please try again.";
+        const at = new Date().toISOString();
         lastDirectToolSuccessRef.current = {
           toolName: "save_note",
           resultText,
-          at: new Date().toISOString(),
+          at,
           inputSummary: { note: trimmed },
           outcome: "failure",
         };
+        noteSaveOutcomeRef.current = { outcome: "failure", resultText, at };
         try {
           recordCarsonDiagnostic("carson-direct-tool", {
             toolName: "save_note",
@@ -5319,6 +5340,10 @@ export default function ElevenLabsAgentWidget({
           }
 
           if (role === "user") {
+            // New voice turn starting — a stale note-save outcome from an
+            // earlier, unrelated turn must never be read as "this turn's"
+            // result (see noteSaveOutcomeRef doc comment).
+            noteSaveOutcomeRef.current = null;
 
             const receivedAt = new Date().toISOString();
             const captureEvaluation = evaluateCarsonTranscriptCapture(message);
@@ -5447,6 +5472,7 @@ export default function ElevenLabsAgentWidget({
               agentMessage: message,
               previousUserMessage,
               lastSuccess: lastDirectToolSuccessRef.current,
+              noteSaveOutcome: noteSaveOutcomeRef.current,
             });
             if (!displayMessage || shouldSuppressCarsonIdlePrompt(message)) {
               sessionTranscriptRef.current.pop();
@@ -5890,6 +5916,8 @@ export default function ElevenLabsAgentWidget({
       // restored history or photo-preparation event can invoke a tool. Start
       // the response clock only when this exact owner turn is ready to send.
       pendingTypedClientMessageIdRef.current = clientMessageId;
+      // New typed turn starting — see noteSaveOutcomeRef doc comment.
+      noteSaveOutcomeRef.current = null;
       typedResponseTimeoutRef.current = setTimeout(() => {
         if (pendingTypedClientMessageIdRef.current !== clientMessageId) return;
         typedResponseTimeoutRef.current = null;

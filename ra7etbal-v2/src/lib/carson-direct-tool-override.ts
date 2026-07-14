@@ -136,38 +136,43 @@ export function resolveCarsonDisplayMessage(
   return lastSuccess.resultText;
 }
 
-function isRecentNonFailure(lastSuccess: DirectToolSuccessResult, now: number): boolean {
-  if (lastSuccess.outcome === "failure") return false;
-  const at = Date.parse(lastSuccess.at);
-  return !Number.isNaN(at) && now - at <= OVERRIDE_WINDOW_MS;
+/**
+ * save_note's outcome for the CURRENT user turn only. Deliberately NOT a
+ * DirectToolSuccessResult / time-window check: CodeRabbit correctly flagged
+ * that a shared 15-second window would let an unrelated tool's (or an
+ * earlier turn's) success suppress the fabrication check for a LATER note
+ * request inside that same window. The caller is responsible for resetting
+ * this to null at every new-turn boundary (voice: a fresh transcript
+ * arrives; typed: a message is submitted) — see noteSaveOutcomeRef in
+ * ElevenLabsAgentWidget.tsx.
+ */
+export interface NoteSaveOutcome {
+  outcome: "success" | "failure";
+  resultText: string;
+  at: string;
 }
 
 /**
  * True when the previous owner message reads as an explicit note-saving
- * request, the agent's reply claims that request was saved, and nothing
- * verifiably succeeded this turn to back that claim up — i.e. Carson is
- * about to (or did) narrate a save that never happened. Deliberately does
- * NOT fire when ANY other tool genuinely succeeded this turn (the user's
- * phrasing can be ambiguous between a note and another action; if something
- * real happened, don't second-guess it just because the wording was
- * generic).
+ * request, the agent's reply claims that request was saved, and save_note
+ * did not verifiably succeed THIS turn — i.e. Carson is about to (or did)
+ * narrate a save that never happened.
  */
 export function detectsUnconfirmedNoteSaveClaim(
   agentMessage: string,
   previousUserMessage: string,
-  lastSuccess: DirectToolSuccessResult | null,
-  now: number = Date.now(),
+  noteSaveOutcome: NoteSaveOutcome | null,
 ): boolean {
   if (!EXPLICIT_NOTE_REQUEST_PATTERN.test(previousUserMessage)) return false;
   if (!NOTE_SAVE_CONFIRMATION_PATTERN.test(agentMessage)) return false;
-  if (lastSuccess && isRecentNonFailure(lastSuccess, now)) return false;
-  return true;
+  return noteSaveOutcome?.outcome !== "success";
 }
 
 interface ResolveSanitizedCarsonDisplayMessageInput {
   agentMessage: string;
   previousUserMessage?: string;
   lastSuccess: DirectToolSuccessResult | null;
+  noteSaveOutcome?: NoteSaveOutcome | null;
   now?: number;
 }
 
@@ -178,9 +183,10 @@ export function resolveSanitizedCarsonDisplayMessage({
   agentMessage,
   previousUserMessage = "",
   lastSuccess,
+  noteSaveOutcome = null,
   now = Date.now(),
 }: ResolveSanitizedCarsonDisplayMessageInput): string {
-  if (detectsUnconfirmedNoteSaveClaim(agentMessage, previousUserMessage, lastSuccess, now)) {
+  if (detectsUnconfirmedNoteSaveClaim(agentMessage, previousUserMessage, noteSaveOutcome)) {
     return sanitizeCarsonReplyText(UNCONFIRMED_NOTE_SAVE_REPLY);
   }
 

@@ -3,7 +3,7 @@
  * Note actions: Remind Me + Delegate visible; Make Task / Add to Calendar / Delete in ··· overflow.
  * Refresh on mount only — no visible refresh button.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AuthNotice from "../components/auth/AuthNotice";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
@@ -73,15 +73,24 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
     return notes.filter((n) => n.note.toLowerCase().includes(q) || (n.category ?? "").toLowerCase().includes(q));
   }, [notes, searchQuery]);
 
+  // Mount-triggered and notes-changed-triggered reloads can overlap; if the
+  // older request resolves last it must not overwrite a newer one's result
+  // (CodeRabbit finding, 2026-07-14). Only the reload that was most recently
+  // started is allowed to apply its result.
+  const reloadGenerationRef = useRef(0);
+
   async function reload() {
     if (!userId) return;
+    const generation = ++reloadGenerationRef.current;
     setStatus((s) => s === "ready" ? "ready" : "loading");
     setError(null);
     try {
       const loaded = await loadRecentNotes(100);
+      if (reloadGenerationRef.current !== generation) return;
       setNotes(loaded);
       setStatus("ready");
     } catch (err) {
+      if (reloadGenerationRef.current !== generation) return;
       setError(err instanceof Error ? err.message : "Could not load notes.");
       setStatus("error");
     }

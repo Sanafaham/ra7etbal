@@ -63,9 +63,34 @@ describe("ElevenLabsAgentWidget — save_note truthfulness (2026-07-14 fix)", ()
   it("the shared onMessage handler resolves the agent's reply through the truthfulness override for both channels", () => {
     expect(SOURCE).toContain("const displayMessage = resolveSanitizedCarsonDisplayMessage({");
     expect(SOURCE).toContain("lastSuccess: lastDirectToolSuccessRef.current");
+    expect(SOURCE).toContain("noteSaveOutcome: noteSaveOutcomeRef.current");
     // Not gated on requestedChannel — same resolution path for voice and typed.
     const resolveIndex = SOURCE.indexOf("const displayMessage = resolveSanitizedCarsonDisplayMessage({");
     const channelGateIndex = SOURCE.indexOf('if (requestedChannel === "text") {', resolveIndex);
     expect(channelGateIndex).toBeGreaterThan(resolveIndex);
+  });
+
+  // CodeRabbit finding (2026-07-14): the first version of this fix reused
+  // the shared, time-windowed lastDirectToolSuccessRef for the fabrication
+  // check, which would let an unrelated tool's (or an earlier turn's)
+  // success suppress the guard for a LATER turn's note request inside that
+  // same 15s window. noteSaveOutcomeRef must instead be reset to null at
+  // every new-turn boundary, for both channels, so it can never leak across
+  // turns or tools regardless of timing.
+  it("resets noteSaveOutcomeRef to null at the start of every voice turn", () => {
+    const block = blockBetween('if (role === "user") {', "const receivedAt = new Date().toISOString();");
+    expect(block).toContain("noteSaveOutcomeRef.current = null");
+  });
+
+  it("resets noteSaveOutcomeRef to null at the start of every typed turn", () => {
+    const block = blockBetween(
+      "pendingTypedClientMessageIdRef.current = clientMessageId;",
+      "typedResponseTimeoutRef.current = setTimeout(",
+    );
+    expect(block).toContain("noteSaveOutcomeRef.current = null");
+  });
+
+  it("noteSaveOutcomeRef is a dedicated ref, separate from the shared lastDirectToolSuccessRef", () => {
+    expect(SOURCE).toContain("const noteSaveOutcomeRef = useRef<{");
   });
 });
