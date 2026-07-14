@@ -111,7 +111,7 @@ vi.mock("./supabase", () => ({
                 due_at: null,
                 created_at: new Date().toISOString(),
                 assigned_to: "Grace",
-                confirmation_url: "https://ra7etbal.com/confirm?task=task-delegate-1",
+                confirmation_url: "https://www.ra7etbal.com/confirm?task=task-delegate-1",
               },
               error: null,
             })),
@@ -122,10 +122,9 @@ vi.mock("./supabase", () => ({
   },
 }));
 
-// savePending builds a confirmation URL from window.location.origin for
-// delegation items; this suite runs in vitest's default node environment
-// (no jsdom), so stub the one property it reads.
-vi.stubGlobal("window", { location: { origin: "https://ra7etbal.com" } });
+// Delegation confirmation links must stay on the production worker-facing
+// domain even when the owner is testing from a preview origin.
+vi.stubGlobal("window", { location: { origin: "https://ra7etbal-v2-preview.vercel.app" } });
 
 import { savePending } from "./save";
 import { uploadTaskImage } from "./image-upload";
@@ -291,19 +290,19 @@ describe("savePending — Clear My Head routing (Notes/To-do/Reminder/Delegation
     expect(result.messages).toHaveLength(1);
     const task = result.tasks[0];
     expect(task.image_path).toBe(`task-images/user-1/${task.id}/photo.jpg`);
-    expect(task.confirmation_url).toBe(`https://ra7etbal.com/confirm?task=${task.id}`);
+    expect(task.confirmation_url).toBe(`https://www.ra7etbal.com/confirm?task=${task.id}`);
     expect(result.imagePathsByTaskId.get(task.id)).toBe(task.image_path);
     expect(calls.createTask[0]).toMatchObject({
       id: task.id,
       type: "delegation",
       assigned_to: "Grace",
       image_path: task.image_path,
-      confirmation_url: `https://ra7etbal.com/confirm?task=${task.id}`,
+      confirmation_url: `https://www.ra7etbal.com/confirm?task=${task.id}`,
     });
     expect(calls.createMessage[0]).toMatchObject({
       task_id: task.id,
       recipient: "Grace",
-      confirmation_url: `https://ra7etbal.com/confirm?task=${task.id}`,
+      confirmation_url: `https://www.ra7etbal.com/confirm?task=${task.id}`,
     });
     expect(calls.scheduleEscalationMessages).toEqual([[task.id, task.created_at]]);
   });

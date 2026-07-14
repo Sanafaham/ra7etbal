@@ -22,7 +22,9 @@ vi.mock("./delegation-message", () => ({
 
 const {
   buildDeterministicGuestPreparationTasks,
+  buildHostingEventBrief,
   detectHouseholdOutcome,
+  evaluateHostingPlanningGate,
   executeProposedPlan,
   handlePendingPlanTurn,
   hasOperatingAuthority,
@@ -116,28 +118,44 @@ describe("guest preparation operational planning", () => {
   });
 
   it("creates separate dinner, hospitality, and coordinator delegations", () => {
-    const tasks = buildDeterministicGuestPreparationTasks(guestTeam());
+    const tasks = buildDeterministicGuestPreparationTasks(
+      guestTeam(),
+      "Afternoon tea today at 4:30 PM in the garden for three guests. Serve sandwiches, scones, cakes, tea, coffee, and water. No dietary restrictions. Use the blue china and simple flowers.",
+    );
 
-    expect(tasks).toEqual([
-      expect.objectContaining({
-        personName: "Christopher",
-        message: "Please prepare the food and tea.",
-      }),
-      expect.objectContaining({
-        personName: "Nasira",
-        message: "Please handle the hospitality setup and table presentation.",
-      }),
-      expect.objectContaining({
-        personName: "Grace",
-        message: "Please coordinate with Christopher and Nasira and follow up that everything is ready.",
-      }),
-    ]);
+    expect(tasks.map((task) => task.personName)).toEqual(["Christopher", "Nasira", "Grace"]);
+    for (const task of tasks) {
+      expect(task.message).toContain("Sana is hosting afternoon tea for three guests today at 4:30 PM in the garden.");
+      expect(task.message).toMatch(/today/);
+      expect(task.message).toMatch(/4:30 PM/);
+      expect(task.message).toMatch(/garden/);
+    }
+    expect(tasks[0].message).toMatch(/sandwiches, scones, cakes, tea, coffee, and water/i);
+    expect(tasks[1].message).toMatch(/blue china|flowers/i);
+    expect(tasks[2].message).toMatch(/Checkpoints: confirm with Christopher.*confirm with Nasira/i);
+  });
+
+  it("formats hosting worker messages naturally for relative dates and indoor locations", () => {
+    const tasks = buildDeterministicGuestPreparationTasks(
+      guestTeam(),
+      "Afternoon tea today at 4:00 PM inside for three guests. Serve mini sandwiches, mini cakes, pastries, tea, coffee, and water. No dietary restrictions. Use the pink floral china, pink flowers, and silver cutlery.",
+    );
+
+    for (const task of tasks) {
+      expect(task.message).toContain("Sana is hosting afternoon tea for three guests today at 4:00 PM inside.");
+      expect(task.message).not.toMatch(/\bon today\b/i);
+      expect(task.message).not.toMatch(/\bin inside\b/i);
+      expect(task.message).not.toMatch(/\bsana is hosting\b/);
+    }
+    expect(tasks[0].message).toContain("afternoon tea today at 4:00 PM inside");
+    expect(tasks[1].message).toContain("pink floral china");
+    expect(tasks[1].message).toContain("pink flowers");
   });
 
   it("repairs a collapsed single-owner guest plan before persistence or execution", () => {
     const collapsed = normalizeGuestPreparationPlan({
       outcomeType: "guest_arrival",
-      sourceText: "I have guests tomorrow. Handle what you can.",
+      sourceText: "I have guests tomorrow at 6 PM in the dining room. Serve tea and sandwiches. Handle what you can.",
       createdAt: Date.now(),
       proposalSpeech: "I can ask Christopher to handle it. Should I send it?",
       tasks: [
@@ -154,11 +172,9 @@ describe("guest preparation operational planning", () => {
       "Nasira",
       "Grace",
     ]);
-    expect(collapsed.tasks.map((task) => task.message)).toEqual([
-      "Please prepare the food and tea.",
-      "Please handle the hospitality setup and table presentation.",
-      "Please coordinate with Christopher and Nasira and follow up that everything is ready.",
-    ]);
+    expect(collapsed.tasks.map((task) => task.message).join("\n")).toContain("tomorrow at 6 PM in the dining room");
+    expect(collapsed.tasks[0].message).toContain("Menu/service: tea and sandwiches");
+    expect(collapsed.tasks[2].message).toContain("Checkpoints");
   });
 
   it("executes multi-owner guest plans as three separate delegation items, messages, and confirmations", async () => {
@@ -185,7 +201,7 @@ describe("guest preparation operational planning", () => {
 
     const plan = normalizeGuestPreparationPlan({
       outcomeType: "guest_arrival",
-      sourceText: "I have guests tomorrow. Handle what you can.",
+      sourceText: "I have guests tomorrow at 6 PM in the dining room. Serve tea and sandwiches. Handle what you can.",
       createdAt: Date.now(),
       proposalSpeech: "I can ask Christopher to handle it. Should I send it?",
       tasks: [
@@ -204,11 +220,12 @@ describe("guest preparation operational planning", () => {
     });
 
     const savedItems = mocks.savePending.mock.calls[0][0] as ExtractedItem[];
-    expect(savedItems.map((item) => [item.assignedTo, item.description])).toEqual([
-      ["Christopher", "Please prepare the food and tea."],
-      ["Nasira", "Please handle the hospitality setup and table presentation."],
-      ["Grace", "Please coordinate with Christopher and Nasira and follow up that everything is ready."],
-    ]);
+    expect(savedItems.map((item) => item.assignedTo)).toEqual(["Christopher", "Nasira", "Grace"]);
+    for (const item of savedItems) {
+      expect(item.description).toContain("tomorrow at 6 PM in the dining room");
+    }
+    expect(savedItems[0].description).toContain("Menu/service: tea and sandwiches");
+    expect(savedItems[2].description).toContain("Checkpoints");
     expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
     expect(mocks.deliverTaskMessage.mock.calls.map(([payload]) => payload.recipientName)).toEqual([
       "Christopher",
@@ -458,6 +475,8 @@ describe("household outcome detection — hosting events without the word 'guest
 
 describe("guest event planning — safety rules", () => {
   const TEA = "I have guests tomorrow for afternoon tea. Handle what you can.";
+  const COMPLETE_TEA =
+    "I have afternoon tea at home today for three guests at 4:30 PM in the garden. Serve finger sandwiches, scones, small cakes, tea, coffee, and water. No dietary restrictions. Use the blue china and simple flowers. Handle what you can.";
 
   function realHousehold(): Person[] {
     return [
@@ -470,20 +489,22 @@ describe("guest event planning — safety rules", () => {
   }
 
   it("splits the afternoon-tea plan into exact recipient/task pairs", () => {
-    const tasks = buildDeterministicGuestPreparationTasks(realHousehold(), TEA);
-    expect(tasks).toEqual([
-      { personId: "christopher", personName: "Christopher", message: "Please prepare the food and tea." },
-      {
-        personId: "nasira",
-        personName: "Nasira",
-        message: "Please handle the hospitality setup and table presentation.",
-      },
-      {
-        personId: "bahan",
-        personName: "Bahan",
-        message: "Please coordinate with Christopher and Nasira and follow up that everything is ready.",
-      },
+    const tasks = buildDeterministicGuestPreparationTasks(realHousehold(), COMPLETE_TEA);
+    expect(tasks.map((task) => [task.personId, task.personName])).toEqual([
+      ["christopher", "Christopher"],
+      ["nasira", "Nasira"],
+      ["bahan", "Bahan"],
     ]);
+    for (const task of tasks) {
+      expect(task.message).toContain("Sana is hosting afternoon tea for three guests today at 4:30 PM in the garden.");
+      expect(task.message).toMatch(/Required result:/);
+      expect(task.message).toMatch(/Tell Carson immediately|Report any missing item/);
+    }
+    expect(tasks[0].message).toContain("finger sandwiches, scones, small cakes, tea, coffee, and water");
+    expect(tasks[1].message).toContain("blue china");
+    expect(tasks[1].message).toContain("flowers");
+    expect(tasks[2].message).toContain("Checkpoints: confirm with Christopher");
+    expect(tasks[2].message).toContain("confirm with Nasira");
   });
 
   it("never assigns anything to Carson, even when Carson holds the only coordinator role", () => {
@@ -551,6 +572,163 @@ describe("guest event planning — safety rules", () => {
       expect(bundlesEverything).toBe(false);
     }
     expect(new Set(tasks.map((t) => t.personName)).size).toBe(tasks.length);
+  });
+});
+
+describe("hosting planning gate", () => {
+  it("blocks the exact afternoon-tea failure when time, menu, and specific location are missing", () => {
+    const gate = evaluateHostingPlanningGate("Handle afternoon tea at home today for me and three guests.");
+
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.brief.occasion).toBe("afternoon tea");
+    expect(gate.brief.date).toBe("today");
+    expect(gate.brief.guestCount).toBe("three guests");
+    expect(gate.brief.location).toBe("home");
+    expect(gate.brief.unresolvedRequiredFields).toEqual(["start_time", "menu", "location", "dietary_requirements"]);
+    expect(gate.question).toMatch(/what time/i);
+    expect(gate.question).toMatch(/where at home/i);
+    expect(gate.question).toMatch(/what you would like served/i);
+    expect(gate.question).toMatch(/dietary restrictions/i);
+    expect(gate.question).not.toMatch(/china or flowers/i);
+  });
+
+  it("asks for menu or permission to suggest one when menu is missing", () => {
+    const gate = evaluateHostingPlanningGate("Afternoon tea today at 4 PM in the garden for three guests.");
+
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.brief.unresolvedRequiredFields).toEqual(["menu", "dietary_requirements"]);
+    expect(gate.question).toMatch(/what you would like served|suggest a menu/i);
+  });
+
+  it("preserves supplied date, location, and guest count in the structured brief", () => {
+    const brief = buildHostingEventBrief(
+      "Afternoon tea today at 4:30 PM in the garden for three guests. Serve sandwiches and tea.",
+    );
+
+    expect(brief.date).toBe("today");
+    expect(brief.location).toBe("the garden");
+    expect(brief.guestCount).toBe("three guests");
+    expect(brief.startTime).toBe("4:30 PM");
+    expect(brief.menu).toBe("sandwiches and tea");
+  });
+
+  it("lets a complete hosting brief proceed to shared worker-message generation", () => {
+    const gate = evaluateHostingPlanningGate(
+      "Afternoon tea today at 4:30 PM in the garden for three guests. Serve sandwiches, scones, cakes, tea, coffee, and water. No dietary restrictions. Use the blue china and flowers.",
+    );
+
+    expect(gate.status).toBe("ready");
+    expect(gate.brief.unresolvedRequiredFields).toEqual([]);
+  });
+
+  it("preserves partial clarification details and asks only for time and dietary restrictions", () => {
+    const original = "Handle afternoon tea for tomorrow at home for 5 guests";
+    const answer =
+      "Mini sandwiches, mini cakes, pastries and food finger. It should be indoors and use the pink floral China, pink flowers and the silver cutlery. Luxury setting";
+    const linkedAnswer = evaluateHostingPlanningGate(`${original}\n\nClarification details: ${answer}`);
+
+    expect(linkedAnswer.status).toBe("needs_clarification");
+    expect(linkedAnswer.brief.occasion).toBe("afternoon tea");
+    expect(linkedAnswer.brief.date).toBe("tomorrow");
+    expect(linkedAnswer.brief.guestCount).toBe("5 guests");
+    expect(linkedAnswer.brief.startTime).toBeNull();
+    expect(linkedAnswer.brief.location).toBe("inside");
+    expect(linkedAnswer.brief.menu).toBe("Mini sandwiches, mini cakes, pastries and food finger");
+    expect(linkedAnswer.brief.dietaryRequirements).toBeNull();
+    expect(linkedAnswer.brief.china).toBe("pink floral China");
+    expect(linkedAnswer.brief.flowers).toBe("pink flowers");
+    expect(linkedAnswer.brief.unresolvedRequiredFields).toEqual(["start_time", "dietary_requirements"]);
+    expect(linkedAnswer.question).toBe("What time should it begin, and are there any dietary restrictions?");
+  });
+
+  it("accumulates the exact three-turn hosting clarification into one complete brief", () => {
+    const turn1 = "Handle afternoon tea at home today for me and three guests.";
+    const turn2 =
+      "Mini sandwiches, mini cakes, pastries and finger food. It should be indoors and use the pink floral china, pink flowers and the silver cutlery. Luxury setting.";
+    const turn3 = "4:00 PM and no dietary restrictions";
+    const afterTurn2 = evaluateHostingPlanningGate(`${turn1}\n\nClarification details: ${turn2}`);
+    const afterTurn3 = evaluateHostingPlanningGate(
+      `${turn1}\n\nClarification details: ${turn2}\n\nClarification details: ${turn3}`,
+    );
+
+    expect(afterTurn2.question).toBe("What time should it begin, and are there any dietary restrictions?");
+    expect(afterTurn3.status).toBe("ready");
+    expect(afterTurn3.brief.occasion).toBe("afternoon tea");
+    expect(afterTurn3.brief.date).toBe("today");
+    expect(afterTurn3.brief.guestCount).toBe("three guests");
+    expect(afterTurn3.brief.startTime).toBe("4:00 PM");
+    expect(afterTurn3.brief.location).toBe("inside");
+    expect(afterTurn3.brief.menu).toBe("Mini sandwiches, mini cakes, pastries and finger food");
+    expect(afterTurn3.brief.dietaryRequirements).toBe("no dietary restrictions");
+    expect(afterTurn3.brief.china).toBe("pink floral china");
+    expect(afterTurn3.brief.flowers).toBe("pink flowers");
+    expect(afterTurn3.brief.unresolvedRequiredFields).toEqual([]);
+  });
+
+  it("does not ask again for fields already answered across clarification turns", () => {
+    const gate = evaluateHostingPlanningGate(
+      "Handle afternoon tea at home today for me and three guests.\n\n" +
+      "Clarification details: Mini sandwiches, mini cakes, pastries and finger food. It should be indoors and use the pink floral china, pink flowers and the silver cutlery. Luxury setting.\n\n" +
+      "Clarification details: 4:00 PM and no dietary restrictions",
+    );
+
+    expect(gate.question).toBeNull();
+    expect(gate.brief.unresolvedRequiredFields).toEqual([]);
+  });
+
+  it("treats the exact clarification answer as needing only dietary info when linked to the original request", () => {
+    const original = "Handle afternoon tea for me and three guests today at home.";
+    const answer =
+      "At 4 PM in the garden. Finger sandwiches, cakes and tea. Use the floral china and simple white flowers.";
+    const linkedAnswer = evaluateHostingPlanningGate(`${original}\n\nClarification details: ${answer}`);
+
+    expect(resolveGuestOutcomeAction(answer)).toBe("none");
+    expect(resolveGuestOutcomeAction(`${original}\n\nClarification details: ${answer}`)).toBe("propose");
+    expect(linkedAnswer.status).toBe("needs_clarification");
+    expect(linkedAnswer.brief.occasion).toBe("afternoon tea");
+    expect(linkedAnswer.brief.date).toBe("today");
+    expect(linkedAnswer.brief.guestCount).toBe("three guests");
+    expect(linkedAnswer.brief.startTime).toBe("4 PM");
+    expect(linkedAnswer.brief.location).toBe("the garden");
+    expect(linkedAnswer.brief.menu).toBe("Finger sandwiches, cakes and tea");
+    expect(linkedAnswer.brief.dietaryRequirements).toBeNull();
+    expect(linkedAnswer.brief.china).toBe("floral china");
+    expect(linkedAnswer.brief.flowers).toBe("simple white flowers");
+    expect(linkedAnswer.brief.unresolvedRequiredFields).toEqual(["dietary_requirements"]);
+    expect(linkedAnswer.question).toBe("For afternoon tea, are there any dietary restrictions?");
+  });
+
+  it("shows a clear operational plan before approval after the exact clarification answer", () => {
+    const sourceText =
+      "Handle afternoon tea for me and three guests today at home.\n\n" +
+      "Clarification details: At 4 PM in the garden. Finger sandwiches, cakes and tea. Use the floral china and simple white flowers.";
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText,
+      createdAt: Date.now(),
+      proposalSpeech: "I can split this between the team. Should I send it?",
+      tasks: [
+        { personId: "christopher", personName: "Christopher", message: "Handle everything." },
+      ],
+    }, [
+      person({ id: "christopher", name: "Christopher", role: "Cook", responsibilities: "Dinner, menu, kitchen, food." }),
+      person({ id: "nasira", name: "Nasira", role: "Housekeeper", responsibilities: "Flowers, hospitality, table setup, guest rooms." }),
+      person({ id: "bahan", name: "Bahan", role: "Coordinator", responsibilities: "Coordinate staff and follow up." }),
+      person({ id: "grace", name: "Grace", role: "Nanny", responsibilities: "Childcare." }),
+      person({ id: "ghulam", name: "Ghulam", role: "Driver", responsibilities: "Transport, car, airport pickups." }),
+    ]);
+
+    expect(plan.proposalSpeech).toContain("4 PM");
+    expect(plan.proposalSpeech).toContain("today");
+    expect(plan.proposalSpeech).toContain("the garden");
+    expect(plan.proposalSpeech).toContain("three guests");
+    expect(plan.proposalSpeech).toContain("Finger sandwiches, cakes and tea");
+    expect(plan.proposalSpeech).toContain("floral china");
+    expect(plan.proposalSpeech).toContain("simple white flowers");
+    expect(plan.proposalSpeech).toContain("Christopher handles food and drinks");
+    expect(plan.proposalSpeech).toContain("Nasira handles setup, china, flowers, and table presentation");
+    expect(plan.proposalSpeech).toContain("Bahan coordinates readiness");
+    expect(plan.proposalSpeech).toMatch(/Should I send it\?$/);
   });
 });
 

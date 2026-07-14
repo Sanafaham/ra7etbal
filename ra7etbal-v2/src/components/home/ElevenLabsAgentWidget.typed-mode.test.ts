@@ -110,6 +110,150 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(revokeIndex).toBeLessThan(persistReplyIndex);
   });
 
+  it("gates typed hosting plans locally before the ElevenLabs text chat can propose workers", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const guestActionIndex = sendBlock.indexOf("const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)");
+    const hostingGateIndex = sendBlock.indexOf("const hostingGate = evaluateHostingPlanningGate(savedMessage.content)");
+    const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", hostingGateIndex);
+    const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
+
+    expect(guestActionIndex).toBeGreaterThan(-1);
+    expect(hostingGateIndex).toBeGreaterThan(guestActionIndex);
+    expect(localReplyIndex).toBeGreaterThan(hostingGateIndex);
+    expect(hostingGateIndex).toBeLessThan(sendIndex);
+    expect(sendBlock).toContain('hostingGate.status === "needs_clarification"');
+    expect(sendBlock).toContain("buildOperationalPlanFromOutcome(savedMessage.content, people)");
+    expect(sendBlock).toContain("pendingPlanRef.current = plan");
+    expect(sendBlock).toContain("content: plan.proposalSpeech");
+  });
+
+  it("links a typed hosting clarification answer back to the original request before planning", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const pendingRefIndex = SOURCE.indexOf("const pendingHostingClarificationRef = useRef<PendingHostingClarification | null>(null)");
+    const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
+    const mergeIndex = sendBlock.indexOf("const clarifiedHostingText = `${pendingHostingClarification.sourceText}");
+    const gateIndex = sendBlock.indexOf("evaluateHostingPlanningGate(clarifiedHostingText)");
+    const buildIndex = sendBlock.indexOf("buildOperationalPlanFromOutcome(clarifiedHostingText, people)");
+    const proposalIndex = sendBlock.indexOf("content: plan.proposalSpeech", buildIndex);
+    const setClarificationIndex = sendBlock.indexOf("pendingHostingClarificationRef.current = {", gateIndex);
+    const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
+
+    expect(pendingRefIndex).toBeGreaterThan(-1);
+    expect(setClarificationIndex).toBeGreaterThan(gateIndex);
+    expect(pendingBranchIndex).toBeGreaterThan(-1);
+    expect(mergeIndex).toBeGreaterThan(pendingBranchIndex);
+    expect(gateIndex).toBeGreaterThan(mergeIndex);
+    expect(buildIndex).toBeGreaterThan(gateIndex);
+    expect(proposalIndex).toBeGreaterThan(buildIndex);
+    expect(buildIndex).toBeLessThan(sendIndex);
+  });
+
+  it("executes typed hosting approval through the stored plan once instead of re-asking ElevenLabs", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const decisionIndex = sendBlock.indexOf("const typedPendingDecision = resolvePendingPlanDecision(savedMessage.content)");
+    const pendingPlanIndex = sendBlock.indexOf("let activeTypedPlan = pendingPlanRef.current");
+    const handlerIndex = sendBlock.indexOf("handlePendingPlanTurn([savedMessage.content], activeTypedPlan");
+    const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", handlerIndex);
+    const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
+
+    expect(decisionIndex).toBeGreaterThan(-1);
+    expect(pendingPlanIndex).toBeGreaterThan(decisionIndex);
+    expect(handlerIndex).toBeGreaterThan(pendingPlanIndex);
+    expect(localReplyIndex).toBeGreaterThan(handlerIndex);
+    expect(handlerIndex).toBeLessThan(sendIndex);
+    expect(sendBlock).toContain("if (turn.clearPlan) pendingPlanRef.current = null");
+    expect(sendBlock).toContain('turn.action === "executed"');
+    expect(sendBlock).toContain('turn.action === "cancelled"');
+  });
+
+  it("handles typed pending-plan approval before requiring an active ElevenLabs connection", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const createUserIndex = sendBlock.indexOf("savedMessage = await createTypedUserMessage({");
+    const pendingPlanIndex = sendBlock.indexOf("let activeTypedPlan = pendingPlanRef.current");
+    const loadPlanIndex = sendBlock.indexOf("activeTypedPlan = await loadLatestPendingPlan().catch(() => null)");
+    const handlerIndex = sendBlock.indexOf("handlePendingPlanTurn([savedMessage.content], activeTypedPlan");
+    const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", handlerIndex);
+    const connectionGuardIndex = sendBlock.indexOf('throw new Error("The Carson session ended before the message could be sent.")');
+    const initialGuardBlock = sendBlock.slice(
+      sendBlock.indexOf("if ("),
+      sendBlock.indexOf("typedSubmitInFlightRef.current = true;"),
+    );
+
+    expect(createUserIndex).toBeGreaterThan(-1);
+    expect(pendingPlanIndex).toBeGreaterThan(createUserIndex);
+    expect(loadPlanIndex).toBeGreaterThan(pendingPlanIndex);
+    expect(handlerIndex).toBeGreaterThan(loadPlanIndex);
+    expect(localReplyIndex).toBeGreaterThan(handlerIndex);
+    expect(connectionGuardIndex).toBeGreaterThan(localReplyIndex);
+    expect(initialGuardBlock).not.toContain('statusRef.current !== "connected"');
+    expect(initialGuardBlock).not.toContain("!conversation");
+  });
+
+  it("returns after local partial hosting clarification so ElevenLabs cannot duplicate the reply", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
+    const needsClarificationIndex = sendBlock.indexOf('hostingGate.status === "needs_clarification"', pendingBranchIndex);
+    const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", needsClarificationIndex);
+    const localReturnIndex = sendBlock.indexOf("return;", localReplyIndex);
+    const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
+
+    expect(pendingBranchIndex).toBeGreaterThan(-1);
+    expect(needsClarificationIndex).toBeGreaterThan(pendingBranchIndex);
+    expect(localReplyIndex).toBeGreaterThan(needsClarificationIndex);
+    expect(localReturnIndex).toBeGreaterThan(localReplyIndex);
+    expect(localReturnIndex).toBeLessThan(sendIndex);
+  });
+
+  it("keeps typed conversation history stable when leaving and returning to Type to Carson", () => {
+    expect(SOURCE).toContain('const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id"');
+    expect(SOURCE).toContain("const typedSessionIdRef = useRef(getOrCreateTypedSessionId())");
+    expect(SOURCE).toContain("loadRecentTypedCarsonMessages(100)");
+    expect(SOURCE).toContain("setTypedMessages(messages)");
+    expect(SOURCE).toContain("markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)");
+  });
+
+  it("marks local typed hosting replies responded in the durable user row", () => {
+    const helperBlock = blockBetween(
+      "const persistLocalTypedAgentReply = useCallback(",
+      "  const sendTypedMessage = useCallback(async () => {",
+    );
+    expect(helperBlock).toContain("updateTypedUserMessage({");
+    expect(helperBlock).toContain("clientMessageId: input.replyToClientMessageId");
+    expect(helperBlock).toContain('deliveryStatus: "responded"');
+    expect(helperBlock).toContain("elevenlabsConversationId: typedConversationIdRef.current");
+
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    for (const requiredText of [
+      "You are not signed in. Please sign in and try again.",
+      'turn.action === "executed"',
+      'turn.action === "cancelled"',
+      'hostingGate.status === "needs_clarification"',
+      "I couldn't put that guest plan together right now. Please try again.",
+      "content: plan.proposalSpeech",
+    ]) {
+      expect(sendBlock).toContain(requiredText);
+    }
+    expect(sendBlock.split("persistLocalTypedAgentReply({").length - 1).toBeGreaterThanOrEqual(6);
+  });
+
   it("blocks empty Enter submissions while preserving IME and Shift+Enter behavior", () => {
     expect(TYPED_CHAT_SOURCE).toContain("!event.nativeEvent.isComposing &&\n              value.trim()");
     expect(TYPED_CHAT_SOURCE).toContain("!event.shiftKey");

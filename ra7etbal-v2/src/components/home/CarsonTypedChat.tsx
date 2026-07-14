@@ -59,7 +59,7 @@ export default function CarsonTypedChat({
   }
 
   return (
-    <div className="flex min-h-0 w-full max-w-xl flex-1 flex-col">
+    <div className="flex min-h-0 w-full max-w-xl flex-1 flex-col pb-[calc(env(safe-area-inset-bottom)+0.5rem)]">
       {messages.length > 0 && (
         <div className="mb-2 flex min-h-8 items-center justify-end gap-2 px-1">
           {confirmingClear ? (
@@ -187,7 +187,10 @@ export default function CarsonTypedChat({
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="mt-3 flex items-end gap-2">
+      <form
+        onSubmit={handleSubmit}
+        className="sticky bottom-0 z-10 mt-3 flex items-end gap-2 bg-warm-white/95 pb-1 pt-2 backdrop-blur"
+      >
         <button
           type="button"
           onClick={onAttachPhoto}

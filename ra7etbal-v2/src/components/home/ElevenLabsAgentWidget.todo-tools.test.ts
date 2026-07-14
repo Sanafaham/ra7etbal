@@ -299,6 +299,43 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
   });
 });
 
+describe("ElevenLabsAgentWidget — hosting planning gate", () => {
+  it("imports the reusable hosting planning gate from ops-intelligence", () => {
+    expect(SOURCE).toContain("evaluateHostingPlanningGate");
+    expect(SOURCE).toContain('from "../../lib/ops-intelligence"');
+  });
+
+  it("checks missing hosting details before direct send_delegation can build or execute a guest plan", () => {
+    const start = SOURCE.indexOf("const sendDelegation = useCallback(");
+    const end = SOURCE.indexOf("const matches = people.filter(", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const block = SOURCE.slice(start, end);
+    const actionIndex = block.indexOf("const guestAction = resolveGuestOutcomeAction(latestUserMessageForOps)");
+    const gateIndex = block.indexOf("const hostingGate = evaluateHostingPlanningGate(latestUserMessageForOps)");
+    const buildIndex = block.indexOf("const plan = await buildOperationalPlanFromOutcome(latestUserMessageForOps, people)");
+    expect(actionIndex).toBeGreaterThan(-1);
+    expect(gateIndex).toBeGreaterThan(actionIndex);
+    expect(buildIndex).toBeGreaterThan(gateIndex);
+    expect(block).toContain('hostingGate.status === "needs_clarification"');
+  });
+
+  it("checks missing hosting details before execute_instruction can build or execute a guest plan", () => {
+    const start = SOURCE.indexOf("// ── Operations Intelligence — outcome leg");
+    const end = SOURCE.indexOf("// ── Carson Weekly Planning V1 — outcome leg", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const block = SOURCE.slice(start, end);
+    const actionIndex = block.indexOf("const outcomeAction = resolveGuestOutcomeAction(rawInstruction)");
+    const gateIndex = block.indexOf("const hostingGate = evaluateHostingPlanningGate(rawInstruction)");
+    const buildIndex = block.indexOf("const plan = await buildOperationalPlanFromOutcome(rawInstruction, people)");
+    expect(actionIndex).toBeGreaterThan(-1);
+    expect(gateIndex).toBeGreaterThan(actionIndex);
+    expect(buildIndex).toBeGreaterThan(gateIndex);
+    expect(block).toContain('hostingGate.status === "needs_clarification"');
+  });
+});
+
 describe("ElevenLabsAgentWidget — guest plan proposal regression guards", () => {
   function guestOutcomeBlock(): string {
     const start = SOURCE.indexOf("const outcomeAction = resolveGuestOutcomeAction(rawInstruction);");
