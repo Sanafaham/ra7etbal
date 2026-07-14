@@ -9,7 +9,21 @@ import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
 import { saveCarsonNote, loadRecentNotes, type CarsonNote } from "../../lib/carson-notes";
-import { createTodo, listActiveTodos, completeTodo, findTodoMatches, type CarsonTodo } from "../../lib/carson-todos";
+import { createTodo, listActiveTodos, completeTodo, findTodoMatches, formatTodosForContext, type CarsonTodo } from "../../lib/carson-todos";
+import { getHouseholdRules } from "../../lib/household-rules";
+import { fetchAutomationDigest, buildAutomationStatusBlock } from "../../lib/automation-context";
+import { buildDailyBrief } from "../../lib/daily-brief";
+import {
+  detectWeeklyPlanningIntent,
+  isWeekPlanExpired,
+  isWeekPlanRetryRequest,
+  buildWeekPlan,
+  executeWeekPlan,
+  rejectWeekPlan,
+  loadLatestPendingWeekPlan,
+  type ProposedWeekPlan,
+  type WeekEventResult,
+} from "../../lib/weekly-planning";
 import {
   extractTodoTitleParam,
   extractTodoDescriptionParam,
@@ -1181,6 +1195,20 @@ export default function ElevenLabsAgentWidget({
   /** Holds an unconfirmed operational plan proposed by Operations Intelligence.
    *  Cleared on execution or when a new instruction doesn't confirm it. */
   const pendingPlanRef = useRef<ProposedPlan | null>(null);
+
+  /** Carson Weekly Planning V1 — unconfirmed proposed week, same lifecycle
+   *  shape as pendingPlanRef but a separate ref/type (calendar events, not
+   *  person tasks) and a separate carson_pending_operations "type". */
+  const pendingWeekPlanRef = useRef<ProposedWeekPlan | null>(null);
+
+  /** Last executed weekly plan's per-event results, kept briefly so a
+   *  follow-up "try again" retries only the events that failed — never the
+   *  ones already confirmed created. */
+  const lastWeekPlanExecutionRef = useRef<{
+    plan: ProposedWeekPlan;
+    results: WeekEventResult[];
+    at: number;
+  } | null>(null);
 
   /** Snapshot of saved notes loaded at startCall. Used by act_on_note for
    *  in-memory keyword lookup without hitting Supabase during the call. */
@@ -3922,6 +3950,60 @@ export default function ElevenLabsAgentWidget({
           // Fall through to normal handling below.
         }
 
+        // ── Carson Weekly Planning V1 — confirmation / rejection / retry ────
+        // Must run BEFORE the guest-arrival "no active plan → graceful ack"
+        // guard below: that guard fires on ANY yes/no when there's no active
+        // GUEST plan, which would otherwise swallow a "yes" meant for a
+        // pending WEEK plan before we ever get to check for one.
+        let activeWeekPlan = pendingWeekPlanRef.current;
+        if (!activeWeekPlan && pendingDecision !== "hold") {
+          activeWeekPlan = await loadLatestPendingWeekPlan().catch(() => null);
+          if (activeWeekPlan) pendingWeekPlanRef.current = activeWeekPlan;
+        }
+
+        if (activeWeekPlan) {
+          if (isWeekPlanExpired(activeWeekPlan)) {
+            pendingWeekPlanRef.current = null;
+            activeWeekPlan = null;
+          } else if (pendingDecision === "confirm") {
+            pendingWeekPlanRef.current = null;
+            const { summary, results } = await executeWeekPlan(activeWeekPlan);
+            lastWeekPlanExecutionRef.current = { plan: activeWeekPlan, results, at: Date.now() };
+            sessionActionsRef.current.push(`Weekly plan executed: ${activeWeekPlan.sourceText}`);
+            lastDirectToolSuccessRef.current = {
+              toolName: "execute_instruction",
+              resultText: summary,
+              at: new Date().toISOString(),
+              inputSummary: { kind: "weekly_plan_execute", instruction: activeWeekPlan.sourceText.slice(0, 80) },
+            };
+            return summary;
+          } else if (pendingDecision === "reject") {
+            pendingWeekPlanRef.current = null;
+            const summary = await rejectWeekPlan(activeWeekPlan);
+            return summary;
+          }
+          // held: plan preserved for a later turn (or cleared above on expiry).
+        }
+
+        // A short-window retry re-attempts only the events that failed last
+        // time — never re-creates one already confirmed created.
+        if (!activeWeekPlan && isWeekPlanRetryRequest(rawInstruction)) {
+          const lastExecution = lastWeekPlanExecutionRef.current;
+          const hasFailure = lastExecution?.results.some((r) => r.status !== "created");
+          if (lastExecution && hasFailure && Date.now() - lastExecution.at <= 10 * 60 * 1000) {
+            const { summary, results } = await executeWeekPlan(lastExecution.plan, lastExecution.results);
+            lastWeekPlanExecutionRef.current = { plan: lastExecution.plan, results, at: Date.now() };
+            sessionActionsRef.current.push(`Weekly plan retried: ${lastExecution.plan.sourceText}`);
+            lastDirectToolSuccessRef.current = {
+              toolName: "execute_instruction",
+              resultText: summary,
+              at: new Date().toISOString(),
+              inputSummary: { kind: "weekly_plan_retry", instruction: lastExecution.plan.sourceText.slice(0, 80) },
+            };
+            return summary;
+          }
+        }
+
         // Guard: a confirmation/rejection with no active plan returns a graceful
         // acknowledgement. Do NOT fall through to executeDelegationFromText —
         // feeding "Yes"/"No" to extraction returns empty results and propagates
@@ -3976,6 +4058,66 @@ export default function ElevenLabsAgentWidget({
             return plan.proposalSpeech;
           }
           return "I couldn't put that guest plan together right now. Please try again.";
+        }
+
+        // ── Carson Weekly Planning V1 — outcome leg ─────────────────────────
+        // "Carson, organize my week" — reads the next 7 days of calendar plus
+        // Ra7etBal state, proposes a compact week, and waits for one approval
+        // before creating anything. Same execute_instruction tool both voice
+        // and typed Carson already share — no separate agent or pipeline.
+        if (detectWeeklyPlanningIntent(rawInstruction)) {
+          pendingWeekPlanRef.current = null;
+
+          if (!calendarFetchedRef.current) {
+            return "Google Calendar isn't connected yet. Ask the user to connect it in Settings, then try again.";
+          }
+
+          const tasksState = useTasksStore.getState();
+          if (tasksState.status === "idle" || tasksState.items.length === 0) {
+            await useTasksStore.getState().loadFor(authUserId, { force: true });
+          }
+          const tasks = useTasksStore.getState().items;
+          const brief = buildDailyBrief(tasks, new Date());
+
+          const [todos, householdRulesRow, automationDigest, persistentMemory] = await Promise.all([
+            listActiveTodos(50).catch(() => []),
+            getHouseholdRules().catch(() => null),
+            fetchAutomationDigest().catch(() => null),
+            loadPersistentMemory().catch(() => ""),
+          ]);
+
+          const result = await buildWeekPlan({
+            sourceText: rawInstruction,
+            calendarEvents: filterCalendarEventsByRange(planningCalendarEventsRef.current, "next_7_days"),
+            todosBlock: formatTodosForContext(todos),
+            needsAttentionBlock: brief.needsAttention
+              .map((t) => `- ${t.description}${t.due_at ? ` (due ${new Date(t.due_at).toLocaleString()})` : ""}`)
+              .join("\n"),
+            waitingBlock: brief.waitingOnOthers
+              .map((t) => `- ${t.description} (with ${t.assigned_to ?? "someone"})`)
+              .join("\n"),
+            automationStatusBlock: automationDigest ? buildAutomationStatusBlock(automationDigest) : "",
+            householdRules: householdRulesRow?.rules ?? "",
+            persistentMemory,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            now: new Date(),
+          });
+
+          if (result.status === "clarification_needed") {
+            return result.question;
+          }
+          if (result.status === "no_plan") {
+            return "I couldn't put together a weekly plan right now. Please try again.";
+          }
+
+          pendingWeekPlanRef.current = result.plan;
+          lastDirectToolSuccessRef.current = {
+            toolName: "execute_instruction",
+            resultText: result.plan.proposalSpeech,
+            at: new Date().toISOString(),
+            inputSummary: { kind: "weekly_plan_proposal", instruction: rawInstruction.slice(0, 80) },
+          };
+          return result.plan.proposalSpeech;
         }
 
         // ── Recurring-language detection ──────────────────────────────────
