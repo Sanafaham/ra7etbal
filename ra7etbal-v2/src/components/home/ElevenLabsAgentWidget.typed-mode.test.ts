@@ -175,6 +175,32 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(sendBlock).toContain('turn.action === "cancelled"');
   });
 
+  it("handles typed pending-plan approval before requiring an active ElevenLabs connection", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const createUserIndex = sendBlock.indexOf("savedMessage = await createTypedUserMessage({");
+    const pendingPlanIndex = sendBlock.indexOf("let activeTypedPlan = pendingPlanRef.current");
+    const loadPlanIndex = sendBlock.indexOf("activeTypedPlan = await loadLatestPendingPlan().catch(() => null)");
+    const handlerIndex = sendBlock.indexOf("handlePendingPlanTurn([savedMessage.content], activeTypedPlan");
+    const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", handlerIndex);
+    const connectionGuardIndex = sendBlock.indexOf('throw new Error("The Carson session ended before the message could be sent.")');
+    const initialGuardBlock = sendBlock.slice(
+      sendBlock.indexOf("if ("),
+      sendBlock.indexOf("typedSubmitInFlightRef.current = true;"),
+    );
+
+    expect(createUserIndex).toBeGreaterThan(-1);
+    expect(pendingPlanIndex).toBeGreaterThan(createUserIndex);
+    expect(loadPlanIndex).toBeGreaterThan(pendingPlanIndex);
+    expect(handlerIndex).toBeGreaterThan(loadPlanIndex);
+    expect(localReplyIndex).toBeGreaterThan(handlerIndex);
+    expect(connectionGuardIndex).toBeGreaterThan(localReplyIndex);
+    expect(initialGuardBlock).not.toContain('statusRef.current !== "connected"');
+    expect(initialGuardBlock).not.toContain("!conversation");
+  });
+
   it("keeps typed conversation history stable when leaving and returning to Type to Carson", () => {
     expect(SOURCE).toContain('const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id"');
     expect(SOURCE).toContain("const typedSessionIdRef = useRef(getOrCreateTypedSessionId())");

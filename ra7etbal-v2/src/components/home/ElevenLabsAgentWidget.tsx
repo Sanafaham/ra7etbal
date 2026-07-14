@@ -6108,12 +6108,8 @@ export default function ElevenLabsAgentWidget({
   );
 
   const sendTypedMessage = useCallback(async () => {
-    const conversation = conversationRef.current;
     const content = typedInput.trim();
     if (
-      !conversation ||
-      statusRef.current !== "connected" ||
-      activeChannelRef.current !== "text" ||
       typedSubmitInFlightRef.current ||
       !content
     ) {
@@ -6311,8 +6307,9 @@ export default function ElevenLabsAgentWidget({
       if (typedPhotoContext) {
         sessionPhotoContextRef.current = typedPhotoContext;
       }
+      const conversation = conversationRef.current;
       if (
-        conversationRef.current !== conversation ||
+        !conversation ||
         statusRef.current !== "connected" ||
         activeChannelRef.current !== "text"
       ) {
