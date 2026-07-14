@@ -154,6 +154,11 @@ type AgentMode = "listening" | "speaking";
 type CarsonChannel = "voice" | "text";
 const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id";
 
+interface PendingHostingClarification {
+  sourceText: string;
+  askedAtClientMessageId: string;
+}
+
 function getOrCreateTypedSessionId(): string {
   if (typeof window === "undefined") return crypto.randomUUID();
   try {
@@ -897,6 +902,7 @@ export default function ElevenLabsAgentWidget({
   const typedSessionIdRef = useRef(getOrCreateTypedSessionId());
   const typedConversationIdRef = useRef<string | null>(null);
   const pendingTypedClientMessageIdRef = useRef<string | null>(null);
+  const pendingHostingClarificationRef = useRef<PendingHostingClarification | null>(null);
   const persistedTypedAgentEventsRef = useRef(new Set<string>());
   const [typedMessages, setTypedMessages] = useState<CarsonTypedMessage[]>([]);
   const typedMessagesRef = useRef<CarsonTypedMessage[]>([]);
@@ -6026,6 +6032,8 @@ export default function ElevenLabsAgentWidget({
       await clearTypedCarsonMessages();
       setTypedMessages([]);
       setTypedInput("");
+      pendingHostingClarificationRef.current = null;
+      pendingPlanRef.current = null;
     } catch (err) {
       setTypedError(`Could not clear the typed conversation. ${sanitizeCarsonErrorDetail(err)}`);
     } finally {
@@ -6160,6 +6168,7 @@ export default function ElevenLabsAgentWidget({
           people,
         });
         if (turn.clearPlan) pendingPlanRef.current = null;
+        if (turn.clearPlan) pendingHostingClarificationRef.current = null;
 
         if (turn.action === "executed") {
           sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
@@ -6183,12 +6192,71 @@ export default function ElevenLabsAgentWidget({
         }
       }
 
+      const pendingHostingClarification = pendingHostingClarificationRef.current;
+      if (pendingHostingClarification) {
+        const clarifiedHostingText = `${pendingHostingClarification.sourceText}\n\nClarification details: ${savedMessage.content}`;
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+
+        const hostingGate = evaluateHostingPlanningGate(clarifiedHostingText);
+        if (hostingGate.status === "needs_clarification") {
+          pendingHostingClarificationRef.current = {
+            sourceText: clarifiedHostingText,
+            askedAtClientMessageId: clientMessageId,
+          };
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: hostingGate.question ?? "I still need a few details before I message anyone.",
+            clearPendingPhotos: false,
+          });
+          return;
+        }
+
+        pendingHostingClarificationRef.current = null;
+        pendingPlanRef.current = null;
+
+        if (!authUserId) {
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: "You are not signed in. Please sign in and try again.",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
+        const peopleState = usePeopleStore.getState();
+        if (peopleState.status === "idle" || peopleState.items.length === 0) {
+          await usePeopleStore.getState().loadFor(authUserId);
+        }
+        const people = usePeopleStore.getState().items;
+        const plan = await buildOperationalPlanFromOutcome(clarifiedHostingText, people);
+        if (!plan) {
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: "I couldn't put that guest plan together right now. Please try again.",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
+        pendingPlanRef.current = plan;
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: plan.proposalSpeech,
+          clearPendingPhotos: true,
+        });
+        return;
+      }
+
       const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content);
       if (typedGuestAction !== "none") {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
         pendingPlanRef.current = null;
         const hostingGate = evaluateHostingPlanningGate(savedMessage.content);
         if (hostingGate.status === "needs_clarification") {
+          pendingHostingClarificationRef.current = {
+            sourceText: savedMessage.content,
+            askedAtClientMessageId: clientMessageId,
+          };
           await persistLocalTypedAgentReply({
             replyToClientMessageId: clientMessageId,
             content: hostingGate.question ?? "I need a few details before I message anyone.",
@@ -6196,6 +6264,8 @@ export default function ElevenLabsAgentWidget({
           });
           return;
         }
+
+        pendingHostingClarificationRef.current = null;
 
         if (!authUserId) {
           await persistLocalTypedAgentReply({

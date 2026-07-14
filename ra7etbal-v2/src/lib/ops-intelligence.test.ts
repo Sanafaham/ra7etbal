@@ -603,6 +603,26 @@ describe("hosting planning gate", () => {
     expect(gate.status).toBe("ready");
     expect(gate.brief.unresolvedRequiredFields).toEqual([]);
   });
+
+  it("treats the exact clarification answer as complete only when linked to the original request", () => {
+    const original = "Handle afternoon tea at home today for me and three guests.";
+    const answer =
+      "At 4 PM in the garden. Serve finger sandwiches, scones, small cakes, tea and coffee. No dietary restrictions. Use the floral china and simple white flowers.";
+    const linkedAnswer = evaluateHostingPlanningGate(`${original}\n\nClarification details: ${answer}`);
+
+    expect(resolveGuestOutcomeAction(answer)).toBe("none");
+    expect(resolveGuestOutcomeAction(`${original}\n\nClarification details: ${answer}`)).toBe("propose");
+    expect(linkedAnswer.status).toBe("ready");
+    expect(linkedAnswer.brief.occasion).toBe("afternoon tea");
+    expect(linkedAnswer.brief.date).toBe("today");
+    expect(linkedAnswer.brief.guestCount).toBe("three guests");
+    expect(linkedAnswer.brief.startTime).toBe("4 PM");
+    expect(linkedAnswer.brief.location).toBe("the garden");
+    expect(linkedAnswer.brief.menu).toContain("finger sandwiches");
+    expect(linkedAnswer.brief.dietaryRequirements).toBe("No dietary restrictions");
+    expect(linkedAnswer.brief.china).toBe("floral china");
+    expect(linkedAnswer.brief.flowers).toBe("simple white flowers");
+  });
 });
 
 // ── Confirm-before-send: propose → verbatim "Yes" → execute once ─────────────

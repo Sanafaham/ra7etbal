@@ -166,8 +166,7 @@ const PERMISSION_TO_SUGGEST_MENU_RE =
 const DIETARY_RE =
   /\b(?:no dietary restrictions|no allergies|dietary restrictions?[:\s]+[^.!?;]+|allerg(?:y|ies)[:\s]+[^.!?;]+|vegetarian|vegan|gluten[-\s]?free|dairy[-\s]?free|nut[-\s]?free|halal)\b/i;
 const DRINKS_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cocktails?)\b/ig;
-const CHINA_RE = /\b(?:(?:the|selected|blue|white|formal|best|special)\s+)?(?:china|tea set|cups?|plates?|silver|serving pieces?)\b/i;
-const FLOWERS_RE = /\bflowers?|floral|arrangement\b/i;
+const CHINA_RE = /\b(?:(?:the|selected|blue|white|floral|formal|best|special)\s+)?(?:china|tea set|cups?|plates?|silver|serving pieces?)\b/i;
 
 function cleanMatchedText(value: string | null | undefined): string | null {
   const cleaned = (value ?? "").replace(/\s+/g, " ").trim().replace(/[,.]$/, "");
@@ -232,6 +231,15 @@ function inferDrinks(text: string): string | null {
   return unique.length > 0 ? unique.join(", ") : null;
 }
 
+function inferFlowers(text: string): string | null {
+  const explicitFlowers = text.match(/\b(?:(?:simple|white|fresh|seasonal|small|large)\s+)*flowers?\b/i)?.[0];
+  if (explicitFlowers) return cleanMatchedText(explicitFlowers);
+  const arrangement = text.match(/\b(?:(?:simple|white|fresh|seasonal|small|large)\s+)*arrangement\b/i)?.[0];
+  if (arrangement) return cleanMatchedText(arrangement);
+  if (/\bfloral\b(?!\s+china\b)/i.test(text)) return "floral";
+  return null;
+}
+
 export function buildHostingEventBrief(text: string): HostingEventBrief {
   const source = text.trim();
   const startTime = cleanMatchedText(source.match(TIME_RE)?.[1]);
@@ -251,7 +259,7 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
       ? cleanMatchedText(source.match(/\b(?:formal|casual|simple|elegant|garden|inside|outside|buffet|seated)\b/i)?.[0])
       : null,
     china: cleanMatchedText(source.match(CHINA_RE)?.[0]),
-    flowers: cleanMatchedText(source.match(FLOWERS_RE)?.[0]),
+    flowers: inferFlowers(source),
     unresolvedRequiredFields: [],
   };
 

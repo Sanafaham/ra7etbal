@@ -130,6 +130,30 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(sendBlock).toContain("content: plan.proposalSpeech");
   });
 
+  it("links a typed hosting clarification answer back to the original request before planning", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const pendingRefIndex = SOURCE.indexOf("const pendingHostingClarificationRef = useRef<PendingHostingClarification | null>(null)");
+    const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
+    const mergeIndex = sendBlock.indexOf("const clarifiedHostingText = `${pendingHostingClarification.sourceText}");
+    const gateIndex = sendBlock.indexOf("evaluateHostingPlanningGate(clarifiedHostingText)");
+    const buildIndex = sendBlock.indexOf("buildOperationalPlanFromOutcome(clarifiedHostingText, people)");
+    const proposalIndex = sendBlock.indexOf("content: plan.proposalSpeech", buildIndex);
+    const setClarificationIndex = sendBlock.indexOf("pendingHostingClarificationRef.current = {", gateIndex);
+    const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
+
+    expect(pendingRefIndex).toBeGreaterThan(-1);
+    expect(setClarificationIndex).toBeGreaterThan(gateIndex);
+    expect(pendingBranchIndex).toBeGreaterThan(-1);
+    expect(mergeIndex).toBeGreaterThan(pendingBranchIndex);
+    expect(gateIndex).toBeGreaterThan(mergeIndex);
+    expect(buildIndex).toBeGreaterThan(gateIndex);
+    expect(proposalIndex).toBeGreaterThan(buildIndex);
+    expect(buildIndex).toBeLessThan(sendIndex);
+  });
+
   it("executes typed hosting approval through the stored plan once instead of re-asking ElevenLabs", () => {
     const sendBlock = blockBetween(
       "const sendTypedMessage = useCallback(async () => {",
@@ -149,6 +173,14 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(sendBlock).toContain("if (turn.clearPlan) pendingPlanRef.current = null");
     expect(sendBlock).toContain('turn.action === "executed"');
     expect(sendBlock).toContain('turn.action === "cancelled"');
+  });
+
+  it("keeps typed conversation history stable when leaving and returning to Type to Carson", () => {
+    expect(SOURCE).toContain('const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id"');
+    expect(SOURCE).toContain("const typedSessionIdRef = useRef(getOrCreateTypedSessionId())");
+    expect(SOURCE).toContain("loadRecentTypedCarsonMessages(100)");
+    expect(SOURCE).toContain("setTypedMessages(messages)");
+    expect(SOURCE).toContain("markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)");
   });
 
   it("marks local typed hosting replies responded in the durable user row", () => {
