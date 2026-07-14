@@ -688,6 +688,35 @@ function buildHostingWorkerMessage(
   ].join(" ");
 }
 
+function hostingAssignmentSummary(task: ProposedTask): string {
+  if (/transport support|car and timing/i.test(task.message)) return `${task.personName} handles transport support`;
+  if (/coordinate|checkpoints/i.test(task.message)) return `${task.personName} coordinates readiness`;
+  if (/setup|china|linens|flowers|table/i.test(task.message)) {
+    return `${task.personName} handles setup, china, flowers, and table presentation`;
+  }
+  if (/food|drinks|menu|service/i.test(task.message)) return `${task.personName} handles food and drinks`;
+  return `${task.personName} handles their part`;
+}
+
+function buildHostingProposalSpeech(brief: HostingEventBrief, tasks: ProposedTask[]): string {
+  const details = [
+    brief.startTime ? brief.startTime : null,
+    brief.date,
+    brief.location ? `in ${brief.location}` : null,
+    brief.guestCount ? `for ${brief.guestCount}` : null,
+  ].filter(Boolean);
+  const detailSentence = details.length > 0 ? details.join(" ") : brief.occasion ?? "the event";
+  const planParts = [
+    `Here is the plan for ${brief.occasion ?? "the event"}: ${detailSentence}.`,
+    brief.menu ? `Menu: ${brief.menu}.` : null,
+    brief.dietaryRequirements ? `Dietary requirements: ${brief.dietaryRequirements}.` : null,
+    brief.china ? `China: ${brief.china}.` : null,
+    brief.flowers ? `Flowers: ${brief.flowers}.` : null,
+    `${formatNameList(tasks.map(hostingAssignmentSummary))}. Should I send it?`,
+  ].filter(Boolean);
+  return planParts.join(" ");
+}
+
 export function normalizeGuestPreparationPlan(
   plan: ProposedPlan,
   people: Person[],
@@ -697,14 +726,11 @@ export function normalizeGuestPreparationPlan(
   const deterministicTasks = buildDeterministicGuestPreparationTasks(people, plan.sourceText);
   if (deterministicTasks.length < 2) return plan;
 
-  const names = deterministicTasks.map((task) => task.personName);
+  const brief = buildHostingEventBrief(plan.sourceText);
   return {
     ...plan,
     tasks: deterministicTasks,
-    proposalSpeech:
-      names.length === 1
-        ? `I can handle this with ${names[0]}. Should I send it?`
-        : `I can split this between ${formatNameList(names)}. Should I send it?`,
+    proposalSpeech: buildHostingProposalSpeech(brief, deterministicTasks),
   };
 }
 

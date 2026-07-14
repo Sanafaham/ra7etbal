@@ -623,6 +623,39 @@ describe("hosting planning gate", () => {
     expect(linkedAnswer.brief.china).toBe("floral china");
     expect(linkedAnswer.brief.flowers).toBe("simple white flowers");
   });
+
+  it("shows a clear operational plan before approval after the exact clarification answer", () => {
+    const sourceText =
+      "Handle afternoon tea for me and three guests today at home.\n\n" +
+      "Clarification details: At 4 PM in the garden. Finger sandwiches, cakes and tea. Use the floral china and simple white flowers.";
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText,
+      createdAt: Date.now(),
+      proposalSpeech: "I can split this between the team. Should I send it?",
+      tasks: [
+        { personId: "christopher", personName: "Christopher", message: "Handle everything." },
+      ],
+    }, [
+      person({ id: "christopher", name: "Christopher", role: "Cook", responsibilities: "Dinner, menu, kitchen, food." }),
+      person({ id: "nasira", name: "Nasira", role: "Housekeeper", responsibilities: "Flowers, hospitality, table setup, guest rooms." }),
+      person({ id: "bahan", name: "Bahan", role: "Coordinator", responsibilities: "Coordinate staff and follow up." }),
+      person({ id: "grace", name: "Grace", role: "Nanny", responsibilities: "Childcare." }),
+      person({ id: "ghulam", name: "Ghulam", role: "Driver", responsibilities: "Transport, car, airport pickups." }),
+    ]);
+
+    expect(plan.proposalSpeech).toContain("4 PM");
+    expect(plan.proposalSpeech).toContain("today");
+    expect(plan.proposalSpeech).toContain("the garden");
+    expect(plan.proposalSpeech).toContain("three guests");
+    expect(plan.proposalSpeech).toContain("Finger sandwiches, cakes and tea");
+    expect(plan.proposalSpeech).toContain("floral china");
+    expect(plan.proposalSpeech).toContain("simple white flowers");
+    expect(plan.proposalSpeech).toContain("Christopher handles food and drinks");
+    expect(plan.proposalSpeech).toContain("Nasira handles setup, china, flowers, and table presentation");
+    expect(plan.proposalSpeech).toContain("Bahan coordinates readiness");
+    expect(plan.proposalSpeech).toMatch(/Should I send it\?$/);
+  });
 });
 
 // ── Confirm-before-send: propose → verbatim "Yes" → execute once ─────────────
