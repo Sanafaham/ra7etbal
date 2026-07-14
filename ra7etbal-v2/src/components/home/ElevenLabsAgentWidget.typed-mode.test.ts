@@ -201,6 +201,24 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(initialGuardBlock).not.toContain("!conversation");
   });
 
+  it("returns after local partial hosting clarification so ElevenLabs cannot duplicate the reply", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
+    const needsClarificationIndex = sendBlock.indexOf('hostingGate.status === "needs_clarification"', pendingBranchIndex);
+    const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", needsClarificationIndex);
+    const localReturnIndex = sendBlock.indexOf("return;", localReplyIndex);
+    const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
+
+    expect(pendingBranchIndex).toBeGreaterThan(-1);
+    expect(needsClarificationIndex).toBeGreaterThan(pendingBranchIndex);
+    expect(localReplyIndex).toBeGreaterThan(needsClarificationIndex);
+    expect(localReturnIndex).toBeGreaterThan(localReplyIndex);
+    expect(localReturnIndex).toBeLessThan(sendIndex);
+  });
+
   it("keeps typed conversation history stable when leaving and returning to Type to Carson", () => {
     expect(SOURCE).toContain('const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id"');
     expect(SOURCE).toContain("const typedSessionIdRef = useRef(getOrCreateTypedSessionId())");

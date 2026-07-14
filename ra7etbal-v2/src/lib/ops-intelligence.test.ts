@@ -567,19 +567,19 @@ describe("hosting planning gate", () => {
     expect(gate.brief.date).toBe("today");
     expect(gate.brief.guestCount).toBe("three guests");
     expect(gate.brief.location).toBe("home");
-    expect(gate.brief.unresolvedRequiredFields).toEqual(["start_time", "menu", "location"]);
+    expect(gate.brief.unresolvedRequiredFields).toEqual(["start_time", "menu", "location", "dietary_requirements"]);
     expect(gate.question).toMatch(/what time/i);
     expect(gate.question).toMatch(/where at home/i);
     expect(gate.question).toMatch(/what you would like served/i);
     expect(gate.question).toMatch(/dietary restrictions/i);
-    expect(gate.question).toMatch(/china or flowers/i);
+    expect(gate.question).not.toMatch(/china or flowers/i);
   });
 
   it("asks for menu or permission to suggest one when menu is missing", () => {
     const gate = evaluateHostingPlanningGate("Afternoon tea today at 4 PM in the garden for three guests.");
 
     expect(gate.status).toBe("needs_clarification");
-    expect(gate.brief.unresolvedRequiredFields).toEqual(["menu"]);
+    expect(gate.brief.unresolvedRequiredFields).toEqual(["menu", "dietary_requirements"]);
     expect(gate.question).toMatch(/what you would like served|suggest a menu/i);
   });
 
@@ -604,7 +604,27 @@ describe("hosting planning gate", () => {
     expect(gate.brief.unresolvedRequiredFields).toEqual([]);
   });
 
-  it("treats the exact clarification answer as complete only when linked to the original request", () => {
+  it("preserves partial clarification details and asks only for time and dietary restrictions", () => {
+    const original = "Handle afternoon tea for tomorrow at home for 5 guests";
+    const answer =
+      "Mini sandwiches, mini cakes, pastries and food finger. It should be indoors and use the pink floral China, pink flowers and the silver cutlery. Luxury setting";
+    const linkedAnswer = evaluateHostingPlanningGate(`${original}\n\nClarification details: ${answer}`);
+
+    expect(linkedAnswer.status).toBe("needs_clarification");
+    expect(linkedAnswer.brief.occasion).toBe("afternoon tea");
+    expect(linkedAnswer.brief.date).toBe("tomorrow");
+    expect(linkedAnswer.brief.guestCount).toBe("5 guests");
+    expect(linkedAnswer.brief.startTime).toBeNull();
+    expect(linkedAnswer.brief.location).toBe("inside");
+    expect(linkedAnswer.brief.menu).toBe("Mini sandwiches, mini cakes, pastries and food finger");
+    expect(linkedAnswer.brief.dietaryRequirements).toBeNull();
+    expect(linkedAnswer.brief.china).toBe("pink floral China");
+    expect(linkedAnswer.brief.flowers).toBe("pink flowers");
+    expect(linkedAnswer.brief.unresolvedRequiredFields).toEqual(["start_time", "dietary_requirements"]);
+    expect(linkedAnswer.question).toBe("What time should it begin, and are there any dietary restrictions?");
+  });
+
+  it("treats the exact clarification answer as needing only dietary info when linked to the original request", () => {
     const original = "Handle afternoon tea for me and three guests today at home.";
     const answer =
       "At 4 PM in the garden. Finger sandwiches, cakes and tea. Use the floral china and simple white flowers.";
@@ -612,7 +632,7 @@ describe("hosting planning gate", () => {
 
     expect(resolveGuestOutcomeAction(answer)).toBe("none");
     expect(resolveGuestOutcomeAction(`${original}\n\nClarification details: ${answer}`)).toBe("propose");
-    expect(linkedAnswer.status).toBe("ready");
+    expect(linkedAnswer.status).toBe("needs_clarification");
     expect(linkedAnswer.brief.occasion).toBe("afternoon tea");
     expect(linkedAnswer.brief.date).toBe("today");
     expect(linkedAnswer.brief.guestCount).toBe("three guests");
@@ -622,6 +642,8 @@ describe("hosting planning gate", () => {
     expect(linkedAnswer.brief.dietaryRequirements).toBeNull();
     expect(linkedAnswer.brief.china).toBe("floral china");
     expect(linkedAnswer.brief.flowers).toBe("simple white flowers");
+    expect(linkedAnswer.brief.unresolvedRequiredFields).toEqual(["dietary_requirements"]);
+    expect(linkedAnswer.question).toBe("For afternoon tea, are there any dietary restrictions?");
   });
 
   it("shows a clear operational plan before approval after the exact clarification answer", () => {

@@ -170,7 +170,7 @@ const PERMISSION_TO_SUGGEST_MENU_RE =
 const DIETARY_RE =
   /\b(?:no dietary restrictions|no allergies|dietary restrictions?[:\s]+[^.!?;]+|allerg(?:y|ies)[:\s]+[^.!?;]+|vegetarian|vegan|gluten[-\s]?free|dairy[-\s]?free|nut[-\s]?free|halal)\b/i;
 const DRINKS_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cocktails?)\b/ig;
-const CHINA_RE = /\b(?:(?:the|selected|blue|white|floral|formal|best|special)\s+)?(?:china|tea set|cups?|plates?|silver|serving pieces?)\b/i;
+const CHINA_RE = /\b(?:(?:the|selected|blue|white|pink|floral|formal|best|special|luxury)\s+)*(?:china|tea set|cups?|plates?|silver|silverware|cutlery|serving pieces?)\b/i;
 
 function cleanMatchedText(value: string | null | undefined): string | null {
   const cleaned = (value ?? "").replace(/\s+/g, " ").trim().replace(/[,.]$/, "");
@@ -204,6 +204,8 @@ function inferDate(text: string): string | null {
 function inferLocation(text: string): string | null {
   const specific = text.match(SPECIFIC_LOCATION_RE)?.[1];
   if (specific) return `the ${specific.toLowerCase()}`;
+  if (/\b(?:outside|outdoors?)\b/i.test(text)) return "outside";
+  if (/\b(?:inside|indoors?)\b/i.test(text)) return "inside";
   const home = text.match(HOME_LOCATION_RE);
   if (!home) return null;
   if (home[1]) return `the ${home[1].toLowerCase()}`;
@@ -225,7 +227,7 @@ function inferMenu(text: string): string | null {
   const menu = text.match(MENU_RE)?.[1];
   if (menu) {
     const cleaned = cleanMatchedText(menu.replace(/\b(?:by|at|in|on)\s+\d.*$/i, ""));
-    if (cleaned && cleaned.length >= 4) return cleaned;
+    if (cleaned && cleaned.length >= 4 && MENU_ITEM_RE.test(cleaned)) return cleaned;
   }
 
   const fallbackText = text.includes("Clarification details:")
@@ -257,9 +259,9 @@ function inferDrinks(text: string): string | null {
 }
 
 function inferFlowers(text: string): string | null {
-  const explicitFlowers = text.match(/\b(?:(?:simple|white|fresh|seasonal|small|large)\s+)*flowers?\b/i)?.[0];
+  const explicitFlowers = text.match(/\b(?:(?:simple|white|pink|fresh|seasonal|small|large)\s+)*flowers?\b/i)?.[0];
   if (explicitFlowers) return cleanMatchedText(explicitFlowers);
-  const arrangement = text.match(/\b(?:(?:simple|white|fresh|seasonal|small|large)\s+)*arrangement\b/i)?.[0];
+  const arrangement = text.match(/\b(?:(?:simple|white|pink|fresh|seasonal|small|large)\s+)*arrangement\b/i)?.[0];
   if (arrangement) return cleanMatchedText(arrangement);
   if (/\bfloral\b(?!\s+china\b)/i.test(text)) return "floral";
   return null;
@@ -283,7 +285,7 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
     setupPreferences: /\b(?:formal|casual|simple|elegant|garden|inside|outside|buffet|seated)\b/i.test(source)
       ? cleanMatchedText(source.match(/\b(?:formal|casual|simple|elegant|garden|inside|outside|buffet|seated)\b/i)?.[0])
       : null,
-    china: cleanMatchedText(source.match(CHINA_RE)?.[0]),
+    china: cleanMatchedText(source.match(CHINA_RE)?.[0])?.replace(/^the\s+/i, "") ?? null,
     flowers: inferFlowers(source),
     unresolvedRequiredFields: [],
   };
@@ -294,6 +296,7 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
   if (/\b(?:tea|dinner|lunch|brunch|breakfast|hosting|guests?)\b/i.test(source) && (!brief.location || brief.location === "home")) {
     missing.push("location");
   }
+  if (!brief.dietaryRequirements) missing.push("dietary_requirements");
   brief.unresolvedRequiredFields = missing;
   return brief;
 }
@@ -305,13 +308,15 @@ export function evaluateHostingPlanningGate(text: string): HostingPlanningGateRe
   }
 
   const asks: string[] = [];
-  if (brief.unresolvedRequiredFields.includes("start_time")) asks.push("what time it should begin");
+  if (brief.unresolvedRequiredFields.includes("start_time")) asks.push("what time should it begin");
   if (brief.unresolvedRequiredFields.includes("location")) asks.push("where at home we should host it");
   if (brief.unresolvedRequiredFields.includes("menu")) asks.push("what you would like served");
+  if (brief.unresolvedRequiredFields.includes("dietary_requirements")) asks.push("are there any dietary restrictions");
 
   const question =
-    `For ${brief.occasion ?? "this"}, ${asks.join(", and ")}? ` +
-    "I can suggest a menu if you prefer. Are there any dietary restrictions, and do you want particular china or flowers used?";
+    asks.length === 2 && brief.unresolvedRequiredFields.includes("start_time") && brief.unresolvedRequiredFields.includes("dietary_requirements")
+      ? "What time should it begin, and are there any dietary restrictions?"
+      : `For ${brief.occasion ?? "this"}, ${asks.join(", and ")}?`;
 
   return { status: "needs_clarification", brief, question };
 }
