@@ -624,6 +624,41 @@ describe("hosting planning gate", () => {
     expect(linkedAnswer.question).toBe("What time should it begin, and are there any dietary restrictions?");
   });
 
+  it("accumulates the exact three-turn hosting clarification into one complete brief", () => {
+    const turn1 = "Handle afternoon tea at home today for me and three guests.";
+    const turn2 =
+      "Mini sandwiches, mini cakes, pastries and finger food. It should be indoors and use the pink floral china, pink flowers and the silver cutlery. Luxury setting.";
+    const turn3 = "4:00 PM and no dietary restrictions";
+    const afterTurn2 = evaluateHostingPlanningGate(`${turn1}\n\nClarification details: ${turn2}`);
+    const afterTurn3 = evaluateHostingPlanningGate(
+      `${turn1}\n\nClarification details: ${turn2}\n\nClarification details: ${turn3}`,
+    );
+
+    expect(afterTurn2.question).toBe("What time should it begin, and are there any dietary restrictions?");
+    expect(afterTurn3.status).toBe("ready");
+    expect(afterTurn3.brief.occasion).toBe("afternoon tea");
+    expect(afterTurn3.brief.date).toBe("today");
+    expect(afterTurn3.brief.guestCount).toBe("three guests");
+    expect(afterTurn3.brief.startTime).toBe("4:00 PM");
+    expect(afterTurn3.brief.location).toBe("inside");
+    expect(afterTurn3.brief.menu).toBe("Mini sandwiches, mini cakes, pastries and finger food");
+    expect(afterTurn3.brief.dietaryRequirements).toBe("no dietary restrictions");
+    expect(afterTurn3.brief.china).toBe("pink floral china");
+    expect(afterTurn3.brief.flowers).toBe("pink flowers");
+    expect(afterTurn3.brief.unresolvedRequiredFields).toEqual([]);
+  });
+
+  it("does not ask again for fields already answered across clarification turns", () => {
+    const gate = evaluateHostingPlanningGate(
+      "Handle afternoon tea at home today for me and three guests.\n\n" +
+      "Clarification details: Mini sandwiches, mini cakes, pastries and finger food. It should be indoors and use the pink floral china, pink flowers and the silver cutlery. Luxury setting.\n\n" +
+      "Clarification details: 4:00 PM and no dietary restrictions",
+    );
+
+    expect(gate.question).toBeNull();
+    expect(gate.brief.unresolvedRequiredFields).toEqual([]);
+  });
+
   it("treats the exact clarification answer as needing only dietary info when linked to the original request", () => {
     const original = "Handle afternoon tea for me and three guests today at home.";
     const answer =

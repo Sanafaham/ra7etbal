@@ -156,15 +156,17 @@ export function resolveGuestOutcomeAction(text: string | null | undefined): Gues
 
 const TIME_RE =
   /\b(?:at|by|from|around|about)\s+((?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:am|pm|a\.m\.|p\.m\.)?|(?:[01]?\d|2[0-3]):[0-5]\d)\b/i;
+const CLARIFICATION_TIME_RE =
+  /\b((?:1[0-2]|0?[1-9])(?::[0-5]\d)\s*(?:am|pm|a\.m\.|p\.m\.))\b/i;
 const GUEST_COUNT_RE =
   /\b(?:for\s+)?(?:(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+)?(?:guests?|people|visitors?|friends|family|company)\b/i;
 const HOME_LOCATION_RE = /\b(?:at\s+home|in\s+the\s+(garden|dining\s+room|salon|majlis|kitchen|terrace|patio)|outside|inside|outdoors?|indoors?)\b/i;
 const SPECIFIC_LOCATION_RE = /\b(?:in|on|at)\s+(?:the\s+)?(garden|dining\s+room|salon|majlis|terrace|patio|pool\s+area|living\s+room|kitchen)\b/i;
 const MENU_RE = /\b(?:serve|serving|with|menu|food|prepare)\s+([^.!?;]+)/i;
 const MENU_ITEM_RE =
-  /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/i;
+  /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/i;
 const MENU_ITEM_TOKEN_RE =
-  /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/ig;
+  /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/ig;
 const PERMISSION_TO_SUGGEST_MENU_RE =
   /\b(?:you choose|choose (?:the )?menu|suggest (?:a )?menu|carson chooses?|whatever you think|up to you|decide (?:the )?menu)\b/i;
 const DIETARY_RE =
@@ -230,12 +232,9 @@ function inferMenu(text: string): string | null {
     if (cleaned && cleaned.length >= 4 && MENU_ITEM_RE.test(cleaned)) return cleaned;
   }
 
-  const fallbackText = text.includes("Clarification details:")
-    ? text.slice(text.lastIndexOf("Clarification details:") + "Clarification details:".length)
-    : text;
-  const sentences = fallbackText
+  const sentences = text
     .split(/[.!?;]+/)
-    .map((sentence) => cleanMatchedText(sentence))
+    .map((sentence) => cleanMatchedText(sentence.replace(/^[\s\S]*Clarification details:\s*/i, "")))
     .filter((sentence): sentence is string => Boolean(sentence));
   const menuSentence = sentences.find((sentence) => {
     if (!MENU_ITEM_RE.test(sentence)) return false;
@@ -269,7 +268,7 @@ function inferFlowers(text: string): string | null {
 
 export function buildHostingEventBrief(text: string): HostingEventBrief {
   const source = text.trim();
-  const startTime = cleanMatchedText(source.match(TIME_RE)?.[1]);
+  const startTime = cleanMatchedText(source.match(TIME_RE)?.[1] ?? source.match(CLARIFICATION_TIME_RE)?.[1]);
   const menu = inferMenu(source);
   const location = inferLocation(source);
   const occasion = inferOccasion(source);
