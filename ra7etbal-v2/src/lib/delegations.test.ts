@@ -59,6 +59,24 @@ function taskFixture(overrides: Partial<Task> = {}): Task {
 // This test locks in that createDelegationTaskAndMessage only ever uses the
 // value createTask() actually returned.
 describe("createDelegationTaskAndMessage schedules escalation using task.created_at only", () => {
+  it("always uses the production confirmation origin for worker-facing links", async () => {
+    mocks.createTask.mockImplementation(async (draft) => taskFixture({ ...draft, id: draft.id }));
+
+    const result = await createDelegationTaskAndMessage({
+      source: "test",
+      userId: "user-1",
+      assignee: { name: "Christopher" },
+      taskText: "Prepare lunch.",
+      taskId: "task-preview-origin",
+      confirmationOrigin: "https://ra7etbal-v2-preview.vercel.app",
+    });
+
+    const expectedUrl = "https://www.ra7etbal.com/confirm?task=task-preview-origin";
+    expect(result.confirmationUrl).toBe(expectedUrl);
+    expect(mocks.createTask).toHaveBeenCalledWith(expect.objectContaining({ confirmation_url: expectedUrl }));
+    expect(mocks.createMessage).toHaveBeenCalledWith(expect.objectContaining({ confirmation_url: expectedUrl }));
+  });
+
   it("passes the exact created_at returned by createTask, not a locally-generated timestamp", async () => {
     const dbCreatedAt = "2026-07-02T14:25:42.555Z";
     mocks.createTask.mockResolvedValue(taskFixture({ created_at: dbCreatedAt }));

@@ -64,6 +64,7 @@ import {
 import { buildCarsonOpeningLine } from "../../lib/carson-opening";
 import { createReminderTask } from "../../lib/reminders";
 import {
+  CANONICAL_CONFIRMATION_ORIGIN,
   createDelegationTaskAndMessage,
 } from "../../lib/delegations";
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
@@ -1664,7 +1665,7 @@ export default function ElevenLabsAgentWidget({
       // confirmation_url is derived from a pre-generated UUID so it is set
       // atomically in the same INSERT — no second write required.
       const taskId = crypto.randomUUID();
-      const confirmationUrl = `${window.location.origin}/confirm?task=${taskId}`;
+      const confirmationUrl = `${CANONICAL_CONFIRMATION_ORIGIN}/confirm?task=${taskId}`;
       let task;
       try {
         task = await createTask({

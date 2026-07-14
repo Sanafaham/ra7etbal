@@ -135,6 +135,23 @@ describe("guest preparation operational planning", () => {
     expect(tasks[2].message).toMatch(/Checkpoints: confirm with Christopher.*confirm with Nasira/i);
   });
 
+  it("formats hosting worker messages naturally for relative dates and indoor locations", () => {
+    const tasks = buildDeterministicGuestPreparationTasks(
+      guestTeam(),
+      "Afternoon tea today at 4:00 PM inside for three guests. Serve mini sandwiches, mini cakes, pastries, tea, coffee, and water. No dietary restrictions. Use the pink floral china, pink flowers, and silver cutlery.",
+    );
+
+    for (const task of tasks) {
+      expect(task.message).toContain("Sana is hosting afternoon tea for three guests today at 4:00 PM inside.");
+      expect(task.message).not.toMatch(/\bon today\b/i);
+      expect(task.message).not.toMatch(/\bin inside\b/i);
+      expect(task.message).not.toMatch(/\bsana is hosting\b/);
+    }
+    expect(tasks[0].message).toContain("afternoon tea today at 4:00 PM inside");
+    expect(tasks[1].message).toContain("pink floral china");
+    expect(tasks[1].message).toContain("pink flowers");
+  });
+
   it("repairs a collapsed single-owner guest plan before persistence or execution", () => {
     const collapsed = normalizeGuestPreparationPlan({
       outcomeType: "guest_arrival",

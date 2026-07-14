@@ -629,10 +629,30 @@ export function buildDeterministicGuestPreparationTasks(
 function briefContextSentence(brief: HostingEventBrief): string {
   const occasion = brief.occasion ?? "a household event";
   const guestPart = brief.guestCount ? ` for ${brief.guestCount}` : "";
-  const datePart = brief.date ? ` ${brief.date}` : "";
+  const datePart = brief.date ? ` ${formatHostingDatePhrase(brief.date)}` : "";
   const timePart = brief.startTime ? ` at ${brief.startTime}` : "";
-  const locationPart = brief.location ? ` in ${brief.location}` : "";
+  const locationPart = brief.location ? ` ${formatHostingLocationPhrase(brief.location)}` : "";
   return `Sana is hosting ${occasion}${guestPart}${datePart}${timePart}${locationPart}.`;
+}
+
+function formatHostingDatePhrase(date: string): string {
+  return /^(?:today|tomorrow|tonight|this\s+(?:morning|afternoon|evening|weekend))$/i.test(date.trim())
+    ? date.trim()
+    : `on ${date.trim()}`;
+}
+
+function formatHostingLocationPhrase(location: string): string {
+  const normalized = location.trim();
+  if (/^(?:inside|outside)$/i.test(normalized)) return normalized.toLowerCase();
+  if (/^home$/i.test(normalized)) return "at home";
+  return `in ${normalized}`;
+}
+
+function hostingSchedulePhrase(brief: HostingEventBrief): string {
+  const date = brief.date ? formatHostingDatePhrase(brief.date) : "on the event date";
+  const time = brief.startTime ? `at ${brief.startTime}` : "at the event time";
+  const location = brief.location ? formatHostingLocationPhrase(brief.location) : "in the event location";
+  return `${date} ${time} ${location}`;
 }
 
 function readyDeadline(brief: HostingEventBrief, domain: GuestPrepDomain): string {
@@ -649,9 +669,7 @@ function buildHostingWorkerMessage(
   hospitalityName: string,
 ): string {
   const context = briefContextSentence(brief);
-  const date = brief.date ?? "the event date";
-  const time = brief.startTime ?? "the event time";
-  const location = brief.location ?? "the event location";
+  const schedule = hostingSchedulePhrase(brief);
   const menu = brief.menu ?? "the agreed menu";
   const dietary = brief.dietaryRequirements ?? "any dietary restrictions Sana confirms";
   const china = brief.china ?? "appropriate china, cups, plates, napkins, and serving pieces";
@@ -661,7 +679,7 @@ function buildHostingWorkerMessage(
   if (domain === "dinner") {
     return [
       context,
-      `Please prepare the food and drinks for ${brief.occasion ?? "the event"} on ${date} at ${time} in ${location}.`,
+      `Please prepare the food and drinks for ${brief.occasion ?? "the event"} ${schedule}.`,
       `Menu/service: ${menu}. Drinks: ${brief.drinks ?? "tea, coffee, water, and suitable cold drinks"}. Dietary requirements: ${dietary}.`,
       `Required result: everything is ready for service by ${deadline}. Tell Carson immediately if an ingredient or service item is unavailable.`,
     ].join(" ");
@@ -670,7 +688,7 @@ function buildHostingWorkerMessage(
   if (domain === "hospitality") {
     return [
       context,
-      `Please prepare the setup for ${brief.occasion ?? "the event"} on ${date} at ${time} in ${location}.`,
+      `Please prepare the setup for ${brief.occasion ?? "the event"} ${schedule}.`,
       `Use ${china}, clean linens, seating, water glasses, serving pieces, and ${flowers}.`,
       `Required result: the full table and guest area are ready by ${deadline}. Tell Carson immediately if anything is missing.`,
     ].join(" ");
@@ -679,14 +697,14 @@ function buildHostingWorkerMessage(
   if (domain === "transport") {
     return [
       context,
-      `Please handle the transport support connected to this event on ${date} at ${time} in ${location}.`,
+      `Please handle the transport support connected to this event ${schedule}.`,
       `Required result: the car and timing are ready by ${deadline}. Tell Carson immediately if there is any delay or blocker.`,
     ].join(" ");
   }
 
   return [
     context,
-    `Please coordinate ${brief.occasion ?? "the event"} on ${date} at ${time} in ${location}.`,
+    `Please coordinate ${brief.occasion ?? "the event"} ${schedule}.`,
     `Checkpoints: confirm with ${dinnerName} on menu, drinks, and service timing; confirm with ${hospitalityName} on table setup, china, linens, flowers, seating, and readiness.`,
     `Required result: all checkpoints are verified by ${deadline}. Report any missing item, delay, or blocker to Carson immediately.`,
   ].join(" ");

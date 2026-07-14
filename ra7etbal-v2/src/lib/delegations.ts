@@ -8,6 +8,8 @@ import type { Message } from "../types/message";
 import type { Person } from "../types/person";
 import type { Task } from "../types/task";
 
+export const CANONICAL_CONFIRMATION_ORIGIN = "https://www.ra7etbal.com";
+
 export interface DelegationAssignee {
   name: string;
   phone?: string | null;
@@ -93,7 +95,6 @@ export async function createDelegationTaskAndMessage({
   dueAt = null,
   ownerName = null,
   taskId = null,
-  confirmationOrigin = null,
   scheduleEscalation = true,
   createCompanionMessage = true,
   onEscalationError,
@@ -106,8 +107,7 @@ export async function createDelegationTaskAndMessage({
   if (!description) throw new Error("Delegation task text is required.");
 
   const id = taskId?.trim() || crypto.randomUUID();
-  const origin = confirmationOrigin ?? window.location.origin;
-  const confirmationUrl = `${origin}/confirm?task=${encodeURIComponent(id)}`;
+  const confirmationUrl = `${CANONICAL_CONFIRMATION_ORIGIN}/confirm?task=${encodeURIComponent(id)}`;
   const messageText = await buildDelegationMessageContent({
     personName: assigneeName,
     taskText: description,
