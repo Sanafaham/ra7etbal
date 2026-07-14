@@ -37,6 +37,27 @@ export interface ProposedTask {
   message: string;
 }
 
+export interface HostingEventBrief {
+  occasion: string | null;
+  date: string | null;
+  startTime: string | null;
+  location: string | null;
+  guestCount: string | null;
+  menu: string | null;
+  dietaryRequirements: string | null;
+  drinks: string | null;
+  setupPreferences: string | null;
+  china: string | null;
+  flowers: string | null;
+  unresolvedRequiredFields: string[];
+}
+
+export interface HostingPlanningGateResult {
+  status: "ready" | "needs_clarification";
+  brief: HostingEventBrief;
+  question: string | null;
+}
+
 export interface ProposedPlan {
   /** DB row id — set once persisted */
   dbId?: string;
@@ -129,6 +150,137 @@ export function resolveGuestOutcomeAction(text: string | null | undefined): Gues
   if (hasOperatingAuthority(t)) return "execute";
   if (detectHouseholdOutcome(t) !== null) return "propose";
   return "none";
+}
+
+// ── Hosting planning gate ─────────────────────────────────────────────────────
+
+const TIME_RE =
+  /\b(?:at|by|from|around|about)\s+((?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:am|pm|a\.m\.|p\.m\.)?|(?:[01]?\d|2[0-3]):[0-5]\d)\b/i;
+const GUEST_COUNT_RE =
+  /\b(?:for\s+)?(?:(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+)?(?:guests?|people|visitors?|friends|family|company)\b/i;
+const HOME_LOCATION_RE = /\b(?:at\s+home|in\s+the\s+(garden|dining\s+room|salon|majlis|kitchen|terrace|patio)|outside|inside|outdoors?|indoors?)\b/i;
+const SPECIFIC_LOCATION_RE = /\b(?:in|on|at)\s+(?:the\s+)?(garden|dining\s+room|salon|majlis|terrace|patio|pool\s+area|living\s+room|kitchen)\b/i;
+const MENU_RE = /\b(?:serve|serving|with|menu|food|prepare)\s+([^.!?;]+)/i;
+const PERMISSION_TO_SUGGEST_MENU_RE =
+  /\b(?:you choose|choose (?:the )?menu|suggest (?:a )?menu|carson chooses?|whatever you think|up to you|decide (?:the )?menu)\b/i;
+const DIETARY_RE =
+  /\b(?:no dietary restrictions|no allergies|dietary restrictions?[:\s]+[^.!?;]+|allerg(?:y|ies)[:\s]+[^.!?;]+|vegetarian|vegan|gluten[-\s]?free|dairy[-\s]?free|nut[-\s]?free|halal)\b/i;
+const DRINKS_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cocktails?)\b/ig;
+const CHINA_RE = /\b(?:(?:the|selected|blue|white|formal|best|special)\s+)?(?:china|tea set|cups?|plates?|silver|serving pieces?)\b/i;
+const FLOWERS_RE = /\bflowers?|floral|arrangement\b/i;
+
+function cleanMatchedText(value: string | null | undefined): string | null {
+  const cleaned = (value ?? "").replace(/\s+/g, " ").trim().replace(/[,.]$/, "");
+  return cleaned || null;
+}
+
+function inferOccasion(text: string): string | null {
+  if (/\bafternoon\s+tea\b/i.test(text)) return "afternoon tea";
+  if (/\bhigh\s+tea\b/i.test(text)) return "high tea";
+  if (/\bdinner\s+part(?:y|ies)\b/i.test(text)) return "dinner party";
+  if (/\blunch(?:eon)?\b/i.test(text)) return /\bluncheon\b/i.test(text) ? "luncheon" : "lunch";
+  if (/\bbrunch\b/i.test(text)) return "brunch";
+  if (/\bbreakfast\b/i.test(text)) return "breakfast";
+  if (/\btea\b/i.test(text)) return "tea";
+  if (/\bdinner\b/i.test(text)) return "dinner";
+  if (/\bguests?\b/i.test(text)) return "guest hosting";
+  return null;
+}
+
+function inferDate(text: string): string | null {
+  if (/\btoday\b/i.test(text)) return "today";
+  if (/\btomorrow\b/i.test(text)) return "tomorrow";
+  if (/\btonight\b/i.test(text)) return "tonight";
+  if (/\bthis\s+(?:evening|afternoon|morning|weekend)\b/i.test(text)) {
+    return cleanMatchedText(text.match(/\bthis\s+(?:evening|afternoon|morning|weekend)\b/i)?.[0]);
+  }
+  const weekday = text.match(/\b(?:on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)?.[0];
+  return cleanMatchedText(weekday);
+}
+
+function inferLocation(text: string): string | null {
+  const specific = text.match(SPECIFIC_LOCATION_RE)?.[1];
+  if (specific) return `the ${specific.toLowerCase()}`;
+  const home = text.match(HOME_LOCATION_RE);
+  if (!home) return null;
+  if (home[1]) return `the ${home[1].toLowerCase()}`;
+  if (/outside|outdoors?/i.test(home[0])) return "outside";
+  if (/inside|indoors?/i.test(home[0])) return "inside";
+  return "home";
+}
+
+function inferGuestCount(text: string): string | null {
+  const match = text.match(GUEST_COUNT_RE);
+  if (!match) return null;
+  const count = match[1];
+  if (count) return `${count.toLowerCase()} ${/people/i.test(match[0]) ? "people" : "guests"}`;
+  return null;
+}
+
+function inferMenu(text: string): string | null {
+  if (PERMISSION_TO_SUGGEST_MENU_RE.test(text)) return "Carson may suggest or choose the menu";
+  const menu = text.match(MENU_RE)?.[1];
+  if (!menu) return null;
+  const cleaned = cleanMatchedText(menu.replace(/\b(?:by|at|in|on)\s+\d.*$/i, ""));
+  if (!cleaned || cleaned.length < 4) return null;
+  return cleaned;
+}
+
+function inferDrinks(text: string): string | null {
+  const matches = Array.from(text.matchAll(DRINKS_RE)).map((match) => match[0].toLowerCase());
+  const unique = [...new Set(matches)];
+  return unique.length > 0 ? unique.join(", ") : null;
+}
+
+export function buildHostingEventBrief(text: string): HostingEventBrief {
+  const source = text.trim();
+  const startTime = cleanMatchedText(source.match(TIME_RE)?.[1]);
+  const menu = inferMenu(source);
+  const location = inferLocation(source);
+  const occasion = inferOccasion(source);
+  const brief: HostingEventBrief = {
+    occasion,
+    date: inferDate(source),
+    startTime,
+    location,
+    guestCount: inferGuestCount(source),
+    menu,
+    dietaryRequirements: cleanMatchedText(source.match(DIETARY_RE)?.[0]),
+    drinks: inferDrinks(source),
+    setupPreferences: /\b(?:formal|casual|simple|elegant|garden|inside|outside|buffet|seated)\b/i.test(source)
+      ? cleanMatchedText(source.match(/\b(?:formal|casual|simple|elegant|garden|inside|outside|buffet|seated)\b/i)?.[0])
+      : null,
+    china: cleanMatchedText(source.match(CHINA_RE)?.[0]),
+    flowers: cleanMatchedText(source.match(FLOWERS_RE)?.[0]),
+    unresolvedRequiredFields: [],
+  };
+
+  const missing: string[] = [];
+  if (!brief.startTime) missing.push("start_time");
+  if (!brief.menu) missing.push("menu");
+  if (/\b(?:tea|dinner|lunch|brunch|breakfast|hosting|guests?)\b/i.test(source) && (!brief.location || brief.location === "home")) {
+    missing.push("location");
+  }
+  brief.unresolvedRequiredFields = missing;
+  return brief;
+}
+
+export function evaluateHostingPlanningGate(text: string): HostingPlanningGateResult {
+  const brief = buildHostingEventBrief(text);
+  if (brief.unresolvedRequiredFields.length === 0) {
+    return { status: "ready", brief, question: null };
+  }
+
+  const asks: string[] = [];
+  if (brief.unresolvedRequiredFields.includes("start_time")) asks.push("what time it should begin");
+  if (brief.unresolvedRequiredFields.includes("location")) asks.push("where at home we should host it");
+  if (brief.unresolvedRequiredFields.includes("menu")) asks.push("what you would like served");
+
+  const question =
+    `For ${brief.occasion ?? "this"}, ${asks.join(", and ")}? ` +
+    "I can suggest a menu if you prefer. Are there any dietary restrictions, and do you want particular china or flowers used?";
+
+  return { status: "needs_clarification", brief, question };
 }
 
 // ── Confirmation / rejection detection ────────────────────────────────────────
@@ -365,6 +517,7 @@ export function buildDeterministicGuestPreparationTasks(
   people: Person[],
   sourceText = "",
 ): ProposedTask[] {
+  const brief = buildHostingEventBrief(sourceText);
   // Carson can never be a recipient — filter before any selection.
   const usable = people.filter((person) => !isAssistantRecipientName(person.name));
   const used = new Set<string>();
@@ -408,7 +561,7 @@ export function buildDeterministicGuestPreparationTasks(
       return {
         personId: person.id,
         personName: person.name,
-        message: "Please prepare the food and tea.",
+        message: buildHostingWorkerMessage("dinner", brief, dinnerName, hospitalityName),
       };
     }
 
@@ -416,7 +569,7 @@ export function buildDeterministicGuestPreparationTasks(
       return {
         personId: person.id,
         personName: person.name,
-        message: "Please handle the hospitality setup and table presentation.",
+        message: buildHostingWorkerMessage("hospitality", brief, dinnerName, hospitalityName),
       };
     }
 
@@ -424,16 +577,82 @@ export function buildDeterministicGuestPreparationTasks(
       return {
         personId: person.id,
         personName: person.name,
-        message: "Please be on standby for transport.",
+        message: buildHostingWorkerMessage("transport", brief, dinnerName, hospitalityName),
       };
     }
 
     return {
       personId: person.id,
       personName: person.name,
-      message: `Please coordinate with ${dinnerName} and ${hospitalityName} and follow up that everything is ready.`,
+      message: buildHostingWorkerMessage("coordination", brief, dinnerName, hospitalityName),
     };
   });
+}
+
+function briefContextSentence(brief: HostingEventBrief): string {
+  const occasion = brief.occasion ?? "a household event";
+  const guestPart = brief.guestCount ? ` for ${brief.guestCount}` : "";
+  const datePart = brief.date ? ` ${brief.date}` : "";
+  const timePart = brief.startTime ? ` at ${brief.startTime}` : "";
+  const locationPart = brief.location ? ` in ${brief.location}` : "";
+  return `Sana is hosting ${occasion}${guestPart}${datePart}${timePart}${locationPart}.`;
+}
+
+function readyDeadline(brief: HostingEventBrief, domain: GuestPrepDomain): string {
+  if (!brief.startTime) return "before guests arrive";
+  if (domain === "hospitality" || domain === "coordination") return `30 minutes before ${brief.startTime}`;
+  if (domain === "transport") return `before ${brief.startTime}`;
+  return `15 minutes before ${brief.startTime}`;
+}
+
+function buildHostingWorkerMessage(
+  domain: GuestPrepDomain,
+  brief: HostingEventBrief,
+  dinnerName: string,
+  hospitalityName: string,
+): string {
+  const context = briefContextSentence(brief);
+  const date = brief.date ?? "the event date";
+  const time = brief.startTime ?? "the event time";
+  const location = brief.location ?? "the event location";
+  const menu = brief.menu ?? "the agreed menu";
+  const dietary = brief.dietaryRequirements ?? "any dietary restrictions Sana confirms";
+  const china = brief.china ?? "appropriate china, cups, plates, napkins, and serving pieces";
+  const flowers = brief.flowers ?? "simple flowers if available";
+  const deadline = readyDeadline(brief, domain);
+
+  if (domain === "dinner") {
+    return [
+      context,
+      `Please prepare the food and drinks for ${brief.occasion ?? "the event"} on ${date} at ${time} in ${location}.`,
+      `Menu/service: ${menu}. Drinks: ${brief.drinks ?? "tea, coffee, water, and suitable cold drinks"}. Dietary requirements: ${dietary}.`,
+      `Required result: everything is ready for service by ${deadline}. Tell Carson immediately if an ingredient or service item is unavailable.`,
+    ].join(" ");
+  }
+
+  if (domain === "hospitality") {
+    return [
+      context,
+      `Please prepare the setup for ${brief.occasion ?? "the event"} on ${date} at ${time} in ${location}.`,
+      `Use ${china}, clean linens, seating, water glasses, serving pieces, and ${flowers}.`,
+      `Required result: the full table and guest area are ready by ${deadline}. Tell Carson immediately if anything is missing.`,
+    ].join(" ");
+  }
+
+  if (domain === "transport") {
+    return [
+      context,
+      `Please handle the transport support connected to this event on ${date} at ${time} in ${location}.`,
+      `Required result: the car and timing are ready by ${deadline}. Tell Carson immediately if there is any delay or blocker.`,
+    ].join(" ");
+  }
+
+  return [
+    context,
+    `Please coordinate ${brief.occasion ?? "the event"} on ${date} at ${time} in ${location}.`,
+    `Checkpoints: confirm with ${dinnerName} on menu, drinks, and service timing; confirm with ${hospitalityName} on table setup, china, linens, flowers, seating, and readiness.`,
+    `Required result: all checkpoints are verified by ${deadline}. Report any missing item, delay, or blocker to Carson immediately.`,
+  ].join(" ");
 }
 
 export function normalizeGuestPreparationPlan(

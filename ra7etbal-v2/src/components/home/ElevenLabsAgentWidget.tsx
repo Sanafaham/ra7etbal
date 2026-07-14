@@ -88,6 +88,7 @@ import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-to
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText, resolveRecurringAutomationPerson } from "../../lib/routine-detection";
 import {
   buildOperationalPlanFromOutcome,
+  evaluateHostingPlanningGate,
   resolveGuestOutcomeAction,
   executeProposedPlan,
   isConfirmation,
@@ -1765,6 +1766,11 @@ export default function ElevenLabsAgentWidget({
       // commands are not detected as outcomes and pass straight through.
       const guestAction = resolveGuestOutcomeAction(latestUserMessageForOps);
       if (latestUserMessageForOps && guestAction !== "none") {
+        const hostingGate = evaluateHostingPlanningGate(latestUserMessageForOps);
+        if (hostingGate.status === "needs_clarification") {
+          pendingPlanRef.current = null;
+          return hostingGate.question ?? "I need a few details before I message anyone.";
+        }
         // Dedup a burst of per-person PROPOSE calls: reuse the plan already
         // proposed for this same utterance. (Execute is idempotent on its own.)
         if (guestAction === "propose" && pendingPlanRef.current?.sourceText === latestUserMessageForOps) {
@@ -4041,6 +4047,11 @@ export default function ElevenLabsAgentWidget({
         const outcomeAction = resolveGuestOutcomeAction(rawInstruction);
         if (outcomeAction !== "none") {
           pendingPlanRef.current = null;
+          const hostingGate = evaluateHostingPlanningGate(rawInstruction);
+          if (hostingGate.status === "needs_clarification") {
+            lastDirectToolSuccessRef.current = null;
+            return hostingGate.question ?? "I need a few details before I message anyone.";
+          }
           const plan = await buildOperationalPlanFromOutcome(rawInstruction, people);
           if (plan) {
             if (outcomeAction === "execute") {
