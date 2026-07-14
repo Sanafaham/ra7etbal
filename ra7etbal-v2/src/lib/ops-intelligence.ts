@@ -204,7 +204,14 @@ async function persistPlan(plan: ProposedPlan): Promise<string | null> {
   return data?.id ?? null;
 }
 
-/** Load the latest non-expired pending plan for the user. */
+/**
+ * Load the latest non-expired pending guest_arrival plan for the user.
+ *
+ * Scoped to type "guest_arrival" (Carson Weekly Planning V1 reuses this same
+ * table with type "weekly_plan" for a different pending-operation shape) —
+ * without this filter, a pending weekly plan could be loaded here and
+ * mis-parsed as a ProposedPlan.
+ */
 export async function loadLatestPendingPlan(): Promise<ProposedPlan | null> {
   const {
     data: { user },
@@ -215,6 +222,7 @@ export async function loadLatestPendingPlan(): Promise<ProposedPlan | null> {
     .from("carson_pending_operations")
     .select("*")
     .eq("user_id", user.id)
+    .eq("type", "guest_arrival")
     .eq("status", "pending")
     .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false })
