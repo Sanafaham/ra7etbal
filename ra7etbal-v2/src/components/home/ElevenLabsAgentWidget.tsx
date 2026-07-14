@@ -6033,6 +6033,67 @@ export default function ElevenLabsAgentWidget({
     }
   }, [typedAwaitingResponse, typedClearingHistory]);
 
+  const persistLocalTypedAgentReply = useCallback(
+    async (input: {
+      replyToClientMessageId: string;
+      content: string;
+      clearPendingPhotos?: boolean;
+    }): Promise<void> => {
+      const optimisticId = `local-agent-${crypto.randomUUID()}`;
+      const optimisticCreatedAt = new Date().toISOString();
+      const optimisticMessage: CarsonTypedMessage = {
+        id: optimisticId,
+        session_id: typedSessionIdRef.current,
+        client_message_id: null,
+        reply_to_client_message_id: input.replyToClientMessageId,
+        role: "agent",
+        content: input.content,
+        delivery_status: "responded",
+        elevenlabs_conversation_id: typedConversationIdRef.current,
+        elevenlabs_event_id: null,
+        created_at: optimisticCreatedAt,
+        updated_at: optimisticCreatedAt,
+      };
+
+      sessionTranscriptRef.current.push({ role: "agent", message: input.content });
+      setLastCarsonMessage(input.content);
+      setTypedMessages((current) => [
+        ...current.map((item) =>
+          item.client_message_id === input.replyToClientMessageId
+            ? { ...item, delivery_status: "responded" as const }
+            : item,
+        ),
+        optimisticMessage,
+      ]);
+
+      try {
+        const savedMessage = await createTypedAgentMessage({
+          sessionId: typedSessionIdRef.current,
+          replyToClientMessageId: input.replyToClientMessageId,
+          content: input.content,
+          elevenlabsConversationId: typedConversationIdRef.current,
+          elevenlabsEventId: null,
+        });
+        setTypedMessages((current) =>
+          current.map((item) => (item.id === optimisticId ? savedMessage : item)),
+        );
+      } catch (err) {
+        setTypedError(
+          `Carson replied, but the conversation could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
+        );
+      } finally {
+        pendingTypedClientMessageIdRef.current = null;
+        typedSubmitInFlightRef.current = false;
+        setTypedAwaitingResponse(false);
+        setTurnPhase("idle");
+        if (input.clearPendingPhotos && pendingPhotosRef.current.length > 0) {
+          clearPendingImages();
+        }
+      }
+    },
+    [clearPendingImages],
+  );
+
   const sendTypedMessage = useCallback(async () => {
     const conversation = conversationRef.current;
     const content = typedInput.trim();
@@ -6063,6 +6124,106 @@ export default function ElevenLabsAgentWidget({
       setTypedMessages((current) => [...current, savedMessage]);
       setTypedInput("");
       setTurnPhase("thinking");
+
+      const authUserId = useAuthStore.getState().user?.id;
+      const typedPendingDecision = resolvePendingPlanDecision(savedMessage.content);
+      let activeTypedPlan = pendingPlanRef.current;
+      if (!activeTypedPlan && typedPendingDecision !== "hold") {
+        activeTypedPlan = await loadLatestPendingPlan().catch(() => null);
+        if (activeTypedPlan) pendingPlanRef.current = activeTypedPlan;
+      }
+
+      if (activeTypedPlan) {
+        if (!authUserId) {
+          sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: "You are not signed in. Please sign in and try again.",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
+        const peopleState = usePeopleStore.getState();
+        if (peopleState.status === "idle" || peopleState.items.length === 0) {
+          await usePeopleStore.getState().loadFor(authUserId);
+        }
+        const people = usePeopleStore.getState().items;
+        const turn = await handlePendingPlanTurn([savedMessage.content], activeTypedPlan, {
+          displayName: displayName ?? null,
+          userId: authUserId,
+          people,
+        });
+        if (turn.clearPlan) pendingPlanRef.current = null;
+
+        if (turn.action === "executed") {
+          sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+          sessionActionsRef.current.push(`Ops plan executed: ${activeTypedPlan.sourceText}`);
+          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: turn.summary ?? "",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+        if (turn.action === "cancelled") {
+          sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: turn.summary ?? "",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+      }
+
+      const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content);
+      if (typedGuestAction !== "none") {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        pendingPlanRef.current = null;
+        const hostingGate = evaluateHostingPlanningGate(savedMessage.content);
+        if (hostingGate.status === "needs_clarification") {
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: hostingGate.question ?? "I need a few details before I message anyone.",
+            clearPendingPhotos: false,
+          });
+          return;
+        }
+
+        if (!authUserId) {
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: "You are not signed in. Please sign in and try again.",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
+        const peopleState = usePeopleStore.getState();
+        if (peopleState.status === "idle" || peopleState.items.length === 0) {
+          await usePeopleStore.getState().loadFor(authUserId);
+        }
+        const people = usePeopleStore.getState().items;
+        const plan = await buildOperationalPlanFromOutcome(savedMessage.content, people);
+        if (!plan) {
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: "I couldn't put that guest plan together right now. Please try again.",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
+        pendingPlanRef.current = plan;
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: plan.proposalSpeech,
+          clearPendingPhotos: true,
+        });
+        return;
+      }
 
       const typedPhotos = [
         ...(pendingPhotosRef.current.length > 0
@@ -6165,7 +6326,7 @@ export default function ElevenLabsAgentWidget({
           `Message sent, but its delivery status could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
         );
       });
-  }, [clearPendingImages, typedInput]);
+  }, [clearPendingImages, displayName, persistLocalTypedAgentReply, typedInput]);
 
   // ------------------------------------------------------------------
   // Session teardown
