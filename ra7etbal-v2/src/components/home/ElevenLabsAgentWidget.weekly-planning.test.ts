@@ -46,7 +46,7 @@ describe("ElevenLabsAgentWidget — Carson Weekly Planning V1", () => {
   it("no calendar event is created before an explicit approval — execution only happens inside the confirm branch", () => {
     const block = blockBetween(
       "if (activeWeekPlan) {",
-      "// A short-window retry re-attempts only the events that failed last",
+      "// A short-window retry re-attempts only the events that genuinely",
     );
     expect(block).toMatch(/pendingDecision === "confirm"\)\s*\{[\s\S]*executeWeekPlan\(activeWeekPlan\)/);
     expect(block).not.toMatch(/executeWeekPlan\(activeWeekPlan\)[\s\S]*pendingDecision === "confirm"/);
@@ -55,7 +55,7 @@ describe("ElevenLabsAgentWidget — Carson Weekly Planning V1", () => {
   it("rejection cancels without creating anything", () => {
     const block = blockBetween(
       "if (activeWeekPlan) {",
-      "// A short-window retry re-attempts only the events that failed last",
+      "// A short-window retry re-attempts only the events that genuinely",
     );
     expect(block).toContain('pendingDecision === "reject"');
     expect(block).toContain("rejectWeekPlan(activeWeekPlan)");
@@ -63,19 +63,46 @@ describe("ElevenLabsAgentWidget — Carson Weekly Planning V1", () => {
 
   it("retry re-attempts only failed events from the last execution, passing prior results so successes are never recreated", () => {
     const block = blockBetween(
-      "// A short-window retry re-attempts only the events that failed last",
+      "// A short-window retry re-attempts only the events that genuinely",
       "// Guard: a confirmation/rejection with no active plan",
     );
     expect(block).toContain("isWeekPlanRetryRequest(rawInstruction)");
     expect(block).toContain("executeWeekPlan(lastExecution.plan, lastExecution.results)");
   });
 
-  it("gates a retry to only when the last execution actually had a failure", () => {
+  it("gates a retry to only when the last execution has a genuinely failed event — not a verified_missing one", () => {
     const block = blockBetween(
-      "// A short-window retry re-attempts only the events that failed last",
+      "// A short-window retry re-attempts only the events that genuinely",
       "// Guard: a confirmation/rejection with no active plan",
     );
-    expect(block).toMatch(/hasFailure\s*=\s*lastExecution\?\.results\.some\(\(r\) => r\.status !== "created"\)/);
+    expect(block).toMatch(/hasRetryableFailure\s*=\s*lastExecution\?\.results\.some\(\(r\) => r\.status === "failed"\)/);
+    expect(block).not.toContain('r.status !== "created"');
+  });
+
+  it("returns an explicit answer for 'try again' when there's nothing eligible to retry, instead of falling through silently", () => {
+    const block = blockBetween(
+      "// A short-window retry re-attempts only the events that genuinely",
+      "// Guard: a confirmation/rejection with no active plan",
+    );
+    expect(block).toContain("nothing from your weekly plan left to retry");
+    expect(block).toContain("too old to retry now");
+  });
+
+  it("clears a stale guest plan when proposing, confirming, or rejecting a week plan, so it can never hijack a later yes/no reply", () => {
+    const proposeBlock = blockBetween(
+      "if (detectWeeklyPlanningIntent(rawInstruction)) {",
+      "if (!calendarFetchedRef.current)",
+    );
+    expect(proposeBlock).toContain("pendingPlanRef.current = null;");
+
+    const confirmRejectBlock = blockBetween(
+      "if (activeWeekPlan) {",
+      "// A short-window retry re-attempts only the events that genuinely",
+    );
+    const confirmSection = confirmRejectBlock.slice(0, confirmRejectBlock.indexOf('pendingDecision === "reject"'));
+    const rejectSection = confirmRejectBlock.slice(confirmRejectBlock.indexOf('pendingDecision === "reject"'));
+    expect(confirmSection).toContain("pendingPlanRef.current = null;");
+    expect(rejectSection).toContain("pendingPlanRef.current = null;");
   });
 
   it("executes via the shared weekly-planning module — post-creation verification and truthful reporting are not duplicated inline", () => {

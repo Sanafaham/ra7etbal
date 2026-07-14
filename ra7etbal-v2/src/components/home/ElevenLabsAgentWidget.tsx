@@ -3967,6 +3967,7 @@ export default function ElevenLabsAgentWidget({
             activeWeekPlan = null;
           } else if (pendingDecision === "confirm") {
             pendingWeekPlanRef.current = null;
+            pendingPlanRef.current = null;
             const { summary, results } = await executeWeekPlan(activeWeekPlan);
             lastWeekPlanExecutionRef.current = { plan: activeWeekPlan, results, at: Date.now() };
             sessionActionsRef.current.push(`Weekly plan executed: ${activeWeekPlan.sourceText}`);
@@ -3979,18 +3980,24 @@ export default function ElevenLabsAgentWidget({
             return summary;
           } else if (pendingDecision === "reject") {
             pendingWeekPlanRef.current = null;
+            pendingPlanRef.current = null;
             const summary = await rejectWeekPlan(activeWeekPlan);
             return summary;
           }
           // held: plan preserved for a later turn (or cleared above on expiry).
         }
 
-        // A short-window retry re-attempts only the events that failed last
-        // time — never re-creates one already confirmed created.
+        // A short-window retry re-attempts only the events that genuinely
+        // failed last time. "verified_missing" is deliberately excluded —
+        // the create call may have actually succeeded and the verification
+        // re-read simply lagged, so auto-retrying it risks a real duplicate;
+        // executeWeekPlan treats it the same as "created" and skips it too.
         if (!activeWeekPlan && isWeekPlanRetryRequest(rawInstruction)) {
           const lastExecution = lastWeekPlanExecutionRef.current;
-          const hasFailure = lastExecution?.results.some((r) => r.status !== "created");
-          if (lastExecution && hasFailure && Date.now() - lastExecution.at <= 10 * 60 * 1000) {
+          const hasRetryableFailure = lastExecution?.results.some((r) => r.status === "failed");
+          const withinRetryWindow = !!lastExecution && Date.now() - lastExecution.at <= 10 * 60 * 1000;
+
+          if (lastExecution && hasRetryableFailure && withinRetryWindow) {
             const { summary, results } = await executeWeekPlan(lastExecution.plan, lastExecution.results);
             lastWeekPlanExecutionRef.current = { plan: lastExecution.plan, results, at: Date.now() };
             sessionActionsRef.current.push(`Weekly plan retried: ${lastExecution.plan.sourceText}`);
@@ -4001,6 +4008,16 @@ export default function ElevenLabsAgentWidget({
               inputSummary: { kind: "weekly_plan_retry", instruction: lastExecution.plan.sourceText.slice(0, 80) },
             };
             return summary;
+          }
+
+          // "try again" with nothing eligible to retry — return a clear
+          // answer instead of silently falling through to an unrelated path
+          // (recurring-language detection, direct delegation, etc.).
+          if (lastExecution && !hasRetryableFailure) {
+            return "There's nothing from your weekly plan left to retry.";
+          }
+          if (lastExecution && !withinRetryWindow) {
+            return "That weekly plan is too old to retry now. Ask me to organize your week again.";
           }
         }
 
@@ -4067,6 +4084,11 @@ export default function ElevenLabsAgentWidget({
         // and typed Carson already share — no separate agent or pipeline.
         if (detectWeeklyPlanningIntent(rawInstruction)) {
           pendingWeekPlanRef.current = null;
+          // A stale guest plan must never be left able to consume the next
+          // yes/no reply the user gives to THIS week proposal — the guest
+          // "activePlan" check above runs before this block on every future
+          // turn, so an un-cleared pendingPlanRef would hijack that reply.
+          pendingPlanRef.current = null;
 
           if (!calendarFetchedRef.current) {
             return "Google Calendar isn't connected yet. Ask the user to connect it in Settings, then try again.";

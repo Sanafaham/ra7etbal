@@ -384,13 +384,23 @@ export async function buildWeekPlan(ctx: WeekPlanContext): Promise<WeekPlanBuild
  * already confirmed created — so a retry can never duplicate a success.
  * Re-reads the calendar afterward and only reports an event as created once
  * it's confirmed to actually exist there.
+ *
+ * "verified_missing" (createCalendarEvent reported success but the re-read
+ * calendar didn't show it) is treated the same as "created" for retry
+ * purposes, never re-attempted automatically: the create call may well have
+ * actually succeeded and the re-read simply lagged behind (Google Calendar
+ * eventual consistency) — blindly retrying risks a real duplicate, which is
+ * worse than leaving one event in a known-ambiguous state for the user to
+ * check manually.
  */
 export async function executeWeekPlan(
   plan: ProposedWeekPlan,
   previousResults: WeekEventResult[] = [],
 ): Promise<{ summary: string; results: WeekEventResult[] }> {
   const alreadyCreated = new Map(
-    previousResults.filter((r) => r.status === "created").map((r) => [r.id, r]),
+    previousResults
+      .filter((r) => r.status === "created" || r.status === "verified_missing")
+      .map((r) => [r.id, r]),
   );
 
   const results: WeekEventResult[] = [...alreadyCreated.values()];
@@ -434,11 +444,17 @@ export async function executeWeekPlan(
   if (plan.dbId) markWeekPlanCompleted(plan.dbId).catch(() => {});
 
   const createdCount = results.filter((r) => r.status === "created").length;
-  const failedResults = results.filter((r) => r.status !== "created");
+  const failedResults = results.filter((r) => r.status === "failed");
+  const missingResults = results.filter((r) => r.status === "verified_missing");
 
-  const summary = failedResults.length === 0
-    ? `Added ${createdCount} event${createdCount === 1 ? "" : "s"} to your calendar for this week.`
-    : `Added ${createdCount} event${createdCount === 1 ? "" : "s"}. ${failedResults.length} did not go through: ${failedResults.map((f) => f.title).join(", ")}. Say "try again" to retry those.`;
+  const parts: string[] = [`Added ${createdCount} event${createdCount === 1 ? "" : "s"} to your calendar for this week.`];
+  if (failedResults.length > 0) {
+    parts.push(`${failedResults.length} did not go through: ${failedResults.map((f) => f.title).join(", ")}. Say "try again" to retry those.`);
+  }
+  if (missingResults.length > 0) {
+    parts.push(`${missingResults.length} could not be confirmed on the calendar yet: ${missingResults.map((f) => f.title).join(", ")}. Please check your calendar directly before retrying.`);
+  }
+  const summary = parts.join(" ");
 
   return { summary, results };
 }

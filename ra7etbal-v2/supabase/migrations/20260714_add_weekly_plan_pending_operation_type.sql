@@ -8,6 +8,12 @@
 alter table public.carson_pending_operations
   drop constraint if exists carson_pending_operations_type_check;
 
+-- NOT VALID + a separate VALIDATE CONSTRAINT avoids the full-table-scan write
+-- lock a normal ADD CONSTRAINT CHECK would take — the constraint still
+-- applies to every new/updated row immediately either way.
 alter table public.carson_pending_operations
   add constraint carson_pending_operations_type_check
-  check (type = any (array['guest_arrival', 'weekly_plan']));
+  check (type = any (array['guest_arrival', 'weekly_plan'])) not valid;
+
+alter table public.carson_pending_operations
+  validate constraint carson_pending_operations_type_check;

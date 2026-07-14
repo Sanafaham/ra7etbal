@@ -280,6 +280,26 @@ describe("executeWeekPlan", () => {
     expect(results.find((r) => r.id === "e1")?.status).toBe("created");
     expect(results.find((r) => r.id === "e2")?.status).toBe("created");
   });
+
+  // CodeRabbit finding: createCalendarEvent reporting ok:true doesn't
+  // guarantee the event is immediately visible in a re-read (Google Calendar
+  // eventual consistency) — auto-retrying a "verified_missing" result could
+  // create a real duplicate of an event that actually was created the first
+  // time. It must be treated exactly like "created": never re-attempted.
+  it("never retries a verified_missing event either, since it may have actually succeeded", async () => {
+    const events: ProposedCalendarEvent[] = [
+      { id: "e1", title: "Deep work", date: "2026-07-20", time: "09:00", durationMinutes: 60 },
+    ];
+    const previousResults: WeekEventResult[] = [
+      { id: "e1", title: "Deep work", date: "2026-07-20", time: "09:00", status: "verified_missing", googleEventId: "g1" },
+    ];
+    fetchCalendarEventsMock.mockResolvedValue({ connected: true, events: [] });
+
+    const { results } = await executeWeekPlan(plan(events), previousResults);
+
+    expect(createCalendarEventMock).not.toHaveBeenCalled();
+    expect(results.find((r) => r.id === "e1")?.status).toBe("verified_missing");
+  });
 });
 
 describe("buildWeekPlan", () => {
