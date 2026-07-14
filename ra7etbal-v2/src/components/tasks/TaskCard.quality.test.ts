@@ -36,7 +36,8 @@ describe("TaskCard — Quality Intelligence owner surface", () => {
   });
 
   it("keeps only true owner-review uncertainty visible on owner cards", () => {
-    expect(SOURCE).toContain('task.quality_review_status === "uncertain"');
+    expect(SOURCE).toContain('const showUncertainReview = qualityLifecycle.state === "needs_owner_review"');
+    expect(SOURCE).toContain("{showUncertainReview &&");
     expect(SOURCE).toContain("Carson is unsure");
     expect(SOURCE).not.toContain("Possible issue with this proof photo");
   });

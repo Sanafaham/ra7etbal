@@ -80,6 +80,20 @@ describe("daily-brief — quality-review-aware Waiting / Needs You classificatio
     expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
   });
 
+  it("regression: Custom Instruction completion leaves Needs You and Waiting even if a stale owner-decision status remains", () => {
+    const task = makeTask({
+      status: "done",
+      confirmed_at: NOW.toISOString(),
+      proof_image_path: "task-images/user-1/task-1/proof/0.jpg",
+      quality_review_status: "substitute_review",
+      quality_review_note: "Previous alternative review should no longer create owner work.",
+    });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.done.map((t) => t.id)).toContain(task.id);
+  });
+
   it("regression: a corrected proof whose latest review is approved clears Waiting even after a prior rejected proof", () => {
     const task = makeTask({
       status: "done",
@@ -93,6 +107,18 @@ describe("daily-brief — quality-review-aware Waiting / Needs You classificatio
     expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
     expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
     expect(brief.done.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("regression: a corrected alternative that still needs owner judgment returns to Needs You exactly once", () => {
+    const task = makeTask({
+      proof_image_path: "task-images/user-1/task-1/proof/0.jpg",
+      quality_review_status: "substitute_review",
+      quality_review_note: "The corrected proof is still an alternative.",
+      worker_reply: "The exact item was unavailable.",
+    });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).toEqual([task.id]);
+    expect(brief.waitingOnOthers.map((t) => t.id)).toEqual([]);
   });
 
   it("regression: an approved task with a stale needs_follow_up=true (pre-fix task-confirm shape) still leaves Waiting — status is checked first", () => {

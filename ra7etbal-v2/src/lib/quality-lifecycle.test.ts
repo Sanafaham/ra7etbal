@@ -107,6 +107,18 @@ describe("Quality Intelligence lifecycle state machine", () => {
     expect(lifecycle.badge).not.toBe("Waiting for confirmation");
   });
 
+  it("completed task cannot keep a stale owner-decision state", () => {
+    const lifecycle = resolveQualityLifecycle(task({
+      status: "done",
+      proof_image_path: "task-images/u/t/proof/0.jpg",
+      quality_review_status: "substitute_review",
+    }));
+
+    expect(lifecycle.state).toBe("completed");
+    expect(lifecycle.badge).toBe("Completed");
+    expect(lifecycle.needsOwnerReview).toBe(false);
+  });
+
   it("correction_required returns to waiting for new proof only", () => {
     const lifecycle = resolveQualityLifecycle(task({
       proof_image_path: "task-images/u/t/proof/0.jpg",

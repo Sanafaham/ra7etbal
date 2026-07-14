@@ -76,6 +76,8 @@ export default function TaskCard({
     task.quality_review_status === "correction_required" ||
     task.quality_review_status === "fraud_suspected";
   const qualityLifecycle = resolveQualityLifecycle(task);
+  const showUncertainReview = qualityLifecycle.state === "needs_owner_review";
+  const showSubstituteReview = qualityLifecycle.state === "needs_owner_decision";
   const showProofImage = Boolean(signedProofImageUrl && !isOperationalProofCorrection);
   const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;
 
@@ -228,14 +230,14 @@ export default function TaskCard({
         <ProofPhotoThumbnail url={signedProofImageUrl} />
       )}
 
-      {task.quality_review_status === "uncertain" && (
+      {showUncertainReview && (
         <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
           <p className="font-medium">Carson is unsure — needs your review</p>
           {task.quality_review_note && <p className="mt-0.5">{task.quality_review_note}</p>}
         </div>
       )}
 
-      {task.quality_review_status === "substitute_review" && (
+      {showSubstituteReview && (
         <SubstituteReviewCard task={task} assignedLabel={assignedLabel} />
       )}
 

@@ -16,9 +16,12 @@ describe("TaskCard.tsx — substitute_review card wiring", () => {
     SOURCE.length,
   );
 
-  it("renders only for quality_review_status === 'substitute_review', parallel to the frozen uncertain block", () => {
-    expect(SOURCE).toContain('task.quality_review_status === "uncertain" &&');
-    expect(SOURCE).toContain('task.quality_review_status === "substitute_review" &&');
+  it("renders only from the active lifecycle state, so completed tasks cannot keep owner-decision buttons", () => {
+    expect(SOURCE).toContain('const showUncertainReview = qualityLifecycle.state === "needs_owner_review"');
+    expect(SOURCE).toContain('const showSubstituteReview = qualityLifecycle.state === "needs_owner_decision"');
+    expect(SOURCE).toContain("{showUncertainReview &&");
+    expect(SOURCE).toContain("{showSubstituteReview &&");
+    expect(SOURCE).not.toContain('task.quality_review_status === "substitute_review" &&');
     expect(SOURCE).toContain("<SubstituteReviewCard task={task} assignedLabel={assignedLabel} />");
   });
 

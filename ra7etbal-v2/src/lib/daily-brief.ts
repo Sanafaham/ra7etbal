@@ -183,6 +183,7 @@ function isWaitingTask(task: Task): boolean {
 
 function isWaitingInterventionTask(task: Task): boolean {
   if (task.type !== "delegation" && task.type !== "followup") return false;
+  if (task.status === "done") return false;
   if (task.status === "cancelled") return true;
   return isQualityOwnerReviewStatus(task.quality_review_status);
 }
