@@ -162,6 +162,35 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('approved alternative confirmation completes without a new proof photo or review loop', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'buy TEREA Silver',
+        assigned_to: 'Ghulam',
+        image_path: 'task-images/u/t/reference.jpg',
+        attachment_count: 0,
+        quality_review_status: 'approved',
+        quality_review_note: 'Owner approved the alternative.',
+      }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(runQualityReviewMock).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
+    const patchBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(patchBody.status).toBe('done');
+    expect(patchBody.proof_image_path).toBeUndefined();
+  });
+
   it('skips review for a personal task with no assignee even if a proof photo is submitted', async () => {
     const fetchMock = vi
       .fn()
@@ -1775,6 +1804,37 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
     expect(signingCalls).toHaveLength(0);
   });
 
+  it('approved alternative opens a confirmation-only link with no proof upload slots', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', status: 'pending',
+            confirmed_at: null, image_path: 'task-images/u/t/terea.jpg', proof_image_path: 'task-images/u/t/proof/0.jpg',
+            attachment_count: 0, quality_review_status: 'approved',
+            quality_review_note: 'Owner approved the alternative.', worker_reply: null,
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/terea.jpg?token=ref' }))
+      .mockResolvedValueOnce(jsonResponse([{ storage_path: 'task-images/u/t/proof/0.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/u/t/proof/0.jpg?token=proof' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'GET', query: { taskId: 'task-1' } }, res);
+
+    const body = res.json.mock.calls[0][0];
+    expect(body.confirmationOnly).toBe(true);
+    expect(body.proofRequired).toBe(false);
+    expect(body.proofUploadSlots).toEqual([]);
+    expect(body.qualityReviewStatus).toBe('approved');
+    const signingCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/object/upload/sign/'));
+    expect(signingCalls).toHaveLength(0);
+  });
+
   it('protected: upload slots are still generated for "fraud_suspected" — Carson can collect a new live proof', async () => {
     const fetchMock = vi
       .fn()
@@ -1833,6 +1893,7 @@ describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
 
     const body = res.json.mock.calls[0][0];
     expect(body.proofUploadSlots).toHaveLength(5);
+    expect(body.confirmationOnly).toBe(false);
     expect(body.qualityReviewStatus).toBe('correction_required');
   });
 });
@@ -1968,7 +2029,8 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
       .mockResolvedValueOnce(metaAcceptedResponse()) // Meta send
       .mockResolvedValueOnce(emptyResponse()) // markMessageAccepted PATCH messages
       .mockResolvedValueOnce(emptyResponse()) // markWhatsappDeliveryAccepted PATCH whatsapp_deliveries
-      .mockResolvedValueOnce(emptyResponse()); // complete_custom_instruction RPC
+      .mockResolvedValueOnce(emptyResponse()) // complete_custom_instruction RPC
+      .mockResolvedValueOnce(emptyResponse()); // mark pending task confirmation-only
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -1983,6 +2045,13 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/reserve_custom_instruction'))).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/complete_custom_instruction'))).toBe(true);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/complete_approved_alternative'))).toBe(false);
+    const markerCall = fetchMock.mock.calls.find(([url, options]) =>
+      String(url).includes('/rest/v1/tasks?id=eq.task-1&status=eq.pending') && options?.method === 'PATCH'
+    );
+    expect(JSON.parse(markerCall[1].body)).toMatchObject({
+      quality_review_status: 'approved',
+      quality_review_note: 'Owner approved the alternative.',
+    });
   });
 
   it('Approve Alternative immediate send failure: does not complete — task stays in Needs You, retry available, no duplicate message', async () => {
@@ -2018,7 +2087,8 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
       .mockResolvedValueOnce(jsonResponse([{ name: 'Ghulam', phone: '+15551234567' }]))
       .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }])) // reserve_custom_instruction — same message/delivery reused
       .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'accepted' }])) // fetchDeliveryStatus — already accepted from a prior attempt
-      .mockResolvedValueOnce(emptyResponse()); // complete_custom_instruction RPC — goes straight here
+      .mockResolvedValueOnce(emptyResponse()) // complete_custom_instruction RPC — goes straight here
+      .mockResolvedValueOnce(emptyResponse()); // mark pending task confirmation-only
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -2027,7 +2097,7 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, decision: 'approved_alternative', outcome: 'approved' }));
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false); // no second send
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/reserve_send_window'))).toBe(false); // fence skipped too
-    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 
   it('Custom Instruction immediate send failure: does not complete — task stays in Needs You, retry available, no state loss', async () => {
@@ -2088,6 +2158,7 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
       .mockResolvedValueOnce(metaAcceptedResponse())
       .mockResolvedValueOnce(emptyResponse())
       .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
       .mockResolvedValueOnce(emptyResponse());
     vi.stubGlobal('fetch', fetchMock);
 
@@ -2113,6 +2184,7 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
       .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
       .mockResolvedValueOnce(emptyResponse())
       .mockResolvedValueOnce(metaAcceptedResponse())
+      .mockResolvedValueOnce(emptyResponse())
       .mockResolvedValueOnce(emptyResponse())
       .mockResolvedValueOnce(emptyResponse())
       .mockResolvedValueOnce(emptyResponse());
@@ -2187,12 +2259,14 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
       .mockResolvedValueOnce(metaAcceptedResponse())
       .mockResolvedValueOnce(emptyResponse())
       .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
       .mockResolvedValueOnce(emptyResponse());
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
 
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, decision: 'approved_alternative', outcome: 'approved' }));
     const metaPayload = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
     expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
     expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([

@@ -56,6 +56,8 @@ interface TaskInfo {
   proofUploadSlots: ProofUploadSlot[];
   /** True when a delegated task has reference photo(s) and needs proof before completion. */
   proofRequired: boolean;
+  /** True when the owner already approved an alternative and the worker only needs to confirm completion. */
+  confirmationOnly: boolean;
   /**
    * Persisted outcome of Carson's automated proof review (server source of
    * truth). Rehydrated into `outcome` state on every load so reopening the
@@ -159,6 +161,7 @@ export default function Confirm() {
           proofImageUrls: Array.isArray(data.proofImageUrls) ? data.proofImageUrls : [],
           proofUploadSlots: Array.isArray(data.proofUploadSlots) ? data.proofUploadSlots : [],
           proofRequired: data.proofRequired === true,
+          confirmationOnly: data.confirmationOnly === true,
           qualityReviewStatus: data.qualityReviewStatus ?? null,
           qualityReviewNote: data.qualityReviewNote ?? null,
           workerReply: data.workerReply ?? null,
@@ -424,6 +427,7 @@ export default function Confirm() {
   // without a photo (which would skip the review entirely since needsReview =
   // proofImagePaths.length > 0 on the server).
   const needsNewProof =
+    !info?.confirmationOnly &&
     ((info?.proofRequired === true && outcome !== "uncertain") ||
       outcome === "correction_required" ||
       outcome === "fraud_suspected") &&
@@ -524,6 +528,25 @@ export default function Confirm() {
               <AuthNotice kind="success">
                 Thanks — this has been sent to the owner to review the alternative.
               </AuthNotice>
+            </div>
+          ) : info.confirmationOnly ? (
+            <div className="space-y-3">
+              <AuthNotice kind="success">
+                The owner approved the alternative. Confirm once this is complete.
+              </AuthNotice>
+
+              {confirmError && <AuthNotice kind="error">{confirmError}</AuthNotice>}
+
+              <button
+                type="button"
+                onClick={() => void handleConfirm()}
+                disabled={isBusy}
+                aria-busy={isBusy}
+                className="flex w-full items-center justify-center gap-2 rounded-full bg-sage px-5 py-3 text-base font-medium text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isBusy && <Spinner size={16} />}
+                <span>{confirming ? "Confirming…" : "Confirm completion"}</span>
+              </button>
             </div>
           ) : (
             <>

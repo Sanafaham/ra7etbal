@@ -123,6 +123,13 @@ describe("Confirm — proof photo upload (up to 5, remove/replace, honest failur
     expect(SOURCE).toContain("disabled={isBusy || needsNewProof}");
   });
 
+  it("approved alternatives render a confirmation-only path without proof upload", () => {
+    expect(SOURCE).toContain("confirmationOnly: data.confirmationOnly === true");
+    expect(SOURCE).toContain("!info?.confirmationOnly");
+    expect(SOURCE).toContain("info.confirmationOnly ? (");
+    expect(SOURCE).toContain("Confirm completion");
+  });
+
   it("thumbnail grid renders and can remove any of up to 5 queued photos", () => {
     expect(SOURCE).toContain("proofPhotos.map((photo, i) => (");
     expect(SOURCE).toContain("onClick={() => removeProofPhoto(photo.id)}");

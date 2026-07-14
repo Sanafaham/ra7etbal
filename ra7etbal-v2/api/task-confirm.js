@@ -287,6 +287,8 @@ async function handleGet(req, res) {
     // substitute_review also locks: the owner, not the assignee, decides
     // next (Approve Alternative / Reject Alternative / Custom Instruction) —
     // this is not an automatic worker-retry loop.
+    const approvedAlternativeConfirmationOnly =
+      task.status !== 'done' && task.quality_review_status === 'approved';
     const isLockedForOwnerReview =
       task.quality_review_status === 'uncertain' || task.quality_review_status === 'substitute_review';
 
@@ -295,7 +297,7 @@ async function handleGet(req, res) {
     // (e.g. after a Quality Intelligence rejection) overwrites cleanly
     // instead of failing with "Upload failed (400)".
     let proofUploadSlots = [];
-    if (task.status !== 'done' && !isLockedForOwnerReview && task.user_id) {
+    if (task.status !== 'done' && !isLockedForOwnerReview && !approvedAlternativeConfirmationOnly && task.user_id) {
       proofUploadSlots = await createSignedProofUploadUrls({
         supabaseUrl,
         serviceKey,
@@ -316,7 +318,8 @@ async function handleGet(req, res) {
       attachmentUrls,
       proofImageUrls,
       proofUploadSlots,
-      proofRequired: Boolean(task.assigned_to && (task.image_path || Number(task.attachment_count || 0) > 0)),
+      proofRequired: Boolean(task.assigned_to && !approvedAlternativeConfirmationOnly && (task.image_path || Number(task.attachment_count || 0) > 0)),
+      confirmationOnly: approvedAlternativeConfirmationOnly,
       // Source of truth for the confirm page's post-reload state — without
       // this, reopening the link after an uncertain outcome lost the "sent
       // to owner" locked view. Operational proof failures intentionally keep
@@ -390,7 +393,12 @@ async function handlePost(req, res) {
 
     // Quality Intelligence V1 — photo delegations must include proof so the
     // review cannot be bypassed by tapping Mark done without uploading.
-    const proofRequired = Boolean(task.assigned_to && (task.image_path || Number(task.attachment_count || 0) > 0));
+    const approvedAlternativeConfirmationOnly = task.quality_review_status === 'approved';
+    const proofRequired = Boolean(
+      task.assigned_to &&
+      !approvedAlternativeConfirmationOnly &&
+      (task.image_path || Number(task.attachment_count || 0) > 0),
+    );
     if (proofRequired && proofImagePaths.length === 0) {
       return res.status(400).json({
         error: 'Please attach a proof photo before marking this task done.',
@@ -929,6 +937,22 @@ async function handleOwnerDecision(req, res) {
     });
     if (complete.error) return respondRpcError(res, complete.error);
 
+    if (decision === 'approved_alternative') {
+      const marker = await markApprovedAlternativeConfirmationOnly({
+        supabaseUrl,
+        serviceKey,
+        taskId: task.id || taskId,
+      });
+      if (!marker.ok) {
+        console.error('[task-confirm] approved alternative marker failed', {
+          taskId: task.id || taskId,
+          status: marker.status,
+          body: marker.body,
+        });
+        return res.status(500).json({ error: 'The approval was sent, but the confirmation link could not be prepared. Please try again.' });
+      }
+    }
+
     return res.status(200).json({
       success: true,
       decision,
@@ -945,6 +969,31 @@ async function handleOwnerDecision(req, res) {
     });
     return res.status(500).json({ error: 'Could not process this decision. Please try again.' });
   }
+}
+
+async function markApprovedAlternativeConfirmationOnly({ supabaseUrl, serviceKey, taskId }) {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}&status=eq.pending`,
+    {
+      method: 'PATCH',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({
+        quality_review_status: 'approved',
+        quality_review_note: 'Owner approved the alternative.',
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+  return {
+    ok: response.ok,
+    status: response.status,
+    body: response.ok ? '' : await response.text().catch(() => ''),
+  };
 }
 
 /** Verifies the Bearer JWT, returns { uid } or { error }. Same auth/v1/user pattern as api/automations.js's requireUser(). */
