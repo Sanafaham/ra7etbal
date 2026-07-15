@@ -152,6 +152,27 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(operationTurnIndex).toBeLessThan(sendIndex);
   });
 
+  it("restores a pending typed hosting clarification draft from saved history before routing the answer", () => {
+    expect(SOURCE).toContain("function restorePendingHostingDraftFromTypedHistory(");
+    expect(SOURCE).toContain("isHostingClarificationQuestion(message.content)");
+    expect(SOURCE).toContain('operationType: "guest_arrival"');
+    expect(SOURCE).toContain("sourceText: ownerTurn.content");
+
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const restoreIndex = sendBlock.indexOf("restorePendingHostingDraftFromTypedHistory(");
+    const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
+    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await prepareOperationalPlanTurn({", pendingBranchIndex);
+    const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
+
+    expect(restoreIndex).toBeGreaterThan(-1);
+    expect(pendingBranchIndex).toBeGreaterThan(restoreIndex);
+    expect(operationTurnIndex).toBeGreaterThan(pendingBranchIndex);
+    expect(operationTurnIndex).toBeLessThan(sendIndex);
+  });
+
   it("executes typed hosting approval through the stored plan once instead of re-asking ElevenLabs", () => {
     const sendBlock = blockBetween(
       "const sendTypedMessage = useCallback(async () => {",

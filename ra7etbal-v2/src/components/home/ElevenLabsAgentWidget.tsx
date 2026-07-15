@@ -169,6 +169,37 @@ function getOrCreateTypedSessionId(): string {
     return crypto.randomUUID();
   }
 }
+
+function isHostingClarificationQuestion(content: string): boolean {
+  return /\bFor\s+(?:afternoon\s+tea|high\s+tea|tea|dinner|lunch|brunch|breakfast|this)\b/i.test(content)
+    && /\bwhat time should it begin\b/i.test(content)
+    && /\bwhere at home\b/i.test(content)
+    && /\bdietary restrictions\b/i.test(content);
+}
+
+function restorePendingHostingDraftFromTypedHistory(
+  messages: CarsonTypedMessage[],
+): PendingOperationDraft | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== "agent" || !isHostingClarificationQuestion(message.content)) continue;
+    const replyTo = message.reply_to_client_message_id;
+    if (!replyTo) continue;
+    const ownerTurn = messages.find(
+      (candidate) =>
+        candidate.role === "user" &&
+        candidate.client_message_id === replyTo &&
+        resolveGuestOutcomeAction(candidate.content) !== "none",
+    );
+    if (!ownerTurn) continue;
+    return {
+      operationType: "guest_arrival",
+      sourceText: ownerTurn.content,
+      askedAtClientMessageId: ownerTurn.client_message_id,
+    };
+  }
+  return null;
+}
 // Truthful processing indicator, layered on top of the SDK-driven `mode`
 // (which only reports listening/speaking, with no signal for the gap in
 // between). "idle" = no app-level signal yet for this turn (renders as
@@ -6246,6 +6277,11 @@ export default function ElevenLabsAgentWidget({
         }
       }
 
+      if (!pendingHostingClarificationRef.current) {
+        pendingHostingClarificationRef.current = restorePendingHostingDraftFromTypedHistory(
+          typedMessagesRef.current,
+        );
+      }
       const pendingHostingClarification = pendingHostingClarificationRef.current;
       if (pendingHostingClarification) {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });

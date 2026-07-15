@@ -696,6 +696,20 @@ describe("hosting planning gate", () => {
     expect(gate.question).toBeNull();
   });
 
+  it("treats the exact comma-separated production clarification as complete", () => {
+    const gate = evaluateHostingPlanningGate(
+      "Handle afternoon tea for 3 guests today at home.\n\n" +
+      "Clarification details: 4:00 PM, garden under the pavilion, finger sandwiches, scones with clotted cream and jam, mini cakes and pastries, tea and refreshments, no dietary restrictions.",
+    );
+
+    expect(gate.status).toBe("ready");
+    expect(gate.brief.location).toBe("garden under the pavilion");
+    expect(gate.brief.startTime).toBe("4:00 PM");
+    expect(gate.brief.dietaryRequirements).toBe("no dietary restrictions");
+    expect(gate.brief.unresolvedRequiredFields).toEqual([]);
+    expect(gate.question).toBeNull();
+  });
+
   it("treats the exact clarification answer as needing only dietary info when linked to the original request", () => {
     const original = "Handle afternoon tea for me and three guests today at home.";
     const answer =
