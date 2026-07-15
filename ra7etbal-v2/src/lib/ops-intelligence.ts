@@ -206,6 +206,8 @@ const GUEST_COUNT_RE =
   /\b(?:for\s+)?(?:(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+)?(?:guests?|people|visitors?|friends|family|company)\b/i;
 const HOME_LOCATION_RE = /\b(?:at\s+home|in\s+the\s+(garden|dining\s+room|salon|majlis|kitchen|terrace|patio)|outside|inside|outdoors?|indoors?)\b/i;
 const SPECIFIC_LOCATION_RE = /\b(?:in|on|at)\s+(?:the\s+)?(garden|dining\s+room|salon|majlis|terrace|patio|pool\s+area|living\s+room|kitchen)\b/i;
+const CLARIFICATION_LOCATION_RE =
+  /\b((?:garden|dining\s+room|salon|majlis|terrace|patio|pool\s+area|living\s+room|kitchen)(?:\s+(?:under|by|near|beside|next to|around|with)\s+(?:the\s+)?(?:pavilion|pergola|gazebo|pool|fountain|terrace|patio|door|window|table|seating|sofa|fireplace))?)\b/i;
 const MENU_RE = /\b(?:serve|serving|with|menu|food|prepare)\s+([^.!?;]+)/i;
 const MENU_ITEM_RE =
   /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/i;
@@ -250,6 +252,8 @@ function inferDate(text: string): string | null {
 function inferLocation(text: string): string | null {
   const specific = text.match(SPECIFIC_LOCATION_RE)?.[1];
   if (specific) return `the ${specific.toLowerCase()}`;
+  const clarificationLocation = text.match(CLARIFICATION_LOCATION_RE)?.[1];
+  if (clarificationLocation) return cleanMatchedText(clarificationLocation.toLowerCase());
   if (/\b(?:outside|outdoors?)\b/i.test(text)) return "outside";
   if (/\b(?:inside|indoors?)\b/i.test(text)) return "inside";
   const home = text.match(HOME_LOCATION_RE);
