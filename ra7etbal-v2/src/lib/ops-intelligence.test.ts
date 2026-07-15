@@ -33,12 +33,14 @@ const {
   isStatusQuestion,
   mustRouteGuestEventToPlanner,
   normalizeGuestPreparationPlan,
+  prepareOperationalPlanTurn,
   resetExecutedPlanRegistryForTest,
   resolveGuestOutcomeAction,
   resolvePendingPlanDecision,
 } = await import("./ops-intelligence");
 
 beforeEach(() => {
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
   resetExecutedPlanRegistryForTest();
 });
@@ -739,6 +741,65 @@ describe("hosting planning gate", () => {
     expect(plan.proposalSpeech.match(/dietary restrictions/gi)).toHaveLength(1);
     expect(plan.proposalSpeech.match(/\?/g)).toHaveLength(1);
     expect(plan.proposalSpeech).toMatch(/Shall I send the plan\?$/);
+  });
+
+  it("uses the unified operation lifecycle to preserve clarification state before planning", async () => {
+    const firstTurn = await prepareOperationalPlanTurn({
+      message: "Handle afternoon tea at home today for me and three guests.",
+      people: [],
+      askedAtClientMessageId: "typed-1",
+    });
+
+    expect(firstTurn.status).toBe("needs_clarification");
+    expect(firstTurn.draft?.sourceText).toBe("Handle afternoon tea at home today for me and three guests.");
+    expect(firstTurn.draft?.askedAtClientMessageId).toBe("typed-1");
+    expect(firstTurn.question).toMatch(/what time/i);
+
+    const secondTurn = await prepareOperationalPlanTurn({
+      message: "Mini sandwiches, mini cakes, pastries and finger food. It should be indoors and use the pink floral china, pink flowers and the silver cutlery. Luxury setting.",
+      people: [],
+      pendingDraft: firstTurn.draft,
+      askedAtClientMessageId: "typed-2",
+    });
+
+    expect(secondTurn.status).toBe("needs_clarification");
+    expect(secondTurn.draft?.sourceText).toContain("Clarification details: Mini sandwiches");
+    expect(secondTurn.question).toBe("What time should it begin, and are there any dietary restrictions?");
+  });
+
+  it("uses the unified operation lifecycle to create one stored plan from the complete brief", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        content: [{
+          text: JSON.stringify({
+            tasks: [
+              { person_name: "Christopher", message: "Please handle the food." },
+              { person_name: "Nasira", message: "Please handle the table." },
+              { person_name: "Grace", message: "Please coordinate readiness." },
+            ],
+            proposal_speech: "I can send the afternoon tea plan. Shall I send it?",
+          }),
+        }],
+      }),
+    })));
+
+    const turn = await prepareOperationalPlanTurn({
+      message:
+        "Handle afternoon tea at home today for me and three guests.\n\n" +
+        "Clarification details: At 4 PM in the garden. Finger sandwiches, cakes and tea. No dietary restrictions. Use the floral china and simple white flowers.",
+      people: guestTeam(),
+      askedAtClientMessageId: "typed-3",
+    });
+
+    expect(turn.status).toBe("ready");
+    expect(turn.action).toBe("propose");
+    expect(turn.plan?.sourceText).toContain("Clarification details: At 4 PM");
+    expect(turn.plan?.brief?.startTime).toBe("4 PM");
+    expect(turn.plan?.brief?.location).toBe("the garden");
+    expect(turn.plan?.brief?.menu).toBe("Finger sandwiches, cakes and tea");
+    expect(turn.plan?.brief?.dietaryRequirements).toBe("No dietary restrictions");
+    expect(turn.plan?.tasks.map((task) => task.personName)).toEqual(["Christopher", "Nasira", "Grace"]);
   });
 });
 

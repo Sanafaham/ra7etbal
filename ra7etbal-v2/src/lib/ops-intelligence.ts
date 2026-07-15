@@ -63,6 +63,8 @@ export interface ProposedPlan {
   dbId?: string;
   outcomeType: HouseholdOutcomeType;
   tasks: ProposedTask[];
+  /** Structured brief rebuilt from sourceText; sourceText remains persistence source of truth. */
+  brief?: HostingEventBrief;
   /** Carson's spoken proposal — returned verbatim as executeInstruction result */
   proposalSpeech: string;
   /** Original user utterance */
@@ -70,6 +72,48 @@ export interface ProposedPlan {
   /** Unix ms when plan was created — used for 5-minute expiry check */
   createdAt: number;
 }
+
+export type OperationalPlan = ProposedPlan;
+
+export interface PendingOperationDraft {
+  operationType: HouseholdOutcomeType;
+  sourceText: string;
+  askedAtClientMessageId: string | null;
+}
+
+export type OperationalPlanningResult =
+  | {
+      status: "not_operation";
+      action: "none";
+      sourceText: string;
+      draft: null;
+      plan: null;
+      question: null;
+    }
+  | {
+      status: "needs_clarification";
+      action: Exclude<GuestOutcomeAction, "none">;
+      sourceText: string;
+      draft: PendingOperationDraft;
+      plan: null;
+      question: string;
+    }
+  | {
+      status: "ready";
+      action: Exclude<GuestOutcomeAction, "none">;
+      sourceText: string;
+      draft: null;
+      plan: OperationalPlan;
+      question: null;
+    }
+  | {
+      status: "plan_failed";
+      action: Exclude<GuestOutcomeAction, "none">;
+      sourceText: string;
+      draft: null;
+      plan: null;
+      question: null;
+    };
 
 // ── Outcome detection ──────────────────────────────────────────────────────────
 
@@ -320,6 +364,97 @@ export function evaluateHostingPlanningGate(text: string): HostingPlanningGateRe
   return { status: "needs_clarification", brief, question };
 }
 
+export function appendOperationClarification(
+  draft: PendingOperationDraft,
+  answerText: string,
+): string {
+  const answer = answerText.trim();
+  if (!answer) return draft.sourceText;
+  return `${draft.sourceText}\n\nClarification details: ${answer}`;
+}
+
+export function createPendingOperationDraft(
+  sourceText: string,
+  askedAtClientMessageId: string | null = null,
+): PendingOperationDraft | null {
+  const operationType = detectHouseholdOutcome(sourceText);
+  if (!operationType) return null;
+  return {
+    operationType,
+    sourceText,
+    askedAtClientMessageId,
+  };
+}
+
+/**
+ * Unified Operational Plan Engine V1 entry point.
+ *
+ * V1 deliberately supports only the proven guest/hosting operation, but the
+ * lifecycle is reusable: accumulated brief → clarification gate → stored plan.
+ * Execution remains in handlePendingPlanTurn/executeProposedPlan so approvals
+ * always run the exact stored plan.
+ */
+export async function prepareOperationalPlanTurn(input: {
+  message: string;
+  people: Person[];
+  pendingDraft?: PendingOperationDraft | null;
+  askedAtClientMessageId?: string | null;
+}): Promise<OperationalPlanningResult> {
+  const currentMessage = input.message.trim();
+  const sourceText = input.pendingDraft
+    ? appendOperationClarification(input.pendingDraft, currentMessage)
+    : currentMessage;
+  const action = resolveGuestOutcomeAction(sourceText);
+
+  if (action === "none") {
+    return {
+      status: "not_operation",
+      action,
+      sourceText,
+      draft: null,
+      plan: null,
+      question: null,
+    };
+  }
+
+  const gate = evaluateHostingPlanningGate(sourceText);
+  if (gate.status === "needs_clarification") {
+    return {
+      status: "needs_clarification",
+      action,
+      sourceText,
+      draft: {
+        operationType: gate.brief.occasion ? "guest_arrival" : detectHouseholdOutcome(sourceText) ?? "guest_arrival",
+        sourceText,
+        askedAtClientMessageId: input.askedAtClientMessageId ?? input.pendingDraft?.askedAtClientMessageId ?? null,
+      },
+      plan: null,
+      question: gate.question ?? "I need a few details before I message anyone.",
+    };
+  }
+
+  const plan = await buildOperationalPlanFromOutcome(sourceText, input.people);
+  if (!plan) {
+    return {
+      status: "plan_failed",
+      action,
+      sourceText,
+      draft: null,
+      plan: null,
+      question: null,
+    };
+  }
+
+  return {
+    status: "ready",
+    action,
+    sourceText,
+    draft: null,
+    plan,
+    question: null,
+  };
+}
+
 // ── Confirmation / rejection detection ────────────────────────────────────────
 
 const CONFIRMATION_RE =
@@ -426,6 +561,7 @@ export async function loadLatestPendingPlan(): Promise<ProposedPlan | null> {
     tasks: (data.tasks ?? []) as ProposedTask[],
     proposalSpeech: data.summary as string,
     sourceText: data.source_text as string,
+    brief: buildHostingEventBrief(data.source_text as string),
     createdAt: new Date(data.created_at as string).getTime(),
   };
 }
@@ -767,6 +903,7 @@ export function normalizeGuestPreparationPlan(
   const brief = buildHostingEventBrief(plan.sourceText);
   return {
     ...plan,
+    brief,
     tasks: deterministicTasks,
     proposalSpeech: buildHostingProposalSpeech(brief, deterministicTasks),
   };
@@ -859,6 +996,7 @@ Return ONLY valid JSON, no markdown:
   const plan = normalizeGuestPreparationPlan({
     outcomeType: "guest_arrival",
     tasks: proposedTasks,
+    brief: buildHostingEventBrief(text),
     proposalSpeech: parsed.proposal_speech,
     sourceText: text,
     createdAt: Date.now(),

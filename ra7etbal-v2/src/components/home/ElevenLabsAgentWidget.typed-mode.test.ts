@@ -116,16 +116,16 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "  // ------------------------------------------------------------------\n  // Session teardown",
     );
     const guestActionIndex = sendBlock.indexOf("const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)");
-    const hostingGateIndex = sendBlock.indexOf("const hostingGate = evaluateHostingPlanningGate(savedMessage.content)");
-    const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", hostingGateIndex);
+    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await prepareOperationalPlanTurn({", guestActionIndex);
+    const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", operationTurnIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
     expect(guestActionIndex).toBeGreaterThan(-1);
-    expect(hostingGateIndex).toBeGreaterThan(guestActionIndex);
-    expect(localReplyIndex).toBeGreaterThan(hostingGateIndex);
-    expect(hostingGateIndex).toBeLessThan(sendIndex);
-    expect(sendBlock).toContain('hostingGate.status === "needs_clarification"');
-    expect(sendBlock).toContain("buildOperationalPlanFromOutcome(savedMessage.content, people)");
+    expect(operationTurnIndex).toBeGreaterThan(guestActionIndex);
+    expect(localReplyIndex).toBeGreaterThan(operationTurnIndex);
+    expect(operationTurnIndex).toBeLessThan(sendIndex);
+    expect(sendBlock).toContain('operationTurn.status === "needs_clarification"');
+    expect(sendBlock).toContain("prepareOperationalPlanTurn({");
     expect(sendBlock).toContain("pendingPlanRef.current = plan");
     expect(sendBlock).toContain("content: plan.proposalSpeech");
   });
@@ -135,23 +135,21 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "const sendTypedMessage = useCallback(async () => {",
       "  // ------------------------------------------------------------------\n  // Session teardown",
     );
-    const pendingRefIndex = SOURCE.indexOf("const pendingHostingClarificationRef = useRef<PendingHostingClarification | null>(null)");
+    const pendingRefIndex = SOURCE.indexOf("const pendingHostingClarificationRef = useRef<PendingOperationDraft | null>(null)");
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
-    const mergeIndex = sendBlock.indexOf("const clarifiedHostingText = `${pendingHostingClarification.sourceText}");
-    const gateIndex = sendBlock.indexOf("evaluateHostingPlanningGate(clarifiedHostingText)");
-    const buildIndex = sendBlock.indexOf("buildOperationalPlanFromOutcome(clarifiedHostingText, people)");
-    const proposalIndex = sendBlock.indexOf("content: plan.proposalSpeech", buildIndex);
-    const setClarificationIndex = sendBlock.indexOf("pendingHostingClarificationRef.current = {", gateIndex);
+    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await prepareOperationalPlanTurn({", pendingBranchIndex);
+    const pendingDraftIndex = sendBlock.indexOf("pendingDraft: pendingHostingClarification", operationTurnIndex);
+    const proposalIndex = sendBlock.indexOf("content: plan.proposalSpeech", operationTurnIndex);
+    const setClarificationIndex = sendBlock.indexOf("pendingHostingClarificationRef.current = operationTurn.draft", operationTurnIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
     expect(pendingRefIndex).toBeGreaterThan(-1);
-    expect(setClarificationIndex).toBeGreaterThan(gateIndex);
     expect(pendingBranchIndex).toBeGreaterThan(-1);
-    expect(mergeIndex).toBeGreaterThan(pendingBranchIndex);
-    expect(gateIndex).toBeGreaterThan(mergeIndex);
-    expect(buildIndex).toBeGreaterThan(gateIndex);
-    expect(proposalIndex).toBeGreaterThan(buildIndex);
-    expect(buildIndex).toBeLessThan(sendIndex);
+    expect(operationTurnIndex).toBeGreaterThan(pendingBranchIndex);
+    expect(pendingDraftIndex).toBeGreaterThan(operationTurnIndex);
+    expect(setClarificationIndex).toBeGreaterThan(operationTurnIndex);
+    expect(proposalIndex).toBeGreaterThan(operationTurnIndex);
+    expect(operationTurnIndex).toBeLessThan(sendIndex);
   });
 
   it("executes typed hosting approval through the stored plan once instead of re-asking ElevenLabs", () => {
@@ -207,7 +205,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "  // ------------------------------------------------------------------\n  // Session teardown",
     );
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
-    const needsClarificationIndex = sendBlock.indexOf('hostingGate.status === "needs_clarification"', pendingBranchIndex);
+    const needsClarificationIndex = sendBlock.indexOf('operationTurn.status === "needs_clarification"', pendingBranchIndex);
     const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", needsClarificationIndex);
     const localReturnIndex = sendBlock.indexOf("return;", localReplyIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
@@ -245,7 +243,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "You are not signed in. Please sign in and try again.",
       'turn.action === "executed"',
       'turn.action === "cancelled"',
-      'hostingGate.status === "needs_clarification"',
+      'operationTurn.status === "needs_clarification"',
       "I couldn't put that guest plan together right now. Please try again.",
       "content: plan.proposalSpeech",
     ]) {

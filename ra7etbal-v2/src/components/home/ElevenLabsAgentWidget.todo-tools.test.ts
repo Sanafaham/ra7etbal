@@ -300,8 +300,8 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
 });
 
 describe("ElevenLabsAgentWidget — hosting planning gate", () => {
-  it("imports the reusable hosting planning gate from ops-intelligence", () => {
-    expect(SOURCE).toContain("evaluateHostingPlanningGate");
+  it("imports the reusable operation lifecycle from ops-intelligence", () => {
+    expect(SOURCE).toContain("prepareOperationalPlanTurn");
     expect(SOURCE).toContain('from "../../lib/ops-intelligence"');
   });
 
@@ -326,19 +326,19 @@ describe("ElevenLabsAgentWidget — hosting planning gate", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const block = SOURCE.slice(start, end);
-    const actionIndex = block.indexOf("const outcomeAction = resolveGuestOutcomeAction(rawInstruction)");
-    const gateIndex = block.indexOf("const hostingGate = evaluateHostingPlanningGate(rawInstruction)");
-    const buildIndex = block.indexOf("const plan = await buildOperationalPlanFromOutcome(rawInstruction, people)");
-    expect(actionIndex).toBeGreaterThan(-1);
-    expect(gateIndex).toBeGreaterThan(actionIndex);
-    expect(buildIndex).toBeGreaterThan(gateIndex);
-    expect(block).toContain('hostingGate.status === "needs_clarification"');
+    const helperIndex = block.indexOf("const operationTurn = await prepareOperationalPlanTurn({");
+    const clarificationIndex = block.indexOf('operationTurn.status === "needs_clarification"', helperIndex);
+    const readyIndex = block.indexOf('operationTurn.status === "ready"', helperIndex);
+    expect(helperIndex).toBeGreaterThan(-1);
+    expect(clarificationIndex).toBeGreaterThan(helperIndex);
+    expect(readyIndex).toBeGreaterThan(clarificationIndex);
+    expect(block).toContain("pendingHostingClarificationRef.current = operationTurn.draft");
   });
 });
 
 describe("ElevenLabsAgentWidget — guest plan proposal regression guards", () => {
   function guestOutcomeBlock(): string {
-    const start = SOURCE.indexOf("const outcomeAction = resolveGuestOutcomeAction(rawInstruction);");
+    const start = SOURCE.indexOf("// ── Operations Intelligence — outcome leg");
     const end = SOURCE.indexOf("// ── Recurring-language detection", start);
 
     expect(start).toBeGreaterThan(-1);
@@ -349,7 +349,7 @@ describe("ElevenLabsAgentWidget — guest plan proposal regression guards", () =
 
   it("executes immediately on operating authority and reports the tool result", () => {
     const block = guestOutcomeBlock();
-    const executeBranch = block.indexOf('if (outcomeAction === "execute")');
+    const executeBranch = block.indexOf('if (operationTurn.action === "execute")');
     const execCall = block.indexOf("executeProposedPlan(plan", executeBranch);
     const execReturn = block.indexOf("return execSummary", executeBranch);
 

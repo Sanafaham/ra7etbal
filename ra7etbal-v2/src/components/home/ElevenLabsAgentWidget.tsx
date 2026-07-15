@@ -90,6 +90,7 @@ import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderR
 import {
   buildOperationalPlanFromOutcome,
   evaluateHostingPlanningGate,
+  prepareOperationalPlanTurn,
   resolveGuestOutcomeAction,
   executeProposedPlan,
   isConfirmation,
@@ -98,6 +99,7 @@ import {
   resolvePendingPlanDecision,
   handlePendingPlanTurn,
   loadLatestPendingPlan,
+  type PendingOperationDraft,
   type ProposedPlan,
 } from "../../lib/ops-intelligence";
 import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/people-behavior";
@@ -154,11 +156,6 @@ type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
 type CarsonChannel = "voice" | "text";
 const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id";
-
-interface PendingHostingClarification {
-  sourceText: string;
-  askedAtClientMessageId: string;
-}
 
 function getOrCreateTypedSessionId(): string {
   if (typeof window === "undefined") return crypto.randomUUID();
@@ -903,7 +900,7 @@ export default function ElevenLabsAgentWidget({
   const typedSessionIdRef = useRef(getOrCreateTypedSessionId());
   const typedConversationIdRef = useRef<string | null>(null);
   const pendingTypedClientMessageIdRef = useRef<string | null>(null);
-  const pendingHostingClarificationRef = useRef<PendingHostingClarification | null>(null);
+  const pendingHostingClarificationRef = useRef<PendingOperationDraft | null>(null);
   const persistedTypedAgentEventsRef = useRef(new Set<string>());
   const [typedMessages, setTypedMessages] = useState<CarsonTypedMessage[]>([]);
   const typedMessagesRef = useRef<CarsonTypedMessage[]>([]);
@@ -4034,6 +4031,60 @@ export default function ElevenLabsAgentWidget({
           }
         }
 
+        // ── Unified Operational Plan Engine V1 — clarification / outcome leg ─
+        // A pending operation draft must run before the generic yes/no guard:
+        // the owner may answer a clarification with short phrases that are not
+        // standalone operations. The helper owns accumulated brief → gate →
+        // persisted plan for both voice and typed hosting.
+        const pendingOperationDraft = pendingHostingClarificationRef.current;
+        if (pendingOperationDraft) {
+          const operationTurn = await prepareOperationalPlanTurn({
+            message: rawInstruction,
+            people,
+            pendingDraft: pendingOperationDraft,
+          });
+
+          if (operationTurn.status === "needs_clarification") {
+            pendingHostingClarificationRef.current = operationTurn.draft;
+            lastDirectToolSuccessRef.current = null;
+            return operationTurn.question;
+          }
+
+          pendingHostingClarificationRef.current = null;
+          pendingPlanRef.current = null;
+
+          if (operationTurn.status === "ready") {
+            const plan = operationTurn.plan;
+            if (operationTurn.action === "execute") {
+              const execSummary = await executeProposedPlan(plan, {
+                displayName: displayName ?? null,
+                userId: authUserId,
+                people,
+              });
+              sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+              lastDirectToolSuccessRef.current = {
+                toolName: "execute_instruction",
+                resultText: execSummary,
+                at: new Date().toISOString(),
+                inputSummary: { kind: "guest_plan_execute", instruction: plan.sourceText.slice(0, 80) },
+              };
+              return execSummary;
+            }
+
+            pendingPlanRef.current = plan;
+            lastDirectToolSuccessRef.current = {
+              toolName: "execute_instruction",
+              resultText: plan.proposalSpeech,
+              at: new Date().toISOString(),
+              inputSummary: { kind: "guest_plan_proposal", instruction: plan.sourceText.slice(0, 80) },
+            };
+            return plan.proposalSpeech;
+          }
+
+          return "I couldn't put that guest plan together right now. Please try again.";
+        }
+
         // Guard: a confirmation/rejection with no active plan returns a graceful
         // acknowledgement. Do NOT fall through to executeDelegationFromText —
         // feeding "Yes"/"No" to extraction returns empty results and propagates
@@ -4051,17 +4102,23 @@ export default function ElevenLabsAgentWidget({
         // ready", …) → EXECUTE immediately and report the tool-confirmed result.
         // A hosting event WITHOUT operating authority → propose (confirm-before-
         // send). Approval-required sensitive actions are gated at the prompt.
-        const outcomeAction = resolveGuestOutcomeAction(rawInstruction);
-        if (outcomeAction !== "none") {
+        const operationTurn = await prepareOperationalPlanTurn({
+          message: rawInstruction,
+          people,
+        });
+        if (operationTurn.status !== "not_operation") {
           pendingPlanRef.current = null;
-          const hostingGate = evaluateHostingPlanningGate(rawInstruction);
-          if (hostingGate.status === "needs_clarification") {
+          if (operationTurn.status === "needs_clarification") {
+            pendingHostingClarificationRef.current = operationTurn.draft;
             lastDirectToolSuccessRef.current = null;
-            return hostingGate.question ?? "I need a few details before I message anyone.";
+            return operationTurn.question;
           }
-          const plan = await buildOperationalPlanFromOutcome(rawInstruction, people);
-          if (plan) {
-            if (outcomeAction === "execute") {
+
+          pendingHostingClarificationRef.current = null;
+
+          if (operationTurn.status === "ready") {
+            const plan = operationTurn.plan;
+            if (operationTurn.action === "execute") {
               const execSummary = await executeProposedPlan(plan, {
                 displayName: displayName ?? null,
                 userId: authUserId,
@@ -4075,7 +4132,7 @@ export default function ElevenLabsAgentWidget({
                 at: new Date().toISOString(),
                 inputSummary: {
                   kind: "guest_plan_execute",
-                  instruction: rawInstruction.slice(0, 80),
+                  instruction: plan.sourceText.slice(0, 80),
                 },
               };
               return execSummary;
@@ -4087,7 +4144,7 @@ export default function ElevenLabsAgentWidget({
               at: new Date().toISOString(),
               inputSummary: {
                 kind: "guest_plan_proposal",
-                instruction: rawInstruction.slice(0, 80),
+                instruction: plan.sourceText.slice(0, 80),
               },
             };
             return plan.proposalSpeech;
@@ -6191,18 +6248,25 @@ export default function ElevenLabsAgentWidget({
 
       const pendingHostingClarification = pendingHostingClarificationRef.current;
       if (pendingHostingClarification) {
-        const clarifiedHostingText = `${pendingHostingClarification.sourceText}\n\nClarification details: ${savedMessage.content}`;
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
 
-        const hostingGate = evaluateHostingPlanningGate(clarifiedHostingText);
-        if (hostingGate.status === "needs_clarification") {
-          pendingHostingClarificationRef.current = {
-            sourceText: clarifiedHostingText,
-            askedAtClientMessageId: clientMessageId,
-          };
+        let people = usePeopleStore.getState().items;
+        if (authUserId && (usePeopleStore.getState().status === "idle" || people.length === 0)) {
+          await usePeopleStore.getState().loadFor(authUserId);
+          people = usePeopleStore.getState().items;
+        }
+
+        const operationTurn = await prepareOperationalPlanTurn({
+          message: savedMessage.content,
+          people,
+          pendingDraft: pendingHostingClarification,
+          askedAtClientMessageId: clientMessageId,
+        });
+        if (operationTurn.status === "needs_clarification") {
+          pendingHostingClarificationRef.current = operationTurn.draft;
           await persistLocalTypedAgentReply({
             replyToClientMessageId: clientMessageId,
-            content: hostingGate.question ?? "I still need a few details before I message anyone.",
+            content: operationTurn.question,
             clearPendingPhotos: false,
           });
           return;
@@ -6220,13 +6284,7 @@ export default function ElevenLabsAgentWidget({
           return;
         }
 
-        const peopleState = usePeopleStore.getState();
-        if (peopleState.status === "idle" || peopleState.items.length === 0) {
-          await usePeopleStore.getState().loadFor(authUserId);
-        }
-        const people = usePeopleStore.getState().items;
-        const plan = await buildOperationalPlanFromOutcome(clarifiedHostingText, people);
-        if (!plan) {
+        if (operationTurn.status !== "ready") {
           await persistLocalTypedAgentReply({
             replyToClientMessageId: clientMessageId,
             content: "I couldn't put that guest plan together right now. Please try again.",
@@ -6235,6 +6293,7 @@ export default function ElevenLabsAgentWidget({
           return;
         }
 
+        const plan = operationTurn.plan;
         pendingPlanRef.current = plan;
         await persistLocalTypedAgentReply({
           replyToClientMessageId: clientMessageId,
@@ -6248,15 +6307,21 @@ export default function ElevenLabsAgentWidget({
       if (typedGuestAction !== "none") {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
         pendingPlanRef.current = null;
-        const hostingGate = evaluateHostingPlanningGate(savedMessage.content);
-        if (hostingGate.status === "needs_clarification") {
-          pendingHostingClarificationRef.current = {
-            sourceText: savedMessage.content,
-            askedAtClientMessageId: clientMessageId,
-          };
+        let people = usePeopleStore.getState().items;
+        if (authUserId && (usePeopleStore.getState().status === "idle" || people.length === 0)) {
+          await usePeopleStore.getState().loadFor(authUserId);
+          people = usePeopleStore.getState().items;
+        }
+        const operationTurn = await prepareOperationalPlanTurn({
+          message: savedMessage.content,
+          people,
+          askedAtClientMessageId: clientMessageId,
+        });
+        if (operationTurn.status === "needs_clarification") {
+          pendingHostingClarificationRef.current = operationTurn.draft;
           await persistLocalTypedAgentReply({
             replyToClientMessageId: clientMessageId,
-            content: hostingGate.question ?? "I need a few details before I message anyone.",
+            content: operationTurn.question,
             clearPendingPhotos: false,
           });
           return;
@@ -6273,13 +6338,7 @@ export default function ElevenLabsAgentWidget({
           return;
         }
 
-        const peopleState = usePeopleStore.getState();
-        if (peopleState.status === "idle" || peopleState.items.length === 0) {
-          await usePeopleStore.getState().loadFor(authUserId);
-        }
-        const people = usePeopleStore.getState().items;
-        const plan = await buildOperationalPlanFromOutcome(savedMessage.content, people);
-        if (!plan) {
+        if (operationTurn.status !== "ready") {
           await persistLocalTypedAgentReply({
             replyToClientMessageId: clientMessageId,
             content: "I couldn't put that guest plan together right now. Please try again.",
@@ -6288,6 +6347,7 @@ export default function ElevenLabsAgentWidget({
           return;
         }
 
+        const plan = operationTurn.plan;
         pendingPlanRef.current = plan;
         await persistLocalTypedAgentReply({
           replyToClientMessageId: clientMessageId,
