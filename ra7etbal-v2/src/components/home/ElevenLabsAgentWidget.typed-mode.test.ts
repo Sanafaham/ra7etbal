@@ -220,6 +220,42 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(initialGuardBlock).not.toContain("!conversation");
   });
 
+  it("executes simple typed delegations locally through execute_instruction before ElevenLabs can narrate success", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const candidateIndex = sendBlock.indexOf("const typedDelegationCandidate = parseDelegationFastPath(");
+    const executeIndex = sendBlock.indexOf("await executeInstruction({ instruction: savedMessage.content })", candidateIndex);
+    const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", executeIndex);
+    const localReturnIndex = sendBlock.indexOf("return;", localReplyIndex);
+    const connectionGuardIndex = sendBlock.indexOf('throw new Error("The Carson session ended before the message could be sent.")');
+    const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
+
+    expect(SOURCE).toContain("parseDelegationFastPath");
+    expect(candidateIndex).toBeGreaterThan(-1);
+    expect(executeIndex).toBeGreaterThan(candidateIndex);
+    expect(localReplyIndex).toBeGreaterThan(executeIndex);
+    expect(localReturnIndex).toBeGreaterThan(localReplyIndex);
+    expect(localReturnIndex).toBeLessThan(connectionGuardIndex);
+    expect(localReturnIndex).toBeLessThan(sendIndex);
+  });
+
+  it("keeps typed delegation success copy bound to the authoritative executor result", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const candidateIndex = sendBlock.indexOf("const typedDelegationCandidate = parseDelegationFastPath(");
+    const branch = sendBlock.slice(candidateIndex, sendBlock.indexOf("const typedPhotos = [", candidateIndex));
+
+    expect(branch).toContain("const summary = authUserId");
+    expect(branch).toContain("await executeInstruction({ instruction: savedMessage.content })");
+    expect(branch).toContain("content: summary");
+    expect(branch).not.toContain("I'll have");
+    expect(branch).not.toContain("make that now");
+  });
+
   it("returns after local partial hosting clarification so ElevenLabs cannot duplicate the reply", () => {
     const sendBlock = blockBetween(
       "const sendTypedMessage = useCallback(async () => {",

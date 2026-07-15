@@ -92,6 +92,12 @@ describe("parseDelegationFastPath", () => {
     });
   });
 
+  it("parses the production typed delegation phrase for Christopher", () => {
+    expect(
+      parseDelegationFastPath("Ask Christopher to make this now", roster()),
+    ).toEqual({ personName: "Christopher", taskText: "make this now" });
+  });
+
   it("returns null for unknown person (falls through to Anthropic)", () => {
     expect(
       parseDelegationFastPath("ask Ahmad to clean the kitchen", roster()),

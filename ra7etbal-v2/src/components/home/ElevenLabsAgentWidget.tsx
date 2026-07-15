@@ -70,7 +70,7 @@ import {
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
-import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
+import { executeDelegationFastPath, parseDelegationFastPath } from "../../lib/delegation-fast-path";
 import {
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
@@ -6380,6 +6380,29 @@ export default function ElevenLabsAgentWidget({
         return;
       }
 
+      let typedDelegationPeople = usePeopleStore.getState().items;
+      if (authUserId && (usePeopleStore.getState().status === "idle" || typedDelegationPeople.length === 0)) {
+        await usePeopleStore.getState().loadFor(authUserId);
+        typedDelegationPeople = usePeopleStore.getState().items;
+      }
+      const typedDelegationCandidate = parseDelegationFastPath(
+        savedMessage.content,
+        typedDelegationPeople,
+      );
+      if (typedDelegationCandidate) {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        setTurnPhase("acting");
+        const summary = authUserId
+          ? await executeInstruction({ instruction: savedMessage.content })
+          : "You are not signed in. Please sign in and try again.";
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: summary,
+          clearPendingPhotos: true,
+        });
+        return;
+      }
+
       const typedPhotos = [
         ...(pendingPhotosRef.current.length > 0
           ? pendingPhotosRef.current
@@ -6482,7 +6505,7 @@ export default function ElevenLabsAgentWidget({
           `Message sent, but its delivery status could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
         );
       });
-  }, [clearPendingImages, displayName, persistLocalTypedAgentReply, typedInput]);
+  }, [clearPendingImages, displayName, executeInstruction, persistLocalTypedAgentReply, typedInput]);
 
   // ------------------------------------------------------------------
   // Session teardown
