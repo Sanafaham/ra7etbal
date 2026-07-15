@@ -870,9 +870,9 @@ function formatHostingLocationPhrase(location: string): string {
 
 function readyDeadline(brief: HostingEventBrief, domain: GuestPrepDomain): string {
   if (!brief.startTime) return "before guests arrive";
-  if (domain === "hospitality" || domain === "coordination") return `30 minutes before ${brief.startTime}`;
-  if (domain === "transport") return `before ${brief.startTime}`;
-  return `15 minutes before ${brief.startTime}`;
+  if (domain === "transport") return brief.startTime;
+  const minutesBefore = domain === "hospitality" || domain === "coordination" ? 30 : 15;
+  return subtractMinutesFromTime(brief.startTime, minutesBefore) ?? `${minutesBefore} minutes before ${brief.startTime}`;
 }
 
 function formatDetailList(value: string): string {
@@ -891,10 +891,42 @@ function dietaryPhrase(brief: HostingEventBrief): string {
   return dietary;
 }
 
-function hostingServiceDetails(brief: HostingEventBrief): string {
-  const menu = brief.menu ? formatDetailList(brief.menu) : "the agreed menu";
-  const drinks = brief.drinks ? formatDetailList(brief.drinks) : "suitable drinks";
-  return `Menu: ${menu}. Drinks: ${drinks}. Dietary requirements: ${dietaryPhrase(brief)}.`;
+function subtractMinutesFromTime(value: string, minutesBefore: number): string | null {
+  const match = value.trim().match(/^(\d{1,2})(?::([0-5]\d))?\s*(am|pm|a\.m\.|p\.m\.)?$/i);
+  if (!match) return null;
+  const suffix = match[3]?.replace(/\./g, "").toUpperCase() ?? null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2] ?? "0");
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  const usesTwelveHour = Boolean(suffix);
+  if (usesTwelveHour) {
+    if (suffix === "PM" && hour < 12) hour += 12;
+    if (suffix === "AM" && hour === 12) hour = 0;
+  }
+  const total = (((hour * 60 + minute - minutesBefore) % 1440) + 1440) % 1440;
+  const outputHour24 = Math.floor(total / 60);
+  const outputMinute = total % 60;
+  if (!usesTwelveHour) {
+    return `${String(outputHour24).padStart(2, "0")}:${String(outputMinute).padStart(2, "0")}`;
+  }
+  const outputSuffix = outputHour24 >= 12 ? "PM" : "AM";
+  const outputHour12 = outputHour24 % 12 || 12;
+  return `${outputHour12}:${String(outputMinute).padStart(2, "0")} ${outputSuffix}`;
+}
+
+function hostingFoodAndDrinkPhrase(brief: HostingEventBrief): string {
+  const items = [
+    ...(brief.menu ? brief.menu.split(/\s*,\s*/) : ["the agreed food"]),
+    ...(brief.drinks ? brief.drinks.split(/\s*(?:,|\band\b)\s*/) : []),
+  ].map((item) => item.trim()).filter(Boolean);
+  return formatNameList(items);
+}
+
+function dietarySentence(brief: HostingEventBrief): string | null {
+  const dietary = dietaryPhrase(brief);
+  if (/^dietary requirements to be confirmed$/i.test(dietary)) return null;
+  if (/^no\s+dietary\s+restrictions$/i.test(dietary)) return "There are no dietary restrictions.";
+  return `Dietary restrictions: ${dietary}.`;
 }
 
 function buildHostingWorkerMessage(
@@ -904,27 +936,28 @@ function buildHostingWorkerMessage(
   hospitalityName: string,
 ): string {
   const context = briefContextSentence(brief);
-  const details = hostingServiceDetails(brief);
-  const china = brief.china ?? "appropriate china, cups, plates, napkins, and serving pieces";
+  const foodAndDrinks = hostingFoodAndDrinkPhrase(brief);
+  const dietary = dietarySentence(brief);
+  const china = brief.china
+    ? `${brief.china}, cups, plates, napkins`
+    : "suitable china, cups, plates, napkins";
   const flowers = brief.flowers ?? "simple flowers if available";
   const deadline = readyDeadline(brief, domain);
 
   if (domain === "dinner") {
     return [
       context,
-      "Please prepare the food and drinks.",
-      details,
-      `Required result: everything is ready for service by ${deadline}. Tell Carson immediately if an ingredient or service item is unavailable.`,
-    ].join(" ");
+      `Please prepare ${foodAndDrinks}.`,
+      dietary,
+      `Please have everything ready by ${deadline}.`,
+    ].filter(Boolean).join(" ");
   }
 
   if (domain === "hospitality") {
     return [
       context,
-      "Please prepare the table, guest area, and presentation.",
-      details,
-      `Use ${china}, clean linens, seating, water glasses, serving pieces, and ${flowers}.`,
-      `Required result: the full table and guest area are ready by ${deadline}. Tell Carson immediately if anything is missing.`,
+      `Please prepare the table and guest area with ${china}, clean linens, water glasses, serving pieces, seating, and ${flowers}.`,
+      `Please have the setup ready by ${deadline}.`,
     ].join(" ");
   }
 
@@ -932,27 +965,23 @@ function buildHostingWorkerMessage(
     return [
       context,
       "Please handle the transport support connected to this event.",
-      details,
-      `Required result: the car and timing are ready by ${deadline}. Tell Carson immediately if there is any delay or blocker.`,
+      `Please have the car and timing ready by ${deadline}.`,
     ].join(" ");
   }
 
   return [
     context,
-    `Please coordinate ${brief.occasion ?? "the event"}.`,
-    details,
-    `Checkpoints: confirm with ${dinnerName} on menu, drinks, and service timing; confirm with ${hospitalityName} on table setup, china, linens, flowers, seating, and readiness.`,
-    `Required result: all checkpoints are verified by ${deadline}. Report any missing item, delay, or blocker to Carson immediately.`,
+    `Please coordinate with ${dinnerName} and ${hospitalityName} and confirm that the food, drinks, table setup, flowers, seating, and guest area are ready by ${deadline}.`,
   ].join(" ");
 }
 
 function hostingAssignmentSummary(task: ProposedTask): string {
   if (/transport support|car and timing/i.test(task.message)) return `${task.personName} handles transport support`;
-  if (/coordinate|checkpoints/i.test(task.message)) return `${task.personName} coordinates readiness`;
+  if (/coordinate|confirm that/i.test(task.message)) return `${task.personName} coordinates readiness`;
   if (/\b(?:setup|china|linens|flowers|table)\b/i.test(task.message)) {
     return `${task.personName} handles setup, china, flowers, and table presentation`;
   }
-  if (/food|drinks|menu|service/i.test(task.message)) return `${task.personName} handles food and drinks`;
+  if (/food|drinks|menu|service|sandwiches|scones|cakes|tea|refreshments/i.test(task.message)) return `${task.personName} handles food and drinks`;
   return `${task.personName} handles their part`;
 }
 

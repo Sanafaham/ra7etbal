@@ -69,6 +69,9 @@ export function buildDelegationMessage({
   const name = personName.trim();
   const owner = ownerName?.trim() || "Sana";
   const rawTask = cleanTaskText(taskText);
+  if (/^Sana is hosting\b/i.test(rawTask)) {
+    return `Hi ${name}, ${rawTask}.`;
+  }
   const { task, hadPlease } = stripLeadingPlease(rawTask);
   const p = hadPlease ? "please " : "";
   const notes = (personNotes ?? "").toLowerCase();

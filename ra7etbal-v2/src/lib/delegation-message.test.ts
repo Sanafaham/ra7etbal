@@ -43,6 +43,22 @@ describe("please deduplication", () => {
     const msg = build("please make a sushi/poke bowl for dinner");
     expect(msg).toBe("Hi Christopher, could you please make a sushi/poke bowl for dinner? Let Sana know when done.");
   });
+
+  it("preserves precomposed hosting instructions without lowercasing Sana or adding follow-up text", () => {
+    const msg = build(
+      "Sana is hosting afternoon tea for three guests today at 4:00 PM in the garden under the pavilion. " +
+      "Please prepare finger sandwiches, scones with clotted cream and jam, mini cakes and pastries, tea, and refreshments. " +
+      "There are no dietary restrictions. Please have everything ready by 3:45 PM.",
+    );
+
+    expect(msg).toBe(
+      "Hi Christopher, Sana is hosting afternoon tea for three guests today at 4:00 PM in the garden under the pavilion. " +
+      "Please prepare finger sandwiches, scones with clotted cream and jam, mini cakes and pastries, tea, and refreshments. " +
+      "There are no dietary restrictions. Please have everything ready by 3:45 PM.",
+    );
+    expect(msg).not.toMatch(/\bsana is hosting\b/);
+    expect(msg).not.toMatch(/Let Sana know|Tell Carson|Report .* to Carson/i);
+  });
 });
 
 describe("please deduplication — personality branches", () => {

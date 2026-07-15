@@ -132,10 +132,9 @@ describe("guest preparation operational planning", () => {
       expect(task.message).toMatch(/4:30 PM/);
       expect(task.message).toMatch(/garden/);
     }
-    expect(tasks[0].message).toContain("Menu: sandwiches, scones, and cakes.");
-    expect(tasks[0].message).toContain("Drinks: tea, coffee, and water.");
+    expect(tasks[0].message).toContain("Please prepare sandwiches, scones, cakes, tea, coffee, and water.");
     expect(tasks[1].message).toMatch(/blue china|flowers/i);
-    expect(tasks[2].message).toMatch(/Checkpoints: confirm with Christopher.*confirm with Nasira/i);
+    expect(tasks[2].message).toMatch(/coordinate with Christopher and Nasira/i);
   });
 
   it("formats hosting worker messages naturally for relative dates and indoor locations", () => {
@@ -176,8 +175,8 @@ describe("guest preparation operational planning", () => {
       "Grace",
     ]);
     expect(collapsed.tasks.map((task) => task.message).join("\n")).toContain("tomorrow at 6 PM in the dining room");
-    expect(collapsed.tasks[0].message).toContain("Menu: tea and sandwiches.");
-    expect(collapsed.tasks[2].message).toContain("Checkpoints");
+    expect(collapsed.tasks[0].message).toContain("Please prepare tea and sandwiches.");
+    expect(collapsed.tasks[2].message).toContain("Please coordinate with Christopher and Nasira");
   });
 
   it("executes multi-owner guest plans as three separate delegation items, messages, and confirmations", async () => {
@@ -227,8 +226,8 @@ describe("guest preparation operational planning", () => {
     for (const item of savedItems) {
       expect(item.description).toContain("tomorrow at 6 PM in the dining room");
     }
-    expect(savedItems[0].description).toContain("Menu: tea and sandwiches.");
-    expect(savedItems[2].description).toContain("Checkpoints");
+    expect(savedItems[0].description).toContain("Please prepare tea and sandwiches.");
+    expect(savedItems[2].description).toContain("Please coordinate with Christopher and Nasira");
     expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
     expect(mocks.deliverTaskMessage.mock.calls.map(([payload]) => payload.recipientName)).toEqual([
       "Christopher",
@@ -500,15 +499,13 @@ describe("guest event planning — safety rules", () => {
     ]);
     for (const task of tasks) {
       expect(task.message).toContain("Sana is hosting afternoon tea for three guests today at 4:30 PM in the garden.");
-      expect(task.message).toMatch(/Required result:/);
-      expect(task.message).toMatch(/Tell Carson immediately|Report any missing item/);
+      expect(task.message).not.toMatch(/\bMenu:|\bDrinks:|\bDietary requirements:|\bRequired result:/);
+      expect(task.message).not.toMatch(/Tell Carson|Report .* to Carson/i);
     }
-    expect(tasks[0].message).toContain("Menu: finger sandwiches, scones, and small cakes.");
-    expect(tasks[0].message).toContain("Drinks: tea, coffee, and water.");
+    expect(tasks[0].message).toContain("Please prepare finger sandwiches, scones, small cakes, tea, coffee, and water.");
     expect(tasks[1].message).toContain("blue china");
     expect(tasks[1].message).toContain("flowers");
-    expect(tasks[2].message).toContain("Checkpoints: confirm with Christopher");
-    expect(tasks[2].message).toContain("confirm with Nasira");
+    expect(tasks[2].message).toContain("Please coordinate with Christopher and Nasira");
   });
 
   it("never assigns anything to Carson, even when Carson holds the only coordinator role", () => {
@@ -815,15 +812,26 @@ describe("hosting planning gate", () => {
     expect(plan.tasks.map((task) => task.personName)).toEqual(["Christopher", "Nasira", "Bahan"]);
     for (const task of plan.tasks) {
       expect(task.message).toContain("Sana is hosting afternoon tea for three guests today at 4:00 PM in the garden under the pavilion.");
-      expect(task.message).toContain("finger sandwiches");
-      expect(task.message).toContain("scones with clotted cream and jam");
-      expect(task.message).toContain("mini cakes and pastries");
-      expect(task.message).toContain("tea and refreshments");
-      expect(task.message).toContain("no dietary restrictions");
       expect(task.message).not.toContain("Clarification details");
       expect(task.message).not.toMatch(/\bsana is hosting\b/);
-      expect(task.message.match(/dietary requirements?/gi)).toHaveLength(1);
+      expect(task.message).not.toMatch(/\bMenu:|\bDrinks:|\bDietary requirements:|\bRequired result:/);
+      expect(task.message).not.toMatch(/Tell Carson|Report .* to Carson/i);
     }
+    expect(plan.tasks[0].message).toBe(
+      "Sana is hosting afternoon tea for three guests today at 4:00 PM in the garden under the pavilion. " +
+      "Please prepare finger sandwiches, scones with clotted cream and jam, mini cakes and pastries, tea, and refreshments. " +
+      "There are no dietary restrictions. Please have everything ready by 3:45 PM.",
+    );
+    expect(plan.tasks[1].message).toBe(
+      "Sana is hosting afternoon tea for three guests today at 4:00 PM in the garden under the pavilion. " +
+      "Please prepare the table and guest area with suitable china, cups, plates, napkins, clean linens, water glasses, serving pieces, seating, and simple flowers if available. " +
+      "Please have the setup ready by 3:30 PM.",
+    );
+    expect(plan.tasks[1].message.match(/serving pieces/g)).toHaveLength(1);
+    expect(plan.tasks[2].message).toBe(
+      "Sana is hosting afternoon tea for three guests today at 4:00 PM in the garden under the pavilion. " +
+      "Please coordinate with Christopher and Nasira and confirm that the food, drinks, table setup, flowers, seating, and guest area are ready by 3:30 PM.",
+    );
   });
 
   it("uses the unified operation lifecycle to preserve clarification state before planning", async () => {
@@ -1017,6 +1025,11 @@ describe("guest plan confirm-before-send", () => {
       "Christopher",
       "Nasira",
       "Bahan",
+    ]);
+    expect(mocks.deliverTaskMessage.mock.calls.map(([payload]) => payload.confirmationLink)).toEqual([
+      "https://ra7etbal.test/confirm?task=task-1",
+      "https://ra7etbal.test/confirm?task=task-2",
+      "https://ra7etbal.test/confirm?task=task-3",
     ]);
     expect(turn.summary).toContain("Christopher, Nasira, Bahan have the plan");
   });
