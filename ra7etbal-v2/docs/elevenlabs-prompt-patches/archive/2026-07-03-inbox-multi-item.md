@@ -1,5 +1,9 @@
 # Patch: Inbox multi-item sequencing + delegate-vs-message wording
 
+> Historical only: the Inbox surface and `act_on_inbox_item` client tool have
+> been removed from the active app/runtime. Do not paste or apply this patch to
+> the live ElevenLabs prompt.
+
 **Date:** 2026-07-03
 **Tools affected:** `act_on_inbox_item` (existing tool, no schema change — code-side `src/components/home/ElevenLabsAgentWidget.tsx` untouched, see reason below)
 **Status:** repo copy only — **not yet confirmed pasted into the ElevenLabs dashboard**

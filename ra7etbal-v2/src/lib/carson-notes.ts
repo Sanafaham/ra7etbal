@@ -89,12 +89,10 @@ export async function deleteCarsonNote(id: string): Promise<void> {
 }
 
 /**
- * Case-insensitive substring match against note text — used by
- * act_on_inbox_item (Carson Inbox Review) to detect whether a note that
- * duplicates a given inbox item's text already exists, before creating a
- * new one. Mirrors carson-todos.ts's findTodoMatches — matches either
- * direction (note contains the query, or the query contains the note) so
- * a slightly reworded duplicate is still caught.
+ * Case-insensitive substring match against note text. Mirrors
+ * carson-todos.ts's findTodoMatches — matches either direction (note contains
+ * the query, or the query contains the note) so a slightly reworded duplicate
+ * is still caught.
  */
 export function findNoteMatches(notes: CarsonNote[], query: string): CarsonNote[] {
   const q = query.trim().toLowerCase();

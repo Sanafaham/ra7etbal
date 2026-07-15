@@ -64,8 +64,6 @@ describe("ElevenLabsAgentWidget — invalid voice capture guard", () => {
       "save_city",
       "save_note",
       "act_on_note",
-      "list_inbox_items",
-      "act_on_inbox_item",
       "create_todo",
       "complete_todo",
       "control_task",

@@ -3568,25 +3568,6 @@ export default function ElevenLabsAgentWidget({
     [displayName, createCalendarEvent],
   );
 
-  // ------------------------------------------------------------------
-  // Client tools: list_inbox_items / act_on_inbox_item
-  //
-  // The internal Inbox surface (Clear My Head Review's "Leave here for
-  // now" queue) was removed from the product — capture now always
-  // resolves straight to a Note or a To-do via save_note/create_todo.
-  // These handlers are kept as harmless stubs (not deleted) only because
-  // the ElevenLabs agent's tool schema is configured in the dashboard,
-  // outside this repo, and may still list these tool names until that
-  // config is cleaned up separately.
-  // ------------------------------------------------------------------
-  const getInboxItems = useCallback(async (): Promise<string> => {
-    return "There's no separate inbox anymore — just tell me what to save, and I'll add it as a note or a to-do.";
-  }, []);
-
-  const actOnInboxItem = useCallback(async (): Promise<string> => {
-    return "There's no separate inbox anymore — just tell me what to save, and I'll add it as a note or a to-do.";
-  }, []);
-
   const runDirectToolWithDiagnostic = useCallback(
     async <TResult,>(
       toolName: string,
@@ -5444,16 +5425,6 @@ export default function ElevenLabsAgentWidget({
             const captureBlock = guardCurrentToolInvocation("act_on_note");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("act_on_note", params, () => actOnNote(params));
-          },
-          list_inbox_items: () => {
-            const captureBlock = guardCurrentToolInvocation("list_inbox_items");
-            if (captureBlock) return captureBlock;
-            return runDirectToolWithDiagnostic("list_inbox_items", {}, () => getInboxItems());
-          },
-          act_on_inbox_item: () => {
-            const captureBlock = guardCurrentToolInvocation("act_on_inbox_item");
-            if (captureBlock) return captureBlock;
-            return runDirectToolWithDiagnostic("act_on_inbox_item", {}, () => actOnInboxItem());
           },
           create_todo: (params: Parameters<typeof createTodoTool>[0]) => {
             const captureBlock = guardCurrentToolInvocation("create_todo");

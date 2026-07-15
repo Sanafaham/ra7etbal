@@ -25,4 +25,11 @@ This directory stores **patches only**: the specific, minimal additions needed w
 
 | Date | File | Summary |
 |---|---|---|
-| 2026-07-03 | [2026-07-03-inbox-multi-item.md](2026-07-03-inbox-multi-item.md) | Multi-item Inbox instruction sequencing + delegate-vs-message wording for `act_on_inbox_item` |
+
+## Historical patches
+
+These patches are retained only as incident history for surfaces/tools that are no longer active.
+
+| Date | File | Summary |
+|---|---|---|
+| 2026-07-03 | [archive/2026-07-03-inbox-multi-item.md](archive/2026-07-03-inbox-multi-item.md) | Historical Inbox sequencing patch for removed `act_on_inbox_item` |
