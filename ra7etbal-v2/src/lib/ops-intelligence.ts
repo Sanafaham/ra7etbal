@@ -458,7 +458,7 @@ export async function prepareOperationalPlanTurn(input: {
 // ── Confirmation / rejection detection ────────────────────────────────────────
 
 const CONFIRMATION_RE =
-  /^\s*(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|send (them|those|it|the messages?)|sounds good|perfect|great|please do|go for it|confirmed?|correct|absolutely|definitely)\s*[.!]?\s*$/i;
+  /^\s*(yes|yeah|yep|yup|sure|ok|okay|go ahead|do it|send (them|those|it|the messages?)|yes[, ]+send (them|those|it|the messages?)|yes[, ]+go ahead|yes[, ]+please|sounds good|perfect|great|please do|go for it|confirmed?|correct|absolutely|definitely)\s*[.!]?\s*$/i;
 
 const REJECTION_RE =
   /^\s*(no|nope|not yet|cancel|don't send|do not send|hold off|wait|never mind|nevermind|skip it|don't do it)\s*[.!]?\s*$/i;
@@ -1113,6 +1113,14 @@ export async function executeProposedPlan(
   const noConsentMessages = saved.messages.filter(
     (m) => !!m.recipient.trim() && noConsentNames.has(m.recipient.trim().toLowerCase()),
   );
+  const savedMessageRecipients = new Set(
+    saved.messages
+      .map((m) => m.recipient.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const missingSavedAssignments = deliverableTasks.filter(
+    (task) => !savedMessageRecipients.has(task.personName.trim().toLowerCase()),
+  );
 
   const sendResults = await Promise.allSettled(
     sendableMessages.map((msg) =>
@@ -1142,6 +1150,12 @@ export async function executeProposedPlan(
     recipient: msg.recipient,
     reason: "WhatsApp consent not recorded",
   }));
+  for (const task of missingSavedAssignments) {
+    failedSends.push({
+      recipient: task.personName,
+      reason: "approved assignment was not created in Ra7etBal",
+    });
+  }
 
   for (let i = 0; i < sendableMessages.length; i++) {
     const msg = sendableMessages[i];

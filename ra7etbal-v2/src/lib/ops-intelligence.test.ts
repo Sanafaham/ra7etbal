@@ -842,6 +842,7 @@ describe("guest plan confirm-before-send", () => {
 
   it("resolves a verbatim confirmation to confirm, even if a later source is noisy", () => {
     expect(resolvePendingPlanDecision("Yes.")).toBe("confirm");
+    expect(resolvePendingPlanDecision("Yes send it")).toBe("confirm");
     expect(resolvePendingPlanDecision("go ahead")).toBe("confirm");
     // Robust to EL routing: confirm if EITHER source is a confirmation.
     expect(resolvePendingPlanDecision("send the messages to everyone", "yes")).toBe("confirm");
@@ -874,6 +875,122 @@ describe("guest plan confirm-before-send", () => {
       "Nasira",
       "Grace",
     ]);
+  });
+
+  it("executes every approved hosting assignment for Christopher, Nasira, and Bahan on 'Yes send it'", async () => {
+    const people = [
+      person({ id: "christopher", name: "Christopher", role: "Cook", responsibilities: "Food and drinks." }),
+      person({ id: "nasira", name: "Nasira", role: "Housekeeper", responsibilities: "Setup, china, flowers, and table presentation." }),
+      person({ id: "bahan", name: "Bahan", role: "Coordinator", responsibilities: "Coordinate readiness." }),
+    ];
+    const plan = {
+      outcomeType: "guest_arrival" as const,
+      sourceText:
+        "Handle afternoon tea at home today for three guests.\n\n" +
+        "Clarification details: At 4 PM in the garden. Finger sandwiches, cakes and tea. No dietary restrictions. Use the floral china and simple white flowers.",
+      createdAt: Date.now(),
+      proposalSpeech:
+        "Christopher handles food and drinks, Nasira handles setup, china, flowers, and table presentation, and Bahan coordinates readiness. Shall I send the plan?",
+      tasks: [
+        { personId: "christopher", personName: "Christopher", message: "Food assignment." },
+        { personId: "nasira", personName: "Nasira", message: "Setup assignment." },
+        { personId: "bahan", personName: "Bahan", message: "Coordination assignment." },
+      ],
+    };
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item, i) => ({
+        id: `task-${i + 1}`,
+        type: "delegation",
+        assigned_to: item.assignedTo,
+        description: item.description,
+      })),
+      messages: items.map((item, i) => ({
+        id: `message-${i + 1}`,
+        task_id: `task-${i + 1}`,
+        recipient: item.assignedTo,
+        content: item.suggestedMessage ?? item.description,
+        confirmation_url: `https://ra7etbal.test/confirm?task=task-${i + 1}`,
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const turn = await handlePendingPlanTurn(["Yes send it"], plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people,
+    });
+
+    expect(turn.action).toBe("executed");
+    expect((mocks.savePending.mock.calls[0][0] as ExtractedItem[]).map((item) => item.assignedTo)).toEqual([
+      "Christopher",
+      "Nasira",
+      "Bahan",
+    ]);
+    expect(mocks.deliverTaskMessage.mock.calls.map(([payload]) => payload.recipientName)).toEqual([
+      "Christopher",
+      "Nasira",
+      "Bahan",
+    ]);
+    expect(turn.summary).toContain("Christopher, Nasira, Bahan have the plan");
+  });
+
+  it("reports an approved assignment explicitly if task/message creation omits it", async () => {
+    const people = [
+      person({ id: "christopher", name: "Christopher", role: "Cook", responsibilities: "Food and drinks." }),
+      person({ id: "nasira", name: "Nasira", role: "Housekeeper", responsibilities: "Setup." }),
+      person({ id: "bahan", name: "Bahan", role: "Coordinator", responsibilities: "Coordinate readiness." }),
+    ];
+    const plan = {
+      outcomeType: "guest_arrival" as const,
+      sourceText: "Afternoon tea today at 4 PM in the garden for three guests.",
+      createdAt: Date.now(),
+      proposalSpeech: "Plan.",
+      tasks: [
+        { personId: "christopher", personName: "Christopher", message: "Food assignment." },
+        { personId: "nasira", personName: "Nasira", message: "Setup assignment." },
+        { personId: "bahan", personName: "Bahan", message: "Coordination assignment." },
+      ],
+    };
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => {
+      const savedItems = items.filter((item) => item.assignedTo !== "Nasira");
+      return {
+        tasks: savedItems.map((item, i) => ({
+          id: `task-${i + 1}`,
+          type: "delegation",
+          assigned_to: item.assignedTo,
+          description: item.description,
+        })),
+        messages: savedItems.map((item, i) => ({
+          id: `message-${i + 1}`,
+          task_id: `task-${i + 1}`,
+          recipient: item.assignedTo,
+          content: item.suggestedMessage ?? item.description,
+          confirmation_url: `https://ra7etbal.test/confirm?task=task-${i + 1}`,
+        })) as Message[],
+        todos: [],
+        notesSaved: 0,
+        skipped: 0,
+        imagePathsByTaskId: new Map(),
+      };
+    });
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const turn = await handlePendingPlanTurn(["Yes send it"], plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people,
+    });
+
+    expect(mocks.deliverTaskMessage.mock.calls.map(([payload]) => payload.recipientName)).toEqual([
+      "Christopher",
+      "Bahan",
+    ]);
+    expect(turn.summary).toContain("Christopher, Bahan have the plan");
+    expect(turn.summary).toContain("Nasira was NOT messaged — approved assignment was not created in Ra7etBal");
   });
 
   it("does not send when the reply is held", async () => {
