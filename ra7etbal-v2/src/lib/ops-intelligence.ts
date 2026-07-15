@@ -204,6 +204,18 @@ const CLARIFICATION_TIME_RE =
   /\b((?:1[0-2]|0?[1-9])(?::[0-5]\d)\s*(?:am|pm|a\.m\.|p\.m\.))\b/i;
 const GUEST_COUNT_RE =
   /\b(?:for\s+)?(?:(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+)?(?:guests?|people|visitors?|friends|family|company)\b/i;
+const NUMBER_WORDS = new Map<number, string>([
+  [1, "one"],
+  [2, "two"],
+  [3, "three"],
+  [4, "four"],
+  [5, "five"],
+  [6, "six"],
+  [7, "seven"],
+  [8, "eight"],
+  [9, "nine"],
+  [10, "ten"],
+]);
 const HOME_LOCATION_RE = /\b(?:at\s+home|in\s+the\s+(garden|dining\s+room|salon|majlis|kitchen|terrace|patio)|outside|inside|outdoors?|indoors?)\b/i;
 const SPECIFIC_LOCATION_RE = /\b(?:in|on|at)\s+(?:the\s+)?(garden|dining\s+room|salon|majlis|terrace|patio|pool\s+area|living\s+room|kitchen)\b/i;
 const CLARIFICATION_LOCATION_RE =
@@ -213,11 +225,14 @@ const MENU_ITEM_RE =
   /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/i;
 const MENU_ITEM_TOKEN_RE =
   /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/ig;
+const FOOD_ITEM_RE =
+  /\b(?:sandwiches?|cakes?|scones?|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/i;
+const DRINK_ITEM_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cocktails?|refreshments?)\b/i;
 const PERMISSION_TO_SUGGEST_MENU_RE =
   /\b(?:you choose|choose (?:the )?menu|suggest (?:a )?menu|carson chooses?|whatever you think|up to you|decide (?:the )?menu)\b/i;
 const DIETARY_RE =
   /\b(?:no dietary restrictions|no allergies|dietary restrictions?[:\s]+[^.!?;]+|allerg(?:y|ies)[:\s]+[^.!?;]+|vegetarian|vegan|gluten[-\s]?free|dairy[-\s]?free|nut[-\s]?free|halal)\b/i;
-const DRINKS_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cocktails?)\b/ig;
+const DRINKS_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cocktails?|refreshments?)\b/ig;
 const CHINA_RE = /\b(?:(?:the|selected|blue|white|pink|floral|formal|best|special|luxury)\s+)*(?:china|tea set|cups?|plates?|silver|silverware|cutlery|serving pieces?)\b/i;
 
 function cleanMatchedText(value: string | null | undefined): string | null {
@@ -268,12 +283,61 @@ function inferGuestCount(text: string): string | null {
   const match = text.match(GUEST_COUNT_RE);
   if (!match) return null;
   const count = match[1];
-  if (count) return `${count.toLowerCase()} ${/people/i.test(match[0]) ? "people" : "guests"}`;
+  if (count) {
+    const normalizedCount = /^\d+$/.test(count)
+      ? NUMBER_WORDS.get(Number(count)) ?? count
+      : count.toLowerCase();
+    return `${normalizedCount} ${/people/i.test(match[0]) ? "people" : "guests"}`;
+  }
   return null;
+}
+
+function hostingClauses(text: string): string[] {
+  const detailSections = text.split(/Clarification details:\s*/i).slice(1);
+  const source = detailSections.length > 0 ? detailSections.join(". ") : text;
+  return source
+    .split(/[,\n.!?;]+/)
+    .map((clause) => cleanMatchedText(
+      clause
+        .replace(/^\s*(?:and|serve|serving|with|menu|food|prepare|use)\s+/i, "")
+        .replace(/^the\s+/i, ""),
+    ))
+    .filter((clause): clause is string => Boolean(clause));
+}
+
+function isDietaryClause(clause: string): boolean {
+  return DIETARY_RE.test(clause) || /^(?:no\s+)?dietary\b/i.test(clause) || /\ballerg/i.test(clause);
+}
+
+function isTimingClause(clause: string): boolean {
+  return Boolean(clause.match(TIME_RE) || clause.match(CLARIFICATION_TIME_RE));
+}
+
+function isLocationClause(clause: string): boolean {
+  return Boolean(inferLocation(clause)) && !FOOD_ITEM_RE.test(clause) && !DRINK_ITEM_RE.test(clause);
+}
+
+function isSetupClause(clause: string): boolean {
+  return CHINA_RE.test(clause) || /\b(?:flowers?|arrangement|linens?|cutlery|silverware|table|presentation|setting)\b/i.test(clause);
+}
+
+function joinClauses(clauses: string[]): string | null {
+  const unique = [...new Set(clauses.map((clause) => clause.trim()).filter(Boolean))];
+  return unique.length > 0 ? unique.join(", ") : null;
 }
 
 function inferMenu(text: string): string | null {
   if (PERMISSION_TO_SUGGEST_MENU_RE.test(text)) return "Carson may suggest or choose the menu";
+  const foodClauses = hostingClauses(text).filter((clause) => (
+    FOOD_ITEM_RE.test(clause) &&
+    !isDietaryClause(clause) &&
+    !isTimingClause(clause) &&
+    !isLocationClause(clause) &&
+    !isSetupClause(clause)
+  ));
+  const clauseMenu = joinClauses(foodClauses);
+  if (clauseMenu) return clauseMenu;
+
   const menu = text.match(MENU_RE)?.[1];
   if (menu) {
     const cleaned = cleanMatchedText(menu.replace(/\b(?:by|at|in|on)\s+\d.*$/i, ""));
@@ -300,6 +364,19 @@ function inferMenu(text: string): string | null {
 }
 
 function inferDrinks(text: string): string | null {
+  const clauses = hostingClauses(text);
+  const drinkClauses = clauses.filter((clause) => (
+    DRINK_ITEM_RE.test(clause) &&
+    !FOOD_ITEM_RE.test(clause) &&
+    !isDietaryClause(clause) &&
+    !isTimingClause(clause) &&
+    !isLocationClause(clause) &&
+    !isSetupClause(clause)
+  ));
+  const clauseDrinks = joinClauses(drinkClauses);
+  if (clauseDrinks) return clauseDrinks;
+  if (clauses.some((clause) => FOOD_ITEM_RE.test(clause))) return null;
+
   const matches = Array.from(text.matchAll(DRINKS_RE)).map((match) => match[0].toLowerCase());
   const unique = [...new Set(matches)];
   return unique.length > 0 ? unique.join(", ") : null;
@@ -329,8 +406,8 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
     menu,
     dietaryRequirements: cleanMatchedText(source.match(DIETARY_RE)?.[0]),
     drinks: inferDrinks(source),
-    setupPreferences: /\b(?:formal|casual|simple|elegant|garden|inside|outside|buffet|seated)\b/i.test(source)
-      ? cleanMatchedText(source.match(/\b(?:formal|casual|simple|elegant|garden|inside|outside|buffet|seated)\b/i)?.[0])
+    setupPreferences: /\b(?:formal|casual|elegant|luxury|buffet|seated)\b/i.test(source)
+      ? cleanMatchedText(source.match(/\b(?:formal|casual|elegant|luxury|buffet|seated)\b/i)?.[0])
       : null,
     china: cleanMatchedText(source.match(CHINA_RE)?.[0])?.replace(/^the\s+/i, "") ?? null,
     flowers: inferFlowers(source),
@@ -785,14 +862,10 @@ function formatHostingLocationPhrase(location: string): string {
   const normalized = location.trim();
   if (/^(?:inside|outside)$/i.test(normalized)) return normalized.toLowerCase();
   if (/^home$/i.test(normalized)) return "at home";
+  if (/^(?:garden|dining\s+room|salon|majlis|terrace|patio|pool\s+area|living\s+room|kitchen)\b/i.test(normalized)) {
+    return `in the ${normalized}`;
+  }
   return `in ${normalized}`;
-}
-
-function hostingSchedulePhrase(brief: HostingEventBrief): string {
-  const date = brief.date ? formatHostingDatePhrase(brief.date) : "on the event date";
-  const time = brief.startTime ? `at ${brief.startTime}` : "at the event time";
-  const location = brief.location ? formatHostingLocationPhrase(brief.location) : "in the event location";
-  return `${date} ${time} ${location}`;
 }
 
 function readyDeadline(brief: HostingEventBrief, domain: GuestPrepDomain): string {
@@ -802,6 +875,28 @@ function readyDeadline(brief: HostingEventBrief, domain: GuestPrepDomain): strin
   return `15 minutes before ${brief.startTime}`;
 }
 
+function formatDetailList(value: string): string {
+  const parts = value
+    .split(/\s*,\s*/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length < 3) return value;
+  return formatNameList(parts);
+}
+
+function dietaryPhrase(brief: HostingEventBrief): string {
+  const dietary = brief.dietaryRequirements?.replace(/\.$/, "");
+  if (!dietary) return "dietary requirements to be confirmed";
+  if (/^no\s+dietary\s+restrictions$/i.test(dietary)) return "no dietary restrictions";
+  return dietary;
+}
+
+function hostingServiceDetails(brief: HostingEventBrief): string {
+  const menu = brief.menu ? formatDetailList(brief.menu) : "the agreed menu";
+  const drinks = brief.drinks ? formatDetailList(brief.drinks) : "suitable drinks";
+  return `Menu: ${menu}. Drinks: ${drinks}. Dietary requirements: ${dietaryPhrase(brief)}.`;
+}
+
 function buildHostingWorkerMessage(
   domain: GuestPrepDomain,
   brief: HostingEventBrief,
@@ -809,9 +904,7 @@ function buildHostingWorkerMessage(
   hospitalityName: string,
 ): string {
   const context = briefContextSentence(brief);
-  const schedule = hostingSchedulePhrase(brief);
-  const menu = brief.menu ?? "the agreed menu";
-  const dietary = brief.dietaryRequirements ?? "any dietary restrictions Sana confirms";
+  const details = hostingServiceDetails(brief);
   const china = brief.china ?? "appropriate china, cups, plates, napkins, and serving pieces";
   const flowers = brief.flowers ?? "simple flowers if available";
   const deadline = readyDeadline(brief, domain);
@@ -819,8 +912,8 @@ function buildHostingWorkerMessage(
   if (domain === "dinner") {
     return [
       context,
-      `Please prepare the food and drinks for ${brief.occasion ?? "the event"} ${schedule}.`,
-      `Menu/service: ${menu}. Drinks: ${brief.drinks ?? "tea, coffee, water, and suitable cold drinks"}. Dietary requirements: ${dietary}.`,
+      "Please prepare the food and drinks.",
+      details,
       `Required result: everything is ready for service by ${deadline}. Tell Carson immediately if an ingredient or service item is unavailable.`,
     ].join(" ");
   }
@@ -828,7 +921,8 @@ function buildHostingWorkerMessage(
   if (domain === "hospitality") {
     return [
       context,
-      `Please prepare the setup for ${brief.occasion ?? "the event"} ${schedule}.`,
+      "Please prepare the table, guest area, and presentation.",
+      details,
       `Use ${china}, clean linens, seating, water glasses, serving pieces, and ${flowers}.`,
       `Required result: the full table and guest area are ready by ${deadline}. Tell Carson immediately if anything is missing.`,
     ].join(" ");
@@ -837,14 +931,16 @@ function buildHostingWorkerMessage(
   if (domain === "transport") {
     return [
       context,
-      `Please handle the transport support connected to this event ${schedule}.`,
+      "Please handle the transport support connected to this event.",
+      details,
       `Required result: the car and timing are ready by ${deadline}. Tell Carson immediately if there is any delay or blocker.`,
     ].join(" ");
   }
 
   return [
     context,
-    `Please coordinate ${brief.occasion ?? "the event"} ${schedule}.`,
+    `Please coordinate ${brief.occasion ?? "the event"}.`,
+    details,
     `Checkpoints: confirm with ${dinnerName} on menu, drinks, and service timing; confirm with ${hospitalityName} on table setup, china, linens, flowers, seating, and readiness.`,
     `Required result: all checkpoints are verified by ${deadline}. Report any missing item, delay, or blocker to Carson immediately.`,
   ].join(" ");
@@ -853,7 +949,7 @@ function buildHostingWorkerMessage(
 function hostingAssignmentSummary(task: ProposedTask): string {
   if (/transport support|car and timing/i.test(task.message)) return `${task.personName} handles transport support`;
   if (/coordinate|checkpoints/i.test(task.message)) return `${task.personName} coordinates readiness`;
-  if (/setup|china|linens|flowers|table/i.test(task.message)) {
+  if (/\b(?:setup|china|linens|flowers|table)\b/i.test(task.message)) {
     return `${task.personName} handles setup, china, flowers, and table presentation`;
   }
   if (/food|drinks|menu|service/i.test(task.message)) return `${task.personName} handles food and drinks`;
@@ -885,9 +981,16 @@ function buildHostingProposalSpeech(brief: HostingEventBrief, tasks: ProposedTas
       ? "There are no dietary restrictions."
       : `Dietary restrictions: ${dietary}.`
     : null;
+  const menuSentence = brief.menu
+    ? brief.drinks
+      ? `The menu is ${formatDetailList(brief.menu)}, with ${formatDetailList(brief.drinks)}.`
+      : `The menu is ${formatDetailList(brief.menu)}.`
+    : brief.drinks
+      ? `Drinks are ${formatDetailList(brief.drinks)}.`
+      : null;
   const planParts = [
     `Here is the plan for ${brief.occasion ?? "the event"}: ${schedule}.`,
-    brief.menu ? `The menu is ${brief.menu}.` : null,
+    menuSentence,
     dietarySentence,
     setupDetails.length > 0 ? `Setup will use ${formatNameList(setupDetails)}.` : null,
     `${formatNameList(tasks.map(hostingAssignmentSummary))}. Shall I send the plan?`,
