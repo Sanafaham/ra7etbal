@@ -41,7 +41,7 @@ describe("Voice Carson direct message fast path", () => {
     expect(result).toMatchObject({
       handled: true,
       status: "sent",
-      response: "It's with Sana. I'll watch for the reply.",
+      response: "WhatsApp accepted the message to Sana. I'll watch for delivery updates.",
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
@@ -216,6 +216,12 @@ describe("Voice Carson direct message fast path", () => {
     ).toBeNull();
     expect(
       parseSimpleDirectMessage("remind Sana to call me", [person()]),
+    ).toBeNull();
+    expect(
+      parseSimpleDirectMessage("send Loulya call me", [person({ name: "Loulya" })]),
+    ).toBeNull();
+    expect(
+      parseSimpleDirectMessage("message Grace to call me", [person({ name: "Grace" })]),
     ).toBeNull();
   });
 });

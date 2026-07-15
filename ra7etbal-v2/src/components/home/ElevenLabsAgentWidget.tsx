@@ -69,7 +69,7 @@ import {
 } from "../../lib/delegations";
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
 import { executeDelegationFromText } from "../../lib/text-carson";
-import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
+import { executeDirectMessageFastPath, isUnsafeDirectMessageBody, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath, parseDelegationFastPath } from "../../lib/delegation-fast-path";
 import {
   getSocialAcknowledgementReply,
@@ -2707,6 +2707,11 @@ export default function ElevenLabsAgentWidget({
         return "I need both a recipient name and a message to send.";
       }
 
+      if (isUnsafeDirectMessageBody(text)) {
+        const taskText = text.trim().replace(/^(?:to|please)\s+/i, "");
+        return sendDelegation({ name, task: taskText });
+      }
+
       // This tool sends a plain `messages` row with no image column and no
       // taskId to scope an upload under — it cannot carry a photo. If one is
       // pending, decline so Carson retries via send_delegation, which can.
@@ -2784,9 +2789,10 @@ export default function ElevenLabsAgentWidget({
           success: true,
           channel: delivery.channel,
           deliveryId: delivery.deliveryId,
+          messageId: delivery.messageId ?? null,
         });
         recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, text);
-        return `It's with ${person.name}. I'll watch for the reply.`;
+        return `WhatsApp accepted the message to ${person.name}. I'll watch for delivery updates.`;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error("[direct_whatsapp_tool_failed]", {
@@ -2797,7 +2803,7 @@ export default function ElevenLabsAgentWidget({
         return `I couldn't send ${person.name} the message. Please try again.`;
       }
     },
-    [],
+    [sendDelegation],
   );
 
   // ------------------------------------------------------------------

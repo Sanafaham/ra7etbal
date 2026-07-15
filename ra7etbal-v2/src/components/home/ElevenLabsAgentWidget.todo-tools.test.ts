@@ -735,3 +735,26 @@ describe("ElevenLabsAgentWidget — delegation failure truthfulness", () => {
     expect(outcomeFieldIndex).toBeGreaterThan(refIndex);
   });
 });
+
+describe("ElevenLabsAgentWidget — direct WhatsApp truthfulness", () => {
+  it("reroutes actionable direct-message bodies to delegation before creating a plain WhatsApp message", () => {
+    const start = SOURCE.indexOf("const sendDirectWhatsAppMessage = useCallback(");
+    const guardIndex = SOURCE.indexOf("isUnsafeDirectMessageBody(text)", start);
+    const rerouteIndex = SOURCE.indexOf("return sendDelegation({ name, task: taskText });", guardIndex);
+    const createIndex = SOURCE.indexOf("createAndSendDirectMessage({", start);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(guardIndex).toBeGreaterThan(start);
+    expect(rerouteIndex).toBeGreaterThan(guardIndex);
+    expect(createIndex).toBeGreaterThan(rerouteIndex);
+  });
+
+  it("reports Meta acceptance, not delivery/read success, for direct WhatsApp messages", () => {
+    const start = SOURCE.indexOf("const sendDirectWhatsAppMessage = useCallback(");
+    const blockEnd = SOURCE.indexOf("  );\n\n  // ------------------------------------------------------------------\n  // Client tool: save_city", start);
+    const block = SOURCE.slice(start, blockEnd);
+
+    expect(block).toContain("WhatsApp accepted the message to ${person.name}");
+    expect(block).not.toContain("It's with ${person.name}");
+  });
+});

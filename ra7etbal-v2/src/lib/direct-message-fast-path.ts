@@ -127,7 +127,7 @@ export async function executeDirectMessageFastPath(
       status: "sent",
       recipientName: person.name,
       messageText: parsed.messageText,
-      response: `It's with ${person.name}. I'll watch for the reply.`,
+      response: `WhatsApp accepted the message to ${person.name}. I'll watch for delivery updates.`,
     };
   } catch (err) {
     console.error("[fast_path_direct_message_failed]", {
@@ -162,7 +162,7 @@ export function parseSimpleDirectMessage(
   const personAtStart = findPersonAtStart(afterCommand, people);
   if (personAtStart) {
     const body = extractMessageBody(afterCommand.slice(personAtStart.name.length).trim(), verb);
-    if (!body || isUnsafeBody(body)) return null;
+    if (!body || isUnsafeDirectMessageBody(body)) return null;
     return { recipientName: personAtStart.name, messageText: body };
   }
 
@@ -170,7 +170,7 @@ export function parseSimpleDirectMessage(
   const toResult = findPersonAfterToWithIndex(afterCommand, people);
   if (toResult) {
     const body = extractMessageBody(afterCommand.slice(toResult.afterNameIndex).trim(), verb);
-    if (body && !isUnsafeBody(body)) {
+    if (body && !isUnsafeDirectMessageBody(body)) {
       return { recipientName: toResult.person.name, messageText: body };
     }
   }
@@ -182,7 +182,7 @@ export function parseSimpleDirectMessage(
   if (!unknownResult) return null;
   const bodyText = afterCommand.slice(unknownResult.endIndex).trim();
   const body = extractMessageBody(bodyText, verb);
-  if (!body || isUnsafeBody(body)) return null;
+  if (!body || isUnsafeDirectMessageBody(body)) return null;
   return { recipientName: unknownResult.name, messageText: body };
 }
 
@@ -208,8 +208,12 @@ function extractMessageBody(restAfterRecipient: string, verb: string): string | 
   return rest;
 }
 
-function isUnsafeBody(body: string): boolean {
-  return UNSAFE_OPERATIONAL_LANGUAGE.test(body) || DELEGATION_BODY_START.test(body);
+export function isUnsafeDirectMessageBody(body: string): boolean {
+  const normalizedBody = body.trim().replace(/^(?:to|please)\s+/i, "");
+  return (
+    UNSAFE_OPERATIONAL_LANGUAGE.test(normalizedBody) ||
+    DELEGATION_BODY_START.test(normalizedBody)
+  );
 }
 
 function findPersonAtStart(text: string, people: Person[]): Person | null {

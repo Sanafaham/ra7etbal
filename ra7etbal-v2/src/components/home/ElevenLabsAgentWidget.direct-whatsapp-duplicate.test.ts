@@ -44,7 +44,7 @@ describe("ElevenLabsAgentWidget — direct WhatsApp duplicate guard", () => {
   it("records the duplicate key only after a successful direct WhatsApp send", () => {
     const successBlock = blockBetween(
       "console.log(\"[direct_whatsapp_tool_delivery_result]\", {",
-      "return `It's with ${person.name}. I'll watch for the reply.`;",
+      "return `WhatsApp accepted the message to ${person.name}. I'll watch for delivery updates.`;",
     );
 
     expect(successBlock).toContain("success: true");
@@ -56,7 +56,7 @@ describe("ElevenLabsAgentWidget — direct WhatsApp duplicate guard", () => {
   it("keeps WhatsApp failure reporting truthful and does not mark failures as sent", () => {
     const catchBlock = blockBetween(
       "} catch (err) {\n        const errMsg = err instanceof Error ? err.message : String(err);",
-      "}\n    },\n    [],\n  );\n\n  // ------------------------------------------------------------------\n  // Client tool: save_city",
+      "}\n    },\n    [sendDelegation],\n  );\n\n  // ------------------------------------------------------------------\n  // Client tool: save_city",
     );
 
     expect(catchBlock).toContain("return `I couldn't send ${person.name} the message. Please try again.`;");

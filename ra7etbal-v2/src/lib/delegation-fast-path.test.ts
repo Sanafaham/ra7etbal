@@ -38,6 +38,7 @@ function roster(nasiraOverrides: Partial<Person> = {}): Person[] {
     person({ id: "person-2", name: "Ghulam", phone: "+971500000002" }),
     person({ id: "person-3", name: "Grace", phone: "+971500000003" }),
     person({ id: "person-4", name: "Christopher", phone: "+971500000004" }),
+    person({ id: "person-5", name: "Loulya", phone: "+971500000005" }),
   ];
 }
 
@@ -96,6 +97,12 @@ describe("parseDelegationFastPath", () => {
     expect(
       parseDelegationFastPath("Ask Christopher to make this now", roster()),
     ).toEqual({ personName: "Christopher", taskText: "make this now" });
+  });
+
+  it("routes 'ask Loulya to call me' as an actionable delegation, not a direct message", () => {
+    expect(
+      parseDelegationFastPath("Ask Loulya to call me", roster()),
+    ).toEqual({ personName: "Loulya", taskText: "call me" });
   });
 
   it("returns null for unknown person (falls through to Anthropic)", () => {
