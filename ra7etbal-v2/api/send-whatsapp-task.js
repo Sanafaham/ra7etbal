@@ -12,6 +12,7 @@ export const config = { maxDuration: 60 };
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
 const DEFAULT_PLAIN_MESSAGE_TEMPLATE = 'ra7etbal_routine_message';
+const DEFAULT_DIRECT_MESSAGE_TEMPLATE = 'ra7etbal_direct_operational_message';
 const OWNER_DECISION_TEMPLATE_NAME = 'ra7etbal_owner_decision';
 const TASK_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 const TASK_UUID_EXACT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -235,12 +236,15 @@ export default async function handler(req, res) {
   }
 
   // ── Plain message boundary ────────────────────────────────────────────────
-  // Preserves the existing approved plain-message template payload exactly:
-  // one body parameter, no task, no confirmation link, no SMS fallback.
-  // Used by recurring automations and Voice Carson direct messages.
+  // One body parameter, no task, no confirmation link, no SMS fallback.
+  // Routine automations keep their routine template; direct person-to-person
+  // messages use the dedicated Utility template to avoid Marketing throttles.
   if (usesPlainMessageTemplate) {
     const plainTemplateName =
-      (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || DEFAULT_PLAIN_MESSAGE_TEMPLATE).trim();
+      (isDirectMessage
+        ? process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || DEFAULT_DIRECT_MESSAGE_TEMPLATE
+        : process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || DEFAULT_PLAIN_MESSAGE_TEMPLATE
+      ).trim();
 
     const routinePayload = buildRoutineMessagePayload({
       to: normalizedTo,

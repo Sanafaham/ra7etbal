@@ -5,6 +5,7 @@ beforeEach(() => {
   vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'test-token');
   vi.stubEnv('WHATSAPP_PHONE_NUMBER_ID', '1234567890');
   vi.stubEnv('WHATSAPP_ROUTINE_MESSAGE_TEMPLATE', 'ra7etbal_routine_message');
+  vi.stubEnv('WHATSAPP_DIRECT_MESSAGE_TEMPLATE', 'ra7etbal_direct_operational_message');
   vi.stubEnv('WHATSAPP_TEMPLATE_LANGUAGE', 'en_US');
   vi.stubEnv('SUPABASE_URL', 'https://example.supabase.co');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
@@ -279,7 +280,7 @@ describe('routine message shared boundary', () => {
     );
   });
 
-  it('accepts a direct message without a confirmation link using the approved plain-message template', async () => {
+  it('accepts a direct message without a confirmation link using the approved direct Utility template', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: null }]))
@@ -309,7 +310,7 @@ describe('routine message shared boundary', () => {
         sendType: 'template',
         channel: 'whatsapp',
         messageId: 'wamid.direct',
-        templateName: 'ra7etbal_routine_message',
+        templateName: 'ra7etbal_direct_operational_message',
       }),
     );
     const metaPayload = JSON.parse(fetchMock.mock.calls[2][1].body);
@@ -317,9 +318,63 @@ describe('routine message shared boundary', () => {
       buildRoutineMessagePayload({
         to: '971500000000',
         message: 'Ra7etBal notification test.',
-        templateName: 'ra7etbal_routine_message',
+        templateName: 'ra7etbal_direct_operational_message',
         templateLanguage: 'en_US',
       }),
+    );
+  });
+
+  it('keeps routine messages on ra7etbal_routine_message while direct messages use the direct Utility template', async () => {
+    const routineFetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'routine-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-routine-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.routine' }] }))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', routineFetchMock);
+
+    const routineRes = createRes();
+    await handler(
+      createReq(
+        {
+          to: '+971 50 000 0000',
+          messageText: 'Routine message.',
+          routineId: 'routine-1',
+          sourceType: 'routine_message',
+          sendMode: 'routine_message',
+        },
+        { 'x-ra7etbal-internal-secret': 'cron-secret' },
+      ),
+      routineRes,
+    );
+
+    expect(routineRes.json).toHaveBeenCalledWith(
+      expect.objectContaining({ templateName: 'ra7etbal_routine_message' }),
+    );
+
+    const directFetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'message-1', user_id: 'user-1', task_id: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-direct-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.direct' }] }))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', directFetchMock);
+
+    const directRes = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'Direct message.',
+        messageRecordId: 'message-1',
+        sourceType: 'message',
+        sendMode: 'direct_message',
+      }),
+      directRes,
+    );
+
+    expect(directRes.json).toHaveBeenCalledWith(
+      expect.objectContaining({ templateName: 'ra7etbal_direct_operational_message' }),
     );
   });
 
@@ -399,7 +454,7 @@ describe('routine message shared boundary', () => {
     expect(acceptedPatch).toMatchObject({
       delivery_status: 'accepted',
       meta_message_id: 'wamid.direct',
-      template_name: 'ra7etbal_routine_message',
+      template_name: 'ra7etbal_direct_operational_message',
       metadata: expect.objectContaining({
         template_language: 'en_US',
         send_mode: 'direct_message',
