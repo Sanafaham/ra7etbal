@@ -77,7 +77,7 @@ Item-vs-location judgment:
 
 Decide exactly one outcome, in this order — check APPROVED first, then SUBSTITUTE_REVIEW, then CORRECTION_REQUIRED:
 - APPROVED: the requested item/outcome is clearly correct, materially matches the task, and is a reasonable fulfillment of the request. This applies regardless of the proof photo's style, polish, or resemblance to the reference.
-- SUBSTITUTE_REVIEW: use ONLY when the assignee could not obtain the exact requested item/brand/variant and instead clearly sends a different, reasonable alternative — for example a different flavor/color/variant of the same product line when the exact one was unavailable (e.g. TEREA Silver requested, TEREA Turquoise sent), an equivalent brand when the requested brand was unavailable, or a similar arrangement when the exact flowers were unavailable. The assignee's note (if present) is strong evidence for this, but is not required — the photo alone can make the substitution clear (e.g. a visibly different product variant than the reference). Do NOT use SUBSTITUTE_REVIEW for normal variation of the SAME item — a different plate, background, lighting, angle, portion, garnish, arrangement, or a home-made version of a reference dish is still the same requested item and is APPROVED, not a substitute. Do NOT use SUBSTITUTE_REVIEW for a wrong or unrelated item — that is CORRECTION_REQUIRED. If you are not confident the photo shows a genuinely different item/variant than requested, prefer APPROVED. This outcome hands the decision to the task owner — it does not mean the proof failed.
+- SUBSTITUTE_REVIEW: use ONLY when the assignee explicitly asks the owner to approve a different reasonable alternative before treating it as completed — for example "TEREA Silver is unavailable; may I get Turquoise instead?" or "The exact flowers are unavailable; is this similar arrangement okay?" The worker asking for permission is required. A submitted proof photo of a different item/variant without an explicit approval request is CORRECTION_REQUIRED, not SUBSTITUTE_REVIEW. Do NOT use SUBSTITUTE_REVIEW for normal variation of the SAME item — a different plate, background, lighting, angle, portion, garnish, arrangement, or a home-made version of a reference dish is still the same requested item and is APPROVED, not a substitute. Do NOT use SUBSTITUTE_REVIEW for a wrong or unrelated item — that is CORRECTION_REQUIRED. If you are not confident the worker is explicitly asking permission for a reasonable alternative, do not use SUBSTITUTE_REVIEW. This outcome hands the decision to the task owner — it does not mean the proof failed.
 - CORRECTION_REQUIRED: you can clearly see what's wrong and describe it specifically — wrong required placement/location, missing item, visibly incomplete, or an entirely different/mismatched item than what was asked for (e.g. the wrong product, wrong color/variant when the exact variant matters, wrong object altogether). A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible, and never treat polish, studio quality, or resemblance to the reference as a problem. Do not reject the correct item merely because it is on a different neutral surface/background unless location proof was explicitly requested.
 - UNCERTAIN: reserve this only for genuine ambiguity where you cannot tell what's in the photo or whether it matches — for example the photo itself is blurry, too dark, or cropped so the relevant item isn't visible, the angle makes it impossible to judge, or there's no reference image and the task description is too vague to judge against. If you can clearly see the item and can clearly see that it does not match, that is CORRECTION_REQUIRED, never UNCERTAIN.
 - FRAUD_SUSPECTED: the proof photo itself is not genuine proof of the completed task — not just wrong or unclear, but not real evidence of the task at all. Use this ONLY when there is strong, concrete evidence that the image is not a photo of a real physical item or scene at all, such as the photo being a screenshot (product listing, marketplace page, menu, app UI, etc.). This is about strong evidence the image isn't a photo, NOT about how polished, professional, stock-like, AI-generated, similar to, or identical to the reference it looks — those are never sufficient evidence on their own, and identity or similarity to the reference is never grounds for FRAUD_SUSPECTED. A real photo of the wrong item is CORRECTION_REQUIRED; a correct, well-composed, professional-looking, or reference-identical photo of the right item is APPROVED.
@@ -299,6 +299,43 @@ function normalizeReviewResult(parsed) {
   return { status: parsed.status, note: parsed.note };
 }
 
+function hasExplicitAlternativeApprovalRequest(text) {
+  const value = String(text || '').trim().toLowerCase();
+  if (!value) return false;
+
+  const alternativeLanguage =
+    /\b(?:instead|alternative|substitute|similar|equivalent|replacement|different|unavailable|out of stock|could(?:n't| not) find|cannot find|can't find)\b/.test(value);
+  const asksPermission =
+    /\b(?:may i|can i|should i|would you like me to|do you want me to|is it ok(?:ay)?|is this ok(?:ay)?|would this work|shall i|please approve|please confirm|confirm if|let me know if)\b/.test(value) ||
+    /\?$/.test(value);
+
+  return alternativeLanguage && asksPermission;
+}
+
+function correctionNoteForUnapprovedAlternative({ review, taskDescription }) {
+  const note = String(review?.note || '').trim();
+  if (/please|send|upload|try again|instead/i.test(note) && /requested|correct|exact|wrong|different|instead/i.test(note)) {
+    return note;
+  }
+
+  const target = String(taskDescription || 'the requested task').trim();
+  const prefix = note ? `${note} ` : '';
+  return `${prefix}This was submitted as a different result without prior approval. Please complete "${target}" or ask the owner before using an alternative.`;
+}
+
+export function normalizeAlternativeReviewBoundary(review, { taskDescription, delegationMessage, workerReply } = {}) {
+  if (!review || review.status !== 'substitute_review') return review;
+
+  if (hasExplicitAlternativeApprovalRequest(workerReply) || hasExplicitAlternativeApprovalRequest(review.note)) {
+    return review;
+  }
+
+  return {
+    status: 'correction_required',
+    note: correctionNoteForUnapprovedAlternative({ review, taskDescription, delegationMessage }),
+  };
+}
+
 /**
  * Runs the Carson quality review. Never throws — any failure (missing API
  * key, network error, malformed model output, missing correction text for a
@@ -381,7 +418,11 @@ export async function runQualityReview({
       };
     }
 
-    return normalizeReviewResult(parsed);
+    return normalizeAlternativeReviewBoundary(normalizeReviewResult(parsed), {
+      taskDescription,
+      delegationMessage,
+      workerReply,
+    });
   } catch {
     return fallback;
   } finally {

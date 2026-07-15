@@ -76,7 +76,7 @@ const REMINDER_CONFIRMATION_PATTERN =
 // message also doesn't sound like failure, but overriding it with stale
 // failure text would itself be an untruthful, out-of-context correction.
 const SUCCESS_LANGUAGE_PATTERN =
-  /\b(?:i(?:'|’)ve|i(?:'|’)ll|i have|done\b|all set|set up|created|added|scheduled|that(?:'|’)s (?:taken care of|handled|set)|got that (?:running|set|done)|reminder (?:created|set|saved))\b/i;
+  /\b(?:i(?:'|’)ve|i(?:'|’)ll|i have|done\b|all set|set up|created|added|scheduled|sent|messaged|delivered|have it|has it|that(?:'|’)s (?:taken care of|handled|set)|got that (?:running|set|done)|reminder (?:created|set|saved))\b/i;
 
 function shouldOverrideAgentMessage(
   agentMessage: string,

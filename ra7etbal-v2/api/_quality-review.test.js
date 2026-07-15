@@ -822,7 +822,7 @@ describe('runQualityReview', () => {
 });
 
 describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
-  it('reasonable substitute with a worker note classifies as substitute_review', async () => {
+  it('reasonable substitute with an explicit approval request classifies as substitute_review', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -838,14 +838,14 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       delegationMessage: 'Please buy TEREA Silver and send a photo.',
       referenceImageBase64: 'terea-silver-reference-base64',
       proofImagesBase64: ['terea-turquoise-proof-base64'],
-      workerReply: 'Could not find TEREA Silver, found Turquoise instead.',
+      workerReply: 'Could not find TEREA Silver. May I get Turquoise instead?',
     });
 
     expect(result.status).toBe('substitute_review');
     expect(result.note).toContain('TEREA Turquoise');
   });
 
-  it('a clear substitute is classified even without a worker note — the note is evidence, not a requirement', async () => {
+  it('demotes a different submitted item without explicit approval request to correction_required', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       anthropicResponse(
         '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"A different, equivalent brand was sent since the requested brand was unavailable."}',
@@ -861,7 +861,9 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       proofImagesBase64: ['different-flowers-proof-base64'],
     });
 
-    expect(result.status).toBe('substitute_review');
+    expect(result.status).toBe('correction_required');
+    expect(result.note).toMatch(/without prior approval/i);
+    expect(result.note).toContain('Buy the usual flowers and send a photo.');
     // No workerReply was passed — must not appear as a note line in the prompt.
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
@@ -950,6 +952,7 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
     expect(promptText).toMatch(/check APPROVED first, then SUBSTITUTE_REVIEW, then CORRECTION_REQUIRED/i);
+    expect(promptText).toMatch(/worker asking for permission is required/i);
     expect(promptText).toMatch(/Do NOT use SUBSTITUTE_REVIEW for normal variation/i);
     expect(promptText).toMatch(/Do NOT use SUBSTITUTE_REVIEW for a wrong or unrelated item/i);
     expect(promptText).toMatch(/"SUBSTITUTE_REVIEW"/);

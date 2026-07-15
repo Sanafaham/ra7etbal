@@ -709,3 +709,29 @@ describe("ElevenLabsAgentWidget — create_automation records verified outcomes"
     expect(returnIndex).toBeGreaterThan(outcomeIndex);
   });
 });
+
+describe("ElevenLabsAgentWidget — delegation failure truthfulness", () => {
+  it("records send_delegation failures as verified failure outcomes before returning", () => {
+    const start = SOURCE.indexOf("const sendDelegation = useCallback(");
+    const failureTextIndex = SOURCE.indexOf("const failureText = `Could not send the delegation to ${person.name}. ${detail}`;", start);
+    const outcomeIndex = SOURCE.indexOf('outcome: "failure"', failureTextIndex);
+    const returnIndex = SOURCE.indexOf("return failureText;", outcomeIndex);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(failureTextIndex).toBeGreaterThan(start);
+    expect(outcomeIndex).toBeGreaterThan(failureTextIndex);
+    expect(returnIndex).toBeGreaterThan(outcomeIndex);
+  });
+
+  it("records execute_instruction delegation summaries with failure outcome when any recipient was not messaged", () => {
+    const start = SOURCE.indexOf("const summary = await executeDelegationFromText(rawInstruction,");
+    const outcomeIndex = SOURCE.indexOf("const executionOutcome = isVerifiedExecutionFailureSummary(summary)", start);
+    const refIndex = SOURCE.indexOf("lastDirectToolSuccessRef.current = {", outcomeIndex);
+    const outcomeFieldIndex = SOURCE.indexOf("outcome: executionOutcome", refIndex);
+
+    expect(start).toBeGreaterThan(-1);
+    expect(outcomeIndex).toBeGreaterThan(start);
+    expect(refIndex).toBeGreaterThan(outcomeIndex);
+    expect(outcomeFieldIndex).toBeGreaterThan(refIndex);
+  });
+});

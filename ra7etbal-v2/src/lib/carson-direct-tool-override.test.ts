@@ -251,6 +251,30 @@ describe("resolveCarsonDisplayMessage — tool-failure truthfulness", () => {
     );
   });
 
+  it("overrides a fabricated send confirmation with a verified delegation failure", () => {
+    const result = resolveCarsonDisplayMessage(
+      "Yes, I sent it to Christopher.",
+      failureResult({
+        toolName: "send_delegation",
+        resultText: "Could not send the delegation to Christopher. Meta rejected the message.",
+      }),
+      NOW,
+    );
+    expect(result).toBe("Could not send the delegation to Christopher. Meta rejected the message.");
+  });
+
+  it("overrides a fabricated all-sent reply with a verified partial execution failure", () => {
+    const result = resolveCarsonDisplayMessage(
+      "Christopher, Nasira, and Bahan have it.",
+      failureResult({
+        toolName: "execute_instruction",
+        resultText: "Christopher has it. Nasira was NOT messaged — WhatsApp consent not recorded.",
+      }),
+      NOW,
+    );
+    expect(result).toBe("Christopher has it. Nasira was NOT messaged — WhatsApp consent not recorded.");
+  });
+
   it("does not override an agent reply that already truthfully reads as a failure", () => {
     // Carson failure speech after a real tool failure must remain as-is —
     // it's already truthful, forcing the canned tool text isn't necessary.

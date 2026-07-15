@@ -609,6 +609,12 @@ async function createAndSendDelegation({
   };
 }
 
+function isVerifiedExecutionFailureSummary(summary: string): boolean {
+  return /\b(?:NOT messaged|could not|couldn['’]?t|not sent|delivery failed|no phone number|WhatsApp consent not recorded|timed out|unconfirmed)\b/i.test(
+    summary,
+  );
+}
+
 /**
  * Builds the `current_time` dynamic variable as a human-readable LOCAL date/time
  * with a timezone label, followed by the UTC ISO string for unambiguous machine
@@ -2000,7 +2006,15 @@ export default function ElevenLabsAgentWidget({
         });
       } catch (err) {
         const detail = sanitizeCarsonErrorDetail(err);
-        return `Could not send the delegation to ${person.name}. ${detail}`;
+        const failureText = `Could not send the delegation to ${person.name}. ${detail}`;
+        lastDirectToolSuccessRef.current = {
+          toolName: "send_delegation",
+          resultText: failureText,
+          at: new Date().toISOString(),
+          outcome: "failure",
+          inputSummary: { name: person.name, task: taskText },
+        };
+        return failureText;
       }
 
       // Clear pending photos after successful send — covers the send_delegation path.
@@ -4561,11 +4575,13 @@ export default function ElevenLabsAgentWidget({
         }
 
         // Record success so resolveSanitizedCarsonDisplayMessage can override
-        // any failure language in Carson's separately-generated spoken reply.
+        // any contradictory language in Carson's separately-generated spoken reply.
+        const executionOutcome = isVerifiedExecutionFailureSummary(summary) ? "failure" : "success";
         lastDirectToolSuccessRef.current = {
           toolName: "execute_instruction",
           resultText: summary,
           at: new Date().toISOString(),
+          outcome: executionOutcome,
           inputSummary: { kind: "delegation", instruction: rawInstruction.slice(0, 80) },
         };
 

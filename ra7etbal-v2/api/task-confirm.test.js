@@ -9,10 +9,14 @@ const runQualityReviewMock = vi.fn();
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TASK_CONFIRM_SOURCE = readFileSync(join(__dirname, 'task-confirm.js'), 'utf-8');
 
-vi.mock('./_quality-review.js', () => ({
-  downloadImageAsBase64: downloadImageAsBase64Mock,
-  runQualityReview: runQualityReviewMock,
-}));
+vi.mock('./_quality-review.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    downloadImageAsBase64: downloadImageAsBase64Mock,
+    runQualityReview: runQualityReviewMock,
+  };
+});
 
 vi.mock('web-push', () => ({
   default: { setVapidDetails: vi.fn(), sendNotification: vi.fn() },
@@ -468,26 +472,71 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       user_id: 'user-1',
       task_id: null,
       recipient: 'Christopher',
-      content: 'Christopher, please center the chicken and send another photo.',
+      content: expect.stringContaining('Christopher, please center the chicken and send another photo.'),
       confirmation_url: null,
     });
+    expect(JSON.parse(correctionInsert[1].body).content).toContain('https://www.ra7etbal.com/confirm?task=task-1');
     const correctionSend = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/send-whatsapp-task'));
     expect(correctionSend).toBeDefined();
     expect(JSON.parse(correctionSend[1].body)).toMatchObject({
       to: '+971500000004',
-      messageText: 'Christopher, please center the chicken and send another photo.',
-      confirmationLink: null,
+      messageText: expect.stringContaining('Christopher, please center the chicken and send another photo.'),
+      confirmationLink: 'https://www.ra7etbal.com/confirm?task=task-1',
       messageRecordId: 'correction-message-1',
       taskId: null,
       sendMode: 'direct_message',
       sourceType: 'quality_correction',
       recipientName: 'Christopher',
     });
+    expect(JSON.parse(correctionSend[1].body).messageText).toContain('https://www.ra7etbal.com/confirm?task=task-1');
     // No owner push for correction_required.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
     // No confirmations row.
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+
+  it('demotes substitute_review without an explicit worker approval request to a correction with a task link', async () => {
+    runQualityReviewMock.mockResolvedValue({
+      status: 'substitute_review',
+      note: 'Pizza was requested but the proof shows a salad.',
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'make the pizza', assigned_to: 'Christopher', image_path: 'task-images/u/t/pizza.jpg' }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Christopher, please make this pizza for lunch.' }]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Christopher', phone: '+971500000004' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'correction-message-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ success: true, messageId: 'wamid.correction' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/salad.jpg'] }),
+      res,
+    );
+
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        outcome: 'correction_required',
+        correctionCycleCount: 1,
+      }),
+    );
+    const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(patchBody.quality_review_status).toBe('correction_required');
+    expect(patchBody.quality_review_cycle_count).toBe(1);
+    expect(patchBody.quality_review_note).toMatch(/without prior approval/i);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
+    const correctionSend = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/send-whatsapp-task'));
+    expect(JSON.parse(correctionSend[1].body)).toMatchObject({
+      sendMode: 'direct_message',
+      confirmationLink: 'https://www.ra7etbal.com/confirm?task=task-1',
+      messageText: expect.stringContaining('https://www.ra7etbal.com/confirm?task=task-1'),
+    });
   });
 
   it('correction_required: replaces the rejected proof set — a corrected resubmission with fewer photos does not leave stale rows', async () => {
@@ -1009,7 +1058,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       createReq({
         taskId: 'task-1',
         proofImagePaths: ['task-images/u/t/proof/0.jpg'],
-        workerReply: 'Could not find TEREA Silver, found Turquoise instead.',
+        workerReply: 'Could not find TEREA Silver. May I get Turquoise instead?',
       }),
       res,
     );
@@ -1019,7 +1068,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     );
     const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
     expect(patchBody.quality_review_status).toBe('substitute_review');
-    expect(patchBody.worker_reply).toBe('Could not find TEREA Silver, found Turquoise instead.');
+    expect(patchBody.worker_reply).toBe('Could not find TEREA Silver. May I get Turquoise instead?');
     // Narrow additive branch: does not consume the automated correction-attempt budget.
     expect(patchBody.quality_review_cycle_count).toBe(2);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
@@ -1322,11 +1371,12 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(correctionSend).toBeDefined();
     expect(JSON.parse(correctionSend[1].body)).toMatchObject({
       to: '+971500000009',
-      messageText: 'This is the same image as the reference photo, not a new photo of the completed task. Please upload a new live proof photo.',
-      confirmationLink: null,
+      messageText: expect.stringContaining('This is the same image as the reference photo, not a new photo of the completed task. Please upload a new live proof photo.'),
+      confirmationLink: 'https://www.ra7etbal.com/confirm?task=task-1',
       sourceType: 'quality_correction',
       recipientName: 'Grace',
     });
+    expect(JSON.parse(correctionSend[1].body).messageText).toContain('https://www.ra7etbal.com/confirm?task=task-1');
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
   });

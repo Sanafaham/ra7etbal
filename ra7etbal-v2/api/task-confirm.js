@@ -53,7 +53,7 @@
  */
 
 import webpush from 'web-push';
-import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
+import { downloadImageAsBase64, normalizeAlternativeReviewBoundary, runQualityReview } from './_quality-review.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 
@@ -473,6 +473,11 @@ async function handlePost(req, res) {
         delegationMessage,
         referenceImageBase64,
         proofImagesBase64,
+        workerReply,
+      });
+      review = normalizeAlternativeReviewBoundary(review, {
+        taskDescription: reviewTaskDescription,
+        delegationMessage,
         workerReply,
       });
     }
@@ -1304,7 +1309,9 @@ async function fetchLatestCompletedCustomInstruction({ supabaseUrl, serviceKey, 
 }
 
 async function sendCorrectionRequest({ req, supabaseUrl, serviceKey, userId, taskId, assignedTo, correctionNote }) {
-  const messageText = String(correctionNote || '').trim();
+  const confirmationUrl = buildFreshWorkerConfirmationUrl(taskId);
+  const baseMessageText = String(correctionNote || '').trim();
+  const messageText = appendTaskLink(baseMessageText, confirmationUrl);
   if (!messageText || !userId || !assignedTo) return;
 
   const person = await findAssigneePerson({ supabaseUrl, serviceKey, userId, assignedTo });
@@ -1335,7 +1342,7 @@ async function sendCorrectionRequest({ req, supabaseUrl, serviceKey, userId, tas
     body: JSON.stringify({
       to: person.phone,
       messageText,
-      confirmationLink: null,
+      confirmationLink: confirmationUrl,
       messageRecordId: messageRecord.id,
       taskId: null,
       sendMode: 'direct_message',
@@ -1349,6 +1356,14 @@ async function sendCorrectionRequest({ req, supabaseUrl, serviceKey, userId, tas
     const text = await response.text().catch(() => '');
     throw new Error(`Correction WhatsApp send failed (${response.status}): ${text.slice(0, 200)}`);
   }
+}
+
+function appendTaskLink(messageText, confirmationUrl) {
+  const text = String(messageText || '').trim();
+  const link = String(confirmationUrl || '').trim();
+  if (!text || !link) return text;
+  if (text.includes(link)) return text;
+  return `${text}\n\nOpen the task here: ${link}`;
 }
 
 async function createCorrectionMessageRecord({ supabaseUrl, serviceKey, userId, recipient, messageText }) {
