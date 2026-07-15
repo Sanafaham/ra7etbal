@@ -23,6 +23,7 @@ vi.mock("./tasks", () => ({
       quality_review_note: null,
       quality_reviewed_at: null,
       worker_reply: null,
+      dismissed_at: null,
       ...draft,
     } satisfies Task;
   }),
@@ -118,6 +119,7 @@ describe("createReminderTask", () => {
       quality_review_note: null,
       quality_reviewed_at: null,
       worker_reply: null,
+      dismissed_at: null,
       ...draft,
     }) satisfies Task);
     const dueAt = "2026-06-29T09:00:00.000Z";

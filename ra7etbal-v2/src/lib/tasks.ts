@@ -2,7 +2,7 @@ import { supabase } from "./supabase";
 import type { Task, TaskDraft, TaskPatch } from "../types/task";
 
 const COLUMNS =
-  "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path, quality_review_status, quality_review_note, quality_reviewed_at, worker_reply";
+  "id, user_id, description, type, assigned_to, status, needs_follow_up, confirmation_url, confirmed_at, due_at, archived_at, created_at, qstash_message_id, followup_sent_at, escalated_at, image_path, proof_image_path, quality_review_status, quality_review_note, quality_reviewed_at, worker_reply, dismissed_at";
 
 /**
  * Active workspace tasks — excludes archived rows. Used by Actions /
@@ -112,6 +112,31 @@ export async function deleteTasks(ids: string[]): Promise<void> {
     .in("id", uniqueIds)
     .eq("status", "done");
   if (error) throw friendly(error);
+}
+
+/**
+ * Dismiss owner-facing confirmation-notice banners (ConfirmationNotices.tsx).
+ * Mirrors archiveDoneTasks: a narrow, guarded update rather than the generic
+ * updateTask(id, patch) path, so the client only ever sends dismissed_at —
+ * never the rest of the row. The `.eq`/`.not`/`.is` guards double-check the
+ * same invariant the selector already enforces (only a done, confirmed,
+ * not-yet-dismissed task can be dismissed) so a stray call can never affect
+ * an active or pending task.
+ */
+export async function dismissConfirmationNotices(ids: string[]): Promise<Task[]> {
+  const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
+  if (uniqueIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("tasks")
+    .update({ dismissed_at: new Date().toISOString() })
+    .in("id", uniqueIds)
+    .eq("status", "done")
+    .not("confirmed_at", "is", null)
+    .is("dismissed_at", null)
+    .select(COLUMNS);
+  if (error) throw friendly(error);
+  return (data ?? []) as Task[];
 }
 
 function friendly(err: { message?: string }): Error {

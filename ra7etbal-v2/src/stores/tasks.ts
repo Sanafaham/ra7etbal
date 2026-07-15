@@ -9,6 +9,7 @@ import {
   createTask as apiCreate,
   deleteTask as apiDelete,
   deleteTasks as apiDeleteMany,
+  dismissConfirmationNotices as apiDismissConfirmationNotices,
   listTasks as apiList,
   updateTask as apiUpdate,
 } from "../lib/tasks";
@@ -35,6 +36,8 @@ export interface TasksState {
   markDone: (id: string) => Promise<Task>;
   markPending: (id: string) => Promise<Task>;
   archiveDone: (ids: string[]) => Promise<Task[]>;
+  /** Dismiss a single confirmation-notice banner (server-backed, optimistic). */
+  dismissConfirmationNotice: (id: string) => Promise<void>;
   /** Replace a single row in place (used by realtime updates). */
   upsert: (row: Task) => void;
 }
@@ -214,6 +217,22 @@ export const useTasksStore = create<TasksState>((set, get) => {
         return await apiArchiveDone(uniqueIds);
       } catch (err) {
         set({ items: prev });
+        throw err;
+      }
+    },
+
+    async dismissConfirmationNotice(id) {
+      const prev = get().items.find((t) => t.id === id);
+      if (!prev) return;
+      const optimistic = { ...prev, dismissed_at: new Date().toISOString() };
+      set((s) => ({ items: s.items.map((t) => (t.id === id ? optimistic : t)) }));
+      try {
+        const [updated] = await apiDismissConfirmationNotices([id]);
+        if (updated) {
+          set((s) => ({ items: s.items.map((t) => (t.id === id ? updated : t)) }));
+        }
+      } catch (err) {
+        set((s) => ({ items: s.items.map((t) => (t.id === id ? prev : t)) }));
         throw err;
       }
     },

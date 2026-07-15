@@ -2,7 +2,6 @@ import { useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useAuth } from "../../hooks/useAuth";
-import { useDismissedNotifications } from "../../hooks/useDismissedNotifications";
 import { selectConfirmationNotices } from "../../lib/dismissed-notifications";
 import { useTasksStore } from "../../stores/tasks";
 
@@ -30,22 +29,21 @@ function confirmationSummary(description: string): string {
  * hasn't already dismissed. Surfaces only delegations — host-initiated
  * "Mark done myself" actions don't deserve a self-notification.
  *
- * Derived entirely from the existing tasks store; no new fetch, no new
- * schema. Force-refresh of the store on Home mount (wired in Home.tsx)
- * ensures the banner appears when the user returns to the app after a
- * recipient hit /confirm.
+ * Derived entirely from the existing tasks store (dismissal state lives on
+ * tasks.dismissed_at); no new fetch, no client-side dismissal state. Force-
+ * refresh of the store on Home mount (wired in Home.tsx) ensures the banner
+ * appears when the user returns to the app after a recipient hit /confirm.
  */
 export default function ConfirmationNotices() {
-  const { status, user } = useAuth();
-  const userId = user?.id ?? null;
+  const { status } = useAuth();
   const location = useLocation();
 
-  const { dismissed, dismiss } = useDismissedNotifications(userId);
   const tasks = useTasksStore(useShallow((s) => s.items));
+  const dismiss = useTasksStore((s) => s.dismissConfirmationNotice);
 
   const visible = useMemo(
-    () => selectConfirmationNotices(tasks, dismissed),
-    [tasks, dismissed],
+    () => selectConfirmationNotices(tasks),
+    [tasks],
   );
 
   // Hide on the public recipient page and whenever the owner isn't signed in.

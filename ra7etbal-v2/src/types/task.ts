@@ -64,6 +64,8 @@ export interface Task {
   quality_reviewed_at: string | null;
   /** Optional note the assignee submitted with proof (e.g. explaining a substitute item). Null until submitted. */
   worker_reply: string | null;
+  /** Timestamp when the owner dismissed this task's confirmation-notice banner. Null = not dismissed (or not applicable). Server-backed — replaces the old localStorage dismissal state. */
+  dismissed_at: string | null;
 }
 
 export interface TaskDraft {
