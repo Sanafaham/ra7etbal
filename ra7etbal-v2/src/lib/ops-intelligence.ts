@@ -721,20 +721,36 @@ function hostingAssignmentSummary(task: ProposedTask): string {
 }
 
 function buildHostingProposalSpeech(brief: HostingEventBrief, tasks: ProposedTask[]): string {
-  const details = [
-    brief.startTime ? brief.startTime : null,
+  const schedule = [
+    brief.startTime,
     brief.date,
-    brief.location ? `in ${brief.location}` : null,
+    brief.location ? formatHostingLocationPhrase(brief.location) : null,
     brief.guestCount ? `for ${brief.guestCount}` : null,
-  ].filter(Boolean);
-  const detailSentence = details.length > 0 ? details.join(" ") : brief.occasion ?? "the event";
+  ].filter(Boolean).join(" ");
+  const setupDetails = [
+    brief.china ? `${brief.china}` : null,
+    brief.flowers ? `${brief.flowers}` : null,
+    brief.setupPreferences ? `${brief.setupPreferences}` : null,
+  ].filter((detail): detail is string => {
+    if (!detail) return false;
+    const normalizedDetail = detail.toLowerCase().replace(/^the\s+/, "");
+    const normalizedLocation = (brief.location ?? "").toLowerCase().replace(/^the\s+/, "");
+    return normalizedDetail !== normalizedLocation;
+  });
+  const dietary = brief.dietaryRequirements
+    ? brief.dietaryRequirements.replace(/\.$/, "")
+    : null;
+  const dietarySentence = dietary
+    ? /^no\s+dietary\s+restrictions$/i.test(dietary)
+      ? "There are no dietary restrictions."
+      : `Dietary restrictions: ${dietary}.`
+    : null;
   const planParts = [
-    `Here is the plan for ${brief.occasion ?? "the event"}: ${detailSentence}.`,
-    brief.menu ? `Menu: ${brief.menu}.` : null,
-    brief.dietaryRequirements ? `Dietary requirements: ${brief.dietaryRequirements}.` : null,
-    brief.china ? `China: ${brief.china}.` : null,
-    brief.flowers ? `Flowers: ${brief.flowers}.` : null,
-    `${formatNameList(tasks.map(hostingAssignmentSummary))}. Should I send it?`,
+    `Here is the plan for ${brief.occasion ?? "the event"}: ${schedule}.`,
+    brief.menu ? `The menu is ${brief.menu}.` : null,
+    dietarySentence,
+    setupDetails.length > 0 ? `Setup will use ${formatNameList(setupDetails)}.` : null,
+    `${formatNameList(tasks.map(hostingAssignmentSummary))}. Shall I send the plan?`,
   ].filter(Boolean);
   return planParts.join(" ");
 }

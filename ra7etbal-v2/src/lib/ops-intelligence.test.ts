@@ -701,7 +701,7 @@ describe("hosting planning gate", () => {
   it("shows a clear operational plan before approval after the exact clarification answer", () => {
     const sourceText =
       "Handle afternoon tea for me and three guests today at home.\n\n" +
-      "Clarification details: At 4 PM in the garden. Finger sandwiches, cakes and tea. Use the floral china and simple white flowers.";
+      "Clarification details: At 4 PM in the garden. Finger sandwiches, cakes and tea. No dietary restrictions. Use the floral china and simple white flowers.";
     const plan = normalizeGuestPreparationPlan({
       outcomeType: "guest_arrival",
       sourceText,
@@ -718,6 +718,13 @@ describe("hosting planning gate", () => {
       person({ id: "ghulam", name: "Ghulam", role: "Driver", responsibilities: "Transport, car, airport pickups." }),
     ]);
 
+    expect(plan.proposalSpeech).toBe(
+      "Here is the plan for afternoon tea: 4 PM today in the garden for three guests. " +
+      "The menu is Finger sandwiches, cakes and tea. " +
+      "There are no dietary restrictions. " +
+      "Setup will use floral china and simple white flowers. " +
+      "Christopher handles food and drinks, Nasira handles setup, china, flowers, and table presentation, and Bahan coordinates readiness. Shall I send the plan?",
+    );
     expect(plan.proposalSpeech).toContain("4 PM");
     expect(plan.proposalSpeech).toContain("today");
     expect(plan.proposalSpeech).toContain("the garden");
@@ -728,7 +735,10 @@ describe("hosting planning gate", () => {
     expect(plan.proposalSpeech).toContain("Christopher handles food and drinks");
     expect(plan.proposalSpeech).toContain("Nasira handles setup, china, flowers, and table presentation");
     expect(plan.proposalSpeech).toContain("Bahan coordinates readiness");
-    expect(plan.proposalSpeech).toMatch(/Should I send it\?$/);
+    expect(plan.proposalSpeech).not.toContain("Clarification details");
+    expect(plan.proposalSpeech.match(/dietary restrictions/gi)).toHaveLength(1);
+    expect(plan.proposalSpeech.match(/\?/g)).toHaveLength(1);
+    expect(plan.proposalSpeech).toMatch(/Shall I send the plan\?$/);
   });
 });
 
