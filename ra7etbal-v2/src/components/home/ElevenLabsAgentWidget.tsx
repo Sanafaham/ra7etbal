@@ -2033,14 +2033,17 @@ export default function ElevenLabsAgentWidget({
       await maybeSendImpliedDinnerDelegation(userId);
 
       const successText = `Done. I asked ${person.name} to ${taskText}.`;
-      // Record success so the override mechanism can replace any contradictory
-      // failure language Carson's LLM generates from its own separate reply.
-      lastDirectToolSuccessRef.current = {
-        toolName: "send_delegation",
-        resultText: successText,
-        at: new Date().toISOString(),
-        inputSummary: { name: person.name, task: taskText },
-      };
+      if (result.messageId) {
+        // Record verified Meta acceptance so the override mechanism can replace
+        // contradictory failure language Carson's separate LLM reply generates.
+        lastDirectToolSuccessRef.current = {
+          toolName: "send_delegation",
+          resultText: successText,
+          at: new Date().toISOString(),
+          outcome: "success",
+          inputSummary: { name: person.name, task: taskText, messageId: result.messageId },
+        };
+      }
 
       // Inject a contextual update into EL's conversation so that status
       // questions later in the session ("Did you send it?", "Did it go through?")

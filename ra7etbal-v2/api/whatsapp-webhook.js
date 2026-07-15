@@ -314,6 +314,12 @@ export async function updateWhatsappDeliveryStatus({
   failureReason,
   failureCode,
   failureSubcode,
+  failureTitle,
+  failureMessage,
+  failureDetails,
+  failureHref,
+  failureErrors,
+  recipient,
   phoneNumberId,
   webhookReceivedAt = new Date().toISOString(),
   retryCount = 0,
@@ -334,7 +340,38 @@ export async function updateWhatsappDeliveryStatus({
     const rows = await lookupRes.json().catch(() => []);
     const delivery = Array.isArray(rows) ? rows[0] ?? null : null;
     if (!delivery) {
+      if (status === 'failed') {
+        logFailedStatusDiagnostic({
+          messageId,
+          recipient,
+          previousStatus: null,
+          incomingStatus: status,
+          failureCode,
+          failureSubcode,
+          failureTitle,
+          failureMessage,
+          failureDetails,
+          failureHref,
+          failureErrors,
+        });
+      }
       return { matched: false, updated: false, messageId, status };
+    }
+
+    if (status === 'failed') {
+      logFailedStatusDiagnostic({
+        messageId,
+        recipient: recipient || delivery.recipient_phone || null,
+        previousStatus: delivery.delivery_status,
+        incomingStatus: status,
+        failureCode,
+        failureSubcode,
+        failureTitle,
+        failureMessage,
+        failureDetails,
+        failureHref,
+        failureErrors,
+      });
     }
 
     await updateMatchedHealthState({
@@ -399,6 +436,12 @@ export async function updateWhatsappDeliveryStatus({
           failureReason,
           failureCode,
           failureSubcode,
+          failureTitle,
+          failureMessage,
+          failureDetails,
+          failureHref,
+          failureErrors,
+          recipient,
           phoneNumberId,
           webhookReceivedAt,
           retryCount: retryCount + 1,
@@ -772,6 +815,12 @@ function extractStatuses(body) {
           failureReason:  failureDetails.reason,
           failureCode:    failureDetails.code,
           failureSubcode: failureDetails.subcode,
+          failureTitle:   failureDetails.title,
+          failureMessage: failureDetails.message,
+          failureDetails: failureDetails.details,
+          failureHref:    failureDetails.href,
+          failureErrors:  failureDetails.errors,
+          recipient:      String(raw?.recipient_id || '').trim() || null,
           phoneNumberId: String(value?.metadata?.phone_number_id || '').trim() || null,
         });
       }
@@ -839,7 +888,18 @@ function timestampToIso(timestamp) {
 export function getFailureDetails(status) {
   const errors = Array.isArray(status?.errors) ? status.errors : [];
   const first  = errors[0];
-  if (!first) return { reason: null, code: null, subcode: null };
+  if (!first) {
+    return {
+      reason: null,
+      code: null,
+      subcode: null,
+      title: null,
+      message: null,
+      details: null,
+      href: null,
+      errors,
+    };
+  }
 
   return {
     reason:
@@ -850,7 +910,40 @@ export function getFailureDetails(status) {
       'WhatsApp delivery failed.',
     code: first.code ?? null,
     subcode: first.error_subcode ?? null,
+    title: first.title ?? null,
+    message: first.message ?? null,
+    details: first.error_data?.details ?? null,
+    href: first.href ?? null,
+    errors,
   };
+}
+
+function logFailedStatusDiagnostic({
+  messageId,
+  recipient,
+  previousStatus,
+  incomingStatus,
+  failureCode,
+  failureSubcode,
+  failureTitle,
+  failureMessage,
+  failureDetails,
+  failureHref,
+  failureErrors,
+}) {
+  console.warn('[whatsapp-webhook] failed delivery status received', {
+    messageId,
+    recipient: recipient ?? null,
+    errorCode: failureCode ?? null,
+    errorSubcode: failureSubcode ?? null,
+    title: failureTitle ?? null,
+    message: failureMessage ?? null,
+    details: failureDetails ?? null,
+    href: failureHref ?? null,
+    previousStatus: previousStatus ?? null,
+    incomingStatus,
+    errors: Array.isArray(failureErrors) ? failureErrors : [],
+  });
 }
 
 /**

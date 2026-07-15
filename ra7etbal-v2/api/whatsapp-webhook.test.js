@@ -282,23 +282,91 @@ describe('getFailureDetails — Meta webhook error extraction', () => {
           },
         ],
       }),
-    ).toEqual({
+    ).toMatchObject({
       reason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
       code: 131049,
       subcode: 2494,
+      title: 'Unable to deliver message',
+      message: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
     });
   });
 
   it('returns nulls when there are no errors on the status entry', () => {
-    expect(getFailureDetails({})).toEqual({ reason: null, code: null, subcode: null });
+    expect(getFailureDetails({})).toMatchObject({ reason: null, code: null, subcode: null, errors: [] });
   });
 
   it('falls back to a generic reason when Meta sends a code with no message/title', () => {
-    expect(getFailureDetails({ errors: [{ code: 470 }] })).toEqual({
+    expect(getFailureDetails({ errors: [{ code: 470 }] })).toMatchObject({
       reason: '470',
       code: 470,
       subcode: null,
     });
+  });
+
+  it('logs the complete Meta error payload for failed delivery statuses', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([
+        {
+          id: 'delivery-1',
+          user_id: 'user-1',
+          delivery_status: 'accepted',
+          last_status_at: '2026-07-15T20:30:30Z',
+          automation_run_id: null,
+          source_type: 'message',
+          recipient_phone: '+905010589614',
+          metadata: {},
+        },
+      ]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.failed',
+      status: 'failed',
+      updatedAt: '2026-07-15T20:30:36Z',
+      failureReason: 'Recipient phone number is not in allowed list.',
+      failureCode: 131026,
+      failureSubcode: 2494010,
+      failureTitle: 'Message undeliverable',
+      failureMessage: 'Message failed to send because more information is needed.',
+      failureDetails: 'Recipient is not available for this template.',
+      failureHref: 'https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes/',
+      failureErrors: [
+        {
+          code: 131026,
+          error_subcode: 2494010,
+          title: 'Message undeliverable',
+          message: 'Message failed to send because more information is needed.',
+          error_data: { details: 'Recipient is not available for this template.' },
+          href: 'https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes/',
+        },
+      ],
+      recipient: '905010589614',
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[whatsapp-webhook] failed delivery status received',
+      expect.objectContaining({
+        messageId: 'wamid.failed',
+        recipient: '905010589614',
+        errorCode: 131026,
+        errorSubcode: 2494010,
+        title: 'Message undeliverable',
+        message: 'Message failed to send because more information is needed.',
+        details: 'Recipient is not available for this template.',
+        href: 'https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes/',
+        previousStatus: 'accepted',
+        incomingStatus: 'failed',
+        errors: expect.arrayContaining([
+          expect.objectContaining({ code: 131026, title: 'Message undeliverable' }),
+        ]),
+      }),
+    );
   });
 });
 

@@ -410,6 +410,21 @@ describe("resolveSanitizedCarsonDisplayMessage", () => {
     expect(result).toBe("I asked Christopher to make it for lunch.");
   });
 
+  it("overrides unconfirmed Carson wording with send_delegation success result", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "I could not confirm that the message was sent.",
+      lastSuccess: successResult({
+        toolName: "send_delegation",
+        resultText: "Done. I asked Nasira to prepare the table.",
+        at: new Date(NOW).toISOString(),
+        inputSummary: { name: "Nasira", task: "prepare the table", messageId: "wamid.1" },
+      }),
+      now: NOW,
+    });
+
+    expect(result).toBe("I asked Nasira to prepare the table.");
+  });
+
   it("overrides Carson failure wording with execute_instruction delegation success", () => {
     const result = resolveSanitizedCarsonDisplayMessage({
       agentMessage: "I couldn't complete that.",
