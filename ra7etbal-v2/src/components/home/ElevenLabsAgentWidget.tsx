@@ -1384,9 +1384,12 @@ export default function ElevenLabsAgentWidget({
     });
   }, []);
 
-  const continueAfterProactiveDismissal = useCallback(async (): Promise<string> => {
+  const continueAfterProactiveDismissal = useCallback(async (): Promise<{
+    message: string;
+    nextPrompt: CarsonProactiveUpdatePrompt | null;
+  }> => {
     const active = activeProactiveUpdateRef.current;
-    if (!active) return "That is everything requiring attention right now.";
+    if (!active) return { message: "That is everything requiring attention right now.", nextPrompt: null };
 
     const snapshot = await loadCarsonUpdatesSnapshot();
     const continuation = buildProactiveDismissalContinuation({
@@ -1401,7 +1404,7 @@ export default function ElevenLabsAgentWidget({
       proactiveSuppressedUpdateKeysRef.current.add(continuation.nextPrompt.itemKey);
     }
 
-    return continuation.message;
+    return { message: continuation.message, nextPrompt: continuation.nextPrompt };
   }, []);
 
   const presentProactiveUpdatePrompt = useCallback(
@@ -5804,7 +5807,7 @@ export default function ElevenLabsAgentWidget({
             setLastUserTranscript(message);
             if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(message)) {
               void continueAfterProactiveDismissal()
-                .then((continuationMessage) => {
+                .then(({ message: continuationMessage }) => {
                   if (activeChannelRef.current !== "voice" || !conversationRef.current) return;
                   conversationRef.current.sendContextualUpdate(
                     `The user chose not now for the current proactive Updates item. Leave that database record unchanged. Immediately say exactly this next proactive Updates prompt, without adding a greeting or asking what needs attention: ${continuationMessage}`,
@@ -6385,12 +6388,17 @@ export default function ElevenLabsAgentWidget({
 
       if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(savedMessage.content)) {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
-        const continuationMessage = await continueAfterProactiveDismissal();
+        const continuation = await continueAfterProactiveDismissal();
         await persistLocalTypedAgentReply({
           replyToClientMessageId: clientMessageId,
-          content: continuationMessage,
+          content: continuation.message,
           clearPendingPhotos: true,
         });
+        conversationRef.current?.sendContextualUpdate(
+          continuation.nextPrompt
+            ? `The previous proactive Updates item was dismissed for this session. Leave that database record unchanged and do not mention or re-present it. The next active proactive Updates item is: ${continuation.nextPrompt.prompt} This is a silent context update — do not reply to it or say anything now.`
+            : `The previous proactive Updates item was dismissed for this session. Leave that database record unchanged and do not mention or re-present it. No proactive Updates item is currently active. This is a silent context update — do not reply to it or say anything now.`,
+        );
         return;
       }
 

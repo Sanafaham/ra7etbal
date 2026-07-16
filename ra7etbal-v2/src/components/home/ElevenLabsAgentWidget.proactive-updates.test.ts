@@ -123,10 +123,48 @@ describe("ElevenLabsAgentWidget — proactive Updates prompt guard", () => {
       "const authUserId = useAuthStore.getState().user?.id;",
     );
 
-    expect(typedBlock).toContain("const continuationMessage = await continueAfterProactiveDismissal()");
-    expect(typedBlock).toContain("content: continuationMessage");
+    expect(typedBlock).toContain("const continuation = await continueAfterProactiveDismissal()");
+    expect(typedBlock).toContain("content: continuation.message");
     expect(typedBlock).not.toContain("Okay. I'll leave that for now.");
     expect(typedBlock).not.toContain("Noted. It stays open.");
+  });
+
+  it("typed not-now sends exactly one silent contextual update to ElevenLabs, never a user message", () => {
+    const typedBlock = blockBetween(
+      "if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(savedMessage.content))",
+      "const authUserId = useAuthStore.getState().user?.id;",
+    );
+
+    const contextualUpdateCalls = typedBlock.match(/sendContextualUpdate\(/g) ?? [];
+    expect(contextualUpdateCalls).toHaveLength(1);
+    expect(typedBlock).toContain("conversationRef.current?.sendContextualUpdate(");
+    expect(typedBlock).not.toContain("sendUserMessage(");
+    expect(typedBlock).not.toContain("createTypedAgentMessage(");
+  });
+
+  it("typed not-now's contextual update excludes the dismissed item and includes only the next one", () => {
+    const typedBlock = blockBetween(
+      "if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(savedMessage.content))",
+      "const authUserId = useAuthStore.getState().user?.id;",
+    );
+
+    expect(typedBlock).toContain("continuation.nextPrompt");
+    expect(typedBlock).toContain("continuation.nextPrompt.prompt");
+    expect(typedBlock).not.toContain("active.prompt");
+    expect(typedBlock).not.toContain("activeProactiveUpdateRef.current.prompt");
+    expect(typedBlock).toContain("dismissed for this session");
+    expect(typedBlock).toContain("do not mention or re-present it");
+  });
+
+  it("typed not-now's contextual update is explicitly silent and handles the no-next-item case", () => {
+    const typedBlock = blockBetween(
+      "if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(savedMessage.content))",
+      "const authUserId = useAuthStore.getState().user?.id;",
+    );
+
+    expect(typedBlock).toContain("This is a silent context update");
+    expect(typedBlock).toContain("do not reply to it");
+    expect(typedBlock).toContain("No proactive Updates item is currently active.");
   });
 
   it("voice not-now sends the same continuation prompt into the active conversation", () => {
