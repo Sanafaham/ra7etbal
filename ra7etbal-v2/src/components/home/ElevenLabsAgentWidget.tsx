@@ -1372,17 +1372,10 @@ export default function ElevenLabsAgentWidget({
     calendarFetchedRef.current = calendarFetched;
   }, [calendarFetched]);
 
-  const suppressProactiveUpdate = useCallback((itemKey: string) => {
-    proactiveSuppressedUpdateKeysRef.current.add(itemKey);
-    if (activeProactiveUpdateRef.current?.itemKey === itemKey) {
-      activeProactiveUpdateRef.current = null;
-    }
-  }, []);
-
   const markProactiveUpdateDisplayed = useCallback((prompt: CarsonProactiveUpdatePrompt) => {
     activeProactiveUpdateRef.current = prompt;
-    suppressProactiveUpdate(prompt.itemKey);
-  }, [suppressProactiveUpdate]);
+    proactiveSuppressedUpdateKeysRef.current.add(prompt.itemKey);
+  }, []);
 
   const loadNextProactiveUpdate = useCallback(async (): Promise<CarsonProactiveUpdatePrompt | null> => {
     const snapshot = await loadCarsonUpdatesSnapshot();
