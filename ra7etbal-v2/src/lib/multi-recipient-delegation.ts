@@ -3,6 +3,32 @@ import type { ExtractedItem } from "../types/extraction";
 
 const MULTI_DELEGATION_PREFIX = /^\s*(?:please\s+)?(?:ask|tell|get|remind)\s+/i;
 
+/**
+ * Returns every known person whose name appears as a whole word/phrase in
+ * `text`, deduplicated. Deliberately looser than parseMultiRecipientDelegation
+ * (no "ask/tell NAME to TASK" grammar required) — this is a detection guard,
+ * not a parser: it only needs to answer "does this utterance name more than
+ * one known person," so a single-recipient tool call can be intercepted and
+ * rerouted to the safe multi-recipient path before it silently drops anyone.
+ * A false-positive match (e.g. a second name mentioned in passing, not as a
+ * recipient) is safe — it only routes to execute_instruction, which falls
+ * back to Sonnet extraction and still resolves to the correct single
+ * delegation; it does not risk sending to an extra person.
+ */
+export function countKnownRecipientsMentioned(
+  text: string,
+  people: Pick<Person, "name">[],
+): string[] {
+  const found = new Set<string>();
+  for (const person of people) {
+    const name = person.name.trim();
+    if (!name) continue;
+    const pattern = new RegExp(`\\b${escapeRegExp(name)}\\b`, "i");
+    if (pattern.test(text)) found.add(name);
+  }
+  return Array.from(found);
+}
+
 export function parseMultiRecipientDelegation(
   input: string,
   people: Pick<Person, "name">[],

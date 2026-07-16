@@ -102,6 +102,7 @@ import {
   type PendingOperationDraft,
   type ProposedPlan,
 } from "../../lib/ops-intelligence";
+import { countKnownRecipientsMentioned } from "../../lib/multi-recipient-delegation";
 import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/people-behavior";
 import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
@@ -1271,6 +1272,19 @@ export default function ElevenLabsAgentWidget({
   const lastDirectToolSuccessRef = useRef<DirectToolSuccessResult | null>(null);
 
   /**
+   * Forward reference to executeInstruction, kept in sync on every render
+   * (assigned right after executeInstruction's own useCallback below).
+   * sendDelegation and sendDirectWhatsAppMessage are declared earlier in this
+   * component than executeInstruction, so they cannot close over it directly
+   * (TS2448/TS2454 — used before declaration) — this ref is the standard way
+   * to let an earlier-declared callback call a later-declared one without
+   * reordering ~2000 lines of surrounding, unrelated code.
+   */
+  const executeInstructionRef = useRef<
+    ((params?: ExecuteInstructionParams) => Promise<string>) | null
+  >(null);
+
+  /**
    * save_note's outcome for the CURRENT user turn only — reset to null the
    * moment a new turn starts (a fresh voice transcript arrives, or a typed
    * message is submitted) and set only by save_note itself. Deliberately
@@ -1848,6 +1862,31 @@ export default function ElevenLabsAgentWidget({
         }
         // Plan build failed — block the direct send rather than fanning out.
         return "Let me put the full plan together for that. One moment, then say yes to send it.";
+      }
+
+      // Guardrail: an instruction naming more than one known person must
+      // never execute as a single-recipient delegation — the LLM may call
+      // send_delegation once per person and drop a later name from the same
+      // turn. Reroute the complete original instruction, unchanged, through
+      // execute_instruction — multi-recipient-safe (parseMultiRecipientDelegation
+      // / Sonnet extraction, Promise.allSettled sends, truthful per-recipient
+      // summary). Generalizes the guest/hosting guardrail above to the
+      // general case; does not apply when a guest/hosting event already
+      // claimed this turn above.
+      if (latestUserMessageForOps) {
+        const mentionedRecipients = countKnownRecipientsMentioned(latestUserMessageForOps, people);
+        if (mentionedRecipients.length >= 2) {
+          const result =
+            (await executeInstructionRef.current?.({ instruction: latestUserMessageForOps })) ??
+            "Could not process that.";
+          lastDirectToolSuccessRef.current = {
+            toolName: "send_delegation",
+            resultText: result,
+            at: new Date().toISOString(),
+            inputSummary: { kind: "multi_recipient_reroute", instruction: latestUserMessageForOps },
+          };
+          return result;
+        }
       }
 
       const matches = people.filter(
@@ -2708,6 +2747,31 @@ export default function ElevenLabsAgentWidget({
 
       if (!name || !text) {
         return "I need both a recipient name and a message to send.";
+      }
+
+      // Guardrail: an instruction naming more than one known person must
+      // never execute as a single-recipient direct message — see the
+      // matching guardrail in sendDelegation for the full rationale.
+      const latestUserMessageForOps = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((m) => m.role === "user")?.message?.trim();
+      if (latestUserMessageForOps) {
+        const mentionedRecipients = countKnownRecipientsMentioned(
+          latestUserMessageForOps,
+          usePeopleStore.getState().items,
+        );
+        if (mentionedRecipients.length >= 2) {
+          const result =
+            (await executeInstructionRef.current?.({ instruction: latestUserMessageForOps })) ??
+            "Could not process that.";
+          lastDirectToolSuccessRef.current = {
+            toolName: "send_direct_whatsapp_message",
+            resultText: result,
+            at: new Date().toISOString(),
+            inputSummary: { kind: "multi_recipient_reroute", instruction: latestUserMessageForOps },
+          };
+          return result;
+        }
       }
 
       if (isUnsafeDirectMessageBody(text)) {
@@ -4655,6 +4719,10 @@ export default function ElevenLabsAgentWidget({
       recordDelegationSent,
     ],
   );
+  // Keep the forward-reference ref in sync every render — see its
+  // declaration for why sendDelegation/sendDirectWhatsAppMessage (declared
+  // earlier in this component) cannot close over executeInstruction directly.
+  executeInstructionRef.current = executeInstruction;
 
   const clearCarsonSessionTimers = useCallback(() => {
     if (userTranscriptTimerRef.current) {
