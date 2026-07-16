@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   actOnCarsonUpdate,
   buildCarsonUpdatesSnapshot,
+  chooseProactiveCarsonUpdate,
+  getCarsonUpdateItemKey,
+  isCarsonProactiveUpdateDismissal,
   parseCarsonUpdatesIntent,
   resolveCarsonUpdateItem,
   summarizeCarsonUpdates,
@@ -281,5 +284,180 @@ describe("carson-updates shared management layer", () => {
     });
 
     expect(resolveCarsonUpdateItem(snapshot, { kind: "task", query: "other household task" })).toEqual({ status: "not_found" });
+  });
+
+  it("selects Needs You before lower-priority items", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [
+        task({ id: "needs-1", description: "Approve the substitute flowers", type: "delegation", assigned_to: "Grace", quality_review_status: "substitute_review" }),
+      ],
+      todos: [todo({ id: "todo-1", title: "Buy labels" })],
+      notes: [note()],
+      automations: [automation()],
+    });
+
+    const prompt = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    expect(prompt?.item.id).toBe("needs-1");
+    expect(prompt?.item.kind).toBe("needs_you");
+    expect(prompt?.prompt).toContain("needs your decision");
+    expect(prompt?.prompt).toContain("Do you want to give a different instruction or delete it?");
+  });
+
+  it("selects an overdue reminder before a normal To-do", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [
+        task({ id: "reminder-1", description: "Pay internet bill", type: "reminder", due_at: "2026-07-16T09:00:00.000Z" }),
+      ],
+      todos: [todo({ id: "todo-1", title: "Buy folders" })],
+      notes: [],
+      automations: [],
+    });
+
+    const prompt = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    expect(prompt?.item.id).toBe("reminder-1");
+    expect(prompt?.actions).toEqual(["mark done", "reschedule", "snooze", "delete"]);
+    expect(prompt?.prompt).toContain("overdue");
+  });
+
+  it("selects only one proactive item at a time", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [
+        task({ id: "needs-1", description: "Approve proof", quality_review_status: "uncertain" }),
+        task({ id: "needs-2", description: "Review change", escalated_at: "2026-07-16T08:00:00.000Z" }),
+      ],
+      todos: [todo()],
+      notes: [note()],
+      automations: [automation()],
+    });
+
+    const prompt = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    expect(prompt).toBeTruthy();
+    expect(prompt?.prompt).not.toContain("Buy flowers");
+    expect(prompt?.prompt).not.toContain("Daily kitchen check");
+  });
+
+  it("gives notes the correct proactive action choices", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [],
+      todos: [],
+      notes: [note()],
+      automations: [],
+    });
+
+    const prompt = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    expect(prompt?.item.kind).toBe("note");
+    expect(prompt?.actions).toEqual(["turn into To-do", "turn into reminder", "leave as note", "delete"]);
+    expect(prompt?.prompt).toContain("leave it as a note");
+  });
+
+  it("gives waiting items follow-up, keep-waiting, or cancel choices", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [task({ id: "waiting-1", description: "Confirm documents", type: "delegation", assigned_to: "Grace", needs_follow_up: true })],
+      todos: [],
+      notes: [],
+      automations: [],
+    });
+
+    const prompt = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    expect(prompt?.item.kind).toBe("waiting");
+    expect(prompt?.actions).toEqual(["follow up", "keep waiting", "cancel"]);
+    expect(prompt?.prompt).toContain("Should I follow up, keep waiting, or cancel it?");
+  });
+
+  it("gives automations keep, pause, update, or delete choices", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [],
+      todos: [],
+      notes: [],
+      automations: [automation()],
+    });
+
+    const prompt = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    expect(prompt?.item.kind).toBe("automation");
+    expect(prompt?.actions).toEqual(["keep", "pause", "update", "delete"]);
+    expect(prompt?.prompt).toContain("keep it, pause it, change it, or delete it");
+  });
+
+  it("does not show the same proactive item twice when session-suppressed", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [task({ id: "needs-1", description: "Approve proof", quality_review_status: "uncertain" })],
+      todos: [todo({ id: "todo-1", title: "Buy labels" })],
+      notes: [],
+      automations: [],
+    });
+    const first = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    const second = chooseProactiveCarsonUpdate(snapshot, {
+      now: NOW,
+      suppressedItemKeys: first ? [first.itemKey] : [],
+    });
+
+    expect(first?.item.id).toBe("needs-1");
+    expect(second?.item.id).toBe("todo-1");
+  });
+
+  it("uses the same proactive selection result for typed and voice callers", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [
+        task({ id: "waiting-1", description: "Confirm dinner", type: "delegation", assigned_to: "Grace", needs_follow_up: true }),
+      ],
+      todos: [todo({ id: "todo-1", title: "Buy labels" })],
+      notes: [note()],
+      automations: [automation()],
+    });
+
+    const typed = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+    const voice = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    expect(typed?.itemKey).toBe(voice?.itemKey);
+    expect(typed?.actions).toEqual(voice?.actions);
+  });
+
+  it("builds stable item keys for current-session not-now suppression", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [],
+      todos: [],
+      notes: [note({ id: "note-9" })],
+      automations: [],
+    });
+    const key = getCarsonUpdateItemKey(snapshot.notes[0]);
+
+    expect(key).toBe("note:note-9");
+    expect(chooseProactiveCarsonUpdate(snapshot, { now: NOW, suppressedItemKeys: [key] })).toBeNull();
+    expect(isCarsonProactiveUpdateDismissal("not now")).toBe(true);
+    expect(isCarsonProactiveUpdateDismissal("let's do it")).toBe(false);
+  });
+
+  it("does not mutate records while selecting a proactive prompt", () => {
+    const completeTodo = vi.fn();
+    const deleteNote = vi.fn();
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [],
+      todos: [todo()],
+      notes: [note()],
+      automations: [],
+    });
+
+    const prompt = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    expect(prompt?.item.kind).toBe("todo");
+    expect(completeTodo).not.toHaveBeenCalled();
+    expect(deleteNote).not.toHaveBeenCalled();
   });
 });

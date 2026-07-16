@@ -114,9 +114,12 @@ import {
 } from "../../lib/voice-task-control";
 import {
   actOnCarsonUpdate,
+  chooseProactiveCarsonUpdate,
+  isCarsonProactiveUpdateDismissal,
   loadCarsonUpdatesSnapshot,
   parseCarsonUpdatesIntent,
   summarizeCarsonUpdates,
+  type CarsonProactiveUpdatePrompt,
   type CarsonUpdateAction,
   type CarsonUpdateKind,
 } from "../../lib/carson-updates";
@@ -163,6 +166,7 @@ type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
 type CarsonChannel = "voice" | "text";
 const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id";
+const PROACTIVE_UPDATES_SESSION_STORAGE_KEY = "ra7etbal:carson-proactive-updates-suppressed";
 
 function getOrCreateTypedSessionId(): string {
   if (typeof window === "undefined") return crypto.randomUUID();
@@ -174,6 +178,29 @@ function getOrCreateTypedSessionId(): string {
     return created;
   } catch {
     return crypto.randomUUID();
+  }
+}
+
+function readProactiveSuppressedKeys(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.sessionStorage.getItem(PROACTIVE_UPDATES_SESSION_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeProactiveSuppressedKeys(keys: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      PROACTIVE_UPDATES_SESSION_STORAGE_KEY,
+      JSON.stringify([...keys]),
+    );
+  } catch {
+    // Session suppression is best-effort; in-memory refs still cover this run.
   }
 }
 
@@ -955,6 +982,8 @@ export default function ElevenLabsAgentWidget({
   const [typedError, setTypedError] = useState<string | null>(null);
   const typedSubmitInFlightRef = useRef(false);
   const typedResponseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const proactiveSuppressedUpdateKeysRef = useRef<Set<string>>(readProactiveSuppressedKeys());
+  const activeProactiveUpdateRef = useRef<CarsonProactiveUpdatePrompt | null>(null);
 
   useEffect(() => {
     typedMessagesRef.current = typedMessages;
@@ -1362,6 +1391,89 @@ export default function ElevenLabsAgentWidget({
   useEffect(() => {
     calendarFetchedRef.current = calendarFetched;
   }, [calendarFetched]);
+
+  const suppressProactiveUpdate = useCallback((itemKey: string) => {
+    proactiveSuppressedUpdateKeysRef.current.add(itemKey);
+    writeProactiveSuppressedKeys(proactiveSuppressedUpdateKeysRef.current);
+    if (activeProactiveUpdateRef.current?.itemKey === itemKey) {
+      activeProactiveUpdateRef.current = null;
+    }
+  }, []);
+
+  const suppressActiveProactiveUpdate = useCallback(() => {
+    const active = activeProactiveUpdateRef.current;
+    if (!active) return false;
+    suppressProactiveUpdate(active.itemKey);
+    return true;
+  }, [suppressProactiveUpdate]);
+
+  const loadNextProactiveUpdate = useCallback(async (): Promise<CarsonProactiveUpdatePrompt | null> => {
+    const snapshot = await loadCarsonUpdatesSnapshot();
+    return chooseProactiveCarsonUpdate(snapshot, {
+      suppressedItemKeys: proactiveSuppressedUpdateKeysRef.current,
+    });
+  }, []);
+
+  const presentProactiveUpdatePrompt = useCallback(
+    async (
+      prompt: CarsonProactiveUpdatePrompt,
+      input: {
+        channel: CarsonChannel;
+        conversation: NonNullable<typeof conversationRef.current>;
+        sessionGeneration: number;
+        isCurrentSession: () => boolean;
+      },
+    ) => {
+      if (toolInFlightRef.current || typedSubmitInFlightRef.current || typedAwaitingResponse) return;
+      if (!input.isCurrentSession()) return;
+
+      activeProactiveUpdateRef.current = prompt;
+      suppressProactiveUpdate(prompt.itemKey);
+
+      if (input.channel === "voice") {
+        input.conversation.sendContextualUpdate(
+          `[Proactive Updates prompt]\nSay this now in one concise turn, then wait for the user's choice. Do not call any tool until the user chooses an action. Use only these actions: ${prompt.actions.join(", ")}.\nPrompt: ${prompt.prompt}`,
+        );
+        return;
+      }
+
+      const optimisticId = `local-proactive-${input.sessionGeneration}-${prompt.itemKey}`;
+      const optimisticCreatedAt = new Date().toISOString();
+      const optimisticMessage: CarsonTypedMessage = {
+        id: optimisticId,
+        session_id: typedSessionIdRef.current,
+        client_message_id: null,
+        reply_to_client_message_id: null,
+        role: "agent",
+        content: prompt.prompt,
+        delivery_status: "responded",
+        elevenlabs_conversation_id: typedConversationIdRef.current,
+        elevenlabs_event_id: null,
+        created_at: optimisticCreatedAt,
+        updated_at: optimisticCreatedAt,
+      };
+      setLastCarsonMessage(prompt.prompt);
+      sessionTranscriptRef.current.push({ role: "agent", message: prompt.prompt });
+      setTypedMessages((current) => [...current, optimisticMessage]);
+      try {
+        const savedMessage = await createTypedAgentMessage({
+          sessionId: typedSessionIdRef.current,
+          replyToClientMessageId: null,
+          content: prompt.prompt,
+          elevenlabsConversationId: typedConversationIdRef.current,
+          elevenlabsEventId: null,
+        });
+        setTypedMessages((current) =>
+          current.map((item) => (item.id === optimisticId ? savedMessage : item)),
+        );
+      } catch (err) {
+        setTypedError(
+          `Carson found an update, but the prompt could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
+        );
+      }
+    },
+    [suppressProactiveUpdate, typedAwaitingResponse],
+  );
 
   const runLocalOutputProbe = useCallback(async () => {
     const startedAt = new Date().toISOString();
@@ -3003,6 +3115,7 @@ export default function ElevenLabsAgentWidget({
       });
       if (/^Done\./i.test(resultText)) {
         sessionActionsRef.current.push(`Updated item: ${params.query ?? params.text ?? id ?? action}`);
+        activeProactiveUpdateRef.current = null;
         lastDirectToolSuccessRef.current = {
           toolName: "act_on_update",
           resultText,
@@ -5720,6 +5833,9 @@ export default function ElevenLabsAgentWidget({
             invalidCaptureRef.current = null;
             sessionTranscriptRef.current.push({ role, message });
             setLastUserTranscript(message);
+            if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(message)) {
+              suppressActiveProactiveUpdate();
+            }
             if (userTranscriptTimerRef.current) {
               clearTimeout(userTranscriptTimerRef.current);
             }
@@ -6113,6 +6229,25 @@ export default function ElevenLabsAgentWidget({
           `The user has attached photos. Here are descriptions:\n${sessionPhotoContextRef.current}\nKeep this in mind for the entire conversation.`,
         );
       }
+
+      void loadNextProactiveUpdate()
+        .then((prompt) => {
+          if (!prompt) return;
+          return presentProactiveUpdatePrompt(prompt, {
+            channel: requestedChannel,
+            conversation: conv,
+            sessionGeneration,
+            isCurrentSession,
+          });
+        })
+        .catch((err) => {
+          console.warn("[carson-proactive-updates] prompt selection failed", err);
+          recordCarsonDiagnostic("carson-direct-tool", {
+            kind: "proactive_updates_prompt_failed",
+            error: err instanceof Error ? err.message : String(err),
+            at: new Date().toISOString(),
+          });
+        });
     } catch (err) {
       releaseMicWarmupStream();
       if (!isCurrentSession()) return;
@@ -6145,7 +6280,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot]);
+  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot, loadNextProactiveUpdate, presentProactiveUpdatePrompt, suppressActiveProactiveUpdate]);
 
   const startCall = useCallback(() => {
     void startCarsonSession("voice");
@@ -6264,6 +6399,17 @@ export default function ElevenLabsAgentWidget({
       setTypedMessages((current) => [...current, savedMessage]);
       setTypedInput("");
       setTurnPhase("thinking");
+
+      if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(savedMessage.content)) {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        suppressActiveProactiveUpdate();
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: "Okay. I'll leave that for now.",
+          clearPendingPhotos: true,
+        });
+        return;
+      }
 
       const authUserId = useAuthStore.getState().user?.id;
       const typedPendingDecision = resolvePendingPlanDecision(savedMessage.content);
@@ -6586,7 +6732,7 @@ export default function ElevenLabsAgentWidget({
           `Message sent, but its delivery status could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
         );
       });
-  }, [clearPendingImages, displayName, executeInstruction, persistLocalTypedAgentReply, runCarsonUpdateTool, typedInput]);
+  }, [clearPendingImages, displayName, executeInstruction, persistLocalTypedAgentReply, runCarsonUpdateTool, suppressActiveProactiveUpdate, typedInput]);
 
   // ------------------------------------------------------------------
   // Session teardown

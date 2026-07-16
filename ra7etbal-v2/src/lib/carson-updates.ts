@@ -1,5 +1,6 @@
 import { buildDailyBrief } from "./daily-brief";
 import { getUpcomingReminderTasks } from "./updates-reminders";
+import { isReminderOverdue } from "./reminder-time";
 import { createTodo, completeTodo, deleteTodo, updateTodo, findTodoMatches, listActiveTodos, type CarsonTodo } from "./carson-todos";
 import { loadRecentNotes, deleteCarsonNote, findNoteMatches, type CarsonNote } from "./carson-notes";
 import { createReminderTask } from "./reminders";
@@ -51,6 +52,31 @@ export interface CarsonUpdatesSnapshot {
   notes: CarsonUpdateItem[];
   reminders: CarsonUpdateItem[];
   automations: CarsonUpdateItem[];
+}
+
+export type CarsonProactiveDecision =
+  | "turn into To-do"
+  | "turn into reminder"
+  | "leave as note"
+  | "delete"
+  | "mark done"
+  | "reschedule"
+  | "snooze"
+  | "follow up"
+  | "keep waiting"
+  | "cancel"
+  | "keep"
+  | "pause"
+  | "resume"
+  | "update"
+  | "complete";
+
+export interface CarsonProactiveUpdatePrompt {
+  item: CarsonUpdateItem;
+  itemKey: string;
+  prompt: string;
+  actions: CarsonProactiveDecision[];
+  priority: number;
 }
 
 export interface CarsonUpdatesDeps {
@@ -158,6 +184,35 @@ export function summarizeCarsonUpdates(snapshot: CarsonUpdatesSnapshot, kind?: C
     return `${label}: ${preview}${extra}.`;
   });
   return lines.join(" ");
+}
+
+export function getCarsonUpdateItemKey(item: CarsonUpdateItem): string {
+  return `${item.kind}:${item.id}`;
+}
+
+export function isCarsonProactiveUpdateDismissal(value: string): boolean {
+  return /\b(?:not now|later|leave it|leave this|ignore it|skip it|dismiss|keep it|keep as is|nothing for now)\b/i.test(value.trim());
+}
+
+export function chooseProactiveCarsonUpdate(
+  snapshot: CarsonUpdatesSnapshot,
+  input: { now?: Date; suppressedItemKeys?: Iterable<string> } = {},
+): CarsonProactiveUpdatePrompt | null {
+  const now = input.now ?? new Date();
+  const suppressed = new Set(input.suppressedItemKeys ?? []);
+  const candidates = [
+    ...snapshot.needsYou.map((item) => buildProactiveCandidate(item, now)),
+    ...snapshot.reminders.map((item) => buildProactiveCandidate(item, now)),
+    ...snapshot.waiting.map((item) => buildProactiveCandidate(item, now)),
+    ...snapshot.todos.map((item) => buildProactiveCandidate(item, now)),
+    ...snapshot.notes.map((item) => buildProactiveCandidate(item, now)),
+    ...snapshot.automations.map((item) => buildProactiveCandidate(item, now)),
+  ]
+    .filter((candidate): candidate is CarsonProactiveUpdatePrompt => Boolean(candidate))
+    .filter((candidate) => !suppressed.has(candidate.itemKey))
+    .sort((a, b) => a.priority - b.priority || getUpdateDateValue(a.item.dueAt ?? a.item.createdAt) - getUpdateDateValue(b.item.dueAt ?? b.item.createdAt));
+
+  return candidates[0] ?? null;
 }
 
 export function resolveCarsonUpdateItem(
@@ -380,6 +435,123 @@ function automationToItem(automation: AutomationSummary): CarsonUpdateItem {
     createdAt: automation.created_at,
     source: automation,
   };
+}
+
+function buildProactiveCandidate(item: CarsonUpdateItem, now: Date): CarsonProactiveUpdatePrompt | null {
+  const itemKey = getCarsonUpdateItemKey(item);
+  const title = truncate(item.title);
+
+  if (item.kind === "needs_you") {
+    const source = item.source as Task;
+    const reminderOverdue = source.type === "reminder" && isReminderOverdue(item.dueAt ?? null, now);
+    if (reminderOverdue) {
+      return {
+        item,
+        itemKey,
+        priority: 20,
+        actions: ["mark done", "reschedule", "snooze", "delete"],
+        prompt: `This reminder is overdue: ${title}. Should I mark it done, move it, remind you later, or delete it?`,
+      };
+    }
+    return {
+      item,
+      itemKey,
+      priority: 10,
+      actions: actionsForNeedsYou(source),
+      prompt: `This item needs your decision: ${title}. ${questionForNeedsYou(source)}`,
+    };
+  }
+
+  if (item.kind === "reminder") {
+    const overdue = isReminderOverdue(item.dueAt ?? null, now);
+    return {
+      item,
+      itemKey,
+      priority: overdue ? 20 : 60,
+      actions: ["mark done", "reschedule", "snooze", "delete"],
+      prompt: overdue
+        ? `This reminder is overdue: ${title}. Should I mark it done, move it, remind you later, or delete it?`
+        : `This reminder is coming up: ${title}. Should I mark it done, move it, remind you later, or delete it?`,
+    };
+  }
+
+  if (item.kind === "waiting") {
+    return {
+      item,
+      itemKey,
+      priority: isBlockedOrOverdueWaiting(item, now) ? 40 : 45,
+      actions: ["follow up", "keep waiting", "cancel"],
+      prompt: `${waitingSubject(item)} has not replied yet. Should I follow up, keep waiting, or cancel it?`,
+    };
+  }
+
+  if (item.kind === "todo") {
+    return {
+      item,
+      itemKey,
+      priority: item.dueAt ? 50 : 55,
+      actions: ["complete", "reschedule", "delete"],
+      prompt: `This To-do is still open: ${title}. Do you want to complete it, reschedule it, or delete it?`,
+    };
+  }
+
+  if (item.kind === "note") {
+    return {
+      item,
+      itemKey,
+      priority: 70,
+      actions: ["turn into To-do", "turn into reminder", "leave as note", "delete"],
+      prompt: `You have a note about ${title}. Do you want me to turn it into a To-do, set a reminder, leave it as a note, or delete it?`,
+    };
+  }
+
+  return {
+    item,
+    itemKey,
+    priority: item.status === "paused" ? 80 : 75,
+    actions: item.status === "paused" ? ["keep", "resume", "update", "delete"] : ["keep", "pause", "update", "delete"],
+    prompt: `This automation is still ${item.status === "paused" ? "paused" : "active"}: ${title}. Do you want to keep it, ${item.status === "paused" ? "resume" : "pause"} it, change it, or delete it?`,
+  };
+}
+
+function actionsForNeedsYou(task: Task): CarsonProactiveDecision[] {
+  if (task.quality_review_status === "substitute_review") {
+    return ["update", "delete"];
+  }
+  if (task.status === "cancelled") {
+    return ["delete", "update"];
+  }
+  return ["complete", "update", "delete"];
+}
+
+function questionForNeedsYou(task: Task): string {
+  if (task.quality_review_status === "substitute_review") {
+    return "Do you want to give a different instruction or delete it?";
+  }
+  if (task.status === "cancelled") {
+    return "Do you want to delete it or give a different instruction?";
+  }
+  return "Do you want to complete it, update it, or delete it?";
+}
+
+function isBlockedOrOverdueWaiting(item: CarsonUpdateItem, now: Date): boolean {
+  const task = item.source as Task;
+  if (task.needs_follow_up || task.escalated_at) return true;
+  if (!item.dueAt) return false;
+  const due = new Date(item.dueAt);
+  return !Number.isNaN(due.getTime()) && due.getTime() < now.getTime();
+}
+
+function waitingSubject(item: CarsonUpdateItem): string {
+  const assignee = item.assignee?.trim();
+  if (assignee) return assignee;
+  return `The waiting item "${truncate(item.title)}"`;
+}
+
+function getUpdateDateValue(value: string | null | undefined): number {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? 0 : time;
 }
 
 function itemsForKind(snapshot: CarsonUpdatesSnapshot, kind: CarsonUpdateKind): CarsonUpdateItem[] {
