@@ -1409,44 +1409,10 @@ export default function ElevenLabsAgentWidget({
 
       markProactiveUpdateDisplayed(prompt);
 
-      if (input.channel === "voice") {
-        return;
-      }
-
-      const optimisticId = `local-proactive-${input.sessionGeneration}-${prompt.itemKey}`;
-      const optimisticCreatedAt = new Date().toISOString();
-      const optimisticMessage: CarsonTypedMessage = {
-        id: optimisticId,
-        session_id: typedSessionIdRef.current,
-        client_message_id: null,
-        reply_to_client_message_id: null,
-        role: "agent",
-        content: prompt.prompt,
-        delivery_status: "responded",
-        elevenlabs_conversation_id: typedConversationIdRef.current,
-        elevenlabs_event_id: null,
-        created_at: optimisticCreatedAt,
-        updated_at: optimisticCreatedAt,
-      };
-      setLastCarsonMessage(prompt.prompt);
-      sessionTranscriptRef.current.push({ role: "agent", message: prompt.prompt });
-      setTypedMessages((current) => [...current, optimisticMessage]);
-      try {
-        const savedMessage = await createTypedAgentMessage({
-          sessionId: typedSessionIdRef.current,
-          replyToClientMessageId: null,
-          content: prompt.prompt,
-          elevenlabsConversationId: typedConversationIdRef.current,
-          elevenlabsEventId: null,
-        });
-        setTypedMessages((current) =>
-          current.map((item) => (item.id === optimisticId ? savedMessage : item)),
-        );
-      } catch (err) {
-        setTypedError(
-          `Carson found an update, but the prompt could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
-        );
-      }
+      // The proactive prompt is already passed to ElevenLabs as opening_line.
+      // Typed mode receives and persists that opening response through onMessage;
+      // inserting it locally here would show the same update twice.
+      void input;
     },
     [markProactiveUpdateDisplayed, typedAwaitingResponse],
   );

@@ -75,11 +75,20 @@ describe("ElevenLabsAgentWidget — proactive Updates prompt guard", () => {
     expect(SOURCE).not.toContain("writeProactiveSuppressedKeys");
   });
 
-  it("uses the same selected prompt for typed insertion and voice opening", () => {
+  it("uses the selected prompt as the only proactive opening delivery path", () => {
+    const proactiveBlock = blockBetween(
+      "const presentProactiveUpdatePrompt = useCallback(",
+      "const runLocalOutputProbe = useCallback(",
+    );
+
     expect(SOURCE).toContain("sessionStartProactivePrompt?.prompt");
     expect(SOURCE).toContain("presentProactiveUpdatePrompt(sessionStartProactivePrompt, {");
     expect(SOURCE).toContain("channel: requestedChannel");
-    expect(SOURCE).toContain("content: prompt.prompt");
+    expect(proactiveBlock).toContain("markProactiveUpdateDisplayed(prompt)");
+    expect(proactiveBlock).toContain("opening_line");
+    expect(proactiveBlock).not.toContain("local-proactive");
+    expect(proactiveBlock).not.toContain("createTypedAgentMessage({");
+    expect(proactiveBlock).not.toContain("setTypedMessages((current) => [...current, optimisticMessage])");
   });
 
   it("suppresses generic agent greetings after a proactive prompt is active", () => {
