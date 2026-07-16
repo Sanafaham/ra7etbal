@@ -209,7 +209,18 @@ function extractMessageBody(restAfterRecipient: string, verb: string): string | 
 }
 
 export function isUnsafeDirectMessageBody(body: string): boolean {
-  const normalizedBody = body.trim().replace(/^(?:to|please)\s+/i, "");
+  const trimmed = body.trim();
+  // "to <verb> ..." right after the recipient's name is the infinitive-
+  // instruction form ("Tell Christopher to make lunch") — the grammatical
+  // marker of "Tell [person] to [perform an action]", regardless of which
+  // specific verb follows. Checking this directly (before "to " gets
+  // stripped below) is what actually distinguishes an instruction from
+  // information; DELEGATION_BODY_START alone only catches the verbs on its
+  // list, which silently missed "make" (confirmed production bug: "Tell
+  // Christopher to make lunch" fell through as a direct message instead of
+  // an operational delegation).
+  if (/^to\s+[a-z]+\b/i.test(trimmed)) return true;
+  const normalizedBody = trimmed.replace(/^(?:to|please)\s+/i, "");
   return (
     UNSAFE_OPERATIONAL_LANGUAGE.test(normalizedBody) ||
     DELEGATION_BODY_START.test(normalizedBody)

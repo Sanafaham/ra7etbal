@@ -226,6 +226,65 @@ describe("Voice Carson direct message fast path", () => {
   });
 });
 
+describe("Voice Carson direct message fast path — 'Tell X to ACTION' classifier fix", () => {
+  // Production bug: "Tell Christopher to make lunch" was misclassified as a
+  // direct message (DELEGATION_BODY_START's verb whitelist didn't include
+  // "make"). The fix checks for the infinitive "to <verb>" form directly,
+  // rather than relying only on a specific verb list.
+
+  it("'Tell Christopher to make lunch' is excluded from the direct-message fast path (operational delegation)", () => {
+    expect(
+      parseSimpleDirectMessage("Tell Christopher to make lunch", [person({ name: "Christopher" })]),
+    ).toBeNull();
+  });
+
+  it("'Tell Grace to call me' is excluded from the direct-message fast path (operational delegation)", () => {
+    expect(
+      parseSimpleDirectMessage("Tell Grace to call me", [person({ name: "Grace" })]),
+    ).toBeNull();
+  });
+
+  it("'Tell Ghulam to bring the car' is excluded from the direct-message fast path (operational delegation)", () => {
+    expect(
+      parseSimpleDirectMessage("Tell Ghulam to bring the car", [person({ name: "Ghulam" })]),
+    ).toBeNull();
+  });
+
+  it("'Tell Grace I have no Wi-Fi' still matches the direct-message fast path (pure communication)", () => {
+    expect(
+      parseSimpleDirectMessage("Tell Grace I have no Wi-Fi", [person({ name: "Grace" })]),
+    ).toEqual({ recipientName: "Grace", messageText: "I have no Wi-Fi" });
+  });
+
+  it("'Tell Loulya I miss her' still matches the direct-message fast path (pure communication)", () => {
+    expect(
+      parseSimpleDirectMessage("Tell Loulya I miss her", [person({ name: "Loulya" })]),
+    ).toEqual({ recipientName: "Loulya", messageText: "I miss her" });
+  });
+
+  it("'Tell Christopher the meeting is at four' still matches the direct-message fast path (pure communication)", () => {
+    expect(
+      parseSimpleDirectMessage("Tell Christopher the meeting is at four", [person({ name: "Christopher" })]),
+    ).toEqual({ recipientName: "Christopher", messageText: "the meeting is at four" });
+  });
+
+  it("protected: 'Ask Christopher to make lunch' is unaffected — 'ask' never enters this fast path at all", () => {
+    expect(
+      parseSimpleDirectMessage("Ask Christopher to make lunch", [person({ name: "Christopher" })]),
+    ).toBeNull();
+  });
+
+  it("protected: existing single-recipient direct-message behavior is unchanged", () => {
+    expect(
+      parseSimpleDirectMessage("tell Sana Ra7etBal notification test", [person()]),
+    ).toEqual({ recipientName: "Sana", messageText: "Ra7etBal notification test" });
+    // Existing exclusion (verb already on the DELEGATION_BODY_START list) still holds.
+    expect(
+      parseSimpleDirectMessage("tell Sana to call me tomorrow", [person()]),
+    ).toBeNull();
+  });
+});
+
 function person(overrides: Partial<Person> = {}): Person {
   return {
     id: "person-1",
