@@ -205,6 +205,24 @@ export function isCarsonProactiveUpdateDismissal(value: string): boolean {
   return /\b(?:not now|later|leave it|leave this|ignore it|skip it|dismiss|keep it|keep as is|nothing for now)\b/i.test(value.trim());
 }
 
+const LEADING_DISMISSAL_PATTERN =
+  /^(?:not now|later|leave it|leave this|ignore it|skip it|dismiss|keep it|keep as is|nothing for now)\b[\s,.;:!-]*/i;
+
+/**
+ * A typed turn like "Not now. Ask Grace to call me." is a dismissal plus a
+ * separate instruction, not a pure dismissal. Returns the remaining
+ * instruction text when the turn opens with a dismissal phrase followed by
+ * more content; returns null for a pure dismissal (nothing left to act on)
+ * or when the turn doesn't open with a dismissal phrase at all.
+ */
+export function extractInstructionAfterLeadingDismissal(value: string): string | null {
+  const trimmed = value.trim();
+  const match = trimmed.match(LEADING_DISMISSAL_PATTERN);
+  if (!match) return null;
+  const remainder = trimmed.slice(match[0].length).trim();
+  return remainder.length > 0 ? remainder : null;
+}
+
 export function chooseProactiveCarsonUpdate(
   snapshot: CarsonUpdatesSnapshot,
   input: { now?: Date; suppressedItemKeys?: Iterable<string> } = {},

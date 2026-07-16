@@ -25,6 +25,7 @@ This directory stores **patches only**: the specific, minimal additions needed w
 
 | Date | File | Summary |
 |---|---|---|
+| 2026-07-17 | [2026-07-17-typed-voice-parity.md](2026-07-17-typed-voice-parity.md) | New CHANNEL PARITY section — typed and voice must resolve the same instruction to the same intent, tool, and confirmation |
 
 ## Historical patches
 

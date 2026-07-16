@@ -116,6 +116,7 @@ import {
   actOnCarsonUpdate,
   buildProactiveDismissalContinuation,
   chooseProactiveCarsonUpdate,
+  extractInstructionAfterLeadingDismissal,
   isCarsonProactiveUpdateDismissal,
   loadCarsonUpdatesSnapshot,
   parseCarsonUpdatesIntent,
@@ -6389,16 +6390,40 @@ export default function ElevenLabsAgentWidget({
       if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(savedMessage.content)) {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
         const continuation = await continueAfterProactiveDismissal();
+        const remainingInstruction = extractInstructionAfterLeadingDismissal(savedMessage.content);
         await persistLocalTypedAgentReply({
           replyToClientMessageId: clientMessageId,
           content: continuation.message,
-          clearPendingPhotos: true,
+          clearPendingPhotos: !remainingInstruction,
         });
         conversationRef.current?.sendContextualUpdate(
           continuation.nextPrompt
             ? `The previous proactive Updates item was dismissed for this session. Leave that database record unchanged and do not mention or re-present it. The next active proactive Updates item is: ${continuation.nextPrompt.prompt} This is a silent context update — do not reply to it or say anything now.`
             : `The previous proactive Updates item was dismissed for this session. Leave that database record unchanged and do not mention or re-present it. No proactive Updates item is currently active. This is a silent context update — do not reply to it or say anything now.`,
         );
+
+        if (!remainingInstruction) {
+          return;
+        }
+
+        // The dismissal was only part of this turn — e.g. "Not now. Ask Grace
+        // to call me." Route the rest through executeInstruction, the same
+        // shared operational function voice's execute_instruction tool calls
+        // (and which itself calls sendDelegation / send_direct_whatsapp_message
+        // internally), instead of dropping it silently.
+        sessionTranscriptRef.current.push({ role: "user", message: remainingInstruction });
+        typedSubmitInFlightRef.current = true;
+        setTypedAwaitingResponse(true);
+        setTurnPhase("acting");
+        const remainderAuthUserId = useAuthStore.getState().user?.id;
+        const remainderSummary = remainderAuthUserId
+          ? await executeInstruction({ instruction: remainingInstruction })
+          : "You are not signed in. Please sign in and try again.";
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: remainderSummary,
+          clearPendingPhotos: true,
+        });
         return;
       }
 

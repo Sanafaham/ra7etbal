@@ -179,4 +179,70 @@ describe("ElevenLabsAgentWidget — proactive Updates prompt guard", () => {
     expect(voiceBlock).toContain("Leave that database record unchanged");
     expect(voiceBlock).toContain("without adding a greeting or asking what needs attention");
   });
+
+  it("typed and voice resolve a staff instruction through the same shared operational function", () => {
+    // Voice: the send_delegation client tool is a direct call to sendDelegation.
+    const voiceToolBlock = blockBetween(
+      "send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {",
+      "send_direct_whatsapp_message:",
+    );
+    expect(voiceToolBlock).toContain("sendDelegation(params)");
+
+    // Typed: a plain (non-dismissal) staff instruction routes through
+    // executeInstruction, never a separate local delegation handler.
+    const typedFallthroughBlock = blockBetween(
+      "const typedDelegationCandidate = parseDelegationFastPath(",
+      "const typedPhotos = [",
+    );
+    expect(typedFallthroughBlock).toContain("await executeInstruction({ instruction: savedMessage.content })");
+    expect(typedFallthroughBlock).not.toContain("sendDelegation(");
+
+    // executeInstruction itself — the function both entry points ultimately
+    // reach — calls the identical sendDelegation callback via the delegation
+    // fast path, so classification, persistence, and delivery path are the
+    // same function call in both channels.
+    const executeInstructionBlock = blockBetween(
+      "const executeInstruction = useCallback(",
+      "const clearCarsonSessionTimers = useCallback(",
+    );
+    expect(executeInstructionBlock).toContain("executeDelegationFastPath(");
+    expect(executeInstructionBlock).toContain("{ sendDelegationFn: sendDelegation }");
+  });
+
+  it("typed dismisses first, then routes the remaining instruction through executeInstruction", () => {
+    const typedBlock = blockBetween(
+      "if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(savedMessage.content))",
+      "const authUserId = useAuthStore.getState().user?.id;",
+    );
+
+    expect(typedBlock).toContain("extractInstructionAfterLeadingDismissal(savedMessage.content)");
+    expect(typedBlock).toContain("if (!remainingInstruction) {\n          return;\n        }");
+    expect(typedBlock).toContain("await executeInstruction({ instruction: remainingInstruction })");
+
+    // Ordering: the dismissal continuation is computed and persisted, and the
+    // early-return guard for a pure dismissal, all appear before the
+    // executeInstruction call for the remainder.
+    const dismissalIndex = typedBlock.indexOf("const continuation = await continueAfterProactiveDismissal()");
+    const guardIndex = typedBlock.indexOf("if (!remainingInstruction)");
+    const executeIndex = typedBlock.indexOf("await executeInstruction({ instruction: remainingInstruction })");
+    expect(dismissalIndex).toBeGreaterThan(-1);
+    expect(guardIndex).toBeGreaterThan(dismissalIndex);
+    expect(executeIndex).toBeGreaterThan(guardIndex);
+  });
+
+  it("typed does not persist a success message before executeInstruction confirms the remainder", () => {
+    const typedBlock = blockBetween(
+      "if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(savedMessage.content))",
+      "const authUserId = useAuthStore.getState().user?.id;",
+    );
+
+    const executeIndex = typedBlock.indexOf("const remainderSummary = remainderAuthUserId\n          ? await executeInstruction({ instruction: remainingInstruction })");
+    const finalReplyIndex = typedBlock.indexOf("content: remainderSummary");
+    expect(executeIndex).toBeGreaterThan(-1);
+    expect(finalReplyIndex).toBeGreaterThan(executeIndex);
+    // The dismissal-only reply persisted before the remainder exists only
+    // acknowledges the proactive item, never a result for the new instruction.
+    const firstReplyBlock = typedBlock.slice(0, executeIndex);
+    expect(firstReplyBlock).not.toContain("content: remainderSummary");
+  });
 });

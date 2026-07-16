@@ -4,6 +4,7 @@ import {
   buildProactiveDismissalContinuation,
   buildCarsonUpdatesSnapshot,
   chooseProactiveCarsonUpdate,
+  extractInstructionAfterLeadingDismissal,
   getCarsonUpdateItemKey,
   isCarsonProactiveUpdateDismissal,
   parseCarsonUpdatesIntent,
@@ -442,6 +443,26 @@ describe("carson-updates shared management layer", () => {
     expect(chooseProactiveCarsonUpdate(snapshot, { now: NOW, suppressedItemKeys: [key] })).toBeNull();
     expect(isCarsonProactiveUpdateDismissal("not now")).toBe(true);
     expect(isCarsonProactiveUpdateDismissal("let's do it")).toBe(false);
+  });
+
+  it("splits a leading dismissal phrase from a trailing instruction", () => {
+    expect(extractInstructionAfterLeadingDismissal("Not now. Ask Grace to call me."))
+      .toBe("Ask Grace to call me.");
+    expect(extractInstructionAfterLeadingDismissal("not now, ask Grace to call me"))
+      .toBe("ask Grace to call me");
+    expect(extractInstructionAfterLeadingDismissal("Later - tell Ghulam to bring the car"))
+      .toBe("tell Ghulam to bring the car");
+  });
+
+  it("returns null for a pure dismissal with nothing left to act on", () => {
+    expect(extractInstructionAfterLeadingDismissal("Not now")).toBeNull();
+    expect(extractInstructionAfterLeadingDismissal("not now.")).toBeNull();
+    expect(extractInstructionAfterLeadingDismissal("later")).toBeNull();
+  });
+
+  it("returns null when the dismissal phrase is not at the start", () => {
+    expect(extractInstructionAfterLeadingDismissal("Ask Grace to call me, not now")).toBeNull();
+    expect(extractInstructionAfterLeadingDismissal("Let's do it")).toBeNull();
   });
 
   it("continues to the next eligible proactive item after not-now suppression", () => {
