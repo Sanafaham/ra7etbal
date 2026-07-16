@@ -9,7 +9,7 @@ import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
 import { saveCarsonNote, loadRecentNotes, type CarsonNote } from "../../lib/carson-notes";
-import { createTodo, listActiveTodos, completeTodo, findTodoMatches, formatTodosForContext, type CarsonTodo } from "../../lib/carson-todos";
+import { createTodo, listActiveTodos, findTodoMatches, formatTodosForContext, type CarsonTodo } from "../../lib/carson-todos";
 import { getHouseholdRules } from "../../lib/household-rules";
 import { fetchAutomationDigest, buildAutomationStatusBlock } from "../../lib/automation-context";
 import { buildDailyBrief } from "../../lib/daily-brief";
@@ -109,10 +109,17 @@ import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
 import {
-  executeVoiceTaskControl,
   resolveVoiceTaskControl,
   type VoiceTaskContext,
 } from "../../lib/voice-task-control";
+import {
+  actOnCarsonUpdate,
+  loadCarsonUpdatesSnapshot,
+  parseCarsonUpdatesIntent,
+  summarizeCarsonUpdates,
+  type CarsonUpdateAction,
+  type CarsonUpdateKind,
+} from "../../lib/carson-updates";
 import {
   isRecentDirectWhatsappDuplicate,
   recordDirectWhatsappSent,
@@ -2945,6 +2952,74 @@ export default function ElevenLabsAgentWidget({
     [],
   );
 
+  const runCarsonUpdateTool = useCallback(
+    async (params: {
+      action?: CarsonUpdateAction | "list";
+      kind?: CarsonUpdateKind | "task" | "all";
+      query?: string;
+      id?: string;
+      task_id?: string;
+      note_id?: string;
+      todo_id?: string;
+      automation_id?: string;
+      text?: string;
+      time_text?: string;
+      due_at?: string;
+    }): Promise<string> => {
+      const authUserId = useAuthStore.getState().user?.id;
+      if (!authUserId) return "You are not signed in. Please sign in and try again.";
+
+      const action = params.action ?? "list";
+      if (action === "list") {
+        const snapshot = await loadCarsonUpdatesSnapshot();
+        return summarizeCarsonUpdates(
+          snapshot,
+          params.kind === "all" || params.kind === "task" ? "all" : params.kind,
+        );
+      }
+
+      if (action === "follow_up") {
+        const snapshot = await loadCarsonUpdatesSnapshot();
+        const query = params.query ?? params.text ?? "";
+        const waitingMatch = snapshot.waiting.find((item) => {
+          const haystack = `${item.title} ${item.detail} ${item.assignee ?? ""}`.toLowerCase();
+          return query.trim() ? haystack.includes(query.trim().toLowerCase()) : false;
+        });
+        const assignee = waitingMatch?.assignee ?? query.trim();
+        if (!assignee) return "Which waiting item should I follow up on?";
+        return sendFollowup({ name: assignee, allowNewFollowup: true });
+      }
+
+      const id = params.id ?? params.task_id ?? params.note_id ?? params.todo_id ?? params.automation_id ?? null;
+      const resultText = await actOnCarsonUpdate({
+        userId: authUserId,
+        action,
+        kind: params.kind === "all" ? undefined : params.kind,
+        id,
+        query: params.query ?? params.text ?? null,
+        text: params.text ?? null,
+        time_text: params.time_text ?? null,
+        due_at: params.due_at ?? null,
+      });
+      if (/^Done\./i.test(resultText)) {
+        sessionActionsRef.current.push(`Updated item: ${params.query ?? params.text ?? id ?? action}`);
+        lastDirectToolSuccessRef.current = {
+          toolName: "act_on_update",
+          resultText,
+          at: new Date().toISOString(),
+          inputSummary: { action, kind: params.kind, query: params.query ?? params.text ?? null },
+        };
+        useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("ra7etbal:notes-changed"));
+          window.dispatchEvent(new CustomEvent("ra7etbal:automation-created"));
+        }
+      }
+      return resultText;
+    },
+    [sendFollowup],
+  );
+
   // ------------------------------------------------------------------
   // Client tool: complete_todo
   // "Mark buy flowers done" — matches an active to-do by keyword and marks
@@ -2957,39 +3032,27 @@ export default function ElevenLabsAgentWidget({
       if (!q) {
         return "I did not receive which to-do to complete. Ask the user which one they mean.";
       }
-
-      const matches = findTodoMatches(todosRef.current, q);
-
-      if (matches.length === 0) {
-        return `I couldn't find a to-do matching "${q}". Ask the user what it's called exactly.`;
-      }
-
-      if (matches.length > 1) {
-        const snippets = matches
-          .slice(0, 4)
-          .map((t) => `"${t.title.slice(0, 45).trim()}${t.title.length > 45 ? "…" : ""}"`)
-          .join(", ");
-        return `I found ${matches.length} to-dos matching "${q}": ${snippets}. Ask the user which one they mean.`;
-      }
-
-      const todo = matches[0];
       try {
-        await completeTodo(todo.id);
-        todosRef.current = todosRef.current.filter((t) => t.id !== todo.id);
-        sessionActionsRef.current.push(`Completed to-do: ${todo.title}`);
-        const resultText = "Done. I've marked that complete.";
+        const resultText = await runCarsonUpdateTool({
+          action: "complete",
+          kind: "todo",
+          query: q,
+        });
+        if (/^Done\./i.test(resultText)) {
+          todosRef.current = todosRef.current.filter((t) => !findTodoMatches([t], q).length);
+        }
         lastDirectToolSuccessRef.current = {
           toolName: "complete_todo",
           resultText,
           at: new Date().toISOString(),
-          inputSummary: { title: todo.title },
+          inputSummary: { query: q },
         };
         return resultText;
       } catch {
         return "I couldn't mark that to-do complete right now. Please try again.";
       }
     },
-    [],
+    [runCarsonUpdateTool],
   );
 
   // ------------------------------------------------------------------
@@ -3022,47 +3085,32 @@ export default function ElevenLabsAgentWidget({
       if (tasksStore.status === "idle" || tasksStore.items.length === 0) {
         await tasksStore.loadFor(authUserId, { force: true });
       }
-      const latestTasksStore = useTasksStore.getState();
       try {
-        const result = await executeVoiceTaskControl({
-          rawText: rawInstruction,
-          tasks: latestTasksStore.items,
-          currentTask: currentTaskContextRef.current,
-          taskId,
-          action: actionParam,
-          markDoneTask: (task) => latestTasksStore.markDone(task.id),
-          deleteTask: (task) => latestTasksStore.remove(task.id),
+        const normalizedAction =
+          /delete|cancel|remove|dismiss|clear/i.test(actionParam ?? rawInstruction)
+            ? "delete"
+            : "complete";
+        const resultText = await runCarsonUpdateTool({
+          action: normalizedAction,
+          kind: "task",
+          id: taskId || currentTaskContextRef.current?.id,
+          query: rawInstruction,
         });
-        if (!result.handled) return "Which task should I update?";
-
-        if (result.action === "delete" && result.task) {
+        if (/^Done\./i.test(resultText)) {
           currentTaskContextRef.current = null;
-          sessionActionsRef.current.push(`Deleted ${result.task.type === "reminder" ? "reminder" : "task"}: ${result.task.description}`);
           lastDirectToolSuccessRef.current = {
             toolName: "control_task",
-            resultText: result.reply,
+            resultText,
             at: new Date().toISOString(),
-            inputSummary: { action: "delete", taskId: result.task.id, description: result.task.description },
-          };
-          return result.reply;
-        }
-
-        if (result.action === "mark_done" && result.task) {
-          currentTaskContextRef.current = null;
-          sessionActionsRef.current.push(`Marked ${result.task.type === "reminder" ? "reminder" : "task"} done: ${result.task.description}`);
-          lastDirectToolSuccessRef.current = {
-            toolName: "control_task",
-            resultText: result.reply,
-            at: new Date().toISOString(),
-            inputSummary: { action: "mark_done", taskId: result.task.id, description: result.task.description },
+            inputSummary: { action: normalizedAction, taskId, instruction: rawInstruction },
           };
         }
-        return result.reply;
+        return resultText;
       } catch {
         return "I couldn't update that task right now. Please try again.";
       }
     },
-    [],
+    [runCarsonUpdateTool],
   );
 
   // ------------------------------------------------------------------
@@ -3464,20 +3512,13 @@ export default function ElevenLabsAgentWidget({
       // ── task ────────────────────────────────────────────────────────────────
       if (action === "task") {
         try {
-          const task = await createTask({
-            user_id: authUserId,
-            description: note.note,
-            type: "action",
-            assigned_to: null,
-            status: "pending",
-            needs_follow_up: false,
-            confirmation_url: null,
-            due_at: null,
+          const resultText = await runCarsonUpdateTool({
+            action: "convert_to_todo",
+            kind: "note",
+            id: note.id,
           });
-          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
           sessionActionsRef.current.push(`Turned note into task: ${note.note}`);
-          console.log("[act_on_note] task created from note:", task.id);
-          return "I've got that on your list.";
+          return resultText;
         } catch (err) {
           return `Couldn't create the task. ${sanitizeCarsonErrorDetail(err)}`;
         }
@@ -3588,7 +3629,7 @@ export default function ElevenLabsAgentWidget({
 
       return "I don't know how to perform that action on a note. Ask the user to clarify.";
     },
-    [displayName, createCalendarEvent],
+    [displayName, createCalendarEvent, runCarsonUpdateTool],
   );
 
   const runDirectToolWithDiagnostic = useCallback(
@@ -5451,6 +5492,11 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("act_on_note", params, () => actOnNote(params));
           },
+          act_on_update: (params: Parameters<typeof runCarsonUpdateTool>[0]) => {
+            const captureBlock = guardCurrentToolInvocation("act_on_update");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("act_on_update", params, () => runCarsonUpdateTool(params));
+          },
           create_todo: (params: Parameters<typeof createTodoTool>[0]) => {
             const captureBlock = guardCurrentToolInvocation("create_todo");
             if (captureBlock) return captureBlock;
@@ -6389,6 +6435,32 @@ export default function ElevenLabsAgentWidget({
         return;
       }
 
+      const typedUpdatesIntent = parseCarsonUpdatesIntent(savedMessage.content);
+      if (typedUpdatesIntent) {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        setTurnPhase("acting");
+        const summary = authUserId
+          ? typedUpdatesIntent.action === "list"
+            ? await runCarsonUpdateTool({
+                action: "list",
+                kind: typedUpdatesIntent.kind ?? "all",
+              })
+            : await runCarsonUpdateTool({
+                action: typedUpdatesIntent.action,
+                kind: typedUpdatesIntent.kind,
+                query: typedUpdatesIntent.query,
+                text: typedUpdatesIntent.text,
+                time_text: typedUpdatesIntent.time_text,
+              })
+          : "You are not signed in. Please sign in and try again.";
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: summary,
+          clearPendingPhotos: true,
+        });
+        return;
+      }
+
       let typedDelegationPeople = usePeopleStore.getState().items;
       if (authUserId && (usePeopleStore.getState().status === "idle" || typedDelegationPeople.length === 0)) {
         await usePeopleStore.getState().loadFor(authUserId);
@@ -6514,7 +6586,7 @@ export default function ElevenLabsAgentWidget({
           `Message sent, but its delivery status could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
         );
       });
-  }, [clearPendingImages, displayName, executeInstruction, persistLocalTypedAgentReply, typedInput]);
+  }, [clearPendingImages, displayName, executeInstruction, persistLocalTypedAgentReply, runCarsonUpdateTool, typedInput]);
 
   // ------------------------------------------------------------------
   // Session teardown

@@ -42,9 +42,9 @@ describe("ElevenLabsAgentWidget — To-do client tool registration", () => {
     expect(SOURCE).toMatch(/createTodoTool[\s\S]{0,900}await createTodo\(/);
   });
 
-  it("defines a completeTodoTool implementation that calls the carson-todos completeTodo helper", () => {
+  it("defines a completeTodoTool implementation that routes through the shared Updates handler", () => {
     expect(SOURCE).toContain("const completeTodoTool = useCallback(");
-    expect(SOURCE).toMatch(/completeTodoTool[\s\S]{0,1200}await completeTodo\(/);
+    expect(SOURCE).toMatch(/completeTodoTool[\s\S]{0,1200}await runCarsonUpdateTool\(\{[\s\S]{0,180}kind:\s*"todo"/);
   });
 
   it("execute_instruction fallback pipeline is also registered (shared extraction path for any to-do phrasing the dashboard routes there instead)", () => {
