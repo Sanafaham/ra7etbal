@@ -166,7 +166,6 @@ type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
 type CarsonChannel = "voice" | "text";
 const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id";
-const PROACTIVE_UPDATES_SESSION_STORAGE_KEY = "ra7etbal:carson-proactive-updates-suppressed";
 
 function getOrCreateTypedSessionId(): string {
   if (typeof window === "undefined") return crypto.randomUUID();
@@ -178,29 +177,6 @@ function getOrCreateTypedSessionId(): string {
     return created;
   } catch {
     return crypto.randomUUID();
-  }
-}
-
-function readProactiveSuppressedKeys(): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = window.sessionStorage.getItem(PROACTIVE_UPDATES_SESSION_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function writeProactiveSuppressedKeys(keys: Set<string>): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(
-      PROACTIVE_UPDATES_SESSION_STORAGE_KEY,
-      JSON.stringify([...keys]),
-    );
-  } catch {
-    // Session suppression is best-effort; in-memory refs still cover this run.
   }
 }
 
@@ -982,7 +958,7 @@ export default function ElevenLabsAgentWidget({
   const [typedError, setTypedError] = useState<string | null>(null);
   const typedSubmitInFlightRef = useRef(false);
   const typedResponseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const proactiveSuppressedUpdateKeysRef = useRef<Set<string>>(readProactiveSuppressedKeys());
+  const proactiveSuppressedUpdateKeysRef = useRef<Set<string>>(new Set());
   const activeProactiveUpdateRef = useRef<CarsonProactiveUpdatePrompt | null>(null);
 
   useEffect(() => {
@@ -1394,7 +1370,6 @@ export default function ElevenLabsAgentWidget({
 
   const suppressProactiveUpdate = useCallback((itemKey: string) => {
     proactiveSuppressedUpdateKeysRef.current.add(itemKey);
-    writeProactiveSuppressedKeys(proactiveSuppressedUpdateKeysRef.current);
     if (activeProactiveUpdateRef.current?.itemKey === itemKey) {
       activeProactiveUpdateRef.current = null;
     }
@@ -5235,6 +5210,7 @@ export default function ElevenLabsAgentWidget({
     sentDelegationsRef.current = [];
     currentTaskContextRef.current = null;
     activeProactiveUpdateRef.current = null;
+    proactiveSuppressedUpdateKeysRef.current = new Set();
     createdReminderKeysRef.current.clear();
     recurringRawRef.current = null;
     invalidCaptureRef.current = null;

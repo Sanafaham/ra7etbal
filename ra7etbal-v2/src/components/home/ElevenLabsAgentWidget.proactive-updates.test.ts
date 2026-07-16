@@ -30,10 +30,13 @@ describe("ElevenLabsAgentWidget — proactive Updates prompt guard", () => {
       'const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = "voice") => {',
       "const conv = await Conversation.startSession({",
     );
+    const refreshIndex = startBlock.indexOf("const freshVars = onBeforeCallStart ? await onBeforeCallStart() : null;");
     const selectionIndex = startBlock.indexOf("const sessionStartProactivePrompt = await loadNextProactiveUpdate()");
     const openingIndex = startBlock.indexOf("const openingLine = sessionStartProactivePrompt?.prompt");
 
+    expect(refreshIndex).toBeGreaterThan(-1);
     expect(selectionIndex).toBeGreaterThan(-1);
+    expect(selectionIndex).toBeGreaterThan(refreshIndex);
     expect(openingIndex).toBeGreaterThan(selectionIndex);
   });
 
@@ -58,6 +61,18 @@ describe("ElevenLabsAgentWidget — proactive Updates prompt guard", () => {
     expect(startBlock).toContain("buildCarsonOpeningLine({");
     expect(startBlock).not.toContain("What needs attention?");
     expect(startBlock).not.toContain("What can I help with?");
+  });
+
+  it("clears proactive suppression at the start of every real Carson session", () => {
+    const resetBlock = blockBetween(
+      "// Reset session state for this new session.",
+      "// Load structured user memory",
+    );
+
+    expect(resetBlock).toContain("proactiveSuppressedUpdateKeysRef.current = new Set()");
+    expect(SOURCE).not.toContain("ra7etbal:carson-proactive-updates-suppressed");
+    expect(SOURCE).not.toContain("readProactiveSuppressedKeys");
+    expect(SOURCE).not.toContain("writeProactiveSuppressedKeys");
   });
 
   it("uses the same selected prompt for typed insertion and voice opening", () => {
