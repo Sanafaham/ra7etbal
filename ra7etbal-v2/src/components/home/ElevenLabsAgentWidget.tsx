@@ -1407,6 +1407,11 @@ export default function ElevenLabsAgentWidget({
     return true;
   }, [suppressProactiveUpdate]);
 
+  const markProactiveUpdateDisplayed = useCallback((prompt: CarsonProactiveUpdatePrompt) => {
+    activeProactiveUpdateRef.current = prompt;
+    suppressProactiveUpdate(prompt.itemKey);
+  }, [suppressProactiveUpdate]);
+
   const loadNextProactiveUpdate = useCallback(async (): Promise<CarsonProactiveUpdatePrompt | null> => {
     const snapshot = await loadCarsonUpdatesSnapshot();
     return chooseProactiveCarsonUpdate(snapshot, {
@@ -1427,13 +1432,9 @@ export default function ElevenLabsAgentWidget({
       if (toolInFlightRef.current || typedSubmitInFlightRef.current || typedAwaitingResponse) return;
       if (!input.isCurrentSession()) return;
 
-      activeProactiveUpdateRef.current = prompt;
-      suppressProactiveUpdate(prompt.itemKey);
+      markProactiveUpdateDisplayed(prompt);
 
       if (input.channel === "voice") {
-        input.conversation.sendContextualUpdate(
-          `[Proactive Updates prompt]\nSay this now in one concise turn, then wait for the user's choice. Do not call any tool until the user chooses an action. Use only these actions: ${prompt.actions.join(", ")}.\nPrompt: ${prompt.prompt}`,
-        );
         return;
       }
 
@@ -1472,7 +1473,7 @@ export default function ElevenLabsAgentWidget({
         );
       }
     },
-    [suppressProactiveUpdate, typedAwaitingResponse],
+    [markProactiveUpdateDisplayed, typedAwaitingResponse],
   );
 
   const runLocalOutputProbe = useCallback(async () => {
@@ -5233,6 +5234,7 @@ export default function ElevenLabsAgentWidget({
     sessionTranscriptRef.current = [];
     sentDelegationsRef.current = [];
     currentTaskContextRef.current = null;
+    activeProactiveUpdateRef.current = null;
     createdReminderKeysRef.current.clear();
     recurringRawRef.current = null;
     invalidCaptureRef.current = null;
@@ -5314,6 +5316,16 @@ export default function ElevenLabsAgentWidget({
     if (!isCurrentSession()) return;
     const liveBriefStateText = freshVars?.briefStateText ?? briefStateText;
     const liveSpokenBrief = freshVars?.spokenBrief ?? (spokenBrief ?? "");
+    const sessionStartProactivePrompt = await loadNextProactiveUpdate().catch((err) => {
+      console.warn("[carson-proactive-updates] prompt selection failed", err);
+      recordCarsonDiagnostic("carson-direct-tool", {
+        kind: "proactive_updates_prompt_failed",
+        error: err instanceof Error ? err.message : String(err),
+        at: new Date().toISOString(),
+      });
+      return null;
+    });
+    if (!isCurrentSession()) return;
 
     // Compute opening_line — proactive brief on first session of the day,
     // short status line on subsequent sessions.
@@ -5329,13 +5341,15 @@ export default function ElevenLabsAgentWidget({
     }
     const openingVariantIndex = Number(localStorage.getItem("carson_opening_variant") ?? "0");
     localStorage.setItem("carson_opening_variant", String(openingVariantIndex + 1));
-    const openingLine = buildCarsonOpeningLine({
-      isFirstSessionToday,
-      displayName,
-      spokenBrief: liveSpokenBrief,
-      now: nowForOpening,
-      variantIndex: openingVariantIndex,
-    });
+    const openingLine = sessionStartProactivePrompt?.prompt ??
+      buildCarsonOpeningLine({
+        isFirstSessionToday,
+        displayName,
+        spokenBrief: liveSpokenBrief,
+        now: nowForOpening,
+        variantIndex: openingVariantIndex,
+      });
+    activeProactiveUpdateRef.current = sessionStartProactivePrompt;
 
     // Await the photo descriptions now — they have been running concurrently with
     // the memory/weather loads above, so in most cases it is already resolved.
@@ -5884,6 +5898,21 @@ export default function ElevenLabsAgentWidget({
               setLastCarsonMessage(CARSON_REPEAT_PROMPT);
               return;
             }
+            const activeProactivePrompt = activeProactiveUpdateRef.current;
+            const hasOwnerTurn =
+              sessionTranscriptRef.current.some((entry) => entry.role === "user") ||
+              Boolean(pendingTypedClientMessageIdRef.current);
+            if (
+              activeProactivePrompt &&
+              !hasOwnerTurn &&
+              normalizeMemoryText(message) !== normalizeMemoryText(activeProactivePrompt.prompt)
+            ) {
+              sessionTranscriptRef.current.pop();
+              console.log("[carson-proactive-updates] suppressed generic session greeting", {
+                eventId: event_id ?? null,
+              });
+              return;
+            }
             // "agent" is the ElevenLabs SDK role for Carson's spoken turns.
             // If the role value ever changes, this silently stops updating — check
             // the console log below if the transcript bubble stops appearing.
@@ -6230,24 +6259,14 @@ export default function ElevenLabsAgentWidget({
         );
       }
 
-      void loadNextProactiveUpdate()
-        .then((prompt) => {
-          if (!prompt) return;
-          return presentProactiveUpdatePrompt(prompt, {
-            channel: requestedChannel,
-            conversation: conv,
-            sessionGeneration,
-            isCurrentSession,
-          });
-        })
-        .catch((err) => {
-          console.warn("[carson-proactive-updates] prompt selection failed", err);
-          recordCarsonDiagnostic("carson-direct-tool", {
-            kind: "proactive_updates_prompt_failed",
-            error: err instanceof Error ? err.message : String(err),
-            at: new Date().toISOString(),
-          });
+      if (sessionStartProactivePrompt) {
+        void presentProactiveUpdatePrompt(sessionStartProactivePrompt, {
+          channel: requestedChannel,
+          conversation: conv,
+          sessionGeneration,
+          isCurrentSession,
         });
+      }
     } catch (err) {
       releaseMicWarmupStream();
       if (!isCurrentSession()) return;
