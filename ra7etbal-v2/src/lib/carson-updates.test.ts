@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   actOnCarsonUpdate,
+  buildProactiveDismissalContinuation,
   buildCarsonUpdatesSnapshot,
   chooseProactiveCarsonUpdate,
   getCarsonUpdateItemKey,
@@ -441,6 +442,124 @@ describe("carson-updates shared management layer", () => {
     expect(chooseProactiveCarsonUpdate(snapshot, { now: NOW, suppressedItemKeys: [key] })).toBeNull();
     expect(isCarsonProactiveUpdateDismissal("not now")).toBe(true);
     expect(isCarsonProactiveUpdateDismissal("let's do it")).toBe(false);
+  });
+
+  it("continues to the next eligible proactive item after not-now suppression", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [
+        task({ id: "needs-1", description: "Approve proof", quality_review_status: "uncertain" }),
+      ],
+      todos: [todo({ id: "todo-1", title: "Buy labels" })],
+      notes: [note()],
+      automations: [],
+    });
+    const first = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+    expect(first?.itemKey).toBe("needs_you:needs-1");
+
+    const continuation = buildProactiveDismissalContinuation({
+      current: first!,
+      snapshot,
+      now: NOW,
+    });
+
+    expect(continuation.suppressedItemKey).toBe("needs_you:needs-1");
+    expect(continuation.nextPrompt?.itemKey).toBe("todo:todo-1");
+    expect(continuation.message).toContain("Buy labels");
+    expect(continuation.message).toContain("complete it, reschedule it, or delete it");
+  });
+
+  it("does not mutate the skipped item merely by continuing after not-now", () => {
+    const skippedTask = task({
+      id: "needs-1",
+      description: "Approve proof",
+      quality_review_status: "uncertain",
+      status: "pending",
+    });
+    const before = structuredClone(skippedTask);
+    const completeTodo = vi.fn();
+    const deleteNote = vi.fn();
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [skippedTask],
+      todos: [todo({ id: "todo-1", title: "Buy labels" })],
+      notes: [note()],
+      automations: [],
+    });
+    const first = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    buildProactiveDismissalContinuation({
+      current: first!,
+      snapshot,
+      now: NOW,
+    });
+
+    expect(skippedTask).toEqual(before);
+    expect(completeTodo).not.toHaveBeenCalled();
+    expect(deleteNote).not.toHaveBeenCalled();
+  });
+
+  it("does not show the skipped proactive item again in the same session", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [
+        task({ id: "needs-1", description: "Approve proof", quality_review_status: "uncertain" }),
+      ],
+      todos: [todo({ id: "todo-1", title: "Buy labels" })],
+      notes: [],
+      automations: [],
+    });
+    const first = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+    const continuation = buildProactiveDismissalContinuation({
+      current: first!,
+      snapshot,
+      now: NOW,
+    });
+    const thirdSelection = chooseProactiveCarsonUpdate(snapshot, {
+      now: NOW,
+      suppressedItemKeys: [continuation.suppressedItemKey, continuation.nextPrompt!.itemKey],
+    });
+
+    expect(continuation.nextPrompt?.itemKey).not.toBe(first?.itemKey);
+    expect(thirdSelection).toBeNull();
+  });
+
+  it("reports clearly when not-now leaves no further eligible items", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [],
+      todos: [],
+      notes: [note({ id: "note-1", note: "Update the Ra7etBal master plan" })],
+      automations: [],
+    });
+    const first = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+    const continuation = buildProactiveDismissalContinuation({
+      current: first!,
+      snapshot,
+      now: NOW,
+    });
+
+    expect(continuation.nextPrompt).toBeNull();
+    expect(continuation.message).toBe("That is everything requiring attention right now.");
+  });
+
+  it("uses the same not-now continuation result for typed and voice callers", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [
+        task({ id: "needs-1", description: "Approve proof", quality_review_status: "uncertain" }),
+      ],
+      todos: [todo({ id: "todo-1", title: "Buy labels" })],
+      notes: [],
+      automations: [],
+    });
+    const first = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+
+    const typed = buildProactiveDismissalContinuation({ current: first!, snapshot, now: NOW });
+    const voice = buildProactiveDismissalContinuation({ current: first!, snapshot, now: NOW });
+
+    expect(typed.message).toBe(voice.message);
+    expect(typed.nextPrompt?.itemKey).toBe(voice.nextPrompt?.itemKey);
   });
 
   it("does not mutate records while selecting a proactive prompt", () => {

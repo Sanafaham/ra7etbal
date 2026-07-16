@@ -79,6 +79,12 @@ export interface CarsonProactiveUpdatePrompt {
   priority: number;
 }
 
+export interface CarsonProactiveDismissalContinuation {
+  suppressedItemKey: string;
+  nextPrompt: CarsonProactiveUpdatePrompt | null;
+  message: string;
+}
+
 export interface CarsonUpdatesDeps {
   now?: Date;
   tasks?: Task[];
@@ -213,6 +219,25 @@ export function chooseProactiveCarsonUpdate(
     .sort((a, b) => a.priority - b.priority || getUpdateDateValue(a.item.dueAt ?? a.item.createdAt) - getUpdateDateValue(b.item.dueAt ?? b.item.createdAt));
 
   return candidates[0] ?? null;
+}
+
+export function buildProactiveDismissalContinuation(input: {
+  current: CarsonProactiveUpdatePrompt;
+  snapshot: CarsonUpdatesSnapshot;
+  suppressedItemKeys?: Iterable<string>;
+  now?: Date;
+}): CarsonProactiveDismissalContinuation {
+  const suppressed = new Set(input.suppressedItemKeys ?? []);
+  suppressed.add(input.current.itemKey);
+  const nextPrompt = chooseProactiveCarsonUpdate(input.snapshot, {
+    now: input.now,
+    suppressedItemKeys: suppressed,
+  });
+  return {
+    suppressedItemKey: input.current.itemKey,
+    nextPrompt,
+    message: nextPrompt?.prompt ?? "That is everything requiring attention right now.",
+  };
 }
 
 export function resolveCarsonUpdateItem(

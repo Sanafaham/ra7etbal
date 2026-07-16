@@ -114,6 +114,7 @@ import {
 } from "../../lib/voice-task-control";
 import {
   actOnCarsonUpdate,
+  buildProactiveDismissalContinuation,
   chooseProactiveCarsonUpdate,
   isCarsonProactiveUpdateDismissal,
   loadCarsonUpdatesSnapshot,
@@ -1378,13 +1379,6 @@ export default function ElevenLabsAgentWidget({
     }
   }, []);
 
-  const suppressActiveProactiveUpdate = useCallback(() => {
-    const active = activeProactiveUpdateRef.current;
-    if (!active) return false;
-    suppressProactiveUpdate(active.itemKey);
-    return true;
-  }, [suppressProactiveUpdate]);
-
   const markProactiveUpdateDisplayed = useCallback((prompt: CarsonProactiveUpdatePrompt) => {
     activeProactiveUpdateRef.current = prompt;
     suppressProactiveUpdate(prompt.itemKey);
@@ -1395,6 +1389,26 @@ export default function ElevenLabsAgentWidget({
     return chooseProactiveCarsonUpdate(snapshot, {
       suppressedItemKeys: proactiveSuppressedUpdateKeysRef.current,
     });
+  }, []);
+
+  const continueAfterProactiveDismissal = useCallback(async (): Promise<string> => {
+    const active = activeProactiveUpdateRef.current;
+    if (!active) return "That is everything requiring attention right now.";
+
+    const snapshot = await loadCarsonUpdatesSnapshot();
+    const continuation = buildProactiveDismissalContinuation({
+      current: active,
+      snapshot,
+      suppressedItemKeys: proactiveSuppressedUpdateKeysRef.current,
+    });
+
+    proactiveSuppressedUpdateKeysRef.current.add(continuation.suppressedItemKey);
+    activeProactiveUpdateRef.current = continuation.nextPrompt;
+    if (continuation.nextPrompt) {
+      proactiveSuppressedUpdateKeysRef.current.add(continuation.nextPrompt.itemKey);
+    }
+
+    return continuation.message;
   }, []);
 
   const presentProactiveUpdatePrompt = useCallback(
@@ -5796,7 +5810,16 @@ export default function ElevenLabsAgentWidget({
             sessionTranscriptRef.current.push({ role, message });
             setLastUserTranscript(message);
             if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(message)) {
-              suppressActiveProactiveUpdate();
+              void continueAfterProactiveDismissal()
+                .then((continuationMessage) => {
+                  if (activeChannelRef.current !== "voice" || !conversationRef.current) return;
+                  conversationRef.current.sendContextualUpdate(
+                    `The user chose not now for the current proactive Updates item. Leave that database record unchanged. Immediately say exactly this next proactive Updates prompt, without adding a greeting or asking what needs attention: ${continuationMessage}`,
+                  );
+                })
+                .catch((err) => {
+                  console.warn("[carson-proactive-updates] dismissal continuation failed", err);
+                });
             }
             if (userTranscriptTimerRef.current) {
               clearTimeout(userTranscriptTimerRef.current);
@@ -6247,7 +6270,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot, loadNextProactiveUpdate, presentProactiveUpdatePrompt, suppressActiveProactiveUpdate]);
+  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot, loadNextProactiveUpdate, presentProactiveUpdatePrompt, continueAfterProactiveDismissal]);
 
   const startCall = useCallback(() => {
     void startCarsonSession("voice");
@@ -6369,10 +6392,10 @@ export default function ElevenLabsAgentWidget({
 
       if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(savedMessage.content)) {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
-        suppressActiveProactiveUpdate();
+        const continuationMessage = await continueAfterProactiveDismissal();
         await persistLocalTypedAgentReply({
           replyToClientMessageId: clientMessageId,
-          content: "Okay. I'll leave that for now.",
+          content: continuationMessage,
           clearPendingPhotos: true,
         });
         return;
@@ -6699,7 +6722,7 @@ export default function ElevenLabsAgentWidget({
           `Message sent, but its delivery status could not be saved. ${sanitizeCarsonErrorDetail(err)}`,
         );
       });
-  }, [clearPendingImages, displayName, executeInstruction, persistLocalTypedAgentReply, runCarsonUpdateTool, suppressActiveProactiveUpdate, typedInput]);
+  }, [clearPendingImages, continueAfterProactiveDismissal, displayName, executeInstruction, persistLocalTypedAgentReply, runCarsonUpdateTool, typedInput]);
 
   // ------------------------------------------------------------------
   // Session teardown

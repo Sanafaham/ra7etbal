@@ -101,4 +101,44 @@ describe("ElevenLabsAgentWidget — proactive Updates prompt guard", () => {
     expect(messageBlock).toContain("normalizeMemoryText(message) !== normalizeMemoryText(activeProactivePrompt.prompt)");
     expect(messageBlock).toContain("suppressed generic session greeting");
   });
+
+  it("continues to the next proactive Updates item after a not-now dismissal", () => {
+    const continuationBlock = blockBetween(
+      "const continueAfterProactiveDismissal = useCallback(",
+      "const presentProactiveUpdatePrompt = useCallback(",
+    );
+
+    expect(continuationBlock).toContain("buildProactiveDismissalContinuation({");
+    expect(continuationBlock).toContain("proactiveSuppressedUpdateKeysRef.current.add(continuation.suppressedItemKey)");
+    expect(continuationBlock).toContain("activeProactiveUpdateRef.current = continuation.nextPrompt");
+    expect(continuationBlock).toContain("proactiveSuppressedUpdateKeysRef.current.add(continuation.nextPrompt.itemKey)");
+    expect(continuationBlock).not.toContain("actOnCarsonUpdate(");
+    expect(continuationBlock).not.toContain("markDone");
+    expect(continuationBlock).not.toContain("remove(");
+  });
+
+  it("typed not-now persists the continuation prompt instead of stopping at an acknowledgement", () => {
+    const typedBlock = blockBetween(
+      "if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(savedMessage.content))",
+      "const authUserId = useAuthStore.getState().user?.id;",
+    );
+
+    expect(typedBlock).toContain("const continuationMessage = await continueAfterProactiveDismissal()");
+    expect(typedBlock).toContain("content: continuationMessage");
+    expect(typedBlock).not.toContain("Okay. I'll leave that for now.");
+    expect(typedBlock).not.toContain("Noted. It stays open.");
+  });
+
+  it("voice not-now sends the same continuation prompt into the active conversation", () => {
+    const voiceBlock = blockBetween(
+      "if (activeProactiveUpdateRef.current && isCarsonProactiveUpdateDismissal(message))",
+      "if (userTranscriptTimerRef.current)",
+    );
+
+    expect(voiceBlock).toContain("continueAfterProactiveDismissal()");
+    expect(voiceBlock).toContain("activeChannelRef.current !== \"voice\"");
+    expect(voiceBlock).toContain("conversationRef.current.sendContextualUpdate(");
+    expect(voiceBlock).toContain("Leave that database record unchanged");
+    expect(voiceBlock).toContain("without adding a greeting or asking what needs attention");
+  });
 });
