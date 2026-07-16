@@ -167,3 +167,60 @@ describe("daily-brief — quality-review-aware Waiting / Needs You classificatio
     expect(briefAfter.waitingOnOthers.map((t) => t.id)).not.toContain(confirmed.id);
   });
 });
+
+describe("daily-brief — escalated_at moves an active task into Needs You", () => {
+  it("an active, incomplete task with escalated_at set enters Needs You", () => {
+    const task = makeTask({ escalated_at: NOW.toISOString() });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("an escalated task no longer appears in Waiting", () => {
+    const task = makeTask({ escalated_at: NOW.toISOString() });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
+  });
+
+  it("regression: a completed task retaining an old escalated_at never returns to Needs You", () => {
+    const task = makeTask({
+      status: "done",
+      confirmed_at: NOW.toISOString(),
+      escalated_at: "2026-07-01T09:00:00.000Z",
+    });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.done.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("a cancelled task keeps its existing classification regardless of escalated_at", () => {
+    const withoutEscalation = makeTask({ status: "cancelled" });
+    const withEscalation = makeTask({ status: "cancelled", escalated_at: NOW.toISOString() });
+    const brief = buildDailyBrief([withoutEscalation, withEscalation], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).toContain(withoutEscalation.id);
+    expect(brief.needsAttention.map((t) => t.id)).toContain(withEscalation.id);
+  });
+
+  it("protected: existing Quality Intelligence classifications are unaffected by a non-escalated task", () => {
+    const task = makeTask({ quality_review_status: "uncertain", quality_review_note: "No reference image to compare against." });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.waitingOnOthers.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("protected: existing reminder classification is unaffected by a non-escalated reminder", () => {
+    const overdueReminder = makeTask({
+      type: "reminder",
+      due_at: "2026-07-08T09:00:00.000Z", // before NOW — overdue
+    });
+    const brief = buildDailyBrief([overdueReminder], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).toContain(overdueReminder.id);
+  });
+
+  it("protected: an ordinary non-escalated Waiting delegation is unaffected", () => {
+    const task = makeTask({});
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.waitingOnOthers.map((t) => t.id)).toContain(task.id);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
+  });
+});

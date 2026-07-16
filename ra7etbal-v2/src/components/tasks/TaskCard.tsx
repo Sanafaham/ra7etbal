@@ -78,6 +78,11 @@ export default function TaskCard({
   const qualityLifecycle = resolveQualityLifecycle(task);
   const showUncertainReview = qualityLifecycle.state === "needs_owner_review";
   const showSubstituteReview = qualityLifecycle.state === "needs_owner_decision";
+  // Escalated is independent of the Quality Intelligence review states above —
+  // only shown when neither of those already explains why the task needs
+  // attention, so a task never renders two "needs you" reason boxes at once.
+  const showEscalatedReason =
+    Boolean(task.escalated_at) && !isDone && !showUncertainReview && !showSubstituteReview;
   const showProofImage = Boolean(signedProofImageUrl && !isOperationalProofCorrection);
   const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;
 
@@ -239,6 +244,12 @@ export default function TaskCard({
 
       {showSubstituteReview && (
         <SubstituteReviewCard task={task} assignedLabel={assignedLabel} />
+      )}
+
+      {showEscalatedReason && (
+        <div className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-900">
+          <p className="font-medium">Carson needs your attention.</p>
+        </div>
       )}
 
       {message?.content && (

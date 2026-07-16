@@ -159,6 +159,13 @@ function capitalize(str: string): string {
 
 function isNeedsYouTask(task: Task, waitingIds: Set<string>, now: Date): boolean {
   if (task.status === "cancelled") return true;
+  // Escalated means Carson has decided the owner needs to be looped in now —
+  // a timing/process signal, distinct from Blocked (a verified obstacle,
+  // not yet modeled). An escalated task always enters Needs You regardless
+  // of its other state. Callers only ever pass non-done tasks here (see
+  // buildDailyBrief's status !== "done" filter), so a completed task can
+  // never re-enter Needs You from a stale escalated_at.
+  if (task.escalated_at) return true;
   if (isWaitingInterventionTask(task)) return true;
 
   if (task.type === "reminder") {
@@ -171,6 +178,9 @@ function isNeedsYouTask(task: Task, waitingIds: Set<string>, now: Date): boolean
 
 function isWaitingTask(task: Task): boolean {
   if (task.status === "done" || task.status === "cancelled") return false;
+  // An escalated task has already left Waiting — Carson asked for owner
+  // attention now. See isNeedsYouTask.
+  if (task.escalated_at) return false;
   // Only proof states that genuinely need owner input leave Waiting. Clear
   // proof failures stay operational: Carson keeps working with the assignee.
   if (isQualityOwnerReviewStatus(task.quality_review_status)) {
