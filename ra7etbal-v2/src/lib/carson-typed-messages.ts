@@ -1,5 +1,8 @@
 import { supabase } from "./supabase";
-import { normalizeTypedCarsonMessage } from "./carson-typed-message-utils";
+import {
+  filterRestorableTypedCarsonMessages,
+  normalizeTypedCarsonMessage,
+} from "./carson-typed-message-utils";
 
 export type CarsonTypedRole = "user" | "agent";
 export type CarsonTypedDeliveryStatus =
@@ -37,7 +40,7 @@ export async function loadRecentTypedCarsonMessages(
     .limit(safeLimit);
 
   if (error) throw new Error(error.message);
-  return ((data ?? []) as CarsonTypedMessage[]).reverse();
+  return filterRestorableTypedCarsonMessages(((data ?? []) as CarsonTypedMessage[]).reverse());
 }
 
 /**

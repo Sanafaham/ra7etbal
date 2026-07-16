@@ -160,7 +160,10 @@ import {
   updateTypedUserMessage,
   type CarsonTypedMessage,
 } from "../../lib/carson-typed-messages";
-import { buildTypedHistoryContext } from "../../lib/carson-typed-message-utils";
+import {
+  buildTypedHistoryContext,
+  filterRestorableTypedCarsonMessages,
+} from "../../lib/carson-typed-message-utils";
 
 type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
@@ -5092,6 +5095,9 @@ export default function ElevenLabsAgentWidget({
     startInFlightRef.current = true;
     activeChannelRef.current = requestedChannel;
     setChannel(requestedChannel);
+    if (requestedChannel === "text") {
+      setTypedMessages((current) => filterRestorableTypedCarsonMessages(current));
+    }
     const sessionGeneration = sessionGenerationRef.current + 1;
     sessionGenerationRef.current = sessionGeneration;
     const isCurrentSession = () => sessionGenerationRef.current === sessionGeneration;

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { CarsonTypedMessage } from "./carson-typed-messages";
-import { buildTypedHistoryContext, normalizeTypedCarsonMessage } from "./carson-typed-message-utils";
+import {
+  buildTypedHistoryContext,
+  filterRestorableTypedCarsonMessages,
+  normalizeTypedCarsonMessage,
+} from "./carson-typed-message-utils";
 
 function message(role: "user" | "agent", content: string, index: number): CarsonTypedMessage {
   return {
@@ -15,6 +19,15 @@ function message(role: "user" | "agent", content: string, index: number): Carson
     elevenlabs_event_id: null,
     created_at: new Date(index * 1000).toISOString(),
     updated_at: new Date(index * 1000).toISOString(),
+  };
+}
+
+function openingMessage(content: string, index: number): CarsonTypedMessage {
+  return {
+    ...message("agent", content, index),
+    id: `opening-${index}`,
+    reply_to_client_message_id: null,
+    elevenlabs_event_id: index,
   };
 }
 
@@ -45,5 +58,21 @@ describe("typed Carson message helpers", () => {
     failed.delivery_status = "failed";
 
     expect(buildTypedHistoryContext([interrupted, failed])).toBe("");
+  });
+
+  it("does not restore prior session-opening agent messages as fresh chat history", () => {
+    const oldOpeningOne = openingMessage("same proactive opening", 1);
+    const oldOpeningTwo = openingMessage("same proactive opening", 2);
+    const ownerTurn = message("user", "done", 3);
+    const agentReply = message("agent", "marked done", 4);
+
+    expect(
+      filterRestorableTypedCarsonMessages([
+        oldOpeningOne,
+        oldOpeningTwo,
+        ownerTurn,
+        agentReply,
+      ]).map((item) => item.id),
+    ).toEqual([ownerTurn.id, agentReply.id]);
   });
 });

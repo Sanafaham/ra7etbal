@@ -4,6 +4,16 @@ export function normalizeTypedCarsonMessage(content: string): string {
   return content.trim().replace(/\s+/g, " ").slice(0, 12_000);
 }
 
+export function isRestorableTypedCarsonMessage(message: CarsonTypedMessage): boolean {
+  return !(message.role === "agent" && message.reply_to_client_message_id === null);
+}
+
+export function filterRestorableTypedCarsonMessages(
+  messages: CarsonTypedMessage[],
+): CarsonTypedMessage[] {
+  return messages.filter(isRestorableTypedCarsonMessage);
+}
+
 export function buildTypedHistoryContext(
   messages: CarsonTypedMessage[],
   maxMessages = 20,

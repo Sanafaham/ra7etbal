@@ -282,6 +282,22 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(SOURCE).toContain("markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)");
   });
 
+  it("does not carry prior typed session-opening prompts into a new typed session", () => {
+    const historyBlock = blockBetween(
+      "void markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)",
+      "  }, [authenticatedUserId]);",
+    );
+    expect(TYPED_MESSAGES_SOURCE).toContain("filterRestorableTypedCarsonMessages");
+    expect(historyBlock).toContain("loadRecentTypedCarsonMessages(100)");
+
+    const startBlock = blockBetween(
+      'const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = "voice") => {',
+      "console.info(\"[carson-lifecycle] connect attempt\"",
+    );
+    expect(startBlock).toContain('if (requestedChannel === "text")');
+    expect(startBlock).toContain("filterRestorableTypedCarsonMessages(current)");
+  });
+
   it("marks local typed hosting replies responded in the durable user row", () => {
     const helperBlock = blockBetween(
       "const persistLocalTypedAgentReply = useCallback(",
