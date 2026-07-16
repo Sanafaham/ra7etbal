@@ -455,7 +455,7 @@ describe("carson-updates shared management layer", () => {
       automations: [],
     });
     const first = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
-    expect(first?.itemKey).toBe("needs_you:needs-1");
+    expect(first?.itemKey).toBe("task:needs-1");
 
     const continuation = buildProactiveDismissalContinuation({
       current: first!,
@@ -463,10 +463,81 @@ describe("carson-updates shared management layer", () => {
       now: NOW,
     });
 
-    expect(continuation.suppressedItemKey).toBe("needs_you:needs-1");
+    expect(continuation.suppressedItemKey).toBe("task:needs-1");
     expect(continuation.nextPrompt?.itemKey).toBe("todo:todo-1");
     expect(continuation.message).toContain("Buy labels");
     expect(continuation.message).toContain("complete it, reschedule it, or delete it");
+  });
+
+  it("does not repeat an overdue reminder through its reminder category after not-now", () => {
+    const snapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [
+        task({
+          id: "task-master-plan",
+          description: "Update the Ra7etBal master plan",
+          type: "reminder",
+          due_at: "2026-07-16T09:00:00.000Z",
+        }),
+      ],
+      todos: [],
+      notes: [],
+      automations: [],
+    });
+
+    const displayed = chooseProactiveCarsonUpdate(snapshot, { now: NOW });
+    const continuation = buildProactiveDismissalContinuation({
+      current: displayed!,
+      snapshot,
+      now: NOW,
+    });
+
+    expect(displayed?.itemKey).toBe("task:task-master-plan");
+    expect(continuation.suppressedItemKey).toBe("task:task-master-plan");
+    expect(continuation.nextPrompt).toBeNull();
+    expect(continuation.message).toBe("That is everything requiring attention right now.");
+  });
+
+  it("keeps item identity stable when the title is translated or reformatted", () => {
+    const englishSnapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [
+        task({
+          id: "task-master-plan",
+          description: "Update the Ra7etBal master plan",
+          type: "reminder",
+          due_at: "2026-07-16T09:00:00.000Z",
+        }),
+      ],
+      todos: [],
+      notes: [],
+      automations: [],
+    });
+    const reformattedSnapshot = buildCarsonUpdatesSnapshot({
+      now: NOW,
+      tasks: [
+        task({
+          id: "task-master-plan",
+          description: "Update the راحة بال master plan.",
+          type: "reminder",
+          due_at: "2026-07-16T09:00:00.000Z",
+        }),
+      ],
+      todos: [],
+      notes: [],
+      automations: [],
+    });
+
+    const english = chooseProactiveCarsonUpdate(englishSnapshot, { now: NOW });
+    const reformatted = chooseProactiveCarsonUpdate(reformattedSnapshot, { now: NOW });
+
+    expect(english?.item.title).not.toBe(reformatted?.item.title);
+    expect(english?.itemKey).toBe("task:task-master-plan");
+    expect(reformatted?.itemKey).toBe("task:task-master-plan");
+    expect(chooseProactiveCarsonUpdate(reformattedSnapshot, {
+      now: NOW,
+      suppressedItemKeys: [english!.itemKey],
+    })).toBeNull();
   });
 
   it("does not mutate the skipped item merely by continuing after not-now", () => {

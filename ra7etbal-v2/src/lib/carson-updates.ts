@@ -193,7 +193,12 @@ export function summarizeCarsonUpdates(snapshot: CarsonUpdatesSnapshot, kind?: C
 }
 
 export function getCarsonUpdateItemKey(item: CarsonUpdateItem): string {
-  return `${item.kind}:${item.id}`;
+  if (item.kind === "needs_you" || item.kind === "waiting" || item.kind === "reminder") {
+    return `task:${(item.source as Task).id}`;
+  }
+  if (item.kind === "todo") return `todo:${(item.source as CarsonTodo).id}`;
+  if (item.kind === "note") return `note:${(item.source as CarsonNote).id}`;
+  return `automation:${(item.source as AutomationSummary).id}`;
 }
 
 export function isCarsonProactiveUpdateDismissal(value: string): boolean {
