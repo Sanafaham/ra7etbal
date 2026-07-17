@@ -8,9 +8,9 @@ describe("normalizeFirstPersonForOwner", () => {
     );
   });
 
-  it("rewrites the I'm contraction, including the on-my-way idiom (I'm on my way.)", () => {
+  it("rewrites the I'm contraction, including the on-my-way idiom (I'm on my way.) without inventing a gendered pronoun", () => {
     expect(normalizeFirstPersonForOwner("I'm on my way.", "Sana")).toBe(
-      "Sana is on her way.",
+      "Sana is on the way.",
     );
   });
 

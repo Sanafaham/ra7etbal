@@ -128,7 +128,11 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ### Typed direct-message owner-reference normalization
 
-Status: implemented, focused-tested, typechecked, full-suite verified, build verified. Not yet merged.
+Status: implemented. Not yet merged.
+
+Focused tests passed. Typecheck passed. Build passed. Full suite: 1509/1510, with one confirmed pre-existing unrelated failure in `canonical-paths.test.ts` (hardcoded `CANONICAL_CONFIRMATION_ORIGIN`, not caused by this change).
+
+Output does not invent a gendered pronoun: "Tell Grace I'm on my way." sends "Sana is on the way."
 
 Typed Carson's direct-message fast path (`direct-message-fast-path.ts`) now rewrites a leading first-person subject in the message body to the owner's display name before sending, via a new `normalizeFirstPersonForOwner` utility (`direct-message-owner-normalization.ts`), so "Tell Grace I have no Wi-Fi." sends "Sana has no Wi-Fi." to the worker — matching voice Carson's natural third-person phrasing. Gated by a new opt-in `normalizeOwnerReference` flag on `executeDirectMessageFastPath`'s context, set only from the typed call site in `ElevenLabsAgentWidget.tsx` (`activeChannelRef.current === "text"`). Voice's own `send_direct_whatsapp_message` tool composes its own text and is untouched.
 

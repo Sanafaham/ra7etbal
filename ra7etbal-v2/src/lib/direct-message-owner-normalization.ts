@@ -16,10 +16,9 @@
  * speaker there may not be the owner and rewriting it could change the
  * message's meaning.
  *
- * Does not invent a gendered pronoun for the owner. The one exception is
- * the fixed idiom "on my way", which this codebase already renders as
- * "on her way" elsewhere (see personal-note.ts) — reusing that existing,
- * established phrasing rather than introducing a new pronoun rule.
+ * Never invents a gendered pronoun for the owner. The idiom "on my way" is
+ * rewritten to the gender-neutral "on the way" rather than guessing "his"
+ * or "her".
  */
 export function normalizeFirstPersonForOwner(
   messageText: string,
@@ -69,11 +68,12 @@ const LEADING_SUBJECT_RULES: LeadingSubjectRule[] = [
 ];
 
 function composeOwnerSentence(owner: string, verb: string, rest: string): string {
-  // Known idiom: "on my way" — see file header. Only this exact phrase gets
-  // a pronoun; every other possessive is handled as "[Owner]'s ..." above.
+  // Known idiom: "on my way" — see file header. Rewritten gender-neutrally
+  // rather than guessing a pronoun; every other possessive is handled as
+  // "[Owner]'s ..." above.
   const onMyWay = rest.match(/^on my way\b(.*)$/i);
   if (onMyWay) {
-    return `${owner} ${verb} on her way${onMyWay[1]}`;
+    return `${owner} ${verb} on the way${onMyWay[1]}`;
   }
   return `${owner} ${verb} ${rest}`;
 }

@@ -279,7 +279,7 @@ describe("executeDirectMessageFastPath — typed owner-reference normalization",
     );
   });
 
-  it("4. first-person contraction: 'Tell Grace I'm on my way.' sends 'Sana is on her way.'", async () => {
+  it("4. first-person contraction: 'Tell Grace I'm on my way.' sends 'Sana is on the way.' (no invented gendered pronoun)", async () => {
     const deps = deliveredDeps();
     await executeDirectMessageFastPath(
       "Tell Grace I'm on my way.",
@@ -287,7 +287,7 @@ describe("executeDirectMessageFastPath — typed owner-reference normalization",
       deps,
     );
     expect(deps.deliverTaskMessageFn).toHaveBeenCalledWith(
-      expect.objectContaining({ messageText: "Sana is on her way." }),
+      expect.objectContaining({ messageText: "Sana is on the way." }),
     );
   });
 
