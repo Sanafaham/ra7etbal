@@ -132,6 +132,8 @@ Current behavior: Carson can list reminders when asked, but the morning brief do
 
 Expected behavior: the morning brief should automatically include the owner's relevant reminders and commitments without requiring a separate question.
 
+Code status: focused fix is in PR #24. It adds supported owner reminders scheduled in the next 24 hours to the existing morning brief automation slot. Merge, deployment, and Sana's production verification are still required before this moves to Stable and protected.
+
 ### PWA authentication or notification restoration difference
 
 Observed behavior: browser sign-in restores notifications, while the installed home-screen PWA may not restore them in the same way.
