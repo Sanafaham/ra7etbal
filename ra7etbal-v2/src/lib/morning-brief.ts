@@ -18,6 +18,7 @@
  */
 
 import { isReminderOverdue, formatReminderDue } from "./reminder-time";
+import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
 import type { Task } from "../types/task";
 import type { Person } from "../types/person";
 import type { CalendarEvent } from "./calendar";
@@ -74,12 +75,15 @@ export function buildMorningBrief(
   const overdueIds = new Set(overdueItems.map((t) => t.id));
 
   // ── 2. Waiting on others ─────────────────────────────────────────────────
-  // All pending delegations/followups including escalated ones.
+  // All pending delegations/followups including escalated ones, except items
+  // awaiting the owner's own review/decision on a staff reply — those move
+  // to Needs Attention instead (mirrors daily-brief.ts's isWaitingTask).
   // Escalated items sort first so highest-risk surfaces earliest.
   const waitingOn = active
     .filter((t) => {
       if (t.status !== "pending") return false;
       if (overdueIds.has(t.id)) return false;
+      if (isQualityOwnerReviewStatus(t.quality_review_status)) return false;
       if (t.type === "delegation" && t.assigned_to) return true;
       if (t.type === "followup") return true;
       if (t.needs_follow_up && t.assigned_to) return true;
@@ -95,11 +99,15 @@ export function buildMorningBrief(
   const waitingIds = new Set(waitingOn.map((t) => t.id));
 
   // ── 1. Needs your attention ──────────────────────────────────────────────
-  // Owner tasks (unassigned or assigned to "me") + reminders due today.
+  // Owner tasks (unassigned or assigned to "me") + reminders due today +
+  // items awaiting the owner's own review/decision on a staff reply
+  // (substitute_review, uncertain — a recent staff reply needs a decision).
   const needsAttention = active.filter((t) => {
     if (t.status !== "pending") return false;
     if (overdueIds.has(t.id)) return false;
     if (waitingIds.has(t.id)) return false;
+
+    if (isQualityOwnerReviewStatus(t.quality_review_status)) return true;
 
     // Reminder due today (not yet overdue)
     if (t.type === "reminder" && t.due_at) {
@@ -194,6 +202,10 @@ function buildRisks(waitingOn: Task[], nowMs: number): RiskItem[] {
  * SPEECH ORDER follows natural arc regardless of what got included:
  *   greeting → urgent → completions → waiting → calendar → automation → close
  *
+ * todosCount/notesCount are optional counts (active to-dos, recent notes) —
+ * mentioned only as a total in the close sentence, never individually named,
+ * since neither has a dedicated slot in this brief.
+ *
  * Called from App.tsx as `daily_brief` ElevenLabs dynamic variable.
  */
 export function buildMorningBriefSpoken(
@@ -203,6 +215,8 @@ export function buildMorningBriefSpoken(
   now = new Date(),
   calendarEvents?: CalendarEvent[],
   automationDigest?: AutomationDigest,
+  todosCount = 0,
+  notesCount = 0,
 ): string {
   const brief  = buildMorningBrief(tasks, people, now);
   const name   = displayName?.trim() || null;
@@ -241,11 +255,14 @@ export function buildMorningBriefSpoken(
 
   // ── URGENT — items requiring Sana's direct action ─────────────────────────
   // Priority: overdue reminders → personal reminders due today → personal tasks → upcoming deadline
-  const overdueReminder = brief.overdueItems.find(t => t.type === "reminder");
+  // All overdue reminders are counted (not just the first) so multiple
+  // overdue items are never silently dropped from the brief.
+  const overdueReminders = brief.overdueItems.filter(t => t.type === "reminder");
   const todayReminder   = brief.needsAttention.find(
     t => t.type === "reminder" && t.due_at && !isReminderOverdue(t.due_at, now),
   );
   const personalTasks   = brief.needsAttention.filter(t => t.type !== "reminder");
+  const urgentCount     = overdueReminders.length + (todayReminder ? 1 : 0) + personalTasks.length;
 
   const tomorrowStart    = new Date(todayStart.getTime() + 86_400_000);
   const horizonEnd       = new Date(todayStart.getTime() + 14 * 86_400_000);
@@ -259,18 +276,29 @@ export function buildMorningBriefSpoken(
     })
     .sort((a, b) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime())[0] ?? null;
 
+  function overdueSentence(): string {
+    if (overdueReminders.length === 1) {
+      return `One reminder is overdue: ${spokenDesc(overdueReminders[0].description)}.`;
+    }
+    const titles = overdueReminders.slice(0, 2).map(t => spokenDesc(t.description));
+    return `${capFirst(spokenCount(overdueReminders.length))} reminders are overdue: ${titles.join(", ")}.`;
+  }
+
   let slotUrgent = "";
-  if (overdueReminder) {
-    slotUrgent = `One reminder is overdue: ${spokenDesc(overdueReminder.description)}.`;
-  } else if (todayReminder) {
-    const timeSuffix = spokenTimeSuffix(todayReminder.due_at, now);
-    slotUrgent = timeSuffix
-      ? `You have a reminder — ${spokenDesc(todayReminder.description)} ${timeSuffix}.`
-      : `You have a reminder today — ${spokenDesc(todayReminder.description)}.`;
-  } else if (personalTasks.length === 1) {
-    slotUrgent = `One task needs your attention: ${spokenDesc(personalTasks[0].description)}.`;
-  } else if (personalTasks.length > 1) {
-    slotUrgent = `${spokenCount(personalTasks.length)} tasks need your attention today.`;
+  if (urgentCount === 1) {
+    if (overdueReminders.length === 1) {
+      slotUrgent = overdueSentence();
+    } else if (todayReminder) {
+      const timeSuffix = spokenTimeSuffix(todayReminder.due_at, now);
+      slotUrgent = timeSuffix
+        ? `You have a reminder — ${spokenDesc(todayReminder.description)} ${timeSuffix}.`
+        : `You have a reminder today — ${spokenDesc(todayReminder.description)}.`;
+    } else {
+      slotUrgent = `One task needs your attention: ${spokenDesc(personalTasks[0].description)}.`;
+    }
+  } else if (urgentCount > 1) {
+    const leadIn = `${capFirst(spokenCount(urgentCount))} thing${urgentCount === 1 ? "" : "s"} need${urgentCount === 1 ? "s" : ""} attention today.`;
+    slotUrgent = overdueReminders.length > 0 ? `${leadIn} ${overdueSentence()}` : leadIn;
   } else if (upcomingDeadline) {
     const dayCount = spokenDaysUntil(upcomingDeadline.due_at!, now);
     slotUrgent = `You have the ${spokenDesc(upcomingDeadline.description)} coming up ${dayCount}.`;
@@ -395,10 +423,16 @@ export function buildMorningBriefSpoken(
   const slotGreeting = name ? `${greeting} ${name}.${frame}` : `${greeting}.${frame}`;
 
   // ── CLOSE ─────────────────────────────────────────────────────────────────
+  // otherOpenCount covers to-dos and actionable notes — categories with no
+  // dedicated slot above — as a count only, never individually narrated.
   const hasOpen = brief.waitingOn.length > 0 || brief.needsAttention.length > 0 || brief.overdueItems.length > 0;
-  const slotClose = hasOpen
+  const otherOpenCount = todosCount + notesCount;
+  const otherOpenSuffix = otherOpenCount > 0
+    ? ` You have ${spokenCount(otherOpenCount)} other open item${otherOpenCount === 1 ? "" : "s"} in the app.`
+    : "";
+  const slotClose = (hasOpen
     ? "Everything else is on track."
-    : "You're clear for the rest of the day.";
+    : "You're clear for the rest of the day.") + otherOpenSuffix;
 
   // ── PRIORITY SLOT SELECTION ───────────────────────────────────────────────
   // Collect all candidate sentences with priority and speech-order weights.

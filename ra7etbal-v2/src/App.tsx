@@ -230,6 +230,8 @@ function PersistentCarsonWidget({
   const [calendarFetched, setCalendarFetched] = useState(false);
   const [notesBlock, setNotesBlock] = useState("");
   const [todosBlock, setTodosBlock] = useState("");
+  const [notesCount, setNotesCount] = useState(0);
+  const [todosCount, setTodosCount] = useState(0);
   const [automationDigest, setAutomationDigest] = useState<AutomationDigest | null>(null);
   const [whatsappFailures, setWhatsappFailures] = useState<WhatsappDeliveryFailureSummary[]>([]);
   const [calendarConnectionStatus, setCalendarConnectionStatus] = useState<CalendarConnectionStatus>("unknown");
@@ -265,17 +267,17 @@ function PersistentCarsonWidget({
   }, [userId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (!userId) { setNotesBlock(""); return; }
+    if (!userId) { setNotesBlock(""); setNotesCount(0); return; }
     loadRecentNotes(20)
-      .then((notes) => setNotesBlock(formatNotesForContext(notes)))
-      .catch(() => setNotesBlock(""));
+      .then((notes) => { setNotesBlock(formatNotesForContext(notes)); setNotesCount(notes.length); })
+      .catch(() => { setNotesBlock(""); setNotesCount(0); });
   }, [userId]);
 
   useEffect(() => {
-    if (!userId) { setTodosBlock(""); return; }
+    if (!userId) { setTodosBlock(""); setTodosCount(0); return; }
     listActiveTodos(50)
-      .then((todos) => setTodosBlock(formatTodosForContext(todos)))
-      .catch(() => setTodosBlock(""));
+      .then((todos) => { setTodosBlock(formatTodosForContext(todos)); setTodosCount(todos.length); })
+      .catch(() => { setTodosBlock(""); setTodosCount(0); });
   }, [userId]);
 
   useEffect(() => {
@@ -321,9 +323,9 @@ function PersistentCarsonWidget({
     () =>
       isEvening
         ? buildNightSweepSpoken(tasks, displayName, now, calendarEvents, automationDigest ?? undefined)
-        : buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents, automationDigest ?? undefined),
+        : buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents, automationDigest ?? undefined, todosCount, notesCount),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tasks, people, displayName, now, calendarEvents, isEvening, automationDigest],
+    [tasks, people, displayName, now, calendarEvents, isEvening, automationDigest, todosCount, notesCount],
   );
 
   const handleBeforeCallStart = useCallback(async () => {
@@ -355,11 +357,15 @@ function PersistentCarsonWidget({
 
     const freshTasks = useTasksStore.getState().items;
     const freshNow = new Date();
-    const freshNotesBlock = userId ? formatNotesForContext(await loadRecentNotes(20)) : "";
+    const freshNotes = userId ? await loadRecentNotes(20) : [];
+    const freshNotesBlock = formatNotesForContext(freshNotes);
     setNotesBlock(freshNotesBlock);
+    setNotesCount(freshNotes.length);
 
-    const freshTodosBlock = userId ? formatTodosForContext(await listActiveTodos(50)) : "";
+    const freshTodos = userId ? await listActiveTodos(50) : [];
+    const freshTodosBlock = formatTodosForContext(freshTodos);
     setTodosBlock(freshTodosBlock);
+    setTodosCount(freshTodos.length);
 
     const freshDigest = userId
       ? await fetchAutomationDigest().catch(() => null)
@@ -382,7 +388,7 @@ function PersistentCarsonWidget({
       spokenBrief:
         freshNow.getHours() >= EVENING_HOUR
           ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined)
-          : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined),
+          : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined, freshTodos.length, freshNotes.length),
     };
   }, [userId, loadTasks, calendarEvents, calendarConnectionStatusBlock, people, user?.email, displayName, onCalendarRevokedChange]);
 
