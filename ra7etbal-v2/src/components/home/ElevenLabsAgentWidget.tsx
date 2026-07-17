@@ -115,7 +115,6 @@ import {
 import {
   actOnCarsonUpdate,
   buildProactiveDismissalContinuation,
-  chooseProactiveCarsonUpdate,
   extractInstructionAfterLeadingDismissal,
   isCarsonProactiveUpdateDismissal,
   loadCarsonUpdatesSnapshot,
@@ -1373,18 +1372,6 @@ export default function ElevenLabsAgentWidget({
     calendarFetchedRef.current = calendarFetched;
   }, [calendarFetched]);
 
-  const markProactiveUpdateDisplayed = useCallback((prompt: CarsonProactiveUpdatePrompt) => {
-    activeProactiveUpdateRef.current = prompt;
-    proactiveSuppressedUpdateKeysRef.current.add(prompt.itemKey);
-  }, []);
-
-  const loadNextProactiveUpdate = useCallback(async (): Promise<CarsonProactiveUpdatePrompt | null> => {
-    const snapshot = await loadCarsonUpdatesSnapshot();
-    return chooseProactiveCarsonUpdate(snapshot, {
-      suppressedItemKeys: proactiveSuppressedUpdateKeysRef.current,
-    });
-  }, []);
-
   const continueAfterProactiveDismissal = useCallback(async (): Promise<{
     message: string;
     nextPrompt: CarsonProactiveUpdatePrompt | null;
@@ -1407,29 +1394,6 @@ export default function ElevenLabsAgentWidget({
 
     return { message: continuation.message, nextPrompt: continuation.nextPrompt };
   }, []);
-
-  const presentProactiveUpdatePrompt = useCallback(
-    async (
-      prompt: CarsonProactiveUpdatePrompt,
-      input: {
-        channel: CarsonChannel;
-        conversation: NonNullable<typeof conversationRef.current>;
-        sessionGeneration: number;
-        isCurrentSession: () => boolean;
-      },
-    ) => {
-      if (toolInFlightRef.current || typedSubmitInFlightRef.current || typedAwaitingResponse) return;
-      if (!input.isCurrentSession()) return;
-
-      markProactiveUpdateDisplayed(prompt);
-
-      // The proactive prompt is already passed to ElevenLabs as opening_line.
-      // Typed mode receives and persists that opening response through onMessage;
-      // inserting it locally here would show the same update twice.
-      void input;
-    },
-    [markProactiveUpdateDisplayed, typedAwaitingResponse],
-  );
 
   const runLocalOutputProbe = useCallback(async () => {
     const startedAt = new Date().toISOString();
@@ -5275,16 +5239,6 @@ export default function ElevenLabsAgentWidget({
     if (!isCurrentSession()) return;
     const liveBriefStateText = freshVars?.briefStateText ?? briefStateText;
     const liveSpokenBrief = freshVars?.spokenBrief ?? (spokenBrief ?? "");
-    const sessionStartProactivePrompt = await loadNextProactiveUpdate().catch((err) => {
-      console.warn("[carson-proactive-updates] prompt selection failed", err);
-      recordCarsonDiagnostic("carson-direct-tool", {
-        kind: "proactive_updates_prompt_failed",
-        error: err instanceof Error ? err.message : String(err),
-        at: new Date().toISOString(),
-      });
-      return null;
-    });
-    if (!isCurrentSession()) return;
 
     // Compute opening_line — proactive brief on first session of the day,
     // short status line on subsequent sessions.
@@ -5300,15 +5254,13 @@ export default function ElevenLabsAgentWidget({
     }
     const openingVariantIndex = Number(localStorage.getItem("carson_opening_variant") ?? "0");
     localStorage.setItem("carson_opening_variant", String(openingVariantIndex + 1));
-    const openingLine = sessionStartProactivePrompt?.prompt ??
-      buildCarsonOpeningLine({
-        isFirstSessionToday,
-        displayName,
-        spokenBrief: liveSpokenBrief,
-        now: nowForOpening,
-        variantIndex: openingVariantIndex,
-      });
-    activeProactiveUpdateRef.current = sessionStartProactivePrompt;
+    const openingLine = buildCarsonOpeningLine({
+      isFirstSessionToday,
+      displayName,
+      spokenBrief: liveSpokenBrief,
+      now: nowForOpening,
+      variantIndex: openingVariantIndex,
+    });
 
     // Await the photo descriptions now — they have been running concurrently with
     // the memory/weather loads above, so in most cases it is already resolved.
@@ -6226,15 +6178,6 @@ export default function ElevenLabsAgentWidget({
           `The user has attached photos. Here are descriptions:\n${sessionPhotoContextRef.current}\nKeep this in mind for the entire conversation.`,
         );
       }
-
-      if (sessionStartProactivePrompt) {
-        void presentProactiveUpdatePrompt(sessionStartProactivePrompt, {
-          channel: requestedChannel,
-          conversation: conv,
-          sessionGeneration,
-          isCurrentSession,
-        });
-      }
     } catch (err) {
       releaseMicWarmupStream();
       if (!isCurrentSession()) return;
@@ -6267,7 +6210,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot, loadNextProactiveUpdate, presentProactiveUpdatePrompt, continueAfterProactiveDismissal]);
+  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot, continueAfterProactiveDismissal]);
 
   const startCall = useCallback(() => {
     void startCarsonSession("voice");

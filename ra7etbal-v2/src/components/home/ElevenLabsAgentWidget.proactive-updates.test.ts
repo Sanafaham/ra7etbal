@@ -13,54 +13,37 @@ describe("ElevenLabsAgentWidget — proactive Updates prompt guard", () => {
     return SOURCE.slice(start, end);
   }
 
-  it("does not present a proactive Updates prompt while Carson is already acting", () => {
-    const guardBlockStart = SOURCE.indexOf("const presentProactiveUpdatePrompt = useCallback(");
-    const guardBlockEnd = SOURCE.indexOf("const runLocalOutputProbe = useCallback(", guardBlockStart);
-    const block = SOURCE.slice(guardBlockStart, guardBlockEnd);
-
-    expect(block).toContain("toolInFlightRef.current");
-    expect(block).toContain("typedSubmitInFlightRef.current");
-    expect(block).toContain("typedAwaitingResponse");
-    expect(block).toContain("markProactiveUpdateDisplayed(prompt)");
-    expect(block).not.toContain("[Proactive Updates prompt]");
-  });
-
-  it("selects the proactive item before opening_line is computed", () => {
+  it("does not select or inject any proactive Updates item when a Carson session starts", () => {
     const startBlock = blockBetween(
       'const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = "voice") => {',
       "const conv = await Conversation.startSession({",
     );
-    const refreshIndex = startBlock.indexOf("const freshVars = onBeforeCallStart ? await onBeforeCallStart() : null;");
-    const selectionIndex = startBlock.indexOf("const sessionStartProactivePrompt = await loadNextProactiveUpdate()");
-    const openingIndex = startBlock.indexOf("const openingLine = sessionStartProactivePrompt?.prompt");
 
-    expect(refreshIndex).toBeGreaterThan(-1);
-    expect(selectionIndex).toBeGreaterThan(-1);
-    expect(selectionIndex).toBeGreaterThan(refreshIndex);
-    expect(openingIndex).toBeGreaterThan(selectionIndex);
+    expect(startBlock).not.toContain("loadNextProactiveUpdate");
+    expect(startBlock).not.toContain("sessionStartProactivePrompt");
+    expect(startBlock).not.toContain("chooseProactiveCarsonUpdate");
+    expect(startBlock).toContain("const openingLine = buildCarsonOpeningLine({");
   });
 
-  it("uses the selected proactive prompt as the first session-start opening line", () => {
-    const startBlock = blockBetween(
-      "const sessionStartProactivePrompt = await loadNextProactiveUpdate()",
-      "const channelInstructions = requestedChannel === \"voice\"",
-    );
-
-    expect(startBlock).toContain("const openingLine = sessionStartProactivePrompt?.prompt ??");
-    expect(startBlock).toContain("buildCarsonOpeningLine({");
-    expect(startBlock.indexOf("sessionStartProactivePrompt?.prompt"))
-      .toBeLessThan(startBlock.indexOf("buildCarsonOpeningLine({"));
+  it("removed the session-start proactive opener functions entirely", () => {
+    expect(SOURCE).not.toContain("const loadNextProactiveUpdate = useCallback(");
+    expect(SOURCE).not.toContain("const presentProactiveUpdatePrompt = useCallback(");
+    expect(SOURCE).not.toContain("const markProactiveUpdateDisplayed = useCallback(");
+    expect(SOURCE).not.toContain("[Proactive Updates prompt]");
+    expect(SOURCE).not.toContain("presentProactiveUpdatePrompt(");
   });
 
-  it("keeps the generic greeting only as the no-proactive fallback", () => {
+  it("keeps the generic greeting as the only session-start opening line", () => {
     const startBlock = blockBetween(
-      "const openingLine = sessionStartProactivePrompt?.prompt ??",
+      "const openingLine = buildCarsonOpeningLine({",
       "sessionPhotoContextRef.current = await photoContextPromise",
     );
 
-    expect(startBlock).toContain("buildCarsonOpeningLine({");
+    expect(startBlock).toContain("isFirstSessionToday");
+    expect(startBlock).toContain("spokenBrief: liveSpokenBrief");
     expect(startBlock).not.toContain("What needs attention?");
     expect(startBlock).not.toContain("What can I help with?");
+    expect(startBlock).not.toContain("sessionStartProactivePrompt");
   });
 
   it("clears proactive suppression at the start of every real Carson session", () => {
@@ -73,22 +56,6 @@ describe("ElevenLabsAgentWidget — proactive Updates prompt guard", () => {
     expect(SOURCE).not.toContain("ra7etbal:carson-proactive-updates-suppressed");
     expect(SOURCE).not.toContain("readProactiveSuppressedKeys");
     expect(SOURCE).not.toContain("writeProactiveSuppressedKeys");
-  });
-
-  it("uses the selected prompt as the only proactive opening delivery path", () => {
-    const proactiveBlock = blockBetween(
-      "const presentProactiveUpdatePrompt = useCallback(",
-      "const runLocalOutputProbe = useCallback(",
-    );
-
-    expect(SOURCE).toContain("sessionStartProactivePrompt?.prompt");
-    expect(SOURCE).toContain("presentProactiveUpdatePrompt(sessionStartProactivePrompt, {");
-    expect(SOURCE).toContain("channel: requestedChannel");
-    expect(proactiveBlock).toContain("markProactiveUpdateDisplayed(prompt)");
-    expect(proactiveBlock).toContain("opening_line");
-    expect(proactiveBlock).not.toContain("local-proactive");
-    expect(proactiveBlock).not.toContain("createTypedAgentMessage({");
-    expect(proactiveBlock).not.toContain("setTypedMessages((current) => [...current, optimisticMessage])");
   });
 
   it("suppresses generic agent greetings after a proactive prompt is active", () => {
@@ -105,7 +72,7 @@ describe("ElevenLabsAgentWidget — proactive Updates prompt guard", () => {
   it("continues to the next proactive Updates item after a not-now dismissal", () => {
     const continuationBlock = blockBetween(
       "const continueAfterProactiveDismissal = useCallback(",
-      "const presentProactiveUpdatePrompt = useCallback(",
+      "const runLocalOutputProbe = useCallback(",
     );
 
     expect(continuationBlock).toContain("buildProactiveDismissalContinuation({");
