@@ -128,11 +128,11 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ### Morning brief does not proactively include reminders
 
-Current behavior: Carson can list reminders when asked, but the morning brief does not reliably include them.
+Current behavior: the focused fix is merged and deployed in PR #24. Carson now receives supported owner reminders scheduled in the next 24 hours through the existing morning brief automation slot, including when another automation status also needs to be spoken.
 
 Expected behavior: the morning brief should automatically include the owner's relevant reminders and commitments without requiring a separate question.
 
-Code status: focused fix is in PR #24. It adds supported owner reminders scheduled in the next 24 hours to the existing morning brief automation slot. Merge, deployment, and Sana's production verification are still required before this moves to Stable and protected.
+Verification status: production deployment is ready. Sana's live morning-brief check is still required before this moves to Stable and protected.
 
 ### PWA authentication or notification restoration difference
 
