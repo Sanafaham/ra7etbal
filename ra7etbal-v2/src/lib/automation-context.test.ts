@@ -126,6 +126,61 @@ describe("formatAutomationForMorning — failed takes priority over escalated/pe
   });
 });
 
+describe("formatAutomationForMorning — owner reminders scheduled today", () => {
+  it("names a single owner reminder before it fires", () => {
+    const digest = makeDigest({
+      firingToday: [{
+        title: "Daily Claude skill files check",
+        assignee: null,
+        nextRunAt: "2026-07-18T06:00:00.000Z",
+      }],
+    });
+
+    const spoken = formatAutomationForMorning(digest);
+    expect(spoken).toContain("Daily Claude skill files check".toLowerCase());
+    expect(spoken).toMatch(/reminder scheduled/i);
+  });
+
+  it("summarizes multiple owner reminders and names the first", () => {
+    const digest = makeDigest({
+      firingToday: [
+        { title: "Check Meta template approval", assignee: null, nextRunAt: "2026-07-18T06:00:00.000Z" },
+        { title: "Call the dentist", assignee: null, nextRunAt: "2026-07-18T08:00:00.000Z" },
+      ],
+    });
+
+    const spoken = formatAutomationForMorning(digest);
+    expect(spoken).toContain("2 reminders scheduled");
+    expect(spoken).toContain("check Meta template approval".toLowerCase());
+    expect(spoken).toContain("1 more after that");
+  });
+
+  it("does not present a staff automation as the owner's personal reminder", () => {
+    const digest = makeDigest({
+      firingToday: [{
+        title: "Grace kitchen check",
+        assignee: "Grace",
+        nextRunAt: "2026-07-18T06:00:00.000Z",
+      }],
+    });
+
+    expect(formatAutomationForMorning(digest)).toBe("");
+  });
+
+  it("keeps failure priority above a scheduled owner reminder", () => {
+    const digest = makeDigest({
+      failed: [makeFailedRun()],
+      firingToday: [{
+        title: "Call the dentist",
+        assignee: null,
+        nextRunAt: "2026-07-18T08:00:00.000Z",
+      }],
+    });
+
+    expect(formatAutomationForMorning(digest)).toMatch(/failed to send/i);
+  });
+});
+
 describe("formatAutomationForNight — failed takes priority", () => {
   it("speaks a single failed automation before escalated/pending", () => {
     const digest = makeDigest({
