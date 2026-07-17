@@ -314,59 +314,61 @@ export function buildAutomationStatusBlock(digest: AutomationDigest): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Returns ≤1 spoken sentence for the Morning Brief.
+ * Returns one spoken automation sentence for the Morning Brief.
  *
- * Priority: escalated → pending → confirmed → "" (silence)
- * Only speaks when there is a notable signal worth surfacing at morning time.
- * Never repeats what the task waitingOn section already covers (those are
- * regular tasks; these are automation-generated loops).
+ * The highest-priority automation status remains first, but a scheduled owner
+ * reminder is appended to the same sentence so another signal cannot hide it.
  */
 export function formatAutomationForMorning(digest: AutomationDigest): string {
-  // Failed — highest urgency, something actually broke (e.g. WhatsApp delivery failure)
+  let statusClause = "";
+
   if (digest.failed.length === 1) {
     const r = digest.failed[0];
     const who = r.assignee ? ` to ${cap(r.assignee)}` : "";
-    return `One automation failed to send${who} — it needs your attention.`;
-  }
-  if (digest.failed.length > 1) {
-    return `${digest.failed.length} automations failed to send and need your attention.`;
-  }
-
-  // Escalated — highest urgency
-  if (digest.escalated.length === 1) {
+    statusClause = `One automation failed to send${who} and needs your attention`;
+  } else if (digest.failed.length > 1) {
+    statusClause = `${digest.failed.length} automations failed to send and need your attention`;
+  } else if (digest.escalated.length === 1) {
     const r = digest.escalated[0];
-    const who = r.assignee ? ` — ${cap(r.assignee)} hasn't responded.` : " — no response yet.";
-    return `One automation has been escalated${who}`;
-  }
-  if (digest.escalated.length > 1) {
-    return `${digest.escalated.length} automations have been escalated and need attention.`;
-  }
-
-  // Pending — medium priority
-  if (digest.pending.length === 1) {
+    const who = r.assignee ? ` because ${cap(r.assignee)} hasn't responded` : " because there is no response yet";
+    statusClause = `One automation has been escalated${who}`;
+  } else if (digest.escalated.length > 1) {
+    statusClause = `${digest.escalated.length} automations have been escalated and need attention`;
+  } else if (digest.pending.length === 1) {
     const r = digest.pending[0];
     const who = r.assignee ? ` from ${cap(r.assignee)}` : "";
-    return `One automation is waiting for confirmation${who}.`;
-  }
-  if (digest.pending.length > 1) {
-    return `${digest.pending.length} automations are waiting for confirmation.`;
-  }
-
-  // Confirmed — positive signal
-  if (digest.confirmedToday.length === 1) {
+    statusClause = `One automation is waiting for confirmation${who}`;
+  } else if (digest.pending.length > 1) {
+    statusClause = `${digest.pending.length} automations are waiting for confirmation`;
+  } else if (digest.confirmedToday.length === 1) {
     const r = digest.confirmedToday[0];
-    if (r.assignee) return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} automation.`;
-    return `The ${lc(r.automationTitle)} automation was confirmed.`;
-  }
-  if (digest.confirmedToday.length > 1) {
+    statusClause = r.assignee
+      ? `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} automation`
+      : `The ${lc(r.automationTitle)} automation was confirmed`;
+  } else if (digest.confirmedToday.length > 1) {
     const r = digest.confirmedToday[0];
     const rest = digest.confirmedToday.length - 1;
-    if (r.assignee) {
-      return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} automation, and ${rest} other${rest === 1 ? "" : "s"} were confirmed too.`;
-    }
-    return `${digest.confirmedToday.length} automations were confirmed today.`;
+    statusClause = r.assignee
+      ? `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} automation, and ${rest} other${rest === 1 ? "" : "s"} were confirmed too`
+      : `${digest.confirmedToday.length} automations were confirmed today`;
   }
 
+  // Owner-only reminders have no assignee. Before they fire they exist only in
+  // automations, not tasks, so this is the morning brief's only reliable source.
+  const ownerRemindersToday = digest.firingToday.filter((a) => !a.assignee);
+  let reminderClause = "";
+  if (ownerRemindersToday.length === 1) {
+    const reminder = ownerRemindersToday[0];
+    reminderClause = `you have a reminder scheduled ${firingLabel(reminder.nextRunAt)} — ${lc(reminder.title)}`;
+  } else if (ownerRemindersToday.length > 1) {
+    const first = ownerRemindersToday[0];
+    const rest = ownerRemindersToday.length - 1;
+    reminderClause = `you have ${ownerRemindersToday.length} reminders scheduled in the next 24 hours, starting with ${lc(first.title)} ${firingLabel(first.nextRunAt)}, with ${rest} more after that`;
+  }
+
+  if (statusClause && reminderClause) return `${statusClause}, and ${reminderClause}.`;
+  if (statusClause) return `${statusClause}.`;
+  if (reminderClause) return `${capFirst(reminderClause)}.`;
   return "";
 }
 
@@ -447,6 +449,10 @@ export async function fetchAndBuildAutomationStatusBlock(): Promise<string> {
 
 function cap(s: string | null | undefined): string {
   if (!s) return "";
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function capFirst(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
