@@ -12,7 +12,6 @@ export const config = { maxDuration: 60 };
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
 const DEFAULT_PLAIN_MESSAGE_TEMPLATE = 'ra7etbal_routine_message';
-const DEFAULT_DIRECT_MESSAGE_TEMPLATE = 'ra7etbal_direct_operational_message';
 const OWNER_DECISION_TEMPLATE_NAME = 'ra7etbal_owner_decision';
 const TASK_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 const TASK_UUID_EXACT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -75,14 +74,11 @@ export default async function handler(req, res) {
     }
   }
 
-  // Task templates are approved in 'en'. Routine and direct-message plain
-  // templates each preserve their own independently-approved language
-  // configuration — they must not share one env var.
-  const templateLanguage = isDirectMessage
-    ? (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || 'en_US').trim()
-    : isRoutineMessage
-      ? (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim()
-      : DEFAULT_TEMPLATE_LANGUAGE;
+  // Task templates are approved in 'en'. Routine messages preserve their
+  // existing independently-approved language configuration.
+  const templateLanguage = usesPlainMessageTemplate
+    ? (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim()
+    : DEFAULT_TEMPLATE_LANGUAGE;
   const normalizedTo = normalizeWhatsAppPhone(to);
   const cleanOwnerName = String(ownerName || '').trim() || FALLBACK_OWNER_NAME;
   const attachmentCountN = typeof attachmentCount === 'number' ? attachmentCount : 0;
@@ -241,13 +237,10 @@ export default async function handler(req, res) {
   // ── Plain message boundary ────────────────────────────────────────────────
   // Preserves the existing approved plain-message template payload exactly:
   // one body parameter, no task, no confirmation link, no SMS fallback.
-  // Direct messages and routine messages are two separately approved
-  // templates — each selects its own env var and default, so a direct
-  // message can never silently fall back to the routine template.
+  // Used by recurring automations and Voice Carson direct messages.
   if (usesPlainMessageTemplate) {
-    const plainTemplateName = isDirectMessage
-      ? (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || DEFAULT_DIRECT_MESSAGE_TEMPLATE).trim()
-      : (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || DEFAULT_PLAIN_MESSAGE_TEMPLATE).trim();
+    const plainTemplateName =
+      (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || DEFAULT_PLAIN_MESSAGE_TEMPLATE).trim();
 
     const routinePayload = buildRoutineMessagePayload({
       to: normalizedTo,
