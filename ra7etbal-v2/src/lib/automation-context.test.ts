@@ -137,7 +137,7 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
     });
 
     const spoken = formatAutomationForMorning(digest);
-    expect(spoken).toContain("Daily Claude skill files check".toLowerCase());
+    expect(spoken).toContain("daily Claude skill files check");
     expect(spoken).toMatch(/reminder scheduled/i);
   });
 
@@ -151,7 +151,7 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
 
     const spoken = formatAutomationForMorning(digest);
     expect(spoken).toContain("2 reminders scheduled");
-    expect(spoken).toContain("check Meta template approval".toLowerCase());
+    expect(spoken).toContain("check Meta template approval");
     expect(spoken).toContain("1 more after that");
   });
 
