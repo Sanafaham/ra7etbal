@@ -167,7 +167,7 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
     expect(formatAutomationForMorning(digest)).toBe("");
   });
 
-  it("keeps failure priority above a scheduled owner reminder", () => {
+  it("includes the owner reminder alongside a higher-priority failure", () => {
     const digest = makeDigest({
       failed: [makeFailedRun()],
       firingToday: [{
@@ -177,7 +177,24 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
       }],
     });
 
-    expect(formatAutomationForMorning(digest)).toMatch(/failed to send/i);
+    const spoken = formatAutomationForMorning(digest);
+    expect(spoken).toMatch(/failed to send/i);
+    expect(spoken).toContain("call the dentist");
+  });
+
+  it("includes the owner reminder alongside a pending automation", () => {
+    const digest = makeDigest({
+      pending: [{ automationTitle: "Kitchen check", assignee: "Grace", sentAgoMs: 60_000, isFollowupSent: false }],
+      firingToday: [{
+        title: "Check Meta template approval",
+        assignee: null,
+        nextRunAt: "2026-07-18T08:00:00.000Z",
+      }],
+    });
+
+    const spoken = formatAutomationForMorning(digest);
+    expect(spoken).toMatch(/waiting for confirmation/i);
+    expect(spoken).toContain("check Meta template approval");
   });
 });
 
