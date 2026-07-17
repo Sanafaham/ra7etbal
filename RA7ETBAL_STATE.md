@@ -126,6 +126,16 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ## Known current issues and near-term priorities
 
+### Direct-message WhatsApp template routing fix
+
+Status: implemented. Not yet merged.
+
+Production evidence showed a direct message failing at 22:20 because `send-whatsapp-task.js` selected `ra7etbal_routine_message` (via `WHATSAPP_ROUTINE_MESSAGE_TEMPLATE`) for both routine and direct messages. Direct messages now select `process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || 'ra7etbal_direct_operational_message'` independently; routine messages are unchanged (`WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || 'ra7etbal_routine_message'`). Language selection is likewise independent: direct messages use `WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || en_US`; routine messages continue using `WHATSAPP_TEMPLATE_LANGUAGE || en_US`.
+
+Focused tests passed. Typecheck passed. Build passed. Full suite: 1513/1514, with the same pre-existing unrelated failure in `canonical-paths.test.ts`.
+
+Protect: task/delegation templates, owner-decision template, reminder/automation delivery, typed message normalization (PR #25).
+
 ### Typed direct-message owner-reference normalization
 
 Status: implemented. Not yet merged.
