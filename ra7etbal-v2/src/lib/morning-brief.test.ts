@@ -51,7 +51,30 @@ describe("buildMorningBriefSpoken — overdue reminders", () => {
     expect(spoken).toContain("test this exact reminder");
   });
 
-  it("does not silently drop a pending reminder when an overdue reminder also exists", () => {
+  it("names the pending reminder alongside two overdue reminders (production evidence)", () => {
+    const overdueA = makeTask({
+      id: "rem-1",
+      description: "check on Claude skill files",
+      due_at: "2026-07-07T09:00:00.000Z",
+    });
+    const overdueB = makeTask({
+      id: "rem-2",
+      description: "test this exact reminder",
+      due_at: "2026-07-07T10:00:00.000Z",
+    });
+    const pendingToday = makeTask({
+      id: "rem-3",
+      description: "Test routine reminder",
+      due_at: "2026-07-08T18:00:00.000Z",
+    });
+    const spoken = buildMorningBriefSpoken([overdueA, overdueB, pendingToday], [], "Sana", NOW);
+
+    expect(spoken).toContain("Three things need attention today");
+    expect(spoken).toContain("Two reminders are overdue: check on Claude skill files, test this exact reminder.");
+    expect(spoken).toContain("Test routine reminder is still pending.");
+  });
+
+  it("does not silently drop a pending reminder when a single overdue reminder also exists", () => {
     const overdue = makeTask({
       id: "rem-1",
       description: "check on Claude skill files",
@@ -64,11 +87,40 @@ describe("buildMorningBriefSpoken — overdue reminders", () => {
     });
     const spoken = buildMorningBriefSpoken([overdue, pendingToday], [], "Sana", NOW);
 
-    // Both the overdue count/lead-in and the overdue title must survive —
-    // the previous exclusive if/else chain dropped the pending reminder
-    // entirely and never surfaced a combined count.
     expect(spoken).toContain("Two things need attention today");
     expect(spoken).toContain("One reminder is overdue: check on Claude skill files");
+    expect(spoken).toContain("Test routine reminder is still pending.");
+  });
+
+  it("mentions only overdue reminders, with no pending clause, when no pending reminder exists", () => {
+    const overdueA = makeTask({ id: "rem-1", description: "check on Claude skill files", due_at: "2026-07-07T09:00:00.000Z" });
+    const overdueB = makeTask({ id: "rem-2", description: "test this exact reminder", due_at: "2026-07-07T10:00:00.000Z" });
+    const spoken = buildMorningBriefSpoken([overdueA, overdueB], [], "Sana", NOW);
+
+    expect(spoken).toContain("Two reminders are overdue: check on Claude skill files, test this exact reminder.");
+    expect(spoken).not.toContain("is still pending");
+  });
+
+  it("names a lone pending reminder with no overdue clause when nothing is overdue", () => {
+    const pendingToday = makeTask({ id: "rem-3", description: "Test routine reminder", due_at: "2026-07-08T18:00:00.000Z" });
+    const spoken = buildMorningBriefSpoken([pendingToday], [], "Sana", NOW);
+
+    expect(spoken).toContain("You have a reminder — Test routine reminder");
+    expect(spoken).not.toContain("overdue");
+  });
+
+  it("summarizes a larger reminder backlog safely: overdue titles stay capped at two and the pending reminder is still named", () => {
+    const overdue = ["rem-1", "rem-2", "rem-3", "rem-4"].map((id, i) =>
+      makeTask({ id, description: `overdue item ${i}`, due_at: "2026-07-07T09:00:00.000Z" }),
+    );
+    const pendingToday = makeTask({ id: "rem-5", description: "Test routine reminder", due_at: "2026-07-08T18:00:00.000Z" });
+    const spoken = buildMorningBriefSpoken([...overdue, pendingToday], [], "Sana", NOW);
+
+    expect(spoken).toContain("Five things need attention today");
+    expect(spoken).toContain("Four reminders are overdue: overdue item 0, overdue item 1.");
+    expect(spoken).not.toContain("overdue item 2");
+    expect(spoken).not.toContain("overdue item 3");
+    expect(spoken).toContain("Test routine reminder is still pending.");
   });
 
   it("still uses the single-item phrasing when there is exactly one overdue reminder", () => {

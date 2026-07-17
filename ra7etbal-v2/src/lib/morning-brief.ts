@@ -298,7 +298,14 @@ export function buildMorningBriefSpoken(
     }
   } else if (urgentCount > 1) {
     const leadIn = `${capFirst(spokenCount(urgentCount))} thing${urgentCount === 1 ? "" : "s"} need${urgentCount === 1 ? "s" : ""} attention today.`;
-    slotUrgent = overdueReminders.length > 0 ? `${leadIn} ${overdueSentence()}` : leadIn;
+    const parts = [leadIn];
+    if (overdueReminders.length > 0) parts.push(overdueSentence());
+    // The pending (due-today, not-yet-overdue) reminder is counted in
+    // urgentCount above but was never named here — only folded into the
+    // lead-in number — so it silently disappeared whenever overdue
+    // reminders were also present. Name it explicitly.
+    if (todayReminder) parts.push(`${spokenDesc(todayReminder.description)} is still pending.`);
+    slotUrgent = parts.join(" ");
   } else if (upcomingDeadline) {
     const dayCount = spokenDaysUntil(upcomingDeadline.due_at!, now);
     slotUrgent = `You have the ${spokenDesc(upcomingDeadline.description)} coming up ${dayCount}.`;
