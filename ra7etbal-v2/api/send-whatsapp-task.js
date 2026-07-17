@@ -12,6 +12,7 @@ export const config = { maxDuration: 60 };
 const DEFAULT_TEMPLATE_LANGUAGE = 'en';
 const FALLBACK_OWNER_NAME = 'Rahet Bal';
 const DEFAULT_PLAIN_MESSAGE_TEMPLATE = 'ra7etbal_routine_message';
+const DEFAULT_DIRECT_MESSAGE_TEMPLATE = 'ra7etbal_direct_operational_message';
 const OWNER_DECISION_TEMPLATE_NAME = 'ra7etbal_owner_decision';
 const TASK_UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i;
 const TASK_UUID_EXACT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -75,10 +76,14 @@ export default async function handler(req, res) {
   }
 
   // Task templates are approved in 'en'. Routine messages preserve their
-  // existing independently-approved language configuration.
-  const templateLanguage = usesPlainMessageTemplate
-    ? (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim()
-    : DEFAULT_TEMPLATE_LANGUAGE;
+  // existing independently-approved language configuration. Direct messages
+  // are a separately approved template and must not share the routine
+  // template's language env var.
+  const templateLanguage = isDirectMessage
+    ? (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || 'en').trim()
+    : isRoutineMessage
+      ? (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim()
+      : DEFAULT_TEMPLATE_LANGUAGE;
   const normalizedTo = normalizeWhatsAppPhone(to);
   const cleanOwnerName = String(ownerName || '').trim() || FALLBACK_OWNER_NAME;
   const attachmentCountN = typeof attachmentCount === 'number' ? attachmentCount : 0;
@@ -234,11 +239,101 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── Plain message boundary ────────────────────────────────────────────────
-  // Preserves the existing approved plain-message template payload exactly:
+  // ── Direct message boundary ───────────────────────────────────────────────
+  // Isolated from routine messages: its own template name, its own language,
+  // and the approved direct-message template's own two-parameter body shape
+  // (ownerName, messageText). Has no route to WHATSAPP_ROUTINE_MESSAGE_TEMPLATE,
+  // DEFAULT_PLAIN_MESSAGE_TEMPLATE, or ra7etbal_routine_message.
+  if (isDirectMessage) {
+    const directTemplateName =
+      (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || DEFAULT_DIRECT_MESSAGE_TEMPLATE).trim();
+
+    const directPayload = buildDirectMessagePayload({
+      to: normalizedTo,
+      ownerName: cleanOwnerName,
+      message: cleanMessage,
+      templateName: directTemplateName,
+      templateLanguage,
+    });
+
+    try {
+      const result = await sendMetaMessage({
+        url,
+        accessToken,
+        payload: directPayload,
+      });
+
+      if (!result.ok) {
+        const failure = getMetaFailure(result);
+        await markWhatsappDeliveryFailed({
+          supabaseUrl,
+          serviceKey,
+          deliveryId,
+          failureStage: 'meta_api',
+          ...failure,
+          templateName: directTemplateName,
+          metadata: { template_language: templateLanguage, send_mode: sendMode },
+        });
+        return sendFailure(res, result, null, deliveryId);
+      }
+
+      await markMessageAccepted({
+        supabaseUrl,
+        serviceKey,
+        messageRecordId,
+        messageId: result.messageId,
+      });
+      await markWhatsappDeliveryAccepted({
+        supabaseUrl,
+        serviceKey,
+        deliveryId,
+        metaMessageId: result.messageId,
+        templateName: directTemplateName,
+        metadata: {
+          template_language: templateLanguage,
+          send_mode: 'direct_message',
+          direct_message: true,
+        },
+      });
+
+      return res.status(200).json({
+        success: true,
+        delivery_id: deliveryId,
+        sendMode: 'direct_message',
+        sendType: 'template',
+        channel: 'whatsapp',
+        messageId: result.messageId,
+        to: normalizedTo,
+        acceptedAt: new Date().toISOString(),
+        phoneNumberIdLast4,
+        templateName: directTemplateName,
+        templateLanguage,
+      });
+    } catch (err) {
+      await markWhatsappDeliveryFailed({
+        supabaseUrl,
+        serviceKey,
+        deliveryId,
+        failureStage: 'network',
+        reason: err instanceof Error ? err.message : String(err),
+        templateName: directTemplateName,
+        metadata: { template_language: templateLanguage, send_mode: sendMode },
+      });
+      return res.status(500).json({
+        success: false,
+        delivery_id: deliveryId,
+        error: 'Could not send WhatsApp message.',
+        errorMessage: 'Could not send WhatsApp message.',
+        details: err instanceof Error ? err.message : 'Unexpected server error.',
+      });
+    }
+  }
+
+  // ── Routine message boundary ──────────────────────────────────────────────
+  // Preserves the existing approved routine-message template payload exactly:
   // one body parameter, no task, no confirmation link, no SMS fallback.
-  // Used by recurring automations and Voice Carson direct messages.
-  if (usesPlainMessageTemplate) {
+  // Used by recurring automations. Unchanged by this fix.
+  if (isRoutineMessage) {
     const plainTemplateName =
       (process.env.WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || DEFAULT_PLAIN_MESSAGE_TEMPLATE).trim();
 
@@ -270,14 +365,6 @@ export default async function handler(req, res) {
         return sendFailure(res, result, null, deliveryId);
       }
 
-      if (isDirectMessage) {
-        await markMessageAccepted({
-          supabaseUrl,
-          serviceKey,
-          messageRecordId,
-          messageId: result.messageId,
-        });
-      }
       await markWhatsappDeliveryAccepted({
         supabaseUrl,
         serviceKey,
@@ -286,15 +373,15 @@ export default async function handler(req, res) {
         templateName: plainTemplateName,
         metadata: {
           template_language: templateLanguage,
-          send_mode: isDirectMessage ? 'direct_message' : 'routine_message',
-          direct_message: isDirectMessage,
+          send_mode: 'routine_message',
+          direct_message: false,
         },
       });
 
       return res.status(200).json({
         success: true,
         delivery_id: deliveryId,
-        sendMode: isDirectMessage ? 'direct_message' : 'template',
+        sendMode: 'template',
         sendType: 'template',
         channel: 'whatsapp',
         messageId: result.messageId,
@@ -748,6 +835,41 @@ export function buildRoutineMessagePayload({
       name: templateName,
       language: { code: templateLanguage },
       components,
+    },
+  };
+}
+
+// The approved direct-message Utility template body is:
+//   Operational update from {{1}}:
+//   {{2}}
+//   Thank you.
+// It requires exactly two body parameters (ownerName, messageText) — a
+// separate shape from buildRoutineMessagePayload's single-parameter body,
+// so direct messages get their own builder rather than reusing that one.
+export function buildDirectMessagePayload({
+  to,
+  ownerName,
+  message,
+  templateName,
+  templateLanguage,
+}) {
+  return {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'template',
+    template: {
+      name: templateName,
+      language: { code: templateLanguage },
+      components: [
+        {
+          type: 'body',
+          parameters: [
+            { type: 'text', text: ownerName },
+            { type: 'text', text: message },
+          ],
+        },
+      ],
     },
   };
 }

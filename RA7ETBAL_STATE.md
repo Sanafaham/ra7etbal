@@ -128,13 +128,17 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ### Direct-message WhatsApp template routing fix
 
-Status: implemented. Not yet merged.
+Status: implemented (third attempt). Not yet merged.
 
-Production evidence showed a direct message failing at 22:20 because `send-whatsapp-task.js` selected `ra7etbal_routine_message` (via `WHATSAPP_ROUTINE_MESSAGE_TEMPLATE`) for both routine and direct messages. Direct messages now select `process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || 'ra7etbal_direct_operational_message'` independently; routine messages are unchanged (`WHATSAPP_ROUTINE_MESSAGE_TEMPLATE || 'ra7etbal_routine_message'`). Language selection is likewise independent: direct messages use `WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || en_US`; routine messages continue using `WHATSAPP_TEMPLATE_LANGUAGE || en_US`.
+History: PR #26 first split direct messages onto `ra7etbal_direct_operational_message` but sent only one body parameter, causing Meta error 132000 (wrong parameter count) — messages were accepted then asynchronously marked failed. PR #27 tried an `en_US` → `en` language fix; Meta still rejected with error 132001 because the payload shape was still wrong. PR #28 fully reverted #26 and #27 back to the shared routine-template path (`ra7etbal_routine_message` for both routine and direct messages) to restore delivery, at the cost of reintroducing the original template-mismatch bug for direct messages.
 
-Focused tests passed. Typecheck passed. Build passed. Full suite: 1513/1514, with the same pre-existing unrelated failure in `canonical-paths.test.ts`.
+Root cause, confirmed against the approved Meta Utility template preview: the direct-message template body is `Operational update from {{1}}:\n\n{{2}}\n\nThank you.` — it requires **two** body parameters (`ownerName`, `messageText`), not one. `send-whatsapp-task.js` now gives `direct_message` a fully isolated branch (separate from `routine_message`, no shared code path) with its own template name (`WHATSAPP_DIRECT_MESSAGE_TEMPLATE || 'ra7etbal_direct_operational_message'`), own language (`WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || 'en'`), and a dedicated `buildDirectMessagePayload` builder sending exactly `[{ type: 'text', text: ownerName }, { type: 'text', text: messageText }]`. Routine messages are untouched — same template, same language default (`en_US`), same one-parameter payload via `buildRoutineMessagePayload`.
 
-Protect: task/delegation templates, owner-decision template, reminder/automation delivery, typed message normalization (PR #25).
+Focused tests passed (`send-whatsapp-task.test.js` 21/21, relevant direct-message/escalation/webhook tests 201/201). Typecheck passed. Build passed. Full suite not re-run for this narrow fix per task scope — no shared infrastructure changed beyond the isolated direct-message branch.
+
+Protect: task/delegation templates, owner-decision template, reminder/automation delivery, typed message normalization (PR #25), and the routine-message template/payload (byte-for-byte unchanged).
+
+**Before merging, confirm with Sana / Meta Business Manager that `ra7etbal_direct_operational_message` is approved and live with exactly this two-parameter body** — a correct payload shape still fails if the template itself isn't approved yet.
 
 ### Typed direct-message owner-reference normalization
 
