@@ -126,6 +126,26 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ## Known current issues and near-term priorities
 
+### Typed direct-message owner-reference normalization
+
+Status: implemented, focused-tested, typechecked, full-suite verified, build verified. Not yet merged.
+
+Typed Carson's direct-message fast path (`direct-message-fast-path.ts`) now rewrites a leading first-person subject in the message body to the owner's display name before sending, via a new `normalizeFirstPersonForOwner` utility (`direct-message-owner-normalization.ts`), so "Tell Grace I have no Wi-Fi." sends "Sana has no Wi-Fi." to the worker — matching voice Carson's natural third-person phrasing. Gated by a new opt-in `normalizeOwnerReference` flag on `executeDirectMessageFastPath`'s context, set only from the typed call site in `ElevenLabsAgentWidget.tsx` (`activeChannelRef.current === "text"`). Voice's own `send_direct_whatsapp_message` tool composes its own text and is untouched.
+
+Protect: voice behavior, delegation routing, the parser's (`parseSimpleDirectMessage`) unnormalized output contract.
+
+### Confirmed: Meta rejection may still report success
+
+Status: confirmed, pre-existing, not fixed. Out of scope for the typed/voice owner-normalization task — record only.
+
+When Meta rejects a direct-message send, typed and voice Carson may still report success to the owner. Needs its own scoped fix and verification; do not fold into unrelated work without explicit authorization.
+
+### Confirmed: delegation misclassification for "make"/"wait" verbs
+
+Status: confirmed, pre-existing, not fixed. Documented via two `it.fails(...)` tests in `direct-message-fast-path.test.ts` (routing-protection describe block) so the gap is visible without asserting broken behavior as correct.
+
+`parseSimpleDirectMessage` currently classifies "Tell Christopher to make lunch." and "Tell Christopher to wait for me in the kitchen. I'm on my way." as direct messages, not delegations, even though the required behavior is that these route to delegation and preserve full instruction/context. Root cause is in `DELEGATION_BODY_START` matching / delegation-routing logic in `direct-message-fast-path.ts`, not touched by the normalization work above. Needs its own scoped fix and verification.
+
 ### Morning brief does not proactively include reminders
 
 Current behavior: the focused fix is merged and deployed in PR #24. Carson now receives supported owner reminders scheduled in the next 24 hours through the existing morning brief automation slot, including when another automation status also needs to be spoken.

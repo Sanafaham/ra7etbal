@@ -1,6 +1,7 @@
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "./direct-messages";
 import { deliverTaskMessage } from "./delivery";
 import { createMessage } from "./messages";
+import { normalizeFirstPersonForOwner } from "./direct-message-owner-normalization";
 import type { Person } from "../types/person";
 
 export type DirectMessageFastPathResult =
@@ -18,6 +19,15 @@ interface DirectMessageFastPathContext {
   userId: string;
   displayName?: string | null;
   people: Person[];
+  /**
+   * Typed-only: rewrite a leading first-person subject in the message body
+   * to the owner's name before sending, so typed and voice produce the same
+   * worker-facing text. Voice composes its own message text via the
+   * ElevenLabs model and must not opt in — this defaults to off so any
+   * caller that doesn't explicitly request it (including voice, if it ever
+   * reaches this path) keeps the exact current, unnormalized behavior.
+   */
+  normalizeOwnerReference?: boolean;
 }
 
 interface DirectMessageFastPathDeps {
@@ -49,9 +59,17 @@ export async function executeDirectMessageFastPath(
   const parsed = parseSimpleDirectMessage(input, context.people);
   if (!parsed) return { handled: false, reason: "no_match" };
 
+  // Typed-only (see DirectMessageFastPathContext.normalizeOwnerReference):
+  // rewrite a leading first-person subject to the owner's name so typed and
+  // voice produce the same worker-facing message. The parser's own output
+  // contract is unchanged — this happens after parsing, before the send.
+  const messageText = context.normalizeOwnerReference
+    ? normalizeFirstPersonForOwner(parsed.messageText, context.displayName)
+    : parsed.messageText;
+
   console.info("[fast_path_direct_message_detected]", {
     recipientName: parsed.recipientName,
-    messageLength: parsed.messageText.length,
+    messageLength: messageText.length,
   });
 
   const person = findPersonByName(parsed.recipientName, context.people);
@@ -65,7 +83,7 @@ export async function executeDirectMessageFastPath(
       status: "blocked",
       reason: "missing_person",
       recipientName: parsed.recipientName,
-      messageText: parsed.messageText,
+      messageText,
       response: `I don't have ${parsed.recipientName} in People yet.`,
     };
   }
@@ -80,7 +98,7 @@ export async function executeDirectMessageFastPath(
       status: "blocked",
       reason: "missing_phone",
       recipientName: person.name,
-      messageText: parsed.messageText,
+      messageText,
       response: `I don't have a phone number for ${person.name}.`,
     };
   }
@@ -95,7 +113,7 @@ export async function executeDirectMessageFastPath(
       status: "blocked",
       reason: "missing_consent",
       recipientName: person.name,
-      messageText: parsed.messageText,
+      messageText,
       response: `WhatsApp consent is not recorded for ${person.name}.`,
     };
   }
@@ -108,7 +126,7 @@ export async function executeDirectMessageFastPath(
       source: "direct-message-fast-path",
       userId: context.userId,
       recipient: person.name,
-      messageText: parsed.messageText,
+      messageText,
       phone: person.phone,
       ownerName: context.displayName ?? null,
       createMessageFn,
@@ -126,7 +144,7 @@ export async function executeDirectMessageFastPath(
       handled: true,
       status: "sent",
       recipientName: person.name,
-      messageText: parsed.messageText,
+      messageText,
       response: `It's with ${person.name}. I'll watch for the reply.`,
     };
   } catch (err) {
@@ -140,7 +158,7 @@ export async function executeDirectMessageFastPath(
       status: "failed",
       reason: "delivery_failed",
       recipientName: person.name,
-      messageText: parsed.messageText,
+      messageText,
       response: `I couldn't send ${person.name} the message. Please try again.`,
     };
   }

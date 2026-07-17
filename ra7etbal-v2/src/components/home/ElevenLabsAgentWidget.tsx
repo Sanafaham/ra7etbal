@@ -4434,6 +4434,12 @@ export default function ElevenLabsAgentWidget({
                 displayName,
                 userId: authUserId,
                 people,
+                // Typed/voice parity: only the typed channel rewrites a
+                // leading first-person subject to the owner's name. Voice
+                // composes its own message text via the ElevenLabs model
+                // and must not be touched here — see
+                // direct-message-owner-normalization.ts.
+                normalizeOwnerReference: activeChannelRef.current === "text",
               });
         if (directMessageFastPath.handled) {
           return directMessageFastPath.response;
