@@ -1,9 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "env": {
-    "WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE": "en"
-  },
   "headers": [
     {
       "source": "/((?!api/|assets/|robots\\.txt$|sitemap\\.xml$|sw\\.js$|manifest\\.webmanifest$|icons/).*)",
