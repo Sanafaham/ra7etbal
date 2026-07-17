@@ -6370,6 +6370,67 @@ export default function ElevenLabsAgentWidget({
         return;
       }
 
+      // ── Deterministic typed delegation fast path ──────────────────────────
+      // Type to Carson's normal tool-calling path depends on the ElevenLabs
+      // text model choosing to invoke send_delegation / execute_instruction.
+      // For simple single-person delegation wording ("Ask Ghulam to bring
+      // the car out.") the model can reply in natural language ("Ghulam has
+      // it") without calling any tool, so no real delegation is created and
+      // no WhatsApp message is sent. Voice does not have this gap and is not
+      // touched here. Mirror the same executeDelegationFastPath + sendDelegation
+      // executor already used inside executeInstruction for voice/typed tool
+      // calls, so a fresh, simple, single-person typed delegation is executed
+      // deterministically before the turn ever reaches the model — same
+      // executor, same task creation, same WhatsApp delivery path.
+      //
+      // Excluded (falls through to the existing model-driven flow unchanged):
+      // - no signed-in owner
+      // - a photo is pending (the fast path cannot carry an image)
+      // - the instruction contains recurring language
+      // - the instruction matches the protected direct-message grammar
+      //   (parseSimpleDirectMessage) — never reclassify a direct message
+      // - multi-person, personal-note, or otherwise ambiguous wording —
+      //   already excluded by parseDelegationFastPath itself, which returns
+      //   null and leaves `handled: false` below
+      if (authUserId) {
+        const typedHasPendingPhoto =
+          pendingPhotosRef.current.length > 0 || sessionPhotosRef.current.length > 0;
+        const typedIsRecurring = detectAllRecurringSchedules(savedMessage.content).length > 0;
+        const typedIsDirectMessage = Boolean(
+          parseSimpleDirectMessage(savedMessage.content, usePeopleStore.getState().items),
+        );
+
+        if (!typedHasPendingPhoto && !typedIsRecurring && !typedIsDirectMessage) {
+          let people = usePeopleStore.getState().items;
+          if (usePeopleStore.getState().status === "idle" || people.length === 0) {
+            await usePeopleStore.getState().loadFor(authUserId);
+            people = usePeopleStore.getState().items;
+          }
+
+          const typedDelegationFastPath = await executeDelegationFastPath(
+            savedMessage.content,
+            { people, userId: authUserId, displayName },
+            { sendDelegationFn: sendDelegation },
+          );
+
+          if (typedDelegationFastPath.handled) {
+            sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+            if (typedDelegationFastPath.status === "sent") {
+              sessionActionsRef.current.push(
+                `Delegated to ${typedDelegationFastPath.personName}: ${typedDelegationFastPath.taskText}`,
+              );
+              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+            }
+            await persistLocalTypedAgentReply({
+              replyToClientMessageId: clientMessageId,
+              content: typedDelegationFastPath.response,
+              clearPendingPhotos: true,
+            });
+            return;
+          }
+        }
+      }
+
       const typedPhotos = [
         ...(pendingPhotosRef.current.length > 0
           ? pendingPhotosRef.current
