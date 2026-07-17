@@ -2107,7 +2107,7 @@ export default function ElevenLabsAgentWidget({
 
       await maybeSendImpliedDinnerDelegation(userId);
 
-      const successText = `Done. I asked ${person.name} to ${taskText}.`;
+      const successText = `${person.name} has it.`;
       if (result.messageId) {
         // Record verified Meta acceptance so the override mechanism can replace
         // contradictory failure language Carson's separate LLM reply generates.

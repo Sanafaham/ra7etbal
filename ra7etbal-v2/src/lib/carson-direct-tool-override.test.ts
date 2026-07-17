@@ -400,14 +400,12 @@ describe("resolveSanitizedCarsonDisplayMessage", () => {
       agentMessage: "I wasn't able to send that. Please try again.",
       lastSuccess: successResult({
         toolName: "send_delegation",
-        // sanitizeCarsonReplyText strips the "Done." filler prefix — expected.
-        resultText: "Done. I asked Christopher to make it for lunch.",
+        resultText: "Christopher has it.",
         at: new Date(NOW).toISOString(),
       }),
       now: NOW,
     });
-    // "Done." stripped by sanitizeCarsonReplyText; the rest of the success text is shown.
-    expect(result).toBe("I asked Christopher to make it for lunch.");
+    expect(result).toBe("Christopher has it.");
   });
 
   it("overrides unconfirmed Carson wording with send_delegation success result", () => {
@@ -415,14 +413,14 @@ describe("resolveSanitizedCarsonDisplayMessage", () => {
       agentMessage: "I could not confirm that the message was sent.",
       lastSuccess: successResult({
         toolName: "send_delegation",
-        resultText: "Done. I asked Nasira to prepare the table.",
+        resultText: "Nasira has it.",
         at: new Date(NOW).toISOString(),
         inputSummary: { name: "Nasira", task: "prepare the table", messageId: "wamid.1" },
       }),
       now: NOW,
     });
 
-    expect(result).toBe("I asked Nasira to prepare the table.");
+    expect(result).toBe("Nasira has it.");
   });
 
   it("overrides Carson failure wording with execute_instruction delegation success", () => {
