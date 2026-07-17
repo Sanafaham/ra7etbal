@@ -316,7 +316,7 @@ export function buildAutomationStatusBlock(digest: AutomationDigest): string {
 /**
  * Returns ≤1 spoken sentence for the Morning Brief.
  *
- * Priority: escalated → pending → confirmed → "" (silence)
+ * Priority: failed → escalated → pending → owner reminders firing today → confirmed → "".
  * Only speaks when there is a notable signal worth surfacing at morning time.
  * Never repeats what the task waitingOn section already covers (those are
  * regular tasks; these are automation-generated loops).
@@ -350,6 +350,19 @@ export function formatAutomationForMorning(digest: AutomationDigest): string {
   }
   if (digest.pending.length > 1) {
     return `${digest.pending.length} automations are waiting for confirmation.`;
+  }
+
+  // Owner-only reminders have no assignee. Before they fire they exist only in
+  // automations, not tasks, so this is the morning brief's only reliable source.
+  const ownerRemindersToday = digest.firingToday.filter((a) => !a.assignee);
+  if (ownerRemindersToday.length === 1) {
+    const reminder = ownerRemindersToday[0];
+    return `You have a reminder scheduled ${firingLabel(reminder.nextRunAt)} — ${lc(reminder.title)}.`;
+  }
+  if (ownerRemindersToday.length > 1) {
+    const first = ownerRemindersToday[0];
+    const rest = ownerRemindersToday.length - 1;
+    return `You have ${ownerRemindersToday.length} reminders scheduled in the next 24 hours. The first is ${lc(first.title)} ${firingLabel(first.nextRunAt)}, with ${rest} more after that.`;
   }
 
   // Confirmed — positive signal
