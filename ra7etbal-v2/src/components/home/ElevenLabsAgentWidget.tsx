@@ -6414,13 +6414,14 @@ export default function ElevenLabsAgentWidget({
           );
 
           if (typedDelegationFastPath.handled) {
+            // Success bookkeeping (session action log, Tasks/Waiting refresh)
+            // is owned by sendDelegation after createAndSendDelegation
+            // succeeds — duplicating it here on status === "sent" would
+            // double-count it, and executeDelegationFastPath currently
+            // treats any normally-resolved sendDelegation response string as
+            // "sent", including a failure-shaped one, so a caller-side check
+            // here could misrecord a failed delegation as successful.
             sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
-            if (typedDelegationFastPath.status === "sent") {
-              sessionActionsRef.current.push(
-                `Delegated to ${typedDelegationFastPath.personName}: ${typedDelegationFastPath.taskText}`,
-              );
-              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-            }
             await persistLocalTypedAgentReply({
               replyToClientMessageId: clientMessageId,
               content: typedDelegationFastPath.response,

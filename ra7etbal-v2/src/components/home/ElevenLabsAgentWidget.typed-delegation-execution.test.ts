@@ -83,25 +83,36 @@ describe("ElevenLabsAgentWidget — deterministic typed delegation execution", (
     expect(fastPathBlock).toContain("content: typedDelegationFastPath.response");
   });
 
-  it("5. only records a sent delegation and refreshes Tasks when the executor actually reports success", () => {
+  it("5. does not duplicate success bookkeeping — that stays owned by sendDelegation, not the typed caller", () => {
     const fastPathBlock = blockBetween(
       "Deterministic typed delegation fast path",
       "const typedPhotos = [",
     );
-    const statusCheckIndex = fastPathBlock.indexOf('typedDelegationFastPath.status === "sent"');
-    const taskRefreshIndex = fastPathBlock.indexOf(
-      "useTasksStore.getState().loadFor(authUserId, { force: true })",
-    );
-    const replyIndex = fastPathBlock.indexOf("await persistLocalTypedAgentReply({");
 
-    expect(statusCheckIndex).toBeGreaterThan(-1);
-    expect(taskRefreshIndex).toBeGreaterThan(statusCheckIndex);
+    // The caller no longer branches on status === "sent" to push a session
+    // action or refresh Tasks itself. executeDelegationFastPath currently
+    // treats any normally-resolved sendDelegation response string as
+    // "sent" — including a failure-shaped one — so a caller-side check here
+    // could misrecord a failed delegation as successful, on top of
+    // duplicating bookkeeping sendDelegation already performs.
+    expect(fastPathBlock).not.toContain('typedDelegationFastPath.status === "sent"');
+    expect(fastPathBlock).not.toContain("sessionActionsRef.current.push(");
+    expect(fastPathBlock).not.toContain("useTasksStore.getState().loadFor(");
+
     // The reply is persisted unconditionally with the executor's own response —
     // never a hardcoded success string — so a blocked/failed status (e.g. no
     // phone, no consent, send error) surfaces its own truthful text instead of
     // a fabricated "<name> has it".
-    expect(replyIndex).toBeGreaterThan(taskRefreshIndex);
     expect(fastPathBlock).not.toMatch(/content:\s*["'`].*has it/i);
+
+    // sendDelegation (untouched) still owns this bookkeeping after a real
+    // WhatsApp send succeeds — it is not simply deleted from the codebase.
+    const sendDelegationBlock = blockBetween(
+      "const sendDelegation = useCallback(",
+      "  const executeInstruction = useCallback(",
+    );
+    expect(sendDelegationBlock).toContain("useTasksStore.getState().loadFor(userId, { force: true })");
+    expect(sendDelegationBlock).toContain("sessionActionsRef.current.push(`Delegated to ${person.name}: ${taskText}`)");
   });
 
   it("6. excludes instructions that match the protected direct-message grammar before running the delegation executor", () => {
