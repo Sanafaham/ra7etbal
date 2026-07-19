@@ -164,9 +164,8 @@ describe('attemptCarsonBridgePoc — one valid staff message reaches the product
     });
 
     socket.emit('message', { data: JSON.stringify({ type: 'conversation_initiation_metadata' }) });
-    expect(socket.sent[1]).toMatchObject({ type: 'contextual_update' });
-    expect(socket.sent[1].text).toContain('Grace');
-    expect(socket.sent[2]).toEqual({ type: 'user_message', text: msg.body });
+    expect(socket.sent[1]).toEqual({ type: 'user_message', text: msg.body });
+    expect(socket.sent).toHaveLength(2); // exactly one message follows metadata
 
     socket.emit('message', {
       data: JSON.stringify({
@@ -224,6 +223,121 @@ describe('attemptCarsonBridgePoc — one valid staff message reaches the product
       data: JSON.stringify({ type: 'agent_response', agent_response: 'Noted.' }),
     });
     await expect(resultPromise).resolves.toEqual({ handled: true, reason: 'answered', messageId: msg.messageId });
+  });
+});
+
+describe('attemptCarsonBridgePoc — WebSocket event sequencing', () => {
+  it('never sends user_message before conversation_initiation_metadata is received', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ signed_url: 'wss://fake' }),
+    }));
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p5', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+
+    const msg = makeMsg();
+    attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+
+    // Only conversation_initiation_client_data goes out on open — nothing
+    // else, and specifically no user_message, until metadata arrives.
+    expect(socket.sent).toHaveLength(1);
+    expect(socket.sent[0].type).toBe('conversation_initiation_client_data');
+    expect(socket.sent.some((m) => m.type === 'user_message')).toBe(false);
+
+    // A ping in between must not trigger a user_message either.
+    socket.emit('message', { data: JSON.stringify({ type: 'ping', ping_event: { event_id: 1 } }) });
+    expect(socket.sent.some((m) => m.type === 'user_message')).toBe(false);
+  });
+
+  it('sends user_message exactly once, immediately after metadata', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ signed_url: 'wss://fake' }),
+    }));
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p6', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+
+    const msg = makeMsg({ body: 'Can you check on the delivery?' });
+    attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', { data: JSON.stringify({ type: 'conversation_initiation_metadata' }) });
+
+    const userMessages = socket.sent.filter((m) => m.type === 'user_message');
+    expect(userMessages).toEqual([{ type: 'user_message', text: msg.body }]);
+
+    // A second, unrelated server event afterwards must not resend it.
+    socket.emit('message', { data: JSON.stringify({ type: 'ping', ping_event: { event_id: 2 } }) });
+    expect(socket.sent.filter((m) => m.type === 'user_message')).toHaveLength(1);
+  });
+
+  it('keeps the socket open after user_message — does not resolve or close while waiting for the agent response', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ signed_url: 'wss://fake' }),
+    }));
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p7', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+
+    const msg = makeMsg();
+    let settled = false;
+    const resultPromise = attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone })
+      .then((r) => { settled = true; return r; });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', { data: JSON.stringify({ type: 'conversation_initiation_metadata' }) });
+
+    // Give any wrongly-premature resolution a chance to happen.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(settled).toBe(false);
+    expect(socket.closeCalled).toBeUndefined();
+
+    // Only now does the turn actually complete.
+    socket.emit('message', { data: JSON.stringify({ type: 'agent_response', text: 'On it.' }) });
+    await resultPromise;
+    expect(settled).toBe(true);
+  });
+
+  it('a normal close (code 1000) before any agent response still fails diagnostically with the code and reason', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ signed_url: 'wss://fake' }),
+    }));
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p8', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const msg = makeMsg();
+    const resultPromise = attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', { data: JSON.stringify({ type: 'conversation_initiation_metadata' }) });
+    socket.emit('close', { code: 1000, reason: '' });
+
+    const result = await resultPromise;
+    expect(result).toEqual({ handled: false, reason: 'error', messageId: msg.messageId });
+    expect(consoleError).toHaveBeenCalledWith(
+      'Carson bridge PoC: turn failed',
+      expect.objectContaining({ error: 'carson_turn_closed_before_response code=1000 reason=none' }),
+    );
   });
 });
 

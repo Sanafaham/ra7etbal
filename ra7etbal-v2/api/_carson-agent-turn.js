@@ -86,7 +86,7 @@ export async function attemptCarsonBridgePoc({ supabaseUrl, serviceKey, msg, fin
 
   const startedAt = Date.now();
   try {
-    const agentText = await runCarsonTurn({ apiKey, agentId, person, staffText: body });
+    const agentText = await runCarsonTurn({ apiKey, agentId, staffText: body });
     console.log('Carson bridge PoC: turn complete', {
       messageId,
       personRole:      person.role || null,
@@ -131,7 +131,7 @@ async function getSignedUrl({ apiKey, agentId }) {
  * extraction below tries the nested shape first and falls back to a flat one
  * rather than throwing on a shape mismatch.
  */
-function runCarsonTurn({ apiKey, agentId, person, staffText }) {
+function runCarsonTurn({ apiKey, agentId, staffText }) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let socket;
@@ -177,7 +177,7 @@ function runCarsonTurn({ apiKey, agentId, person, staffText }) {
           } catch {
             return;
           }
-          handleServerEvent(payload, { socket, person, staffText, finish, resolve });
+          handleServerEvent(payload, { socket, staffText, finish, resolve });
         });
 
         socket.addEventListener('error', () => {
@@ -197,7 +197,7 @@ function runCarsonTurn({ apiKey, agentId, person, staffText }) {
   });
 }
 
-function handleServerEvent(payload, { socket, person, staffText, finish, resolve }) {
+function handleServerEvent(payload, { socket, staffText, finish, resolve }) {
   const type = payload?.type;
 
   switch (type) {
@@ -208,10 +208,12 @@ function handleServerEvent(payload, { socket, person, staffText, finish, resolve
     }
 
     case 'conversation_initiation_metadata': {
-      socket.send(JSON.stringify({
-        type: 'contextual_update',
-        text: buildContextNote(person),
-      }));
+      // Exactly one client message follows metadata: user_message. An
+      // earlier version also sent a contextual_update note here — two
+      // client messages in immediate succession at this point in the turn
+      // is the most likely reason production saw a normal (code 1000)
+      // server-initiated close before any response: this was the one
+      // deviation from the verified protocol sequence.
       socket.send(JSON.stringify({ type: 'user_message', text: staffText }));
       break;
     }
@@ -232,7 +234,7 @@ function handleServerEvent(payload, { socket, person, staffText, finish, resolve
     }
 
     case 'agent_response': {
-      const text = payload.agent_response_event?.agent_response ?? payload.agent_response ?? null;
+      const text = payload.agent_response_event?.agent_response ?? payload.agent_response ?? payload.text ?? null;
       finish(resolve, text);
       break;
     }
@@ -246,10 +248,4 @@ function handleServerEvent(payload, { socket, person, staffText, finish, resolve
       }
       break;
   }
-}
-
-function buildContextNote(person) {
-  const role = person.role ? String(person.role).slice(0, 80) : 'staff member';
-  const name = person.name ? String(person.name).slice(0, 80) : 'a staff member';
-  return `Incoming WhatsApp message from ${name}, ${role}, a known Ra7etBal staff member.`;
 }
