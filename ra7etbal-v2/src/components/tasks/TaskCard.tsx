@@ -6,6 +6,7 @@ import {
   formatReminderDueTime,
   isReminderOverdue,
 } from "../../lib/reminder-time";
+import { getNeedsYouTimestampLabel } from "../../lib/needs-you-timestamp";
 import { resolveQualityLifecycle } from "../../lib/quality-lifecycle";
 import { openWhatsAppMessage, sendWhatsAppTask } from "../../lib/whatsapp";
 import { submitSubstituteDecision, type SubstituteDecision } from "../../lib/quality-substitute-decision";
@@ -20,6 +21,10 @@ interface Props {
   now?: Date;
   onToggleDone: (task: Task) => Promise<unknown>;
   onDelete: (task: Task) => Promise<unknown>;
+  /** True only when this card is rendered inside the Needs You list — shows
+   * a truthful timestamp for why/when the task became owner action. Not
+   * shown in Waiting, History, or any other TaskCard usage. */
+  isNeedsYouCard?: boolean;
 }
 
 // 3 calm color groups:
@@ -43,6 +48,7 @@ export default function TaskCard({
   now,
   onToggleDone,
   onDelete,
+  isNeedsYouCard = false,
 }: Props) {
   const type = TYPE_META[task.type] ?? TYPE_META.action;
   const [busy, setBusy] = useState<"done" | "delete" | "send" | null>(null);
@@ -80,6 +86,16 @@ export default function TaskCard({
   const showSubstituteReview = qualityLifecycle.state === "needs_owner_decision";
   const showProofImage = Boolean(signedProofImageUrl && !isOperationalProofCorrection);
   const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;
+  const needsYouTimestampLabel = isNeedsYouCard ? getNeedsYouTimestampLabel(task, now) : null;
+  // The followup/delegation "Sent ..." line below already shows created_at
+  // truthfully — don't repeat the same instant under a second label when
+  // no more specific Needs You reason (review/escalation/due time) applies.
+  const showNeedsYouTimestamp =
+    needsYouTimestampLabel &&
+    !(
+      (task.type === "followup" || task.type === "delegation") &&
+      needsYouTimestampLabel.startsWith("Created ")
+    );
 
   async function toggle() {
     if (busy) return;
@@ -211,6 +227,10 @@ export default function TaskCard({
         <p className="mt-1 text-[11px] text-ink/40">
           {formatFollowUpSentTime(task.created_at)}
         </p>
+      )}
+
+      {showNeedsYouTimestamp && (
+        <p className="mt-1 text-[11px] text-ink/40">{needsYouTimestampLabel}</p>
       )}
 
       {signedImageUrl && (
