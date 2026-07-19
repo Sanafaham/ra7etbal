@@ -76,6 +76,24 @@ Status: merged and deployed.
 
 Protect separation between restored typed history, newly selected image context, and tool execution. Never allow an old task or old recipient to inherit a newly selected image.
 
+### Universal Timestamp System V1A — Type to Carson display + automation run timestamps
+
+Status: completed and production verified. Production verification date: 2026-07-19. (PR #31, merged as `a32f8f40a0eb345669cec67c938cac439bf3a29b`, deployed to `www.ra7etbal.com` / `ra7etbal.com`.)
+
+Do not reopen without a reproduced regression.
+
+Verified in production: Type to Carson message timestamps, restored history timestamps, date dividers, live message timestamps, message order preserved, Automation run timestamps.
+
+Protect: live typed messages, restored typed history, Clear Chat, and message order (unchanged — this only reads `created_at` off objects already flowing through `typedMessages` state); legacy Routines' `last_run_at` display; automation execution/scheduling (untouched, read-only widening of an existing Supabase select). No database migration, no API/serverless change.
+
+Known remaining gaps (from the original Universal Timestamp System audit, not part of V1A's scope — see "Universal Timestamp System V2 — remaining gaps" below):
+
+- Needs You timestamps
+- true completion timestamps in History
+- Waiting duration
+- task lifecycle timestamps
+- owner-decision and proof-event timestamps
+
 ## Current product rules
 
 ### Carson communication
@@ -186,15 +204,17 @@ Expected behavior: the morning brief should automatically include the owner's re
 
 Verification status: production deployment is ready. Sana's live morning-brief check is still required before this moves to Stable and protected.
 
-### Universal Timestamp System V1A — Type to Carson display + automation run timestamps
+### Universal Timestamp System V2 — remaining gaps
 
-Status: implemented. Not yet merged. (PR #31, branch `feat/timestamp-display-v1a`.)
+Status: not started. Universal Timestamp System V1A is complete and production-verified — see Stable and protected above. This entry tracks the gaps the original audit found that V1A intentionally left out of scope (display-only, zero-migration work):
 
-Context: a read-only audit found `carson_typed_messages.created_at` was already stored and fetched on every history load/live insert, but never rendered in the Type to Carson UI — and that the Automations screen's Supabase query for `automation_runs` selected only `automation_id, current_state, failure_reason`, omitting the already-existing `sent_at`/`confirmed_at`/`followup_sent_at`/`escalated_at`/`completed_at` columns.
+- Needs You timestamps (no persisted "when it became Needs You" or reason)
+- true completion timestamps in History (`tasks.confirmed_at` is currently overloaded between "worker confirmed" and "owner approved alternative")
+- Waiting duration (currently proxied by `created_at`, not a real "entered Waiting" timestamp)
+- task lifecycle timestamps (`proof_submitted_at`, `cancelled_at`, `owner_notified_at` do not exist)
+- owner-decision and proof-event timestamps (`quality_substitute_decisions` has only `processing_started_at`/`completed_at`; no "decision requested" / "decision submitted" pair)
 
-Fix: `CarsonTypedChat.tsx` now shows a per-message time label and a date divider ("Today" / "Yesterday" / weekday) whenever consecutive typed messages cross a calendar day, using day-comparison and formatting helpers exported (not duplicated) from `reminder-time.ts`. `Routines.tsx` now selects the existing `automation_runs` timestamp columns and displays the one matching the run's current state next to the existing status badge, mirroring `resolveStateConfig`'s own state priority. No database migration, no API/serverless change, no execution or scheduling behavior change — pure reads of existing columns plus display formatting.
-
-Focused tests passed: `carson-typed-messages.test.ts` (4), `routines.test.ts` (4), `Routines.test.ts` (7), `ElevenLabsAgentWidget.typed-mode.test.ts` (18), `ElevenLabsAgentWidget.direct-message-parity.test.ts` (3), `ElevenLabsAgentWidget.typed-delegation-execution.test.ts` (9), `ElevenLabsAgentWidget.sdk-config.test.ts` (6) — 51/51. Typecheck passed. Build passed. Live visual check not possible from this worktree (no Supabase credentials available locally) — Sana's live check in Type to Carson and the Automations screen is still required before this moves to Stable and protected.
+These require small additive `tasks` columns (a real migration, unlike V1A) — see the full audit for the smallest-safe-fix proposal before starting.
 
 Protect: live typed messages, restored typed history, Clear Chat, and message order (all unchanged — this only reads `created_at` off objects already flowing through `typedMessages` state); legacy Routines' `last_run_at` display; automation execution/scheduling (untouched, read-only widening of an existing Supabase select).
 
