@@ -312,7 +312,7 @@ describe('attemptCarsonBridgePoc — WebSocket event sequencing', () => {
     expect(settled).toBe(true);
   });
 
-  it('a normal close (code 1000) before any agent response still fails diagnostically with the code and reason', async () => {
+  it('a normal close (code 1000) before any agent response still fails diagnostically with the code, hasReason, and lastStep — never the raw reason', async () => {
     stubElevenLabsEnv();
     vi.stubGlobal('WebSocket', FakeWebSocket);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -330,19 +330,26 @@ describe('attemptCarsonBridgePoc — WebSocket event sequencing', () => {
     const socket = await waitForSocket();
     socket.emit('open');
     socket.emit('message', { data: JSON.stringify({ type: 'conversation_initiation_metadata' }) });
-    socket.emit('close', { code: 1000, reason: '' });
+    const sensitiveCloseReason = 'Override for field debug_secret_token_xyz is not allowed';
+    socket.emit('close', { code: 1000, reason: sensitiveCloseReason });
 
     const result = await resultPromise;
     expect(result).toEqual({ handled: false, reason: 'error', messageId: msg.messageId });
     expect(consoleError).toHaveBeenCalledWith(
       'Carson bridge PoC: turn failed',
-      expect.objectContaining({ error: 'carson_turn_closed_before_response code=1000 reason=none' }),
+      expect.objectContaining({
+        error: 'carson_turn_closed_before_response code=1000 hasReason=true lastStep=user_message_sent',
+      }),
     );
+
+    for (const call of consoleError.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain(sensitiveCloseReason);
+    }
   });
 });
 
 describe('attemptCarsonBridgePoc — diagnostic step logging', () => {
-  it('logs the six confirmed steps in order, with only safe fields (messageId/type/step/code/reason)', async () => {
+  it('logs the six confirmed steps in order, with only safe fields (messageId/type/step/code/hasReason)', async () => {
     stubElevenLabsEnv();
     vi.stubGlobal('WebSocket', FakeWebSocket);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -379,16 +386,18 @@ describe('attemptCarsonBridgePoc — diagnostic step logging', () => {
     expect(firstEventAfterUserMessage[1]).toEqual({ messageId: msg.messageId, type: 'agent_response' });
 
     // No log call anywhere contains the staff message text, a phone number,
-    // person data, prompts, tokens, credentials, or a full payload object.
+    // person name, person role, prompts, tokens, credentials, or a full
+    // payload object.
     for (const call of consoleLog.mock.calls) {
       const serialized = JSON.stringify(call);
       expect(serialized).not.toContain('Secret staff text');
       expect(serialized).not.toContain(msg.from);
       expect(serialized).not.toContain('Grace');
+      expect(serialized).not.toContain('household coordinator');
     }
   });
 
-  it('logs only "WS closed" with code/reason/lastStep when the server closes before any post-user_message event', async () => {
+  it('logs only "WS closed" with code/hasReason/lastStep (never the raw reason) when the server closes before any post-user_message event', async () => {
     stubElevenLabsEnv();
     vi.stubGlobal('WebSocket', FakeWebSocket);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -407,9 +416,12 @@ describe('attemptCarsonBridgePoc — diagnostic step logging', () => {
     const socket = await waitForSocket();
     socket.emit('open');
     socket.emit('message', { data: JSON.stringify({ type: 'conversation_initiation_metadata' }) });
-    // Reproduces the observed production failure: server closes (code 1000,
-    // no reason) with no further message event after user_message.
-    socket.emit('close', { code: 1000, reason: '' });
+    // Reproduces the observed production failure (code 1000, no further
+    // message event after user_message) with a non-empty, distinctive close
+    // reason so the test can prove that raw text is never logged anywhere,
+    // not just when the reason happens to be empty.
+    const sensitiveCloseReason = 'Override for field debug_secret_token_xyz is not allowed';
+    socket.emit('close', { code: 1000, reason: sensitiveCloseReason });
     await resultPromise;
 
     const diagCalls = consoleLog.mock.calls.filter(([label]) => typeof label === 'string' && label.startsWith('Carson bridge PoC:'));
@@ -429,9 +441,13 @@ describe('attemptCarsonBridgePoc — diagnostic step logging', () => {
     expect(closeCall[1]).toEqual({
       messageId: msg.messageId,
       code: 1000,
-      reason: 'none',
+      hasReason: true,
       lastStep: 'user_message_sent',
     });
+
+    for (const call of consoleLog.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain(sensitiveCloseReason);
+    }
   });
 });
 

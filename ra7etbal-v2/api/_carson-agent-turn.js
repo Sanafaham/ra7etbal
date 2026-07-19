@@ -89,7 +89,6 @@ export async function attemptCarsonBridgePoc({ supabaseUrl, serviceKey, msg, fin
     const agentText = await runCarsonTurn({ apiKey, agentId, staffText: body, messageId });
     console.log('Carson bridge PoC: turn complete', {
       messageId,
-      personRole:      person.role || null,
       responseReceived: agentText != null,
       responseLength:   agentText ? agentText.length : 0,
       elapsedMs:        Date.now() - startedAt,
@@ -205,20 +204,20 @@ function runCarsonTurn({ apiKey, agentId, staffText, messageId }) {
           finish(reject, new Error('carson_turn_socket_error'));
         });
 
-        // event.code/event.reason are the WebSocket close frame's code and
-        // UTF-8 reason text (never message content or secrets) — logging
-        // them, together with the last confirmed step, is what tells us
-        // *why* and *where* the server closed the connection.
+        // event.reason is untrusted, server-provided text — never logged or
+        // embedded in the diagnostic error, only whether one was present.
+        // event.code and the last confirmed step are what tell us *why* and
+        // *where* the server closed the connection.
         socket.addEventListener('close', (event) => {
           const code = event?.code ?? null;
-          const reason = event?.reason ? String(event.reason).slice(0, 200) : null;
+          const hasReason = Boolean(event?.reason);
           console.log('Carson bridge PoC: WS closed', {
             messageId,
             code,
-            reason: reason || 'none',
+            hasReason,
             lastStep: diag.lastStep,
           });
-          finish(reject, new Error(`carson_turn_closed_before_response code=${code} reason=${reason || 'none'}`));
+          finish(reject, new Error(`carson_turn_closed_before_response code=${code} hasReason=${hasReason} lastStep=${diag.lastStep}`));
         });
       })
       .catch((err) => finish(reject, err));
