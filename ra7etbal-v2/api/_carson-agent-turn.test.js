@@ -182,7 +182,6 @@ describe('attemptCarsonBridgePoc — one valid staff message reaches the product
       type: 'conversation_initiation_client_data',
       conversation_config_override: {
         conversation: { text_only: true },
-        agent: { prompt: { tool_ids: [] } },
       },
     });
 
@@ -250,7 +249,7 @@ describe('attemptCarsonBridgePoc — one valid staff message reaches the product
 });
 
 describe('attemptCarsonBridgePoc — conversation_initiation_client_data wire shape', () => {
-  it('the first serialized WebSocket message is exactly the required text-only + no-tools init payload', async () => {
+  it('the first serialized WebSocket message is exactly the required text-only-only init payload (tool_ids override removed for the isolation experiment)', async () => {
     stubElevenLabsEnv();
     vi.stubGlobal('WebSocket', FakeWebSocket);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -274,7 +273,11 @@ describe('attemptCarsonBridgePoc — conversation_initiation_client_data wire sh
 
     expect(initMessage.type).toBe('conversation_initiation_client_data');
     expect(initMessage.conversation_config_override.conversation.text_only).toBe(true);
-    expect(initMessage.conversation_config_override.agent.prompt.tool_ids).toEqual([]);
+
+    // No agent property anywhere in conversation_config_override, and no
+    // tool_ids field anywhere in the serialized payload at all.
+    expect(initMessage.conversation_config_override).not.toHaveProperty('agent');
+    expect(JSON.stringify(initMessage)).not.toContain('tool_ids');
 
     // No camelCase or duplicate/shadow field anywhere in the message that
     // could confuse a differently-implemented server-side parser.
@@ -289,7 +292,6 @@ describe('attemptCarsonBridgePoc — conversation_initiation_client_data wire sh
       type: 'conversation_initiation_client_data',
       conversation_config_override: {
         conversation: { text_only: true },
-        agent: { prompt: { tool_ids: [] } },
       },
     });
   });

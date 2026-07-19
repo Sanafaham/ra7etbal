@@ -253,11 +253,20 @@ function runCarsonTurn({ apiKey, agentId, staffText, messageId }) {
           console.log('Carson bridge PoC: WS opened', { messageId });
           diag.lastStep = 'ws_opened';
 
+          // Experimental: the tool_ids override is temporarily removed to
+          // isolate whether an empty conversation_config_override.agent.
+          // prompt.tool_ids array is what's causing ElevenLabs to report
+          // "Conversation initialization failed" (see the Conversation
+          // Details evidence gathered on production conversation
+          // conv_6401kxy1nyj6ern918nryxwh1rw8). No client tools are
+          // connected on this server-side turn either way -- the
+          // client_tool_call handler below still responds with a safe
+          // error result if Carson attempts one, so removing this override
+          // does not risk a stalled turn.
           socket.send(JSON.stringify({
             type: 'conversation_initiation_client_data',
             conversation_config_override: {
               conversation: { text_only: true },
-              agent:        { prompt: { tool_ids: [] } },
             },
           }));
           console.log('Carson bridge PoC: conversation_initiation_client_data sent', { messageId });
