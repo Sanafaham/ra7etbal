@@ -1,5 +1,25 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { CarsonTypedMessage } from "../../lib/carson-typed-messages";
+import {
+  formatDate,
+  formatTime,
+  formatWeekday,
+  isSameLocalDay,
+  isYesterday,
+} from "../../lib/reminder-time";
+
+/** "Today" / "Yesterday" / "Monday, June 12" (adds the year only when it
+ * differs from the current year) — used for date dividers between typed
+ * Carson messages sent on different calendar days. */
+function formatChatDayDivider(date: Date, now: Date): string {
+  if (isSameLocalDay(date, now)) return "Today";
+  if (isYesterday(date, now)) return "Yesterday";
+  const weekday = formatWeekday(date);
+  const monthDay = formatDate(date);
+  return date.getFullYear() === now.getFullYear()
+    ? `${weekday}, ${monthDay}`
+    : `${weekday}, ${monthDay}, ${date.getFullYear()}`;
+}
 
 interface TypedPhotoPreview {
   id: string;
@@ -115,31 +135,57 @@ export default function CarsonTypedChat({
           </div>
         )}
 
-        {messages.map((message) => (
-          <div
-            key={message.id}
-            className={message.role === "user" ? "flex justify-end" : "flex justify-start"}
-          >
-            <div
-              className={
-                "max-w-[86%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed " +
-                (message.role === "user"
-                  ? "rounded-br-md bg-charcoal text-white"
-                  : "rounded-bl-md border border-charcoal/10 bg-warm-white text-ink/80")
-              }
-            >
-              <p className="whitespace-pre-wrap break-words">{message.content}</p>
-              {message.role === "user" &&
-                (message.delivery_status === "interrupted" || message.delivery_status === "failed") && (
-                  <p className="mt-1 text-[10px] text-white/65">
-                    {message.delivery_status === "interrupted"
-                      ? "Interrupted before Carson replied. It was not resent."
-                      : "Not delivered."}
-                  </p>
-                )}
+        {messages.map((message, index) => {
+          const messageDate = new Date(message.created_at);
+          const previousDate = index > 0 ? new Date(messages[index - 1].created_at) : null;
+          const showDayDivider =
+            !Number.isNaN(messageDate.getTime()) &&
+            (!previousDate || !isSameLocalDay(messageDate, previousDate));
+
+          return (
+            <div key={message.id}>
+              {showDayDivider && (
+                <div className="my-3 flex items-center justify-center">
+                  <span className="rounded-full bg-charcoal/5 px-3 py-1 text-[11px] font-medium text-ink/45">
+                    {formatChatDayDivider(messageDate, new Date())}
+                  </span>
+                </div>
+              )}
+              <div
+                className={message.role === "user" ? "flex justify-end" : "flex justify-start"}
+              >
+                <div
+                  className={
+                    "max-w-[86%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed " +
+                    (message.role === "user"
+                      ? "rounded-br-md bg-charcoal text-white"
+                      : "rounded-bl-md border border-charcoal/10 bg-warm-white text-ink/80")
+                  }
+                >
+                  <p className="whitespace-pre-wrap break-words">{message.content}</p>
+                  {message.role === "user" &&
+                    (message.delivery_status === "interrupted" || message.delivery_status === "failed") && (
+                      <p className="mt-1 text-[10px] text-white/65">
+                        {message.delivery_status === "interrupted"
+                          ? "Interrupted before Carson replied. It was not resent."
+                          : "Not delivered."}
+                      </p>
+                    )}
+                  {!Number.isNaN(messageDate.getTime()) && (
+                    <p
+                      className={
+                        "mt-1 text-[10px] " +
+                        (message.role === "user" ? "text-right text-white/50" : "text-ink/40")
+                      }
+                    >
+                      {formatTime(messageDate)}
+                    </p>
+                  )}
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {awaitingResponse && (
           <div className="flex justify-start">

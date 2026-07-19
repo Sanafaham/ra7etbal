@@ -76,7 +76,7 @@ function formatOverdue(diffMs: number): string {
   return `Overdue by ${days} ${days === 1 ? "day" : "days"}`;
 }
 
-function isSameLocalDay(a: Date, b: Date): boolean {
+export function isSameLocalDay(a: Date, b: Date): boolean {
   return (
     a.getFullYear() === b.getFullYear() &&
     a.getMonth() === b.getMonth() &&
@@ -90,7 +90,7 @@ function isTomorrow(date: Date, now: Date): boolean {
   return isSameLocalDay(date, tomorrow);
 }
 
-function isYesterday(date: Date, now: Date): boolean {
+export function isYesterday(date: Date, now: Date): boolean {
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
   return isSameLocalDay(date, yesterday);
@@ -107,18 +107,18 @@ function startOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-function formatTime(date: Date): string {
+export function formatTime(date: Date): string {
   return date.toLocaleTimeString(undefined, {
     hour: "numeric",
     minute: "2-digit",
   });
 }
 
-function formatWeekday(date: Date): string {
+export function formatWeekday(date: Date): string {
   return date.toLocaleDateString(undefined, { weekday: "long" });
 }
 
-function formatDate(date: Date): string {
+export function formatDate(date: Date): string {
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
