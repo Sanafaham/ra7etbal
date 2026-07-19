@@ -76,23 +76,47 @@ Status: merged and deployed.
 
 Protect separation between restored typed history, newly selected image context, and tool execution. Never allow an old task or old recipient to inherit a newly selected image.
 
-### Universal Timestamp System V1A — Type to Carson display + automation run timestamps
+### Universal Timestamp System (V1A + V2A)
 
-Status: completed and production verified. Production verification date: 2026-07-19. (PR #31, merged as `a32f8f40a0eb345669cec67c938cac439bf3a29b`, deployed to `www.ra7etbal.com` / `ra7etbal.com`.)
+Status: COMPLETED. PRODUCTION VERIFIED. STABLE. PROTECTED.
 
-Do not reopen without a reproduced regression.
+Production verification date: 2026-07-19. Verified by Sana on canonical production at `https://www.ra7etbal.com`.
 
-Verified in production: Type to Carson message timestamps, restored history timestamps, date dividers, live message timestamps, message order preserved, Automation run timestamps.
+Releases:
+- V1A — PR #31, merge commit `a32f8f40a0eb345669cec67c938cac439bf3a29b`
+- V2A — PR #34, merge commit `7a6349a2a64f498f2cdebe141e412fae73cbd6af`
 
-Protect: live typed messages, restored typed history, Clear Chat, and message order (unchanged — this only reads `created_at` off objects already flowing through `typedMessages` state); legacy Routines' `last_run_at` display; automation execution/scheduling (untouched, read-only widening of an existing Supabase select). No database migration, no API/serverless change.
+Do not reopen this work because of an idea, cleanup proposal, consistency preference, refactor, or best-practice suggestion. Reopen only when Sana explicitly approves a product change, or a reproduced production regression is documented with screenshots and exact steps.
 
-Known remaining gaps (from the original Universal Timestamp System audit, not part of V1A's scope — see "Universal Timestamp System V2 — remaining gaps" below):
+**Production-verified behavior:**
 
-- Needs You timestamps
-- true completion timestamps in History
-- Waiting duration
-- task lifecycle timestamps
-- owner-decision and proof-event timestamps
+1. Type to Carson — every stored chat message shows its time; messages crossing calendar days show date dividers; history restoration and Clear Chat remain working.
+2. Needs You — every card shows a truthful available timestamp, using the most relevant real timestamp available; never invents a "Needs You since" timestamp. Valid labels: Reviewed, Escalated, Due, Overdue, Created.
+3. Waiting — delegation cards show their sent date and time.
+4. To-do — to-do cards show their creation date and time.
+5. Notes — notes show their creation date and time.
+6. Automations — automation cards show the relevant run event and time (e.g. Reminder sent, confirmation, escalation, completion, next run).
+7. History — completed task cards show their existing stored sent date and time.
+
+**Permanent rules:**
+
+1. Do not remove these timestamp displays.
+2. Do not hide, rename, replace, or simplify them without Sana's explicit approval.
+3. Do not change their meaning.
+4. Do not substitute one event timestamp for another event.
+5. Do not invent missing timestamps.
+6. Do not infer a lifecycle event time when the event was not persisted.
+7. Always display timestamps in the owner's local device timezone unless an explicitly approved product change says otherwise.
+8. Preserve date dividers in Type to Carson.
+9. Preserve per-message times in Type to Carson.
+10. Preserve truthful fallback labels such as "Created" when no more specific lifecycle timestamp exists.
+11. Future work may add missing lifecycle timestamps, but it must be additive.
+12. Future timestamp work must not break or rewrite the production-verified V1A or V2A displays.
+13. Do not touch protected systems while working on timestamps, including: Talk to Carson, Type to Carson session architecture, typed history restoration, Clear Chat, Morning Brief, Night Sweep, reminders, Automations execution, WhatsApp, delegations, owner decisions, Quality Intelligence, proof upload, hosting, calendar, Notes, To-do.
+14. Do not reopen this work because of an idea, cleanup proposal, consistency preference, refactor, or best-practice suggestion.
+15. Reopen only when Sana explicitly approves a product change, or a reproduced production regression is documented with screenshots and exact steps.
+
+Implementation detail (unchanged from the original entries, kept for reference): live typed messages, restored typed history, Clear Chat, and message order read `created_at` off objects already flowing through `typedMessages` state; legacy Routines' `last_run_at` display and automation execution/scheduling are untouched (read-only widening of an existing Supabase select); Needs You timestamps come from `src/lib/needs-you-timestamp.ts` (`getNeedsYouTimestampLabel`), which mirrors but never reads or modifies `isNeedsYouTask()`'s classification in `daily-brief.ts`. No database migration, no API/serverless change, for either release.
 
 ## Current product rules
 
@@ -204,30 +228,20 @@ Expected behavior: the morning brief should automatically include the owner's re
 
 Verification status: production deployment is ready. Sana's live morning-brief check is still required before this moves to Stable and protected.
 
-### Universal Timestamp System V2A — truthful Needs You card timestamps
+### Universal Timestamp System V2 — remaining future work (not defects)
 
-Status: implemented. Not yet merged. (Branch `feat/needs-you-timestamp-v2a`.)
+Status: not started. Kept separate from the production-verified, protected Universal Timestamp System baseline (see Stable and protected above). These are additive future improvements, not defects in the verified timestamp display — do not present them as bugs:
 
-Every Needs You card now shows a truthful timestamp for why/when it became owner action, via new `src/lib/needs-you-timestamp.ts` (`getNeedsYouTimestampLabel`, pure function). Priority mirrors — but does not read or modify — `isNeedsYouTask()`'s existing classification in `daily-brief.ts`: `quality_reviewed_at` when the task needs an owner review/decision ("Reviewed today at 9:00 AM"), else `escalated_at` when escalated ("Escalated today at 8:30 AM"), else the existing `formatReminderDueTime()` for overdue/due-today reminders (reused as-is), else a plain, honestly-labeled `created_at` fallback ("Created Jul 17 at 10:00 AM") — never "Needs You since" unless that's truly what the timestamp represents. No timestamp is invented; a task with no valid timestamp at all shows nothing.
+- true completion timestamps in History
+- precise Waiting duration
+- persisted Needs You entry time
+- missing task lifecycle event timestamps
+- owner-decision timestamps
+- proof-submission timestamps
+- cancellation timestamps
+- owner-notification timestamps
 
-Wired into `TaskCard.tsx` behind a new `isNeedsYouCard` prop (default false), passed only from the Needs You list in `Updates.tsx`. Waiting, History, and every other `TaskCard` usage are unaffected. Suppresses the label when it would duplicate the existing "Sent ..." line already shown for followup/delegation cards.
-
-Focused tests passed: `needs-you-timestamp.test.ts` (6, new) + `updates-reminders.test.ts` (5) + `daily-brief.test.ts` (12) + `Updates.test.ts` (14) + `TaskCard.quality.test.ts` (7) + `TaskCard.test.ts` (8) — 52/52. Typecheck passed. Build passed. Live visual check not yet done — Sana's live check on the Needs You tab is still required before this moves to Stable and protected.
-
-Protect: Needs You classification (`isNeedsYouTask`, untouched); Waiting, History, and all other `TaskCard` usages (unaffected — new prop defaults to off); reminders, automations, delegations, WhatsApp, Morning Brief, Carson, Type to Carson, and Automation timestamps (none touched).
-
-### Universal Timestamp System V2 — remaining gaps
-
-Status: not started. This entry tracks the gaps the original audit found that V1A/V2A intentionally left out of scope (both were display-only, zero-migration work):
-
-- true completion timestamps in History (`tasks.confirmed_at` is currently overloaded between "worker confirmed" and "owner approved alternative")
-- Waiting duration (currently proxied by `created_at`, not a real "entered Waiting" timestamp)
-- task lifecycle timestamps (`proof_submitted_at`, `cancelled_at`, `owner_notified_at` do not exist)
-- owner-decision and proof-event timestamps (`quality_substitute_decisions` has only `processing_started_at`/`completed_at`; no "decision requested" / "decision submitted" pair)
-
-These require small additive `tasks` columns (a real migration, unlike V1A/V2A) — see the full audit for the smallest-safe-fix proposal before starting.
-
-Protect: live typed messages, restored typed history, Clear Chat, and message order (all unchanged — this only reads `created_at` off objects already flowing through `typedMessages` state); legacy Routines' `last_run_at` display; automation execution/scheduling (untouched, read-only widening of an existing Supabase select); Needs You card timestamps (see V2A above).
+These require small additive `tasks`/related-table columns (a real migration, unlike V1A/V2A, which were display-only and zero-migration) — see the full audit for the smallest-safe-fix proposal before starting. Any future work here must be additive and must not break or rewrite the production-verified V1A/V2A displays.
 
 ### PWA authentication or notification restoration difference
 
