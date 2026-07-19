@@ -51,6 +51,29 @@ async function waitForSocket() {
   return FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
 }
 
+// Routes fetch calls to get-signed-url vs. the conversation details
+// endpoint by URL, so a single mock can serve both without per-test
+// call-order assumptions. detailsResponses are served in order, one per
+// call; the last entry repeats for any calls beyond the array length.
+function makeFetchRouter({ signedUrl = 'wss://fake', detailsResponses = [] } = {}) {
+  let detailsCallIndex = 0;
+  return vi.fn(async (url) => {
+    const urlStr = String(url);
+    if (urlStr.includes('get-signed-url')) {
+      return { ok: true, json: async () => ({ signed_url: signedUrl }) };
+    }
+    if (urlStr.includes('/convai/conversations/')) {
+      const resp = detailsResponses[Math.min(detailsCallIndex, detailsResponses.length - 1)];
+      detailsCallIndex++;
+      if (resp?.httpError) {
+        return { ok: false, status: resp.httpError };
+      }
+      return { ok: true, json: async () => resp };
+    }
+    return { ok: true, json: async () => ({}) };
+  });
+}
+
 describe('attemptCarsonBridgePoc — staff identity gate', () => {
   it('ignores an unknown sender and never contacts Carson', async () => {
     stubElevenLabsEnv();
@@ -448,6 +471,216 @@ describe('attemptCarsonBridgePoc — diagnostic step logging', () => {
     for (const call of consoleLog.mock.calls) {
       expect(JSON.stringify(call)).not.toContain(sensitiveCloseReason);
     }
+  });
+});
+
+describe('attemptCarsonBridgePoc — conversation details lookup on premature close', () => {
+  it('extracts conversation_id from conversation_initiation_metadata_event and uses it in the details lookup URL', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const fetchMock = makeFetchRouter({
+      detailsResponses: [{ conversation_id: 'conv_abc123', status: 'done', metadata: {} }],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p11', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+    const msg = makeMsg();
+    const resultPromise = attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      data: JSON.stringify({
+        type: 'conversation_initiation_metadata',
+        conversation_initiation_metadata_event: { conversation_id: 'conv_abc123' },
+      }),
+    });
+    socket.emit('close', { code: 1000, reason: '' });
+    await resultPromise;
+
+    const detailsCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/convai/conversations/'));
+    expect(detailsCall[0]).toBe('https://api.elevenlabs.io/v1/convai/conversations/conv_abc123');
+    expect(detailsCall[1]).toEqual({ headers: { 'xi-api-key': 'test-key' } });
+  });
+
+  it('never calls the conversation details API when the turn completes successfully', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const fetchMock = makeFetchRouter();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p12', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+    const msg = makeMsg();
+    const resultPromise = attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      data: JSON.stringify({
+        type: 'conversation_initiation_metadata',
+        conversation_initiation_metadata_event: { conversation_id: 'conv_success' },
+      }),
+    });
+    socket.emit('message', { data: JSON.stringify({ type: 'agent_response', text: 'On it.' }) });
+    await resultPromise;
+
+    const detailsCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/convai/conversations/'));
+    expect(detailsCall).toBeUndefined();
+  });
+
+  it('does not perform a details lookup if close fires after the turn already succeeded', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const fetchMock = makeFetchRouter();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p13', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+    const msg = makeMsg();
+    const resultPromise = attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      data: JSON.stringify({
+        type: 'conversation_initiation_metadata',
+        conversation_initiation_metadata_event: { conversation_id: 'conv_late_close' },
+      }),
+    });
+    socket.emit('message', { data: JSON.stringify({ type: 'agent_response', text: 'On it.' }) });
+    await resultPromise;
+
+    // Simulates the real WebSocket eventually firing 'close' after our own
+    // finish()-triggered socket.close() call on a successful turn — proves
+    // the settled guard, not just that FakeWebSocket.close() is a no-op.
+    socket.emit('close', { code: 1000, reason: '' });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const detailsCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/convai/conversations/'));
+    expect(detailsCall).toBeUndefined();
+  });
+
+  it('logs only safe classification fields from the conversation details response, never transcript text or sensitive content', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const sensitiveTranscriptMessage = 'Grace said the WiFi password is hunter2';
+    const fetchMock = makeFetchRouter({
+      detailsResponses: [{
+        conversation_id: 'conv_safe_test',
+        agent_id: 'agent_test123',
+        status: 'done',
+        transcript: [
+          { role: 'user', time_in_call_secs: 1, message: sensitiveTranscriptMessage },
+          { role: 'agent', time_in_call_secs: 2, message: 'Some agent reply text' },
+        ],
+        metadata: {
+          termination_reason: 'client disconnected',
+          text_only: true,
+          authorization_method: 'signed_url',
+          error: null,
+          main_language: 'en',
+          dynamic_variables: { person_name: 'Grace', person_phone: '971501234567' },
+        },
+        version_id: 'v1',
+        branch_id: 'main',
+      }],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p14', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+    const msg = makeMsg({ body: 'staff message text' });
+    const resultPromise = attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      data: JSON.stringify({
+        type: 'conversation_initiation_metadata',
+        conversation_initiation_metadata_event: { conversation_id: 'conv_safe_test' },
+      }),
+    });
+    socket.emit('close', { code: 1000, reason: '' });
+    await resultPromise;
+
+    const detailsLog = consoleLog.mock.calls.find(([label]) => label === 'Carson bridge PoC: conversation details');
+    expect(detailsLog).toBeDefined();
+    expect(detailsLog[1]).toEqual({
+      messageId: msg.messageId,
+      conversationId: 'conv_safe_test',
+      status: 'done',
+      terminationReason: 'client disconnected',
+      hasUserTranscript: true,
+      hasAgentTranscript: true,
+      userTranscriptEntries: 1,
+      agentTranscriptEntries: 1,
+      textOnly: true,
+      authorizationMethod: 'signed_url',
+      versionId: 'v1',
+      branchId: 'main',
+      hasError: false,
+    });
+
+    for (const call of consoleLog.mock.calls) {
+      const serialized = JSON.stringify(call);
+      expect(serialized).not.toContain(sensitiveTranscriptMessage);
+      expect(serialized).not.toContain('Some agent reply text');
+      expect(serialized).not.toContain('staff message text');
+      expect(serialized).not.toContain(msg.from);
+      expect(serialized).not.toContain('Grace');
+      expect(serialized).not.toContain('household coordinator');
+      expect(serialized).not.toContain('dynamic_variables');
+      expect(serialized).not.toContain('person_phone');
+    }
+  });
+
+  it('retries a "processing" conversation status a bounded number of times, then stops', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const fetchMock = makeFetchRouter({
+      detailsResponses: [
+        { conversation_id: 'conv_retry', status: 'processing', metadata: {} },
+        { conversation_id: 'conv_retry', status: 'processing', metadata: {} },
+        { conversation_id: 'conv_retry', status: 'processing', metadata: {} },
+        { conversation_id: 'conv_retry', status: 'processing', metadata: {} }, // would only be hit if unbounded
+      ],
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p15', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+    const msg = makeMsg();
+    const resultPromise = attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      data: JSON.stringify({
+        type: 'conversation_initiation_metadata',
+        conversation_initiation_metadata_event: { conversation_id: 'conv_retry' },
+      }),
+    });
+    socket.emit('close', { code: 1000, reason: '' });
+    await resultPromise;
+
+    const detailsCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/convai/conversations/'));
+    expect(detailsCalls).toHaveLength(3); // strict small bound — never a 4th attempt
+
+    const detailsLog = consoleLog.mock.calls.find(([label]) => label === 'Carson bridge PoC: conversation details');
+    expect(detailsLog[1].status).toBe('processing');
   });
 });
 

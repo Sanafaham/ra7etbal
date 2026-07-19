@@ -14,10 +14,17 @@
  */
 
 const SIGNED_URL_ENDPOINT = 'https://api.elevenlabs.io/v1/convai/conversation/get-signed-url';
+const CONVERSATION_DETAILS_ENDPOINT = 'https://api.elevenlabs.io/v1/convai/conversations';
 
 // Leaves headroom under the function's 60s maxDuration for the surrounding
 // webhook logic (delivery-status/consent handling, logging) to still run.
 const TURN_TIMEOUT_MS = 45000;
+
+// Diagnostic-only lookup, run after a premature close. Small, strict bound:
+// the first attempt plus up to two retries (three total) if the API reports
+// the conversation is still "processing", with a short pause between tries.
+const DETAILS_MAX_ATTEMPTS = 3;
+const DETAILS_RETRY_DELAY_MS = 300;
 
 // Best-effort, in-process idempotency only — bounded to the current warm
 // container, not durable across cold starts or concurrent instances. This
@@ -120,6 +127,82 @@ async function getSignedUrl({ apiKey, agentId }) {
 }
 
 /**
+ * Diagnostic-only: after a premature close, ask ElevenLabs' own Conversation
+ * Details API why. Never throws — any failure here is logged as a safe
+ * classification and swallowed, since this must never affect the turn's own
+ * failure outcome. Retries briefly, within a strict small bound, only while
+ * the API reports the conversation is still "processing".
+ */
+async function fetchConversationDetailsSafely({ apiKey, conversationId, messageId }) {
+  for (let attempt = 1; attempt <= DETAILS_MAX_ATTEMPTS; attempt++) {
+    let response;
+    try {
+      response = await fetch(
+        `${CONVERSATION_DETAILS_ENDPOINT}/${encodeURIComponent(conversationId)}`,
+        { headers: { 'xi-api-key': apiKey } },
+      );
+    } catch {
+      console.log('Carson bridge PoC: conversation details lookup errored', { messageId, attempt });
+      return;
+    }
+
+    if (!response.ok) {
+      console.log('Carson bridge PoC: conversation details lookup failed', {
+        messageId,
+        attempt,
+        httpStatus: response.status,
+      });
+      return;
+    }
+
+    const data = await response.json().catch(() => null);
+    if (!data) {
+      console.log('Carson bridge PoC: conversation details lookup returned no data', { messageId, attempt });
+      return;
+    }
+
+    if (data.status === 'processing' && attempt < DETAILS_MAX_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, DETAILS_RETRY_DELAY_MS));
+      continue;
+    }
+
+    logSafeConversationDetails({ messageId, data });
+    return;
+  }
+}
+
+/**
+ * Logs only structural/classification fields confirmed present in
+ * ElevenLabs' documented Conversation Details response — never transcript
+ * text, phone numbers, person data, prompts, dynamic-variable values,
+ * credentials, or the full response object.
+ */
+function logSafeConversationDetails({ messageId, data }) {
+  const transcript = Array.isArray(data.transcript) ? data.transcript : [];
+  const userTranscriptEntries = transcript.filter((entry) => entry?.role === 'user').length;
+  const agentTranscriptEntries = transcript.filter((entry) => entry?.role === 'agent').length;
+  const terminationReason = data.metadata?.termination_reason
+    ? String(data.metadata.termination_reason).slice(0, 200)
+    : null;
+
+  console.log('Carson bridge PoC: conversation details', {
+    messageId,
+    conversationId: data.conversation_id || null,
+    status: data.status || null,
+    terminationReason,
+    hasUserTranscript: userTranscriptEntries > 0,
+    hasAgentTranscript: agentTranscriptEntries > 0,
+    userTranscriptEntries,
+    agentTranscriptEntries,
+    textOnly: typeof data.metadata?.text_only === 'boolean' ? data.metadata.text_only : null,
+    authorizationMethod: data.metadata?.authorization_method || null,
+    versionId: data.version_id || null,
+    branchId: data.branch_id || null,
+    hasError: Boolean(data.metadata?.error),
+  });
+}
+
+/**
  * Drives exactly one text-only Carson turn over the ElevenLabs Conversational
  * AI WebSocket and resolves with the agent's final text response.
  *
@@ -140,7 +223,7 @@ function runCarsonTurn({ apiKey, agentId, staffText, messageId }) {
     // to identify exactly how far the turn got — messageId/type/step are
     // the only diagnostic fields logged; never message content, phone,
     // person data, prompts, tokens, credentials, or full payloads.
-    const diag = { lastStep: 'signed_url_requested', firstPostUserMessageEventLogged: false };
+    const diag = { lastStep: 'signed_url_requested', firstPostUserMessageEventLogged: false, conversationId: null };
 
     const finish = (fn, value) => {
       if (settled) return;
@@ -209,6 +292,11 @@ function runCarsonTurn({ apiKey, agentId, staffText, messageId }) {
         // event.code and the last confirmed step are what tell us *why* and
         // *where* the server closed the connection.
         socket.addEventListener('close', (event) => {
+          // A close fired after we already succeeded is just our own
+          // post-resolve cleanup (finish() calls socket.close()) — nothing
+          // to diagnose, and no conversation-details call to make.
+          if (settled) return;
+
           const code = event?.code ?? null;
           const hasReason = Boolean(event?.reason);
           console.log('Carson bridge PoC: WS closed', {
@@ -217,7 +305,15 @@ function runCarsonTurn({ apiKey, agentId, staffText, messageId }) {
             hasReason,
             lastStep: diag.lastStep,
           });
-          finish(reject, new Error(`carson_turn_closed_before_response code=${code} hasReason=${hasReason} lastStep=${diag.lastStep}`));
+
+          const conversationId = diag.conversationId;
+          const lookup = conversationId
+            ? fetchConversationDetailsSafely({ apiKey, conversationId, messageId }).catch(() => {})
+            : Promise.resolve();
+
+          lookup.finally(() => {
+            finish(reject, new Error(`carson_turn_closed_before_response code=${code} hasReason=${hasReason} lastStep=${diag.lastStep}`));
+          });
         });
       })
       .catch((err) => finish(reject, err));
@@ -235,6 +331,7 @@ function handleServerEvent(payload, { socket, staffText, finish, resolve, messag
     }
 
     case 'conversation_initiation_metadata': {
+      diag.conversationId = payload.conversation_initiation_metadata_event?.conversation_id ?? null;
       console.log('Carson bridge PoC: conversation_initiation_metadata received', { messageId });
       diag.lastStep = 'metadata_received';
 
