@@ -186,6 +186,18 @@ Expected behavior: the morning brief should automatically include the owner's re
 
 Verification status: production deployment is ready. Sana's live morning-brief check is still required before this moves to Stable and protected.
 
+### Universal Timestamp System V1A — Type to Carson display + automation run timestamps
+
+Status: implemented. Not yet merged. (PR #31, branch `feat/timestamp-display-v1a`.)
+
+Context: a read-only audit found `carson_typed_messages.created_at` was already stored and fetched on every history load/live insert, but never rendered in the Type to Carson UI — and that the Automations screen's Supabase query for `automation_runs` selected only `automation_id, current_state, failure_reason`, omitting the already-existing `sent_at`/`confirmed_at`/`followup_sent_at`/`escalated_at`/`completed_at` columns.
+
+Fix: `CarsonTypedChat.tsx` now shows a per-message time label and a date divider ("Today" / "Yesterday" / weekday) whenever consecutive typed messages cross a calendar day, using day-comparison and formatting helpers exported (not duplicated) from `reminder-time.ts`. `Routines.tsx` now selects the existing `automation_runs` timestamp columns and displays the one matching the run's current state next to the existing status badge, mirroring `resolveStateConfig`'s own state priority. No database migration, no API/serverless change, no execution or scheduling behavior change — pure reads of existing columns plus display formatting.
+
+Focused tests passed: `carson-typed-messages.test.ts` (4), `routines.test.ts` (4), `Routines.test.ts` (7), `ElevenLabsAgentWidget.typed-mode.test.ts` (18), `ElevenLabsAgentWidget.direct-message-parity.test.ts` (3), `ElevenLabsAgentWidget.typed-delegation-execution.test.ts` (9), `ElevenLabsAgentWidget.sdk-config.test.ts` (6) — 51/51. Typecheck passed. Build passed. Live visual check not possible from this worktree (no Supabase credentials available locally) — Sana's live check in Type to Carson and the Automations screen is still required before this moves to Stable and protected.
+
+Protect: live typed messages, restored typed history, Clear Chat, and message order (all unchanged — this only reads `created_at` off objects already flowing through `typedMessages` state); legacy Routines' `last_run_at` display; automation execution/scheduling (untouched, read-only widening of an existing Supabase select).
+
 ### PWA authentication or notification restoration difference
 
 Observed behavior: browser sign-in restores notifications, while the installed home-screen PWA may not restore them in the same way.
