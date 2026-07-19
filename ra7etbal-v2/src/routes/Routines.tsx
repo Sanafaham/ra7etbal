@@ -38,6 +38,35 @@ export interface AutomationRunRow {
   automation_id: string;
   current_state: string;
   failure_reason: string | null;
+  created_at: string;
+  sent_at: string | null;
+  confirmed_at: string | null;
+  followup_sent_at: string | null;
+  escalated_at: string | null;
+  completed_at: string | null;
+}
+
+/** The run already has a per-state timestamp column; pick whichever one
+ * matches the current state (falling back to created_at) rather than
+ * inventing a generic "last updated" label. Mirrors the state priority
+ * resolveStateConfig() already uses below. */
+function latestRunTimestampLabel(run: AutomationRunRow): string | null {
+  const iso =
+    run.completed_at ??
+    run.escalated_at ??
+    run.followup_sent_at ??
+    run.confirmed_at ??
+    run.sent_at ??
+    run.created_at;
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
 function automationCadenceLabel(row: AutomationRow): string {
@@ -318,7 +347,9 @@ export default function Routines({ headerless = false }: { headerless?: boolean 
     }
     const { data: runs } = await supabase
       .from("automation_runs")
-      .select("automation_id, current_state, failure_reason")
+      .select(
+        "automation_id, current_state, failure_reason, created_at, sent_at, confirmed_at, followup_sent_at, escalated_at, completed_at",
+      )
       .in("automation_id", ids)
       .order("created_at", { ascending: false });
 
@@ -1107,6 +1138,7 @@ function AutomationCard({
     latestRun?.current_state === "failed" || latestRun?.current_state === "skipped"
       ? latestRun.failure_reason
       : null;
+  const latestRunTimestamp = latestRun ? latestRunTimestampLabel(latestRun) : null;
   const isActive = automation.status === "active";
   const isPaused = automation.status === "paused";
 
@@ -1153,6 +1185,9 @@ function AutomationCard({
           <div className="flex items-center gap-1.5 pt-0.5">
             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${state.dot}`} />
             <span className={`text-[11px] font-medium ${state.text}`}>{state.label}</span>
+            {latestRunTimestamp && !unsupportedRecurringWhatsapp && (
+              <span className="text-[11px] text-ink/35">· {latestRunTimestamp}</span>
+            )}
           </div>
           {failureReason && (
             <p className={`text-[11px] leading-snug ${unsupportedRecurringWhatsapp ? "text-ink/45" : "text-red-600/80"}`}>
