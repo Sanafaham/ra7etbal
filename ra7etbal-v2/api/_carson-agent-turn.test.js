@@ -341,6 +341,100 @@ describe('attemptCarsonBridgePoc — WebSocket event sequencing', () => {
   });
 });
 
+describe('attemptCarsonBridgePoc — diagnostic step logging', () => {
+  it('logs the six confirmed steps in order, with only safe fields (messageId/type/step/code/reason)', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ signed_url: 'wss://fake' }),
+    }));
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p9', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const msg = makeMsg({ body: 'Secret staff text that must never appear in logs' });
+    const resultPromise = attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', { data: JSON.stringify({ type: 'conversation_initiation_metadata' }) });
+    socket.emit('message', { data: JSON.stringify({ type: 'agent_response', text: 'On it.' }) });
+    await resultPromise;
+
+    const diagCalls = consoleLog.mock.calls.filter(([label]) => typeof label === 'string' && label.startsWith('Carson bridge PoC:'));
+    const labels = diagCalls.map(([label]) => label);
+
+    expect(labels).toEqual([
+      'Carson bridge PoC: WS opened',
+      'Carson bridge PoC: conversation_initiation_client_data sent',
+      'Carson bridge PoC: conversation_initiation_metadata received',
+      'Carson bridge PoC: user_message sent',
+      'Carson bridge PoC: first event after user_message',
+      'Carson bridge PoC: turn complete',
+    ]);
+
+    const firstEventAfterUserMessage = diagCalls.find(([label]) => label === 'Carson bridge PoC: first event after user_message');
+    expect(firstEventAfterUserMessage[1]).toEqual({ messageId: msg.messageId, type: 'agent_response' });
+
+    // No log call anywhere contains the staff message text, a phone number,
+    // person data, prompts, tokens, credentials, or a full payload object.
+    for (const call of consoleLog.mock.calls) {
+      const serialized = JSON.stringify(call);
+      expect(serialized).not.toContain('Secret staff text');
+      expect(serialized).not.toContain(msg.from);
+      expect(serialized).not.toContain('Grace');
+    }
+  });
+
+  it('logs only "WS closed" with code/reason/lastStep when the server closes before any post-user_message event', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ signed_url: 'wss://fake' }),
+    }));
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p10', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const msg = makeMsg();
+    const resultPromise = attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg, findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', { data: JSON.stringify({ type: 'conversation_initiation_metadata' }) });
+    // Reproduces the observed production failure: server closes (code 1000,
+    // no reason) with no further message event after user_message.
+    socket.emit('close', { code: 1000, reason: '' });
+    await resultPromise;
+
+    const diagCalls = consoleLog.mock.calls.filter(([label]) => typeof label === 'string' && label.startsWith('Carson bridge PoC:'));
+    const labels = diagCalls.map(([label]) => label);
+
+    expect(labels).toEqual([
+      'Carson bridge PoC: WS opened',
+      'Carson bridge PoC: conversation_initiation_client_data sent',
+      'Carson bridge PoC: conversation_initiation_metadata received',
+      'Carson bridge PoC: user_message sent',
+      'Carson bridge PoC: WS closed',
+    ]);
+    // No "first event after user_message" — proves nothing came back at all.
+    expect(labels).not.toContain('Carson bridge PoC: first event after user_message');
+
+    const closeCall = diagCalls.find(([label]) => label === 'Carson bridge PoC: WS closed');
+    expect(closeCall[1]).toEqual({
+      messageId: msg.messageId,
+      code: 1000,
+      reason: 'none',
+      lastStep: 'user_message_sent',
+    });
+  });
+});
+
 describe('attemptCarsonBridgePoc — idempotency on the real Meta message id', () => {
   it('a duplicate message id is skipped without a second identity lookup or Carson call', async () => {
     stubElevenLabsEnv();
