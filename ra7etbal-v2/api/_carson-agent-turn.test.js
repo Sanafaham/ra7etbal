@@ -249,6 +249,52 @@ describe('attemptCarsonBridgePoc — one valid staff message reaches the product
   });
 });
 
+describe('attemptCarsonBridgePoc — conversation_initiation_client_data wire shape', () => {
+  it('the first serialized WebSocket message is exactly the required text-only + no-tools init payload', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ signed_url: 'wss://fake' }),
+    }));
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p16', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+
+    attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg: makeMsg(), findPersonByPhone });
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+
+    // socket.sent[0] is FakeWebSocket's JSON.parse(data) of what send()
+    // actually received — i.e. the real serialized wire content, not the
+    // pre-serialization JS object, so this rules out any JSON.stringify
+    // data loss as well as a wrong-key/wrong-nesting/camelCase mistake.
+    const initMessage = socket.sent[0];
+
+    expect(initMessage.type).toBe('conversation_initiation_client_data');
+    expect(initMessage.conversation_config_override.conversation.text_only).toBe(true);
+    expect(initMessage.conversation_config_override.agent.prompt.tool_ids).toEqual([]);
+
+    // No camelCase or duplicate/shadow field anywhere in the message that
+    // could confuse a differently-implemented server-side parser.
+    expect(initMessage).not.toHaveProperty('conversation_config_override.conversation.textOnly');
+    expect(initMessage).not.toHaveProperty('textOnly');
+    expect(initMessage).not.toHaveProperty('text_only');
+    expect(initMessage.conversation_config_override.conversation).not.toHaveProperty('textOnly');
+
+    // Exact full shape — an exhaustive match, not a partial toMatchObject,
+    // so an accidental extra sibling key would also fail this test.
+    expect(initMessage).toEqual({
+      type: 'conversation_initiation_client_data',
+      conversation_config_override: {
+        conversation: { text_only: true },
+        agent: { prompt: { tool_ids: [] } },
+      },
+    });
+  });
+});
+
 describe('attemptCarsonBridgePoc — WebSocket event sequencing', () => {
   it('never sends user_message before conversation_initiation_metadata is received', async () => {
     stubElevenLabsEnv();
