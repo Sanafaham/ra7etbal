@@ -184,8 +184,13 @@ function runCarsonTurn({ apiKey, agentId, person, staffText }) {
           finish(reject, new Error('carson_turn_socket_error'));
         });
 
-        socket.addEventListener('close', () => {
-          finish(reject, new Error('carson_turn_closed_before_response'));
+        // event.code/event.reason are the WebSocket close frame's code and
+        // UTF-8 reason text (never message content or secrets) — logging
+        // them is what tells us *why* the server closed the connection.
+        socket.addEventListener('close', (event) => {
+          const code = event?.code ?? null;
+          const reason = event?.reason ? String(event.reason).slice(0, 200) : null;
+          finish(reject, new Error(`carson_turn_closed_before_response code=${code} reason=${reason || 'none'}`));
         });
       })
       .catch((err) => finish(reject, err));
