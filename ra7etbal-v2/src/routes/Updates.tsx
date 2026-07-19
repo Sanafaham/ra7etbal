@@ -357,6 +357,7 @@ export default function Updates() {
                     task={task}
                     message={messageByTaskId.get(task.id) ?? null}
                     recipientPhone={task.assigned_to ? phoneByName.get(task.assigned_to.trim().toLowerCase()) ?? null : null}
+                    isNeedsYouCard
                     {...sharedTaskProps}
                   />
                 </li>
