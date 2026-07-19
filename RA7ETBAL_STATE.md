@@ -204,19 +204,30 @@ Expected behavior: the morning brief should automatically include the owner's re
 
 Verification status: production deployment is ready. Sana's live morning-brief check is still required before this moves to Stable and protected.
 
+### Universal Timestamp System V2A — truthful Needs You card timestamps
+
+Status: implemented. Not yet merged. (Branch `feat/needs-you-timestamp-v2a`.)
+
+Every Needs You card now shows a truthful timestamp for why/when it became owner action, via new `src/lib/needs-you-timestamp.ts` (`getNeedsYouTimestampLabel`, pure function). Priority mirrors — but does not read or modify — `isNeedsYouTask()`'s existing classification in `daily-brief.ts`: `quality_reviewed_at` when the task needs an owner review/decision ("Reviewed today at 9:00 AM"), else `escalated_at` when escalated ("Escalated today at 8:30 AM"), else the existing `formatReminderDueTime()` for overdue/due-today reminders (reused as-is), else a plain, honestly-labeled `created_at` fallback ("Created Jul 17 at 10:00 AM") — never "Needs You since" unless that's truly what the timestamp represents. No timestamp is invented; a task with no valid timestamp at all shows nothing.
+
+Wired into `TaskCard.tsx` behind a new `isNeedsYouCard` prop (default false), passed only from the Needs You list in `Updates.tsx`. Waiting, History, and every other `TaskCard` usage are unaffected. Suppresses the label when it would duplicate the existing "Sent ..." line already shown for followup/delegation cards.
+
+Focused tests passed: `needs-you-timestamp.test.ts` (6, new) + `updates-reminders.test.ts` (5) + `daily-brief.test.ts` (12) + `Updates.test.ts` (14) + `TaskCard.quality.test.ts` (7) + `TaskCard.test.ts` (8) — 52/52. Typecheck passed. Build passed. Live visual check not yet done — Sana's live check on the Needs You tab is still required before this moves to Stable and protected.
+
+Protect: Needs You classification (`isNeedsYouTask`, untouched); Waiting, History, and all other `TaskCard` usages (unaffected — new prop defaults to off); reminders, automations, delegations, WhatsApp, Morning Brief, Carson, Type to Carson, and Automation timestamps (none touched).
+
 ### Universal Timestamp System V2 — remaining gaps
 
-Status: not started. Universal Timestamp System V1A is complete and production-verified — see Stable and protected above. This entry tracks the gaps the original audit found that V1A intentionally left out of scope (display-only, zero-migration work):
+Status: not started. This entry tracks the gaps the original audit found that V1A/V2A intentionally left out of scope (both were display-only, zero-migration work):
 
-- Needs You timestamps (no persisted "when it became Needs You" or reason)
 - true completion timestamps in History (`tasks.confirmed_at` is currently overloaded between "worker confirmed" and "owner approved alternative")
 - Waiting duration (currently proxied by `created_at`, not a real "entered Waiting" timestamp)
 - task lifecycle timestamps (`proof_submitted_at`, `cancelled_at`, `owner_notified_at` do not exist)
 - owner-decision and proof-event timestamps (`quality_substitute_decisions` has only `processing_started_at`/`completed_at`; no "decision requested" / "decision submitted" pair)
 
-These require small additive `tasks` columns (a real migration, unlike V1A) — see the full audit for the smallest-safe-fix proposal before starting.
+These require small additive `tasks` columns (a real migration, unlike V1A/V2A) — see the full audit for the smallest-safe-fix proposal before starting.
 
-Protect: live typed messages, restored typed history, Clear Chat, and message order (all unchanged — this only reads `created_at` off objects already flowing through `typedMessages` state); legacy Routines' `last_run_at` display; automation execution/scheduling (untouched, read-only widening of an existing Supabase select).
+Protect: live typed messages, restored typed history, Clear Chat, and message order (all unchanged — this only reads `created_at` off objects already flowing through `typedMessages` state); legacy Routines' `last_run_at` display; automation execution/scheduling (untouched, read-only widening of an existing Supabase select); Needs You card timestamps (see V2A above).
 
 ### PWA authentication or notification restoration difference
 
