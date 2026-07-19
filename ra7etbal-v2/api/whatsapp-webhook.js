@@ -1,5 +1,13 @@
 import { buildSmsBody, sendTwilioSms } from './send-whatsapp-task.js';
 import { sendOwnerPush } from './task-confirm.js';
+import { attemptCarsonBridgePoc } from './_carson-agent-turn.js';
+
+// One text-only Carson turn (WebSocket round trip to ElevenLabs) can run
+// longer than the platform default. Matches the maxDuration already used by
+// task-confirm.js and send-whatsapp-task.js for their own slow external
+// calls. Existing delivery-status/consent handling is unaffected — it still
+// completes in well under a second either way.
+export const config = { maxDuration: 60 };
 
 const ALLOWED_STATUSES = new Set(['sent', 'delivered', 'read', 'failed']);
 const DELIVERY_STATUS_RANK = {
@@ -86,20 +94,39 @@ export default async function handler(req, res) {
     console.warn('WhatsApp delivery persistence warnings', { failed: failedDeliveryUpdates });
   }
 
-  // --- Process inbound messages (consent replies) ---
+  // --- Process inbound messages (consent replies, then the Carson bridge PoC) ---
   const consentResults = [];
+  const carsonBridgeResults = [];
   for (const msg of inboundMessages) {
     const result = await handleInboundConsentReply({ supabaseUrl, serviceKey, msg });
     consentResults.push(result);
+
+    // Read-only proof of concept: a message that isn't a consent reply is
+    // handed to the Carson bridge to *log* a response only. This must never
+    // throw past this point or block Meta's ack — same fail-open discipline
+    // as recordWebhookHeartbeat above.
+    if (!result.handled && result.reason === 'not_consent_reply') {
+      const bridgeResult = await attemptCarsonBridgePoc({
+        supabaseUrl,
+        serviceKey,
+        msg,
+        findPersonByPhone,
+      }).catch((err) => {
+        console.error('Carson bridge PoC: unexpected failure', { error: err?.message || String(err) });
+        return { handled: false, reason: 'error' };
+      });
+      carsonBridgeResults.push(bridgeResult);
+    }
   }
 
   return res.status(200).json({
-    success:         true,
-    statusProcessed: statusResults.length,
-    statusUpdated:   statusResults.filter((r) => r.updated).length,
-    deliveryMatched: deliveryResults.filter((r) => r.matched).length,
-    deliveryUpdated: deliveryResults.filter((r) => r.updated).length,
-    consentHandled:  consentResults.filter((r) => r.handled).length,
+    success:            true,
+    statusProcessed:    statusResults.length,
+    statusUpdated:      statusResults.filter((r) => r.updated).length,
+    deliveryMatched:    deliveryResults.filter((r) => r.matched).length,
+    deliveryUpdated:    deliveryResults.filter((r) => r.updated).length,
+    consentHandled:     consentResults.filter((r) => r.handled).length,
+    carsonBridgeHandled: carsonBridgeResults.filter((r) => r.handled).length,
   });
 }
 
@@ -163,7 +190,7 @@ async function handleInboundConsentReply({ supabaseUrl, serviceKey, msg }) {
 // Supabase helpers
 // ---------------------------------------------------------------------------
 
-async function findPersonByPhone({ supabaseUrl, serviceKey, rawPhone }) {
+export async function findPersonByPhone({ supabaseUrl, serviceKey, rawPhone }) {
   // rawPhone from Meta is digits only without leading +.
   // people.phone may be stored as "+971501234567", "00971...", or "0501234567".
   // We strip all non-digits and use a LIKE suffix match on the last 9 digits,
@@ -173,8 +200,11 @@ async function findPersonByPhone({ supabaseUrl, serviceKey, rawPhone }) {
 
   const suffix = digits.slice(-9); // last 9 digits are unique enough
 
+  // is_family / whatsapp_opted_in are selected for the Carson bridge PoC's
+  // staff-identity gate (api/_carson-agent-turn.js) — handleInboundConsentReply
+  // below doesn't use them, so this is a purely additive widening.
   const response = await fetch(
-    `${supabaseUrl}/rest/v1/people?select=id,user_id,name,phone`,
+    `${supabaseUrl}/rest/v1/people?select=id,user_id,name,phone,role,is_family,whatsapp_opted_in`,
     {
       headers: {
         apikey:        serviceKey,

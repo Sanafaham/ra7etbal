@@ -14,6 +14,10 @@ const taskConfirmMocks = vi.hoisted(() => ({
   sendOwnerPush: vi.fn(async () => {}),
 }));
 
+const carsonBridgeMocks = vi.hoisted(() => ({
+  attemptCarsonBridgePoc: vi.fn(async () => ({ handled: true, reason: 'answered' })),
+}));
+
 vi.mock('./send-whatsapp-task.js', () => ({
   buildSmsBody: smsMocks.buildSmsBody,
   sendTwilioSms: smsMocks.sendTwilioSms,
@@ -23,7 +27,11 @@ vi.mock('./task-confirm.js', () => ({
   sendOwnerPush: taskConfirmMocks.sendOwnerPush,
 }));
 
-import {
+vi.mock('./_carson-agent-turn.js', () => ({
+  attemptCarsonBridgePoc: carsonBridgeMocks.attemptCarsonBridgePoc,
+}));
+
+import handler, {
   attemptAutomationMessageSmsFallback,
   buildDeliveryStatusPatch,
   getFailureDetails,
@@ -37,7 +45,36 @@ afterEach(() => {
   smsMocks.buildSmsBody.mockClear();
   smsMocks.sendTwilioSms.mockClear();
   taskConfirmMocks.sendOwnerPush.mockClear();
+  carsonBridgeMocks.attemptCarsonBridgePoc.mockClear();
 });
+
+function makeReqRes(body) {
+  const res = {
+    statusCode: null,
+    body: null,
+    status(code) { this.statusCode = code; return this; },
+    json(payload) { this.body = payload; return this; },
+  };
+  return { req: { method: 'POST', body }, res };
+}
+
+function inboundMessagePayload({ from = '971501234567', messageId, text }) {
+  return {
+    entry: [{
+      changes: [{
+        value: {
+          messages: [{ from, id: messageId, type: 'text', text: { body: text }, timestamp: '1700000000' }],
+        },
+      }],
+    }],
+  };
+}
+
+function stubBaseEnv() {
+  vi.stubEnv('SUPABASE_URL', 'https://x.supabase.co');
+  vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
+  vi.stubEnv('WHATSAPP_PHONE_NUMBER_ID', ''); // keeps recordWebhookHeartbeat a no-op
+}
 
 describe('WhatsApp delivery status progression', () => {
   it('advances accepted through sent, delivered, and read with timestamps', () => {
@@ -654,3 +691,76 @@ function jsonResponse(body, status = 200) {
     text: vi.fn().mockResolvedValue(JSON.stringify(body)),
   };
 }
+
+describe('POST /api/whatsapp-webhook — Carson bridge PoC dispatch (read-only)', () => {
+  it('a consent reply still uses the existing consent path and never reaches the Carson bridge', async () => {
+    stubBaseEnv();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([]))); // findPersonByPhone -> no match, consent flow no-ops safely
+
+    const { req, res } = makeReqRes(
+      inboundMessagePayload({ messageId: 'wamid.consent-1', text: 'STOP' }),
+    );
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(carsonBridgeMocks.attemptCarsonBridgePoc).not.toHaveBeenCalled();
+  });
+
+  it('one valid non-consent staff message calls the Carson bridge exactly once', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn(); // consent check exits before ever calling fetch for a non-consent body
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { req, res } = makeReqRes(
+      inboundMessagePayload({
+        messageId: 'wamid.staff-1',
+        text: 'We are out of strawberries. What should I do?',
+      }),
+    );
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.carsonBridgeHandled).toBe(1);
+    expect(carsonBridgeMocks.attemptCarsonBridgePoc).toHaveBeenCalledTimes(1);
+    expect(carsonBridgeMocks.attemptCarsonBridgePoc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        msg: expect.objectContaining({ messageId: 'wamid.staff-1', body: 'We are out of strawberries. What should I do?' }),
+        findPersonByPhone: expect.any(Function),
+      }),
+    );
+  });
+
+  it('dispatching a staff message causes no outbound WhatsApp send and no database write', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { req, res } = makeReqRes(
+      inboundMessagePayload({ messageId: 'wamid.staff-2', text: 'Can you check on the delivery?' }),
+    );
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    // Zero Supabase/network calls at the dispatch layer itself — the bridge
+    // module is mocked here and asserted separately in
+    // _carson-agent-turn.test.js, so this proves the webhook handler adds no
+    // side effects of its own beyond delegating to it.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(smsMocks.sendTwilioSms).not.toHaveBeenCalled();
+    expect(taskConfirmMocks.sendOwnerPush).not.toHaveBeenCalled();
+  });
+
+  it('a status-only payload (no inbound messages) never touches the Carson bridge', async () => {
+    stubBaseEnv();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ id: 'msg-1' })));
+
+    const { req, res } = makeReqRes({
+      entry: [{ changes: [{ value: { statuses: [{ id: 'wamid.status-1', status: 'delivered', timestamp: '1700000000' }] } }] }],
+    });
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(carsonBridgeMocks.attemptCarsonBridgePoc).not.toHaveBeenCalled();
+  });
+});
