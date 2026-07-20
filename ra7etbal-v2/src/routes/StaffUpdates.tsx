@@ -58,7 +58,12 @@ export interface StaffUpdatesViewProps {
 
 /** Pure presentational component — no hooks, no data fetching. */
 export function StaffUpdatesView({ headerless, status, error, messages, now, onRetry }: StaffUpdatesViewProps) {
-  const initialLoading = status === "loading" && messages.length === 0;
+  // "idle" is the pre-fetch window while auth is still resolving (the
+  // stateful wrapper's reload() early-returns until userId is known) — it
+  // must render as loading, not as a premature "nothing needs attention"
+  // empty state, or the owner would briefly see a false-truthful message
+  // before Carson has actually checked.
+  const initialLoading = (status === "loading" || status === "idle") && messages.length === 0;
 
   return (
     <section className="space-y-3">

@@ -37,6 +37,13 @@ function baseMessage(overrides: Partial<StaffMessage> = {}): StaffMessage {
 }
 
 describe("StaffUpdatesView", () => {
+  it("does not show the empty-state message while auth is still resolving (status idle) — that would be premature, not truthful", () => {
+    const html = renderToStaticMarkup(
+      <StaffUpdatesView headerless status="idle" error={null} messages={[]} now={NOW} onRetry={() => {}} />,
+    );
+    expect(html).not.toContain("No staff messages need your attention.");
+  });
+
   it("1. empty state renders truthfully — no rows, not loading, not erroring", () => {
     const html = renderToStaticMarkup(
       <StaffUpdatesView headerless status="ready" error={null} messages={[]} now={NOW} onRetry={() => {}} />,
