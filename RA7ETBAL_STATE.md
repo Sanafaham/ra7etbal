@@ -168,6 +168,24 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ## Known current issues and near-term priorities
 
+### Transport-independent staff communication engine (Issue #46)
+
+Status: implemented. DB layer applied and verified live. Not yet merged. No live production UI testing performed (per task scope — this is a backend engine with a focused test harness, not a UI change).
+
+What it is: a canonical, transport-independent pipeline that lets a staff member's message be classified, answered directly or escalated, and persisted — without ElevenLabs or WhatsApp, both currently blocked/unavailable transports. There is still only one Carson: this is the first place Carson's staff-facing reasoning runs as a direct Claude call rather than only inside the ElevenLabs dashboard-configured agent (see `api/_carson-agent-turn.js`, an existing read-only PoC that tunnels into ElevenLabs — untouched, not reused, since it depends on the currently-blocked transport). Any future transport (WhatsApp inbound, a rebuilt ElevenLabs bridge) must call through this same module.
+
+Schema: new table `public.staff_messages` (migration `supabase/migrations/20260720_create_staff_messages.sql`), with four `SECURITY DEFINER` functions as the only insert/update path: `claim_staff_message` (atomically verifies person_id/task_id belong to the caller's user_id and that the sender is not `is_family`, idempotent on `(user_id, source, external_message_id)`), `complete_staff_message` (claimed → completed, idempotent no-op if already completed), `fail_staff_message` (claimed → failed), `retry_staff_message` (failed → claimed, explicit recovery only, returns `is_retried` so callers can't double-process a losing race). RLS: owner-only `SELECT`; `EXECUTE` on all four functions revoked from `PUBLIC`/`anon`/`authenticated`, granted only to `service_role`. Applied to the live Supabase project (`ggarvhgqzpooloacjgcj`) and verified with temporary fixtures (cross-household rejection, family exclusion, idempotency including source-scoping, full claimed/completed/failed/retried state machine, person-deletion history preservation) — all fixtures fully cleaned up, zero residue, confirmed by count query.
+
+Application layer: `api/_staff-comms-engine.js` (`processStaffMessage`), underscore-prefixed so it doesn't count against the Hobby 12-function cap. Loads person/task/household-rules/recent-memory context scoped by `user_id`, calls Claude directly (`claude-sonnet-4-6`, same pattern as `api/_quality-review.js`) with a narrow staff-reply system prompt, strictly re-validates the model's JSON output against the DB's own enums before trusting it, and never writes to `public.tasks` — a `completion_confirmation` classification only marks the staff *message* `Completed`, never the underlying task (that stays exclusively inside the protected `api/task-confirm.js` proof/confirmation pipeline).
+
+Test interface: `api/_staff-comms-engine.test.js`, 12 focused Vitest tests (all passing) covering the 8 scenarios from issue #46 plus Claude-failure handling and pure-function edge cases — the preferred "focused test harness" option per the issue, so no new API route or Hobby-cap slot was used.
+
+Independent review (separate agent, `review:bug-hunter`): 0 critical/high/medium findings across second-Carson risk, cross-household leakage, idempotency, false completion, accidental ElevenLabs/WhatsApp changes, and test-meaningfulness (2 findings mutation-tested to confirm the tests actually fail without the implementation). One Low/nit, not a blocker: if `fail_staff_message` itself throws inside the outer catch block's nested try/catch, the row is left silently stuck in `claimed` with no distinguishing signal — logged at the same level as normal errors. Left as a documented follow-up, not fixed in this task (narrow, pre-existing-shape gap, not a regression risk to protected behavior).
+
+Remaining for issue #46, deferred until ElevenLabs is unblocked (explicit non-goal of this task): wiring an actual transport (WhatsApp inbound or ElevenLabs) to call `processStaffMessage`; owner-facing UI surfacing of escalations (currently persisted on `staff_messages.escalation_reason`/`user_facing_state`/`next_action_owner` only, not yet shown in any UI — "do not redesign the UI" was an explicit non-goal here).
+
+Protect: this table/module design must not be duplicated by a future transport integration — reuse `processStaffMessage`, do not build a second reasoning path.
+
 ### Typed Carson delegation execution regression fix
 
 Status: implemented. Not yet merged.
