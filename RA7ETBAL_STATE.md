@@ -170,7 +170,7 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ### Transport-independent staff communication engine (Issue #46)
 
-Status: implemented. DB layer applied and verified live. Not yet merged. No live production UI testing performed (per task scope — this is a backend engine with a focused test harness, not a UI change).
+Status: implemented, merged (PR #47, merge commit `e7a8e56c59b27f6f3857d68c0a2ec3b825ac5353`), deployed to production (`www.ra7etbal.com`). No live production UI testing performed (per task scope — this was a backend engine with a focused test harness, not a UI change).
 
 What it is: a canonical, transport-independent pipeline that lets a staff member's message be classified, answered directly or escalated, and persisted — without ElevenLabs or WhatsApp, both currently blocked/unavailable transports. There is still only one Carson: this is the first place Carson's staff-facing reasoning runs as a direct Claude call rather than only inside the ElevenLabs dashboard-configured agent (see `api/_carson-agent-turn.js`, an existing read-only PoC that tunnels into ElevenLabs — untouched, not reused, since it depends on the currently-blocked transport). Any future transport (WhatsApp inbound, a rebuilt ElevenLabs bridge) must call through this same module.
 
@@ -185,6 +185,26 @@ Independent review (separate agent, `review:bug-hunter`): 0 critical/high/medium
 Remaining for issue #46, deferred until ElevenLabs is unblocked (explicit non-goal of this task): wiring an actual transport (WhatsApp inbound or ElevenLabs) to call `processStaffMessage`; owner-facing UI surfacing of escalations (currently persisted on `staff_messages.escalation_reason`/`user_facing_state`/`next_action_owner` only, not yet shown in any UI — "do not redesign the UI" was an explicit non-goal here).
 
 Protect: this table/module design must not be duplicated by a future transport integration — reuse `processStaffMessage`, do not build a second reasoning path.
+
+### Owner visibility for staff communications V1
+
+Status: implemented. Not yet merged, PR open against `main`.
+
+What it is: a read-only "Staff" tab added to the existing Updates screen (`src/routes/Updates.tsx`, the same tab bar that already hosts Needs You / Waiting / To-do / Notes / Automations / History), showing every `staff_messages` row the owner is allowed to see: staff name, their message, Carson's response (when present), the current state (Waiting / Needs You / Completed / In Progress), who owns the next action, the exact decision needed (when `owner_attention_required` is true), when the message arrived, and linked task context when available. No reply, approve/reject, or outbound-messaging controls — display only.
+
+UI location: `/updates?tab=staff`.
+
+Files: `src/types/staff-message.ts` (new type), `src/lib/staff-messages.ts` (new — `listStaffMessages()`, RLS-only, no manual `user_id` filter, same anon-key `supabase` client as `messages.ts`/`people.ts`/`tasks.ts`; `getStaffMessageDisplayState()` implementing the exact Needs-You-if-either-signal-is-true rule from the spec, nothing invented), `src/routes/StaffUpdates.tsx` (new — a stateful data-fetching wrapper plus pure, hook-free `StaffUpdatesView`/`StaffMessageCard` exports so rendering logic is unit-testable without a DOM/testing-library dependency), `src/routes/Updates.tsx` (edited — one new tab entry + one new conditional render block, mirroring how To-do/Notes/Automations already render as self-contained `headerless` components). Card styling reuses `TaskCard.tsx`'s existing badge language (`rounded-full border ... text-[10px] font-medium uppercase tracking-wide`, rose/amber/sky/emerald semantics) rather than inventing new visual language. No schema change, no new dependency, no new state-management layer (plain `useState`/`useEffect`, matching `Inbox.tsx`'s existing pattern for a self-contained tab).
+
+Internal fields (`processing_status`, `processing_error`, `external_message_id`, `user_id`, `person_id`, `thread_id`, `source`, raw row `id`) are never selected by the query and never rendered — `id` is used only as a React list key.
+
+Tests: `src/lib/staff-messages.test.ts` (6) + `src/routes/StaffUpdates.test.tsx` (14) — the 10 scenarios required by this task (empty state, Needs You with escalation reason, Waiting with next-action-owner, Completed label, Carson response shown/omitted safely, linked task context shown/omitted safely, internal fields never rendered, fetch error contained without breaking the parent screen, no cross-household filter surface). Plus `src/routes/Updates.test.ts`'s pre-existing 6-tab regression guard updated to 7 tabs (this branch's own change legitimately added the 7th; the guard now protects against an 8th being silently added). 34/34 passing. Typecheck and production build both clean.
+
+Independent review (separate agent, `review:bug-hunter`, mutation-tested): zero write paths, zero service_role reference, zero cross-household exposure surface, zero duplication of `daily-brief.ts`/`needs-you-timestamp.ts` logic, zero internal-field leakage — all confirmed via mutation testing (introducing each failure mode and confirming the relevant test catches it, then reverting). One High finding (the stale 6-tab regression-guard test) — fixed before delivery.
+
+Known limitation: no live transport (WhatsApp/ElevenLabs) calls `processStaffMessage()` yet, so this tab is expected to show its empty state ("No staff messages need your attention.") in production until a transport is wired — this is truthful, not a bug, and the empty-state copy never mentions ElevenLabs, transports, or implementation status.
+
+Protect: this is a read-only view. Do not add write/reply/approve controls here without a separate, explicitly-scoped task.
 
 ### Typed Carson delegation execution regression fix
 

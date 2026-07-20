@@ -6,8 +6,9 @@ const SOURCE = readFileSync(join(__dirname, "Updates.tsx"), "utf-8");
 
 /**
  * Clear My Head and the internal Inbox tab were removed from the product.
- * Updates now has exactly 6 tabs: Needs You / Waiting / To-do / Notes /
- * Automations / History.
+ * Updates now has exactly 7 tabs: Needs You / Waiting / To-do / Notes /
+ * Automations / Staff / History. Staff (Owner Visibility V1) was added
+ * after the original 6-tab baseline — read-only staff_messages records.
  */
 describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
   it("no longer has a tab labeled \"Inbox\" or the clear-my-head tab id", () => {
@@ -22,6 +23,7 @@ describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
     expect(SOURCE).toMatch(/\{ id: "todo",\s*label: "To-do"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "inbox",\s*label: "Notes"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "routines",\s*label: "Automations"\s*\}/);
+    expect(SOURCE).toMatch(/\{ id: "staff",\s*label: "Staff"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "history",\s*label: "History"\s*\}/);
   });
 
@@ -43,13 +45,13 @@ describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
  * from genuine (including keyboard-driven) user interaction.
  */
 describe("Updates.tsx — chip auto-scroll does not self-pause", () => {
-  it("TABS is exactly these 6 entries, in order, with no seventh tab silently added back", () => {
+  it("TABS is exactly these 7 entries, in order, with no eighth tab silently added back", () => {
     const tabsBlock = SOURCE.slice(
       SOURCE.indexOf("const TABS: { id: Tab; label: string }[] = ["),
       SOURCE.indexOf("];", SOURCE.indexOf("const TABS: { id: Tab; label: string }[] = [")),
     );
     const ids = [...tabsBlock.matchAll(/\{ id: "([a-z-]+)",/g)].map((m) => m[1]);
-    expect(ids).toEqual(["needs-you", "waiting", "todo", "inbox", "routines", "history"]);
+    expect(ids).toEqual(["needs-you", "waiting", "todo", "inbox", "routines", "staff", "history"]);
     expect(SOURCE).toMatch(/\[\.\.\.TABS, \.\.\.TABS\]\.map/);
   });
 
