@@ -19,9 +19,10 @@ import type { Task } from "../types/task";
 import Inbox from "./Inbox";
 import Todos from "./Todos";
 import Routines from "./Routines";
+import StaffUpdates from "./StaffUpdates";
 import { advanceChipScrollLeft, shouldAdvanceChipAutoScroll } from "../lib/chip-auto-scroll";
 
-type Tab = "needs-you" | "waiting" | "todo" | "inbox" | "routines" | "history";
+type Tab = "needs-you" | "waiting" | "todo" | "inbox" | "routines" | "staff" | "history";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "needs-you",     label: "Needs You" },
@@ -29,6 +30,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "todo",          label: "To-do"     },
   { id: "inbox",         label: "Notes"     },
   { id: "routines",      label: "Automations"  },
+  { id: "staff",         label: "Staff"     },
   { id: "history",       label: "History"   },
 ];
 
@@ -324,7 +326,7 @@ export default function Updates() {
       </div>
 
       {/* ── Error ── */}
-      {tasksError && tasksStatus !== "loading" && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && (
+      {tasksError && tasksStatus !== "loading" && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && activeTab !== "staff" && (
         <AuthNotice kind="error">
           {tasksError}{" "}
           <button type="button" onClick={reload} className="ml-1 underline">
@@ -334,7 +336,7 @@ export default function Updates() {
       )}
 
       {/* ── Initial loading (task-based tabs only) ── */}
-      {initialLoading && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && (
+      {initialLoading && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && activeTab !== "staff" && (
         <div className="flex items-center justify-center py-12 text-ink/60">
           <Spinner size={20} label="Loading" />
         </div>
@@ -456,6 +458,15 @@ export default function Updates() {
           ROUTINES
       ══════════════════════════════════════════════════════════════ */}
       {activeTab === "routines" && <Routines headerless />}
+
+      {/* ══════════════════════════════════════════════════════════════
+          STAFF — read-only owner visibility into staff communications
+          processed by processStaffMessage(). No live transport is wired
+          to it yet, so this list may be empty; StaffUpdates manages its
+          own loading/error/empty state independently, same as Inbox,
+          Routines, and Todos above.
+      ══════════════════════════════════════════════════════════════ */}
+      {activeTab === "staff" && <StaffUpdates headerless />}
 
       {/* ══════════════════════════════════════════════════════════════
           HISTORY
