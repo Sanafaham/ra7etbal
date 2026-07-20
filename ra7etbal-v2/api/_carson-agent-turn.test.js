@@ -295,8 +295,8 @@ describe('attemptCarsonBridgePoc — conversation_initiation_client_data wire sh
   });
 });
 
-describe('attemptCarsonBridgePoc — signed-URL branch resolution', () => {
-  it('requests the signed URL with the correct agent_id and exactly one branch_id parameter', async () => {
+describe('attemptCarsonBridgePoc — signed-URL request shape', () => {
+  it('requests the signed URL with only agent_id — no branch_id (explicit branch pinning was tested and ruled out)', async () => {
     stubElevenLabsEnv();
     vi.stubGlobal('WebSocket', FakeWebSocket);
     const fetchMock = vi.fn().mockResolvedValue({
@@ -317,8 +317,7 @@ describe('attemptCarsonBridgePoc — signed-URL branch resolution', () => {
     const requestedUrl = new URL(String(signedUrlCall[0]));
 
     expect(requestedUrl.searchParams.get('agent_id')).toBe('agent_test123');
-    expect(requestedUrl.searchParams.get('branch_id')).toBe('agtbrch_9201kt3zzm87evb92dt1bx1h4ayt');
-    expect(requestedUrl.searchParams.getAll('branch_id')).toHaveLength(1);
+    expect(requestedUrl.searchParams.has('branch_id')).toBe(false);
     expect(signedUrlCall[1]).toEqual({ headers: { 'xi-api-key': 'test-key' } });
   });
 });

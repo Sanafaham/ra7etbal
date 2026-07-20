@@ -16,13 +16,6 @@
 const SIGNED_URL_ENDPOINT = 'https://api.elevenlabs.io/v1/convai/conversation/get-signed-url';
 const CONVERSATION_DETAILS_ENDPOINT = 'https://api.elevenlabs.io/v1/convai/conversations';
 
-// Experimental: explicitly requests the confirmed Main branch on the
-// signed-URL call, since prior Conversation Details lookups showed every
-// failed turn resolving to this branch/version already without us ever
-// specifying one -- this isolates whether requesting it explicitly changes
-// initialization behavior.
-const CARSON_MAIN_BRANCH_ID = 'agtbrch_9201kt3zzm87evb92dt1bx1h4ayt';
-
 // Leaves headroom under the function's 60s maxDuration for the surrounding
 // webhook logic (delivery-status/consent handling, logging) to still run.
 const TURN_TIMEOUT_MS = 45000;
@@ -120,7 +113,7 @@ export async function attemptCarsonBridgePoc({ supabaseUrl, serviceKey, msg, fin
 
 async function getSignedUrl({ apiKey, agentId }) {
   const response = await fetch(
-    `${SIGNED_URL_ENDPOINT}?agent_id=${encodeURIComponent(agentId)}&branch_id=${encodeURIComponent(CARSON_MAIN_BRANCH_ID)}`,
+    `${SIGNED_URL_ENDPOINT}?agent_id=${encodeURIComponent(agentId)}`,
     { headers: { 'xi-api-key': apiKey } },
   );
   if (!response.ok) {
