@@ -295,6 +295,34 @@ describe('attemptCarsonBridgePoc — conversation_initiation_client_data wire sh
   });
 });
 
+describe('attemptCarsonBridgePoc — signed-URL branch resolution', () => {
+  it('requests the signed URL with the correct agent_id and exactly one branch_id parameter', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ signed_url: 'wss://fake' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const findPersonByPhone = vi.fn().mockResolvedValue({
+      id: 'p17', name: 'Grace', role: 'household coordinator', is_family: false, whatsapp_opted_in: true,
+    });
+
+    attemptCarsonBridgePoc({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'key', msg: makeMsg(), findPersonByPhone });
+
+    await waitForSocket();
+
+    const signedUrlCall = fetchMock.mock.calls.find(([url]) => String(url).includes('get-signed-url'));
+    expect(signedUrlCall).toBeDefined();
+    const requestedUrl = new URL(String(signedUrlCall[0]));
+
+    expect(requestedUrl.searchParams.get('agent_id')).toBe('agent_test123');
+    expect(requestedUrl.searchParams.get('branch_id')).toBe('agtbrch_9201kt3zzm87evb92dt1bx1h4ayt');
+    expect(requestedUrl.searchParams.getAll('branch_id')).toHaveLength(1);
+    expect(signedUrlCall[1]).toEqual({ headers: { 'xi-api-key': 'test-key' } });
+  });
+});
+
 describe('attemptCarsonBridgePoc — WebSocket event sequencing', () => {
   it('never sends user_message before conversation_initiation_metadata is received', async () => {
     stubElevenLabsEnv();
