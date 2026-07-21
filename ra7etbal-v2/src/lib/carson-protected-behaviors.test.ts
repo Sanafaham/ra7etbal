@@ -406,14 +406,14 @@ describe("Typed direct-message dispatch — deterministic, before the free-form 
       "const typedIsDirectMessage = Boolean(",
       "if (!typedHasPendingPhoto && !typedIsRecurring && !typedIsDirectMessage) {",
     );
-    expect(block).toContain("if (typedIsDirectMessage && !typedHasPendingPhoto && !typedIsRecurring) {");
+    expect(block).toContain("if (typedDirectMessageParsed && !typedHasPendingPhoto && !typedIsRecurring) {");
     expect(block).toContain("await executeDirectMessageFastPath(");
     expect(block).toContain("normalizeOwnerReference: true");
   });
 
   it("the typed direct-message dispatch block never reaches conversation.sendUserMessage", () => {
     const block = blockBetween(
-      "if (typedIsDirectMessage && !typedHasPendingPhoto && !typedIsRecurring) {",
+      "if (typedDirectMessageParsed && !typedHasPendingPhoto && !typedIsRecurring) {",
       "if (!typedHasPendingPhoto && !typedIsRecurring && !typedIsDirectMessage) {",
     );
     expect(block).not.toContain("conversation.sendUserMessage");
@@ -423,7 +423,7 @@ describe("Typed direct-message dispatch — deterministic, before the free-form 
 
   it("persists Carson's reply and returns immediately when the dispatch is handled — the turn never falls through to ElevenLabs", () => {
     const block = blockBetween(
-      "if (typedIsDirectMessage && !typedHasPendingPhoto && !typedIsRecurring) {",
+      "if (typedDirectMessageParsed && !typedHasPendingPhoto && !typedIsRecurring) {",
       "if (!typedHasPendingPhoto && !typedIsRecurring && !typedIsDirectMessage) {",
     );
     const handledIndex = block.indexOf("if (typedDirectMessageFastPath.handled) {");
@@ -456,5 +456,32 @@ describe("Typed direct-message dispatch — deterministic, before the free-form 
     const source = readFileSync(join(__dirname, "direct-message-fast-path.ts"), "utf-8");
     expect(source).toContain("response: `I let ${person.name} know. I'll watch for the reply.`,");
     expect(source).not.toMatch(/response:\s*`\$\{person\.name\}\s+has it/);
+  });
+
+  // CodeRabbit finding on PR #53: executeDirectMessageFastPath has no
+  // recent-send protection of its own, and this dispatch is now
+  // deterministic (not model-dependent), so an identical resubmission —
+  // exactly what happened in the confirmed production test (the same
+  // phrase submitted twice, ~70s apart) — would otherwise reliably
+  // double-send. Guarded at this call site by reusing the same
+  // recentDirectWhatsappMessagesRef mechanism sendDelegation()'s own
+  // communication reroute already uses, before executeDirectMessageFastPath
+  // is ever called.
+  it("checks for a recent duplicate before calling executeDirectMessageFastPath, and records a send only after it actually succeeds", () => {
+    const block = blockBetween(
+      "if (typedDirectMessageParsed && !typedHasPendingPhoto && !typedIsRecurring) {",
+      "if (!typedHasPendingPhoto && !typedIsRecurring && !typedIsDirectMessage) {",
+    );
+    const duplicateCheckIndex = block.indexOf("isRecentDirectWhatsappDuplicate(");
+    const executorIndex = block.indexOf("await executeDirectMessageFastPath(");
+    const recordIndex = block.indexOf("recordDirectWhatsappSent(", executorIndex);
+
+    expect(duplicateCheckIndex).toBeGreaterThan(-1);
+    expect(duplicateCheckIndex).toBeLessThan(executorIndex);
+    expect(block).toContain("recentDirectWhatsappMessagesRef.current");
+    expect(recordIndex).toBeGreaterThan(executorIndex);
+    // Recording is gated on an actual successful send, not merely "handled"
+    // (which also covers blocked/failed outcomes).
+    expect(block).toContain('typedDirectMessageFastPath.status === "sent"');
   });
 });

@@ -120,16 +120,21 @@ describe("ElevenLabsAgentWidget — deterministic typed delegation execution", (
       "Deterministic typed delegation fast path",
       "const typedPhotos = [",
     );
+    // parseSimpleDirectMessage's parsed result is captured directly (not
+    // just a boolean) so the typed direct-message dispatch block below can
+    // reuse it for its own duplicate-send guard (see
+    // carson-protected-behaviors.test.ts) — so the parse call now comes
+    // before the derived typedIsDirectMessage boolean, not nested inside it.
+    const parseCallIndex = fastPathBlock.indexOf("parseSimpleDirectMessage(savedMessage.content");
     const directCheckIndex = fastPathBlock.indexOf(
       "const typedIsDirectMessage = Boolean(",
     );
-    const parseCallIndex = fastPathBlock.indexOf("parseSimpleDirectMessage(savedMessage.content");
     const guardIndex = fastPathBlock.indexOf("!typedIsDirectMessage");
     const executorIndex = fastPathBlock.indexOf("await executeDelegationFastPath(");
 
-    expect(directCheckIndex).toBeGreaterThan(-1);
-    expect(parseCallIndex).toBeGreaterThan(directCheckIndex);
-    expect(guardIndex).toBeGreaterThan(parseCallIndex);
+    expect(parseCallIndex).toBeGreaterThan(-1);
+    expect(directCheckIndex).toBeGreaterThan(parseCallIndex);
+    expect(guardIndex).toBeGreaterThan(directCheckIndex);
     expect(guardIndex).toBeLessThan(executorIndex);
   });
 

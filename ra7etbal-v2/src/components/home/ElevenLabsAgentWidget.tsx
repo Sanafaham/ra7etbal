@@ -6467,9 +6467,8 @@ export default function ElevenLabsAgentWidget({
         const typedHasPendingPhoto =
           pendingPhotosRef.current.length > 0 || sessionPhotosRef.current.length > 0;
         const typedIsRecurring = detectAllRecurringSchedules(savedMessage.content).length > 0;
-        const typedIsDirectMessage = Boolean(
-          parseSimpleDirectMessage(savedMessage.content, usePeopleStore.getState().items),
-        );
+        const typedDirectMessageParsed = parseSimpleDirectMessage(savedMessage.content, usePeopleStore.getState().items);
+        const typedIsDirectMessage = Boolean(typedDirectMessageParsed);
 
         // Deterministic typed direct-message dispatch — confirmed production
         // regression: "Tell Christopher to wait for me in the kitchen"
@@ -6488,7 +6487,39 @@ export default function ElevenLabsAgentWidget({
         // tool.
         // Excluded for the same reasons as the delegation fast path below: a
         // pending photo (this path can't carry one) or recurring language.
-        if (typedIsDirectMessage && !typedHasPendingPhoto && !typedIsRecurring) {
+        if (typedDirectMessageParsed && !typedHasPendingPhoto && !typedIsRecurring) {
+          // Duplicate guard (CodeRabbit finding on PR #53): executeDirectMessageFastPath
+          // itself has no recent-send protection — a pre-existing gap shared
+          // with executeInstruction's own call site (out of scope here, left
+          // untouched) — but now that this dispatch is deterministic rather
+          // than model-dependent, an identical resubmission (exactly what
+          // happened in the confirmed production test: the same phrase
+          // submitted twice, ~70s apart) would reliably double-send. Reuses
+          // the same recentDirectWhatsappMessagesRef mechanism
+          // sendDelegation()'s own communication reroute already uses,
+          // keyed on the raw parsed recipient/body — sufficient to catch a
+          // resubmitted raw instruction without duplicating
+          // executeDirectMessageFastPath's own "to"-strip/owner-
+          // normalization logic here.
+          const typedDirectMessageRecipient = typedDirectMessageParsed.recipientName;
+          const typedDirectMessageRawText = typedDirectMessageParsed.messageText;
+
+          if (
+            isRecentDirectWhatsappDuplicate(
+              recentDirectWhatsappMessagesRef.current,
+              typedDirectMessageRecipient,
+              typedDirectMessageRawText,
+            )
+          ) {
+            sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+            await persistLocalTypedAgentReply({
+              replyToClientMessageId: clientMessageId,
+              content: `I already sent ${typedDirectMessageRecipient} that message just now. I won't send it again.`,
+              clearPendingPhotos: true,
+            });
+            return;
+          }
+
           let people = usePeopleStore.getState().items;
           if (usePeopleStore.getState().status === "idle" || people.length === 0) {
             await usePeopleStore.getState().loadFor(authUserId);
@@ -6501,6 +6532,13 @@ export default function ElevenLabsAgentWidget({
           );
 
           if (typedDirectMessageFastPath.handled) {
+            if (typedDirectMessageFastPath.status === "sent") {
+              recordDirectWhatsappSent(
+                recentDirectWhatsappMessagesRef.current,
+                typedDirectMessageRecipient,
+                typedDirectMessageRawText,
+              );
+            }
             sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
             await persistLocalTypedAgentReply({
               replyToClientMessageId: clientMessageId,
