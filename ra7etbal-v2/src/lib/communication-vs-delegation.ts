@@ -25,8 +25,23 @@
  * case correctly before this fix existed.
  */
 const OWNER_TARGET_COMMUNICATION =
-  /\b(?:call|contact|text|message|whatsapp|ring|phone|reach)\s+(?:me|us)\b|\bwait\s+(?:for|here\s+for)\s+(?:me|us)\b|\blet\s+(?:me|us)\s+know\b/i;
+  /\b(?:call|contact|text|message|whatsapp|ring|phone|reach)\s+(?:me|us)\b|\bgive\s+(?:me|us)\s+a\s+(?:call|ring)\b|\bwait\s+(?:for|here\s+for)\s+(?:me|us)\b|\blet\s+(?:me|us)\s+know\b/i;
 
+// KNOWN, DOCUMENTED LIMITATION — flagged by review, not yet fixed. This is a
+// "contains" match, not "the whole text is only communication": a compound
+// instruction pairing real trackable work with a trailing communication
+// clause ("clean the kitchen and let me know when done") is misclassified
+// as fully communication-style, so sendDelegation() reroutes the ENTIRE
+// instruction to a plain message and the trackable work item is never
+// created. A full `^...$` anchor isn't viable either — the confirmed
+// regression case "wait for me in the kitchen. I'm on my way." must still
+// classify as communication despite trailing content. A safe fix needs to
+// distinguish "communication phrase with descriptive trailing content" from
+// "actionable clause + conjunction + communication phrase" (e.g. detect a
+// coordinating conjunction joining an action-verb clause before the
+// communication phrase) — genuinely new logic, not a small extension of
+// this regex, and not proven by any confirmed production incident. See the
+// it.todo in carson-protected-behaviors.test.ts and RA7ETBAL_STATE.md.
 export function isCommunicationStyleTaskText(taskText: string): boolean {
   return OWNER_TARGET_COMMUNICATION.test(taskText.trim());
 }

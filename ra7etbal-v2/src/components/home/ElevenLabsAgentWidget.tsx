@@ -1982,37 +1982,44 @@ export default function ElevenLabsAgentWidget({
         if (person.whatsapp_opted_in !== true) {
           return `WhatsApp consent is not recorded for ${person.name}.`;
         }
+        // Prefer the caller's own richer text when present (voice may pass
+        // message/note alongside a terser taskText), matching the normal
+        // delegation path's precedence — never silently drop richer content
+        // Carson already composed. Computed before the try block, and the
+        // destructured send result below is renamed (sentMessage, not
+        // message), so this never shadows the outer `message` param.
+        const directMessageText = message?.trim() || note?.trim() || taskText;
         if (
           isRecentDirectWhatsappDuplicate(
             recentDirectWhatsappMessagesRef.current,
             person.name,
-            taskText,
+            directMessageText,
           )
         ) {
           return `I already sent ${person.name} that message just now. I won't send it again.`;
         }
         try {
-          const { message, delivery } = await createAndSendDirectMessage({
+          const { message: sentMessage, delivery } = await createAndSendDirectMessage({
             source: "send_delegation_communication_reroute",
             userId: authUserId,
             recipient: person.name,
-            messageText: taskText,
+            messageText: directMessageText,
             phone: person.phone,
             ownerName: displayName ?? null,
             createMessageFn: createMessage,
           });
           console.log("[send_delegation_rerouted_to_direct_message]", {
             recipientName: person.name,
-            messageRecordId: message.id,
+            messageRecordId: sentMessage.id,
             deliveryId: delivery.deliveryId ?? null,
           });
-          recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, taskText);
+          recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, directMessageText);
           const successText = `It's with ${person.name}. I'll watch for the reply.`;
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
             resultText: successText,
             at: new Date().toISOString(),
-            inputSummary: { name: person.name, task: taskText },
+            inputSummary: { name: person.name, task: directMessageText },
           };
           return successText;
         } catch (err) {

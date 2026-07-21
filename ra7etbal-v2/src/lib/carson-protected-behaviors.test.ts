@@ -104,6 +104,8 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     "wait for me.",
     "wait for me in the kitchen. I'm on my way.",
     "let me know when you arrive",
+    "give me a call",
+    "give us a ring",
   ])("%s -> communication (does not create a tracked task)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(true);
   });
@@ -122,6 +124,19 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
   ])("%s -> tracked delegated work (%s)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(false);
   });
+
+  // KNOWN, DOCUMENTED LIMITATION — flagged by independent review, not fixed
+  // here (see communication-vs-delegation.ts's doc comment and
+  // RA7ETBAL_STATE.md). A compound instruction pairing real trackable work
+  // with a trailing communication clause is misclassified as fully
+  // communication-style, so sendDelegation() would reroute the ENTIRE
+  // instruction to a plain message and never create the trackable task.
+  // Not proven by any confirmed production incident; fixing it correctly
+  // needs conjunction/clause-boundary detection, not a small regex tweak,
+  // so it is deliberately out of scope for this fix.
+  it.todo(
+    "'clean the kitchen and let me know when done' should stay tracked delegated work — currently misclassifies as communication-only and loses the task entirely (see communication-vs-delegation.ts)",
+  );
 });
 
 // ── 2. Confirmed production regressions — exact evidence, permanently locked ──
@@ -209,8 +224,12 @@ describe("Type to Carson — fast-path routing", () => {
 
 describe("Shared handler wiring — sendDelegation() reroutes communication-style text before creating a task", () => {
   it("checks isCommunicationStyleTaskText after resolving the person and phone, before the delegation cooldown/send", () => {
+    // Anchored on "const person = matches[0];" (unique to sendDelegation),
+    // not "if (!person.phone) {" — that exact string also appears in
+    // sendFollowup earlier in the file, so indexOf would have matched there
+    // first and captured a far wider span than sendDelegation alone.
     const block = blockBetween(
-      "if (!person.phone) {",
+      "const person = matches[0];",
       "// 3. Cooldown.",
     );
     expect(block).toContain("isCommunicationStyleTaskText(taskText)");
