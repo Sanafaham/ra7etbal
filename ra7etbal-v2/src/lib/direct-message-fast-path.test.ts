@@ -404,16 +404,16 @@ describe("Routing protection — delegation vs. direct message (typed/voice pari
     expect(parseSimpleDirectMessage("Tell Grace I'm on my way", people)).not.toBeNull();
   });
 
-  // KNOWN, PRE-EXISTING GAP — confirmed on origin/main, independent of this
-  // change: DELEGATION_BODY_START's fixed verb whitelist does not include
-  // "make" or "wait", so both instructions below currently fall through as
-  // direct messages instead of being excluded for delegation routing. This
-  // is the same root cause the (unmerged) release-line commit b058441 fixed
-  // for "make" in this exact file — not reapplied here, since this task's
-  // explicit scope says not to change delegation routing. Both are recorded
-  // in RA7ETBAL_STATE.md as a confirmed current issue requiring separate
-  // authorization. Written as it.fails so this suite honestly reports the
-  // gap instead of asserting the current (wrong) behavior as if correct.
+  // KNOWN, PRE-EXISTING GAP — confirmed on origin/main, independent of the
+  // carson-protected-behaviors fix (see src/lib/carson-protected-behaviors.test.ts):
+  // DELEGATION_BODY_START's fixed verb whitelist does not include "make", so
+  // this instruction currently falls through as a direct message instead of
+  // being excluded for delegation routing. Out of scope for that fix — it's
+  // a separate, narrower verb-whitelist gap, not the confirmed
+  // call-me/contact-me/wait-for-me production regression that fix targets,
+  // and closing it safely requires its own scoped change (see
+  // RA7ETBAL_STATE.md). Written as it.fails so this suite honestly reports
+  // the gap instead of asserting the current (wrong) behavior as if correct.
   it.fails("7. 'Tell Christopher to make lunch.' remains a delegation, not a direct message", () => {
     expect(
       parseSimpleDirectMessage(
@@ -423,13 +423,22 @@ describe("Routing protection — delegation vs. direct message (typed/voice pari
     ).toBeNull();
   });
 
-  it.fails("7b. 'Tell Christopher to wait for me in the kitchen. I'm on my way.' remains a delegation, not a direct message", () => {
+  // CORRECTED (was previously it.fails, asserting the opposite): confirmed
+  // production regression fixed by carson-protected-behaviors — "wait for
+  // me" targets the owner, so it is simple communication, not trackable
+  // delegated work, regardless of which verb introduces it. See
+  // src/lib/communication-vs-delegation.ts and CARSON PROTECTED BEHAVIORS
+  // in AGENTS.md. This fast path already got this case right without any
+  // change (COMMAND_PREFIX/DELEGATION_BODY_START never flagged "wait"); the
+  // confirmed regression was specifically in Talk to Carson and in Type to
+  // Carson's "Ask X to call me" phrasing, both fixed in sendDelegation().
+  it("7b. 'Tell Christopher to wait for me in the kitchen. I'm on my way.' remains a direct message (communication, not delegation)", () => {
     expect(
       parseSimpleDirectMessage(
         "Tell Christopher to wait for me in the kitchen. I'm on my way.",
         [person({ id: "p-christopher", name: "Christopher" })],
       ),
-    ).toBeNull();
+    ).not.toBeNull();
   });
 });
 

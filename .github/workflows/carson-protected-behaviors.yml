@@ -1,0 +1,35 @@
+name: carson-protected-behaviors
+
+# Deliberately no `paths:` filter. Carson orchestration/routing lives across
+# many files (fast-path parsers, ElevenLabsAgentWidget.tsx, shared lib
+# modules) and any path allowlist here would be exactly the kind of gap that
+# lets a relevant Carson change silently bypass this check — so this runs on
+# every pull request to main, unconditionally. The suite itself is a small,
+# fast, curated set of test files (see package.json's test:carson-protected
+# script), not the full repository suite, so the cost of running it
+# unconditionally is small.
+"on":
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  carson-protected-behaviors:
+    name: carson-protected-behaviors
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ra7etbal-v2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ra7etbal-v2/package-lock.json
+      - run: npm ci
+      - run: npm run test:carson-protected

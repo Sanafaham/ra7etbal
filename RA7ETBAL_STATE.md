@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-07-17
+Last updated: 2026-07-21
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -252,11 +252,31 @@ Status: confirmed, pre-existing, not fixed. Out of scope for the typed/voice own
 
 When Meta rejects a direct-message send, typed and voice Carson may still report success to the owner. Needs its own scoped fix and verification; do not fold into unrelated work without explicit authorization.
 
-### Confirmed: delegation misclassification for "make"/"wait" verbs
+### Confirmed: delegation misclassification for "make" verb
 
-Status: confirmed, pre-existing, not fixed. Documented via two `it.fails(...)` tests in `direct-message-fast-path.test.ts` (routing-protection describe block) so the gap is visible without asserting broken behavior as correct.
+Status: confirmed, pre-existing, narrowed and partially superseded — see "Carson communication vs. delegation routing fix" below.
 
-`parseSimpleDirectMessage` currently classifies "Tell Christopher to make lunch." and "Tell Christopher to wait for me in the kitchen. I'm on my way." as direct messages, not delegations, even though the required behavior is that these route to delegation and preserve full instruction/context. Root cause is in `DELEGATION_BODY_START` matching / delegation-routing logic in `direct-message-fast-path.ts`, not touched by the normalization work above. Needs its own scoped fix and verification.
+**Correction to this entry's prior claim**: this previously stated that "Tell Christopher to wait for me in the kitchen. I'm on my way." was *required* to route to delegation. That was wrong — Sana has since explicitly confirmed the opposite: "wait for me" targets the owner, so it is simple communication, not trackable delegated work. The `it.fails` test for that phrase in `direct-message-fast-path.test.ts` has been corrected to a normal passing test asserting it stays a direct message.
+
+`parseSimpleDirectMessage` still classifies "Tell Christopher to make lunch." as a direct message, not a delegation, even though it should route to delegation. Root cause remains in `DELEGATION_BODY_START`'s fixed verb whitelist (`direct-message-fast-path.ts`) not including "make." This is a narrower, separate gap from the confirmed call-me/contact-me/wait-for-me production regression fixed below, still documented via `it.fails` in `direct-message-fast-path.test.ts`, and still needs its own scoped fix and verification — not folded into the fix below to keep it minimal.
+
+### Carson communication vs. delegation routing fix
+
+Status: implemented. Not yet merged.
+
+**Confirmed production regression**: "Ask Grace to call me now." (Type to Carson), "Ask Suresh to call me now." (Talk to Carson), and "Tell Ghulam to wait for me." (Talk to Carson) were all wrongly routed to the tracked-delegation path — the staff member received a confirmation link ("When done, tap here" + `/confirm?task=`) and a task was created, when the correct behavior is a plain WhatsApp message with no task and no link. "Tell Ghulam I'm on my way." was and remains correct (plain message, no link).
+
+**Root cause**: neither Type to Carson's fast-path parsers nor Talk to Carson's `send_delegation` tool handler had any check for whether a task's text actually targets the *owner* (a communication act) rather than describing trackable operational work. `parseDelegationFastPath`'s "ask/tell [name] to [task]" pattern (`delegation-fast-path.ts`) has no exclusion for communication-style task text, so "call me"/"contact me"/"wait for me" phrasing following "ask/tell X to" matches as delegation task text. On the voice side, `sendDelegation()` (`ElevenLabsAgentWidget.tsx`) unconditionally created a task whenever the ElevenLabs voice model called the `send_delegation` tool — with no reclassification check — so if the (externally hosted, not in this repo) ElevenLabs system prompt's model picked `send_delegation` for a communication-style instruction, this codebase faithfully created a tracked task with a confirmation link. Both Type to Carson's delegation fast path (`executeDelegationFastPath`'s injected `sendDelegationFn`) and Talk to Carson's `send_delegation` clientTool call the exact same `sendDelegation()` function — confirmed the single shared convergence point for both channels.
+
+**Fix**: added one new shared, verb-agnostic classifier, `isCommunicationStyleTaskText()` (`src/lib/communication-vs-delegation.ts`) — true when task text targets the owner personally (call me, contact me, text me, wait for me, let me know, etc.), regardless of which verb introduces it. Wired into `sendDelegation()`: when the task text is communication-style, it reroutes to the exact same `createAndSendDirectMessage()` primitive `direct-message-fast-path.ts` and `send_direct_whatsapp_message` already use (never a confirmation URL, since that function always sets `confirmation_url`/`confirmationLink` to `null`), instead of creating a task. Since both channels call the same `sendDelegation()`, one guard protects both — Type and Talk cannot diverge on this because there is only one implementation. `direct-message-fast-path.ts`'s own parsing logic (`COMMAND_PREFIX`, `DELEGATION_BODY_START`, `isUnsafeBody`) is unchanged — it already resolved "Tell Ghulam to wait for me." correctly before this fix (confirmed by tracing); the confirmed regression only reproduced via `parseDelegationFastPath`'s "ask X to Y" pattern (typed) and the ElevenLabs voice model's own tool choice (voice), both of which are now caught downstream in `sendDelegation()` regardless of how they got there.
+
+**Permanent tests**: `src/lib/carson-protected-behaviors.test.ts` (35 tests, 1 `it.todo` documenting the separate pre-existing "make" gap) — classifier behavior, the exact confirmed production phrases, typed fast-path routing, structural proof that `sendDelegation()` checks the classifier before ever calling `createAndSendDelegation()`, Type/Talk parity (one shared `sendDelegation()` implementation, both call sites verified), and confirmation-link-freedom of the direct-message send path. Proven to fail against the unfixed code first (3/34 failing on the wiring checks), then pass after the fix (34/34, plus the 1 todo). Also updated `direct-message-fast-path.test.ts` (corrected the stale "wait for me" `it.fails`) and `ElevenLabsAgentWidget.direct-whatsapp-duplicate.test.ts` (narrowed its delegation-block assertion to exclude the new, intentional communication-reroute sub-block).
+
+**CI protection**: `.github/workflows/carson-protected-behaviors.yml` runs `npm run test:carson-protected` (a curated 10-file focused suite, ~10s) on every PR to `main`, deliberately with no path filter — Carson routing logic is spread across too many files to safely allowlist by path.
+
+**Production verification status**: not yet deployed at the time of this entry. See PR link and merge/deploy status once available.
+
+Protect: this classifier and its wiring inside `sendDelegation()` — do not reintroduce a per-channel or per-phrase patch; any future confirmed regression against this contract must extend `isCommunicationStyleTaskText()` and its test suite, not bypass them.
 
 ### Morning brief does not proactively include reminders
 
