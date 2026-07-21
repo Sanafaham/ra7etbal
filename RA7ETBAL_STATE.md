@@ -262,7 +262,7 @@ Status: confirmed, pre-existing, narrowed and partially superseded — see "Cars
 
 ### Carson communication vs. delegation routing fix
 
-Status: implemented. Not yet merged.
+Status: merged and deployed (PR #49, merge commit `85b3bc5b74743af43798a032162c111522bfc5c8`). See "Carson wait-location-qualifier regression fix" below for a follow-up production regression found after this shipped.
 
 **Confirmed production regression**: "Ask Grace to call me now." (Type to Carson), "Ask Suresh to call me now." (Talk to Carson), and "Tell Ghulam to wait for me." (Talk to Carson) were all wrongly routed to the tracked-delegation path — the staff member received a confirmation link ("When done, tap here" + `/confirm?task=`) and a task was created, when the correct behavior is a plain WhatsApp message with no task and no link. "Tell Ghulam I'm on my way." was and remains correct (plain message, no link).
 
@@ -274,9 +274,27 @@ Status: implemented. Not yet merged.
 
 **CI protection**: `.github/workflows/carson-protected-behaviors.yml` runs `npm run test:carson-protected` (a curated 10-file focused suite, ~10s) on every PR to `main`, deliberately with no path filter — Carson routing logic is spread across too many files to safely allowlist by path.
 
-**Production verification status**: not yet deployed at the time of this entry. See PR link and merge/deploy status once available.
+**Production verification status**: verified on `https://www.ra7etbal.com` after PR #49 merged and deployed.
 
 Protect: this classifier and its wiring inside `sendDelegation()` — do not reintroduce a per-channel or per-phrase patch; any future confirmed regression against this contract must extend `isCommunicationStyleTaskText()` and its test suite, not bypass them.
+
+### Carson wait-location-qualifier regression fix
+
+Status: merged and deployed (PR #50, merge commit `4d6822d76807d9496c734f25a8fe896ed40dbe5a`).
+
+**Confirmed production regression** (found after PR #49 shipped): "Tell Christopher to wait in the kitchen for me." was still wrongly routed to tracked delegation. Talk to Carson replied "Christopher has it." and sent a WhatsApp confirmation-link task message; Type to Carson replied "Okay, I'm on it." instead of the plain-message path.
+
+**Root cause**: `isCommunicationStyleTaskText()`'s "wait" pattern (`/\bwait\s+(?:for|here\s+for)\s+(?:me|us)\b/`) required "wait" and "for me/us" to be immediately adjacent. Inserting a location or time qualifier between them ("wait IN THE KITCHEN for me") broke that adjacency, so the classifier missed it and the text fell through to the delegation path — the exact same convergence point (`sendDelegation()` in `ElevenLabsAgentWidget.tsx`) fixed in PR #49, just a gap in the classifier's grammar, not a new architectural issue.
+
+**Fix**: `communication-vs-delegation.ts`'s `OWNER_TARGET_COMMUNICATION` regex now allows one bounded location clause between "wait" and "for me/us" ("in"/"at"/"by"/"near" require 1-3 following words; "outside"/"inside" allow 0-3, since they can stand alone), plus a separate "wait until TIME" alternative. Two CodeRabbit review rounds hardened this against false positives that would have suppressed real task creation on compound instructions: the qualifier rejects coordinating conjunctions ("and"/"then"/"or"/"but"/"to") via a per-word negative lookahead, so "wait at the store AND BUY MILK for me" cannot have the trailing real task swallowed into the location clause; the "wait until TIME" alternative is anchored to both the start and end of the string, so it cannot match as a fragment of a longer compound instruction in either direction ("wait until 8, THEN CLEAN THE KITCHEN" or "CLEAN THE KITCHEN, then wait until 8").
+
+**Known, documented, deliberately deferred limitation** (not fixed, not proven by any confirmed production incident): a compound instruction pairing real trackable work with a communication clause via a coordinating conjunction is still misclassified as fully communication-style in both directions — "clean the kitchen and let me know when done" (trailing communication after real work) and "wait in the kitchen for me and then clean the garage" (trailing real work after a location-qualified wait clause). A safe general fix needs conjunction/clause-boundary detection distinguishing "communication phrase with descriptive trailing content" (must still match — see the protected "wait for me in the kitchen. I'm on my way." case) from "actionable clause + conjunction + communication phrase" — genuinely new logic, not a small regex extension, and out of scope for this fix. See the two `it.todo` entries in `carson-protected-behaviors.test.ts`.
+
+**Permanent tests**: extended `src/lib/carson-protected-behaviors.test.ts` with the exact confirmed regression phrase plus the three other required-protection phrases ("Tell Ghulam to wait by the car for me.", "Ask Grace to call me from the office.", "Tell Nasira to wait until 8."), the two preserved-delegation phrases ("Ask Christopher to clean the kitchen.", "Ask Ghulam to bring the car out."), and negative regression tests for every compound-instruction false positive found across two CodeRabbit review rounds ("wait at the store and buy milk for me", "wait until 8, then clean the kitchen", "clean the kitchen, then wait until 8") plus positive coverage for the outside/inside standalone-adverb form. 50/53 passing (3 `it.todo`, up from 2 — the new one documents the mirrored compound-instruction gap above). Full curated suite (`npm run test:carson-protected`): 154 passed, 3 todo.
+
+**Production verification status**: verified on `https://www.ra7etbal.com` — deployment `dpl_CV1YfDfcFjgzcXet6vXi7DH6ugma`, commit `4d6822d76807d9496c734f25a8fe896ed40dbe5a` matches the merge commit exactly, `www.ra7etbal.com`/`ra7etbal.com` aliased with `aliasError: null` and `readyState: READY`.
+
+Protect: the four required phrases above, plus the two preserved-delegation phrases — same contract as the PR #49 entry, extended for the location/time qualifier grammar. Do not reintroduce a per-channel or per-phrase patch.
 
 ### Morning brief does not proactively include reminders
 
