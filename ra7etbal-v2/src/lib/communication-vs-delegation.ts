@@ -24,8 +24,15 @@
  * module — it already resolved the confirmed regression's "wait for me"
  * case correctly before this fix existed.
  */
+// "wait" allows one short, bounded location clause (a preposition + up to
+// ~30 chars) between "wait" and "for me/us" — "wait IN THE KITCHEN for me"
+// is still communication, not a different instruction. Bounded deliberately
+// (a handful of common locative prepositions, a short length cap) so this
+// doesn't turn into an unbounded "wait ... anything ... for me" match that
+// could swallow real intervening content — this is a location/time
+// qualifier allowance, not a general wildcard.
 const OWNER_TARGET_COMMUNICATION =
-  /\b(?:call|contact|text|message|whatsapp|ring|phone|reach)\s+(?:me|us)\b|\bgive\s+(?:me|us)\s+a\s+(?:call|ring)\b|\bwait\s+(?:for|here\s+for)\s+(?:me|us)\b|\blet\s+(?:me|us)\s+know\b/i;
+  /\b(?:call|contact|text|message|whatsapp|ring|phone|reach)\s+(?:me|us)\b|\bgive\s+(?:me|us)\s+a\s+(?:call|ring)\b|\bwait\b(?:\s+(?:in|at|by|near|outside|inside)\s+[a-z0-9' ]{1,30})?\s+(?:for|here\s+for)\s+(?:me|us)\b|\bwait\s+(?:until|till)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b|\blet\s+(?:me|us)\s+know\b/i;
 
 // KNOWN, DOCUMENTED LIMITATION — flagged by review, not yet fixed. This is a
 // "contains" match, not "the whole text is only communication": a compound

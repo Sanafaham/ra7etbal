@@ -106,6 +106,13 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     "let me know when you arrive",
     "give me a call",
     "give us a ring",
+    // Production regression (post-PR #49): a location/time qualifier
+    // inserted BETWEEN "wait" and "for me/us" bypassed the classifier,
+    // since the original pattern required them adjacent.
+    "wait in the kitchen for me.",
+    "wait by the car for me.",
+    "call me from the office.",
+    "wait until 8.",
   ])("%s -> communication (does not create a tracked task)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(true);
   });
@@ -156,6 +163,31 @@ describe("Regression: confirmed production evidence must never reproduce", () =>
 
   it("'Ask Ghulam to bring the car out.' remains tracked delegated work (must not change)", () => {
     expect(isCommunicationStyleTaskText("bring the car out.")).toBe(false);
+  });
+
+  // Production regression found after PR #49 shipped: a location/short
+  // qualifier inserted between "wait" and "for me/us" ("wait IN THE KITCHEN
+  // for me") bypassed the classifier, which required them adjacent. Talk to
+  // Carson sent Christopher a confirmation-link task message; Type to
+  // Carson replied "Okay, I'm on it." instead of the plain-message path.
+  it("'Tell Christopher to wait in the kitchen for me.' task text is communication, not trackable work", () => {
+    expect(isCommunicationStyleTaskText("wait in the kitchen for me.")).toBe(true);
+  });
+
+  it("'Tell Ghulam to wait by the car for me.' task text is communication, not trackable work", () => {
+    expect(isCommunicationStyleTaskText("wait by the car for me.")).toBe(true);
+  });
+
+  it("'Ask Grace to call me from the office.' task text is communication, not trackable work", () => {
+    expect(isCommunicationStyleTaskText("call me from the office.")).toBe(true);
+  });
+
+  it("'Tell Nasira to wait until 8.' task text is communication, not trackable work", () => {
+    expect(isCommunicationStyleTaskText("wait until 8.")).toBe(true);
+  });
+
+  it("'Ask Christopher to clean the kitchen.' remains tracked delegated work — a location word ('kitchen') alone must not trigger the communication classifier", () => {
+    expect(isCommunicationStyleTaskText("clean the kitchen.")).toBe(false);
   });
 });
 
