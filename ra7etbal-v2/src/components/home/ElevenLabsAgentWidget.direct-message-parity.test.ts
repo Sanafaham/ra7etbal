@@ -13,7 +13,7 @@ function blockBetween(startNeedle: string, endNeedle: string): string {
 }
 
 describe("ElevenLabsAgentWidget — typed-only direct-message owner normalization", () => {
-  it("gates normalizeOwnerReference to the typed channel at the single executeDirectMessageFastPath call site", () => {
+  it("gates normalizeOwnerReference to the typed channel at the model-driven executeDirectMessageFastPath call site", () => {
     const callBlock = blockBetween(
       "const directMessageFastPath =",
       "if (directMessageFastPath.handled) {",
@@ -21,11 +21,20 @@ describe("ElevenLabsAgentWidget — typed-only direct-message owner normalizatio
 
     expect(callBlock).toContain("executeDirectMessageFastPath(rawInstruction,");
     expect(callBlock).toContain('normalizeOwnerReference: activeChannelRef.current === "text"');
+  });
 
-    // Only one call site in the whole file — the shared executor is never
-    // opted into normalization from more than one place.
+  it("also opts in at the deterministic typed dispatch call site — that path only ever runs for the typed channel, so it hardcodes true instead of the channel check", () => {
+    const callBlock = blockBetween(
+      "const typedDirectMessageFastPath = await executeDirectMessageFastPath(",
+      "if (typedDirectMessageFastPath.handled) {",
+    );
+
+    expect(callBlock).toContain("normalizeOwnerReference: true");
+  });
+
+  it("normalizeOwnerReference is opted into from exactly these two call sites — the shared executor is never opted into normalization from anywhere else", () => {
     const occurrences = SOURCE.match(/normalizeOwnerReference:/g) ?? [];
-    expect(occurrences).toHaveLength(1);
+    expect(occurrences).toHaveLength(2);
   });
 
   it("voice's own send_direct_whatsapp_message tool composes and sends its message text without any normalization step", () => {

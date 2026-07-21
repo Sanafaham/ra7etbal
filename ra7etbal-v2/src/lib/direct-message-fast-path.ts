@@ -59,13 +59,27 @@ export async function executeDirectMessageFastPath(
   const parsed = parseSimpleDirectMessage(input, context.people);
   if (!parsed) return { handled: false, reason: "no_match" };
 
+  // "Tell <person> to <message>" leaves a leading "to" connector in the
+  // extracted body — see extractMessageBody's else-branch, reached only for
+  // the "tell" verb, which strips a leading "that" but not "to". That "to"
+  // is grammatical scaffolding from the sentence structure, not part of the
+  // intended outgoing message ("to wait for me in the kitchen" is not a
+  // message a person should receive). Stripped here — after
+  // parseSimpleDirectMessage's own classification/unsafe-body check has
+  // already run against the untouched body — so this only cleans up the
+  // final outgoing text and never changes which instructions match as a
+  // direct message. Applies regardless of channel: both the typed
+  // deterministic dispatch and the voice/typed execute_instruction tool
+  // handler share this one function.
+  const messageTextWithoutLeadingConnector = parsed.messageText.replace(/^to\s+/i, "");
+
   // Typed-only (see DirectMessageFastPathContext.normalizeOwnerReference):
   // rewrite a leading first-person subject to the owner's name so typed and
   // voice produce the same worker-facing message. The parser's own output
   // contract is unchanged — this happens after parsing, before the send.
   const messageText = context.normalizeOwnerReference
-    ? normalizeFirstPersonForOwner(parsed.messageText, context.displayName)
-    : parsed.messageText;
+    ? normalizeFirstPersonForOwner(messageTextWithoutLeadingConnector, context.displayName)
+    : messageTextWithoutLeadingConnector;
 
   console.info("[fast_path_direct_message_detected]", {
     recipientName: parsed.recipientName,
@@ -145,7 +159,12 @@ export async function executeDirectMessageFastPath(
       status: "sent",
       recipientName: person.name,
       messageText,
-      response: `It's with ${person.name}. I'll watch for the reply.`,
+      // Communication-style acknowledgement, not delegation-style — matches
+      // the approved wording from sendDelegation()'s own communication
+      // reroute in ElevenLabsAgentWidget.tsx (see PR #52 / CARSON PROTECTED
+      // BEHAVIORS). Reused here rather than duplicated, since both callers
+      // send a plain message with no tracked task behind it.
+      response: `I let ${person.name} know. I'll watch for the reply.`,
     };
   } catch (err) {
     console.error("[fast_path_direct_message_failed]", {
