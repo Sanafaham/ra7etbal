@@ -106,6 +106,19 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     "let me know when you arrive",
     "give me a call",
     "give us a ring",
+    // Production regression (post-PR #49): a location/time qualifier
+    // inserted BETWEEN "wait" and "for me/us" bypassed the classifier,
+    // since the original pattern required them adjacent.
+    "wait in the kitchen for me.",
+    "wait by the car for me.",
+    "call me from the office.",
+    "wait until 8.",
+    // CodeRabbit finding on PR #50 (2nd round): "outside"/"inside" are
+    // adverbs that can stand alone before "for me/us" — unlike "in"/"at"/
+    // "by"/"near", which need a following location word. The qualifier
+    // grammar must not silently require a word after them.
+    "wait outside for me",
+    "wait inside for us",
   ])("%s -> communication (does not create a tracked task)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(true);
   });
@@ -121,6 +134,17 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     // Proves the classifier is not a fixed phrase list.
     "call the mechanic.",
     "call the doctor and book an appointment.",
+    // CodeRabbit finding on PR #50: the "wait" location/time qualifier must
+    // not be able to absorb a real trailing task. A coordinating conjunction
+    // ("and") inside the would-be location clause, or real content after a
+    // "wait until TIME" clause, means this is compound delegated work, not
+    // pure communication — the whole instruction must not be rerouted.
+    "wait at the store and buy milk for me",
+    "wait until 8, then clean the kitchen",
+    // CodeRabbit finding on PR #50 (2nd round): "wait until TIME" was only
+    // anchored to the end of the string, so it could still match as the
+    // trailing fragment of a leading compound instruction.
+    "clean the kitchen, then wait until 8",
   ])("%s -> tracked delegated work (%s)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(false);
   });
@@ -136,6 +160,16 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
   // so it is deliberately out of scope for this fix.
   it.todo(
     "'clean the kitchen and let me know when done' should stay tracked delegated work — currently misclassifies as communication-only and loses the task entirely (see communication-vs-delegation.ts)",
+  );
+
+  // Mirror of the above, raised by CodeRabbit on PR #50 (2nd round): real
+  // work AFTER a location-qualified "wait ... for me" communication clause.
+  // Not fixable by end-anchoring the "wait ... for me" alternative, since
+  // that would break the confirmed regression "wait for me in the kitchen.
+  // I'm on my way." (trailing descriptive content, not compound work) —
+  // same deliberate-deferral reasoning as the todo above.
+  it.todo(
+    "'wait in the kitchen for me and then clean the garage' should stay tracked delegated work — currently misclassifies as communication-only and loses the task entirely (see communication-vs-delegation.ts)",
   );
 });
 
@@ -156,6 +190,31 @@ describe("Regression: confirmed production evidence must never reproduce", () =>
 
   it("'Ask Ghulam to bring the car out.' remains tracked delegated work (must not change)", () => {
     expect(isCommunicationStyleTaskText("bring the car out.")).toBe(false);
+  });
+
+  // Production regression found after PR #49 shipped: a location/short
+  // qualifier inserted between "wait" and "for me/us" ("wait IN THE KITCHEN
+  // for me") bypassed the classifier, which required them adjacent. Talk to
+  // Carson sent Christopher a confirmation-link task message; Type to
+  // Carson replied "Okay, I'm on it." instead of the plain-message path.
+  it("'Tell Christopher to wait in the kitchen for me.' task text is communication, not trackable work", () => {
+    expect(isCommunicationStyleTaskText("wait in the kitchen for me.")).toBe(true);
+  });
+
+  it("'Tell Ghulam to wait by the car for me.' task text is communication, not trackable work", () => {
+    expect(isCommunicationStyleTaskText("wait by the car for me.")).toBe(true);
+  });
+
+  it("'Ask Grace to call me from the office.' task text is communication, not trackable work", () => {
+    expect(isCommunicationStyleTaskText("call me from the office.")).toBe(true);
+  });
+
+  it("'Tell Nasira to wait until 8.' task text is communication, not trackable work", () => {
+    expect(isCommunicationStyleTaskText("wait until 8.")).toBe(true);
+  });
+
+  it("'Ask Christopher to clean the kitchen.' remains tracked delegated work — a location word ('kitchen') alone must not trigger the communication classifier", () => {
+    expect(isCommunicationStyleTaskText("clean the kitchen.")).toBe(false);
   });
 });
 
