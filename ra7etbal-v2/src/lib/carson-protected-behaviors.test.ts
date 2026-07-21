@@ -113,6 +113,12 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     "wait by the car for me.",
     "call me from the office.",
     "wait until 8.",
+    // CodeRabbit finding on PR #50 (2nd round): "outside"/"inside" are
+    // adverbs that can stand alone before "for me/us" — unlike "in"/"at"/
+    // "by"/"near", which need a following location word. The qualifier
+    // grammar must not silently require a word after them.
+    "wait outside for me",
+    "wait inside for us",
   ])("%s -> communication (does not create a tracked task)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(true);
   });
@@ -135,6 +141,10 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     // pure communication — the whole instruction must not be rerouted.
     "wait at the store and buy milk for me",
     "wait until 8, then clean the kitchen",
+    // CodeRabbit finding on PR #50 (2nd round): "wait until TIME" was only
+    // anchored to the end of the string, so it could still match as the
+    // trailing fragment of a leading compound instruction.
+    "clean the kitchen, then wait until 8",
   ])("%s -> tracked delegated work (%s)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(false);
   });
@@ -150,6 +160,16 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
   // so it is deliberately out of scope for this fix.
   it.todo(
     "'clean the kitchen and let me know when done' should stay tracked delegated work — currently misclassifies as communication-only and loses the task entirely (see communication-vs-delegation.ts)",
+  );
+
+  // Mirror of the above, raised by CodeRabbit on PR #50 (2nd round): real
+  // work AFTER a location-qualified "wait ... for me" communication clause.
+  // Not fixable by end-anchoring the "wait ... for me" alternative, since
+  // that would break the confirmed regression "wait for me in the kitchen.
+  // I'm on my way." (trailing descriptive content, not compound work) —
+  // same deliberate-deferral reasoning as the todo above.
+  it.todo(
+    "'wait in the kitchen for me and then clean the garage' should stay tracked delegated work — currently misclassifies as communication-only and loses the task entirely (see communication-vs-delegation.ts)",
   );
 });
 
