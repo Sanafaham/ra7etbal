@@ -340,3 +340,48 @@ describe("Direct-message send path never generates a confirmation link", () => {
     expect(source).not.toMatch(/\/confirm\?task=/);
   });
 });
+
+// ── 7. Acknowledgement wording — communication reroute vs. real delegation ──
+//       Production regression: after the reroute correctly stopped creating a
+//       task/confirmation-link for plain staff communication ("Tell
+//       Christopher to wait in the kitchen for me."), Carson still replied
+//       "Christopher has it." — task-style wording for a plain message. Since
+//       Type to Carson's typed fast path displays sendDelegation()'s returned
+//       string verbatim (no LLM paraphrase — see executeDelegationFastPath's
+//       `response` field), and Talk to Carson's voice model is explicitly
+//       steered by CARSON_VOICE_SESSION_GUARD's example phrasing (both
+//       channels call the one shared sendDelegation() — see "Type and Talk
+//       parity" above), the fix touches only these two wording sources: the
+//       reroute's successText string, and the guard's example phrases. No
+//       classification, routing, WhatsApp delivery, task-creation, or
+//       confirmation-link logic changed.
+
+describe("Acknowledgement wording — communication reroute keeps message-style, real delegation keeps task-style", () => {
+  it("the communication-reroute successText uses message-style wording ('I let X know'), never delegation-style ('has it')", () => {
+    const block = blockBetween(
+      "if (isCommunicationStyleTaskText(taskText)) {",
+      "// 3. Cooldown.",
+    );
+    expect(block).toContain("const successText = `I let ${person.name} know. I'll watch for the reply.`;");
+    expect(block).not.toMatch(/\$\{person\.name\}\s+has it/);
+  });
+
+  it("the real delegation successText remains task-style ('Done. I asked ... to ...'), unchanged by the wording fix", () => {
+    const block = blockBetween("// 3. Cooldown.", "return successText;");
+    expect(block).toContain("const successText = `Done. I asked ${person.name} to ${taskText}.`;");
+  });
+
+  it("CARSON_VOICE_SESSION_GUARD distinguishes plain-message wording from real-delegation wording for Talk to Carson", async () => {
+    const { CARSON_VOICE_SESSION_GUARD } = await import("./carson-status-policy");
+    // Real delegation phrasing preserved verbatim (must not regress).
+    expect(CARSON_VOICE_SESSION_GUARD).toContain(
+      "Christopher has it. I'll follow up if he doesn't confirm.",
+    );
+    // New plain-message phrasing, and an explicit instruction not to use
+    // task-style wording for it.
+    expect(CARSON_VOICE_SESSION_GUARD).toContain(
+      "I let Christopher know. I'll watch for the reply.",
+    );
+    expect(CARSON_VOICE_SESSION_GUARD).toContain('Never say "[name] has it" for a plain message');
+  });
+});
