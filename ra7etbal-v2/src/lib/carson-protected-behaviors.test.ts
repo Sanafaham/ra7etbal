@@ -128,6 +128,13 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     // Proves the classifier is not a fixed phrase list.
     "call the mechanic.",
     "call the doctor and book an appointment.",
+    // CodeRabbit finding on PR #50: the "wait" location/time qualifier must
+    // not be able to absorb a real trailing task. A coordinating conjunction
+    // ("and") inside the would-be location clause, or real content after a
+    // "wait until TIME" clause, means this is compound delegated work, not
+    // pure communication — the whole instruction must not be rerouted.
+    "wait at the store and buy milk for me",
+    "wait until 8, then clean the kitchen",
   ])("%s -> tracked delegated work (%s)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(false);
   });

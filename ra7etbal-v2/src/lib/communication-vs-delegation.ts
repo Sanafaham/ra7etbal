@@ -24,15 +24,22 @@
  * module — it already resolved the confirmed regression's "wait for me"
  * case correctly before this fix existed.
  */
-// "wait" allows one short, bounded location clause (a preposition + up to
-// ~30 chars) between "wait" and "for me/us" — "wait IN THE KITCHEN for me"
-// is still communication, not a different instruction. Bounded deliberately
-// (a handful of common locative prepositions, a short length cap) so this
-// doesn't turn into an unbounded "wait ... anything ... for me" match that
-// could swallow real intervening content — this is a location/time
-// qualifier allowance, not a general wildcard.
+// "wait" allows one short location clause (a preposition + up to 3 bare
+// words) between "wait" and "for me/us" — "wait IN THE KITCHEN for me" is
+// still communication, not a different instruction. The qualifier is
+// word-bounded (max 3 words) AND each word is checked with a negative
+// lookahead rejecting coordinating conjunctions ("and", "then", "or",
+// "but", "to") — so a compound instruction like "wait AT THE STORE AND BUY
+// MILK for me" cannot have its trailing real task ("buy milk") swallowed
+// into the location clause: the conjunction breaks the qualifier match
+// before it ever reaches "for me", so the whole alternative fails to match.
+// The "wait until TIME" alternative is anchored to the end of the string
+// (only trailing punctuation/whitespace allowed after the time) so it
+// cannot match as a prefix of a longer compound instruction like "wait
+// until 8, THEN CLEAN THE KITCHEN" — real trailing content after the time
+// blocks the match entirely.
 const OWNER_TARGET_COMMUNICATION =
-  /\b(?:call|contact|text|message|whatsapp|ring|phone|reach)\s+(?:me|us)\b|\bgive\s+(?:me|us)\s+a\s+(?:call|ring)\b|\bwait\b(?:\s+(?:in|at|by|near|outside|inside)\s+[a-z0-9' ]{1,30})?\s+(?:for|here\s+for)\s+(?:me|us)\b|\bwait\s+(?:until|till)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b|\blet\s+(?:me|us)\s+know\b/i;
+  /\b(?:call|contact|text|message|whatsapp|ring|phone|reach)\s+(?:me|us)\b|\bgive\s+(?:me|us)\s+a\s+(?:call|ring)\b|\bwait\b(?:\s+(?:in|at|by|near|outside|inside)(?:\s+(?!(?:and|then|or|but|to)\b)[a-z']+){1,3})?\s+(?:for|here\s+for)\s+(?:me|us)\b|\bwait\s+(?:until|till)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\.?\s*$|\blet\s+(?:me|us)\s+know\b/i;
 
 // KNOWN, DOCUMENTED LIMITATION — flagged by review, not yet fixed. This is a
 // "contains" match, not "the whole text is only communication": a compound
