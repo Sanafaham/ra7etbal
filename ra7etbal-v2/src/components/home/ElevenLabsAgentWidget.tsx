@@ -2014,7 +2014,12 @@ export default function ElevenLabsAgentWidget({
             deliveryId: delivery.deliveryId ?? null,
           });
           recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, directMessageText);
-          const successText = `It's with ${person.name}. I'll watch for the reply.`;
+          // Communication-style acknowledgement, not delegation-style — this
+          // reroute never created a task, so the wording must not sound like
+          // one ("has it" implies tracked work). See CARSON_VOICE_SESSION_GUARD
+          // in carson-status-policy.ts, which mirrors this same distinction
+          // for Talk to Carson's own generated reply.
+          const successText = `I let ${person.name} know. I'll watch for the reply.`;
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
             resultText: successText,

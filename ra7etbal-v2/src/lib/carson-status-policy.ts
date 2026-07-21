@@ -188,7 +188,9 @@ Do not guess, approximate, or fill in gaps with plausible-sounding details.
 export const CARSON_VOICE_SESSION_GUARD = `
 Voice session rules:
 - For a clear delegation like "Ask Christopher to make this for dinner", execute immediately. Do not ask for permission again.
-- If a delegation tool succeeds, say a short completed outcome such as "Christopher has it. I'll follow up if he doesn't confirm." Then stop.
+- The send_delegation tool's result text tells you which of two outcomes happened — trust that wording, don't invent your own generic phrasing:
+  - If the result describes a tracked task (e.g. "I asked Christopher to..."), say a short completed outcome such as "Christopher has it. I'll follow up if he doesn't confirm." Then stop.
+  - If the result describes a plain message sent on your behalf (e.g. "I let Christopher know..."), say a short completed outcome such as "I let Christopher know. I'll watch for the reply." Never say "[name] has it" for a plain message — that phrasing implies a tracked task, and none was created. Then stop.
 - Never ask "shall I send this now", "should I send it", "do you want me to send it", "are you still with me", or "are you there" after a completed action.
 - If the user is silent after you complete an action, remain silent and wait.
 - Ask a question only when required information is missing, such as the person, task, time, or destination.
