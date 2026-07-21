@@ -385,3 +385,76 @@ describe("Acknowledgement wording — communication reroute keeps message-style,
     expect(CARSON_VOICE_SESSION_GUARD).toContain('Never say "[name] has it" for a plain message');
   });
 });
+
+// ── 8. Typed direct-message dispatch — deterministic, not model-dependent ──
+//       Production regression: "Tell Christopher to wait for me in the
+//       kitchen" correctly matched parseSimpleDirectMessage (so it correctly
+//       skipped the delegation fast path — "never reclassify a direct
+//       message"), but nothing then deterministically sent it. It fell
+//       through to conversation.sendUserMessage(), and the free-form
+//       ElevenLabs model replied "Okay, I'm on it." without calling any
+//       tool — confirmed via production Supabase evidence: no `messages`
+//       row, no `tasks` row, for either of two identical test turns. The fix
+//       dispatches deterministically through the same executeDirectMessageFastPath
+//       already used inside executeInstruction's own model-driven tool
+//       handler, before the free-form turn ever starts, so delivery can no
+//       longer depend on the model's own tool-selection judgement.
+
+describe("Typed direct-message dispatch — deterministic, before the free-form turn starts", () => {
+  it("dispatches through executeDirectMessageFastPath when parseSimpleDirectMessage matches, before the delegation fast path", () => {
+    const block = blockBetween(
+      "const typedIsDirectMessage = Boolean(",
+      "if (!typedHasPendingPhoto && !typedIsRecurring && !typedIsDirectMessage) {",
+    );
+    expect(block).toContain("if (typedIsDirectMessage && !typedHasPendingPhoto && !typedIsRecurring) {");
+    expect(block).toContain("await executeDirectMessageFastPath(");
+    expect(block).toContain("normalizeOwnerReference: true");
+  });
+
+  it("the typed direct-message dispatch block never reaches conversation.sendUserMessage", () => {
+    const block = blockBetween(
+      "if (typedIsDirectMessage && !typedHasPendingPhoto && !typedIsRecurring) {",
+      "if (!typedHasPendingPhoto && !typedIsRecurring && !typedIsDirectMessage) {",
+    );
+    expect(block).not.toContain("conversation.sendUserMessage");
+    expect(block).not.toContain("createAndSendDelegation(");
+    expect(block).not.toContain("executeDelegationFastPath(");
+  });
+
+  it("persists Carson's reply and returns immediately when the dispatch is handled — the turn never falls through to ElevenLabs", () => {
+    const block = blockBetween(
+      "if (typedIsDirectMessage && !typedHasPendingPhoto && !typedIsRecurring) {",
+      "if (!typedHasPendingPhoto && !typedIsRecurring && !typedIsDirectMessage) {",
+    );
+    const handledIndex = block.indexOf("if (typedDirectMessageFastPath.handled) {");
+    const replyIndex = block.indexOf("await persistLocalTypedAgentReply({", handledIndex);
+    const contentIndex = block.indexOf("content: typedDirectMessageFastPath.response", replyIndex);
+    const returnIndex = block.indexOf("return;", contentIndex);
+
+    expect(handledIndex).toBeGreaterThan(-1);
+    expect(replyIndex).toBeGreaterThan(handledIndex);
+    expect(contentIndex).toBeGreaterThan(replyIndex);
+    expect(returnIndex).toBeGreaterThan(contentIndex);
+  });
+
+  it("this new block is the only new occurrence — the existing delegation fast path's guard, comment marker, and exclusions are unchanged", () => {
+    const occurrences = WIDGET_SOURCE.match(/Deterministic typed delegation fast path/g) ?? [];
+    expect(occurrences).toHaveLength(1);
+    expect(WIDGET_SOURCE).toContain(
+      "if (!typedHasPendingPhoto && !typedIsRecurring && !typedIsDirectMessage) {",
+    );
+  });
+
+  it("real delegation ('Ask Christopher to clean the kitchen.') is not affected — parseSimpleDirectMessage does not match ask-phrasing", () => {
+    const people = roster();
+    expect(parseSimpleDirectMessage("Ask Christopher to clean the kitchen.", people)).toBeNull();
+    const parsed = parseDelegationFastPath("Ask Christopher to clean the kitchen.", people);
+    expect(parsed).toEqual({ personName: "Christopher", taskText: "clean the kitchen." });
+  });
+
+  it("executeDirectMessageFastPath's success wording is message-style ('I let X know'), matching the approved communication acknowledgement", () => {
+    const source = readFileSync(join(__dirname, "direct-message-fast-path.ts"), "utf-8");
+    expect(source).toContain("response: `I let ${person.name} know. I'll watch for the reply.`,");
+    expect(source).not.toMatch(/response:\s*`\$\{person\.name\}\s+has it/);
+  });
+});

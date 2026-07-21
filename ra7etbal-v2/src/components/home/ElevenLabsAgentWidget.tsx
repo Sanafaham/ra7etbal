@@ -6471,6 +6471,46 @@ export default function ElevenLabsAgentWidget({
           parseSimpleDirectMessage(savedMessage.content, usePeopleStore.getState().items),
         );
 
+        // Deterministic typed direct-message dispatch — confirmed production
+        // regression: "Tell Christopher to wait for me in the kitchen"
+        // correctly matched parseSimpleDirectMessage above (so it correctly
+        // skipped the delegation fast path below — see "never reclassify a
+        // direct message"), but nothing then deterministically sent it. It
+        // fell all the way through to the free-form ElevenLabs turn further
+        // below, and the model replied "Okay, I'm on it." without calling
+        // any tool — no WhatsApp message, no task, correctly no confirmation
+        // link, but also no delivery at all. Mirrors the exact
+        // executeDirectMessageFastPath call already used inside
+        // executeInstruction's own model-driven tool handler (same owner-
+        // reference normalization opt-in, gated there on the active channel
+        // being text), but runs here — before that free-form turn ever
+        // starts — so delivery can't depend on the model choosing to call a
+        // tool.
+        // Excluded for the same reasons as the delegation fast path below: a
+        // pending photo (this path can't carry one) or recurring language.
+        if (typedIsDirectMessage && !typedHasPendingPhoto && !typedIsRecurring) {
+          let people = usePeopleStore.getState().items;
+          if (usePeopleStore.getState().status === "idle" || people.length === 0) {
+            await usePeopleStore.getState().loadFor(authUserId);
+            people = usePeopleStore.getState().items;
+          }
+
+          const typedDirectMessageFastPath = await executeDirectMessageFastPath(
+            savedMessage.content,
+            { userId: authUserId, displayName, people, normalizeOwnerReference: true },
+          );
+
+          if (typedDirectMessageFastPath.handled) {
+            sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+            await persistLocalTypedAgentReply({
+              replyToClientMessageId: clientMessageId,
+              content: typedDirectMessageFastPath.response,
+              clearPendingPhotos: true,
+            });
+            return;
+          }
+        }
+
         if (!typedHasPendingPhoto && !typedIsRecurring && !typedIsDirectMessage) {
           let people = usePeopleStore.getState().items;
           if (usePeopleStore.getState().status === "idle" || people.length === 0) {

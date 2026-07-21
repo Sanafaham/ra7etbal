@@ -41,7 +41,7 @@ describe("Voice Carson direct message fast path", () => {
     expect(result).toMatchObject({
       handled: true,
       status: "sent",
-      response: "It's with Sana. I'll watch for the reply.",
+      response: "I let Sana know. I'll watch for the reply.",
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(
@@ -438,6 +438,102 @@ describe("Routing protection — delegation vs. direct message (typed/voice pari
         "Tell Christopher to wait for me in the kitchen. I'm on my way.",
         [person({ id: "p-christopher", name: "Christopher" })],
       ),
+    ).not.toBeNull();
+  });
+});
+
+describe("Behavioral: outgoing message body for 'Tell <person> to <message>' never carries the leading 'to' connector", () => {
+  // Confirmed production regression (2026-07-21, typed dispatch): the typed
+  // pipeline previously never sent this instruction at all (see
+  // carson-protected-behaviors.test.ts, "Typed direct-message dispatch").
+  // Once wired to send deterministically, parseSimpleDirectMessage's own
+  // body extraction leaves a leading "to" connector in the parsed body
+  // ("to wait for me in the kitchen") — this was harmless while nothing
+  // deterministically sent it, but became a real malformed-WhatsApp-body
+  // risk the moment delivery became deterministic. This block asserts the
+  // ACTUAL outgoing body at the dispatcher/service boundary (the exact
+  // deliverTaskMessageFn call), not just that parseSimpleDirectMessage
+  // returns non-null.
+  function christopher(overrides: Partial<Person> = {}): Person {
+    return person({ id: "p-christopher", name: "Christopher", ...overrides });
+  }
+
+  function deliveredDeps() {
+    return {
+      createMessageFn: vi.fn().mockImplementation((draft: { content: string; recipient: string }) =>
+        Promise.resolve(messageRow({ recipient: draft.recipient, content: draft.content })),
+      ),
+      deliverTaskMessageFn: vi.fn().mockResolvedValue({
+        success: true,
+        channel: "whatsapp" as const,
+        deliveryId: "delivery-1",
+        messageId: "wamid.1",
+      }),
+    };
+  }
+
+  it("confirmed production phrase: 'Tell Christopher to wait for me in the kitchen' sends body 'wait for me in the kitchen', never 'to wait for me in the kitchen'", async () => {
+    const deps = deliveredDeps();
+    const result = await executeDirectMessageFastPath(
+      "Tell Christopher to wait for me in the kitchen",
+      { userId: "user-1", displayName: "Sana", people: [christopher()], normalizeOwnerReference: true },
+      deps,
+    );
+
+    expect(result).toMatchObject({ status: "sent", messageText: "wait for me in the kitchen" });
+    expect(deps.deliverTaskMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({ messageText: "wait for me in the kitchen" }),
+    );
+    expect(deps.createMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "wait for me in the kitchen" }),
+    );
+    // The malformed body must never reach either call.
+    const deliverCallArg = deps.deliverTaskMessageFn.mock.calls[0][0];
+    const createCallArg = deps.createMessageFn.mock.calls[0][0];
+    expect(deliverCallArg.messageText).not.toMatch(/^to\s/i);
+    expect(createCallArg.content).not.toMatch(/^to\s/i);
+  });
+
+  it("same fix applies without normalizeOwnerReference (voice/execute_instruction call site)", async () => {
+    const deps = deliveredDeps();
+    await executeDirectMessageFastPath(
+      "Tell Christopher to wait for me in the kitchen",
+      { userId: "user-1", displayName: "Sana", people: [christopher()] },
+      deps,
+    );
+    expect(deps.deliverTaskMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({ messageText: "wait for me in the kitchen" }),
+    );
+  });
+
+  it("parseSimpleDirectMessage's own raw output is unchanged (still carries the leading 'to') — the fix is applied only in executeDirectMessageFastPath, after classification", () => {
+    expect(
+      parseSimpleDirectMessage("Tell Christopher to wait for me in the kitchen", [christopher()]),
+    ).toEqual({ recipientName: "Christopher", messageText: "to wait for me in the kitchen" });
+  });
+
+  it("does not strip a mid-sentence 'to' — only a leading connector", async () => {
+    const deps = deliveredDeps();
+    await executeDirectMessageFastPath(
+      "Tell Christopher the car is going to the shop",
+      { userId: "user-1", displayName: "Sana", people: [christopher()], normalizeOwnerReference: true },
+      deps,
+    );
+    expect(deps.deliverTaskMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({ messageText: "the car is going to the shop" }),
+    );
+  });
+
+  it("classification/routing is unaffected — the strip runs after isUnsafeBody, so a real delegation body ('to clean the kitchen') is unchanged by this fix and still excluded from direct-message routing exactly as before", () => {
+    // DELEGATION_BODY_START's known, separate, pre-existing whitelist gap
+    // (see it.fails "7" above) is untouched: "clean" is in the whitelist,
+    // but the missing space after the "to" alternative already prevents a
+    // match today, independent of this fix. Confirming parseSimpleDirectMessage's
+    // classification verdict for this input is identical before and after —
+    // it still matches (the known gap), proving this fix did not touch
+    // classification.
+    expect(
+      parseSimpleDirectMessage("Tell Christopher to clean the kitchen.", [christopher()]),
     ).not.toBeNull();
   });
 });
