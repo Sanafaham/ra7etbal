@@ -63,21 +63,45 @@ describe("ElevenLabsAgentWidget — direct WhatsApp duplicate guard", () => {
     expect(catchBlock).not.toContain("recordDirectWhatsappSent");
   });
 
-  it("does not add the direct WhatsApp duplicate guard to delegation or follow-up paths", () => {
+  it("does not add the direct WhatsApp duplicate guard to the follow-up path", () => {
     const followupBlock = blockBetween(
       "// Client tool: send_followup",
       "// Client tool: send_delegation",
-    );
-    const delegationBlock = blockBetween(
-      "// Client tool: send_delegation",
-      "// Client tool: create_reminder",
     );
 
     expect(followupBlock).toContain("lastSentRef.current");
     expect(followupBlock).not.toContain("recentDirectWhatsappMessagesRef");
     expect(followupBlock).not.toContain("isRecentDirectWhatsappDuplicate");
-    expect(delegationBlock).toContain("findRecentDuplicateDelegation");
-    expect(delegationBlock).not.toContain("recentDirectWhatsappMessagesRef");
-    expect(delegationBlock).not.toContain("isRecentDirectWhatsappDuplicate");
+  });
+
+  // CARSON PROTECTED BEHAVIORS (see carson-protected-behaviors.test.ts):
+  // sendDelegation() now has two sub-paths. The genuine tracked-delegation
+  // send (createAndSendDelegation, guarded by the fuzzy delegation cooldown)
+  // still never uses the direct-WhatsApp duplicate guard — task sends and
+  // plain-message sends remain fully separate mechanisms. The communication
+  // reroute (for text that targets the owner, e.g. "call me") is functionally
+  // a direct message, so it correctly and intentionally DOES use the same
+  // direct-WhatsApp duplicate guard as send_direct_whatsapp_message — this
+  // is by design, not a leak between the two guards.
+  it("the genuine delegation send path (task creation) still never uses the direct WhatsApp duplicate guard", () => {
+    const delegationSendBlock = blockBetween(
+      "// 3. Cooldown.",
+      "// Client tool: create_reminder",
+    );
+
+    expect(delegationSendBlock).toContain("findRecentDuplicateDelegation");
+    expect(delegationSendBlock).not.toContain("recentDirectWhatsappMessagesRef");
+    expect(delegationSendBlock).not.toContain("isRecentDirectWhatsappDuplicate");
+  });
+
+  it("the communication-reroute sub-block intentionally uses the direct WhatsApp duplicate guard, not the delegation cooldown", () => {
+    const rerouteBlock = blockBetween(
+      "if (isCommunicationStyleTaskText(taskText)) {",
+      "// 3. Cooldown.",
+    );
+
+    expect(rerouteBlock).toContain("isRecentDirectWhatsappDuplicate");
+    expect(rerouteBlock).toContain("recentDirectWhatsappMessagesRef");
+    expect(rerouteBlock).not.toContain("findRecentDuplicateDelegation");
   });
 });

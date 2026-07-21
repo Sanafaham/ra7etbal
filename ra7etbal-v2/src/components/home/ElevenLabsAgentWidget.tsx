@@ -68,6 +68,7 @@ import {
   createDelegationTaskAndMessage,
 } from "../../lib/delegations";
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
+import { isCommunicationStyleTaskText } from "../../lib/communication-vs-delegation";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
@@ -1964,6 +1965,64 @@ export default function ElevenLabsAgentWidget({
 
       if (!person.phone) {
         return `${person.name} does not have a phone number saved. Ask the user to add one in People settings.`;
+      }
+
+      // CARSON PROTECTED BEHAVIORS: simple staff communication must never
+      // become a tracked task merely because this tool was called. Whichever
+      // channel got here — Talk to Carson's voice model choosing the
+      // send_delegation tool, or Type to Carson's delegation fast path — this
+      // is the one shared guard both rely on, since this function is the
+      // single place their delegation-creation paths converge. The
+      // distinction is whether Ra7etBal needs to track completed work, not
+      // whether the sentence contains a verb: "call the mechanic" is
+      // trackable work, "call me" is not. See
+      // src/lib/communication-vs-delegation.ts and the
+      // carson-protected-behaviors test suite (mandatory CI gate).
+      if (isCommunicationStyleTaskText(taskText)) {
+        if (person.whatsapp_opted_in !== true) {
+          return `WhatsApp consent is not recorded for ${person.name}.`;
+        }
+        if (
+          isRecentDirectWhatsappDuplicate(
+            recentDirectWhatsappMessagesRef.current,
+            person.name,
+            taskText,
+          )
+        ) {
+          return `I already sent ${person.name} that message just now. I won't send it again.`;
+        }
+        try {
+          const { message, delivery } = await createAndSendDirectMessage({
+            source: "send_delegation_communication_reroute",
+            userId: authUserId,
+            recipient: person.name,
+            messageText: taskText,
+            phone: person.phone,
+            ownerName: displayName ?? null,
+            createMessageFn: createMessage,
+          });
+          console.log("[send_delegation_rerouted_to_direct_message]", {
+            recipientName: person.name,
+            messageRecordId: message.id,
+            deliveryId: delivery.deliveryId ?? null,
+          });
+          recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, taskText);
+          const successText = `It's with ${person.name}. I'll watch for the reply.`;
+          lastDirectToolSuccessRef.current = {
+            toolName: "send_delegation",
+            resultText: successText,
+            at: new Date().toISOString(),
+            inputSummary: { name: person.name, task: taskText },
+          };
+          return successText;
+        } catch (err) {
+          console.error("[send_delegation_reroute_failed]", {
+            recipientName: person.name,
+            stage: err instanceof DirectMessageBoundaryError ? err.stage : "deliver_message",
+            error: err instanceof Error ? err.message : String(err),
+          });
+          return `I couldn't send ${person.name} the message. Please try again.`;
+        }
       }
 
       // 3. Cooldown. Fuzzy-matched by person + task (not person alone, so a

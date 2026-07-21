@@ -102,6 +102,18 @@ At minimum, protect:
 - Quality Intelligence V1 completion and correction flow
 - Normal delegations, proof upload, worker replies, reminders, Notes, and Calendar behavior when working nearby
 
+## CARSON PROTECTED BEHAVIORS
+
+Approved working Carson behaviors are product contracts. No protected behavior may change without explicit Sana approval.
+
+Every confirmed production regression against Carson becomes a permanent test — see `src/lib/carson-protected-behaviors.test.ts`.
+
+Simple staff communication and tracked delegation are different flows. Action verbs alone do not justify task creation. The distinction is whether Ra7etBal needs to track completed work, not whether the sentence contains a verb — the same verb can be either ("call the mechanic" is trackable delegated work; "call me" is not, because the owner is the target, not a third party or a physical task object). See `src/lib/communication-vs-delegation.ts` for the shared, verb-agnostic classifier.
+
+Type and Talk must remain behaviorally aligned. They may use different transport adapters (a typed regex fast path vs. an ElevenLabs voice tool call), but both must converge on the same shared decision points (e.g. `sendDelegation()` in `ElevenLabsAgentWidget.tsx`, called by both Talk to Carson's `send_delegation` clientTool and Type to Carson's delegation fast path) so they cannot diverge.
+
+The protected suite (`npm run test:carson-protected`, workflow `carson-protected-behaviors`) is mandatory before merge. Tests and CI are the enforcement — not this document alone. This document records intent; it does not substitute for a passing check.
+
 ## Truth and evidence
 
 Never claim a test passed unless it was run.
