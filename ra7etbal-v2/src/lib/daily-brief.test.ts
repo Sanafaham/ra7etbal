@@ -166,3 +166,64 @@ describe("daily-brief — quality-review-aware Waiting / Needs You classificatio
     expect(briefAfter.waitingOnOthers.map((t) => t.id)).not.toContain(confirmed.id);
   });
 });
+
+/**
+ * Needs You is a decision queue, not an ownership queue. Self-assignment
+ * alone is not a decision — only task.type === "decision" qualifies a
+ * self-owned task. Ordinary actions, errands, and reminders (including
+ * overdue ones) must not appear here; they remain reachable via the
+ * existing Upcoming reminders / Later sections (brief.later), never
+ * deleted, migrated, or rewritten.
+ */
+describe("daily-brief — Needs You is a decision queue, not an ownership queue", () => {
+  it("a self-assigned action with no due date is excluded from Needs You and stays reachable via Later", () => {
+    const task = makeTask({ type: "action", assigned_to: null, description: "Update the master plan." });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.later.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("a self-assigned errand is excluded from Needs You and stays reachable via Later", () => {
+    const task = makeTask({ type: "errand", assigned_to: "me", description: "Charge your phone." });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.later.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("a self-assigned reminder due today is excluded from Needs You and stays reachable via Later", () => {
+    const task = makeTask({ type: "reminder", assigned_to: null, due_at: "2026-07-08T13:00:00.000Z", description: "Test routine reminder" });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.later.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("a self-assigned overdue reminder is excluded from Needs You and remains reachable via Later", () => {
+    const task = makeTask({ type: "reminder", assigned_to: null, due_at: "2026-07-01T09:00:00.000Z", description: "test this exact reminder" });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain(task.id);
+    expect(brief.later.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("a self-assigned decision still reaches Needs You — the one genuine self-owned path is preserved", () => {
+    const task = makeTask({ type: "decision", assigned_to: null, description: "Decide on the school." });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("a cancelled action still reaches Needs You regardless of type — the pre-existing cancellation path is untouched", () => {
+    const task = makeTask({ type: "action", assigned_to: null, status: "cancelled" });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
+  });
+
+  it("a delegation still routes through the untouched quality-review intervention path, not the decision-type gate", () => {
+    const task = makeTask({
+      type: "delegation",
+      assigned_to: "Christopher",
+      quality_review_status: "uncertain",
+      quality_review_note: "No reference image to compare against.",
+    });
+    const brief = buildDailyBrief([task], NOW);
+    expect(brief.needsAttention.map((t) => t.id)).toContain(task.id);
+  });
+});
