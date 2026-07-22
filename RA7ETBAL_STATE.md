@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-07-21
+Last updated: 2026-07-22
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -117,6 +117,22 @@ Do not reopen this work because of an idea, cleanup proposal, consistency prefer
 15. Reopen only when Sana explicitly approves a product change, or a reproduced production regression is documented with screenshots and exact steps.
 
 Implementation detail (unchanged from the original entries, kept for reference): live typed messages, restored typed history, Clear Chat, and message order read `created_at` off objects already flowing through `typedMessages` state; legacy Routines' `last_run_at` display and automation execution/scheduling are untouched (read-only widening of an existing Supabase select); Needs You timestamps come from `src/lib/needs-you-timestamp.ts` (`getNeedsYouTimestampLabel`), which mirrors but never reads or modifies `isNeedsYouTask()`'s classification in `daily-brief.ts`. No database migration, no API/serverless change, for either release.
+
+### Owner escalation visibility in Waiting cards
+
+Status: COMPLETED. MERGED. DEPLOYED. PRODUCTION VERIFIED. PROTECTED.
+
+PR #55, merge commit `8cd6a544a068708b4e796e65a385c5ac6c523fda`.
+
+What it is: a small "Escalated" badge on `TaskCard.tsx`, shown only on a waiting delegation or waiting follow-up whose `tasks.escalated_at` is already set by the existing, unrelated `process-delegation-escalations.js` escalation job. Before this, the only owner-facing signal that a delegation/follow-up had been escalated was a single mention inside Carson's spoken morning/evening brief — the Waiting tab itself gave no visual signal. Reuses the existing rose badge visual language already used for "Overdue"/"Needs your review"; no new component, no new design system, no schema change, no change to escalation timing, escalation automation, task classification, or task state.
+
+Production verification evidence: deployment `dpl_DciDpx3CHdzaHbQEJwstqfFJ8eoy` (project `ra7etbal-v2`), `state: READY`, `readyState: READY`, `meta.githubCommitSha` matches the merge commit exactly, `alias` includes both `www.ra7etbal.com` and `ra7etbal.com`, `aliasError: null`. Canonical `https://www.ra7etbal.com` returned HTTP 200.
+
+Visual verification evidence: Sana visually verified the live Escalated badge on production. Confirmed: the badge appears only on waiting delegations or follow-ups with `escalated_at` set; the existing "Waiting for confirmation" wording is unchanged; existing card layout and actions are unchanged.
+
+CI/test evidence: `carson-protected-behaviors` CI passed. CodeRabbit finished with no remaining actionable comments (one valid finding — a test-assertion matching the word "Escalated" generically instead of the exact badge JSX — was fixed; two out-of-scope suggestions, a new component-render test harness and an unrelated flex-wrap styling change, were explicitly skipped as out of scope). Focused `TaskCard.test.ts` + `TaskCard.quality.test.ts`: 19/19 passing. Typecheck passed. Production build passed.
+
+Protect: do not change escalation timing, escalation automation (`process-delegation-escalations.js`), task classification, or task state to maintain this badge — it only reads the existing `escalated_at` field for display. Reopen only on a reproduced production regression.
 
 ## Current product rules
 
