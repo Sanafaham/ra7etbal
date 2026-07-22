@@ -77,6 +77,10 @@ export default function TaskCard({
   }, [task.proof_image_path]);
   const isDone = task.status === "done";
   const isWaitingDelegation = task.type === "delegation" && !isDone;
+  // Escalation (process-delegation-escalations.js) runs on both delegation
+  // and follow-up tasks, so the Escalated badge must recognize both — not
+  // just isWaitingDelegation, which is delegation-only.
+  const isWaitingDelegationOrFollowUp = isWaitingDelegation || (task.type === "followup" && !isDone);
   const hasConfirmLink = !!task.confirmation_url && isWaitingDelegation;
   const isOperationalProofCorrection =
     task.quality_review_status === "correction_required" ||
@@ -203,6 +207,11 @@ export default function TaskCard({
           ) : isDone && task.type === "delegation" && (
             <span className="rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-800">
               Confirmed done
+            </span>
+          )}
+          {isWaitingDelegationOrFollowUp && task.escalated_at != null && (
+            <span className="rounded-full border border-rose-300 bg-rose-50 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-rose-800">
+              Escalated
             </span>
           )}
           {reminderDue?.overdue && (
