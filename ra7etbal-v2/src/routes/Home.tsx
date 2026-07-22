@@ -123,41 +123,30 @@ export default function Home() {
         )}
       </div>
 
-      {/* ── Waiting — concise preview, up to two items ────────────────── */}
+      {/* ── Waiting — one compact summary, no individual task text ─────── */}
       <div data-testid="home-waiting" className="mt-7 border-t border-border pt-6">
         <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-soft">
           Waiting{brief.waitingOnOthers.length > 0 ? ` · ${brief.waitingOnOthers.length}` : ""}
         </p>
         {brief.waitingOnOthers.length > 0 && (
           <button type="button" onClick={() => navigate("/updates?tab=waiting")} className="w-full text-left">
-            {brief.waitingOnOthers.slice(0, 2).map((t) => (
-              <span key={t.id} className="flex items-baseline gap-2 py-1.5">
-                <span aria-hidden className="h-[5px] w-[5px] shrink-0 rounded-full bg-text-soft" />
-                <span className="text-[14.5px] font-medium leading-snug text-ink">{t.description}</span>
-              </span>
-            ))}
-            {brief.waitingOnOthers.length > 2 && (
-              <span className="block pl-[13px] pt-0.5 text-[13px] font-semibold text-text-soft">
-                +{brief.waitingOnOthers.length - 2} more waiting
-              </span>
-            )}
+            <span className="block text-[14.5px] font-medium leading-snug text-ink">
+              {buildWaitingSummary(brief.waitingOnOthers.length)}
+            </span>
           </button>
         )}
       </div>
 
-      {/* ── Handled — recently handled, up to two items, from brief.done ── */}
+      {/* ── Handled — one compact summary, no individual task text ─────── */}
       <div data-testid="home-handled" className="mt-7 border-t border-border pt-6">
         <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-soft">
           Handled{brief.done.length > 0 ? ` · ${brief.done.length}` : ""}
         </p>
         {brief.done.length > 0 && (
           <button type="button" onClick={() => navigate("/updates?tab=history")} className="w-full text-left">
-            {brief.done.slice(0, 2).map((t) => (
-              <span key={t.id} className="flex items-baseline gap-2 py-1.5">
-                <span aria-hidden className="h-[5px] w-[5px] shrink-0 rounded-full bg-text-soft" />
-                <span className="text-[14.5px] font-medium leading-snug text-ink">{t.description}</span>
-              </span>
-            ))}
+            <span className="block text-[14.5px] font-medium leading-snug text-ink">
+              {buildHandledSummary(brief.done.length)}
+            </span>
           </button>
         )}
       </div>
@@ -204,6 +193,14 @@ function buildGreeting(now: Date, displayName: string | null): string {
   if (hour < 12) return `Good morning${name}`;
   if (hour < 18) return `Good afternoon${name}`;
   return `Good evening${name}`;
+}
+
+function buildWaitingSummary(count: number): string {
+  return count === 1 ? "Carson is handling 1 thing." : `Carson is handling ${count} things.`;
+}
+
+function buildHandledSummary(count: number): string {
+  return count === 1 ? "1 thing completed today." : `${count} things completed today.`;
 }
 
 function buildPremiumStatus(tone: "urgent" | "attention" | "clear"): string {
