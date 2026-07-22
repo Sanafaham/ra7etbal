@@ -2,11 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useCarsonStore } from "../stores/carson";
-import AwarenessCard from "../components/home/AwarenessCard";
 import { useAuth } from "../hooks/useAuth";
-import { fetchCalendarEvents, type CalendarEvent } from "../lib/calendar";
 import { buildDailyBrief } from "../lib/daily-brief";
-import { getUpcomingReminderTasks } from "../lib/updates-reminders";
 import { usePeopleStore } from "../stores/people";
 import { useProfileStore } from "../stores/profile";
 import { useTasksStore } from "../stores/tasks";
@@ -32,7 +29,6 @@ export default function Home() {
   );
 
   const [now, setNow] = useState(() => new Date());
-  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
 
   useEffect(() => {
     if (!userId) return;
@@ -48,16 +44,6 @@ export default function Home() {
     if (!userId) return;
     void loadProfile(userId);
   }, [userId, loadProfile]);
-
-  useEffect(() => {
-    if (!userId) {
-      setCalendarEvents([]);
-      return;
-    }
-    fetchCalendarEvents("next_7_days")
-      .then((result) => setCalendarEvents(result.connected ? result.events : []))
-      .catch(() => setCalendarEvents([]));
-  }, [userId]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => setNow(new Date()), 30_000);
@@ -85,16 +71,6 @@ export default function Home() {
   const premiumStatus = buildPremiumStatus(statusTone);
   const briefSentence = useMemo(() => buildBriefSentence(brief, now), [brief, now]);
   const openCarson = useCarsonStore((s) => s.setOpen);
-
-  // ── Stats grid — real counts, same sources as Updates ──────────────
-  const upcomingReminders = useMemo(
-    () => getUpcomingReminderTasks(tasks, brief.needsAttention, now),
-    [tasks, brief.needsAttention, now],
-  );
-  const completedCount = useMemo(
-    () => tasks.filter((t) => t.status === "done").length,
-    [tasks],
-  );
 
   return (
     <section
@@ -129,68 +105,30 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ── Stats grid — real counts, tap to jump to Updates ─────────── */}
-      <div data-testid="home-stats-grid" className="mt-9 border-t border-border">
-        <div className="grid grid-cols-2">
-          <button
-            type="button"
-            onClick={() => navigate("/updates?tab=needs-you")}
-            className="border-b border-r border-border py-[22px] pr-5 text-left"
-          >
-            <span className="mb-2.5 flex items-center gap-[7px]">
-              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-gold" />
-              <span className="text-[11.5px] font-bold uppercase tracking-[0.04em] text-text-soft">Needs You</span>
-            </span>
-            <span className="block text-[33px] font-semibold leading-none tracking-[-0.02em] text-ink">
-              {brief.needsAttention.length}
+      {/* ── Needs You — concise preview, always visible with a calm empty state ── */}
+      <div data-testid="home-needs-you" className="mt-9 border-t border-border pt-6">
+        <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-gold">
+          Needs You{brief.needsAttention.length > 0 ? ` · ${brief.needsAttention.length}` : ""}
+        </p>
+        {brief.needsAttention.length > 0 ? (
+          <button type="button" onClick={() => navigate("/updates?tab=needs-you")} className="w-full text-left">
+            <span className="block text-[16.5px] font-bold leading-snug text-ink">
+              {brief.needsAttention[0].description}
             </span>
           </button>
-          <button
-            type="button"
-            onClick={() => navigate("/updates?tab=waiting")}
-            className="border-b border-border py-[22px] pl-5 text-left"
-          >
-            <span className="mb-2.5 flex items-center gap-[7px]">
-              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-text-soft" />
-              <span className="text-[11.5px] font-bold uppercase tracking-[0.04em] text-text-soft">Waiting</span>
-            </span>
-            <span className="block text-[33px] font-semibold leading-none tracking-[-0.02em] text-ink">
-              {brief.waitingOnOthers.length}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate("/updates?tab=needs-you")}
-            className="border-r border-border py-[22px] pr-5 text-left"
-          >
-            <span className="mb-2.5 flex items-center gap-[7px]">
-              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-text-soft" />
-              <span className="text-[11.5px] font-bold uppercase tracking-[0.04em] text-text-soft">Upcoming</span>
-            </span>
-            <span className="block text-[33px] font-semibold leading-none tracking-[-0.02em] text-ink">
-              {upcomingReminders.length}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => navigate("/updates?tab=history")}
-            className="py-[22px] pl-5 text-left"
-          >
-            <span className="mb-2.5 flex items-center gap-[7px]">
-              <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-text-soft" />
-              <span className="text-[11.5px] font-bold uppercase tracking-[0.04em] text-text-soft">Completed</span>
-            </span>
-            <span className="block text-[33px] font-semibold leading-none tracking-[-0.02em] text-ink">
-              {completedCount}
-            </span>
-          </button>
-        </div>
+        ) : (
+          <p data-testid="home-needs-you-empty" className="text-[14px] text-text-soft">
+            Nothing needs you right now.
+          </p>
+        )}
       </div>
 
-      {/* ── Waiting preview — hidden entirely when nothing is waiting ── */}
-      {brief.waitingOnOthers.length > 0 && (
-        <div data-testid="home-waiting-preview" className="mt-7 border-t border-border pt-6">
-          <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-soft">Waiting</p>
+      {/* ── Waiting — concise preview, up to two items ────────────────── */}
+      <div data-testid="home-waiting" className="mt-7 border-t border-border pt-6">
+        <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-soft">
+          Waiting{brief.waitingOnOthers.length > 0 ? ` · ${brief.waitingOnOthers.length}` : ""}
+        </p>
+        {brief.waitingOnOthers.length > 0 && (
           <button type="button" onClick={() => navigate("/updates?tab=waiting")} className="w-full text-left">
             {brief.waitingOnOthers.slice(0, 2).map((t) => (
               <span key={t.id} className="flex items-baseline gap-2 py-1.5">
@@ -204,20 +142,25 @@ export default function Home() {
               </span>
             )}
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* ── Needs You — top item ─────────────────────────────────────── */}
-      {brief.needsAttention.length > 0 && (
-        <div data-testid="home-needs-you-preview" className="mt-6">
-          <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-gold">Needs You</p>
-          <button type="button" onClick={() => navigate("/updates?tab=needs-you")} className="w-full text-left">
-            <span className="block text-[16.5px] font-bold leading-snug text-ink">
-              {brief.needsAttention[0].description}
-            </span>
+      {/* ── Handled — recently handled, up to two items, from brief.done ── */}
+      <div data-testid="home-handled" className="mt-7 border-t border-border pt-6">
+        <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-text-soft">
+          Handled{brief.done.length > 0 ? ` · ${brief.done.length}` : ""}
+        </p>
+        {brief.done.length > 0 && (
+          <button type="button" onClick={() => navigate("/updates?tab=history")} className="w-full text-left">
+            {brief.done.slice(0, 2).map((t) => (
+              <span key={t.id} className="flex items-baseline gap-2 py-1.5">
+                <span aria-hidden className="h-[5px] w-[5px] shrink-0 rounded-full bg-text-soft" />
+                <span className="text-[14.5px] font-medium leading-snug text-ink">{t.description}</span>
+              </span>
+            ))}
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* ── Talk to Carson — visual hero ────────────────────────────── */}
       <section data-testid="home-talk-to-carson-section" className="mt-6 sm:mt-8">
@@ -242,8 +185,15 @@ export default function Home() {
         </button>
       </section>
 
-      {/* ── Next Up — lightweight context ───────────────────────────── */}
-      <AwarenessCard events={calendarEvents} now={now} />
+      {/* ── View What's Happening — the full operating picture, one tap away ── */}
+      <button
+        type="button"
+        data-testid="home-view-whats-happening"
+        onClick={() => navigate("/updates")}
+        className="mt-6 block w-full rounded-full border border-border bg-white/60 px-4 py-3 text-center text-[13px] font-semibold text-ink transition hover:bg-cream"
+      >
+        View What's Happening
+      </button>
     </section>
   );
 }
