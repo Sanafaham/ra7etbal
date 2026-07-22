@@ -134,6 +134,28 @@ CI/test evidence: `carson-protected-behaviors` CI passed. CodeRabbit finished wi
 
 Protect: do not change escalation timing, escalation automation (`process-delegation-escalations.js`), task classification, or task state to maintain this badge — it only reads the existing `escalated_at` field for display. Reopen only on a reproduced production regression.
 
+### Needs You is a decision queue, not an ownership queue
+
+Status: COMPLETED. MERGED. DEPLOYED. TECHNICALLY VERIFIED. VISUALLY VERIFIED. PROTECTED.
+
+PR #59, implementation commit `61fc5ab`, merge commit `679aaeb5a6c43d93493678ef4b057b69fd5c6ab9`, production deployment `dpl_FJoeNAzEU8gdmU7gUi8nMmCrd8Ug`.
+
+Root cause: `isNeedsYouTask()` in `src/lib/daily-brief.ts` treated mere self-assignment ("assigned to me", assignee empty) as sufficient for Needs You — on any non-reminder task type via its owner-task fallback, and on any reminder due today or overdue via a separate branch. This put ordinary self-assigned actions, errands, and personal reminders (including automation-generated test reminders) into Needs You as if they required an owner decision, when Carson could already continue without interrupting the owner.
+
+Final authoritative rule: the self-owned fallback now requires `task.type === "decision"` — the extraction pipeline's own existing, authoritative signal for "a choice the user must make" (`extract-prompt.ts`). No title or description keyword matching is used anywhere in the fix.
+
+Preserved, untouched: cancelled tasks still always surface (`task.status === "cancelled"`); the existing quality-review intervention path (`isWaitingInterventionTask()` — delegations/follow-ups needing owner review via `quality_review_status`) is unchanged.
+
+Excluded actions, errands, and reminders are not deleted, migrated, or rewritten — they remain fully reachable via the existing "Upcoming reminders" and "Later" sections inside the What's Happening → Needs You tab (`getUpcomingReminderTasks`, `brief.later`), both pre-existing and unmodified.
+
+Home, What's Happening, and the bottom-navigation badge all read the same `buildDailyBrief().needsAttention` array — this one shared classifier fix corrected all three surfaces at once, with no risk of drift between them.
+
+Technical verification: deployment `dpl_FJoeNAzEU8gdmU7gUi8nMmCrd8Ug` (project `ra7etbal-v2`), `state`/`readyState: READY`, `meta.githubCommitSha` matches the merge commit exactly, `alias` includes both `www.ra7etbal.com` and `ra7etbal.com`, `aliasError: null`. Canonical `https://www.ra7etbal.com` returned HTTP 200.
+
+Visual verification: Sana confirmed on production — Home shows "Nothing needs you right now." with correct Waiting · 3 / Handled · 2 counts and no false Needs You count; the What's Happening nav badge carries no false attention count; What's Happening → Needs You shows "Nothing needs your attention right now." with Later · 16; expanding Later confirms the 16 excluded records (e.g. "test this exact reminder", "This is a recurring automation test that I should see, receive.", "Update the Rahet Bal master plan.") remain accessible and are no longer presented as owner decisions; Automations, Waiting, To-do, Notes, Staff, and History remain intact; Waiting delegation cards and Escalated labels remain intact.
+
+Protect: this classifier gate (`task.type === "decision"` on the self-owned fallback) — do not reintroduce a broader self-assignment check or any title/description keyword matching. Reopen only on a reproduced production regression.
+
 ## Current product rules
 
 ### Carson communication
