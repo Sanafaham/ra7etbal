@@ -128,8 +128,11 @@ describe("Home.tsx — Waiting/Handled compact summaries (no individual task tex
 
   it("no longer renders individual Waiting task descriptions", () => {
     const block = waitingBlock();
-    expect(block).not.toContain("t.description");
-    expect(block).not.toContain(".map((t)");
+    // Variable-name-agnostic: catches per-item rendering under any loop
+    // variable name (t, task, item, ...), not just the one used at the time
+    // this test was written.
+    expect(block).not.toMatch(/\.map\(/);
+    expect(block).not.toContain(".description");
     expect(block).not.toContain("more waiting");
   });
 
@@ -149,8 +152,8 @@ describe("Home.tsx — Waiting/Handled compact summaries (no individual task tex
 
   it("no longer renders individual Handled task descriptions", () => {
     const block = handledBlock();
-    expect(block).not.toContain("t.description");
-    expect(block).not.toContain(".map((t)");
+    expect(block).not.toMatch(/\.map\(/);
+    expect(block).not.toContain(".description");
   });
 
   it("shows the Handled count and one compact summary sentence", () => {
