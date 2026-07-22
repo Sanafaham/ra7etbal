@@ -18,10 +18,12 @@ function Badge({ count }: { count: number }) {
 
 /**
  * 4-tab bottom navigation bar.
- * Home / Updates / People / Carson
+ * Home / What's Happening / People / Carson
  *
- * Updates badge priority: needsAttention → waitingOnOthers
- * (highest-priority non-zero count shown, red pill).
+ * What's Happening badge: genuine unresolved owner attention only
+ * (brief.needsAttention.length — never Waiting, Handled, or any other
+ * count). Route stays /updates internally; only the owner-facing label
+ * changed.
  * Carson: pulsing green dot when connected.
  */
 export default function BottomNav() {
@@ -33,9 +35,7 @@ export default function BottomNav() {
 
   const updatesBadge = useMemo(() => {
     const brief = buildDailyBrief(tasks, new Date());
-    if (brief.needsAttention.length > 0) return brief.needsAttention.length;
-    if (brief.waitingOnOthers.length > 0) return brief.waitingOnOthers.length;
-    return 0;
+    return brief.needsAttention.length;
   }, [tasks]);
 
   return (
@@ -66,10 +66,10 @@ export default function BottomNav() {
           )}
         </NavLink>
 
-        {/* Updates — badge: priority count (needs you → waiting → inbox) */}
+        {/* What's Happening — route stays /updates; badge is Needs You only */}
         <NavLink
           to="/updates"
-          aria-label="Updates"
+          aria-label="What's Happening"
           className={
             "relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " +
             (updatesIsActive ? "text-sage" : "text-ink/45 hover:text-ink/70")
@@ -82,7 +82,7 @@ export default function BottomNav() {
             </svg>
             <Badge count={updatesBadge} />
           </span>
-          <span>Updates</span>
+          <span>What's Happening</span>
         </NavLink>
 
         {/* People — core product destination */}

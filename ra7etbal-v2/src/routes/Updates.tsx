@@ -277,7 +277,7 @@ export default function Updates() {
     <section className="space-y-4">
       {/* ── Header ── */}
       <header>
-        <h1 style={{ fontFamily: "var(--font-display)" }} className="text-[32px] font-semibold leading-none tracking-[-0.005em] text-ink">Updates</h1>
+        <h1 style={{ fontFamily: "var(--font-display)" }} className="text-[32px] font-semibold leading-none tracking-[-0.005em] text-ink">What's Happening</h1>
         <p className="mt-1.5 text-[13px] font-medium text-text-soft">What Carson is managing for you.</p>
       </header>
 
@@ -287,7 +287,7 @@ export default function Updates() {
           ref={chipScrollerRef}
           className="flex gap-2 overflow-x-auto px-5 py-0.5"
           role="tablist"
-          aria-label="Updates sections"
+          aria-label="What's Happening sections"
           style={{ scrollbarWidth: "none" }}
           onScroll={handleChipScroll}
           onPointerDown={pauseChipAutoScroll}
