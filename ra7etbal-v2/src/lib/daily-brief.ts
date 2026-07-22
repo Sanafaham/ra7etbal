@@ -157,16 +157,22 @@ function capitalize(str: string): string {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
-function isNeedsYouTask(task: Task, waitingIds: Set<string>, now: Date): boolean {
+/**
+ * Needs You is a decision queue, not an ownership queue. Self-assignment
+ * alone ("assigned to me") is not a decision — only task.type === "decision"
+ * (the extraction pipeline's own authoritative signal for "a choice the
+ * user must make", see extract-prompt.ts) qualifies a self-owned task.
+ * Ordinary actions, errands, and reminders (including overdue ones) stay
+ * out of Needs You; they remain visible via the existing Upcoming
+ * reminders / Later sections, which already read from `later`/task lists
+ * unaffected by this classifier.
+ */
+function isNeedsYouTask(task: Task, waitingIds: Set<string>, _now: Date): boolean {
   if (task.status === "cancelled") return true;
   if (isWaitingInterventionTask(task)) return true;
-
-  if (task.type === "reminder") {
-    return isReminderOverdue(task.due_at, now) || isDueToday(task, now);
-  }
-
   if (waitingIds.has(task.id)) return false;
-  return isOwnerTask(task);
+
+  return task.type === "decision" && isOwnerTask(task);
 }
 
 function isWaitingTask(task: Task): boolean {
