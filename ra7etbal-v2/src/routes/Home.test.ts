@@ -68,24 +68,25 @@ describe("Home.tsx — V1 two-layer simplification", () => {
     expect((SOURCE.match(/data-testid="home-needs-you"/g) ?? []).length).toBe(1);
   });
 
-  it("shows Waiting from brief.waitingOnOthers exactly once, capped at two items", () => {
+  it("shows Waiting from brief.waitingOnOthers.length exactly once, as a compact summary", () => {
     expect(SOURCE).toContain('data-testid="home-waiting"');
     const block = SOURCE.slice(
       SOURCE.indexOf('data-testid="home-waiting"'),
       SOURCE.indexOf('data-testid="home-handled"'),
     );
-    expect(block).toContain("brief.waitingOnOthers.slice(0, 2)");
+    expect(block).toContain("brief.waitingOnOthers.length");
+    expect(block).toContain("buildWaitingSummary(brief.waitingOnOthers.length)");
     // Exactly one Waiting section — not duplicated through a separate tile.
     expect((SOURCE.match(/data-testid="home-waiting"/g) ?? []).length).toBe(1);
   });
 
-  it("shows Handled from brief.done, capped at two items, no new completion logic", () => {
+  it("shows Handled from brief.done.length exactly once, as a compact summary, no new completion logic", () => {
     const block = SOURCE.slice(
       SOURCE.indexOf('data-testid="home-handled"'),
       SOURCE.indexOf("Talk to Carson — visual hero"),
     );
     expect(block).toContain("brief.done.length");
-    expect(block).toContain("brief.done.slice(0, 2)");
+    expect(block).toContain("buildHandledSummary(brief.done.length)");
   });
 
   it("Tell Carson still calls the existing Carson open action", () => {
@@ -101,5 +102,86 @@ describe("Home.tsx — V1 two-layer simplification", () => {
     );
     expect(block).toContain('onClick={() => navigate("/updates")}');
     expect(block).toContain("View What's Happening");
+  });
+});
+
+/**
+ * Follow-up from Sana's live production review: full Waiting/Handled
+ * records already exist inside What's Happening, so Home shows a compact
+ * count summary only — never individual task titles or descriptions.
+ * Needs You, Talk to Carson, and View What's Happening are untouched.
+ */
+describe("Home.tsx — Waiting/Handled compact summaries (no individual task text)", () => {
+  function waitingBlock(): string {
+    return SOURCE.slice(
+      SOURCE.indexOf('data-testid="home-waiting"'),
+      SOURCE.indexOf('data-testid="home-handled"'),
+    );
+  }
+
+  function handledBlock(): string {
+    return SOURCE.slice(
+      SOURCE.indexOf('data-testid="home-handled"'),
+      SOURCE.indexOf("Talk to Carson — visual hero"),
+    );
+  }
+
+  it("no longer renders individual Waiting task descriptions", () => {
+    const block = waitingBlock();
+    // Variable-name-agnostic: catches per-item rendering under any loop
+    // variable name (t, task, item, ...), not just the one used at the time
+    // this test was written.
+    expect(block).not.toMatch(/\.map\(/);
+    expect(block).not.toContain(".description");
+    expect(block).not.toContain("more waiting");
+  });
+
+  it("shows the Waiting count and one compact summary sentence", () => {
+    const block = waitingBlock();
+    expect(block).toContain("Waiting{brief.waitingOnOthers.length > 0");
+    expect(block).toContain("buildWaitingSummary");
+    expect(SOURCE).toContain(
+      'return count === 1 ? "Carson is handling 1 thing." : `Carson is handling ${count} things.`;',
+    );
+  });
+
+  it("tapping Waiting opens /updates?tab=waiting", () => {
+    const block = waitingBlock();
+    expect(block).toContain('onClick={() => navigate("/updates?tab=waiting")}');
+  });
+
+  it("no longer renders individual Handled task descriptions", () => {
+    const block = handledBlock();
+    expect(block).not.toMatch(/\.map\(/);
+    expect(block).not.toContain(".description");
+  });
+
+  it("shows the Handled count and one compact summary sentence", () => {
+    const block = handledBlock();
+    expect(block).toContain("Handled{brief.done.length > 0");
+    expect(block).toContain("buildHandledSummary");
+    expect(SOURCE).toContain(
+      'return count === 1 ? "1 thing completed today." : `${count} things completed today.`;',
+    );
+  });
+
+  it("tapping Handled opens /updates?tab=history", () => {
+    const block = handledBlock();
+    expect(block).toContain('onClick={() => navigate("/updates?tab=history")}');
+  });
+
+  it("Needs You is unchanged", () => {
+    expect(SOURCE).toContain("brief.needsAttention[0].description");
+    expect(SOURCE).toContain("Nothing needs you right now.");
+  });
+
+  it("Talk to Carson is unchanged", () => {
+    expect(SOURCE).toContain("onClick={() => openCarson(true)}");
+    expect(SOURCE).toContain("Talk to Carson");
+  });
+
+  it("View What's Happening is unchanged", () => {
+    expect(SOURCE).toContain('onClick={() => navigate("/updates")}');
+    expect(SOURCE).toContain("View What's Happening");
   });
 });
