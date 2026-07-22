@@ -6470,6 +6470,10 @@ export default function ElevenLabsAgentWidget({
         const typedDirectMessageParsed = parseSimpleDirectMessage(savedMessage.content, usePeopleStore.getState().items);
         const typedIsDirectMessage = Boolean(typedDirectMessageParsed);
 
+        // INVARIANT: a matched direct message must be dispatched and
+        // returned immediately here. It must never fall through to the
+        // free-form model below.
+        //
         // Deterministic typed direct-message dispatch — confirmed production
         // regression: "Tell Christopher to wait for me in the kitchen"
         // correctly matched parseSimpleDirectMessage above (so it correctly

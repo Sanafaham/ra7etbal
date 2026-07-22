@@ -484,4 +484,19 @@ describe("Typed direct-message dispatch — deterministic, before the free-form 
     // (which also covers blocked/failed outcomes).
     expect(block).toContain('typedDirectMessageFastPath.status === "sent"');
   });
+
+  // Locks the same guarantee "Shared handler wiring" already proves for
+  // sendDelegation()'s communication reroute (never calls
+  // createAndSendDelegation) onto this newer, second dispatcher. Both
+  // sendTypedMessage's deterministic typed dispatch and executeInstruction's
+  // model-driven call site share this one module — if a future refactor ever
+  // pulled task/delegation creation into it, plain staff communication would
+  // silently start creating tracked tasks. Source-level, not just
+  // call-site-level, so it can never be bypassed by adding a third caller.
+  it("direct-message-fast-path.ts never imports or references task/delegation creation — a future refactor cannot silently merge the two paths", () => {
+    const source = readFileSync(join(__dirname, "direct-message-fast-path.ts"), "utf-8");
+    expect(source).not.toMatch(/createAndSendDelegation|createDelegationTaskAndMessage|createTask\b/);
+    expect(source).not.toContain("from \"./delegations\"");
+    expect(source).not.toContain("from \"./tasks\"");
+  });
 });

@@ -492,6 +492,11 @@ describe("Behavioral: outgoing message body for 'Tell <person> to <message>' nev
     const createCallArg = deps.createMessageFn.mock.calls[0][0];
     expect(deliverCallArg.messageText).not.toMatch(/^to\s/i);
     expect(createCallArg.content).not.toMatch(/^to\s/i);
+    // Plain communication: no confirmation link, tied directly to this exact
+    // confirmed production phrase rather than only proven generically
+    // elsewhere.
+    expect(deliverCallArg.confirmationLink).toBeNull();
+    expect(createCallArg.confirmation_url).toBeNull();
   });
 
   it("same fix applies without normalizeOwnerReference (voice/execute_instruction call site)", async () => {
