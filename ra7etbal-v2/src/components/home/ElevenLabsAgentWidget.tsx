@@ -6470,9 +6470,13 @@ export default function ElevenLabsAgentWidget({
         const typedDirectMessageParsed = parseSimpleDirectMessage(savedMessage.content, usePeopleStore.getState().items);
         const typedIsDirectMessage = Boolean(typedDirectMessageParsed);
 
-        // INVARIANT: a matched direct message must be dispatched and
-        // returned immediately here. It must never fall through to the
-        // free-form model below.
+        // INVARIANT: a matched direct message, with no pending photo and no
+        // recurring language (the two exclusions below), must be dispatched
+        // and returned immediately here. It must never fall through to the
+        // free-form model below for that eligible case. A pending photo or
+        // recurring language is the one intentional exception — those cases
+        // fall through by design (this path can't carry an image; recurring
+        // instructions need the automation flow).
         //
         // Deterministic typed direct-message dispatch — confirmed production
         // regression: "Tell Christopher to wait for me in the kitchen"

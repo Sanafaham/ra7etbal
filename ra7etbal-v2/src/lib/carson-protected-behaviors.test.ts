@@ -495,8 +495,13 @@ describe("Typed direct-message dispatch — deterministic, before the free-form 
   // call-site-level, so it can never be bypassed by adding a third caller.
   it("direct-message-fast-path.ts never imports or references task/delegation creation — a future refactor cannot silently merge the two paths", () => {
     const source = readFileSync(join(__dirname, "direct-message-fast-path.ts"), "utf-8");
-    expect(source).not.toMatch(/createAndSendDelegation|createDelegationTaskAndMessage|createTask\b/);
-    expect(source).not.toContain("from \"./delegations\"");
-    expect(source).not.toContain("from \"./tasks\"");
+    // Symbol-name check is quote/aliasing-agnostic by construction — an
+    // import alias ("createTask as ct") still contains the literal exported
+    // name at the import site, so this catches it regardless of what it's
+    // renamed to locally.
+    expect(source).not.toMatch(/createAndSendDelegation|createDelegationTaskAndMessage|\bcreateTask\b/);
+    // Import-path check, tolerant of single/double quotes and both static
+    // and dynamic import syntax — not just one literal quote style.
+    expect(source).not.toMatch(/(?:from\s+|import\(\s*)['"]\.\/(?:delegations|tasks)['"]/);
   });
 });
