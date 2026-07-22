@@ -119,7 +119,13 @@ describe("TaskCard — Quality Intelligence owner surface", () => {
       expect(SOURCE).toContain("{reminderDue?.overdue && (");
       expect(SOURCE).toContain(">\n              Overdue\n            </span>");
       // Escalated badge appears before the Overdue badge in source order.
-      expect(SOURCE.indexOf("Escalated")).toBeLessThan(SOURCE.indexOf(">\n              Overdue"));
+      // Matches the exact JSX conditional markup, not the word "Escalated"
+      // generically — that also appears in an explanatory code comment
+      // above isWaitingDelegationOrFollowUp's definition, which would make
+      // this assertion pass even if the badge itself moved or were removed.
+      expect(
+        SOURCE.indexOf("{isWaitingDelegationOrFollowUp && task.escalated_at != null && ("),
+      ).toBeLessThan(SOURCE.indexOf("{reminderDue?.overdue && ("));
     });
   });
 });
