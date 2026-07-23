@@ -5,11 +5,20 @@
  * dead-end button.
  */
 
+/**
+ * Validates and normalizes an E.164 phone number (e.g. "+971 50 123 4567")
+ * down to bare digits (no leading "+"). Rejects anything that isn't a
+ * plausible E.164 number: missing "+", stray characters, a leading zero
+ * after the country code, or a digit count outside the valid 8–15 range.
+ */
 function normalizePhoneDigits(raw: string | undefined): string | null {
   const trimmed = raw?.trim();
   if (!trimmed) return null;
-  const digits = trimmed.replace(/[^\d]/g, "");
-  return digits.length >= 7 ? digits : null;
+  if (!/^\+[\d\s().-]+$/.test(trimmed)) return null;
+  const digits = trimmed.slice(1).replace(/[^\d]/g, "");
+  if (digits.length < 8 || digits.length > 15) return null;
+  if (digits.startsWith("0")) return null;
+  return digits;
 }
 
 export function getCarsonWhatsAppUrl(): string | null {

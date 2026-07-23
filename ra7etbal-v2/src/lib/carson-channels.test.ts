@@ -28,6 +28,24 @@ describe("carson-channels", () => {
     expect(getCarsonWhatsAppUrl()).toBe("https://wa.me/971501234567");
   });
 
+  it("rejects a placeholder-style destination (no leading +)", () => {
+    vi.stubEnv("VITE_ENABLE_CARSON_WHATSAPP", "true");
+    vi.stubEnv("VITE_CARSON_WHATSAPP_NUMBER", "<your-number-here>");
+    expect(getCarsonWhatsAppUrl()).toBeNull();
+  });
+
+  it("rejects a number that's too short to be E.164", () => {
+    vi.stubEnv("VITE_ENABLE_CARSON_WHATSAPP", "true");
+    vi.stubEnv("VITE_CARSON_WHATSAPP_NUMBER", "+1234");
+    expect(getCarsonWhatsAppUrl()).toBeNull();
+  });
+
+  it("rejects a number with a leading zero after the country code", () => {
+    vi.stubEnv("VITE_ENABLE_CARSON_WHATSAPP", "true");
+    vi.stubEnv("VITE_CARSON_WHATSAPP_NUMBER", "+0501234567");
+    expect(getCarsonWhatsAppUrl()).toBeNull();
+  });
+
   it("hides Call Carson when the switch is off, even if a number is configured", () => {
     vi.stubEnv("VITE_ENABLE_CARSON_CALL", "false");
     vi.stubEnv("VITE_CARSON_PHONE_NUMBER", "+971501234567");
