@@ -151,7 +151,7 @@ export default function Home() {
         )}
       </div>
 
-      {/* ── Talk to Carson — visual hero ────────────────────────────── */}
+      {/* ── Tell Carson — visual hero ────────────────────────────────── */}
       <section data-testid="home-talk-to-carson-section" className="mt-6 sm:mt-8">
         <button
           data-testid="home-talk-to-carson-button"
@@ -168,8 +168,8 @@ export default function Home() {
             </svg>
           </span>
           <div className="text-center">
-            <p className="text-[20px] font-semibold tracking-[-0.02em] text-ink">Talk to Carson</p>
-            <p className="text-[13px] text-text-soft">Ready when you are.</p>
+            <p className="text-[20px] font-semibold tracking-[-0.02em] text-ink">Tell Carson</p>
+            <p className="text-[13px] text-text-soft">Carson will handle it.</p>
           </div>
         </button>
       </section>

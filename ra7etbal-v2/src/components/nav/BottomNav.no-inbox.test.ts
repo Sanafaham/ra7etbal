@@ -21,7 +21,7 @@ describe("BottomNav — no Clear My Head / Inbox surface", () => {
     expect(NAV_SOURCE).toContain('aria-label="Home"');
     expect(NAV_SOURCE).toContain('aria-label="What\'s Happening"');
     expect(NAV_SOURCE).toContain('aria-label="People"');
-    expect(NAV_SOURCE).toContain('aria-label="Talk to Carson"');
+    expect(NAV_SOURCE).toContain('aria-label="Tell Carson"');
     expect(NAV_SOURCE).not.toContain("Clear My Head");
     expect(NAV_SOURCE).not.toContain(">Inbox<");
   });

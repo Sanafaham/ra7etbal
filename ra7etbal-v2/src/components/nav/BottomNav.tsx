@@ -18,7 +18,7 @@ function Badge({ count }: { count: number }) {
 
 /**
  * 4-tab bottom navigation bar.
- * Home / What's Happening / People / Carson
+ * Home / What's Happening / People / Tell Carson
  *
  * What's Happening badge: genuine unresolved owner attention only
  * (brief.needsAttention.length — never Waiting, Handled, or any other
@@ -111,7 +111,7 @@ export default function BottomNav() {
         <button
           type="button"
           onClick={() => setCarsonOpen(true)}
-          aria-label="Talk to Carson"
+          aria-label="Tell Carson"
           className={"relative flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition " + (carsonOpen ? "text-sage" : "text-ink/45 hover:text-ink/70")}
         >
           <span className="relative">
@@ -128,7 +128,7 @@ export default function BottomNav() {
               </span>
             )}
           </span>
-          <span>Carson</span>
+          <span>Tell Carson</span>
         </button>
       </div>
     </nav>

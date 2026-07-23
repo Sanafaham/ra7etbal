@@ -551,7 +551,7 @@ export default function App() {
         >
           {carsonCallStatus === "idle" && (
             <p className="mb-1 text-center text-[13px] text-ink/40">
-              Ask about your tasks, delegate to someone, or set a reminder.
+              How would you like to reach Carson?
             </p>
           )}
           <PersistentCarsonWidget
