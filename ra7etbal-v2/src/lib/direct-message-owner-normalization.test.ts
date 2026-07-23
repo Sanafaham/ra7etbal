@@ -109,5 +109,14 @@ describe("normalizeFirstPersonForOwner", () => {
       const text = "she mentioned it to me yesterday.";
       expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(text);
     });
+
+    // CodeRabbit finding: a leading "I" not covered by LEADING_SUBJECT_RULES
+    // ("I need...") combined with a later object-pronoun "me" would
+    // otherwise produce mixed-person output ("I need Grace to call Sana.").
+    // Left entirely unchanged instead of guessing a conjugation.
+    it('leaves the whole sentence unchanged rather than producing mixed-person output ("I need Grace to call me.")', () => {
+      const text = "I need Grace to call me.";
+      expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(text);
+    });
   });
 });

@@ -21,11 +21,13 @@ interface DirectMessageFastPathContext {
   people: Person[];
   /**
    * Typed-only: rewrite a leading first-person subject in the message body
-   * to the owner's name before sending, so typed and voice produce the same
-   * worker-facing text. Voice composes its own message text via the
-   * ElevenLabs model and must not opt in — this defaults to off so any
-   * caller that doesn't explicitly request it (including voice, if it ever
-   * reaches this path) keeps the exact current, unnormalized behavior.
+   * to the owner's name before this function returns, so its own `response`/
+   * `messageText` result already reflects the same text that will be
+   * delivered. This is a local, early rewrite for this fast path only — it
+   * does NOT gate whether normalization happens at all. The actual delivery
+   * boundary (createDirectMessageRecord, in direct-messages.ts) normalizes
+   * unconditionally for every caller, so `false`/omitted here does not mean
+   * "send unnormalized text" — see direct-message-owner-normalization.ts.
    */
   normalizeOwnerReference?: boolean;
 }

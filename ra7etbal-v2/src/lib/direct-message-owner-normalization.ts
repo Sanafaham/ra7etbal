@@ -52,6 +52,16 @@ export function normalizeFirstPersonForOwner(
     return composeOwnerSentence(owner, rule.verb, rest);
   }
 
+  // Safety guard (CodeRabbit finding on the PR that introduced
+  // normalizeObjectPronoun): a leading "I" that none of the rules above
+  // recognized ("I need Grace to call me.") means the owner is still the
+  // subject of THIS sentence in a form we don't know how to conjugate.
+  // Rewriting only the trailing "me" there would produce mixed-person text
+  // ("I need Grace to call Sana.") — leave the whole sentence untouched
+  // instead of guessing a conjugation, consistent with this function's
+  // conservative-by-design philosophy.
+  if (/^i\b/i.test(trimmed)) return messageText;
+
   // Mid-sentence object pronoun — confirmed production regression: "Ask
   // Grace to call me now." sent Grace the literal text "call me now"; "me"
   // here is the object of "call", not a leading subject, so the rules above
