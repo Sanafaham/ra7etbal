@@ -25,10 +25,10 @@ describe("Home.tsx — Clear My Head removed", () => {
     expect(SOURCE).not.toContain("describeImageForTextCarson");
   });
 
-  it("still renders the greeting and Talk to Carson hero", () => {
+  it("still renders the greeting and Tell Carson hero", () => {
     expect(SOURCE).toContain("home-greeting");
     expect(SOURCE).toContain("home-talk-to-carson-button");
-    expect(SOURCE).toContain("Talk to Carson");
+    expect(SOURCE).toContain("Tell Carson");
   });
 });
 
@@ -83,7 +83,7 @@ describe("Home.tsx — V1 two-layer simplification", () => {
   it("shows Handled from brief.done.length exactly once, as a compact summary, no new completion logic", () => {
     const block = SOURCE.slice(
       SOURCE.indexOf('data-testid="home-handled"'),
-      SOURCE.indexOf("Talk to Carson — visual hero"),
+      SOURCE.indexOf("Tell Carson — visual hero"),
     );
     expect(block).toContain("brief.done.length");
     expect(block).toContain("buildHandledSummary(brief.done.length)");
@@ -109,7 +109,7 @@ describe("Home.tsx — V1 two-layer simplification", () => {
  * Follow-up from Sana's live production review: full Waiting/Handled
  * records already exist inside What's Happening, so Home shows a compact
  * count summary only — never individual task titles or descriptions.
- * Needs You, Talk to Carson, and View What's Happening are untouched.
+ * Needs You, Tell Carson, and View What's Happening are untouched.
  */
 describe("Home.tsx — Waiting/Handled compact summaries (no individual task text)", () => {
   function waitingBlock(): string {
@@ -122,7 +122,7 @@ describe("Home.tsx — Waiting/Handled compact summaries (no individual task tex
   function handledBlock(): string {
     return SOURCE.slice(
       SOURCE.indexOf('data-testid="home-handled"'),
-      SOURCE.indexOf("Talk to Carson — visual hero"),
+      SOURCE.indexOf("Tell Carson — visual hero"),
     );
   }
 
@@ -175,9 +175,9 @@ describe("Home.tsx — Waiting/Handled compact summaries (no individual task tex
     expect(SOURCE).toContain("Nothing needs you right now.");
   });
 
-  it("Talk to Carson is unchanged", () => {
+  it("Tell Carson is unchanged", () => {
     expect(SOURCE).toContain("onClick={() => openCarson(true)}");
-    expect(SOURCE).toContain("Talk to Carson");
+    expect(SOURCE).toContain("Tell Carson");
   });
 
   it("View What's Happening is unchanged", () => {

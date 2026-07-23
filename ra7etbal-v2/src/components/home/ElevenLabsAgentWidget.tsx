@@ -1,6 +1,7 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import CarsonTypedChat from "./CarsonTypedChat";
+import { getCarsonCallUrl, getCarsonWhatsAppUrl } from "../../lib/carson-channels";
 import { supabase } from "../../lib/supabase";
 import { resizeImage, uploadTaskImage } from "../../lib/image-upload";
 import { saveTaskAttachments } from "../../lib/save";
@@ -6746,6 +6747,11 @@ export default function ElevenLabsAgentWidget({
 
   if (!agentId) return null;
 
+  // Configurable channel destinations — each renders only when both its
+  // destination and its visibility switch are set (see lib/carson-channels).
+  const carsonWhatsAppUrl = getCarsonWhatsAppUrl();
+  const carsonCallUrl = getCarsonCallUrl();
+
   return (
     <div
       className={
@@ -6848,30 +6854,57 @@ export default function ElevenLabsAgentWidget({
             </svg>
           </button>
 
-          {/* Talk to Carson button */}
+          {/* Talk now button — same startCall handler as before, relabeled */}
           <button
             type="button"
             onClick={startCall}
-            aria-label="Talk to Carson"
+            aria-label="Talk now"
             className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] transition hover:shadow-[0_8px_24px_-4px_rgba(20,20,20,0.36)] active:scale-95"
           >
             <MicIcon className="h-4 w-4 text-charcoal" />
             <span className="text-[13px] font-semibold text-charcoal">
-              Talk to Carson
+              Talk now
             </span>
           </button>
 
+          {/* Type button — same startTypedSession handler as before, relabeled */}
           <button
             type="button"
             onClick={startTypedSession}
-            aria-label="Type to Carson"
+            aria-label="Type"
             className="flex items-center gap-2 rounded-full border border-sage/35 bg-sage/10 px-4 py-2.5 shadow-sm transition hover:bg-sage/15 active:scale-95"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" />
             </svg>
-            <span className="text-[13px] font-semibold text-charcoal">Type to Carson</span>
+            <span className="text-[13px] font-semibold text-charcoal">Type</span>
           </button>
+
+          {/* WhatsApp — only when a destination + visibility switch are configured */}
+          {carsonWhatsAppUrl && (
+            <a
+              href={carsonWhatsAppUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="WhatsApp"
+              className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-sm transition hover:shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] active:scale-95"
+            >
+              <WhatsAppIcon className="h-4 w-4" />
+              <span className="text-[13px] font-semibold text-charcoal">WhatsApp</span>
+            </a>
+          )}
+
+          {/* Call Carson — only when a destination + visibility switch are configured */}
+          {carsonCallUrl && (
+            <a
+              href={carsonCallUrl}
+              aria-label="Call Carson"
+              className="flex items-center gap-2 rounded-full border border-charcoal/20 bg-white px-4 py-2.5 shadow-sm transition hover:shadow-[0_6px_20px_-4px_rgba(20,20,20,0.30)] active:scale-95"
+            >
+              <PhoneIcon className="h-4 w-4 text-charcoal" />
+              <span className="text-[13px] font-semibold text-charcoal">Call Carson</span>
+            </a>
+          )}
         </div>
       )}
 
@@ -7083,6 +7116,35 @@ function MicIcon({ className }: { className?: string }) {
       <path d="M5 10a7 7 0 0 0 14 0" />
       <line x1="12" y1="19" x2="12" y2="22" />
       <line x1="9" y1="22" x2="15" y2="22" />
+    </svg>
+  );
+}
+
+function PhoneIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+    </svg>
+  );
+}
+
+/** Official WhatsApp glyph — hand-coded inline (no icon library in this project). */
+function WhatsAppIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} aria-hidden>
+      <path
+        fill="#25D366"
+        d="M17.6 6.32A7.85 7.85 0 0 0 12.04 4c-4.35 0-7.9 3.53-7.9 7.87 0 1.39.36 2.74 1.05 3.94L4 20l4.3-1.13a7.93 7.93 0 0 0 3.74.95c4.34 0 7.9-3.53 7.9-7.87a7.8 7.8 0 0 0-2.34-5.63zm-5.56 12.1a6.6 6.6 0 0 1-3.36-.92l-.24-.14-2.5.66.67-2.44-.16-.25a6.55 6.55 0 0 1-1-3.48 6.58 6.58 0 0 1 6.6-6.57c1.76 0 3.42.68 4.66 1.92a6.53 6.53 0 0 1 1.93 4.66c0 3.62-2.96 6.56-6.6 6.56zm3.6-4.92c-.2-.1-1.17-.58-1.35-.64-.18-.07-.32-.1-.45.1-.13.2-.51.64-.63.77-.11.13-.23.15-.43.05-.2-.1-.83-.31-1.58-.98-.58-.52-.98-1.16-1.09-1.36-.11-.2-.01-.3.09-.4.09-.09.2-.23.3-.35.1-.11.13-.2.2-.32.07-.13.03-.24-.02-.34-.05-.1-.45-1.08-.62-1.48-.16-.39-.33-.33-.45-.34-.12 0-.25 0-.38 0a.74.74 0 0 0-.53.25c-.18.2-.7.68-.7 1.66 0 .98.72 1.93.82 2.06.1.13 1.4 2.14 3.4 3 .48.2.85.33 1.14.42.48.15.92.13 1.26.08.38-.06 1.17-.48 1.34-.94.16-.46.16-.86.11-.94-.05-.08-.18-.13-.38-.23z"
+      />
     </svg>
   );
 }
