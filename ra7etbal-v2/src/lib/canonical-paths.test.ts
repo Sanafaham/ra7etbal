@@ -407,7 +407,7 @@ describe("canonical action creation paths", () => {
     expect(saved.messages).toHaveLength(1);
     const task = h.db.tasks[0];
     const message = h.db.messages[0];
-    const confirmationUrl = `https://ra7etbal.test/confirm?task=${task.id}`;
+    const confirmationUrl = `https://www.ra7etbal.com/confirm?task=${task.id}`;
 
     expect(task).toMatchObject({
       user_id: "user-1",
