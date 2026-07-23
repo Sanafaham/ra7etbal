@@ -38,6 +38,7 @@ vi.mock("./messages", () => ({ createMessage: vi.fn() }));
 import { isCommunicationStyleTaskText } from "./communication-vs-delegation";
 import { parseDelegationFastPath } from "./delegation-fast-path";
 import { parseSimpleDirectMessage } from "./direct-message-fast-path";
+import { createAndSendDirectMessage, createDirectMessageRecord } from "./direct-messages";
 import type { Person } from "../types/person";
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -503,5 +504,127 @@ describe("Typed direct-message dispatch — deterministic, before the free-form 
     // Import-path check, tolerant of single/double quotes and both static
     // and dynamic import syntax — not just one literal quote style.
     expect(source).not.toMatch(/(?:from\s+|import\(\s*)['"]\.\/(?:delegations|tasks)['"]/);
+  });
+});
+
+// ── 9. Owner-reference normalization — applies at the shared delivery
+//       boundary, regardless of Talk or Type. Confirmed production
+//       regression: "Ask Grace to call me now." was correctly classified as
+//       communication (section 2 above), correctly created no task and no
+//       confirmation link (section 6), but the plain message itself still
+//       shipped to Grace as the literal text "call me now" — "me" read as
+//       Grace herself, not Sana. Section 4 above already proves
+//       sendDelegation()'s communication reroute calls
+//       createAndSendDirectMessage(); Talk's send_direct_whatsapp_message
+//       tool and Type's executeDirectMessageFastPath call the same
+//       function. None of the three pass a channel of any kind into it —
+//       normalizing once, inside createDirectMessageRecord (see
+//       direct-messages.ts), is therefore the one shared boundary that
+//       fixes this identically for Talk and Type, by construction, without
+//       touching classification, task creation, confirmation links, or
+//       delivery transport at all.
+//
+//       This supersedes the previous assumption (see the now-corrected
+//       "typed-only" tests in ElevenLabsAgentWidget.direct-message-parity.test.ts)
+//       that Talk to Carson's own voice-composed text never needed this
+//       step — production evidence proved the model does not reliably
+//       self-normalize object-pronoun phrasing like "call me now".
+
+describe("Owner-reference normalization at the shared direct-message delivery boundary", () => {
+  it("the exact confirmed-regression phrase is normalized before the message row is created", async () => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+    await createDirectMessageRecord({
+      source: "send_delegation_communication_reroute",
+      userId: "user-1",
+      recipient: "Grace",
+      messageText: "call me now.",
+      ownerName: "Sana",
+      createMessageFn,
+    });
+    expect(createMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "call Sana now." }),
+    );
+  });
+
+  it("'Tell Ghulam to wait for me.' is normalized the same way", async () => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+    await createDirectMessageRecord({
+      source: "send_delegation_communication_reroute",
+      userId: "user-1",
+      recipient: "Ghulam",
+      messageText: "wait for me.",
+      ownerName: "Sana",
+      createMessageFn,
+    });
+    expect(createMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "wait for Sana." }),
+    );
+  });
+
+  it("real delegation task text ('bring the car out.') is never touched by this normalization — it has no owner-relative wording to begin with", async () => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+    await createDirectMessageRecord({
+      source: "send_delegation_communication_reroute",
+      userId: "user-1",
+      recipient: "Ghulam",
+      messageText: "bring the car out.",
+      ownerName: "Sana",
+      createMessageFn,
+    });
+    expect(createMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "bring the car out." }),
+    );
+  });
+
+  it("still creates no task and no confirmation link — classification and task creation are untouched by this fix", async () => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+    const message = await createDirectMessageRecord({
+      source: "send_delegation_communication_reroute",
+      userId: "user-1",
+      recipient: "Grace",
+      messageText: "call me now.",
+      ownerName: "Sana",
+      createMessageFn,
+    });
+    expect(createMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({ task_id: null, confirmation_url: null }),
+    );
+    expect(message.task_id).toBeNull();
+    expect(message.confirmation_url).toBeNull();
+  });
+
+  it("Talk and Type parity: createAndSendDirectMessage takes no channel parameter, so normalization cannot differ by channel", async () => {
+    const source = readFileSync(join(__dirname, "direct-messages.ts"), "utf-8");
+    expect(source).not.toMatch(/\bchannel\b/i);
+
+    // Two independent calls, exactly like Talk's send_direct_whatsapp_message
+    // tool and Type's executeDirectMessageFastPath would each make — same
+    // result either way, since there is nothing here for a channel to gate.
+    const createMessageFnA = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+    const createMessageFnB = vi.fn(async (draft: any) => ({ id: "message-2", ...draft }));
+
+    await createAndSendDirectMessage({
+      source: "send_direct_whatsapp_message",
+      userId: "user-1",
+      recipient: "Grace",
+      messageText: "call me now.",
+      phone: "+971500000001",
+      ownerName: "Sana",
+      createMessageFn: createMessageFnA,
+      deliverTaskMessageFn: vi.fn(async () => ({ success: true, channel: "whatsapp" as const })),
+    });
+    await createAndSendDirectMessage({
+      source: "direct-message-fast-path",
+      userId: "user-1",
+      recipient: "Grace",
+      messageText: "call me now.",
+      phone: "+971500000001",
+      ownerName: "Sana",
+      createMessageFn: createMessageFnB,
+      deliverTaskMessageFn: vi.fn(async () => ({ success: true, channel: "whatsapp" as const })),
+    });
+
+    expect(createMessageFnA).toHaveBeenCalledWith(expect.objectContaining({ content: "call Sana now." }));
+    expect(createMessageFnB).toHaveBeenCalledWith(expect.objectContaining({ content: "call Sana now." }));
   });
 });

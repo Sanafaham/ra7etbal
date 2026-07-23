@@ -70,4 +70,44 @@ describe("normalizeFirstPersonForOwner", () => {
       "Sana has left the office.",
     );
   });
+
+  // Confirmed production regression: "Ask Grace to call me now." sent Grace
+  // the literal text "call me now" — "me" is an object pronoun referring to
+  // the owner (Sana), not the leading subject, so the existing
+  // LEADING_SUBJECT_RULES pass never touched it. Grace read "me" as herself.
+  describe("mid-sentence object pronoun (confirmed production regression)", () => {
+    it('rewrites "call me now." — the exact confirmed-regression phrase', () => {
+      expect(normalizeFirstPersonForOwner("call me now.", "Sana")).toBe(
+        "call Sana now.",
+      );
+    });
+
+    it('rewrites "wait for me."', () => {
+      expect(normalizeFirstPersonForOwner("wait for me.", "Sana")).toBe(
+        "wait for Sana.",
+      );
+    });
+
+    it('rewrites "contact me from the office."', () => {
+      expect(normalizeFirstPersonForOwner("contact me from the office.", "Sana")).toBe(
+        "contact Sana from the office.",
+      );
+    });
+
+    it('rewrites the ditransitive "bring me the keys." preserving the intended meaning', () => {
+      expect(normalizeFirstPersonForOwner("bring me the keys.", "Sana")).toBe(
+        "bring Sana the keys.",
+      );
+    });
+
+    it('leaves third-party wording ("call the doctor.") unchanged', () => {
+      const text = "call the doctor.";
+      expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(text);
+    });
+
+    it("does not rewrite unrelated mid-sentence \"me\" outside the curated verb list", () => {
+      const text = "she mentioned it to me yesterday.";
+      expect(normalizeFirstPersonForOwner(text, "Sana")).toBe(text);
+    });
+  });
 });

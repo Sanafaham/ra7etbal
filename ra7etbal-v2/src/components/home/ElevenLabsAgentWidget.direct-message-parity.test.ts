@@ -12,7 +12,19 @@ function blockBetween(startNeedle: string, endNeedle: string): string {
   return SOURCE.slice(start, end);
 }
 
-describe("ElevenLabsAgentWidget — typed-only direct-message owner normalization", () => {
+// NOTE: this file's original title and the "voice ... without any
+// normalization step" test below asserted that Talk to Carson's outgoing
+// direct messages were never normalized — that assumption was proven wrong
+// by a confirmed production regression ("Ask Grace to call me now." sent
+// Grace the literal text "call me now"). Normalization is now guaranteed
+// for every direct-message path, Talk and Type alike, at the shared
+// createAndSendDirectMessage / createDirectMessageRecord boundary in
+// direct-messages.ts — see the "Owner-reference normalization at the shared
+// direct-message delivery boundary" suite in carson-protected-behaviors.test.ts
+// for the actual behavioral proof. The two source-text checks these two
+// call sites still opt into (normalizeOwnerReference) remain true and
+// unchanged — they're just no longer the only place normalization happens.
+describe("ElevenLabsAgentWidget — direct-message owner normalization call sites", () => {
   it("gates normalizeOwnerReference to the typed channel at the model-driven executeDirectMessageFastPath call site", () => {
     const callBlock = blockBetween(
       "const directMessageFastPath =",
@@ -37,13 +49,17 @@ describe("ElevenLabsAgentWidget — typed-only direct-message owner normalizatio
     expect(occurrences).toHaveLength(2);
   });
 
-  it("voice's own send_direct_whatsapp_message tool composes and sends its message text without any normalization step", () => {
+  it("voice's own send_direct_whatsapp_message tool does not duplicate normalization logic itself — it delegates to the shared createAndSendDirectMessage boundary, which now normalizes for every caller", () => {
     const voiceToolBlock = blockBetween(
       "// Client tool: send_direct_whatsapp_message",
       "// Client tool: save_city",
     );
 
     expect(voiceToolBlock).toContain("createAndSendDirectMessage({");
+    // This widget file never opts in or calls the normalizer directly for
+    // this tool — correct, because createAndSendDirectMessage itself now
+    // normalizes unconditionally (see direct-messages.ts). A local opt-in
+    // flag here would be redundant, not additionally protective.
     expect(voiceToolBlock).not.toContain("normalizeOwnerReference");
     expect(voiceToolBlock).not.toContain("normalizeFirstPersonForOwner");
     expect(voiceToolBlock).not.toContain("executeDirectMessageFastPath");

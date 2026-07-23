@@ -360,7 +360,16 @@ describe("executeDirectMessageFastPath — typed owner-reference normalization",
     expect(result).toMatchObject({ status: "sent", messageText: "Sana has no Wi-Fi." });
   });
 
-  it("10. voice behavior is untouched: without normalizeOwnerReference, the raw first-person text is sent as-is", async () => {
+  // CORRECTED (previously asserted the opposite): confirmed production
+  // regression — "Ask Grace to call me now." shipped to Grace as the literal
+  // "call me now" from Talk to Carson. This function's own
+  // normalizeOwnerReference opt-in was never the real safety net for voice —
+  // relying on it (or on the model self-normalizing its own composed text)
+  // is exactly the assumption that broke. Normalization now happens
+  // unconditionally at the shared createAndSendDirectMessage /
+  // createDirectMessageRecord boundary (direct-messages.ts), so the raw
+  // first-person text is normalized here too, regardless of this flag.
+  it("10. the shared delivery boundary normalizes even when normalizeOwnerReference is omitted (voice call site)", async () => {
     const deps = deliveredDeps();
     await executeDirectMessageFastPath(
       "Tell Grace I have no Wi-Fi.",
@@ -368,11 +377,11 @@ describe("executeDirectMessageFastPath — typed owner-reference normalization",
       deps,
     );
     expect(deps.deliverTaskMessageFn).toHaveBeenCalledWith(
-      expect.objectContaining({ messageText: "I have no Wi-Fi." }),
+      expect.objectContaining({ messageText: "Sana has no Wi-Fi." }),
     );
   });
 
-  it("10b. voice behavior is untouched: normalizeOwnerReference explicitly false also sends the raw text", async () => {
+  it("10b. the shared delivery boundary normalizes even when normalizeOwnerReference is explicitly false", async () => {
     const deps = deliveredDeps();
     await executeDirectMessageFastPath(
       "Tell Grace I have no Wi-Fi.",
@@ -380,7 +389,7 @@ describe("executeDirectMessageFastPath — typed owner-reference normalization",
       deps,
     );
     expect(deps.deliverTaskMessageFn).toHaveBeenCalledWith(
-      expect.objectContaining({ messageText: "I have no Wi-Fi." }),
+      expect.objectContaining({ messageText: "Sana has no Wi-Fi." }),
     );
   });
 
@@ -472,7 +481,13 @@ describe("Behavioral: outgoing message body for 'Tell <person> to <message>' nev
     };
   }
 
-  it("confirmed production phrase: 'Tell Christopher to wait for me in the kitchen' sends body 'wait for me in the kitchen', never 'to wait for me in the kitchen'", async () => {
+  // CORRECTED (previously expected the unnormalized "wait for me in the
+  // kitchen" as correct): the shared delivery boundary now also normalizes
+  // the object pronoun "me" -> the owner's name (confirmed production
+  // regression — see direct-message-owner-normalization.ts and the "Owner-
+  // reference normalization" suite in carson-protected-behaviors.test.ts).
+  // The leading-"to"-connector stripping this test exists for is unchanged.
+  it("confirmed production phrase: 'Tell Christopher to wait for me in the kitchen' sends body 'wait for Sana in the kitchen', never 'to wait for me in the kitchen'", async () => {
     const deps = deliveredDeps();
     const result = await executeDirectMessageFastPath(
       "Tell Christopher to wait for me in the kitchen",
@@ -480,12 +495,12 @@ describe("Behavioral: outgoing message body for 'Tell <person> to <message>' nev
       deps,
     );
 
-    expect(result).toMatchObject({ status: "sent", messageText: "wait for me in the kitchen" });
+    expect(result).toMatchObject({ status: "sent", messageText: "wait for Sana in the kitchen" });
     expect(deps.deliverTaskMessageFn).toHaveBeenCalledWith(
-      expect.objectContaining({ messageText: "wait for me in the kitchen" }),
+      expect.objectContaining({ messageText: "wait for Sana in the kitchen" }),
     );
     expect(deps.createMessageFn).toHaveBeenCalledWith(
-      expect.objectContaining({ content: "wait for me in the kitchen" }),
+      expect.objectContaining({ content: "wait for Sana in the kitchen" }),
     );
     // The malformed body must never reach either call.
     const deliverCallArg = deps.deliverTaskMessageFn.mock.calls[0][0];
@@ -499,7 +514,7 @@ describe("Behavioral: outgoing message body for 'Tell <person> to <message>' nev
     expect(createCallArg.confirmation_url).toBeNull();
   });
 
-  it("same fix applies without normalizeOwnerReference (voice/execute_instruction call site)", async () => {
+  it("same fix applies without normalizeOwnerReference (voice/execute_instruction call site) — the shared boundary normalizes regardless", async () => {
     const deps = deliveredDeps();
     await executeDirectMessageFastPath(
       "Tell Christopher to wait for me in the kitchen",
@@ -507,7 +522,7 @@ describe("Behavioral: outgoing message body for 'Tell <person> to <message>' nev
       deps,
     );
     expect(deps.deliverTaskMessageFn).toHaveBeenCalledWith(
-      expect.objectContaining({ messageText: "wait for me in the kitchen" }),
+      expect.objectContaining({ messageText: "wait for Sana in the kitchen" }),
     );
   });
 
