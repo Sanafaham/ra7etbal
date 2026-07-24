@@ -311,6 +311,16 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(SOURCE).toContain("typedMessagesRef.current = messages");
   });
 
+  it("reconciles persisted history on focus and visibility changes without losing local optimistic rows", () => {
+    expect(SOURCE).toContain("const typedHistoryRequestRef = useRef(0)");
+    expect(SOURCE).toContain("const reconcileTypedHistory = useCallback(async () => {");
+    expect(SOURCE).toContain("window.addEventListener(\"focus\", reconcile)");
+    expect(SOURCE).toContain("document.addEventListener(\"visibilitychange\", reconcile)");
+    expect(SOURCE).toContain("const persistedIds = new Set");
+    expect(SOURCE).toContain("const optimistic = typedMessagesRef.current.filter");
+    expect(SOURCE).toContain("const merged = [...persisted, ...optimistic].sort");
+  });
+
   it("marks local typed hosting replies responded in the durable user row", () => {
     const helperBlock = blockBetween(
       "const persistLocalTypedAgentReply = useCallback(",

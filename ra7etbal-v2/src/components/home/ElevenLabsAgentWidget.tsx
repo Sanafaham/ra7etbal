@@ -908,6 +908,7 @@ export default function ElevenLabsAgentWidget({
   const [typedMessages, setTypedMessages] = useState<CarsonTypedMessage[]>([]);
   const typedMessagesRef = useRef<CarsonTypedMessage[]>([]);
   const typedHistoryLoadPromiseRef = useRef<Promise<CarsonTypedMessage[]> | null>(null);
+  const typedHistoryRequestRef = useRef(0);
   const [typedInput, setTypedInput] = useState("");
   const [typedHistoryLoading, setTypedHistoryLoading] = useState(false);
   const [typedClearingHistory, setTypedClearingHistory] = useState(false);
@@ -969,6 +970,43 @@ export default function ElevenLabsAgentWidget({
     setTypedMessages(messages);
     return messages;
   }, [authenticatedUserId]);
+
+  const reconcileTypedHistory = useCallback(async () => {
+    if (!authenticatedUserId) return;
+    const requestId = ++typedHistoryRequestRef.current;
+    const persisted = await loadRecentTypedCarsonMessages(200);
+    if (requestId !== typedHistoryRequestRef.current) return;
+    const persistedIds = new Set(persisted.map((message) => message.id));
+    const persistedClientIds = new Set(
+      persisted.map((message) => message.client_message_id).filter(Boolean),
+    );
+    const optimistic = typedMessagesRef.current.filter((message) => (
+      message.id.startsWith("local-") || message.id.startsWith("optimistic-")
+      && !persistedIds.has(message.id)
+      && !persistedClientIds.has(message.client_message_id)
+    ));
+    const merged = [...persisted, ...optimistic].sort((a, b) => {
+      const created = a.created_at.localeCompare(b.created_at);
+      return created || a.id.localeCompare(b.id);
+    });
+    typedMessagesRef.current = merged;
+    setTypedMessages(merged);
+  }, [authenticatedUserId]);
+
+  useEffect(() => {
+    if (!authenticatedUserId) return;
+    const reconcile = () => {
+      void reconcileTypedHistory().catch((err) => {
+        setTypedError(`Could not refresh the typed conversation. ${sanitizeCarsonErrorDetail(err)}`);
+      });
+    };
+    window.addEventListener("focus", reconcile);
+    document.addEventListener("visibilitychange", reconcile);
+    return () => {
+      window.removeEventListener("focus", reconcile);
+      document.removeEventListener("visibilitychange", reconcile);
+    };
+  }, [authenticatedUserId, reconcileTypedHistory]);
   /**
    * True from the moment a previous conversation's endSession() is kicked
    * off until it actually settles. iOS Home Screen (standalone) PWA mode

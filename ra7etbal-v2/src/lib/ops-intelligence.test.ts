@@ -813,6 +813,18 @@ describe("hosting planning gate", () => {
     expect(gate.brief.guestCount).toBe("six guests");
     expect(gate.brief.dietaryRequirements).toMatch(/no garlic/i);
   });
+
+  it.each([
+    ["4pm. 6 guests and no shellfish", "no shellfish"],
+    ["six at four and no nuts", "no nuts"],
+    ["16:00, 8 people, allergic to peanuts", "allergic to peanuts"],
+  ])("extracts only the dietary span from '%s'", (answer, dietary) => {
+    const gate = evaluateHostingPlanningGate(
+      `I have afternoon tea today. Handle everything.\n\nClarification details: ${answer}`,
+    );
+    expect(gate.brief.dietaryRequirements).toBe(dietary);
+    expect(gate.brief.dietaryRequirements).not.toMatch(/guests?|people|four|six|eight/i);
+  });
   it("blocks the exact afternoon-tea failure when time, menu, and specific location are missing", () => {
     const gate = evaluateHostingPlanningGate("Handle afternoon tea at home today for me and three guests.");
 

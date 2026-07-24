@@ -423,10 +423,19 @@ function inferFlowers(text: string): string | null {
 }
 
 function inferDietaryRequirements(text: string): string | null {
-  const explicit = text.match(DIETARY_RE)?.[0];
-  if (explicit) return cleanMatchedText(explicit);
-  const natural = hostingClauses(text).find((clause) => NATURAL_DIETARY_EXCLUSION_RE.test(clause));
-  return natural ? cleanMatchedText(natural) : null;
+  const clauses = hostingClauses(text).map((clause) => clause
+    .replace(TIME_RE, " ")
+    .replace(CLARIFICATION_TIME_RE, " ")
+    .replace(GUEST_COUNT_RE, " ")
+    .replace(/\s+/g, " ")
+    .trim());
+  for (const clause of clauses) {
+    const explicit = clause.match(DIETARY_RE)?.[0];
+    if (explicit) return cleanMatchedText(explicit);
+    const natural = clause.match(NATURAL_DIETARY_EXCLUSION_RE)?.[0];
+    if (natural) return cleanMatchedText(natural);
+  }
+  return null;
 }
 
 export function buildHostingEventBrief(text: string): HostingEventBrief {
