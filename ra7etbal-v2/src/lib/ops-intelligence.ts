@@ -298,23 +298,7 @@ function inferLocation(text: string): string | null {
 
 function inferGuestCount(text: string): string | null {
   const match = text.match(GUEST_COUNT_RE);
-  if (!match) {
-    // Bare numbers/number words are meaningful only inside an accumulated
-    // clarification answer. Keeping this fallback scoped to the clarification
-    // section prevents times, dates, rooms, and addresses from becoming guest
-    // counts in a fresh instruction.
-    const clarificationAnswers = text.split(/Clarification details:\s*/i).slice(1);
-    const bare = clarificationAnswers
-      .map((answer) => answer.trim())
-      .reverse()
-      .map((answer) => answer.match(
-        /(?:^|\b(?:there\s+will\s+be|we\s+are|for)\s+)(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})(?=\s*(?:guest|guests|people|,|\.|$|\band\b))/i,
-      ))
-      .find((candidate): candidate is RegExpMatchArray => Boolean(candidate));
-    if (!bare) return null;
-    const count = bare[1];
-    return `${/^\d+$/.test(count) ? NUMBER_WORDS.get(Number(count)) ?? count : count.toLowerCase()} guests`;
-  }
+  if (!match) return null;
   const count = match[1];
   if (count) {
     const normalizedCount = /^\d+$/.test(count)
@@ -476,12 +460,19 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
 }
 
 export function evaluateHostingPlanningGate(text: string): HostingPlanningGateResult {
-  const brief = buildHostingEventBrief(text);
+  const latestMarker = text.toLowerCase().lastIndexOf("clarification details:");
+  const normalizedSource = latestMarker >= 0
+    ? `${text.slice(0, latestMarker)}Clarification details: ${normalizeHostingClarificationAnswer(
+        text.slice(latestMarker + "clarification details:".length),
+        text.slice(0, latestMarker).trim(),
+      )}`
+    : text;
+  const brief = buildHostingEventBrief(normalizedSource);
   if (brief.unresolvedRequiredFields.length === 0) {
     return { status: "ready", brief, question: null };
   }
 
-  const authoritative = hasOperatingAuthority(text);
+  const authoritative = hasOperatingAuthority(normalizedSource);
   const asks: string[] = [];
   if (brief.unresolvedRequiredFields.includes("start_time")) {
     asks.push(authoritative ? "what time should I plan for" : "what time should it begin");
@@ -515,6 +506,103 @@ export function evaluateHostingPlanningGate(text: string): HostingPlanningGateRe
         : `For ${brief.occasion ?? "this"}, ${joinedAsks}?`;
 
   return { status: "needs_clarification", brief, question };
+}
+
+const CLARIFICATION_NUMBER_WORDS = new Map([
+  ["one", 1], ["two", 2], ["three", 3], ["four", 4], ["five", 5],
+  ["six", 6], ["seven", 7], ["eight", 8], ["nine", 9], ["ten", 10],
+  ["eleven", 11], ["twelve", 12], ["thirteen", 13], ["fourteen", 14],
+  ["fifteen", 15], ["sixteen", 16], ["seventeen", 17], ["eighteen", 18],
+  ["nineteen", 19], ["twenty", 20],
+]);
+
+function clarificationNumber(value: string): number | null {
+  const normalized = value.toLowerCase();
+  if (/^\d{1,2}$/.test(normalized)) return Number(normalized);
+  return CLARIFICATION_NUMBER_WORDS.get(normalized) ?? null;
+}
+
+function formatClarificationTime(value: string): string {
+  const normalized = value.replace(/\s+/g, " ").trim().toLowerCase();
+  const wordValue = clarificationNumber(normalized);
+  if (wordValue != null && wordValue >= 1 && wordValue <= 12) return `at ${wordValue} PM`;
+  const match = normalized.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$/i);
+  if (!match) return `at ${value.trim()}`;
+  const hour = Number(match[1]);
+  const minutes = match[2] ?? "00";
+  const meridiem = match[3]?.replace(/\./g, "").toUpperCase();
+  if (!meridiem && hour <= 12) return `at ${hour}:${minutes} PM`;
+  return `at ${hour}:${minutes}${meridiem ? ` ${meridiem}` : ""}`;
+}
+
+/**
+ * Normalizes one owner clarification against the active operation's missing
+ * fields. This deliberately does not inspect all prior answers for meaning:
+ * each answer is parsed once, then merged into the canonical source text.
+ */
+export function normalizeHostingClarificationAnswer(
+  answer: string,
+  activeSourceText: string,
+): string {
+  const source = answer.trim();
+  if (!source) return source;
+  const missing = new Set(buildHostingEventBrief(activeSourceText).unresolvedRequiredFields);
+  const needsTime = missing.has("start_time");
+  const needsGuests = missing.has("guest_count");
+  if (!needsTime && !needsGuests) return source;
+
+  let normalized = source;
+  let timeMatched = false;
+  const explicitTime = source.match(
+    /\b(?:at\s+)?((?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:am|pm|a\.m\.|p\.m\.)|(?:[01]?\d|2[0-3]):[0-5]\d)\b/i,
+  );
+  if (explicitTime && needsTime) {
+    const rawTime = explicitTime[1];
+    normalized = normalized.replace(explicitTime[0], formatClarificationTime(rawTime));
+    timeMatched = true;
+  } else if (needsTime) {
+    const wordTime = source.match(/\bat\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i);
+    if (wordTime) {
+      normalized = normalized.replace(wordTime[0], formatClarificationTime(wordTime[1]));
+      timeMatched = true;
+    }
+  }
+
+  const guestMarker = normalized.match(
+    /\b(?:there\s+are|we\s+are|we['’]re|for)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})(?=\s*(?:guests?|people|persons?|,|\.|$|\band\b))/i,
+  );
+  const labeledGuest = normalized.match(
+    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})\s+(?:guests?|people|persons?)\b/i,
+  );
+  const guestValue = guestMarker?.[1] ?? labeledGuest?.[1];
+  if (needsGuests && guestValue) {
+    const numericGuest = clarificationNumber(guestValue);
+    if (numericGuest != null) {
+      const canonicalGuest = `${NUMBER_WORDS.get(numericGuest) ?? numericGuest} guests`;
+      normalized = normalized.replace(labeledGuest?.[0] ?? guestValue, canonicalGuest);
+    }
+  }
+  if (needsGuests && !guestValue) {
+    const timeRemoved = normalized
+      .replace(/\bat\s+(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d{1,2})(?:\s*(?:am|pm|a\.m\.|p\.m\.))?/i, " ")
+      .replace(/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)\b/ig, " ");
+    const bare = timeRemoved.match(
+      /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})\b/i,
+    );
+    const value = bare ? clarificationNumber(bare[1]) : null;
+    const unambiguousBare = value != null && (!needsTime || timeMatched);
+    if (unambiguousBare) {
+      normalized = normalized.replace(bare![0], `${NUMBER_WORDS.get(value) ?? value} guests`);
+    }
+  }
+
+  // A bare number is intentionally left unchanged when both fields are
+  // missing and no explicit time/guest marker disambiguates it.
+  if (needsTime && !timeMatched && !needsGuests) {
+    const bareTime = normalized.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d{1,2})\b/i);
+    if (bareTime) normalized = normalized.replace(bareTime[0], formatClarificationTime(bareTime[1]));
+  }
+  return normalized;
 }
 
 export function appendOperationClarification(
@@ -607,8 +695,11 @@ export async function prepareOperationalPlanTurn(input: {
   const currentAction = resolveGuestOutcomeAction(currentMessage);
   const isFreshHostingRequest = currentAction !== "none";
   const activeDraft = isFreshHostingRequest ? null : input.pendingDraft;
+  const clarificationMessage = activeDraft
+    ? normalizeHostingClarificationAnswer(currentMessage, activeDraft.sourceText)
+    : currentMessage;
   const sourceText = activeDraft
-    ? appendOperationClarification(activeDraft, currentMessage)
+    ? appendOperationClarification(activeDraft, clarificationMessage)
     : currentMessage;
   const action = resolveGuestOutcomeAction(sourceText);
 

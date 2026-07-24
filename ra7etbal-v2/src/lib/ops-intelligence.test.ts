@@ -35,6 +35,7 @@ const {
   isVerifiedWorkerConfirmation,
   mustRouteGuestEventToPlanner,
   normalizeGuestPreparationPlan,
+  normalizeHostingClarificationAnswer,
   prepareOperationalPlanTurn,
   resetExecutedPlanRegistryForTest,
   resolveGuestOutcomeAction,
@@ -589,6 +590,60 @@ describe("guest event planning — safety rules", () => {
 });
 
 describe("hosting planning gate", () => {
+  const GUEST_MISSING = "I have afternoon tea at home today. Handle it\n\nClarification details: At 4 PM. No shellfish";
+  const TIME_MISSING = "I have afternoon tea at home today. Handle it\n\nClarification details: Six guests. No shellfish";
+  const BOTH_MISSING = "I have afternoon tea at home today. Handle it";
+
+  it.each(["6", "six", "6 guests", "six guests", "6 people", "six people", "there are 6", "we are 6", "for 6"])(
+    "normalizes '%s' as guest count when guest count is the only missing numeric field",
+    (answer) => {
+      const normalized = normalizeHostingClarificationAnswer(answer, GUEST_MISSING);
+      const gate = evaluateHostingPlanningGate(`${GUEST_MISSING}\n\nClarification details: ${normalized}`);
+      expect(gate.brief.guestCount, answer).toBe("six guests");
+    },
+  );
+
+  it.each(["6 and no shellfish", "six and no shellfish"])(
+    "preserves '%s' guest count and dietary restriction together",
+    (answer) => {
+      const normalized = normalizeHostingClarificationAnswer(answer, GUEST_MISSING);
+      const gate = evaluateHostingPlanningGate(`${GUEST_MISSING}\n\nClarification details: ${normalized}`);
+      expect(gate.status).toBe("ready");
+      expect(gate.brief.guestCount).toBe("six guests");
+      expect(gate.brief.dietaryRequirements).toBe("No shellfish");
+    },
+  );
+
+  it.each(["4", "four", "4pm", "4 pm", "at 4", "at four", "4:00", "4:00pm", "4:00 pm", "16:00", "today at 4"])(
+    "normalizes '%s' as time when time is the only missing numeric field",
+    (answer) => {
+      const normalized = normalizeHostingClarificationAnswer(answer, TIME_MISSING);
+      const gate = evaluateHostingPlanningGate(`${TIME_MISSING}\n\nClarification details: ${normalized}`);
+      expect(gate.brief.startTime, answer).toMatch(/4(?::00)?\s*PM|16:00/i);
+    },
+  );
+
+  it.each([
+    ["4pm. 6 guests and no shellfish", "4:00 PM", "six guests"],
+    ["4pm and 6", "4:00 PM", "six guests"],
+    ["six at four", "4:00 PM", "six guests"],
+  ])("parses combined clarification '%s' into time and guests", (answer, expectedTime, expectedGuests) => {
+    const normalized = normalizeHostingClarificationAnswer(answer, BOTH_MISSING);
+    const gate = evaluateHostingPlanningGate(`${BOTH_MISSING}\n\nClarification details: ${normalized}`);
+    expect(gate.brief.startTime).toContain(expectedTime);
+    expect(gate.brief.guestCount).toBe(expectedGuests);
+    if (/shellfish/i.test(answer)) expect(gate.brief.dietaryRequirements).toMatch(/no shellfish/i);
+  });
+
+  it("does not guess a bare number when both time and guest count are missing", () => {
+    const normalized = normalizeHostingClarificationAnswer("4", BOTH_MISSING);
+    const gate = evaluateHostingPlanningGate(`${BOTH_MISSING}\n\nClarification details: ${normalized}`);
+    expect(normalized).toBe("4");
+    expect(gate.brief.startTime).toBeNull();
+    expect(gate.brief.guestCount).toBeNull();
+    expect(gate.question).toMatch(/what time should I plan for/i);
+    expect(gate.question).toContain("how many guests are coming");
+  });
   it("answers worker and deadline recall from the exact completed hosting operation", () => {
     const operation = {
       outcomeType: "guest_arrival" as const,
@@ -880,7 +935,7 @@ describe("hosting planning gate", () => {
     expect(linkedAnswer.brief.occasion).toBe("afternoon tea");
     expect(linkedAnswer.brief.date).toBe("today");
     expect(linkedAnswer.brief.guestCount).toBe("three guests");
-    expect(linkedAnswer.brief.startTime).toBe("4 PM");
+    expect(linkedAnswer.brief.startTime).toBe("4:00 PM");
     expect(linkedAnswer.brief.location).toBe("the garden");
     expect(linkedAnswer.brief.menu).toBe("Finger sandwiches, cakes and tea");
     expect(linkedAnswer.brief.dietaryRequirements).toBeNull();
