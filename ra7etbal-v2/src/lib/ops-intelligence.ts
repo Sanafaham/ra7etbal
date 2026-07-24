@@ -35,6 +35,10 @@ export interface ProposedTask {
   personId: string;
   personName: string;
   message: string;
+  taskId?: string | null;
+  messageId?: string | null;
+  outboundMessage?: string | null;
+  deliveryStatus?: "sent" | "failed" | "not_consented" | "not_created" | "pending";
 }
 
 export interface HostingEventBrief {
@@ -71,6 +75,8 @@ export interface ProposedPlan {
   sourceText: string;
   /** Unix ms when plan was created — used for 5-minute expiry check */
   createdAt: number;
+  executionStatus?: "pending" | "completed" | "partial" | "failed" | "cancelled";
+  executionSummary?: string | null;
 }
 
 export type OperationalPlan = ProposedPlan;
@@ -692,10 +698,90 @@ export async function loadLatestPendingPlan(): Promise<ProposedPlan | null> {
   };
 }
 
-async function markPlanCompleted(dbId: string): Promise<void> {
+export async function loadLatestCompletedHostingOperation(): Promise<ProposedPlan | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data, error } = await supabase
+    .from("carson_pending_operations")
+    .select("*")
+    .eq("user_id", user.id)
+    .eq("type", "guest_arrival")
+    .eq("status", "completed")
+    .order("completed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return {
+    dbId: data.id as string,
+    outcomeType: data.type as HouseholdOutcomeType,
+    tasks: (data.tasks ?? []) as ProposedTask[],
+    proposalSpeech: data.summary as string,
+    sourceText: data.source_text as string,
+    brief: buildHostingEventBrief(data.source_text as string),
+    createdAt: new Date(data.created_at as string).getTime(),
+    executionStatus: "completed",
+    executionSummary: data.summary as string,
+  };
+}
+
+const HOSTING_OPERATION_RECALL_RE =
+  /\b(?:what did you ask|what (?:did|was) .{0,30}(?:prepare|do)|what time did you tell|when did you tell|who (?:received|got|has) the plan|who did you (?:send|message)|what was sent)\b/i;
+
+function escapeHostingRecallRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export async function resolveHostingOperationRecall(text: string): Promise<string | null> {
+  if (!HOSTING_OPERATION_RECALL_RE.test(text.trim())) return null;
+  const operation = await loadLatestCompletedHostingOperation().catch(() => null);
+  if (!operation) return null;
+
+  return answerHostingOperationRecall(text, operation);
+}
+
+export function answerHostingOperationRecall(text: string, operation: ProposedPlan): string | null {
+  if (!HOSTING_OPERATION_RECALL_RE.test(text.trim())) return null;
+
+  const requestedTask = operation.tasks.find((task) =>
+    new RegExp(`\\b${escapeHostingRecallRegex(task.personName)}\\b`, "i").test(text),
+  );
+  if (requestedTask) {
+    return `${requestedTask.personName} was told: ${requestedTask.message}`;
+  }
+
+  if (/\bwhat time|\bwhen\b/i.test(text)) {
+    const deadline = operation.tasks
+      .map((task) => task.message.match(/\bready by\s+([^.;]+)/i)?.[1]?.trim())
+      .find(Boolean);
+    if (deadline) return `I told them to be ready by ${deadline}.`;
+  }
+
+  if (/\bwho\b/i.test(text)) {
+    const sent = operation.tasks.filter((task) => task.deliveryStatus === "sent");
+    const recipients = (sent.length > 0 ? sent : operation.tasks).map((task) => task.personName);
+    return `${formatNameList(recipients)} received the plan.`;
+  }
+
+  return operation.executionSummary ?? operation.proposalSpeech;
+}
+
+async function markPlanCompleted(
+  dbId: string,
+  tasks: ProposedTask[],
+  executionSummary: string,
+): Promise<void> {
   await supabase
     .from("carson_pending_operations")
-    .update({ status: "completed", completed_at: new Date().toISOString() })
+    .update({
+      status: "completed",
+      completed_at: new Date().toISOString(),
+      tasks,
+      summary: executionSummary,
+    })
     .eq("id", dbId);
 }
 
@@ -1217,6 +1303,27 @@ export function resetExecutedPlanRegistryForTest(): void {
   executedPlanKeys.clear();
 }
 
+function buildHostingExecutionSummary(plan: ProposedPlan, sentNames: string[], failedNames: string[]): string {
+  const brief = plan.brief ?? buildHostingEventBrief(plan.sourceText);
+  const details = [
+    brief.occasion,
+    brief.guestCount ? `for ${brief.guestCount}` : null,
+    brief.startTime ? `at ${brief.startTime}` : null,
+    brief.location ? formatHostingLocationPhrase(brief.location) : null,
+    brief.menu ? `menu: ${formatDetailList(brief.menu)}` : null,
+    brief.drinks ? `drinks: ${formatDetailList(brief.drinks)}` : null,
+    brief.dietaryRequirements ? `dietary: ${brief.dietaryRequirements.replace(/\.$/, "")}` : null,
+  ].filter(Boolean).join(", ");
+  const instructions = plan.tasks
+    .map((task) => `${task.personName}: ${task.message}`)
+    .join(" ");
+  const delivery = sentNames.length > 0
+    ? `${sentNames.join(", ")} ${sentNames.length === 1 ? "has" : "have"} the plan. I'll watch for confirmations.`
+    : "No messages were delivered.";
+  const failures = failedNames.length > 0 ? ` Not delivered to ${formatNameList(failedNames)}.` : "";
+  return `${delivery} Hosting operation: ${details}. ${instructions}${failures}`;
+}
+
 /**
  * Executes the confirmed plan without any AI re-extraction.
  *
@@ -1352,14 +1459,46 @@ export async function executeProposedPlan(
     failedSends.push({ recipient: msg.recipient, reason });
   }
 
-  // Mark the Supabase row as completed (fire-and-forget).
+  const enrichedTasks = plan.tasks.map((task) => {
+    const savedTask = saved.tasks.find((candidate) =>
+      candidate.assigned_to?.trim().toLowerCase() === task.personName.trim().toLowerCase(),
+    );
+    const savedMessage = saved.messages.find((candidate) =>
+      candidate.recipient.trim().toLowerCase() === task.personName.trim().toLowerCase(),
+    );
+    const failed = failedSends.find((failure) =>
+      failure.recipient.trim().toLowerCase() === task.personName.trim().toLowerCase(),
+    );
+    const noConsent = failed?.reason === "WhatsApp consent not recorded";
+    const notCreated = failed?.reason === "approved assignment was not created in Ra7etBal";
+    return {
+      ...task,
+      taskId: savedTask?.id ?? savedMessage?.task_id ?? null,
+      messageId: savedMessage?.id ?? null,
+      outboundMessage: savedMessage?.content ?? null,
+      deliveryStatus: failed
+        ? noConsent ? "not_consented" as const : notCreated ? "not_created" as const : "failed" as const
+        : "sent" as const,
+    };
+  });
+  plan.tasks = enrichedTasks;
+  plan.executionStatus = failedSends.length === 0
+    ? "completed"
+    : sentNames.length > 0 ? "partial" : "failed";
+  plan.executionSummary = buildHostingExecutionSummary(
+    plan,
+    sentNames,
+    failedSends.map((failure) => failure.recipient),
+  );
+
+  // Persist the exact generated instructions, task/message IDs, and truthful
+  // delivery result before reporting completion so recall survives restart.
   if (plan.dbId) {
-    markPlanCompleted(plan.dbId).catch(() => {});
+    await markPlanCompleted(plan.dbId, plan.tasks, plan.executionSummary).catch(() => {});
   }
 
   if (failedSends.length === 0) {
-    const names = sentNames.length > 0 ? sentNames.join(", ") : deliverableTasks.map((t) => t.personName).join(", ");
-    return `${names} have the plan. I'll watch for confirmations.`;
+    return plan.executionSummary;
   }
 
   const parts: string[] = [];
@@ -1369,7 +1508,7 @@ export async function executeProposedPlan(
   for (const failure of failedSends) {
     parts.push(`${failure.recipient} was NOT messaged — ${failure.reason}`);
   }
-  return `${parts.join(". ")}.`;
+  return `${plan.executionSummary} ${parts.join(". ")}.`;
 }
 
 /** Call when the user rejects a proposed plan. */

@@ -21,6 +21,7 @@ vi.mock("./delegation-message", () => ({
 }));
 
 const {
+  answerHostingOperationRecall,
   buildDeterministicGuestPreparationTasks,
   buildHostingEventBrief,
   detectHouseholdOutcome,
@@ -234,7 +235,8 @@ describe("guest preparation operational planning", () => {
       "Nasira",
       "Grace",
     ]);
-    expect(result).toBe("Christopher, Nasira, Grace have the plan. I'll watch for confirmations.");
+    expect(result).toContain("Christopher, Nasira, Grace have the plan. I'll watch for confirmations.");
+    expect(result).toContain("Christopher: Sana is hosting tea tomorrow at 6 PM");
   });
 
   it("reports exactly who succeeded and failed when one multi-owner send fails", async () => {
@@ -577,6 +579,27 @@ describe("guest event planning — safety rules", () => {
 });
 
 describe("hosting planning gate", () => {
+  it("answers worker and deadline recall from the exact completed hosting operation", () => {
+    const operation = {
+      outcomeType: "guest_arrival" as const,
+      sourceText: "I have afternoon tea at 4:00 PM today for six guests. No shellfish.",
+      createdAt: Date.now(),
+      proposalSpeech: "Full plan",
+      executionStatus: "completed" as const,
+      executionSummary: "Christopher and Grace have the plan.",
+      tasks: [
+        { personId: "c", personName: "Christopher", message: "Prepare finger sandwiches, scones, mini cakes, and tea with no shellfish. Have everything ready by 3:45 PM.", deliveryStatus: "sent" as const },
+        { personId: "g", personName: "Grace", message: "Coordinate the table setup and confirm readiness by 3:30 PM.", deliveryStatus: "sent" as const },
+      ],
+    };
+
+    expect(answerHostingOperationRecall("What did you ask Christopher to prepare?", operation)).toContain("finger sandwiches, scones, mini cakes, and tea");
+    expect(answerHostingOperationRecall("What did you ask Grace to do?", operation)).toContain("Coordinate the table setup");
+    expect(answerHostingOperationRecall("What time did you tell them to be ready?", operation)).toBe("I told them to be ready by 3:45 PM.");
+    expect(answerHostingOperationRecall("Who received the plan?", operation)).toBe("Christopher and Grace received the plan.");
+    expect(answerHostingOperationRecall("Ask Christopher what he is making", operation)).toBeNull();
+  });
+
   it("normalizes bare and labeled guest counts from one through twenty only in clarification context", () => {
     const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"];
     const original = "I have afternoon tea at 4:00 PM today. Handle everything.";

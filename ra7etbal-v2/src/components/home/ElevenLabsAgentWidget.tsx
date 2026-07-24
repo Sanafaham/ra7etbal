@@ -99,6 +99,7 @@ import {
   resolvePendingPlanDecision,
   handlePendingPlanTurn,
   loadLatestPendingPlan,
+  resolveHostingOperationRecall,
   type PendingOperationDraft,
   type ProposedPlan,
 } from "../../lib/ops-intelligence";
@@ -3863,6 +3864,9 @@ export default function ElevenLabsAgentWidget({
         return sanitizeSocialAcknowledgementReply(getSocialAcknowledgementReply(rawInstruction));
       }
 
+      const hostingRecall = await resolveHostingOperationRecall(rawInstruction);
+      if (hostingRecall) return hostingRecall;
+
       // Delivery status questions — "Did you send it?", "Did it go through?",
       // "Was it delivered?", "Did Christopher get it?" etc.
       //
@@ -6330,6 +6334,17 @@ export default function ElevenLabsAgentWidget({
           });
           return;
         }
+      }
+
+      const typedHostingRecall = await resolveHostingOperationRecall(savedMessage.content);
+      if (typedHostingRecall) {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: typedHostingRecall,
+          clearPendingPhotos: true,
+        });
+        return;
       }
 
       if (!pendingHostingClarificationRef.current) {

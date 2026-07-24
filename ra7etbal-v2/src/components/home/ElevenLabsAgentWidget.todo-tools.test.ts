@@ -305,6 +305,14 @@ describe("ElevenLabsAgentWidget — hosting planning gate", () => {
     expect(SOURCE).toContain('from "../../lib/ops-intelligence"');
   });
 
+  it("answers voice hosting recall before status or delegation fallthrough", () => {
+    const start = SOURCE.indexOf("const executeInstruction = useCallback(");
+    const end = SOURCE.indexOf("// Delivery status questions", start);
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("resolveHostingOperationRecall(rawInstruction)");
+    expect(block).toContain("if (hostingRecall) return hostingRecall");
+  });
+
   it("checks missing hosting details before direct send_delegation can build or execute a guest plan", () => {
     const start = SOURCE.indexOf("const sendDelegation = useCallback(");
     const end = SOURCE.indexOf("const matches = people.filter(", start);

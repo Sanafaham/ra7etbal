@@ -175,6 +175,18 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(operationTurnIndex).toBeLessThan(sendIndex);
   });
 
+  it("answers completed-hosting recall before typed text can reach the free-form model", () => {
+    const sendBlock = blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+    const recallIndex = sendBlock.indexOf("resolveHostingOperationRecall(savedMessage.content)");
+    const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
+    expect(recallIndex).toBeGreaterThan(-1);
+    expect(recallIndex).toBeLessThan(sendIndex);
+    expect(sendBlock).toContain("content: typedHostingRecall");
+  });
+
   it("executes typed hosting approval through the stored plan once instead of re-asking ElevenLabs", () => {
     const sendBlock = blockBetween(
       "const sendTypedMessage = useCallback(async () => {",
