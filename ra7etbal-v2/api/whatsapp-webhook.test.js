@@ -2,40 +2,49 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createHmac } from 'node:crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const smsMocks = vi.hoisted(() => ({
   buildSmsBody: vi.fn(({ messageText }) => `SMS: ${messageText}`),
   sendTwilioSms: vi.fn(async () => ({ ok: true, sid: 'SM123', error: null })),
+  sendMetaMessage: vi.fn(async () => ({ ok: true, messageId: 'wamid.reply-1', metaError: null })),
 }));
 
 const taskConfirmMocks = vi.hoisted(() => ({
   sendOwnerPush: vi.fn(async () => {}),
 }));
 
-const carsonBridgeMocks = vi.hoisted(() => ({
-  attemptCarsonBridgePoc: vi.fn(async () => ({ handled: true, reason: 'answered' })),
+const staffEngineMocks = vi.hoisted(() => ({
+  processStaffMessage: vi.fn(async () => ({
+    ok: true,
+    messageId: 'staff-message-1',
+    response: 'Thanks, I recorded that.',
+  })),
 }));
 
 vi.mock('./send-whatsapp-task.js', () => ({
   buildSmsBody: smsMocks.buildSmsBody,
   sendTwilioSms: smsMocks.sendTwilioSms,
+  sendMetaMessage: smsMocks.sendMetaMessage,
 }));
 
 vi.mock('./task-confirm.js', () => ({
   sendOwnerPush: taskConfirmMocks.sendOwnerPush,
 }));
 
-vi.mock('./_carson-agent-turn.js', () => ({
-  attemptCarsonBridgePoc: carsonBridgeMocks.attemptCarsonBridgePoc,
+vi.mock('./_staff-comms-engine.js', () => ({
+  processStaffMessage: staffEngineMocks.processStaffMessage,
 }));
 
 import handler, {
   attemptAutomationMessageSmsFallback,
   buildDeliveryStatusPatch,
   getFailureDetails,
+  handleInboundStaffMessage,
   updateWhatsappDeliveryStatus,
+  verifyMetaSignature,
 } from './whatsapp-webhook.js';
 
 afterEach(() => {
@@ -44,26 +53,36 @@ afterEach(() => {
   vi.unstubAllEnvs();
   smsMocks.buildSmsBody.mockClear();
   smsMocks.sendTwilioSms.mockClear();
+  smsMocks.sendMetaMessage.mockClear();
   taskConfirmMocks.sendOwnerPush.mockClear();
-  carsonBridgeMocks.attemptCarsonBridgePoc.mockClear();
+  staffEngineMocks.processStaffMessage.mockClear();
 });
 
 function makeReqRes(body) {
+  const rawBody = Buffer.from(JSON.stringify(body));
+  const signature = `sha256=${createHmac('sha256', 'meta-app-secret').update(rawBody).digest('hex')}`;
   const res = {
     statusCode: null,
     body: null,
     status(code) { this.statusCode = code; return this; },
     json(payload) { this.body = payload; return this; },
   };
-  return { req: { method: 'POST', body }, res };
+  return {
+    req: { method: 'POST', rawBody, headers: { 'x-hub-signature-256': signature } },
+    res,
+  };
 }
 
-function inboundMessagePayload({ from = '971501234567', messageId, text }) {
+function inboundMessagePayload({ from = '971501234567', messageId, text, contextMessageId = null }) {
   return {
     entry: [{
       changes: [{
         value: {
-          messages: [{ from, id: messageId, type: 'text', text: { body: text }, timestamp: '1700000000' }],
+          metadata: { phone_number_id: 'meta-phone-id' },
+          messages: [{
+            from, id: messageId, type: 'text', text: { body: text }, timestamp: '1700000000',
+            ...(contextMessageId ? { context: { id: contextMessageId } } : {}),
+          }],
         },
       }],
     }],
@@ -73,6 +92,9 @@ function inboundMessagePayload({ from = '971501234567', messageId, text }) {
 function stubBaseEnv() {
   vi.stubEnv('SUPABASE_URL', 'https://x.supabase.co');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
+  vi.stubEnv('META_APP_SECRET', 'meta-app-secret');
+  vi.stubEnv('ANTHROPIC_API_KEY', 'anthropic-key');
+  vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'meta-access-token');
   vi.stubEnv('WHATSAPP_PHONE_NUMBER_ID', ''); // keeps recordWebhookHeartbeat a no-op
 }
 
@@ -692,7 +714,52 @@ function jsonResponse(body, status = 200) {
   };
 }
 
-describe('POST /api/whatsapp-webhook — Carson bridge PoC dispatch (read-only)', () => {
+describe('verified inbound staff transport', () => {
+  it('rejects invalid Meta signatures before touching dependencies', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const { req, res } = makeReqRes({ entry: [] });
+    req.headers['x-hub-signature-256'] = 'sha256=' + '0'.repeat(64);
+    await handler(req, res);
+    expect(res.statusCode).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('resolves one household/person, preserves reply task context, and leases one outbound send', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', phone: '+971501234567', is_family: false, whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed' }]))
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-1' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-1', claimed: true, claim_token: 'claim-1', response_text: 'Recorded.' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-1' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: { from: '971501234567', messageId: 'wamid.in-1', body: 'Done', phoneNumberId: 'meta-phone-id', contextMessageId: 'wamid.out-1', timestamp: '1700000000' },
+    });
+    expect(result).toEqual({ handled: true, reason: 'delivered' });
+    expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledWith(expect.objectContaining({ userId: 'user-1', personId: 'person-1', taskId: 'task-1', externalMessageId: 'wamid.in-1' }), expect.any(Object));
+    expect(smsMocks.sendMetaMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects ambiguous and non-consented senders without invoking Carson or Meta', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', phone: '+971501234567', is_family: false, whatsapp_opted_in: true }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await handleInboundStaffMessage({ supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key', msg: { from: '971501234567', messageId: 'wamid.in-2', body: 'Done', phoneNumberId: 'meta-phone-id' } });
+    expect(result.reason).toBe('not_opted_in');
+    expect(staffEngineMocks.processStaffMessage).not.toHaveBeenCalled();
+    expect(smsMocks.sendMetaMessage).not.toHaveBeenCalled();
+  });
+});
+
+/* Legacy dispatch coverage removed: inbound staff transport is covered by
+ * api/staff-message-response-delivery.test.js. */
+describe.skip('POST /api/whatsapp-webhook — Carson bridge PoC dispatch (read-only)', () => {
   it('a consent reply still uses the existing consent path and never reaches the Carson bridge', async () => {
     stubBaseEnv();
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([]))); // findPersonByPhone -> no match, consent flow no-ops safely

@@ -1,13 +1,14 @@
-import { buildSmsBody, sendTwilioSms } from './send-whatsapp-task.js';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { buildSmsBody, sendTwilioSms, sendMetaMessage } from './send-whatsapp-task.js';
 import { sendOwnerPush } from './task-confirm.js';
-import { attemptCarsonBridgePoc } from './_carson-agent-turn.js';
+import { processStaffMessage } from './_staff-comms-engine.js';
 
 // One text-only Carson turn (WebSocket round trip to ElevenLabs) can run
 // longer than the platform default. Matches the maxDuration already used by
 // task-confirm.js and send-whatsapp-task.js for their own slow external
 // calls. Existing delivery-status/consent handling is unaffected — it still
 // completes in well under a second either way.
-export const config = { maxDuration: 60 };
+export const config = { maxDuration: 60, api: { bodyParser: false } };
 
 const ALLOWED_STATUSES = new Set(['sent', 'delivered', 'read', 'failed']);
 const DELIVERY_STATUS_RANK = {
@@ -30,17 +31,24 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
   }
+  const rawBody = await readRawBody(req);
+  if (!verifyMetaSignature(rawBody, req.headers?.['x-hub-signature-256'], process.env.META_APP_SECRET)) {
+    return res.status(401).json({ success: false, error: 'Invalid webhook signature.' });
+  }
+  let webhookBody;
+  try { webhookBody = JSON.parse(rawBody.toString('utf8')); }
+  catch { return res.status(400).json({ success: false, error: 'Invalid webhook payload.' }); }
 
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  const statuses        = extractStatuses(req.body);
-  const inboundMessages = extractInboundMessages(req.body);
-  const phoneNumberIds  = extractPhoneNumberIds(req.body);
+  const statuses        = extractStatuses(webhookBody);
+  const inboundMessages = extractInboundMessages(webhookBody);
+  const phoneNumberIds  = extractPhoneNumberIds(webhookBody);
   const webhookReceivedAt = new Date().toISOString();
 
   console.log('WhatsApp webhook POST received', {
-    entries:         Array.isArray(req.body?.entry) ? req.body.entry.length : 0,
+    entries:         Array.isArray(webhookBody?.entry) ? webhookBody.entry.length : 0,
     statusCount:     statuses.length,
     inboundCount:    inboundMessages.length,
   });
@@ -96,26 +104,13 @@ export default async function handler(req, res) {
 
   // --- Process inbound messages (consent replies, then the Carson bridge PoC) ---
   const consentResults = [];
-  const carsonBridgeResults = [];
+  const staffResults = [];
   for (const msg of inboundMessages) {
     const result = await handleInboundConsentReply({ supabaseUrl, serviceKey, msg });
     consentResults.push(result);
 
-    // Read-only proof of concept: a message that isn't a consent reply is
-    // handed to the Carson bridge to *log* a response only. This must never
-    // throw past this point or block Meta's ack — same fail-open discipline
-    // as recordWebhookHeartbeat above.
     if (!result.handled && result.reason === 'not_consent_reply') {
-      const bridgeResult = await attemptCarsonBridgePoc({
-        supabaseUrl,
-        serviceKey,
-        msg,
-        findPersonByPhone,
-      }).catch((err) => {
-        console.error('Carson bridge PoC: unexpected failure', { error: err?.message || String(err) });
-        return { handled: false, reason: 'error' };
-      });
-      carsonBridgeResults.push(bridgeResult);
+      staffResults.push(await handleInboundStaffMessage({ supabaseUrl, serviceKey, msg }));
     }
   }
 
@@ -126,8 +121,88 @@ export default async function handler(req, res) {
     deliveryMatched:    deliveryResults.filter((r) => r.matched).length,
     deliveryUpdated:    deliveryResults.filter((r) => r.updated).length,
     consentHandled:     consentResults.filter((r) => r.handled).length,
-    carsonBridgeHandled: carsonBridgeResults.filter((r) => r.handled).length,
+    staffHandled:        staffResults.filter((r) => r.handled).length,
   });
+}
+
+export function verifyMetaSignature(rawBody, signature, appSecret) {
+  if (!Buffer.isBuffer(rawBody) || !appSecret || typeof signature !== 'string' || !signature.startsWith('sha256=')) return false;
+  const supplied = signature.slice(7);
+  if (!/^[a-f0-9]{64}$/i.test(supplied)) return false;
+  const expected = createHmac('sha256', appSecret).update(rawBody).digest();
+  const actual = Buffer.from(supplied, 'hex');
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+async function readRawBody(req) {
+  if (Buffer.isBuffer(req.rawBody)) return req.rawBody;
+  if (typeof req.rawBody === 'string') return Buffer.from(req.rawBody);
+  const chunks = [];
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+export async function handleInboundStaffMessage({ supabaseUrl, serviceKey, msg }) {
+  const phoneNumberId = msg.phoneNumberId;
+  const owners = await restSelect(supabaseUrl, serviceKey, 'whatsapp_health_state',
+    `phone_number_id=eq.${encodeURIComponent(phoneNumberId)}&select=user_id`);
+  const userIds = [...new Set(owners.map((r) => r.user_id).filter(Boolean))];
+  if (userIds.length !== 1) return { handled: false, reason: 'household_not_unique' };
+  const userId = userIds[0];
+  const people = await restSelect(supabaseUrl, serviceKey, 'people',
+    `user_id=eq.${encodeURIComponent(userId)}&select=id,user_id,name,phone,role,is_family,whatsapp_opted_in,whatsapp_consent_at,whatsapp_consent_method`);
+  const sender = normalizePhone(msg.from);
+  const matches = people.filter((p) => normalizePhone(p.phone) === sender);
+  if (!sender || matches.length !== 1) return { handled: false, reason: matches.length ? 'ambiguous_sender' : 'unknown_sender' };
+  const person = matches[0];
+  if (person.is_family) return { handled: false, reason: 'family_sender' };
+  if (!person.whatsapp_opted_in || !person.whatsapp_consent_at || !person.whatsapp_consent_method) {
+    return { handled: false, reason: 'not_opted_in' };
+  }
+  let taskId = null;
+  if (msg.contextMessageId) {
+    const contextualMessages = await restSelect(supabaseUrl, serviceKey, 'messages',
+      `user_id=eq.${encodeURIComponent(userId)}&whatsapp_message_id=eq.${encodeURIComponent(msg.contextMessageId)}&select=task_id`);
+    if (contextualMessages.length === 1) taskId = contextualMessages[0].task_id || null;
+  }
+  const existing = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
+    `user_id=eq.${encodeURIComponent(userId)}&source=eq.whatsapp&external_message_id=eq.${encodeURIComponent(msg.messageId)}&select=*`);
+  const outcome = existing[0]?.processing_status === 'completed'
+    ? { ok:true, messageId:existing[0].id, response:existing[0].carson_response }
+    : await processStaffMessage({
+        userId, personId: person.id, text: msg.body, taskId,
+        threadId: msg.contextMessageId || null, receivedAt: timestampToIso(msg.timestamp),
+        source:'whatsapp', externalMessageId:msg.messageId,
+      }, { supabaseUrl, serviceKey, anthropicApiKey:process.env.ANTHROPIC_API_KEY });
+  if (!outcome.ok || !outcome.response) return { handled:false, reason:'processing_failed' };
+  const [claim] = await rpc(supabaseUrl, serviceKey, 'claim_staff_response_delivery',
+    { p_id:outcome.messageId,p_user_id:userId,p_lease_seconds:120 });
+  if (!claim?.claimed) return { handled:true, reason:'already_claimed' };
+  const meta = await sendMetaMessage({
+    url:`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+    accessToken:process.env.WHATSAPP_ACCESS_TOKEN,
+    payload:{ messaging_product:'whatsapp',recipient_type:'individual',to:sender,type:'text',text:{body:claim.response_text} },
+  }).catch((e)=>({ok:false,metaError:{message:e.message}}));
+  if (meta.ok) {
+    await rpc(supabaseUrl,serviceKey,'complete_staff_response_delivery',
+      {p_id:outcome.messageId,p_user_id:userId,p_claim_token:claim.claim_token,p_transport_message_id:meta.messageId,p_delivered_at:new Date().toISOString()});
+    return {handled:true,reason:'delivered'};
+  }
+  await rpc(supabaseUrl,serviceKey,'fail_staff_response_delivery',
+    {p_id:outcome.messageId,p_user_id:userId,p_claim_token:claim.claim_token,p_error:'meta_delivery_failed',p_failed_at:new Date().toISOString()});
+  return {handled:false,reason:'delivery_failed'};
+}
+
+function normalizePhone(value) { return String(value || '').replace(/\D/g, ''); }
+async function restSelect(url,key,table,query) {
+  const r=await fetch(`${url}/rest/v1/${table}?${query}`,{headers:serviceHeaders(key)});
+  if(!r.ok) throw new Error(`${table}_lookup_failed`);
+  const rows=await r.json().catch(()=>[]); return Array.isArray(rows)?rows:[];
+}
+async function rpc(url,key,name,args) {
+  const r=await fetch(`${url}/rest/v1/rpc/${name}`,{method:'POST',headers:serviceHeaders(key),body:JSON.stringify(args)});
+  if(!r.ok) throw new Error(`${name}_failed`);
+  const rows=await r.json().catch(()=>[]); return Array.isArray(rows)?rows:[rows];
 }
 
 // ---------------------------------------------------------------------------
@@ -772,7 +847,11 @@ function extractInboundMessages(body) {
         const msgBody   = raw?.type === 'text' ? String(raw?.text?.body || '').trim() : '';
         if (!from || !messageId || !msgBody) continue;
 
-        messages.push({ from, messageId, body: msgBody, timestamp: raw?.timestamp });
+        messages.push({
+          from, messageId, body: msgBody, timestamp: raw?.timestamp,
+          phoneNumberId: String(value?.metadata?.phone_number_id || '').trim(),
+          contextMessageId: String(raw?.context?.id || '').trim() || null,
+        });
       }
     }
   }

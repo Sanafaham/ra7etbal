@@ -79,13 +79,11 @@ describe('processStaffMessage', () => {
         user_facing_state: 'Completed',
         owner_attention_required: false,
       }),
-      'POST /rest/v1/rpc/complete_staff_message': jsonResponse([
-        {
-          id: 'msg-1', classification: 'routine_question', carson_response: 'Yes, please use the cream flowers.',
-          next_action_owner: 'nobody', user_facing_state: 'Completed', owner_attention_required: false,
-          escalation_reason: null, task_id: null,
-        },
-      ]),
+      'POST /rest/v1/rpc/complete_staff_message': jsonResponse({
+        id: 'msg-1', classification: 'routine_question', carson_response: 'Yes, please use the cream flowers.',
+        next_action_owner: 'nobody', user_facing_state: 'Completed', owner_attention_required: false,
+        escalation_reason: null, task_id: null,
+      }),
     });
 
     const result = await processStaffMessage(

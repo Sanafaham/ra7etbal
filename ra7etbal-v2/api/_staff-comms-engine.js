@@ -354,6 +354,7 @@ export async function processStaffMessage(input, deps) {
       ownerAttentionRequired: existing?.owner_attention_required ?? false,
       escalationReason: existing?.escalation_reason ?? null,
       relatedTaskId: existing?.task_id ?? null,
+      responseDeliveryStatus: existing?.response_delivery_status ?? null,
     };
   }
 
@@ -371,7 +372,7 @@ export async function processStaffMessage(input, deps) {
     });
     const outcome = parseClassificationResponse(rawResponse);
 
-    const [completed] = await supabaseRpc({
+    const completedResult = await supabaseRpc({
       supabaseUrl, serviceKey, fetchImpl, fn: 'complete_staff_message',
       args: {
         p_id: claim.message_id,
@@ -385,6 +386,10 @@ export async function processStaffMessage(input, deps) {
         p_responded_at: new Date().toISOString(),
       },
     });
+
+    // PostgREST returns a composite row as an object in production, while
+    // existing callers/tests may provide the equivalent one-row array.
+    const completed = Array.isArray(completedResult) ? completedResult[0] : completedResult;
 
     return {
       ok: true,
@@ -400,6 +405,7 @@ export async function processStaffMessage(input, deps) {
       escalationReason: completed.escalation_reason,
       relatedTaskId: completed.task_id,
       recommendedOption: outcome.recommendedOption,
+      responseDeliveryStatus: completed.response_delivery_status ?? null,
     };
   } catch (err) {
     console.error('[staff-comms-engine] processing failed', { messageId: claim.message_id, error: err.message });
