@@ -231,7 +231,7 @@ const DRINK_ITEM_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cockt
 const PERMISSION_TO_SUGGEST_MENU_RE =
   /\b(?:you choose|choose (?:the )?menu|suggest (?:a )?menu|carson chooses?|whatever you think|up to you|decide (?:the )?menu)\b/i;
 const DIETARY_RE =
-  /\b(?:no dietary restrictions|no allergies|dietary restrictions?[:\s]+[^.!?;]+|allerg(?:y|ies)[:\s]+[^.!?;]+|vegetarian|vegan|gluten[-\s]?free|dairy[-\s]?free|nut[-\s]?free|halal)\b/i;
+  /\b(?:no dietary restrictions|no allergies|no (?:shellfish|nuts?|dairy|gluten|pork|beef|meat|eggs?|fish|seafood)|dietary restrictions?[:\s]+[^.!?;]+|allerg(?:y|ies)[:\s]+[^.!?;]+|vegetarian|vegan|gluten[-\s]?free|dairy[-\s]?free|nut[-\s]?free|halal)\b/i;
 const DRINKS_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cocktails?|refreshments?)\b/ig;
 const CHINA_RE = /\b(?:(?:the|selected|blue|white|pink|floral|formal|best|special|luxury)\s+)*(?:china|tea set|cups?|plates?|silver|silverware|cutlery|serving pieces?)\b/i;
 
