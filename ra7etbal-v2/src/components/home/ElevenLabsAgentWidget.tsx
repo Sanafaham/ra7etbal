@@ -91,7 +91,6 @@ import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-to
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText, resolveRecurringAutomationPerson } from "../../lib/routine-detection";
 import {
   buildOperationalPlanFromOutcome,
-  evaluateHostingPlanningGate,
   prepareOperationalPlanTurn,
   resolveGuestOutcomeAction,
   executeProposedPlan,
@@ -1804,22 +1803,26 @@ export default function ElevenLabsAgentWidget({
       // handed to the deterministic planner instead. This does NOT require
       // operating authority — detection alone diverts. Ordinary single-person
       // commands are not detected as outcomes and pass straight through.
-      const guestAction = resolveGuestOutcomeAction(latestUserMessageForOps);
-      if (latestUserMessageForOps && guestAction !== "none") {
-        const hostingGate = evaluateHostingPlanningGate(latestUserMessageForOps);
-        if (hostingGate.status === "needs_clarification") {
+      const hostingSource = [latestUserMessageForOps, taskText, message]
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value))
+        .join("\n");
+      const guestAction = resolveGuestOutcomeAction(hostingSource);
+      if (guestAction !== "none") {
+        const operationTurn = await prepareOperationalPlanTurn({
+          message: hostingSource,
+          people,
+          pendingDraft: pendingHostingClarificationRef.current,
+        });
+        if (operationTurn.status === "needs_clarification") {
+          pendingHostingClarificationRef.current = operationTurn.draft;
           pendingPlanRef.current = null;
-          return hostingGate.question ?? "I need a few details before I message anyone.";
+          return operationTurn.question ?? "I need a few details before I message anyone.";
         }
-        // Dedup a burst of per-person PROPOSE calls: reuse the plan already
-        // proposed for this same utterance. (Execute is idempotent on its own.)
-        if (guestAction === "propose" && pendingPlanRef.current?.sourceText === latestUserMessageForOps) {
-          return pendingPlanRef.current.proposalSpeech;
-        }
-        const plan = await buildOperationalPlanFromOutcome(latestUserMessageForOps, people);
-        if (plan) {
-          if (guestAction === "execute") {
-            // Operating authority → run the plan now and report the real result.
+        pendingHostingClarificationRef.current = null;
+        if (operationTurn.status === "ready") {
+          const plan = operationTurn.plan;
+          if (operationTurn.action === "execute") {
             const execSummary = await executeProposedPlan(plan, {
               displayName: displayName ?? null,
               userId: authUserId,
@@ -1831,21 +1834,19 @@ export default function ElevenLabsAgentWidget({
               toolName: "send_delegation",
               resultText: execSummary,
               at: new Date().toISOString(),
-              inputSummary: { kind: "guest_operation_execute", instruction: latestUserMessageForOps },
+              inputSummary: { kind: "guest_operation_execute", instruction: plan.sourceText },
             };
             return execSummary;
           }
-          // No operating authority → confirm-before-send.
           pendingPlanRef.current = plan;
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
             resultText: plan.proposalSpeech,
             at: new Date().toISOString(),
-            inputSummary: { kind: "guest_operation_reroute", instruction: latestUserMessageForOps },
+            inputSummary: { kind: "guest_operation_reroute", instruction: plan.sourceText },
           };
           return plan.proposalSpeech;
         }
-        // Plan build failed — block the direct send rather than fanning out.
         return "Let me put the full plan together for that. One moment, then say yes to send it.";
       }
 

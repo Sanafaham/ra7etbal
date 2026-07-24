@@ -311,13 +311,25 @@ describe("ElevenLabsAgentWidget — hosting planning gate", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const block = SOURCE.slice(start, end);
-    const actionIndex = block.indexOf("const guestAction = resolveGuestOutcomeAction(latestUserMessageForOps)");
-    const gateIndex = block.indexOf("const hostingGate = evaluateHostingPlanningGate(latestUserMessageForOps)");
-    const buildIndex = block.indexOf("const plan = await buildOperationalPlanFromOutcome(latestUserMessageForOps, people)");
+    const actionIndex = block.indexOf("const guestAction = resolveGuestOutcomeAction(hostingSource)");
+    const plannerIndex = block.indexOf("const operationTurn = await prepareOperationalPlanTurn({");
     expect(actionIndex).toBeGreaterThan(-1);
-    expect(gateIndex).toBeGreaterThan(actionIndex);
-    expect(buildIndex).toBeGreaterThan(gateIndex);
-    expect(block).toContain('hostingGate.status === "needs_clarification"');
+    expect(plannerIndex).toBeGreaterThan(actionIndex);
+    expect(block).not.toContain("evaluateHostingPlanningGate(latestUserMessageForOps)");
+    expect(block).not.toContain("buildOperationalPlanFromOutcome(latestUserMessageForOps, people)");
+    expect(block).toContain('operationTurn.status === "needs_clarification"');
+    expect(block).toContain("pendingDraft: pendingHostingClarificationRef.current");
+  });
+
+  it("uses the same shared planner and execution path as typed Carson", () => {
+    const start = SOURCE.indexOf("const sendDelegation = useCallback(");
+    const end = SOURCE.indexOf("const matches = people.filter(", start);
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("const hostingSource = [latestUserMessageForOps, taskText, message]");
+    expect(block).toContain("prepareOperationalPlanTurn({");
+    expect(block).toContain("executeProposedPlan(plan");
+    expect(SOURCE).toContain("how many guests are coming");
+    expect(SOURCE).toContain("anything I should avoid serving");
   });
 
   it("checks missing hosting details before execute_instruction can build or execute a guest plan", () => {
