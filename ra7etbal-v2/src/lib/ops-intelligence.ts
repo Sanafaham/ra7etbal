@@ -146,7 +146,7 @@ export function detectHouseholdOutcome(text: string): HouseholdOutcomeType | nul
 }
 
 const OPERATING_AUTHORITY_RE =
-  /\b(handle what you can|handle it|take care of it|run this|coordinate this|make sure everything is ready|make (?:tonight|today|tomorrow|this evening) run smoothly)\b/i;
+  /\b(handle what you can|handle everything|handle it|take care of it|run this|coordinate this|make sure everything is ready|make (?:tonight|today|tomorrow|this evening) run smoothly)\b/i;
 
 export function hasOperatingAuthority(text: string): boolean {
   return OPERATING_AUTHORITY_RE.test(text.trim());
@@ -393,9 +393,13 @@ function inferFlowers(text: string): string | null {
 
 export function buildHostingEventBrief(text: string): HostingEventBrief {
   const source = text.trim();
+  const authoritative = hasOperatingAuthority(source);
   const startTime = cleanMatchedText(source.match(TIME_RE)?.[1] ?? source.match(CLARIFICATION_TIME_RE)?.[1]);
-  const menu = inferMenu(source);
-  const location = inferLocation(source);
+  const confidentAuthority = authoritative && Boolean(startTime);
+  const menu = inferMenu(source) ?? (confidentAuthority && /\b(?:afternoon|high)\s+tea\b/i.test(source)
+    ? "finger sandwiches, scones, and mini cakes"
+    : null);
+  const location = inferLocation(source) ?? (confidentAuthority ? "home" : null);
   const occasion = inferOccasion(source);
   const brief: HostingEventBrief = {
     occasion,
@@ -417,9 +421,10 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
   const missing: string[] = [];
   if (!brief.startTime) missing.push("start_time");
   if (!brief.menu) missing.push("menu");
-  if (/\b(?:tea|dinner|lunch|brunch|breakfast|hosting|guests?)\b/i.test(source) && (!brief.location || brief.location === "home")) {
+  if (/\b(?:tea|dinner|lunch|brunch|breakfast|hosting|guests?)\b/i.test(source) && (!brief.location || (!confidentAuthority && brief.location === "home"))) {
     missing.push("location");
   }
+  if (confidentAuthority && !brief.guestCount) missing.push("guest_count");
   if (!brief.dietaryRequirements) missing.push("dietary_requirements");
   brief.unresolvedRequiredFields = missing;
   return brief;
@@ -432,13 +437,16 @@ export function evaluateHostingPlanningGate(text: string): HostingPlanningGateRe
   }
 
   const asks: string[] = [];
+  if (brief.unresolvedRequiredFields.includes("guest_count")) asks.push("how many guests are coming");
   if (brief.unresolvedRequiredFields.includes("start_time")) asks.push("what time should it begin");
   if (brief.unresolvedRequiredFields.includes("location")) asks.push("where at home we should host it");
   if (brief.unresolvedRequiredFields.includes("menu")) asks.push("what you would like served");
   if (brief.unresolvedRequiredFields.includes("dietary_requirements")) asks.push("are there any dietary restrictions");
 
   const question =
-    asks.length === 2 && brief.unresolvedRequiredFields.includes("start_time") && brief.unresolvedRequiredFields.includes("dietary_requirements")
+    asks.length === 2 && brief.unresolvedRequiredFields.includes("guest_count") && brief.unresolvedRequiredFields.includes("dietary_requirements")
+      ? "How many guests are coming, and is there anything I should avoid serving?"
+    : asks.length === 2 && brief.unresolvedRequiredFields.includes("start_time") && brief.unresolvedRequiredFields.includes("dietary_requirements")
       ? "What time should it begin, and are there any dietary restrictions?"
       : `For ${brief.occasion ?? "this"}, ${asks.join(", and ")}?`;
 

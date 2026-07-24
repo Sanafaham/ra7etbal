@@ -577,6 +577,28 @@ describe("guest event planning — safety rules", () => {
 });
 
 describe("hosting planning gate", () => {
+  it("makes one compact first proposal when authority and time are already supplied", () => {
+    const gate = evaluateHostingPlanningGate("I have afternoon tea at 4:00 PM today. Handle everything.");
+
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.brief.startTime).toBe("4:00 PM");
+    expect(gate.brief.date).toBe("today");
+    expect(gate.brief.menu).toBe("finger sandwiches, scones, and mini cakes");
+    expect(gate.brief.location).toBe("home");
+    expect(gate.question).toBe("How many guests are coming, and is there anything I should avoid serving?");
+    expect(gate.question).not.toMatch(/what time|where|what you would like served/i);
+  });
+
+  it("uses supplied guest count and restrictions without reopening known fields", () => {
+    const gate = evaluateHostingPlanningGate(
+      "I have afternoon tea at 4:00 PM today for five guests. No dietary restrictions. Handle everything.",
+    );
+
+    expect(gate.status).toBe("ready");
+    expect(gate.brief.guestCount).toBe("five guests");
+    expect(gate.brief.dietaryRequirements).toBe("No dietary restrictions");
+    expect(gate.question).toBeNull();
+  });
   it("blocks the exact afternoon-tea failure when time, menu, and specific location are missing", () => {
     const gate = evaluateHostingPlanningGate("Handle afternoon tea at home today for me and three guests.");
 
