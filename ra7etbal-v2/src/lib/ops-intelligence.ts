@@ -609,10 +609,11 @@ export async function prepareOperationalPlanTurn(input: {
       sourceText,
       askedAtClientMessageId: input.askedAtClientMessageId ?? activeDraft?.askedAtClientMessageId ?? null,
     };
-    draft.operationId = await persistHostingDraft(
+    const persistedOperationId = await persistHostingDraft(
       draft,
       gate.question ?? "I need a few details before I message anyone.",
     ).catch(() => draft.operationId);
+    draft.operationId = persistedOperationId ?? draft.operationId;
     return {
       status: "needs_clarification",
       action,
