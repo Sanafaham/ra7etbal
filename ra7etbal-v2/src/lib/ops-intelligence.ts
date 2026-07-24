@@ -248,7 +248,9 @@ const DRINK_ITEM_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cockt
 const PERMISSION_TO_SUGGEST_MENU_RE =
   /\b(?:you choose|choose (?:the )?menu|suggest (?:a )?menu|carson chooses?|whatever you think|up to you|decide (?:the )?menu)\b/i;
 const DIETARY_RE =
-  /\b(?:no dietary restrictions|no allergies|no (?:shellfish|nuts?|dairy|gluten|pork|beef|meat|eggs?|fish|seafood)|dietary restrictions?[:\s]+[^.!?;]+|allerg(?:y|ies)[:\s]+[^.!?;]+|vegetarian|vegan|gluten[-\s]?free|dairy[-\s]?free|nut[-\s]?free|halal)\b/i;
+  /\b(?:no dietary restrictions|no allergies|no (?:shellfish|nuts?|dairy|gluten|pork|beef|meat|eggs?|fish|seafood)|dietary restrictions?[:\s]+[^.!?;]+|allerg(?:ic|y|ies)(?:\s+to)?[:\s]+[^.!?;]+|vegetarian|vegan|gluten[-\s]?free|dairy[-\s]?free|nut[-\s]?free|halal)\b/i;
+const NATURAL_DIETARY_EXCLUSION_RE =
+  /\bno\s+(?!time\b|guests?\b|people\b|menu\b|food\b|location\b|home\b|problem\b|thanks?\b)[a-z][a-z\s-]{1,40}\b/i;
 const DRINKS_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cocktails?|refreshments?)\b/ig;
 const CHINA_RE = /\b(?:(?:the|selected|blue|white|pink|floral|formal|best|special|luxury)\s+)*(?:china|tea set|cups?|plates?|silver|silverware|cutlery|serving pieces?)\b/i;
 
@@ -328,7 +330,10 @@ function isHostingInstructionClause(clause: string): boolean {
 }
 
 function isDietaryClause(clause: string): boolean {
-  return DIETARY_RE.test(clause) || /^(?:no\s+)?dietary\b/i.test(clause) || /\ballerg/i.test(clause);
+  return DIETARY_RE.test(clause)
+    || NATURAL_DIETARY_EXCLUSION_RE.test(clause)
+    || /^(?:no\s+)?dietary\b/i.test(clause)
+    || /\ballerg/i.test(clause);
 }
 
 function isTimingClause(clause: string): boolean {
@@ -417,6 +422,13 @@ function inferFlowers(text: string): string | null {
   return null;
 }
 
+function inferDietaryRequirements(text: string): string | null {
+  const explicit = text.match(DIETARY_RE)?.[0];
+  if (explicit) return cleanMatchedText(explicit);
+  const natural = hostingClauses(text).find((clause) => NATURAL_DIETARY_EXCLUSION_RE.test(clause));
+  return natural ? cleanMatchedText(natural) : null;
+}
+
 export function buildHostingEventBrief(text: string): HostingEventBrief {
   const source = text.trim();
   const authoritative = hasOperatingAuthority(source);
@@ -434,7 +446,7 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
     location,
     guestCount: inferGuestCount(source),
     menu,
-    dietaryRequirements: cleanMatchedText(source.match(DIETARY_RE)?.[0]),
+    dietaryRequirements: inferDietaryRequirements(source),
     drinks: inferDrinks(source) ?? (authoritative && isAfternoonTea ? "tea, coffee, and water" : null),
     setupPreferences: /\b(?:formal|casual|elegant|luxury|buffet|seated)\b/i.test(source)
       ? cleanMatchedText(source.match(/\b(?:formal|casual|elegant|luxury|buffet|seated)\b/i)?.[0])

@@ -303,6 +303,14 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(SOURCE).toContain("markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)");
   });
 
+  it("loads the newest deterministic history page and restores it chronologically", () => {
+    expect(TYPED_MESSAGES_SOURCE).toContain('.order("created_at", { ascending: false })');
+    expect(TYPED_MESSAGES_SOURCE).toContain('.order("id", { ascending: false })');
+    expect(TYPED_MESSAGES_SOURCE).toContain("Math.max(safeLimit, 200)");
+    expect(TYPED_MESSAGES_SOURCE).toContain(".reverse()");
+    expect(SOURCE).toContain("typedMessagesRef.current = messages");
+  });
+
   it("marks local typed hosting replies responded in the durable user row", () => {
     const helperBlock = blockBetween(
       "const persistLocalTypedAgentReply = useCallback(",

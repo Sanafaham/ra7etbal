@@ -34,7 +34,8 @@ export async function loadRecentTypedCarsonMessages(
     .from("carson_typed_messages")
     .select(MESSAGE_COLUMNS)
     .order("created_at", { ascending: false })
-    .limit(safeLimit);
+    .order("id", { ascending: false })
+    .limit(Math.max(safeLimit, 200));
 
   if (error) throw new Error(error.message);
   return ((data ?? []) as CarsonTypedMessage[]).reverse();

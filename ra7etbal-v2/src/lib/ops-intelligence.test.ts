@@ -791,6 +791,28 @@ describe("hosting planning gate", () => {
     expect(gate.brief.dietaryRequirements).toBe("No shellfish");
     expect(gate.question).toBeNull();
   });
+
+  it.each(["No garlic", "No onions", "No dairy", "Vegetarian", "Allergic to peanuts"])(
+    "accepts natural dietary clarification '%s' without repeating the question",
+    (restriction) => {
+      const gate = evaluateHostingPlanningGate(
+        `I have afternoon tea at 4:00 PM today for six guests. Handle everything.\n\nClarification details: ${restriction}`,
+      );
+      expect(gate.status).toBe("ready");
+      expect(gate.brief.dietaryRequirements).toMatch(new RegExp(restriction, "i"));
+      expect(gate.question).toBeNull();
+    },
+  );
+
+  it("preserves time, guest count, and a natural restriction together", () => {
+    const gate = evaluateHostingPlanningGate(
+      "I have afternoon tea today. Handle everything.\n\nClarification details: 4pm. 6 guests and no garlic",
+    );
+    expect(gate.status).toBe("ready");
+    expect(gate.brief.startTime).toMatch(/4:00 PM/i);
+    expect(gate.brief.guestCount).toBe("six guests");
+    expect(gate.brief.dietaryRequirements).toMatch(/no garlic/i);
+  });
   it("blocks the exact afternoon-tea failure when time, menu, and specific location are missing", () => {
     const gate = evaluateHostingPlanningGate("Handle afternoon tea at home today for me and three guests.");
 
