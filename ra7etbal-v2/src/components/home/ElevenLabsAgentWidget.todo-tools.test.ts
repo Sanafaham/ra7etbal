@@ -301,7 +301,7 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
 
 describe("ElevenLabsAgentWidget — hosting planning gate", () => {
   it("imports the reusable operation lifecycle from ops-intelligence", () => {
-    expect(SOURCE).toContain("prepareOperationalPlanTurn");
+    expect(SOURCE).toContain("handleOperationalHostingTurn");
     expect(SOURCE).toContain('from "../../lib/ops-intelligence"');
   });
 
@@ -312,7 +312,7 @@ describe("ElevenLabsAgentWidget — hosting planning gate", () => {
     expect(end).toBeGreaterThan(start);
     const block = SOURCE.slice(start, end);
     const actionIndex = block.indexOf("const guestAction = resolveGuestOutcomeAction(hostingSource)");
-    const plannerIndex = block.indexOf("const operationTurn = await prepareOperationalPlanTurn({");
+    const plannerIndex = block.indexOf("const operationTurn = await handleOperationalHostingTurn({");
     expect(actionIndex).toBeGreaterThan(-1);
     expect(plannerIndex).toBeGreaterThan(actionIndex);
     expect(block).not.toContain("evaluateHostingPlanningGate(latestUserMessageForOps)");
@@ -326,7 +326,7 @@ describe("ElevenLabsAgentWidget — hosting planning gate", () => {
     const end = SOURCE.indexOf("const matches = people.filter(", start);
     const block = SOURCE.slice(start, end);
     expect(block).toContain("const hostingSource = [latestUserMessageForOps, taskText, message]");
-    expect(block).toContain("prepareOperationalPlanTurn({");
+    expect(block).toContain("handleOperationalHostingTurn({");
     expect(block).toContain("executeProposedPlan(plan");
     expect(SOURCE).toContain("how many guests are coming");
     expect(SOURCE).toContain("anything I should avoid serving");
@@ -338,7 +338,7 @@ describe("ElevenLabsAgentWidget — hosting planning gate", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const block = SOURCE.slice(start, end);
-    const helperIndex = block.indexOf("const operationTurn = await prepareOperationalPlanTurn({");
+    const helperIndex = block.indexOf("const operationTurn = await handleOperationalHostingTurn({");
     const clarificationIndex = block.indexOf('operationTurn.status === "needs_clarification"', helperIndex);
     const readyIndex = block.indexOf('operationTurn.status === "ready"', helperIndex);
     expect(helperIndex).toBeGreaterThan(-1);

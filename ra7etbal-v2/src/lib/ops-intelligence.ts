@@ -544,6 +544,20 @@ export async function prepareOperationalPlanTurn(input: {
   };
 }
 
+/**
+ * Canonical hosting lifecycle entry point. All channels pass the current
+ * utterance plus the one accumulated draft through this function; adapters
+ * only render the normalized planning result and own no parsing semantics.
+ */
+export async function handleOperationalHostingTurn(input: {
+  message: string;
+  people: Person[];
+  pendingDraft?: PendingOperationDraft | null;
+  askedAtClientMessageId?: string | null;
+}): Promise<OperationalPlanningResult> {
+  return prepareOperationalPlanTurn(input);
+}
+
 // ── Confirmation / rejection detection ────────────────────────────────────────
 
 const CONFIRMATION_RE =

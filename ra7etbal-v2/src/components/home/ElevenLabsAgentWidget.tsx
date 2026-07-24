@@ -90,7 +90,7 @@ import {
 import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-tool-diagnostics";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText, resolveRecurringAutomationPerson } from "../../lib/routine-detection";
 import {
-  prepareOperationalPlanTurn,
+  handleOperationalHostingTurn,
   resolveGuestOutcomeAction,
   executeProposedPlan,
   isConfirmation,
@@ -172,12 +172,15 @@ function getOrCreateTypedSessionId(): string {
 
 function isHostingClarificationQuestion(content: string): boolean {
   const isHostingQuestion = /\bFor\s+(?:afternoon\s+tea|high\s+tea|tea|dinner|lunch|brunch|breakfast|this)\b/i.test(content);
+  const isGuestCountQuestion = /\bhow many guests?\b/i.test(content)
+    && /\?\s*$/.test(content.trim());
   const isLegacyChecklist = /\bwhat time should it begin\b/i.test(content)
     && /\bwhere at home\b/i.test(content)
     && /\bdietary restrictions\b/i.test(content);
   const isCompactClarification = /\bhow many guests are coming\b/i.test(content)
     && /\banything I should avoid serving\b/i.test(content);
-  return isHostingQuestion && (isLegacyChecklist || isCompactClarification);
+  return (isHostingQuestion || isGuestCountQuestion)
+    && (isLegacyChecklist || isCompactClarification || isGuestCountQuestion);
 }
 
 function restorePendingHostingDraftFromTypedHistory(
@@ -1808,7 +1811,7 @@ export default function ElevenLabsAgentWidget({
         .join("\n");
       const guestAction = resolveGuestOutcomeAction(hostingSource);
       if (guestAction !== "none") {
-        const operationTurn = await prepareOperationalPlanTurn({
+        const operationTurn = await handleOperationalHostingTurn({
           message: hostingSource,
           people,
           pendingDraft: pendingHostingClarificationRef.current,
@@ -4125,7 +4128,7 @@ export default function ElevenLabsAgentWidget({
         // persisted plan for both voice and typed hosting.
         const pendingOperationDraft = pendingHostingClarificationRef.current;
         if (pendingOperationDraft) {
-          const operationTurn = await prepareOperationalPlanTurn({
+          const operationTurn = await handleOperationalHostingTurn({
             message: rawInstruction,
             people,
             pendingDraft: pendingOperationDraft,
@@ -4189,7 +4192,7 @@ export default function ElevenLabsAgentWidget({
         // ready", …) → EXECUTE immediately and report the tool-confirmed result.
         // A hosting event WITHOUT operating authority → propose (confirm-before-
         // send). Approval-required sensitive actions are gated at the prompt.
-        const operationTurn = await prepareOperationalPlanTurn({
+        const operationTurn = await handleOperationalHostingTurn({
           message: rawInstruction,
           people,
         });
@@ -6344,7 +6347,7 @@ export default function ElevenLabsAgentWidget({
           people = usePeopleStore.getState().items;
         }
 
-        const operationTurn = await prepareOperationalPlanTurn({
+        const operationTurn = await handleOperationalHostingTurn({
           message: savedMessage.content,
           people,
           pendingDraft: pendingHostingClarification,
@@ -6400,7 +6403,7 @@ export default function ElevenLabsAgentWidget({
           await usePeopleStore.getState().loadFor(authUserId);
           people = usePeopleStore.getState().items;
         }
-        const operationTurn = await prepareOperationalPlanTurn({
+        const operationTurn = await handleOperationalHostingTurn({
           message: savedMessage.content,
           people,
           askedAtClientMessageId: clientMessageId,

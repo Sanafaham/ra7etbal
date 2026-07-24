@@ -116,7 +116,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "  // ------------------------------------------------------------------\n  // Session teardown",
     );
     const guestActionIndex = sendBlock.indexOf("const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)");
-    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await prepareOperationalPlanTurn({", guestActionIndex);
+    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await handleOperationalHostingTurn({", guestActionIndex);
     const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", operationTurnIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
@@ -125,7 +125,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(localReplyIndex).toBeGreaterThan(operationTurnIndex);
     expect(operationTurnIndex).toBeLessThan(sendIndex);
     expect(sendBlock).toContain('operationTurn.status === "needs_clarification"');
-    expect(sendBlock).toContain("prepareOperationalPlanTurn({");
+    expect(sendBlock).toContain("handleOperationalHostingTurn({");
     expect(sendBlock).toContain("pendingPlanRef.current = plan");
     expect(sendBlock).toContain("content: plan.proposalSpeech");
   });
@@ -137,7 +137,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     );
     const pendingRefIndex = SOURCE.indexOf("const pendingHostingClarificationRef = useRef<PendingOperationDraft | null>(null)");
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
-    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await prepareOperationalPlanTurn({", pendingBranchIndex);
+    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await handleOperationalHostingTurn({", pendingBranchIndex);
     const pendingDraftIndex = sendBlock.indexOf("pendingDraft: pendingHostingClarification", operationTurnIndex);
     const proposalIndex = sendBlock.indexOf("content: plan.proposalSpeech", operationTurnIndex);
     const setClarificationIndex = sendBlock.indexOf("pendingHostingClarificationRef.current = operationTurn.draft", operationTurnIndex);
@@ -166,7 +166,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     );
     const restoreIndex = sendBlock.indexOf("restorePendingHostingDraftFromTypedHistory(");
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
-    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await prepareOperationalPlanTurn({", pendingBranchIndex);
+    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await handleOperationalHostingTurn({", pendingBranchIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
     expect(restoreIndex).toBeGreaterThan(-1);
