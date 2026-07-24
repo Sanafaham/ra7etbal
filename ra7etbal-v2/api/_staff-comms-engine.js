@@ -354,6 +354,7 @@ export async function processStaffMessage(input, deps) {
       ownerAttentionRequired: existing?.owner_attention_required ?? false,
       escalationReason: existing?.escalation_reason ?? null,
       relatedTaskId: existing?.task_id ?? null,
+      responseDeliveryStatus: existing?.response_delivery_status ?? null,
     };
   }
 
@@ -400,6 +401,7 @@ export async function processStaffMessage(input, deps) {
       escalationReason: completed.escalation_reason,
       relatedTaskId: completed.task_id,
       recommendedOption: outcome.recommendedOption,
+      responseDeliveryStatus: completed.response_delivery_status ?? null,
     };
   } catch (err) {
     console.error('[staff-comms-engine] processing failed', { messageId: claim.message_id, error: err.message });
