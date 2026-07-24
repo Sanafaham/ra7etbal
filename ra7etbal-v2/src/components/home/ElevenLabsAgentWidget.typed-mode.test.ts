@@ -155,6 +155,8 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
   it("restores a pending typed hosting clarification draft from saved history before routing the answer", () => {
     expect(SOURCE).toContain("function restorePendingHostingDraftFromTypedHistory(");
     expect(SOURCE).toContain("isHostingClarificationQuestion(message.content)");
+    expect(SOURCE).toContain("how many guests are coming");
+    expect(SOURCE).toContain("anything I should avoid serving");
     expect(SOURCE).toContain('operationType: "guest_arrival"');
     expect(SOURCE).toContain("sourceText: ownerTurn.content");
 

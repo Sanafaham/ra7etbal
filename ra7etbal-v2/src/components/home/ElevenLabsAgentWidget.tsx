@@ -173,10 +173,13 @@ function getOrCreateTypedSessionId(): string {
 }
 
 function isHostingClarificationQuestion(content: string): boolean {
-  return /\bFor\s+(?:afternoon\s+tea|high\s+tea|tea|dinner|lunch|brunch|breakfast|this)\b/i.test(content)
-    && /\bwhat time should it begin\b/i.test(content)
+  const isHostingQuestion = /\bFor\s+(?:afternoon\s+tea|high\s+tea|tea|dinner|lunch|brunch|breakfast|this)\b/i.test(content);
+  const isLegacyChecklist = /\bwhat time should it begin\b/i.test(content)
     && /\bwhere at home\b/i.test(content)
     && /\bdietary restrictions\b/i.test(content);
+  const isCompactClarification = /\bhow many guests are coming\b/i.test(content)
+    && /\banything I should avoid serving\b/i.test(content);
+  return isHostingQuestion && (isLegacyChecklist || isCompactClarification);
 }
 
 function restorePendingHostingDraftFromTypedHistory(

@@ -599,6 +599,13 @@ describe("hosting planning gate", () => {
     expect(gate.brief.dietaryRequirements).toBe("No dietary restrictions");
     expect(gate.question).toBeNull();
   });
+  it("treats a concrete no-food restriction as a complete dietary answer", () => {
+    const gate = evaluateHostingPlanningGate("I have afternoon tea at 4:00 PM today. Handle everything.\n\nClarification details: Six guests. No shellfish.");
+    expect(gate.status).toBe("ready");
+    expect(gate.brief.guestCount).toBe("six guests");
+    expect(gate.brief.dietaryRequirements).toBe("No shellfish");
+    expect(gate.question).toBeNull();
+  });
   it("blocks the exact afternoon-tea failure when time, menu, and specific location are missing", () => {
     const gate = evaluateHostingPlanningGate("Handle afternoon tea at home today for me and three guests.");
 
