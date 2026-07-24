@@ -907,6 +907,7 @@ export default function ElevenLabsAgentWidget({
   const persistedTypedAgentEventsRef = useRef(new Set<string>());
   const [typedMessages, setTypedMessages] = useState<CarsonTypedMessage[]>([]);
   const typedMessagesRef = useRef<CarsonTypedMessage[]>([]);
+  const typedHistoryLoadPromiseRef = useRef<Promise<CarsonTypedMessage[]> | null>(null);
   const [typedInput, setTypedInput] = useState("");
   const [typedHistoryLoading, setTypedHistoryLoading] = useState(false);
   const [typedClearingHistory, setTypedClearingHistory] = useState(false);
@@ -921,6 +922,7 @@ export default function ElevenLabsAgentWidget({
 
   useEffect(() => {
     if (!authenticatedUserId) {
+      typedHistoryLoadPromiseRef.current = null;
       setTypedMessages([]);
       return;
     }
@@ -931,10 +933,15 @@ export default function ElevenLabsAgentWidget({
     setTypedMessages([]);
     setTypedHistoryLoading(true);
     setTypedError(null);
-    void markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)
-      .then(() => loadRecentTypedCarsonMessages(100))
+    const loadPromise = markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)
+      .then(() => loadRecentTypedCarsonMessages(100));
+    typedHistoryLoadPromiseRef.current = loadPromise;
+    void loadPromise
       .then((messages) => {
-        if (!cancelled) setTypedMessages(messages);
+        if (!cancelled) {
+          typedMessagesRef.current = messages;
+          setTypedMessages(messages);
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -950,6 +957,17 @@ export default function ElevenLabsAgentWidget({
     return () => {
       cancelled = true;
     };
+  }, [authenticatedUserId]);
+
+  const ensureTypedHistoryLoaded = useCallback(async (): Promise<CarsonTypedMessage[]> => {
+    if (!authenticatedUserId) return [];
+    const loadPromise = typedHistoryLoadPromiseRef.current
+      ?? loadRecentTypedCarsonMessages(100);
+    typedHistoryLoadPromiseRef.current = loadPromise;
+    const messages = await loadPromise;
+    typedMessagesRef.current = messages;
+    setTypedMessages(messages);
+    return messages;
   }, [authenticatedUserId]);
   /**
    * True from the moment a previous conversation's endSession() is kicked
@@ -5026,6 +5044,13 @@ export default function ElevenLabsAgentWidget({
     }
 
     startInFlightRef.current = true;
+    // A typed sheet can remount before the auth-driven history effect has
+    // completed. Restore the authoritative transcript before deciding whether
+    // this is a genuinely new conversation; otherwise the opening greeting
+    // would be generated against an empty in-memory state.
+    const restoredTypedMessages = requestedChannel === "text"
+      ? await ensureTypedHistoryLoaded()
+      : [];
     activeChannelRef.current = requestedChannel;
     setChannel(requestedChannel);
     const sessionGeneration = sessionGenerationRef.current + 1;
@@ -5217,7 +5242,8 @@ export default function ElevenLabsAgentWidget({
     }
     const openingVariantIndex = Number(localStorage.getItem("carson_opening_variant") ?? "0");
     localStorage.setItem("carson_opening_variant", String(openingVariantIndex + 1));
-    const openingLine = activeHostingDraft
+    const hasTypedHistory = requestedChannel === "text" && restoredTypedMessages.length > 0;
+    const openingLine = activeHostingDraft || hasTypedHistory
       ? ""
       : buildCarsonOpeningLine({
           isFirstSessionToday,
@@ -6156,7 +6182,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot]);
+  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot, ensureTypedHistoryLoaded]);
 
   const startCall = useCallback(() => {
     void startCarsonSession("voice");

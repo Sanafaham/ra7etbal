@@ -92,7 +92,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(sendBlock).toContain('deliveryStatus: "interrupted"');
 
     const historyBlock = blockBetween(
-      "void markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)",
+      "const loadPromise = markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)",
       "  }, [authenticatedUserId]);",
     );
     expect(historyBlock).toContain("loadRecentTypedCarsonMessages(100)");
@@ -184,8 +184,31 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
 
     expect(restoreIndex).toBeGreaterThan(-1);
     expect(openingIndex).toBeGreaterThan(restoreIndex);
-    expect(startBlock).toContain('const openingLine = activeHostingDraft\n      ? ""');
+    expect(startBlock).toContain('const hasTypedHistory = requestedChannel === "text" && restoredTypedMessages.length > 0');
+    expect(startBlock).toContain('const openingLine = activeHostingDraft || hasTypedHistory\n      ? ""');
     expect(startBlock).toContain("An active hosting clarification is in progress. Do not greet or start a new topic");
+  });
+
+  it("restores typed history before deciding whether to open with a greeting", () => {
+    const startBlock = blockBetween(
+      'const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = "voice") => {',
+      "  const startCall = useCallback(() => {",
+    );
+    const restoreIndex = startBlock.indexOf("const restoredTypedMessages = requestedChannel === \"text\"");
+    const openingIndex = startBlock.indexOf("const hasTypedHistory = requestedChannel === \"text\"");
+    expect(restoreIndex).toBeGreaterThan(-1);
+    expect(openingIndex).toBeGreaterThan(restoreIndex);
+    expect(startBlock).toContain("await ensureTypedHistoryLoaded()");
+    expect(startBlock).toContain("opening_line: sanitizeForCarsonSpeech(openingLine)");
+  });
+
+  it("keeps a cleared transcript eligible for the normal first-chat greeting", () => {
+    const clearStart = SOURCE.indexOf("const clearTypedHistory = useCallback(async () => {");
+    const clearBlock = SOURCE.slice(clearStart, clearStart + 900);
+    expect(clearStart).toBeGreaterThan(-1);
+    expect(clearBlock).toContain("await clearTypedCarsonMessages()");
+    expect(clearBlock).toContain("setTypedMessages([])");
+    expect(SOURCE).toContain("const hasTypedHistory = requestedChannel === \"text\" && restoredTypedMessages.length > 0");
   });
 
   it("suppresses a delayed typed greeting while hosting clarification is active", () => {

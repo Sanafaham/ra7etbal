@@ -24,7 +24,7 @@ describe("ElevenLabsAgentWidget — Voice Carson behavior guard", () => {
 
   it("does not start a greeting over a restored hosting clarification", () => {
     expect(SOURCE).toContain("const activeHostingDraft = pendingHostingClarificationRef.current");
-    expect(SOURCE).toContain('const openingLine = activeHostingDraft\n      ? ""');
+    expect(SOURCE).toContain('const openingLine = activeHostingDraft || hasTypedHistory\n      ? ""');
     expect(SOURCE).toContain("Do not greet or start a new topic; wait for the owner's clarification answer");
   });
 
