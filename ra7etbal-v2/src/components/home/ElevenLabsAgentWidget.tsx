@@ -5126,6 +5126,16 @@ export default function ElevenLabsAgentWidget({
       userTranscriptTimerRef.current = null;
     }
 
+    // A persisted hosting clarification survives component remounts and
+    // Type/Talk reconnects. Restore its canonical operation before building
+    // any opening behavior so a greeting can never interrupt the workflow.
+    const activeHostingDraft = pendingHostingClarificationRef.current
+      ?? await loadActiveHostingDraft().catch(() => null);
+    if (activeHostingDraft) {
+      pendingHostingClarificationRef.current = activeHostingDraft;
+    }
+    if (!isCurrentSession()) return;
+
     // Load structured user memory and recent session summaries before opening
     // the ElevenLabs connection. Failures are non-fatal.
     let userMemory = "";
@@ -5207,13 +5217,15 @@ export default function ElevenLabsAgentWidget({
     }
     const openingVariantIndex = Number(localStorage.getItem("carson_opening_variant") ?? "0");
     localStorage.setItem("carson_opening_variant", String(openingVariantIndex + 1));
-    const openingLine = buildCarsonOpeningLine({
-      isFirstSessionToday,
-      displayName,
-      spokenBrief: liveSpokenBrief,
-      now: nowForOpening,
-      variantIndex: openingVariantIndex,
-    });
+    const openingLine = activeHostingDraft
+      ? ""
+      : buildCarsonOpeningLine({
+          isFirstSessionToday,
+          displayName,
+          spokenBrief: liveSpokenBrief,
+          now: nowForOpening,
+          variantIndex: openingVariantIndex,
+        });
 
     // Await the photo descriptions now — they have been running concurrently with
     // the memory/weather loads above, so in most cases it is already resolved.
@@ -5230,7 +5242,7 @@ export default function ElevenLabsAgentWidget({
     const carsonStateText = requestedChannel === "voice" && sessionPhotoContextRef.current
       ? `${baseStateText}\n\nAttached photos context (use this for the conversation):\n${sessionPhotoContextRef.current}`
       : baseStateText;
-    const hostingToolPolicy = `For every new hosting request or hosting clarification, call execute_instruction with the user's full verbatim utterance. Never answer hosting from conversation history or ra7etbal_state alone. Never claim a worker confirmed unless execute_instruction returns verified confirmation evidence.`;
+    const hostingToolPolicy = `For every new hosting request or hosting clarification, call execute_instruction with the user's full verbatim utterance. Never answer hosting from conversation history or ra7etbal_state alone. Never claim a worker confirmed unless execute_instruction returns verified confirmation evidence.${activeHostingDraft ? " An active hosting clarification is in progress. Do not greet or start a new topic; wait for the owner's clarification answer and pass it to execute_instruction." : ""}`;
     const channelInstructions = requestedChannel === "voice"
       ? [CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, hostingToolPolicy, persistentInstructions]
       : [CARSON_STATUS_POLICY, persistentInstructions];
@@ -5746,6 +5758,18 @@ export default function ElevenLabsAgentWidget({
               at: new Date().toISOString(),
             });
             sessionTranscriptRef.current.push({ role, message });
+            if (
+              requestedChannel === "text"
+              && pendingHostingClarificationRef.current
+              && pendingTypedClientMessageIdRef.current == null
+            ) {
+              sessionTranscriptRef.current.pop();
+              console.log("[hosting-clarification] suppressed typed session greeting", {
+                eventId: event_id ?? null,
+                operationId: pendingHostingClarificationRef.current.operationId,
+              });
+              return;
+            }
             if (invalidCaptureRef.current) {
               sessionTranscriptRef.current.pop();
               console.warn("[carson-invalid-capture:agent-reply-suppressed]", {

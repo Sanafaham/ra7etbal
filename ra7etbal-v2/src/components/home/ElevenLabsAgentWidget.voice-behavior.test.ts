@@ -22,6 +22,12 @@ describe("ElevenLabsAgentWidget — Voice Carson behavior guard", () => {
     expect(SOURCE).toContain("handleOperationalHostingTurn({");
   });
 
+  it("does not start a greeting over a restored hosting clarification", () => {
+    expect(SOURCE).toContain("const activeHostingDraft = pendingHostingClarificationRef.current");
+    expect(SOURCE).toContain('const openingLine = activeHostingDraft\n      ? ""');
+    expect(SOURCE).toContain("Do not greet or start a new topic; wait for the owner's clarification answer");
+  });
+
   it("reminds the live agent after a successful delegation not to ask for permission or idle-probe", () => {
     expect(SOURCE).toContain("Do not ask whether to send it now; it has already been sent.");
     expect(SOURCE).toContain("Do not ask whether the user is still there.");

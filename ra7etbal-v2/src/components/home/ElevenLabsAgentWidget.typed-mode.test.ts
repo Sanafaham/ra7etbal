@@ -174,6 +174,27 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(operationTurnIndex).toBeLessThan(sendIndex);
   });
 
+  it("restores an active hosting operation before allowing typed session opening behavior", () => {
+    const startBlock = blockBetween(
+      'const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = "voice") => {',
+      "  const startCall = useCallback(() => {",
+    );
+    const restoreIndex = startBlock.indexOf("const activeHostingDraft = pendingHostingClarificationRef.current");
+    const openingIndex = startBlock.indexOf("const openingLine = activeHostingDraft");
+
+    expect(restoreIndex).toBeGreaterThan(-1);
+    expect(openingIndex).toBeGreaterThan(restoreIndex);
+    expect(startBlock).toContain('const openingLine = activeHostingDraft\n      ? ""');
+    expect(startBlock).toContain("An active hosting clarification is in progress. Do not greet or start a new topic");
+  });
+
+  it("suppresses a delayed typed greeting while hosting clarification is active", () => {
+    expect(SOURCE).toContain('requestedChannel === "text"');
+    expect(SOURCE).toContain("&& pendingHostingClarificationRef.current");
+    expect(SOURCE).toContain("&& pendingTypedClientMessageIdRef.current == null");
+    expect(SOURCE).toContain("[hosting-clarification] suppressed typed session greeting");
+  });
+
   it("answers completed-hosting recall before typed text can reach the free-form model", () => {
     const sendBlock = blockBetween(
       "const sendTypedMessage = useCallback(async () => {",

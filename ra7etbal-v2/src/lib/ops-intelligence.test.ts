@@ -651,7 +651,7 @@ describe("hosting planning gate", () => {
       "Clarification details: Six guests. No shellfish.";
     const brief = buildHostingEventBrief(source);
 
-    expect(brief.drinks).toBeNull();
+    expect(brief.drinks).toBe("tea, coffee, and water");
     expect(brief.menu).toBe("finger sandwiches, scones, and mini cakes");
     expect(brief.menu).not.toContain("I have afternoon tea");
   });
@@ -672,6 +672,51 @@ describe("hosting planning gate", () => {
     expect(gate.brief.location).toBe("home");
     expect(gate.question).toBe("How many guests are coming, and is there anything I should avoid serving?");
     expect(gate.question).not.toMatch(/what time|where|what you would like served/i);
+  });
+
+  it("uses Chief-of-Staff defaults and asks only essential questions when time is missing", () => {
+    const gate = evaluateHostingPlanningGate("I have afternoon tea at home today. Handle it");
+
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.brief.location).toBe("home");
+    expect(gate.brief.menu).toBe("finger sandwiches, scones, and mini cakes");
+    expect(gate.brief.drinks).toBe("tea, coffee, and water");
+    expect(gate.brief.unresolvedRequiredFields).toEqual([
+      "start_time",
+      "guest_count",
+      "dietary_requirements",
+    ]);
+    expect(gate.question).toBe(
+      "What time should I plan for, how many guests are coming, and are there any dietary restrictions?",
+    );
+    expect(gate.question).not.toMatch(/where|what you would like served|food|drinks|staff/i);
+  });
+
+  it("keeps one operation through partial essentials and a final bare guest count", () => {
+    const source =
+      "I have afternoon tea at home today. Handle it\n\n" +
+      "Clarification details: At 4 PM. Inside. No shellfish\n\n" +
+      "Clarification details: 6";
+    const gate = evaluateHostingPlanningGate(source);
+
+    expect(gate.status).toBe("ready");
+    expect(gate.brief.startTime).toBe("4 PM");
+    expect(gate.brief.location).toBe("inside");
+    expect(gate.brief.guestCount).toBe("six guests");
+    expect(gate.brief.dietaryRequirements).toBe("No shellfish");
+    expect(gate.brief.menu).toBe("finger sandwiches, scones, and mini cakes");
+    expect(gate.brief.drinks).toBe("tea, coffee, and water");
+  });
+
+  it("asks only for guest count after the other essentials are answered", () => {
+    const gate = evaluateHostingPlanningGate(
+      "I have afternoon tea at home today. Handle it\n\n" +
+      "Clarification details: At 4 PM. Inside. No shellfish",
+    );
+
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.brief.unresolvedRequiredFields).toEqual(["guest_count"]);
+    expect(gate.question).toBe("How many guests are coming?");
   });
 
   it("uses supplied guest count and restrictions without reopening known fields", () => {
@@ -1042,6 +1087,40 @@ describe("hosting planning gate", () => {
     expect(turn.plan?.brief?.menu).toBe("Finger sandwiches, cakes and tea");
     expect(turn.plan?.brief?.dietaryRequirements).toBe("No dietary restrictions");
     expect(turn.plan?.tasks.map((task) => task.personName)).toEqual(["Christopher", "Nasira", "Grace"]);
+  });
+
+  it("proposes Carson-selected afternoon-tea menu and drinks after the final essential answer", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        content: [{
+          text: JSON.stringify({
+            tasks: [
+              { person_name: "Christopher", message: "Please handle the food." },
+              { person_name: "Nasira", message: "Please handle the table." },
+              { person_name: "Grace", message: "Please coordinate readiness." },
+            ],
+            proposal_speech: "Draft proposal.",
+          }),
+        }],
+      }),
+    })));
+
+    const turn = await prepareOperationalPlanTurn({
+      message:
+        "I have afternoon tea at home today. Handle it\n\n" +
+        "Clarification details: At 4 PM. Inside. No shellfish\n\n" +
+        "Clarification details: 6",
+      people: guestTeam(),
+    });
+
+    expect(turn.status).toBe("ready");
+    expect(turn.plan?.brief?.menu).toBe("finger sandwiches, scones, and mini cakes");
+    expect(turn.plan?.brief?.drinks).toBe("tea, coffee, and water");
+    expect(turn.plan?.proposalSpeech).toContain(
+      "The menu is finger sandwiches, scones, and mini cakes, with tea, coffee, and water.",
+    );
+    expect(turn.plan?.proposalSpeech).not.toContain("I have afternoon tea at home today");
   });
 });
 

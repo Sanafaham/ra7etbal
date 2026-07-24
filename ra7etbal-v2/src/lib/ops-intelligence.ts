@@ -437,11 +437,11 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
   const source = text.trim();
   const authoritative = hasOperatingAuthority(source);
   const startTime = cleanMatchedText(source.match(TIME_RE)?.[1] ?? source.match(CLARIFICATION_TIME_RE)?.[1]);
-  const confidentAuthority = authoritative && Boolean(startTime);
-  const menu = inferMenu(source) ?? (confidentAuthority && /\b(?:afternoon|high)\s+tea\b/i.test(source)
+  const isAfternoonTea = /\b(?:afternoon|high)\s+tea\b/i.test(source);
+  const menu = inferMenu(source) ?? (authoritative && isAfternoonTea
     ? "finger sandwiches, scones, and mini cakes"
     : null);
-  const location = inferLocation(source) ?? (confidentAuthority ? "home" : null);
+  const location = inferLocation(source) ?? (authoritative ? "home" : null);
   const occasion = inferOccasion(source);
   const brief: HostingEventBrief = {
     occasion,
@@ -451,7 +451,7 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
     guestCount: inferGuestCount(source),
     menu,
     dietaryRequirements: cleanMatchedText(source.match(DIETARY_RE)?.[0]),
-    drinks: inferDrinks(source),
+    drinks: inferDrinks(source) ?? (authoritative && isAfternoonTea ? "tea, coffee, and water" : null),
     setupPreferences: /\b(?:formal|casual|elegant|luxury|buffet|seated)\b/i.test(source)
       ? cleanMatchedText(source.match(/\b(?:formal|casual|elegant|luxury|buffet|seated)\b/i)?.[0])
       : null,
@@ -462,11 +462,14 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
 
   const missing: string[] = [];
   if (!brief.startTime) missing.push("start_time");
-  if (!brief.menu) missing.push("menu");
-  if (/\b(?:tea|dinner|lunch|brunch|breakfast|hosting|guests?)\b/i.test(source) && (!brief.location || (!confidentAuthority && brief.location === "home"))) {
+  if (!brief.menu && !authoritative) missing.push("menu");
+  if (
+    /\b(?:tea|dinner|lunch|brunch|breakfast|hosting|guests?)\b/i.test(source)
+    && (!brief.location || (!authoritative && brief.location === "home"))
+  ) {
     missing.push("location");
   }
-  if (confidentAuthority && !brief.guestCount) missing.push("guest_count");
+  if (authoritative && !brief.guestCount) missing.push("guest_count");
   if (!brief.dietaryRequirements) missing.push("dietary_requirements");
   brief.unresolvedRequiredFields = missing;
   return brief;
@@ -478,19 +481,38 @@ export function evaluateHostingPlanningGate(text: string): HostingPlanningGateRe
     return { status: "ready", brief, question: null };
   }
 
+  const authoritative = hasOperatingAuthority(text);
   const asks: string[] = [];
+  if (brief.unresolvedRequiredFields.includes("start_time")) {
+    asks.push(authoritative ? "what time should I plan for" : "what time should it begin");
+  }
   if (brief.unresolvedRequiredFields.includes("guest_count")) asks.push("how many guests are coming");
-  if (brief.unresolvedRequiredFields.includes("start_time")) asks.push("what time should it begin");
   if (brief.unresolvedRequiredFields.includes("location")) asks.push("where at home we should host it");
   if (brief.unresolvedRequiredFields.includes("menu")) asks.push("what you would like served");
   if (brief.unresolvedRequiredFields.includes("dietary_requirements")) asks.push("are there any dietary restrictions");
 
-  const question =
-    asks.length === 2 && brief.unresolvedRequiredFields.includes("guest_count") && brief.unresolvedRequiredFields.includes("dietary_requirements")
-      ? "How many guests are coming, and is there anything I should avoid serving?"
-    : asks.length === 2 && brief.unresolvedRequiredFields.includes("start_time") && brief.unresolvedRequiredFields.includes("dietary_requirements")
-      ? "What time should it begin, and are there any dietary restrictions?"
-      : `For ${brief.occasion ?? "this"}, ${asks.join(", and ")}?`;
+  const isAuthorityClarification = authoritative
+    && brief.unresolvedRequiredFields.every((field) =>
+      field === "start_time" || field === "guest_count" || field === "dietary_requirements"
+    );
+  const joinedAsks = asks.length <= 1
+    ? asks[0] ?? "what details are still missing"
+    : `${asks.slice(0, -1).join(", ")}, and ${asks[asks.length - 1]}`;
+  const onlyGuestAndDietary = brief.unresolvedRequiredFields.length === 2
+    && brief.unresolvedRequiredFields.includes("guest_count")
+    && brief.unresolvedRequiredFields.includes("dietary_requirements");
+  const onlyTimeAndDietary = brief.unresolvedRequiredFields.length === 2
+    && brief.unresolvedRequiredFields.includes("start_time")
+    && brief.unresolvedRequiredFields.includes("dietary_requirements");
+  const question = onlyGuestAndDietary
+    ? "How many guests are coming, and is there anything I should avoid serving?"
+    : onlyTimeAndDietary
+      ? authoritative
+        ? "What time should I plan for, and are there any dietary restrictions?"
+        : "What time should it begin, and are there any dietary restrictions?"
+      : isAuthorityClarification
+        ? `${joinedAsks.charAt(0).toUpperCase()}${joinedAsks.slice(1)}?`
+        : `For ${brief.occasion ?? "this"}, ${joinedAsks}?`;
 
   return { status: "needs_clarification", brief, question };
 }
