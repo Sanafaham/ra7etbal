@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-07-22
+Last updated: 2026-07-25
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -13,6 +13,24 @@ Typed Carson and voice Carson are the same person. They must use the same rules,
 ## Stable and protected
 
 Do not modify these areas without a reproduced regression or explicit product decision.
+
+### Verified hosting loop + typed-history reconciliation — LOCKED, PRODUCTION VERIFIED
+
+Status: COMPLETED. PRODUCTION VERIFIED at commit `6c764873edbd26d5490b6a1408a207a50eacd8ae` (asset `assets/index-3DokSTsX.js`) on `https://www.ra7etbal.com`. Regression protection locked 2026-07-25 (test-only change, no runtime behavior touched).
+
+Verified end-to-end flow (`src/lib/ops-intelligence.ts`, the canonical hosting engine): "I have afternoon tea at home tomorrow. Handle it." routes to the hosting engine (never ordinary staff delegation); Carson asks one combined clarification for time, guest count, and dietary restrictions; a single natural reply ("4:00pm for 6 people, no garlic", "4pm, 6 guests and no garlic", "4pm. 6 guests and no shellfish", "16:00, 8 people, allergic to peanuts") parses into clean independent fields — the dietary value never absorbs guest count, "guests"/"people", time, or connector fragments; Carson presents one complete proposal with correct worker responsibilities (Christopher: food/drinks; Nasira: setup/table/presentation; Grace/Bahan: coordination) and exactly one approval question; one "Yes" executes the one canonical stored operation exactly once (idempotent — a duplicate "Yes" sends nothing more); delivery results are truthful per recipient (a missing phone number is reported as NOT messaged, never implied as sent to everyone); "What did you ask Christopher?" is answered from the stored operation with no new WhatsApp send and no new operation created.
+
+Typed-history reconciliation (`reconcileTypedHistory` in `src/components/home/ElevenLabsAgentWidget.tsx`): one shared in-flight promise (concurrent callers await the same promise, never issue duplicate loads); one monotonic request-generation guard so a stale response can never overwrite newer history; optimistic rows are matched and replaced by persisted rows on both server id and `client_message_id`; the merged transcript sorts deterministically by `created_at` with a stable `id` tie-breaker; reconciliation runs on auth restoration (with `markUnansweredTypedMessagesInterrupted`), on Carson-sheet open, and on window focus/`visibilitychange` — never on a bare re-render. Closing and reopening Carson preserves the newest conversation with no greeting when persisted history exists and no browser refresh required.
+
+Regression protection added (test-only, no runtime file changed):
+- `src/lib/ops-intelligence.test.ts` — new `describe("production baseline — verified afternoon-tea hosting loop")`: exact-phrase routing, the exact combined-clarification wording from the verified flow, one-proposal/worker-responsibility shape, truthful missing-phone delivery reporting, and two new `resolveHostingOperationRecall` behavioral tests (with a minimal chainable Supabase query stub) proving recall reads the stored operation and never calls `savePending`/`deliverTaskMessage`/`sendDirectMessageRecord`, and never issues an `insert`/`update`/`delete` against `carson_pending_operations` or `tasks`.
+- `src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts` — new source-shape assertions locking the shared in-flight promise, the stale-request guard, the persisted-replaces-optimistic id/client-id matching, the stable sort tie-breaker, the auth-restoration reset+reconcile, and the sheet-open reconciliation trigger.
+
+Full pre-existing coverage (already extensive, confirmed still green, not modified): `src/lib/ops-intelligence.test.ts` (196 tests before this task, hosting recognition/clarification/proposal/approval/idempotency/worker-message/delivery-truthfulness/recall) and `src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts` (typed dispatch, hosting gate wiring, typed-history restore-before-greeting). `npm run test:carson-protected` (13 files, protected-neighbor behavior) passes unchanged.
+
+Known pre-existing gap (discovered, not caused by this task, not fixed — out of scope per this task's instructions): `src/components/home/ElevenLabsAgentWidget.todo-tools.test.ts` → `"uses the same shared planner and execution path as typed Carson"` fails on `main`/this branch's HEAD before this task's changes (confirmed via `git stash`) — it asserts the literal strings `"how many guests are coming"` and `"anything I should avoid serving"` exist directly in `ElevenLabsAgentWidget.tsx`, but those strings are generated inside `ops-intelligence.ts`'s `evaluateHostingPlanningGate` and are not hardcoded in the widget after the shared-engine refactor. Not part of `test:carson-protected`. Needs its own scoped fix — do not fold into future hosting work without a separate task.
+
+Protect: everything above. Do not reintroduce a per-channel hosting parser, a second typed-history loader, or a second reconciliation path. Reopen only on a reproduced production regression against the verified behavior above.
 
 ### Inbox Review V1
 
