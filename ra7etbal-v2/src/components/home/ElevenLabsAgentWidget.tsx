@@ -5048,9 +5048,17 @@ export default function ElevenLabsAgentWidget({
     // completed. Restore the authoritative transcript before deciding whether
     // this is a genuinely new conversation; otherwise the opening greeting
     // would be generated against an empty in-memory state.
-    const restoredTypedMessages = requestedChannel === "text"
-      ? await ensureTypedHistoryLoaded()
-      : [];
+    let restoredTypedMessages: CarsonTypedMessage[] = [];
+    try {
+      restoredTypedMessages = requestedChannel === "text"
+        ? await ensureTypedHistoryLoaded()
+        : [];
+    } catch (err) {
+      startInFlightRef.current = false;
+      setStatus("error");
+      setErrorMsg(`Couldn't load the typed conversation. ${sanitizeCarsonErrorDetail(err)}`);
+      return;
+    }
     activeChannelRef.current = requestedChannel;
     setChannel(requestedChannel);
     const sessionGeneration = sessionGenerationRef.current + 1;

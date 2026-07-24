@@ -194,7 +194,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       'const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = "voice") => {',
       "  const startCall = useCallback(() => {",
     );
-    const restoreIndex = startBlock.indexOf("const restoredTypedMessages = requestedChannel === \"text\"");
+    const restoreIndex = startBlock.indexOf("let restoredTypedMessages: CarsonTypedMessage[] = [];");
     const openingIndex = startBlock.indexOf("const hasTypedHistory = requestedChannel === \"text\"");
     expect(restoreIndex).toBeGreaterThan(-1);
     expect(openingIndex).toBeGreaterThan(restoreIndex);
