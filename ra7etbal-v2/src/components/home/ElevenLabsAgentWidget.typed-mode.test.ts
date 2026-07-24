@@ -152,24 +152,23 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(operationTurnIndex).toBeLessThan(sendIndex);
   });
 
-  it("restores a pending typed hosting clarification draft from saved history before routing the answer", () => {
-    expect(SOURCE).toContain("function restorePendingHostingDraftFromTypedHistory(");
-    expect(SOURCE).toContain("isHostingClarificationQuestion(message.content)");
-    expect(SOURCE).toContain("how many guests are coming");
-    expect(SOURCE).toContain("anything I should avoid serving");
-    expect(SOURCE).toContain('operationType: "guest_arrival"');
-    expect(SOURCE).toContain("sourceText: ownerTurn.content");
+  it("restores only the canonical active operation and lets a fresh request supersede history", () => {
+    expect(SOURCE).not.toContain("restorePendingHostingDraftFromTypedHistory(");
 
     const sendBlock = blockBetween(
       "const sendTypedMessage = useCallback(async () => {",
       "  // ------------------------------------------------------------------\n  // Session teardown",
     );
-    const restoreIndex = sendBlock.indexOf("restorePendingHostingDraftFromTypedHistory(");
+    const classifyIndex = sendBlock.indexOf("const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)");
+    const restoreIndex = sendBlock.indexOf("await loadActiveHostingDraft().catch(() => null)");
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
     const operationTurnIndex = sendBlock.indexOf("const operationTurn = await handleOperationalHostingTurn({", pendingBranchIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
+    expect(classifyIndex).toBeGreaterThan(-1);
     expect(restoreIndex).toBeGreaterThan(-1);
+    expect(classifyIndex).toBeLessThan(restoreIndex);
+    expect(sendBlock).toContain('if (typedGuestAction === "none" && !pendingHostingClarificationRef.current)');
     expect(pendingBranchIndex).toBeGreaterThan(restoreIndex);
     expect(operationTurnIndex).toBeGreaterThan(pendingBranchIndex);
     expect(operationTurnIndex).toBeLessThan(sendIndex);

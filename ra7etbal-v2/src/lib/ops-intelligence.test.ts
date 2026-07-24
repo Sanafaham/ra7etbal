@@ -32,6 +32,7 @@ const {
   isConfirmation,
   isRejection,
   isStatusQuestion,
+  isVerifiedWorkerConfirmation,
   mustRouteGuestEventToPlanner,
   normalizeGuestPreparationPlan,
   prepareOperationalPlanTurn,
@@ -111,6 +112,15 @@ describe("isStatusQuestion", () => {
     "You're all set",
   ])("returns false for delegation/social input: '%s'", (text) => {
     expect(isStatusQuestion(text)).toBe(false);
+  });
+});
+
+describe("truthful hosting confirmation evidence", () => {
+  it("requires both done status and a confirmation timestamp", () => {
+    expect(isVerifiedWorkerConfirmation({ status: "done", confirmed_at: "2026-07-24T10:15:00Z" })).toBe(true);
+    expect(isVerifiedWorkerConfirmation({ status: "done", confirmed_at: null })).toBe(false);
+    expect(isVerifiedWorkerConfirmation({ status: "pending", confirmed_at: "2026-07-24T10:15:00Z" })).toBe(false);
+    expect(isVerifiedWorkerConfirmation({ status: "pending", confirmed_at: null })).toBe(false);
   });
 });
 
@@ -622,6 +632,30 @@ describe("hosting planning gate", () => {
     }
   });
 
+  it("parses bare guest counts from the latest answer even after an earlier clarification", () => {
+    const accumulated =
+      "I have afternoon tea at 4:00 PM today. Handle everything.\n\n" +
+      "Clarification details: I have afternoon tea at home today. Handle it\n\n" +
+      "Clarification details: 6 and no shellfish";
+    const gate = evaluateHostingPlanningGate(accumulated);
+
+    expect(gate.status).toBe("ready");
+    expect(gate.brief.guestCount).toBe("six guests");
+    expect(gate.brief.dietaryRequirements).toBe("no shellfish");
+  });
+
+  it("never treats an afternoon-tea instruction as drinks or proposal copy", () => {
+    const source =
+      "I have afternoon tea at 4:00 PM today. Handle everything.\n\n" +
+      "Clarification details: I have afternoon tea at home today. Handle it\n\n" +
+      "Clarification details: Six guests. No shellfish.";
+    const brief = buildHostingEventBrief(source);
+
+    expect(brief.drinks).toBeNull();
+    expect(brief.menu).toBe("finger sandwiches, scones, and mini cakes");
+    expect(brief.menu).not.toContain("I have afternoon tea");
+  });
+
   it("removes duplicated conjunctions when formatting generated menu details", () => {
     const gate = evaluateHostingPlanningGate("I have afternoon tea at 4:00 PM today. Handle everything.");
     expect(gate.brief.menu).toBe("finger sandwiches, scones, and mini cakes");
@@ -936,6 +970,43 @@ describe("hosting planning gate", () => {
     expect(secondTurn.status).toBe("needs_clarification");
     expect(secondTurn.draft?.sourceText).toContain("Clarification details: Mini sandwiches");
     expect(secondTurn.question).toBe("What time should it begin, and are there any dietary restrictions?");
+  });
+
+  it("supersedes an active draft when the next message is a fresh hosting request", async () => {
+    const turn = await prepareOperationalPlanTurn({
+      message: "I have dinner at home tomorrow. Handle it.",
+      people: [],
+      pendingDraft: {
+        operationId: "old-operation",
+        operationType: "guest_arrival",
+        sourceText: "I have afternoon tea at 4:00 PM today. Handle everything.",
+        askedAtClientMessageId: "old-message",
+      },
+      askedAtClientMessageId: "new-message",
+    });
+
+    expect(turn.status).toBe("needs_clarification");
+    expect(turn.sourceText).toBe("I have dinner at home tomorrow. Handle it.");
+    expect(turn.sourceText).not.toContain("afternoon tea");
+    expect(turn.draft?.operationId).not.toBe("old-operation");
+  });
+
+  it("keeps the same canonical operation ID across clarification turns", async () => {
+    const turn = await prepareOperationalPlanTurn({
+      message: "Use the garden.",
+      people: [],
+      pendingDraft: {
+        operationId: "operation-123",
+        operationType: "guest_arrival",
+        sourceText: "I have afternoon tea at home today. Handle it.",
+        askedAtClientMessageId: "message-1",
+      },
+      askedAtClientMessageId: "message-2",
+    });
+
+    expect(turn.status).toBe("needs_clarification");
+    expect(turn.draft?.operationId).toBe("operation-123");
+    expect(turn.draft?.sourceText).toContain("Clarification details: Use the garden.");
   });
 
   it("uses the unified operation lifecycle to create one stored plan from the complete brief", async () => {

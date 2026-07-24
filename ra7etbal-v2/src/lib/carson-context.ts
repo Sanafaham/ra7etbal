@@ -262,7 +262,10 @@ export function buildCarsonContext(input: CarsonContextInput): string {
   // "today-only" scope was the original bug — a task confirmed yesterday was
   // invisible to Voice Carson even though Text Carson still showed it.
   const done = unarchived
-    .filter((t) => t.status === "done")
+    // A task is a worker-confirmed completion only when the confirmation
+    // timestamp exists. Owner-marked or otherwise status-only "done" rows
+    // must not be presented to Voice Carson as worker confirmations.
+    .filter((t) => t.status === "done" && Boolean(t.confirmed_at))
     .sort(
       (a, b) =>
         new Date(b.confirmed_at ?? b.created_at).getTime() -

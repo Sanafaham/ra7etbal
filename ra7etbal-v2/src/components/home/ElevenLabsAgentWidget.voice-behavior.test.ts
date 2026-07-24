@@ -10,9 +10,16 @@ const SOURCE = readFileSync(
 describe("ElevenLabsAgentWidget — Voice Carson behavior guard", () => {
   it("injects the no-reconfirmation/no-idle guard into voice dynamic variables and live context", () => {
     expect(SOURCE).toContain("CARSON_VOICE_SESSION_GUARD");
-    expect(SOURCE).toContain("[CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, persistentInstructions]");
+    expect(SOURCE).toContain("[CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, hostingToolPolicy, persistentInstructions]");
     expect(SOURCE).toContain("[Voice behavior guard]");
     expect(SOURCE).toContain("conv.sendContextualUpdate(");
+  });
+
+  it("requires every voice hosting turn to use the shared execute_instruction handler", () => {
+    expect(SOURCE).toContain("For every new hosting request or hosting clarification, call execute_instruction");
+    expect(SOURCE).toContain("Never answer hosting from conversation history or ra7etbal_state alone.");
+    expect(SOURCE).toContain("pendingOperationDraft = await loadActiveHostingDraft().catch(() => null)");
+    expect(SOURCE).toContain("handleOperationalHostingTurn({");
   });
 
   it("reminds the live agent after a successful delegation not to ask for permission or idle-probe", () => {

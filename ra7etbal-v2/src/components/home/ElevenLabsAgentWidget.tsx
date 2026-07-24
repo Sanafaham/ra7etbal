@@ -98,6 +98,7 @@ import {
   isStatusQuestion,
   resolvePendingPlanDecision,
   handlePendingPlanTurn,
+  loadActiveHostingDraft,
   loadLatestPendingPlan,
   resolveHostingOperationRecall,
   type PendingOperationDraft,
@@ -171,42 +172,6 @@ function getOrCreateTypedSessionId(): string {
   }
 }
 
-function isHostingClarificationQuestion(content: string): boolean {
-  const isHostingQuestion = /\bFor\s+(?:afternoon\s+tea|high\s+tea|tea|dinner|lunch|brunch|breakfast|this)\b/i.test(content);
-  const isGuestCountQuestion = /\bhow many guests?\b/i.test(content)
-    && /\?\s*$/.test(content.trim());
-  const isLegacyChecklist = /\bwhat time should it begin\b/i.test(content)
-    && /\bwhere at home\b/i.test(content)
-    && /\bdietary restrictions\b/i.test(content);
-  const isCompactClarification = /\bhow many guests are coming\b/i.test(content)
-    && /\banything I should avoid serving\b/i.test(content);
-  return (isHostingQuestion || isGuestCountQuestion)
-    && (isLegacyChecklist || isCompactClarification || isGuestCountQuestion);
-}
-
-function restorePendingHostingDraftFromTypedHistory(
-  messages: CarsonTypedMessage[],
-): PendingOperationDraft | null {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (message.role !== "agent" || !isHostingClarificationQuestion(message.content)) continue;
-    const replyTo = message.reply_to_client_message_id;
-    if (!replyTo) continue;
-    const ownerTurn = messages.find(
-      (candidate) =>
-        candidate.role === "user" &&
-        candidate.client_message_id === replyTo &&
-        resolveGuestOutcomeAction(candidate.content) !== "none",
-    );
-    if (!ownerTurn) continue;
-    return {
-      operationType: "guest_arrival",
-      sourceText: ownerTurn.content,
-      askedAtClientMessageId: ownerTurn.client_message_id,
-    };
-  }
-  return null;
-}
 // Truthful processing indicator, layered on top of the SDK-driven `mode`
 // (which only reports listening/speaking, with no signal for the gap in
 // between). "idle" = no app-level signal yet for this turn (renders as
@@ -4130,7 +4095,11 @@ export default function ElevenLabsAgentWidget({
         // the owner may answer a clarification with short phrases that are not
         // standalone operations. The helper owns accumulated brief → gate →
         // persisted plan for both voice and typed hosting.
-        const pendingOperationDraft = pendingHostingClarificationRef.current;
+        let pendingOperationDraft = pendingHostingClarificationRef.current;
+        if (!pendingOperationDraft && resolveGuestOutcomeAction(rawInstruction) === "none") {
+          pendingOperationDraft = await loadActiveHostingDraft().catch(() => null);
+          if (pendingOperationDraft) pendingHostingClarificationRef.current = pendingOperationDraft;
+        }
         if (pendingOperationDraft) {
           const operationTurn = await handleOperationalHostingTurn({
             message: rawInstruction,
@@ -5261,8 +5230,9 @@ export default function ElevenLabsAgentWidget({
     const carsonStateText = requestedChannel === "voice" && sessionPhotoContextRef.current
       ? `${baseStateText}\n\nAttached photos context (use this for the conversation):\n${sessionPhotoContextRef.current}`
       : baseStateText;
+    const hostingToolPolicy = `For every new hosting request or hosting clarification, call execute_instruction with the user's full verbatim utterance. Never answer hosting from conversation history or ra7etbal_state alone. Never claim a worker confirmed unless execute_instruction returns verified confirmation evidence.`;
     const channelInstructions = requestedChannel === "voice"
-      ? [CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, persistentInstructions]
+      ? [CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, hostingToolPolicy, persistentInstructions]
       : [CARSON_STATUS_POLICY, persistentInstructions];
 
     // The warm-up has been settling since the tap (through all the loads
@@ -6347,10 +6317,9 @@ export default function ElevenLabsAgentWidget({
         return;
       }
 
-      if (!pendingHostingClarificationRef.current) {
-        pendingHostingClarificationRef.current = restorePendingHostingDraftFromTypedHistory(
-          typedMessagesRef.current,
-        );
+      const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content);
+      if (typedGuestAction === "none" && !pendingHostingClarificationRef.current) {
+        pendingHostingClarificationRef.current = await loadActiveHostingDraft().catch(() => null);
       }
       const pendingHostingClarification = pendingHostingClarificationRef.current;
       if (pendingHostingClarification) {
@@ -6409,7 +6378,6 @@ export default function ElevenLabsAgentWidget({
         return;
       }
 
-      const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content);
       if (typedGuestAction !== "none") {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
         pendingPlanRef.current = null;

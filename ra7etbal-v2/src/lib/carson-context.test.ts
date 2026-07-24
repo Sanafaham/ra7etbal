@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import type { Person } from "../types/person";
+import type { Task } from "../types/task";
 
 // carson-context transitively imports ./calendar -> ./supabase, whose module
 // top-level throws without VITE_SUPABASE_* env vars. We only test pure context
@@ -7,6 +8,33 @@ import type { Person } from "../types/person";
 vi.mock("./supabase", () => ({ supabase: {} }));
 
 const { buildCarsonContext } = await import("./carson-context");
+
+function makeTask(overrides: Partial<Task>): Task {
+  return {
+    id: "task-1",
+    user_id: "u1",
+    description: "Prepare afternoon tea",
+    type: "delegation",
+    assigned_to: "Grace",
+    status: "done",
+    needs_follow_up: false,
+    confirmation_url: null,
+    confirmed_at: null,
+    due_at: null,
+    archived_at: null,
+    created_at: "2026-07-24T10:00:00Z",
+    qstash_message_id: null,
+    followup_sent_at: null,
+    escalated_at: null,
+    image_path: null,
+    proof_image_path: null,
+    quality_review_status: null,
+    quality_review_note: null,
+    quality_reviewed_at: null,
+    worker_reply: null,
+    ...overrides,
+  };
+}
 
 /**
  * Regression guard for People memory retrieval.
@@ -135,5 +163,25 @@ describe("buildCarsonContext — Phase 9A operational diagnostics", () => {
   it("omits the calendar connection status block when not provided", () => {
     const out = buildCarsonContext({ tasks: [], people: [] });
     expect(out).not.toContain("GOOGLE CALENDAR");
+  });
+});
+
+describe("buildCarsonContext — truthful worker confirmations", () => {
+  it("does not present status-only done tasks as confirmed completions", () => {
+    const out = buildCarsonContext({
+      tasks: [makeTask({ status: "done", confirmed_at: null })],
+      people: [],
+    });
+    expect(out).not.toContain("Prepare afternoon tea");
+    expect(out).not.toContain("completed by Grace");
+  });
+
+  it("includes a completion only when confirmed_at is present", () => {
+    const out = buildCarsonContext({
+      tasks: [makeTask({ confirmed_at: "2026-07-24T10:15:00Z" })],
+      people: [],
+    });
+    expect(out).toContain("Prepare afternoon tea");
+    expect(out).toContain("completed by Grace");
   });
 });

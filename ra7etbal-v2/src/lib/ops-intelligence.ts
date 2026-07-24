@@ -82,6 +82,7 @@ export interface ProposedPlan {
 export type OperationalPlan = ProposedPlan;
 
 export interface PendingOperationDraft {
+  operationId: string | null;
   operationType: HouseholdOutcomeType;
   sourceText: string;
   askedAtClientMessageId: string | null;
@@ -302,11 +303,14 @@ function inferGuestCount(text: string): string | null {
     // clarification answer. Keeping this fallback scoped to the clarification
     // section prevents times, dates, rooms, and addresses from becoming guest
     // counts in a fresh instruction.
-    const clarification = text.split(/Clarification details:\s*/i).slice(1).join(". ");
-    if (!clarification) return null;
-    const bare = clarification.match(
-      /(?:^|\b(?:there\s+will\s+be|we\s+are|for)\s+)(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})(?=\s*(?:guest|guests|people|,|\.|$|\band\b))/i,
-    );
+    const clarificationAnswers = text.split(/Clarification details:\s*/i).slice(1);
+    const bare = clarificationAnswers
+      .map((answer) => answer.trim())
+      .reverse()
+      .map((answer) => answer.match(
+        /(?:^|\b(?:there\s+will\s+be|we\s+are|for)\s+)(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})(?=\s*(?:guest|guests|people|,|\.|$|\band\b))/i,
+      ))
+      .find((candidate): candidate is RegExpMatchArray => Boolean(candidate));
     if (!bare) return null;
     const count = bare[1];
     return `${/^\d+$/.test(count) ? NUMBER_WORDS.get(Number(count)) ?? count : count.toLowerCase()} guests`;
@@ -332,6 +336,11 @@ function hostingClauses(text: string): string[] {
         .replace(/^the\s+/i, ""),
     ))
     .filter((clause): clause is string => Boolean(clause));
+}
+
+function isHostingInstructionClause(clause: string): boolean {
+  return Boolean(detectHouseholdOutcome(clause))
+    || /\b(?:handle (?:it|everything|what you can)|take care of it|make sure everything is ready)\b/i.test(clause);
 }
 
 function isDietaryClause(clause: string): boolean {
@@ -362,7 +371,8 @@ function inferMenu(text: string): string | null {
     !isDietaryClause(clause) &&
     !isTimingClause(clause) &&
     !isLocationClause(clause) &&
-    !isSetupClause(clause)
+    !isSetupClause(clause) &&
+    !isHostingInstructionClause(clause)
   ));
   const clauseMenu = joinClauses(foodClauses);
   if (clauseMenu) return clauseMenu;
@@ -400,13 +410,16 @@ function inferDrinks(text: string): string | null {
     !isDietaryClause(clause) &&
     !isTimingClause(clause) &&
     !isLocationClause(clause) &&
-    !isSetupClause(clause)
+    !isSetupClause(clause) &&
+    !isHostingInstructionClause(clause) &&
+    !/\b(?:afternoon|high|morning)\s+tea\b/i.test(clause)
   ));
   const clauseDrinks = joinClauses(drinkClauses);
   if (clauseDrinks) return clauseDrinks;
   if (clauses.some((clause) => FOOD_ITEM_RE.test(clause))) return null;
 
-  const matches = Array.from(text.matchAll(DRINKS_RE)).map((match) => match[0].toLowerCase());
+  const drinkSearchText = text.replace(/\b(?:afternoon|high|morning)\s+tea\b/ig, "");
+  const matches = Array.from(drinkSearchText.matchAll(DRINKS_RE)).map((match) => match[0].toLowerCase());
   const unique = [...new Set(matches)];
   return unique.length > 0 ? unique.join(", ") : null;
 }
@@ -498,10 +511,60 @@ export function createPendingOperationDraft(
   const operationType = detectHouseholdOutcome(sourceText);
   if (!operationType) return null;
   return {
+    operationId: null,
     operationType,
     sourceText,
     askedAtClientMessageId,
   };
+}
+
+async function persistHostingDraft(
+  draft: PendingOperationDraft,
+  question: string,
+): Promise<string | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  if (draft.operationId) {
+    const { error } = await supabase
+      .from("carson_pending_operations")
+      .update({
+        summary: question,
+        source_text: draft.sourceText,
+        expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+      })
+      .eq("id", draft.operationId)
+      .eq("user_id", user.id)
+      .eq("status", "pending");
+    return error ? null : draft.operationId;
+  }
+
+  // A fresh request is the one canonical active hosting operation. Supersede
+  // any older pending draft/plan before inserting its new identity so neither
+  // channel can later restore an unrelated row.
+  await supabase
+    .from("carson_pending_operations")
+    .update({ status: "cancelled" })
+    .eq("user_id", user.id)
+    .eq("type", "guest_arrival")
+    .eq("status", "pending");
+
+  const { data, error } = await supabase
+    .from("carson_pending_operations")
+    .insert({
+      user_id: user.id,
+      type: draft.operationType,
+      summary: question,
+      tasks: [],
+      source_text: draft.sourceText,
+      status: "pending",
+      expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    })
+    .select("id")
+    .single();
+  return error ? null : data?.id ?? null;
 }
 
 /**
@@ -519,8 +582,11 @@ export async function prepareOperationalPlanTurn(input: {
   askedAtClientMessageId?: string | null;
 }): Promise<OperationalPlanningResult> {
   const currentMessage = input.message.trim();
-  const sourceText = input.pendingDraft
-    ? appendOperationClarification(input.pendingDraft, currentMessage)
+  const currentAction = resolveGuestOutcomeAction(currentMessage);
+  const isFreshHostingRequest = currentAction !== "none";
+  const activeDraft = isFreshHostingRequest ? null : input.pendingDraft;
+  const sourceText = activeDraft
+    ? appendOperationClarification(activeDraft, currentMessage)
     : currentMessage;
   const action = resolveGuestOutcomeAction(sourceText);
 
@@ -537,21 +603,27 @@ export async function prepareOperationalPlanTurn(input: {
 
   const gate = evaluateHostingPlanningGate(sourceText);
   if (gate.status === "needs_clarification") {
+    const draft: PendingOperationDraft = {
+      operationId: activeDraft?.operationId ?? null,
+      operationType: gate.brief.occasion ? "guest_arrival" : detectHouseholdOutcome(sourceText) ?? "guest_arrival",
+      sourceText,
+      askedAtClientMessageId: input.askedAtClientMessageId ?? activeDraft?.askedAtClientMessageId ?? null,
+    };
+    draft.operationId = await persistHostingDraft(
+      draft,
+      gate.question ?? "I need a few details before I message anyone.",
+    ).catch(() => draft.operationId);
     return {
       status: "needs_clarification",
       action,
       sourceText,
-      draft: {
-        operationType: gate.brief.occasion ? "guest_arrival" : detectHouseholdOutcome(sourceText) ?? "guest_arrival",
-        sourceText,
-        askedAtClientMessageId: input.askedAtClientMessageId ?? input.pendingDraft?.askedAtClientMessageId ?? null,
-      },
+      draft,
       plan: null,
       question: gate.question ?? "I need a few details before I message anyone.",
     };
   }
 
-  const plan = await buildOperationalPlanFromOutcome(sourceText, input.people);
+  const plan = await buildOperationalPlanFromOutcome(sourceText, input.people, activeDraft?.operationId ?? null);
   if (!plan) {
     return {
       status: "plan_failed",
@@ -624,6 +696,13 @@ export function isStatusQuestion(text: string): boolean {
   return STATUS_QUESTION_RE.test(text.trim());
 }
 
+export function isVerifiedWorkerConfirmation(task: {
+  status: string | null;
+  confirmed_at: string | null;
+}): boolean {
+  return task.status === "done" && Boolean(task.confirmed_at);
+}
+
 /** Returns true when the plan is older than 5 minutes and should be ignored. */
 export function isPlanExpired(plan: ProposedPlan): boolean {
   return Date.now() - plan.createdAt > 5 * 60 * 1000;
@@ -632,13 +711,37 @@ export function isPlanExpired(plan: ProposedPlan): boolean {
 // ── Supabase persistence ───────────────────────────────────────────────────────
 
 /** Save a newly proposed plan to the DB; returns the row id. */
-async function persistPlan(plan: ProposedPlan): Promise<string | null> {
+async function persistPlan(plan: ProposedPlan, operationId: string | null = null): Promise<string | null> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
 
   const expiresAt = new Date(plan.createdAt + 5 * 60 * 1000).toISOString();
+  if (operationId) {
+    const { data, error } = await supabase
+      .from("carson_pending_operations")
+      .update({
+        summary: plan.proposalSpeech,
+        tasks: plan.tasks,
+        source_text: plan.sourceText,
+        expires_at: expiresAt,
+      })
+      .eq("id", operationId)
+      .eq("user_id", user.id)
+      .eq("status", "pending")
+      .select("id")
+      .single();
+    return error ? null : data?.id ?? null;
+  }
+
+  await supabase
+    .from("carson_pending_operations")
+    .update({ status: "cancelled" })
+    .eq("user_id", user.id)
+    .eq("type", "guest_arrival")
+    .eq("status", "pending");
+
   const { data, error } = await supabase
     .from("carson_pending_operations")
     .insert({
@@ -685,7 +788,7 @@ export async function loadLatestPendingPlan(): Promise<ProposedPlan | null> {
     .limit(1)
     .maybeSingle();
 
-  if (error || !data) return null;
+  if (error || !data || !Array.isArray(data.tasks) || data.tasks.length === 0) return null;
 
   return {
     dbId: data.id as string,
@@ -695,6 +798,33 @@ export async function loadLatestPendingPlan(): Promise<ProposedPlan | null> {
     sourceText: data.source_text as string,
     brief: buildHostingEventBrief(data.source_text as string),
     createdAt: new Date(data.created_at as string).getTime(),
+  };
+}
+
+/** Restore only an explicitly persisted, unresolved hosting draft. */
+export async function loadActiveHostingDraft(): Promise<PendingOperationDraft | null> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data, error } = await supabase
+    .from("carson_pending_operations")
+    .select("id, type, source_text, tasks")
+    .eq("user_id", user.id)
+    .eq("type", "guest_arrival")
+    .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data || (Array.isArray(data.tasks) && data.tasks.length > 0)) return null;
+  return {
+    operationId: data.id as string,
+    operationType: data.type as HouseholdOutcomeType,
+    sourceText: data.source_text as string,
+    askedAtClientMessageId: null,
   };
 }
 
@@ -730,15 +860,40 @@ export async function loadLatestCompletedHostingOperation(): Promise<ProposedPla
 
 const HOSTING_OPERATION_RECALL_RE =
   /\b(?:what did you ask|what (?:did|was) .{0,30}(?:prepare|do)|what time did you tell|when did you tell|who (?:received|got|has) the plan|who did you (?:send|message)|what was sent)\b/i;
+const HOSTING_CONFIRMATION_RECALL_RE =
+  /\b(?:who|has|have|did|is|are).{0,40}\bconfirm(?:ed|ation)?\b/i;
 
 function escapeHostingRecallRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export async function resolveHostingOperationRecall(text: string): Promise<string | null> {
-  if (!HOSTING_OPERATION_RECALL_RE.test(text.trim())) return null;
+  if (!HOSTING_OPERATION_RECALL_RE.test(text.trim()) && !HOSTING_CONFIRMATION_RECALL_RE.test(text.trim())) return null;
   const operation = await loadLatestCompletedHostingOperation().catch(() => null);
   if (!operation) return null;
+
+  if (HOSTING_CONFIRMATION_RECALL_RE.test(text.trim())) {
+    const taskIds = operation.tasks
+      .map((task) => task.taskId)
+      .filter((id): id is string => Boolean(id));
+    if (taskIds.length === 0) return "I don't have verified worker confirmations for that hosting operation.";
+
+    const { data, error } = await supabase
+      .from("tasks")
+      .select("id, assigned_to, status, confirmed_at")
+      .in("id", taskIds);
+    if (error || !data) return "I couldn't verify the worker confirmations right now.";
+
+    const confirmed = data.filter(isVerifiedWorkerConfirmation);
+    if (confirmed.length === 0) return "No worker confirmation has been verified for that hosting operation.";
+    const confirmedNames = confirmed
+      .map((task) => task.assigned_to)
+      .filter((name): name is string => Boolean(name));
+    if (confirmedNames.length === 0) return "No worker confirmation has been verified for that hosting operation.";
+    return `${formatNameList(confirmedNames)} ${
+      confirmedNames.length === 1 ? "has" : "have"
+    } confirmed.`;
+  }
 
   return answerHostingOperationRecall(text, operation);
 }
@@ -1189,6 +1344,7 @@ function formatNameList(names: string[]): string {
 export async function buildOperationalPlanFromOutcome(
   text: string,
   people: Person[],
+  operationId: string | null = null,
 ): Promise<ProposedPlan | null> {
   if (people.length === 0) return null;
 
@@ -1270,7 +1426,7 @@ Return ONLY valid JSON, no markdown:
   }, people);
 
   // Persist before returning — survives disconnect.
-  const dbId = await persistPlan(plan).catch(() => null);
+  const dbId = await persistPlan(plan, operationId).catch(() => null);
   if (dbId) plan.dbId = dbId;
 
   return plan;
