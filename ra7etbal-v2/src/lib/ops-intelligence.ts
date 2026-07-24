@@ -203,7 +203,7 @@ const TIME_RE =
 const CLARIFICATION_TIME_RE =
   /\b((?:1[0-2]|0?[1-9])(?::[0-5]\d)\s*(?:am|pm|a\.m\.|p\.m\.))\b/i;
 const GUEST_COUNT_RE =
-  /\b(?:for\s+)?(?:(one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+)?(?:guests?|people|visitors?|friends|family|company)\b/i;
+  /\b(?:for\s+)?(?:(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})\s+)?(?:guests?|people|visitors?|friends|family|company)\b/i;
 const NUMBER_WORDS = new Map<number, string>([
   [1, "one"],
   [2, "two"],
@@ -215,6 +215,16 @@ const NUMBER_WORDS = new Map<number, string>([
   [8, "eight"],
   [9, "nine"],
   [10, "ten"],
+  [11, "eleven"],
+  [12, "twelve"],
+  [13, "thirteen"],
+  [14, "fourteen"],
+  [15, "fifteen"],
+  [16, "sixteen"],
+  [17, "seventeen"],
+  [18, "eighteen"],
+  [19, "nineteen"],
+  [20, "twenty"],
 ]);
 const HOME_LOCATION_RE = /\b(?:at\s+home|in\s+the\s+(garden|dining\s+room|salon|majlis|kitchen|terrace|patio)|outside|inside|outdoors?|indoors?)\b/i;
 const SPECIFIC_LOCATION_RE = /\b(?:in|on|at)\s+(?:the\s+)?(garden|dining\s+room|salon|majlis|terrace|patio|pool\s+area|living\s+room|kitchen)\b/i;
@@ -281,7 +291,20 @@ function inferLocation(text: string): string | null {
 
 function inferGuestCount(text: string): string | null {
   const match = text.match(GUEST_COUNT_RE);
-  if (!match) return null;
+  if (!match) {
+    // Bare numbers/number words are meaningful only inside an accumulated
+    // clarification answer. Keeping this fallback scoped to the clarification
+    // section prevents times, dates, rooms, and addresses from becoming guest
+    // counts in a fresh instruction.
+    const clarification = text.split(/Clarification details:\s*/i).slice(1).join(". ");
+    if (!clarification) return null;
+    const bare = clarification.match(
+      /(?:^|\b(?:there\s+will\s+be|we\s+are|for)\s+)(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})(?=\s*(?:guest|guests|people|,|\.|$|\band\b))/i,
+    );
+    if (!bare) return null;
+    const count = bare[1];
+    return `${/^\d+$/.test(count) ? NUMBER_WORDS.get(Number(count)) ?? count : count.toLowerCase()} guests`;
+  }
   const count = match[1];
   if (count) {
     const normalizedCount = /^\d+$/.test(count)
@@ -900,7 +923,7 @@ function readyDeadline(brief: HostingEventBrief, domain: GuestPrepDomain): strin
 function formatDetailList(value: string): string {
   const parts = value
     .split(/\s*,\s*/)
-    .map((part) => part.trim())
+    .map((part) => part.trim().replace(/^and\s+/i, ""))
     .filter(Boolean);
   if (parts.length < 3) return value;
   return formatNameList(parts);

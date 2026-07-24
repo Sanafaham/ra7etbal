@@ -577,6 +577,34 @@ describe("guest event planning — safety rules", () => {
 });
 
 describe("hosting planning gate", () => {
+  it("normalizes bare and labeled guest counts from one through twenty only in clarification context", () => {
+    const words = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty"];
+    const original = "I have afternoon tea at 4:00 PM today. Handle everything.";
+    for (let index = 0; index < words.length; index += 1) {
+      for (const answer of [String(index + 1), `${index + 1} guest`, `${index + 1} guests`, words[index], `${words[index]} guest`, `${words[index]} guests`]) {
+        const gate = evaluateHostingPlanningGate(`${original}\n\nClarification details: ${answer}`);
+        expect(gate.brief.guestCount, answer).toBe(`${words[index]} guests`);
+      }
+    }
+    expect(buildHostingEventBrief("I have afternoon tea at 4:00 PM today. Handle everything.").guestCount).toBeNull();
+    expect(buildHostingEventBrief("At 6 PM in room 6 on July 6.").guestCount).toBeNull();
+  });
+
+  it("combines guest count and dietary answers in one pending clarification", () => {
+    const original = "I have afternoon tea at 4:00 PM today. Handle everything.";
+    for (const answer of ["6 and no shellfish", "six and no shellfish", "6 guests and no shellfish", "six guests and no shellfish", "1 and no shellfish", "one guest and no shellfish", "12 and no shellfish", "twelve guests and no shellfish", "20 and no shellfish", "twenty guests and no shellfish"]) {
+      const gate = evaluateHostingPlanningGate(`${original}\n\nClarification details: ${answer}`);
+      expect(gate.status, answer).toBe("ready");
+      expect(gate.brief.dietaryRequirements, answer).toMatch(/no shellfish/i);
+    }
+  });
+
+  it("removes duplicated conjunctions when formatting generated menu details", () => {
+    const gate = evaluateHostingPlanningGate("I have afternoon tea at 4:00 PM today. Handle everything.");
+    expect(gate.brief.menu).toBe("finger sandwiches, scones, and mini cakes");
+    expect(gate.brief.menu).not.toContain("and and");
+  });
+
   it("makes one compact first proposal when authority and time are already supplied", () => {
     const gate = evaluateHostingPlanningGate("I have afternoon tea at 4:00 PM today. Handle everything.");
 
