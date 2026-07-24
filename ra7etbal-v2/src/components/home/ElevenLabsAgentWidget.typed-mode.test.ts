@@ -510,7 +510,6 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
       "complete_todo",
       "control_task",
       "act_on_note",
-      "save_note",
       "save_city",
       "save_instruction",
     ]) {
@@ -518,6 +517,36 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
     }
     // Read-only research/planning stays available to typed mode.
     expect(blockedToolMap).not.toContain("get_calendar_events:");
+    // save_note only persists a note (no worker notification, no task,
+    // calendar, or reminder state change) — "accept brain dumps" is an
+    // explicitly required typed capability. act_on_note (turning a note
+    // into a task/delegation/reminder) is the state-changing step and
+    // stays blocked, verified above.
+    expect(blockedToolMap).not.toContain("save_note:");
+  });
+
+  it("lets typed mode accept a brain dump (save_note) but blocks turning it into a tracked action (act_on_note)", () => {
+    // save_note's own guardCurrentToolInvocation call is unchanged (it still
+    // enforces the pre-existing "no active owner turn" check for both
+    // channels) — it is simply absent from TYPED_BLOCKED_TOOL_MESSAGES
+    // (verified above), so a typed brain dump reaches saveNote(params).
+    const saveNoteBlock = blockBetween(
+      "save_note: (params: Parameters<typeof saveNote>[0]) => {",
+      "  },",
+    );
+    const saveNoteGuardIndex = saveNoteBlock.indexOf('guardCurrentToolInvocation("save_note")');
+    const saveNoteExecutorIndex = saveNoteBlock.indexOf("saveNote(params)");
+    expect(saveNoteGuardIndex).toBeGreaterThan(-1);
+    expect(saveNoteExecutorIndex).toBeGreaterThan(saveNoteGuardIndex);
+
+    const actOnNoteBlock = blockBetween(
+      "act_on_note: (params: Parameters<typeof actOnNote>[0]) => {",
+      "  },",
+    );
+    const guardIndex = actOnNoteBlock.indexOf('guardCurrentToolInvocation("act_on_note")');
+    const executorIndex = actOnNoteBlock.indexOf("actOnNote(params)");
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(executorIndex).toBeGreaterThan(guardIndex);
   });
 
   it("blocks a typed reminder request from creating a reminder or triggering push scheduling", () => {

@@ -95,7 +95,7 @@ Personal recurring reminders must not be converted into staff WhatsApp delegatio
 
 ### Type to Carson V1
 
-Status: implemented and tested.
+Status: implemented and tested. **Superseded in part by "Type to Carson is advisory-only" above (2026-07-25)** — see that entry for the current, authoritative rule. "To-do creation" and "Tool authority and deterministic operational actions" below are historical: typed chat can no longer create a to-do or reach any state-changing tool/deterministic send path. Everything else in this list (same production agent, persistence/history restore, Clear Chat, image attachment/understanding, preview allowlisting) is unaffected and still protected.
 
 Protect:
 
@@ -103,9 +103,7 @@ Protect:
 - Persistence and history restore
 - Clear Chat
 - Image attachment and image understanding
-- To-do creation
 - Preview allowlisting
-- Tool authority and deterministic operational actions
 
 ### Typed-image delegation race fix
 

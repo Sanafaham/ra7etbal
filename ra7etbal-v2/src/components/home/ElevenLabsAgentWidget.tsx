@@ -204,11 +204,15 @@ const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {
   complete_todo: TYPED_ADVISORY_TASK_STATE,
   control_task: TYPED_ADVISORY_TASK_STATE,
   act_on_note: TYPED_ADVISORY_TASK_STATE,
-  save_note: TYPED_ADVISORY_GENERIC,
   save_city: TYPED_ADVISORY_GENERIC,
   save_instruction: TYPED_ADVISORY_GENERIC,
   // get_calendar_events is intentionally absent — read-only lookups remain
   // available for typed research/planning ("what's on my calendar Friday?").
+  // save_note is intentionally absent — it only persists a note (no worker
+  // notification, no task/calendar/reminder state change), and "accept brain
+  // dumps" is an explicitly required typed capability. act_on_note (turning a
+  // saved note into a task/delegation/reminder) stays blocked above — that is
+  // the state-changing step.
 };
 
 const CARSON_TYPED_ADVISORY_POLICY =
