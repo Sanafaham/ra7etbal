@@ -11,7 +11,7 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:carson-protected": "vitest run src/lib/carson-protected-behaviors.test.ts src/lib/delegation-fast-path.test.ts src/lib/direct-message-fast-path.test.ts src/lib/delegations.test.ts src/lib/direct-messages.test.ts src/components/home/ElevenLabsAgentWidget.delegation-duplicate-guard.test.ts src/components/home/ElevenLabsAgentWidget.direct-message-parity.test.ts src/components/home/ElevenLabsAgentWidget.direct-whatsapp-duplicate.test.ts src/components/home/ElevenLabsAgentWidget.typed-delegation-execution.test.ts src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts",
+    "test:carson-protected": "vitest run src/lib/carson-protected-behaviors.test.ts src/lib/delegation-fast-path.test.ts src/lib/direct-message-fast-path.test.ts src/lib/delegations.test.ts src/lib/direct-messages.test.ts src/components/home/ElevenLabsAgentWidget.delegation-duplicate-guard.test.ts src/components/home/ElevenLabsAgentWidget.direct-message-parity.test.ts src/components/home/ElevenLabsAgentWidget.direct-whatsapp-duplicate.test.ts src/components/home/ElevenLabsAgentWidget.typed-delegation-execution.test.ts src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts api/_staff-comms-engine.test.js api/whatsapp-webhook.test.js api/staff-message-response-delivery.test.js",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit"
   },

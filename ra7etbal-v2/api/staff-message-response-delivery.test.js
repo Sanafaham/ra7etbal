@@ -15,6 +15,9 @@ describe('staff response delivery migration', () => {
     expect(migration).toContain('response_delivery_token=p_claim_token');
     expect(migration).toContain("response_delivery_status='delivered'");
     expect(migration).toContain("response_delivery_status='failed'");
+    expect(migration).toContain("response_delivery_status='sending'");
+    expect(migration).toContain("response_delivery_error=NULL");
+    expect(migration).toContain("response_delivery_lease_until=NULL");
     expect(migration).toContain("CASE WHEN source='whatsapp' THEN 'pending' ELSE 'not_required' END");
   });
 
