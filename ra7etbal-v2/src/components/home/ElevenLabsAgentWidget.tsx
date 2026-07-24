@@ -822,6 +822,7 @@ export default function ElevenLabsAgentWidget({
   onCallStatusChange,
   onChannelChange,
   onRequestClose,
+  isOpen = false,
 }: {
   briefStateText: string;
   /** Pre-built spoken daily brief paragraph injected as `daily_brief` dynamic variable. */
@@ -857,6 +858,8 @@ export default function ElevenLabsAgentWidget({
   onChannelChange?: (channel: CarsonChannel) => void;
   /** Called when the user taps a close/dismiss control inside the widget. */
   onRequestClose?: () => void;
+  /** True while the persistent Carson sheet is visible. */
+  isOpen?: boolean;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
   const audioEnvironmentRef = useRef<CarsonAudioEnvironment>(getCarsonAudioEnvironment());
@@ -916,72 +919,27 @@ export default function ElevenLabsAgentWidget({
   const [typedError, setTypedError] = useState<string | null>(null);
   const typedSubmitInFlightRef = useRef(false);
   const typedResponseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previousTypedOpenRef = useRef(false);
 
   useEffect(() => {
     typedMessagesRef.current = typedMessages;
   }, [typedMessages]);
 
-  useEffect(() => {
-    if (!authenticatedUserId) {
-      typedHistoryLoadPromiseRef.current = null;
-      setTypedMessages([]);
-      return;
-    }
-
-    let cancelled = false;
-    // Never leave the previous owner's transcript visible while the newly
-    // authenticated owner's RLS-scoped history is loading.
-    setTypedMessages([]);
-    setTypedHistoryLoading(true);
-    setTypedError(null);
-    const loadPromise = markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current)
-      .then(() => loadRecentTypedCarsonMessages(100));
-    typedHistoryLoadPromiseRef.current = loadPromise;
-    void loadPromise
-      .then((messages) => {
-        if (!cancelled) {
-          typedMessagesRef.current = messages;
-          setTypedMessages(messages);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setTypedError(
-            `Could not load the typed conversation. ${sanitizeCarsonErrorDetail(err)}`,
-          );
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setTypedHistoryLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authenticatedUserId]);
-
-  const ensureTypedHistoryLoaded = useCallback(async (): Promise<CarsonTypedMessage[]> => {
+  const reconcileTypedHistory = useCallback(async (markInterrupted = false): Promise<CarsonTypedMessage[]> => {
     if (!authenticatedUserId) return [];
-    const loadPromise = typedHistoryLoadPromiseRef.current
-      ?? loadRecentTypedCarsonMessages(100);
-    typedHistoryLoadPromiseRef.current = loadPromise;
-    const messages = await loadPromise;
-    typedMessagesRef.current = messages;
-    setTypedMessages(messages);
-    return messages;
-  }, [authenticatedUserId]);
-
-  const reconcileTypedHistory = useCallback(async () => {
-    if (!authenticatedUserId) return;
+    if (typedHistoryLoadPromiseRef.current) return typedHistoryLoadPromiseRef.current;
     const requestId = ++typedHistoryRequestRef.current;
-    const persisted = await loadRecentTypedCarsonMessages(200);
-    if (requestId !== typedHistoryRequestRef.current) return;
+    setTypedHistoryLoading(true);
+    const promise = (async () => {
+      if (markInterrupted) await markUnansweredTypedMessagesInterrupted(typedSessionIdRef.current);
+      const persisted = await loadRecentTypedCarsonMessages(200);
+      if (requestId !== typedHistoryRequestRef.current) return typedMessagesRef.current;
     const persistedIds = new Set(persisted.map((message) => message.id));
     const persistedClientIds = new Set(
       persisted.map((message) => message.client_message_id).filter(Boolean),
     );
     const optimistic = typedMessagesRef.current.filter((message) => (
-      message.id.startsWith("local-") || message.id.startsWith("optimistic-")
+      (message.id.startsWith("local-") || message.id.startsWith("optimistic-"))
       && !persistedIds.has(message.id)
       && !persistedClientIds.has(message.client_message_id)
     ));
@@ -991,14 +949,45 @@ export default function ElevenLabsAgentWidget({
     });
     typedMessagesRef.current = merged;
     setTypedMessages(merged);
+      return merged;
+    })();
+    typedHistoryLoadPromiseRef.current = promise;
+    void promise.catch((err) => {
+      setTypedError(`Could not refresh the typed conversation. ${sanitizeCarsonErrorDetail(err)}`);
+    }).finally(() => {
+      if (typedHistoryLoadPromiseRef.current === promise) typedHistoryLoadPromiseRef.current = null;
+      setTypedHistoryLoading(false);
+    });
+    return promise;
   }, [authenticatedUserId]);
+
+  useEffect(() => {
+    if (!authenticatedUserId) {
+      typedHistoryLoadPromiseRef.current = null;
+      setTypedMessages([]);
+      typedMessagesRef.current = [];
+      return;
+    }
+    setTypedMessages([]);
+    typedMessagesRef.current = [];
+    setTypedError(null);
+    void reconcileTypedHistory(true);
+  }, [authenticatedUserId, reconcileTypedHistory]);
+
+  useEffect(() => {
+    const opened = isOpen && !previousTypedOpenRef.current;
+    previousTypedOpenRef.current = isOpen;
+    if (opened) void reconcileTypedHistory();
+  }, [isOpen, reconcileTypedHistory]);
+
+  const ensureTypedHistoryLoaded = useCallback(async (): Promise<CarsonTypedMessage[]> => {
+    return reconcileTypedHistory(false);
+  }, [reconcileTypedHistory]);
 
   useEffect(() => {
     if (!authenticatedUserId) return;
     const reconcile = () => {
-      void reconcileTypedHistory().catch((err) => {
-        setTypedError(`Could not refresh the typed conversation. ${sanitizeCarsonErrorDetail(err)}`);
-      });
+      void reconcileTypedHistory();
     };
     window.addEventListener("focus", reconcile);
     document.addEventListener("visibilitychange", reconcile);

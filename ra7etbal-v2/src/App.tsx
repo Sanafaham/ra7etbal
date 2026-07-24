@@ -193,12 +193,14 @@ function useGlobalTasksRefresh() {
  * Session survives sheet open/close because this component is never unmounted.
  */
 function PersistentCarsonWidget({
+  isOpen,
   onCallStatusChange,
   onChannelChange,
   onRequestClose,
   onCalendarRevokedChange,
   calendarDisconnectCount,
 }: {
+  isOpen: boolean;
   onCallStatusChange: (status: "idle" | "connecting" | "connected" | "error") => void;
   onChannelChange: (channel: "voice" | "text") => void;
   onRequestClose: () => void;
@@ -400,6 +402,7 @@ function PersistentCarsonWidget({
       onCallStatusChange={onCallStatusChange}
       onChannelChange={onChannelChange}
       onRequestClose={onRequestClose}
+      isOpen={isOpen}
     />
   );
 }
@@ -555,6 +558,7 @@ export default function App() {
             </p>
           )}
           <PersistentCarsonWidget
+            isOpen={carsonOpen}
             onCallStatusChange={setCarsonCallStatus}
             onChannelChange={setCarsonChannel}
             onRequestClose={() => setCarsonOpen(false)}
