@@ -319,6 +319,86 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(SOURCE).toContain("const merged = [...persisted, ...optimistic].sort");
   });
 
+  // ── Typed-history reconciliation lock-in (RA7ETBAL_STATE.md verified loop) ──
+  // Protects the exact architecture verified in production: one shared in-flight
+  // promise, one request-generation guard so a stale response can never overwrite
+  // newer history, deterministic persisted-over-optimistic merge, and a stable
+  // sort tie-breaker so repeated reopen produces the same newest transcript.
+  it("shares one in-flight promise so concurrent reconcile callers never race", () => {
+    const reconcileBlock = blockBetween(
+      "const reconcileTypedHistory = useCallback(async (markInterrupted = false)",
+      "  useEffect(() => {\n    if (!authenticatedUserId) {",
+    );
+    expect(reconcileBlock).toContain("if (!authenticatedUserId) return [];");
+    expect(reconcileBlock).toContain(
+      "if (typedHistoryLoadPromiseRef.current) return typedHistoryLoadPromiseRef.current;",
+    );
+    expect(reconcileBlock).toContain("typedHistoryLoadPromiseRef.current = promise;");
+    expect(reconcileBlock).toContain("if (typedHistoryLoadPromiseRef.current === promise) typedHistoryLoadPromiseRef.current = null;");
+  });
+
+  it("guards every reconcile call with a monotonic request id so a stale response cannot overwrite newer history", () => {
+    const reconcileBlock = blockBetween(
+      "const reconcileTypedHistory = useCallback(async (markInterrupted = false)",
+      "  useEffect(() => {\n    if (!authenticatedUserId) {",
+    );
+    const requestIdIndex = reconcileBlock.indexOf("const requestId = ++typedHistoryRequestRef.current;");
+    const loadIndex = reconcileBlock.indexOf("const persisted = await loadRecentTypedCarsonMessages(200);");
+    const staleGuardIndex = reconcileBlock.indexOf(
+      "if (requestId !== typedHistoryRequestRef.current) return typedMessagesRef.current;",
+    );
+    expect(requestIdIndex).toBeGreaterThan(-1);
+    expect(loadIndex).toBeGreaterThan(requestIdIndex);
+    expect(staleGuardIndex).toBeGreaterThan(loadIndex);
+  });
+
+  it("matches optimistic rows to persisted rows by both server id and client message id before merging", () => {
+    const reconcileBlock = blockBetween(
+      "const reconcileTypedHistory = useCallback(async (markInterrupted = false)",
+      "  useEffect(() => {\n    if (!authenticatedUserId) {",
+    );
+    expect(reconcileBlock).toContain('const persistedIds = new Set(persisted.map((message) => message.id));');
+    expect(reconcileBlock).toContain("const persistedClientIds = new Set(");
+    expect(reconcileBlock).toContain("persisted.map((message) => message.client_message_id).filter(Boolean)");
+    expect(reconcileBlock).toContain('message.id.startsWith("local-") || message.id.startsWith("optimistic-")');
+    expect(reconcileBlock).toContain("!persistedIds.has(message.id)");
+    expect(reconcileBlock).toContain("!persistedClientIds.has(message.client_message_id)");
+  });
+
+  it("orders the merged transcript deterministically by created_at with a stable id tie-breaker", () => {
+    const reconcileBlock = blockBetween(
+      "const reconcileTypedHistory = useCallback(async (markInterrupted = false)",
+      "  useEffect(() => {\n    if (!authenticatedUserId) {",
+    );
+    expect(reconcileBlock).toContain(
+      "const merged = [...persisted, ...optimistic].sort((a, b) => {",
+    );
+    expect(reconcileBlock).toContain('const created = a.created_at.localeCompare(b.created_at);');
+    expect(reconcileBlock).toContain("return created || a.id.localeCompare(b.id);");
+  });
+
+  it("resets and reconciles typed history on authentication restoration, marking unanswered turns interrupted", () => {
+    const authBlock = blockBetween(
+      "  useEffect(() => {\n    if (!authenticatedUserId) {",
+      "  useEffect(() => {\n    const opened = isOpen && !previousTypedOpenRef.current;",
+    );
+    expect(authBlock).toContain("typedHistoryLoadPromiseRef.current = null;");
+    expect(authBlock).toContain("setTypedMessages([]);");
+    expect(authBlock).toContain("typedMessagesRef.current = [];");
+    expect(authBlock).toContain("setTypedError(null);");
+    expect(authBlock).toContain("void reconcileTypedHistory(true);");
+  });
+
+  it("reconciles typed history exactly once when the Carson sheet transitions from closed to open", () => {
+    const openBlock = blockBetween(
+      "  useEffect(() => {\n    const opened = isOpen && !previousTypedOpenRef.current;",
+      "  const ensureTypedHistoryLoaded = useCallback(",
+    );
+    expect(openBlock).toContain("const opened = isOpen && !previousTypedOpenRef.current;");
+    expect(openBlock).toContain("previousTypedOpenRef.current = isOpen;");
+    expect(openBlock).toContain("if (opened) void reconcileTypedHistory();");
+  });
+
   it("marks local typed hosting replies responded in the durable user row", () => {
     const helperBlock = blockBetween(
       "const persistLocalTypedAgentReply = useCallback(",
