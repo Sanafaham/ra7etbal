@@ -90,7 +90,6 @@ import {
 import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-tool-diagnostics";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText, resolveRecurringAutomationPerson } from "../../lib/routine-detection";
 import {
-  buildOperationalPlanFromOutcome,
   prepareOperationalPlanTurn,
   resolveGuestOutcomeAction,
   executeProposedPlan,
