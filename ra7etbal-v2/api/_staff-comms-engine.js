@@ -372,7 +372,7 @@ export async function processStaffMessage(input, deps) {
     });
     const outcome = parseClassificationResponse(rawResponse);
 
-    const [completed] = await supabaseRpc({
+    const completedResult = await supabaseRpc({
       supabaseUrl, serviceKey, fetchImpl, fn: 'complete_staff_message',
       args: {
         p_id: claim.message_id,
@@ -386,6 +386,10 @@ export async function processStaffMessage(input, deps) {
         p_responded_at: new Date().toISOString(),
       },
     });
+
+    // PostgREST returns a composite row as an object in production, while
+    // existing callers/tests may provide the equivalent one-row array.
+    const completed = Array.isArray(completedResult) ? completedResult[0] : completedResult;
 
     return {
       ok: true,
