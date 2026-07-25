@@ -315,7 +315,12 @@ export function parseVoiceTime(
     return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
   }
 
-  // ── 5. "next <weekday>" ──────────────────────────────────────────────────
+  // ── 5. "<weekday>" / "next <weekday>" ─────────────────────────────────────
+  // "next" is optional — confirmed production regression: "Monday at 5:00 PM"
+  // (no "next") matched no weekday pattern here at all, silently dropped the
+  // day entirely, and fell through to the generic clock-time "auto" branch
+  // below (today/tomorrow relative to `now`) — turning a Monday reminder
+  // requested on a Saturday evening (past 5 PM) into Sunday.
   const WEEKDAYS: Record<string, number> = {
     sunday: 0, sun: 0,
     monday: 1, mon: 1,
@@ -325,16 +330,18 @@ export function parseVoiceTime(
     friday: 5, fri: 5,
     saturday: 6, sat: 6,
   };
-  const nextDayMatch = normalised.match(/\bnext\s+(sunday|sun|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat)\b/);
-  if (nextDayMatch) {
-    const targetDay = WEEKDAYS[nextDayMatch[1]];
+  const weekdayMatch = normalised.match(/\b(?:next\s+)?(sunday|sun|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat)\b/);
+  if (weekdayMatch) {
+    const targetDay = WEEKDAYS[weekdayMatch[1]];
     const todayDay = now.getDay();
-    // Always go to the NEXT occurrence (at least 1 day ahead, up to 7).
+    // Always go to the NEXT occurrence (at least 1 day ahead, up to 7) —
+    // "Monday" said on a Monday means next week's Monday, never today.
     const daysUntil = ((targetDay - todayDay + 7) % 7) || 7;
 
     // An explicit clock time elsewhere in the phrase ("next Monday at
-    // 4:30 PM") must win over the 09:00 default — otherwise a fully
-    // specified date+time reminder would silently lose its time.
+    // 4:30 PM", "Monday at 5:00 PM") must win over the 09:00 default —
+    // otherwise a fully specified date+time reminder would silently lose
+    // its time.
     const explicitClock = extractExplicitClockTime(normalised);
     if (explicitClock) {
       const clockMatch = explicitClock.match(/^(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)?$/i);
@@ -344,13 +351,13 @@ export function parseVoiceTime(
       if (ampm === "pm" && hours !== 12) hours += 12;
       if (ampm === "am" && hours === 12) hours = 0;
       const dueAt = addDays(now, daysUntil, hours, minutes).toISOString();
-      const parsedAs = `named: next ${nextDayMatch[1]} → +${daysUntil} days at ${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+      const parsedAs = `named: ${weekdayMatch[0]} → +${daysUntil} days at ${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
       console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
       return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
     }
 
     const dueAt = addDays(now, daysUntil, 9, 0).toISOString();
-    const parsedAs = `named: next ${nextDayMatch[1]} → +${daysUntil} days at 09:00`;
+    const parsedAs = `named: ${weekdayMatch[0]} → +${daysUntil} days at 09:00`;
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
     return { dueAt, timezone, localNow, rawText: timeText, parsedAs, dayOnly: true };
   }
