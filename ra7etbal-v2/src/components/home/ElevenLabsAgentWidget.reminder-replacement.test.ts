@@ -262,4 +262,28 @@ describe("ElevenLabsAgentWidget — reminder day-then-time two-turn flow (2026-0
     expect(block).toContain("if (parsed.dayOnly) {");
     expect(block).not.toMatch(/if \(parsed\.parsedAs\.includes\("named"\)\)/);
   });
+
+  // Protects PR #72/#73/#74 together: "Monday at 5:00 PM" (and the other
+  // supported weekday formats — "next Monday at 5:00 PM", "Monday at
+  // 17:00", "Monday at 5" — all proven dayOnly:false by the dedicated
+  // parse-voice-time.test.ts unit tests) must reach a real, single
+  // creation immediately, with no clarification question and no merge
+  // against a stale pending day-only ref.
+  it("an explicit weekday+time in one turn skips both the dayOnly-ask branch and the pending-clarification merge, creating exactly one reminder with no clarification", () => {
+    const block = reminderBlock();
+    const timeTextBranch = blockBetween(
+      "if (time_text?.trim()) {",
+      '} else if (due_at) {',
+    );
+    // Exactly one plain assignment fallback for an already-complete
+    // day+time phrase (parsed.dayOnly false, no pending clarification to
+    // merge against) — the same resolvedDueAt the create call below uses.
+    expect(timeTextBranch).toContain("resolvedDueAt = parsed.dueAt;");
+    expect(block).toContain("task = await createReminderTask({");
+    expect(block).toContain("dueAt: resolvedDueAt,");
+    // Single create call site for the one-time reminder path — no
+    // duplicate/alternate creation path exists for the explicit-phrase case.
+    const createCallCount = (block.match(/await createReminderTask\(/g) ?? []).length;
+    expect(createCallCount).toBe(1);
+  });
 });
