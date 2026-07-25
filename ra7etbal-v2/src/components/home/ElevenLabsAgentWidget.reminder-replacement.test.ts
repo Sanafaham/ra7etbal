@@ -186,3 +186,80 @@ describe("ElevenLabsAgentWidget — reminder replacement on correction (2026-07-
     }
   });
 });
+
+/**
+ * Confirmed production regression: "I must pay the electricity bill on
+ * Monday." made Carson call create_reminder before asking for the missing
+ * time (parseVoiceTime silently defaults a bare day name to 09:00). Carson
+ * then asked "What time on Monday works for you?"; the owner answered
+ * "4:30 PM"; the follow-up create_reminder call resolved that time-only
+ * phrase against `now` (today/tomorrow), producing "Tomorrow at 4:30 PM"
+ * instead of Monday. Fixed with parseVoiceTime's new `dayOnly` flag (day
+ * named, no clock time → ask instead of creating) and
+ * pendingReminderTimeClarificationRef, which remembers the named day so the
+ * time-only follow-up is combined with it instead of resolved against `now`.
+ */
+describe("ElevenLabsAgentWidget — reminder day-then-time two-turn flow (2026-07-25 fix)", () => {
+  function reminderBlock(): string {
+    return blockBetween(
+      "const createReminder = useCallback(",
+      "  function recordCreateAutomationFailure(",
+    );
+  }
+
+  it("declares a session-scoped ref remembering a day named without a time, separate from lastCreatedReminderRef", () => {
+    expect(SOURCE).toContain("const pendingReminderTimeClarificationRef = useRef<{");
+    expect(SOURCE).toContain("normalizedDescription: string;");
+    expect(SOURCE).toContain("dayOnlyDueAt: string;");
+  });
+
+  it("asks for the time instead of creating anything when parseVoiceTime reports dayOnly", () => {
+    const block = reminderBlock();
+    const dayOnlyIndex = block.indexOf("if (parsed.dayOnly) {");
+    const createIndex = block.indexOf("task = await createReminderTask({");
+    expect(dayOnlyIndex).toBeGreaterThan(-1);
+    expect(createIndex).toBeGreaterThan(dayOnlyIndex); // the day-only branch returns first
+    const dayOnlyBranch = blockBetween("if (parsed.dayOnly) {", "// A pure clock time with no day word");
+    expect(dayOnlyBranch).toContain("pendingReminderTimeClarificationRef.current = {");
+    expect(dayOnlyBranch).toContain("dayOnlyDueAt: parsed.dueAt,");
+    expect(dayOnlyBranch).toContain("recordCreateReminderFailure(clarifyText, text);");
+    expect(dayOnlyBranch).toContain("return clarifyText;");
+    expect(dayOnlyBranch).not.toContain("createReminderTask(");
+  });
+
+  it("combines a time-only follow-up with the previously named day, not with `now`", () => {
+    const block = reminderBlock();
+    expect(block).toContain('/day="auto"/.test(parsed.parsedAs)');
+    expect(block).toContain("pendingClarification?.normalizedDescription === normalizedDescription");
+    expect(block).toContain(
+      "Date.now() - pendingClarification.at <= REMINDER_CORRECTION_WINDOW_MS",
+    );
+    const mergeBlock = blockBetween(
+      "if (answersOpenDayClarification && pendingClarification) {",
+      "} else {\n          resolvedDueAt = parsed.dueAt;",
+    );
+    // Takes the named day's calendar date, but the newly answered time.
+    expect(mergeBlock).toContain("namedDay.getFullYear(),");
+    expect(mergeBlock).toContain("namedDay.getMonth(),");
+    expect(mergeBlock).toContain("namedDay.getDate(),");
+    expect(mergeBlock).toContain("resolvedTime.getHours(),");
+    expect(mergeBlock).toContain("resolvedTime.getMinutes(),");
+  });
+
+  it("consumes (clears) the pending day-only clarification once a due time is resolved, so it cannot leak into an unrelated later reminder", () => {
+    const block = reminderBlock();
+    const timeTextBranchEnd = block.indexOf("} else if (due_at) {");
+    const clearIndex = block.lastIndexOf("pendingReminderTimeClarificationRef.current = null;", timeTextBranchEnd);
+    const mergeIndex = block.indexOf("if (answersOpenDayClarification && pendingClarification) {");
+    expect(clearIndex).toBeGreaterThan(mergeIndex);
+  });
+
+  it("only triggers the day-only ask for a genuinely day-only phrase — an explicit day+time in one turn still resolves and creates normally", () => {
+    // parseVoiceTime itself is covered by dedicated unit tests in
+    // parse-voice-time.test.ts; this just confirms the widget only special-
+    // cases parsed.dayOnly, not every named-day phrase.
+    const block = reminderBlock();
+    expect(block).toContain("if (parsed.dayOnly) {");
+    expect(block).not.toMatch(/if \(parsed\.parsedAs\.includes\("named"\)\)/);
+  });
+});

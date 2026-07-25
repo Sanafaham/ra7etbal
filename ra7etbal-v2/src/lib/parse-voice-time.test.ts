@@ -302,3 +302,54 @@ describe("parseVoiceTime — AM/PM resolution (regression: confirmed 3:15 AM →
     }
   });
 });
+
+// Confirmed production regression: "I must pay the electricity bill on
+// Monday." led create_reminder to fire immediately with a silently invented
+// 09:00 time, instead of asking the owner what time. The fix is this
+// `dayOnly` flag: true only when a day was named (a weekday via "next <day>",
+// or bare "tomorrow") but no clock time was given, so the caller can tell
+// "the user actually said 9am" apart from "parseVoiceTime had to guess".
+describe("parseVoiceTime — dayOnly flag (day named, no clock time)", () => {
+  // 2026-07-12 10:00 local — a Sunday, so "next Monday" is exactly 1 day away.
+  const now = new Date("2026-07-12T10:00:00");
+
+  it("flags a bare weekday with no clock time as dayOnly, defaulting to 09:00", () => {
+    const result = parseVoiceTime("next Monday", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dayOnly).toBe(true);
+    const due = new Date(result.dueAt);
+    expect(due.getDate()).toBe(13); // Monday, July 13
+    expect(due.getHours()).toBe(9);
+    expect(due.getMinutes()).toBe(0);
+  });
+
+  it("flags standalone \"tomorrow\" (no clock time) as dayOnly, defaulting to 09:00", () => {
+    const result = parseVoiceTime("tomorrow", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dayOnly).toBe(true);
+    const due = new Date(result.dueAt);
+    expect(due.getHours()).toBe(9);
+  });
+
+  it("does NOT flag a weekday phrase that also names an explicit clock time — the explicit time wins over the 09:00 default", () => {
+    const result = parseVoiceTime("next Monday at 4:30 PM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dayOnly).toBeFalsy();
+    const due = new Date(result.dueAt);
+    expect(due.getDate()).toBe(13); // still Monday, July 13
+    expect(due.getHours()).toBe(16);
+    expect(due.getMinutes()).toBe(30);
+  });
+
+  it("does NOT flag phrases that already carry an explicit clock time (\"tomorrow at 5 PM\", \"today at 3:30 PM\")", () => {
+    expect(parseVoiceTime("tomorrow at 5 PM", now).dayOnly).toBeFalsy();
+    expect(parseVoiceTime("today at 3:30 PM", now).dayOnly).toBeFalsy();
+  });
+
+  it("a pure time-only phrase (no day word) resolves via the \"auto\" day branch, distinct from dayOnly", () => {
+    const result = parseVoiceTime("4:30 PM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dayOnly).toBeFalsy();
+    expect(result.parsedAs).toContain('day="auto"');
+  });
+});

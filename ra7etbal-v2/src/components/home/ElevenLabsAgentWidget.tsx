@@ -1316,6 +1316,21 @@ export default function ElevenLabsAgentWidget({
    *  immediate correction in the same back-and-forth is treated as one. */
   const lastCreatedReminderRef = useRef<{ id: string; normalizedDescription: string; createdAt: number } | null>(null);
 
+  /** Holds a day named without a clock time ("pay the electricity bill on
+   *  Monday") while Carson asks the follow-up "what time on Monday?" —
+   *  nothing is created until a real time is known. dayOnlyDueAt is
+   *  parseVoiceTime's resolved date with its invented 09:00 default; when
+   *  the next create_reminder call for the same description supplies only a
+   *  clock time (no day word), that time replaces the 09:00 default instead
+   *  of being resolved against "now" (which would silently turn "Monday"
+   *  into "today"/"tomorrow"). Same correction-window gate as
+   *  lastCreatedReminderRef, for the same reason. */
+  const pendingReminderTimeClarificationRef = useRef<{
+    normalizedDescription: string;
+    dayOnlyDueAt: string;
+    at: number;
+  } | null>(null);
+
   /** Holds an unconfirmed operational plan proposed by Operations Intelligence.
    *  Cleared on execution or when a new instruction doesn't confirm it. */
   const pendingPlanRef = useRef<ProposedPlan | null>(null);
@@ -2233,6 +2248,18 @@ export default function ElevenLabsAgentWidget({
     };
   }
 
+  /** "today" / "tomorrow" / "Monday, Jan 5" — shared by the confirmation
+   *  reply and the day-only clarification question below. */
+  function formatReminderDayLabel(date: Date): string {
+    const isToday = date.toDateString() === new Date().toDateString();
+    const isTomorrow = date.toDateString() === new Date(Date.now() + 86_400_000).toDateString();
+    return isToday
+      ? "today"
+      : isTomorrow
+      ? "tomorrow"
+      : date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+  }
+
   // ------------------------------------------------------------------
   // Client tool: create_reminder
   // ------------------------------------------------------------------
@@ -2409,6 +2436,11 @@ export default function ElevenLabsAgentWidget({
         return recurringFailureText;
       }
 
+      // Hoisted above time resolution: needed both by the day-only
+      // clarification check below (to key pendingReminderTimeClarificationRef)
+      // and by the existing reminder-replacement check further down.
+      const normalizedDescription = text.toLowerCase().replace(/\s+/g, " ").trim();
+
       // ── Resolve due time (one-time reminder path) ───────────────────────────
       // Prefer parsing the raw phrase; fall back to agent-supplied ISO only when
       // time_text is absent. This ensures "tomorrow at 5 PM" always resolves
@@ -2428,7 +2460,52 @@ export default function ElevenLabsAgentWidget({
         console.log(
           `[create_reminder] time resolved: raw="${time_text}" parsedAs="${parsed.parsedAs}" dueAt=${parsed.dueAt} tz=${parsed.timezone}`,
         );
-        resolvedDueAt = parsed.dueAt;
+
+        // A day was named but no clock time ("on Monday", bare "tomorrow") —
+        // parsed.dueAt's 09:00 is an invented default, not something the user
+        // said. Confirmed production bug: create_reminder created the
+        // reminder immediately on this alone, then a follow-up answering
+        // Carson's own "what time?" question re-resolved against `now` and
+        // silently turned Monday into tomorrow. Ask for the time instead of
+        // creating anything, and remember the named day so the next call
+        // (time-only) can be combined with it correctly.
+        if (parsed.dayOnly) {
+          pendingReminderTimeClarificationRef.current = {
+            normalizedDescription,
+            dayOnlyDueAt: parsed.dueAt,
+            at: Date.now(),
+          };
+          const dayLabel = formatReminderDayLabel(new Date(parsed.dueAt));
+          const clarifyText = `What time on ${dayLabel} works for you?`;
+          recordCreateReminderFailure(clarifyText, text);
+          return clarifyText;
+        }
+
+        // A pure clock time with no day word ("4:30 PM") resolves against
+        // `now` (today/tomorrow) by default — correct for a fresh request,
+        // but wrong when this is the answer to "what time on Monday?": the
+        // day named in that still-pending clarification must win instead.
+        const pendingClarification = pendingReminderTimeClarificationRef.current;
+        const answersOpenDayClarification =
+          pendingClarification?.normalizedDescription === normalizedDescription &&
+          Date.now() - pendingClarification.at <= REMINDER_CORRECTION_WINDOW_MS &&
+          /day="auto"/.test(parsed.parsedAs);
+        if (answersOpenDayClarification && pendingClarification) {
+          const namedDay = new Date(pendingClarification.dayOnlyDueAt);
+          const resolvedTime = new Date(parsed.dueAt);
+          resolvedDueAt = new Date(
+            namedDay.getFullYear(),
+            namedDay.getMonth(),
+            namedDay.getDate(),
+            resolvedTime.getHours(),
+            resolvedTime.getMinutes(),
+            0,
+            0,
+          ).toISOString();
+        } else {
+          resolvedDueAt = parsed.dueAt;
+        }
+        pendingReminderTimeClarificationRef.current = null;
       } else if (due_at) {
         const dueMs = new Date(due_at).getTime();
         if (Number.isNaN(dueMs)) {
@@ -2489,7 +2566,6 @@ export default function ElevenLabsAgentWidget({
       // reminder fails, the original stays untouched and active (never zero
       // active reminders); "changed" is only spoken once the old one is
       // confirmed cancelled below.
-      const normalizedDescription = text.toLowerCase().replace(/\s+/g, " ").trim();
       const candidatePriorReminder = lastCreatedReminderRef.current;
       const priorReminder =
         candidatePriorReminder?.normalizedDescription === normalizedDescription &&
@@ -2522,16 +2598,7 @@ export default function ElevenLabsAgentWidget({
       // Human-readable confirmation for the agent to speak back.
       const dueDate = new Date(resolvedDueAt);
       const timeStr = dueDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      const isToday =
-        dueDate.toDateString() === new Date().toDateString();
-      const isTomorrow =
-        dueDate.toDateString() ===
-        new Date(Date.now() + 86_400_000).toDateString();
-      const dateLabel = isToday
-        ? "today"
-        : isTomorrow
-        ? "tomorrow"
-        : dueDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+      const dateLabel = formatReminderDayLabel(dueDate);
 
       if (priorReminder) {
         try {
