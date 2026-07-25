@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { formatReminderCreatedTime } from "./reminder-time";
 
 /**
@@ -35,5 +37,22 @@ describe("formatReminderCreatedTime", () => {
     const result = formatReminderCreatedTime("2026-07-25T23:50:00", lateNight);
     expect(result).not.toContain("today");
     expect(result).toBe("Created Jul 25 at 11:50 PM");
+  });
+});
+
+// Protects the display/persistence boundary explicitly: reminder-time.ts is
+// pure display formatting over an already-stored value. It must never be
+// able to read or write reminder scheduling data itself — that would let a
+// display bug corrupt (or a display fix silently touch) the stored due date,
+// exactly the kind of layer-mixing the PR #73 investigation had to rule out
+// by hand via a direct production query.
+describe("reminder-time.ts — display formatting cannot touch stored reminder data", () => {
+  const SOURCE = readFileSync(join(__dirname, "reminder-time.ts"), "utf-8");
+
+  it("imports nothing from Supabase, the tasks store, or parseVoiceTime — pure formatting over its string/Date inputs only", () => {
+    expect(SOURCE).not.toMatch(/from ["'].*supabase/i);
+    expect(SOURCE).not.toMatch(/from ["'].*tasks["']/);
+    expect(SOURCE).not.toMatch(/from ["'].*parse-voice-time/);
+    expect(SOURCE).not.toContain("import");
   });
 });

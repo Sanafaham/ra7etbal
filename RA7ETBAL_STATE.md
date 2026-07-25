@@ -102,6 +102,16 @@ Full pre-existing coverage confirmed still green, not modified: `src/lib/ops-int
 
 Protect: Guard C's placement (after the exact-match confirmation guard, before the fresh-request `handleOperationalHostingTurn` call) and its `!activePlan && !activeWeekPlan` condition; Guard D's ref-population in both the `"executed"` and `"cancelled"` branches; the deterministic missing-phone truthful-delivery behavior in `executeProposedPlan`/`buildDeterministicGuestPreparationTasks`. Do not weaken Guard C's continuation-word list without a reproduced regression showing a specific new phrasing. Reopen only on a reproduced production regression against the verified behavior above.
 
+### Reminder day-only clarification, weekday parsing, and creation-time display (PRs #72, #73, #74) — LOCKED
+
+Status: implemented and merged across PRs #72–#74, locked with regression tests (this task, test-only, no runtime file changed).
+
+Verified behavior: "I must pay the electricity bill Monday." asks for the missing time (`parsed.dayOnly`) and creates nothing; a time-only follow-up ("5:00 PM") is combined with the previously named Monday, never `now` (`pendingReminderTimeClarificationRef`); an explicit single-turn phrase ("Monday at 5:00 PM", "next Monday at 5:00 PM", "Monday at 17:00", "Monday at 5") resolves and creates immediately with no clarification (`src/lib/parse-voice-time.ts`'s weekday branch, `"next"` optional, generic-branch clock grammar reused). Reminder cards show both the due date and a `created_at`-derived "Created today at ..." / "Created \<date\> at ..." line (`formatReminderCreatedTime`, `src/lib/reminder-time.ts`), pure display over an already-stored value with no import of Supabase, the tasks store, or `parseVoiceTime`.
+
+Regression protection added (test-only, no runtime file changed): a new widget-level test proving the explicit-phrase path skips both the dayOnly-ask branch and the pending-clarification merge, creating exactly one reminder (`ElevenLabsAgentWidget.reminder-replacement.test.ts`); a new `reminder-time.test.ts` test proving `reminder-time.ts` has no imports at all, so display formatting cannot read or write scheduling data. All four supported weekday+time formats were already covered by `parse-voice-time.test.ts` (PR #73).
+
+Protect: `parsed.dayOnly` gating create_reminder's ask-vs-create decision; `pendingReminderTimeClarificationRef`'s day-preserving merge; the weekday regex's optional `"next"` and shared clock grammar; `reminder-time.ts` staying import-free. Reopen only on a reproduced production regression.
+
 ### Inbox Review V1
 
 Status: complete and stable.
