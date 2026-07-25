@@ -1715,6 +1715,168 @@ describe("production baseline — verified afternoon-tea hosting loop", () => {
   });
 });
 
+// ── Production baseline lock-in (RA7ETBAL_STATE.md verified dinner loop) ──────
+// Exact verified phrases from the production-confirmed dinner flow: Christopher
+// (food) and Grace (coordination) delivered; Nasira was assigned but not
+// reached because her phone number was missing; Carson reported each
+// recipient's real outcome truthfully; no duplicate send occurred on repeated
+// approval. See RA7ETBAL_STATE.md for the full verified transcript.
+describe("production baseline — verified dinner hosting loop (Christopher, Grace; missing Nasira number)", () => {
+  const TRIGGER = "I have a dinner at home tomorrow for 4 people. Handle it.";
+
+  it("routes the exact verified trigger phrase to the hosting engine, not ordinary delegation", () => {
+    expect(detectHouseholdOutcome(TRIGGER)).toBe("guest_arrival");
+    expect(mustRouteGuestEventToPlanner(TRIGGER)).toBe(true);
+    expect(resolveGuestOutcomeAction(TRIGGER)).not.toBe("none");
+  });
+
+  it("asks only for time and dietary restrictions — guest count is already known from the trigger", () => {
+    const gate = evaluateHostingPlanningGate(TRIGGER);
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.question).toMatch(/what time/i);
+    expect(gate.question).toMatch(/dietary restrictions/i);
+    expect(gate.question).not.toMatch(/how many guests/i);
+  });
+
+  it("parses the combined clarification into clean independent fields", () => {
+    const normalized = normalizeHostingClarificationAnswer("8:00pm, no shellfish", TRIGGER);
+    const gate = evaluateHostingPlanningGate(`${TRIGGER}\n\nClarification details: ${normalized}`);
+
+    expect(gate.status).toBe("ready");
+    expect(gate.brief.startTime).toContain("8:00 PM");
+    expect(gate.brief.guestCount).toBe("four people");
+    expect(gate.brief.dietaryRequirements).toMatch(/no shellfish/i);
+    expect(gate.brief.dietaryRequirements).not.toMatch(/\bpeople\b|\b8(:00)?\s*(pm)?\b|\bfour\b/i);
+  });
+
+  it("assigns Christopher the food instruction, Grace the coordination instruction, and Nasira the setup instruction", () => {
+    const sourceText = `${TRIGGER}\n\nClarification details: 8:00 PM and no shellfish`;
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText,
+      createdAt: Date.now(),
+      proposalSpeech: "Draft.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Handle it." }],
+    }, guestTeam());
+
+    expect(plan.tasks.map((task) => task.personName)).toEqual(["Christopher", "Nasira", "Grace"]);
+    expect(plan.tasks[0].message).toMatch(/prepare the agreed food/i);
+    expect(plan.tasks[0].message).toMatch(/no shellfish/i);
+    expect(plan.tasks[1].message).toMatch(/table and guest area/i);
+    expect(plan.tasks[2].message).toMatch(/coordinate with Christopher and Nasira/i);
+    // Exactly one approval question in the proposal.
+    expect((plan.proposalSpeech.match(/\?/g) ?? []).length).toBe(1);
+  });
+
+  it("delivers to Christopher and Grace once each; a missing Nasira phone number does not block either of them, and Carson reports each recipient truthfully", async () => {
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item, i) => ({
+        id: `task-${i + 1}`,
+        type: "delegation",
+        assigned_to: item.assignedTo,
+        description: item.description,
+      })),
+      messages: items.map((item, i) => ({
+        id: `message-${i + 1}`,
+        task_id: `task-${i + 1}`,
+        recipient: item.assignedTo,
+        content: item.suggestedMessage ?? item.description,
+        confirmation_url: `https://ra7etbal.test/confirm?task=task-${i + 1}`,
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+    mocks.deliverTaskMessage.mockImplementation(async (payload: { to: string | null }) => (
+      payload.to
+        ? { success: true, channel: "whatsapp" }
+        : { success: false, channel: "failed", error: "recipient phone number is missing" }
+    ));
+
+    const teamWithMissingPhone = guestTeam().map((p) =>
+      p.name === "Nasira" ? { ...p, phone: null, whatsapp_opted_in: false } : p,
+    );
+
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: `${TRIGGER}\n\nClarification details: 8:00 PM and no shellfish`,
+      createdAt: Date.now(),
+      proposalSpeech: "Plan.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Handle it." }],
+    }, teamWithMissingPhone);
+
+    const summary = await executeProposedPlan(plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: teamWithMissingPhone,
+    });
+
+    // Christopher and Grace each get exactly one delivery attempt, and it succeeds.
+    const deliveredTo = mocks.deliverTaskMessage.mock.calls.map(([payload]) => payload.recipientName);
+    expect(deliveredTo.filter((name: string) => name === "Christopher")).toHaveLength(1);
+    expect(deliveredTo.filter((name: string) => name === "Grace")).toHaveLength(1);
+    expect(deliveredTo.filter((name: string) => name === "Nasira")).toHaveLength(1); // attempted, not skipped
+
+    expect(summary).toContain("Christopher, Grace have the plan");
+    expect(summary).toMatch(/Nasira was NOT messaged/i);
+    // Never claims the unreachable recipient was actually contacted.
+    expect(summary).not.toMatch(/Nasira (?:has|have) the plan/i);
+    expect(summary).not.toMatch(/everyone|all workers|all staff/i);
+  });
+
+  it("is idempotent: a duplicate approval for the same plan sends nothing more", async () => {
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item, i) => ({
+        id: `task-${i + 1}`,
+        type: "delegation",
+        assigned_to: item.assignedTo,
+        description: item.description,
+      })),
+      messages: items.map((item, i) => ({
+        id: `message-${i + 1}`,
+        task_id: `task-${i + 1}`,
+        recipient: item.assignedTo,
+        content: item.suggestedMessage ?? item.description,
+        confirmation_url: `https://ra7etbal.test/confirm?task=task-${i + 1}`,
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: `${TRIGGER}\n\nClarification details: 8:00 PM and no shellfish`,
+      createdAt: Date.now(),
+      proposalSpeech: "Draft.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Handle it." }],
+    }, guestTeam());
+    plan.dbId = "plan-db-dinner-1";
+
+    const first = await handlePendingPlanTurn(["Yes."], plan, { displayName: "Sana", userId: "user-1", people: guestTeam() });
+    expect(first.action).toBe("executed");
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
+
+    const again = await handlePendingPlanTurn(["Yes."], plan, { displayName: "Sana", userId: "user-1", people: guestTeam() });
+    expect(again.summary).toMatch(/already sent/i);
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3); // no additional attempts
+    expect(mocks.savePending).toHaveBeenCalledTimes(1); // no duplicate operation created
+  });
+
+  it("protects the exact reproduced 'Yes, send both' phrasing as a leading-confirmation-with-no-plan case", () => {
+    // The exact production reply that exposed the Guard C gap (fixed in a
+    // prior pass): when no plan is persisted yet, this must not be misread
+    // as a fresh hosting request.
+    expect(hasLeadingConfirmationLanguage("Yes, send both.")).toBe(true);
+    expect(hasLeadingConfirmationLanguage(
+      "Yes, send both.\nPlease coordinate table setup for dinner tomorrow at 8:00 PM for 4 guests. No shellfish. Ensure everything is ready before guests arrive.",
+    )).toBe(true);
+  });
+});
+
 /** Query-builder stub that records insert/update/delete calls for a given table. */
 function queryStubWithWriteTracking(
   table: string,
