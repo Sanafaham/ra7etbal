@@ -404,4 +404,25 @@ describe("parseVoiceTime — bare weekday without \"next\" (2026-07-25 Saturday�
     const withoutNext = parseVoiceTime("Monday at 5:00 PM", now);
     expect(withNext.dueAt).toBe(withoutNext.dueAt);
   });
+
+  // CodeRabbit finding on this PR: the weekday branch's clock extraction
+  // only accepted a 12-hour am/pm time and silently fell back to 09:00 for
+  // a 24-hour time or a bare hour with no colon/am-pm — inconsistent with
+  // the generic absolute-time branch, which already handles both.
+  it("resolves \"Monday at 17:00\" (24-hour clock, no am/pm) to 17:00, not the 09:00 default", () => {
+    const result = parseVoiceTime("Monday at 17:00", now);
+    expect(result.dayOnly).toBeFalsy();
+    const due = new Date(result.dueAt);
+    expect(due.getDate()).toBe(27);
+    expect(due.getHours()).toBe(17);
+    expect(due.getMinutes()).toBe(0);
+  });
+
+  it("resolves \"Monday at 5\" (bare hour, no colon, no am/pm) to 17:00 via the same PM heuristic as the generic branch, not the 09:00 default", () => {
+    const result = parseVoiceTime("Monday at 5", now);
+    expect(result.dayOnly).toBeFalsy();
+    const due = new Date(result.dueAt);
+    expect(due.getDate()).toBe(27);
+    expect(due.getHours()).toBe(17); // 5 → PM per the 1-7 heuristic
+  });
 });
