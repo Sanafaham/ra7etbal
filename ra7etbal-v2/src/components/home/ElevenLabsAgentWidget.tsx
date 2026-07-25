@@ -72,7 +72,7 @@ import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../li
 import { isCommunicationStyleTaskText } from "../../lib/communication-vs-delegation";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
-import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
+import { executeDelegationFastPath, parseDelegationFastPath } from "../../lib/delegation-fast-path";
 import {
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
@@ -171,6 +171,52 @@ function getOrCreateTypedSessionId(): string {
     return crypto.randomUUID();
   }
 }
+
+// ── Type to Carson — advisory-only (product decision 2026-07-25) ──────────────
+// Talk to Carson (voice) remains the only execution channel. Type to Carson may
+// think, plan, draft, research, and review, but must never perform or claim a
+// state-changing action. This is enforced in code (guardCurrentToolInvocation
+// below, plus the deterministic typed hosting/delegation/direct-message fast
+// paths in sendTypedMessage) — never by prompt wording alone. Flip this single
+// constant back to false to fully restore typed execution if the product
+// decision changes; every call site below is additive and reversible.
+const TYPED_MODE_IS_ADVISORY_ONLY = true;
+const TYPED_ADVISORY_REMINDER = "I can help you prepare that. Use Talk to Carson to create the reminder.";
+const TYPED_ADVISORY_RECURRING_REMINDER = "I can help you plan that. Use Talk to Carson to set up the recurring reminder.";
+const TYPED_ADVISORY_CALENDAR = "I can help you plan the event. Use Talk to Carson to add it to your calendar.";
+const TYPED_ADVISORY_STAFF_MESSAGE = "I can help you draft the message. Use Talk to Carson to send it.";
+const TYPED_ADVISORY_HOSTING_EXECUTION = "I can help you plan the hosting details. Use Talk to Carson when you are ready to execute the plan.";
+const TYPED_ADVISORY_TASK_STATE = "I can help you think that through. Use Talk to Carson to update it.";
+const TYPED_ADVISORY_GENERIC = "I can help you prepare that, but I can't complete it from typed chat. Use Talk to Carson to do it.";
+
+/** Client tool → advisory response when a typed request reaches a state-changing tool. */
+const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {
+  execute_instruction: TYPED_ADVISORY_GENERIC,
+  send_followup: TYPED_ADVISORY_STAFF_MESSAGE,
+  send_delegation: TYPED_ADVISORY_STAFF_MESSAGE,
+  send_direct_whatsapp_message: TYPED_ADVISORY_STAFF_MESSAGE,
+  create_reminder: TYPED_ADVISORY_REMINDER,
+  create_automation: TYPED_ADVISORY_RECURRING_REMINDER,
+  create_calendar_event: TYPED_ADVISORY_CALENDAR,
+  update_calendar_event: TYPED_ADVISORY_CALENDAR,
+  delete_calendar_event: TYPED_ADVISORY_CALENDAR,
+  create_todo: TYPED_ADVISORY_TASK_STATE,
+  complete_todo: TYPED_ADVISORY_TASK_STATE,
+  control_task: TYPED_ADVISORY_TASK_STATE,
+  act_on_note: TYPED_ADVISORY_TASK_STATE,
+  save_city: TYPED_ADVISORY_GENERIC,
+  save_instruction: TYPED_ADVISORY_GENERIC,
+  // get_calendar_events is intentionally absent — read-only lookups remain
+  // available for typed research/planning ("what's on my calendar Friday?").
+  // save_note is intentionally absent — it only persists a note (no worker
+  // notification, no task/calendar/reminder state change), and "accept brain
+  // dumps" is an explicitly required typed capability. act_on_note (turning a
+  // saved note into a task/delegation/reminder) stays blocked above — that is
+  // the state-changing step.
+};
+
+const CARSON_TYPED_ADVISORY_POLICY =
+  "Type to Carson is advisory-only. You may answer questions, help plan, accept brain dumps, draft content and messages, research information, and review existing information. You must never claim to create a reminder or recurring reminder, schedule a push notification, create or change a calendar event, send a staff message, execute or approve a hosting plan, create an assignment or delegation, or change any task or operation state. Every tool that performs one of those actions is blocked in typed mode and returns a short message telling the owner to use Talk to Carson — relay that message plainly and briefly. Never say or imply that an action was completed.";
 
 // Truthful processing indicator, layered on top of the SDK-driven `mode`
 // (which only reports listening/speaking, with no signal for the gap in
@@ -5306,7 +5352,11 @@ export default function ElevenLabsAgentWidget({
     const hostingToolPolicy = `For every new hosting request or hosting clarification, call execute_instruction with the user's full verbatim utterance. Never answer hosting from conversation history or ra7etbal_state alone. Never claim a worker confirmed unless execute_instruction returns verified confirmation evidence.${activeHostingDraft ? " An active hosting clarification is in progress. Do not greet or start a new topic; wait for the owner's clarification answer and pass it to execute_instruction." : ""}`;
     const channelInstructions = requestedChannel === "voice"
       ? [CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, hostingToolPolicy, persistentInstructions]
-      : [CARSON_STATUS_POLICY, persistentInstructions];
+      : [
+          CARSON_STATUS_POLICY,
+          ...(TYPED_MODE_IS_ADVISORY_ONLY ? [CARSON_TYPED_ADVISORY_POLICY] : []),
+          persistentInstructions,
+        ];
 
     // The warm-up has been settling since the tap (through all the loads
     // above). Await it so startSession never begins mid-route-flip; log the
@@ -5366,6 +5416,16 @@ export default function ElevenLabsAgentWidget({
     const guardCurrentToolInvocation = (toolName: string): string | null => {
       if (requestedChannel === "voice") {
         return guardCurrentVoiceCapture(toolName);
+      }
+      // Type to Carson is advisory-only — a typed request must never reach a
+      // state-changing tool, even if the model attempts the call. Checked
+      // before the owner-turn guard below so it applies unconditionally.
+      if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {
+        console.warn("[carson-typed] blocked state-changing tool — typed mode is advisory-only", {
+          toolName,
+          at: new Date().toISOString(),
+        });
+        return TYPED_BLOCKED_TOOL_MESSAGES[toolName];
       }
       if (pendingTypedClientMessageIdRef.current) return null;
 
@@ -6356,6 +6416,21 @@ export default function ElevenLabsAgentWidget({
           return;
         }
 
+        // Type to Carson is advisory-only: it may build and present a hosting
+        // proposal, but approving/executing it is a state-changing action
+        // reserved for Talk to Carson. The plan itself is left untouched
+        // (still pending in pendingPlanRef and the DB) so Talk to Carson can
+        // execute this exact stored plan when the owner is ready.
+        if (TYPED_MODE_IS_ADVISORY_ONLY && typedPendingDecision === "confirm") {
+          sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: TYPED_ADVISORY_HOSTING_EXECUTION,
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
         const peopleState = usePeopleStore.getState();
         if (peopleState.status === "idle" || peopleState.items.length === 0) {
           await usePeopleStore.getState().loadFor(authUserId);
@@ -6571,6 +6646,21 @@ export default function ElevenLabsAgentWidget({
         // Excluded for the same reasons as the delegation fast path below: a
         // pending photo (this path can't carry one) or recurring language.
         if (typedDirectMessageParsed && !typedHasPendingPhoto && !typedIsRecurring) {
+          // Type to Carson is advisory-only: a typed message shaped as a staff
+          // communication must never actually send. Respond truthfully and stop
+          // here — executeDirectMessageFastPath (the real WhatsApp send) is
+          // never called for typed, so there is no code path left for a typed
+          // request to reach delivery even if this check were bypassed above.
+          if (TYPED_MODE_IS_ADVISORY_ONLY) {
+            sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+            await persistLocalTypedAgentReply({
+              replyToClientMessageId: clientMessageId,
+              content: TYPED_ADVISORY_STAFF_MESSAGE,
+              clearPendingPhotos: true,
+            });
+            return;
+          }
+
           // Duplicate guard (CodeRabbit finding on PR #53): executeDirectMessageFastPath
           // itself has no recent-send protection — a pre-existing gap shared
           // with executeInstruction's own call site (out of scope here, left
@@ -6639,27 +6729,46 @@ export default function ElevenLabsAgentWidget({
             people = usePeopleStore.getState().items;
           }
 
-          const typedDelegationFastPath = await executeDelegationFastPath(
-            savedMessage.content,
-            { people, userId: authUserId, displayName },
-            { sendDelegationFn: sendDelegation },
-          );
+          // Type to Carson is advisory-only: use the same pure parser
+          // executeDelegationFastPath relies on to detect delegation-shaped
+          // wording ("ask/tell/get/have [person] to [task]") without ever
+          // calling the real executor, so a typed delegation request cannot
+          // create a task or send WhatsApp even if this check were bypassed.
+          // A non-match falls through unchanged to the general typed flow, so
+          // ordinary questions never get the "Use Talk to Carson" wording.
+          if (TYPED_MODE_IS_ADVISORY_ONLY) {
+            if (parseDelegationFastPath(savedMessage.content, people)) {
+              sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+              await persistLocalTypedAgentReply({
+                replyToClientMessageId: clientMessageId,
+                content: TYPED_ADVISORY_STAFF_MESSAGE,
+                clearPendingPhotos: true,
+              });
+              return;
+            }
+          } else {
+            const typedDelegationFastPath = await executeDelegationFastPath(
+              savedMessage.content,
+              { people, userId: authUserId, displayName },
+              { sendDelegationFn: sendDelegation },
+            );
 
-          if (typedDelegationFastPath.handled) {
-            // Success bookkeeping (session action log, Tasks/Waiting refresh)
-            // is owned by sendDelegation after createAndSendDelegation
-            // succeeds — duplicating it here on status === "sent" would
-            // double-count it, and executeDelegationFastPath currently
-            // treats any normally-resolved sendDelegation response string as
-            // "sent", including a failure-shaped one, so a caller-side check
-            // here could misrecord a failed delegation as successful.
-            sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
-            await persistLocalTypedAgentReply({
-              replyToClientMessageId: clientMessageId,
-              content: typedDelegationFastPath.response,
-              clearPendingPhotos: true,
-            });
-            return;
+            if (typedDelegationFastPath.handled) {
+              // Success bookkeeping (session action log, Tasks/Waiting refresh)
+              // is owned by sendDelegation after createAndSendDelegation
+              // succeeds — duplicating it here on status === "sent" would
+              // double-count it, and executeDelegationFastPath currently
+              // treats any normally-resolved sendDelegation response string as
+              // "sent", including a failure-shaped one, so a caller-side check
+              // here could misrecord a failed delegation as successful.
+              sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+              await persistLocalTypedAgentReply({
+                replyToClientMessageId: clientMessageId,
+                content: typedDelegationFastPath.response,
+                clearPendingPhotos: true,
+              });
+              return;
+            }
           }
         }
       }

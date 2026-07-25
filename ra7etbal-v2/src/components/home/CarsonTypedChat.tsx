@@ -128,9 +128,9 @@ export default function CarsonTypedChat({
 
         {!loadingHistory && messages.length === 0 && (
           <div className="px-3 py-8 text-center">
-            <p className="text-[13px] font-medium text-ink/75">Type naturally to Carson.</p>
+            <p className="text-[13px] font-medium text-ink/75">Type for questions and planning.</p>
             <p className="mt-1 text-[12px] leading-relaxed text-ink/45">
-              Ask about your day, create a reminder, delegate, or manage a To-do.
+              Ask about your day, plan, draft, or brainstorm. Use Talk to Carson to take action.
             </p>
           </div>
         )}

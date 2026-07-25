@@ -8,11 +8,30 @@ This file is the operational source of truth for agents working in this reposito
 
 Ra7etBal is a personal Chief of Staff that reduces mental load. Carson is the AI Chief of Staff.
 
-Typed Carson and voice Carson are the same person. They must use the same rules, tools, state transitions, memory, and operational logic.
+Typed Carson and voice Carson are the same person, sharing the same memory, identity, and reasoning. Product decision (2026-07-25): Type to Carson is advisory-only — thinking, planning, drafting, research, and review only. Talk to Carson (voice) remains the sole execution channel for reminders, recurring reminders, push notifications, calendar events, staff messages, hosting plans, delegations, and any other state-changing action. See "Type to Carson is advisory-only" below.
 
 ## Stable and protected
 
 Do not modify these areas without a reproduced regression or explicit product decision.
+
+### Type to Carson is advisory-only — Talk to Carson remains the execution channel
+
+Status: implemented. Merged to `main`. Deployment status and exact production evidence recorded at completion of this task below (see delivery notes at the end of this task's work, or the final task report).
+
+Product decision (2026-07-25): Type to Carson may answer questions, help plan, accept brain dumps, draft content and messages, research information, and review existing information — it may help prepare an action before the user performs it through Talk to Carson. It must never create or claim a reminder, recurring reminder, push notification, calendar event/update/delete, staff WhatsApp message, hosting plan execution/approval, delegation/assignment, or any other task/operation state change. Talk to Carson (voice) is completely unchanged and remains the only execution channel for all of the above.
+
+**Enforcement is code-level, not prompt-level** (`src/components/home/ElevenLabsAgentWidget.tsx`):
+- A single constant, `TYPED_MODE_IS_ADVISORY_ONLY` (currently `true`), gates every new branch below. Flipping it to `false` fully restores prior typed execution behavior — every gated branch is additive (`if (...) {...} else { <original code, untouched> }` or an early return before the original code), so this is a one-line, fully reversible rollback if the product decision changes.
+- `guardCurrentToolInvocation` — the single function every one of the 17 registered ElevenLabs clientTools calls first, for both channels — now returns a truthful advisory string for 16 of the 17 typed tool calls (`execute_instruction`, `send_followup`, `send_delegation`, `send_direct_whatsapp_message`, `create_reminder`, `create_automation`, `create_calendar_event`, `update_calendar_event`, `delete_calendar_event`, `create_todo`, `complete_todo`, `control_task`, `act_on_note`, `save_note`, `save_city`, `save_instruction`) before the real executor is ever called. `get_calendar_events` (read-only) is the sole, deliberate exclusion — typed research/planning can still check the calendar. Voice returns via the pre-existing, untouched `guardCurrentVoiceCapture(toolName)` on the very first line, structurally before this new check — voice cannot reach it.
+- `sendTypedMessage` (the typed-only dispatch handler, entirely separate from the ElevenLabs model/tool path) has three new gated branches, each leaving the real executor unreachable rather than intercepting its result: a pending hosting plan's "confirm" decision is answered advisorily instead of calling `handlePendingPlanTurn` (the plan itself is left pending/untouched so Talk to Carson can still execute it — `executeProposedPlan`'s existing idempotency key prevents any theoretical double-execution regardless); a message matching `parseSimpleDirectMessage` is answered advisorily instead of calling `executeDirectMessageFastPath`; a message matching the pure parser `parseDelegationFastPath` (the same parser `executeDelegationFastPath` uses internally, so there is no separately-maintained matcher to drift out of sync) is answered advisorily instead of calling `executeDelegationFastPath`. Hosting **planning** (`handleOperationalHostingTurn` — building/persisting a draft or proposal, no send) is deliberately left unconditional in both its call sites, since planning must still work for typed.
+- `channelInstructions` for the text channel gains one additive prompt string, `CARSON_TYPED_ADVISORY_POLICY` ("...never say or imply that an action was completed"), reinforcing but never substituting for the code-level block. Voice's instruction array is untouched.
+- `src/components/home/CarsonTypedChat.tsx` empty-state copy updated from text that named now-false capabilities ("create a reminder, delegate, or manage a To-do") to "Type for questions and planning."
+
+**Independent review** (separate agent, `review:bug-hunter`): no critical/high/medium findings. Confirmed: all 17 clientTools cross-checked against the blocked-tool map (16 blocked, 1 deliberate read-only exclusion); no other Supabase-write or WhatsApp-send path exists inside `sendTypedMessage`; voice's guard, tool executors, and instruction array are structurally unreachable by the new typed-only code and byte-for-byte unchanged; every gated branch is additive/reversible; the hosting-plan idempotency key (pre-existing, shared by both channels) prevents duplicate execution even in a hypothetical bypass. One low-priority product note, not a bug: blocking `save_instruction` (a lower-stakes preference-memory write, e.g. "remember I prefer tea not coffee") may be more conservative than necessary — kept blocked here as the correct literal reading of "any other state-changing tool"; revisit only on explicit product decision.
+
+**Tests** (`src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts`, part of `npm run test:carson-protected`): new `describe("Type to Carson — advisory-only, Talk to Carson unchanged")` — proves the shared tool guard blocks every required tool unconditionally before voice's own guard could ever apply; proves reminder/recurring-reminder/calendar/staff-message requests cannot reach their real executors (including that `createReminder` — which owns all push/automation scheduling — is never invoked); proves hosting planning stays unconditional while approval/execution is blocked with the plan left untouched; proves no advisory string claims a completed action; proves ordinary typed questions/planning/drafting still reach the free-form model unchanged; proves typed-history reconciliation is untouched by this change; proves Talk to Carson's guard ordering and executor wiring are unaffected; proves the updated entry copy. Mutation-spot-checked (temporarily disabled the new guard, confirmed the relevant tests fail, restored).
+
+Protect: the code-level boundary above. Do not let it degrade into a prompt-only restriction. Do not remove the reversibility (the `TYPED_MODE_IS_ADVISORY_ONLY`-gated `if/else` structure). Reopen only on a reproduced production regression or an explicit product decision to restore typed execution.
 
 ### Verified hosting loop + typed-history reconciliation — LOCKED, PRODUCTION VERIFIED
 
@@ -76,7 +95,7 @@ Personal recurring reminders must not be converted into staff WhatsApp delegatio
 
 ### Type to Carson V1
 
-Status: implemented and tested.
+Status: implemented and tested. **Superseded in part by "Type to Carson is advisory-only" above (2026-07-25)** — see that entry for the current, authoritative rule. "To-do creation" and "Tool authority and deterministic operational actions" below are historical: typed chat can no longer create a to-do or reach any state-changing tool/deterministic send path. Everything else in this list (same production agent, persistence/history restore, Clear Chat, image attachment/understanding, preview allowlisting) is unaffected and still protected.
 
 Protect:
 
@@ -84,9 +103,7 @@ Protect:
 - Persistence and history restore
 - Clear Chat
 - Image attachment and image understanding
-- To-do creation
 - Preview allowlisting
-- Tool authority and deterministic operational actions
 
 ### Typed-image delegation race fix
 
