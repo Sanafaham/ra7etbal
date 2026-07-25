@@ -14,6 +14,20 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 Do not modify these areas without a reproduced regression or explicit product decision.
 
+### Reminder correction replaces (not duplicates) the reminder — Talk to Carson only
+
+Status: implemented. Merged to `main`.
+
+Confirmed production regression: Talk to Carson created a 9:00 AM reminder; the owner said it should be 5:00 PM instead; Carson said "changed to 5:00 PM"; production showed BOTH reminders active — the original 9:00 AM task and its QStash push job were never cancelled. Root cause: `create_reminder` is the only reminder tool exposed to the voice model, so a correction necessarily arrives as another `create_reminder` call with the same description, not a distinct "update" call — nothing recognized this as a correction of the reminder just created.
+
+Fix, in `createReminder` (`src/components/home/ElevenLabsAgentWidget.tsx`): a new session-scoped ref (`lastCreatedReminderRef`) tracks the last created one-time reminder's id, normalized description, and creation timestamp. A new `create_reminder` call is treated as a correction only when BOTH the normalized description exactly matches AND the prior creation happened within `REMINDER_CORRECTION_WINDOW_MS` (2 minutes) — description match alone was flagged in independent review as able to silently delete an active reminder the owner intentionally repeated later for something unrelated; the time window is what distinguishes a live correction from that case. On a match: the corrected reminder is created FIRST (via the existing, unmodified `createReminderTask` — same QStash scheduling), and only after that succeeds is the original cancelled via the existing, unmodified `useTasksStore.getState().remove()` (the same function `control_task`'s delete action already uses, which deletes the task and cancels its QStash push). Carson only says "I've changed that reminder..." after both steps verifiably succeed; if creating the new one fails, the original is left untouched (never zero active reminders); if creating succeeds but cancelling the old one fails, the reply reports both are active and does not claim success.
+
+This is a voice-only behavior change (the only confirmed regression, and typed's `create_reminder` is already fully blocked by the advisory-only boundary below) — Talk to Carson's tool registration and every other reminder/calendar/delegation behavior is unmodified.
+
+Tests: `src/components/home/ElevenLabsAgentWidget.reminder-replacement.test.ts` (13 tests) — mutation-spot-checked. Independent review (`review:bug-hunter`): confirmed no stale-QStash-job path, confirmed the ref is correctly reassigned on every creation (so a second correction targets the second reminder, not the first), confirmed voice-only, confirmed the description-only false-positive risk (now closed by the time window above).
+
+Protect: the create-then-cancel ordering, the time-window gate, and the truthful mixed-state failure reporting. Do not weaken the time window or the description match without a new reproduced regression.
+
 ### Type to Carson is advisory-only — Talk to Carson remains the execution channel
 
 Status: implemented. Merged to `main`. Deployment status and exact production evidence recorded at completion of this task below (see delivery notes at the end of this task's work, or the final task report).

@@ -158,6 +158,14 @@ type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
 type CarsonChannel = "voice" | "text";
 const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id";
+// How recently the prior same-wording reminder must have been created for a
+// new create_reminder call to be treated as a correction of it, rather than
+// an unrelated later reminder that happens to reuse the same wording. A real
+// correction ("actually make it 5 PM") is the very next turn in the same
+// back-and-forth; this window is generous enough to cover normal
+// conversational pacing without being long enough to plausibly span an
+// unrelated later request.
+const REMINDER_CORRECTION_WINDOW_MS = 2 * 60 * 1000;
 
 function getOrCreateTypedSessionId(): string {
   if (typeof window === "undefined") return crypto.randomUUID();
@@ -1290,6 +1298,16 @@ export default function ElevenLabsAgentWidget({
    *  Flushed to carson_memory on disconnect. */
   const sessionActionsRef = useRef<string[]>([]);
   const createdReminderKeysRef = useRef<Map<string, string>>(new Map());
+  /** The most recently created one-time reminder task in this session, if still
+   *  active. create_reminder is the only reminder tool exposed to the model —
+   *  a time/date correction necessarily arrives as another create_reminder
+   *  call, not a distinct "update" call — so this lets a same-description
+   *  follow-up replace the prior reminder instead of creating a duplicate.
+   *  createdAt gates the replacement to a short window (see
+   *  REMINDER_CORRECTION_WINDOW_MS) so a genuinely new, later reminder that
+   *  happens to reuse the same wording is never silently deleted — only an
+   *  immediate correction in the same back-and-forth is treated as one. */
+  const lastCreatedReminderRef = useRef<{ id: string; normalizedDescription: string; createdAt: number } | null>(null);
 
   /** Holds an unconfirmed operational plan proposed by Operations Intelligence.
    *  Cleared on execution or when a new instruction doesn't confirm it. */
@@ -2446,8 +2464,35 @@ export default function ElevenLabsAgentWidget({
         return existingReminderReply;
       }
 
+      // ── Reminder replacement (time/date/wording correction) ──────────────
+      // create_reminder is the only reminder tool exposed to the model, so an
+      // immediate correction ("actually make that 5 PM") necessarily arrives
+      // as another create_reminder call with the same description, not a
+      // distinct "update" call. When the normalized description exactly
+      // matches the last reminder created THIS session (still active — not
+      // already superseded/deleted) AND that creation happened within
+      // REMINDER_CORRECTION_WINDOW_MS, this is a replacement, not a second
+      // reminder. The time window matters as much as the description match:
+      // without it, an owner intentionally creating two reminders with
+      // identical wording later in the same session (e.g. the same reminder
+      // repeated on purpose) would have the first one silently deleted —
+      // description equality alone can't tell a live correction apart from
+      // an unrelated later request that happens to reuse the same wording.
+      // New-first-then-cancel-old ordering: if creating the corrected
+      // reminder fails, the original stays untouched and active (never zero
+      // active reminders); "changed" is only spoken once the old one is
+      // confirmed cancelled below.
+      const normalizedDescription = text.toLowerCase().replace(/\s+/g, " ").trim();
+      const candidatePriorReminder = lastCreatedReminderRef.current;
+      const priorReminder =
+        candidatePriorReminder?.normalizedDescription === normalizedDescription &&
+        Date.now() - candidatePriorReminder.createdAt <= REMINDER_CORRECTION_WINDOW_MS
+          ? candidatePriorReminder
+          : null;
+
+      let task: Awaited<ReturnType<typeof createReminderTask>>;
       try {
-        const task = await createReminderTask({
+        task = await createReminderTask({
           userId,
           text,
           dueAt: resolvedDueAt,
@@ -2465,6 +2510,7 @@ export default function ElevenLabsAgentWidget({
         recordCreateReminderFailure(failureText, text);
         return failureText;
       }
+      lastCreatedReminderRef.current = { id: task.id, normalizedDescription, createdAt: Date.now() };
 
       // Human-readable confirmation for the agent to speak back.
       const dueDate = new Date(resolvedDueAt);
@@ -2480,16 +2526,36 @@ export default function ElevenLabsAgentWidget({
         ? "tomorrow"
         : dueDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
 
-      // Prefix with CREATED: so the agent system prompt can pattern-match
-      // success vs error without ambiguity.
-      const reply = `I'll remind you ${dateLabel} at ${timeStr}.`;
+      if (priorReminder) {
+        try {
+          await useTasksStore.getState().remove(priorReminder.id);
+        } catch (err) {
+          // The corrected reminder is persisted and scheduled, but the old
+          // one could not be confirmed cancelled — both are now active.
+          // Never say "changed"/"moved"/"updated" here; report truthfully.
+          const mixedStateText =
+            `I created the new reminder for ${dateLabel} at ${timeStr}, but could not cancel the earlier one. ` +
+            `${sanitizeCarsonErrorDetail(err)} Please check your reminders.`;
+          recordCreateReminderFailure(mixedStateText, text);
+          return mixedStateText;
+        }
+      }
+
+      const reply = priorReminder
+        ? `I've changed that reminder to ${dateLabel} at ${timeStr}.`
+        : `I'll remind you ${dateLabel} at ${timeStr}.`;
       createdReminderKeysRef.current.set(reminderKey, reply);
-      sessionActionsRef.current.push(`Created reminder: ${text} (${dateLabel} at ${timeStr})`);
+      sessionActionsRef.current.push(
+        priorReminder
+          ? `Replaced reminder: ${text} (${dateLabel} at ${timeStr})`
+          : `Created reminder: ${text} (${dateLabel} at ${timeStr})`,
+      );
       lastDirectToolSuccessRef.current = {
         toolName: "create_reminder",
         resultText: reply,
         at: new Date().toISOString(),
-        inputSummary: { description: text, dueAt: resolvedDueAt },
+        outcome: "success",
+        inputSummary: { description: text, dueAt: resolvedDueAt, replaced: Boolean(priorReminder) },
       };
       return reply;
     },
@@ -4867,6 +4933,7 @@ export default function ElevenLabsAgentWidget({
         sentDelegationsRef.current = [];
         currentTaskContextRef.current = null;
         createdReminderKeysRef.current.clear();
+        lastCreatedReminderRef.current = null;
 
         let conversationSummary: string | null = null;
         try {
@@ -5075,6 +5142,7 @@ export default function ElevenLabsAgentWidget({
         sentDelegationsRef.current = [];
         currentTaskContextRef.current = null;
         createdReminderKeysRef.current.clear();
+        lastCreatedReminderRef.current = null;
       }
     },
     [
@@ -5218,6 +5286,7 @@ export default function ElevenLabsAgentWidget({
     sentDelegationsRef.current = [];
     currentTaskContextRef.current = null;
     createdReminderKeysRef.current.clear();
+    lastCreatedReminderRef.current = null;
     recurringRawRef.current = null;
     invalidCaptureRef.current = null;
     sessionConnectedAtRef.current = null;
