@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Spinner from "../Spinner";
 import { getSignedImageUrl } from "../../lib/image-upload";
 import {
+  formatReminderCreatedTime,
   formatReminderDue,
   formatReminderDueTime,
   isReminderOverdue,
@@ -90,6 +91,8 @@ export default function TaskCard({
   const showSubstituteReview = qualityLifecycle.state === "needs_owner_decision";
   const showProofImage = Boolean(signedProofImageUrl && !isOperationalProofCorrection);
   const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;
+  const reminderCreatedLabel =
+    task.type === "reminder" ? formatReminderCreatedTime(task.created_at, now) : null;
   const needsYouTimestampLabel = isNeedsYouCard ? getNeedsYouTimestampLabel(task, now) : null;
   // The followup/delegation "Sent ..." line below already shows created_at
   // truthfully — don't repeat the same instant under a second label when
@@ -289,6 +292,9 @@ export default function TaskCard({
             <p className={reminderDue.overdue ? "text-rose-800" : "text-amber-900"}>
               {reminderDue.label}
             </p>
+          )}
+          {reminderCreatedLabel && (
+            <p className="text-[11px] font-normal text-ink/40">{reminderCreatedLabel}</p>
           )}
         </div>
       )}
