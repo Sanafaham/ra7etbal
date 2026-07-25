@@ -93,6 +93,7 @@ import {
   handleOperationalHostingTurn,
   resolveGuestOutcomeAction,
   executeProposedPlan,
+  hasLeadingConfirmationLanguage,
   isConfirmation,
   isRejection,
   isStatusQuestion,
@@ -4203,6 +4204,21 @@ export default function ElevenLabsAgentWidget({
           return pendingDecision === "reject"
             ? "Understood. Let me know if there's anything else."
             : "You're all set.";
+        }
+
+        // Guard: a compound reply that OPENS with confirmation language
+        // ("Yes, and please coordinate the table setup...") does not match
+        // the exact-match confirmation regex above, so pendingDecision is
+        // "hold" and — with no active plan — this would otherwise fall
+        // through to handleOperationalHostingTurn below and be misread as a
+        // brand new hosting request. Confirmed production incident: Carson
+        // spoke a two-person hosting proposal without ever persisting a
+        // plan; the owner's "Yes, and..." reply then got misrouted this way,
+        // producing an orphaned clarification instead of a truthful "no plan
+        // to confirm" response.
+        if (!activePlan && !activeWeekPlan && hasLeadingConfirmationLanguage(rawInstruction)) {
+          console.log("[execute_instruction] leading confirmation language with no active plan — asking to restate");
+          return "I don't have a saved plan to confirm. Please tell me the hosting plan again.";
         }
 
         // ── Operations Intelligence — outcome leg ──────────────────────────

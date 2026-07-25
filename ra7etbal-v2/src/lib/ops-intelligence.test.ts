@@ -59,6 +59,7 @@ const {
   evaluateHostingPlanningGate,
   executeProposedPlan,
   handlePendingPlanTurn,
+  hasLeadingConfirmationLanguage,
   hasOperatingAuthority,
   isConfirmation,
   isRejection,
@@ -104,6 +105,29 @@ describe("isRejection", () => {
     "returns false for '%s'",
     (text) => { expect(isRejection(text)).toBe(false); },
   );
+});
+
+describe("hasLeadingConfirmationLanguage", () => {
+  it.each([
+    "Yes, and please coordinate the table setup for dinner tomorrow at 8:00 PM. Four guests, no shellfish.",
+    "Okay, also send Grace the details for the dinner.",
+    "Go ahead, and confirm with Grace too.",
+    "Yes, also let Christopher know about the shellfish allergy.",
+  ])("returns true for compound reply '%s'", (text) => {
+    expect(hasLeadingConfirmationLanguage(text)).toBe(true);
+  });
+
+  it.each([
+    "yes",
+    "Yes.",
+    "yeah",
+    "go ahead",
+    "no",
+    "Prepare dinner for four tomorrow",
+    "Please coordinate the table setup for dinner tomorrow at 8:00 PM.",
+  ])("returns false for '%s'", (text) => {
+    expect(hasLeadingConfirmationLanguage(text)).toBe(false);
+  });
 });
 
 describe("isStatusQuestion", () => {
