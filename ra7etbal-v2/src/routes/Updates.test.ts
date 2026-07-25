@@ -6,9 +6,15 @@ const SOURCE = readFileSync(join(__dirname, "Updates.tsx"), "utf-8");
 
 /**
  * Clear My Head and the internal Inbox tab were removed from the product.
- * Updates now has exactly 7 tabs: Needs You / Waiting / To-do / Notes /
- * Automations / Staff / History. Staff (Owner Visibility V1) was added
- * after the original 6-tab baseline — read-only staff_messages records.
+ * Updates now has exactly 6 tabs: Needs You / Waiting / To-do / Notes /
+ * Automations / History.
+ *
+ * Staff tab removed (2026-07-26): the owner-facing Staff tab (Owner
+ * Visibility V1) duplicated information already available through push
+ * notifications, History, Waiting, Handled, and People, so it was removed
+ * from navigation. StaffUpdates.tsx, staff-messages.ts, and all backend
+ * staff-messaging/delegation/WhatsApp behavior are untouched — this was a
+ * navigation-only removal, not a data or backend change.
  */
 describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
   it("no longer has a tab labeled \"Inbox\" or the clear-my-head tab id", () => {
@@ -23,12 +29,28 @@ describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
     expect(SOURCE).toMatch(/\{ id: "todo",\s*label: "To-do"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "inbox",\s*label: "Notes"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "routines",\s*label: "Automations"\s*\}/);
-    expect(SOURCE).toMatch(/\{ id: "staff",\s*label: "Staff"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "history",\s*label: "History"\s*\}/);
   });
 
   it("keeps the Notes tab rendering the pre-existing Inbox component", () => {
     expect(SOURCE).toMatch(/\{activeTab === "inbox" && <Inbox headerless \/>\}/);
+  });
+
+  it("the Staff tab is removed from navigation — no tab id/label, no StaffUpdates import or render, no dead activeTab comparisons left behind", () => {
+    expect(SOURCE).not.toMatch(/id: "staff"/);
+    expect(SOURCE).not.toMatch(/label: "Staff"/);
+    expect(SOURCE).not.toContain("StaffUpdates");
+    expect(SOURCE).not.toMatch(/activeTab === "staff"/);
+    expect(SOURCE).not.toMatch(/activeTab !== "staff"/);
+  });
+
+  it("an old /updates?tab=staff deep link falls back to the default tab instead of exposing a broken screen", () => {
+    // isValidTab only accepts a value present in TABS; "staff" is no longer
+    // in TABS, so isValidTab("staff") is false and activeTab falls back to
+    // the existing "needs-you" default — the same pre-existing fallback
+    // mechanism every unrecognized tab param already goes through.
+    expect(SOURCE).toMatch(/const activeTab: Tab = isValidTab\(rawTab\) \? rawTab : "needs-you";/);
+    expect(SOURCE).toMatch(/function isValidTab\(v: string \| null\): v is Tab \{\s*return TABS\.some\(\(t\) => t\.id === v\);\s*\}/);
   });
 });
 
@@ -45,13 +67,13 @@ describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
  * from genuine (including keyboard-driven) user interaction.
  */
 describe("Updates.tsx — chip auto-scroll does not self-pause", () => {
-  it("TABS is exactly these 7 entries, in order, with no eighth tab silently added back", () => {
+  it("TABS is exactly these 6 entries, in order, with no seventh tab silently added back", () => {
     const tabsBlock = SOURCE.slice(
       SOURCE.indexOf("const TABS: { id: Tab; label: string }[] = ["),
       SOURCE.indexOf("];", SOURCE.indexOf("const TABS: { id: Tab; label: string }[] = [")),
     );
     const ids = [...tabsBlock.matchAll(/\{ id: "([a-z-]+)",/g)].map((m) => m[1]);
-    expect(ids).toEqual(["needs-you", "waiting", "todo", "inbox", "routines", "staff", "history"]);
+    expect(ids).toEqual(["needs-you", "waiting", "todo", "inbox", "routines", "history"]);
     expect(SOURCE).toMatch(/\[\.\.\.TABS, \.\.\.TABS\]\.map/);
   });
 
