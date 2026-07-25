@@ -632,27 +632,44 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
     expect(parseIndex).toBeLessThan(executeIndex);
   });
 
-  it("lets typed hosting requests help with planning but blocks approval/execution of the plan", () => {
-    // Planning/proposal building (handleOperationalHostingTurn) is reached
-    // unconditionally for both a continued clarification and a fresh
-    // request — never gated by TYPED_MODE_IS_ADVISORY_ONLY.
-    const clarificationBlock = blockBetween(
+  // Superseded 2026-07-25 (Priority 2, confirmed production regression: typed
+  // "I have a dinner for 4 people at home tomorrow. Handle it." asked for the
+  // time, asked about dietary restrictions, generated a full proposal, asked
+  // for approval, and only THEN said to use Talk to Carson). Type to Carson
+  // must now redirect immediately, before any hosting clarification question
+  // or proposal is generated — see "redirects a typed hosting execution
+  // request immediately, before any clarification or proposal" below.
+  it("blocks hosting clarification/proposal generation entirely while advisory-only, but keeps the old planning-allowed path reachable behind TYPED_MODE_IS_ADVISORY_ONLY for reversibility", () => {
+    const redirectBlock = blockBetween(
       "const pendingHostingClarification = pendingHostingClarificationRef.current;",
+      "if (pendingHostingClarification) {",
+    );
+    expect(redirectBlock).toContain(
+      'if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {',
+    );
+    expect(redirectBlock).toContain("content: TYPED_ADVISORY_HOSTING_REQUEST,");
+    expect(redirectBlock).toContain("return;");
+    expect(redirectBlock).not.toContain("handleOperationalHostingTurn");
+
+    // The old "planning allowed" flow (both continuing a clarification and a
+    // fresh request) still exists, reachable only when the redirect above
+    // does not return — i.e. only when TYPED_MODE_IS_ADVISORY_ONLY is false.
+    const clarificationBlock = blockBetween(
+      "if (pendingHostingClarification) {",
       "if (typedGuestAction !== \"none\") {",
     );
     expect(clarificationBlock).toContain("const operationTurn = await handleOperationalHostingTurn({");
-    expect(clarificationBlock).not.toContain("TYPED_MODE_IS_ADVISORY_ONLY");
 
     const freshRequestBlock = blockBetween(
       "if (typedGuestAction !== \"none\") {",
       "// ── Deterministic typed delegation fast path",
     );
     expect(freshRequestBlock).toContain("const operationTurn = await handleOperationalHostingTurn({");
-    expect(freshRequestBlock).not.toContain("TYPED_MODE_IS_ADVISORY_ONLY");
 
-    // Approval/execution is blocked before handlePendingPlanTurn (the only
-    // call site that can invoke executeProposedPlan) ever runs, and the
-    // pending plan is left untouched so Talk to Carson can still execute it.
+    // Pending-plan approval/execution remains blocked exactly as before —
+    // handlePendingPlanTurn (the only call site that can invoke
+    // executeProposedPlan) is never reached on "confirm", and the pending
+    // plan is left untouched so Talk to Carson can still execute it.
     const pendingPlanBlock = blockBetween(
       "if (activeTypedPlan) {",
       "const turn = await handlePendingPlanTurn([savedMessage.content], activeTypedPlan, {",
@@ -750,4 +767,158 @@ function sourceConstant(name: string): string {
 
 function TYPED_ADVISORY_STRINGS_ARE_TRUTHFUL(text: string): boolean {
   return /Talk to Carson/.test(text) && !/\b(done|sent|created)\b/i.test(text);
+}
+
+// ── Type to Carson — immediate execution-request redirect (2026-07-25) ────────
+// Confirmed production regressions: (1) a typed hosting execution request
+// ("I have a dinner for 4 people at home tomorrow. Handle it.") asked for the
+// time, asked about dietary restrictions, built a full proposal, asked for
+// approval, and only THEN said to use Talk to Carson; (2) a typed mixed
+// request ("...pay the electricity bill.") got the false reply "I'll have
+// Grace handle it." with no delegation ever created. These tests lock the
+// fix: a deterministic redirect before any clarification/proposal/dispatch,
+// and a truthfulness guard on the free-form model's own reply text.
+describe("Type to Carson — immediate execution-request redirect, Talk to Carson unchanged", () => {
+  function sendBlock(): string {
+    return blockBetween(
+      "const sendTypedMessage = useCallback(async () => {",
+      "  // ------------------------------------------------------------------\n  // Session teardown",
+    );
+  }
+
+  it("redirects a typed hosting execution request immediately, before any clarification question or proposal", () => {
+    const block = sendBlock();
+    const guestActionIndex = block.indexOf('const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)');
+    const redirectIndex = block.indexOf(
+      'if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {',
+      guestActionIndex,
+    );
+    const redirectContentIndex = block.indexOf("content: TYPED_ADVISORY_HOSTING_REQUEST,", redirectIndex);
+    const redirectReturnIndex = block.indexOf("return;", redirectContentIndex);
+    const firstHostingTurnIndex = block.indexOf("await handleOperationalHostingTurn({", redirectIndex);
+
+    expect(guestActionIndex).toBeGreaterThan(-1);
+    expect(redirectIndex).toBeGreaterThan(guestActionIndex);
+    expect(redirectContentIndex).toBeGreaterThan(redirectIndex);
+    expect(redirectReturnIndex).toBeGreaterThan(redirectContentIndex);
+    // No question is asked and no proposal is built before the redirect
+    // returns — the only handleOperationalHostingTurn call (proposal/
+    // clarification generation) in the block comes strictly after the
+    // redirect's own return.
+    expect(firstHostingTurnIndex).toBeGreaterThan(redirectReturnIndex);
+    expect(TYPED_ADVISORY_HOSTING_REQUEST_VALUE()).toMatch(/Talk to Carson/);
+    expect(TYPED_ADVISORY_HOSTING_REQUEST_VALUE()).not.toMatch(/\?/);
+  });
+
+  it("does not ask for approval before redirecting a fresh hosting request — no plan is ever stored first", () => {
+    const block = sendBlock();
+    const redirectIndex = block.indexOf(
+      'if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {',
+    );
+    const redirectReturnIndex = block.indexOf("return;", redirectIndex);
+    const firstPendingPlanAssignment = block.indexOf("pendingPlanRef.current = plan;", redirectIndex);
+    // pendingPlanRef is only ever populated by the dormant reversibility
+    // path, strictly after the redirect's own return — never before it.
+    expect(firstPendingPlanAssignment).toBeGreaterThan(redirectReturnIndex);
+  });
+
+  it("redirects a typed reminder, calendar, staff-message, or generic-action request via one final classifier gate before the free-form model", () => {
+    const block = sendBlock();
+    const classifierIndex = block.indexOf(
+      "const typedExecutionRedirect = TYPED_MODE_IS_ADVISORY_ONLY",
+    );
+    const classifyCallIndex = block.indexOf(
+      "classifyTypedExecutionRequest(savedMessage.content, usePeopleStore.getState().items)",
+      classifierIndex,
+    );
+    const redirectContentIndex = block.indexOf("content: typedExecutionRedirect.message,", classifyCallIndex);
+    const redirectReturnIndex = block.indexOf("return;", redirectContentIndex);
+    const modelSendIndex = block.indexOf("conversation.sendUserMessage(agentMessage)");
+
+    expect(classifierIndex).toBeGreaterThan(-1);
+    expect(classifyCallIndex).toBeGreaterThan(classifierIndex);
+    expect(redirectContentIndex).toBeGreaterThan(classifyCallIndex);
+    expect(redirectReturnIndex).toBeGreaterThan(redirectContentIndex);
+    expect(modelSendIndex).toBeGreaterThan(redirectReturnIndex);
+  });
+
+  it("gates the new classifier redirect on TYPED_MODE_IS_ADVISORY_ONLY for reversibility, same as every other typed-only block", () => {
+    expect(SOURCE).toContain(
+      "const typedExecutionRedirect = TYPED_MODE_IS_ADVISORY_ONLY\n        ? classifyTypedExecutionRequest(savedMessage.content, usePeopleStore.getState().items)\n        : null;",
+    );
+  });
+
+  it("imports classifyTypedExecutionRequest from the dedicated typed-advisory-redirect module — no duplicated pattern logic", () => {
+    expect(SOURCE).toContain('import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";');
+  });
+
+  it("applies the typed-only truthfulness guard exclusively to the text channel, never voice", () => {
+    const onMessageBlock = blockBetween(
+      "onMessage: ({ role, message, event_id }) => {",
+      "onDisconnect: (details?: {",
+    );
+    const sanitizedIndex = onMessageBlock.indexOf("const displayMessage = resolveSanitizedCarsonDisplayMessage({");
+    const guardIndex = onMessageBlock.indexOf('requestedChannel === "text"', sanitizedIndex);
+    const scrubberCallIndex = onMessageBlock.indexOf("sanitizeTypedAdvisoryReply(displayMessage)", guardIndex);
+    expect(sanitizedIndex).toBeGreaterThan(-1);
+    expect(guardIndex).toBeGreaterThan(sanitizedIndex);
+    expect(scrubberCallIndex).toBeGreaterThan(guardIndex);
+    // resolveSanitizedCarsonDisplayMessage itself — the shared, voice-and-typed
+    // display-override call — is completely unchanged: same arguments, same
+    // call site, still runs for both channels exactly as before.
+    expect(onMessageBlock).toContain(
+      "resolveSanitizedCarsonDisplayMessage({\n              agentMessage: message,\n              previousUserMessage,\n              lastSuccess: lastDirectToolSuccessRef.current,\n              noteSaveOutcome: noteSaveOutcomeRef.current,\n            });",
+    );
+  });
+
+  it("imports sanitizeTypedAdvisoryReply alongside the existing, unmodified resolveSanitizedCarsonDisplayMessage import", () => {
+    expect(SOURCE).toContain(
+      'import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";',
+    );
+  });
+
+  it("keeps get_calendar_events reachable for typed read-only research/planning — never touched by any redirect", () => {
+    expect(SOURCE).not.toContain('get_calendar_events: TYPED_ADVISORY');
+    const readBlock = blockBetween(
+      'get_calendar_events: (params: Parameters<typeof getCalendarEvents>[0]) => {',
+      "  },",
+    );
+    expect(readBlock).toContain("getCalendarEvents(params)");
+  });
+
+  it("leaves typed-history persistence, reconciliation, and Clear Chat completely untouched by this fix", () => {
+    const reconcileBlock = blockBetween(
+      "const reconcileTypedHistory = useCallback(async (markInterrupted = false)",
+      "  useEffect(() => {\n    if (!authenticatedUserId) {",
+    );
+    expect(reconcileBlock).not.toContain("classifyTypedExecutionRequest");
+    expect(reconcileBlock).not.toContain("sanitizeTypedAdvisoryReply");
+    expect(reconcileBlock).not.toContain("TYPED_ADVISORY_HOSTING_REQUEST");
+    expect(SOURCE).toContain("const clearTypedHistory = useCallback(async () => {");
+  });
+
+  it("never touches Talk to Carson's tool registration, routing, or execution — voice guard still returns before any typed-only check", () => {
+    const guardBlock = blockBetween(
+      "const guardCurrentToolInvocation = (toolName: string): string | null => {",
+      "    try {",
+    );
+    const voiceReturnIndex = guardBlock.indexOf("return guardCurrentVoiceCapture(toolName);");
+    const typedBlockIndex = guardBlock.indexOf("TYPED_BLOCKED_TOOL_MESSAGES[toolName]");
+    expect(voiceReturnIndex).toBeGreaterThan(-1);
+    expect(voiceReturnIndex).toBeLessThan(typedBlockIndex);
+    // Every real executor call for reminders/calendar/delegation/followup is
+    // still present, unconditionally reachable for voice.
+    for (const executorCall of [
+      "createReminder(params)",
+      "createCalendarEvent(params)",
+      "sendDelegation(params)",
+      "sendFollowup(params)",
+    ]) {
+      expect(SOURCE).toContain(executorCall);
+    }
+  });
+});
+
+function TYPED_ADVISORY_HOSTING_REQUEST_VALUE(): string {
+  return sourceConstant("TYPED_ADVISORY_HOSTING_REQUEST");
 }

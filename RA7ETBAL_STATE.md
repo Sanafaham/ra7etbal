@@ -28,6 +28,22 @@ Tests: `src/components/home/ElevenLabsAgentWidget.reminder-replacement.test.ts` 
 
 Protect: the create-then-cancel ordering, the time-window gate, and the truthful mixed-state failure reporting. Do not weaken the time window or the description match without a new reproduced regression.
 
+### Type to Carson redirects execution requests immediately, never fabricates a completion promise
+
+Status: implemented. Merged to `main`. Tightens "Type to Carson is advisory-only" below — see that entry for the underlying tool-blocking boundary, which is unchanged by this fix.
+
+Two further confirmed production regressions on top of the advisory-only boundary: (1) typed "I have a dinner for 4 people at home tomorrow. Handle it." asked for the time, asked about dietary restrictions, built a full hosting proposal, asked for approval, and only THEN mentioned Talk to Carson — instead of redirecting immediately with no clarification, no proposal, no approval flow; (2) typed "I need to make the UI of Ra7etBal better and pay the electricity bill." got the reply "For the electricity bill, I'll have Grace handle it." — no `send_delegation` tool was ever called; the free-form typed model fabricated the claim entirely in its own reply text, which no tool-call block can catch.
+
+Fix, in two parts:
+- **Immediate redirect** (`src/components/home/ElevenLabsAgentWidget.tsx`, `sendTypedMessage`): the hosting-clarification and fresh-hosting-request branches now redirect immediately instead of calling `handleOperationalHostingTurn` (gated behind `TYPED_MODE_IS_ADVISORY_ONLY`, with the prior "planning allowed" code preserved as a dormant, fully reversible path). A new pure classifier, `classifyTypedExecutionRequest` (`src/lib/typed-advisory-redirect.ts`), runs as a final gate immediately before the free-form model would otherwise run, catching reminder/calendar requests (no dedicated detector existed for these at all) plus edge cases the existing staff-message/delegation detectors correctly return null for — a bodyless staff address ("Tell Grace.") and bare imperative actions ("Take care of it.", "Pay the electricity bill."). The staff-address check validates the addressed word against the real People list (not a capitalization heuristic — independent review confirmed a naive `[A-Z]` check is silently defeated by the case-insensitive `/i` flag the rest of the module needs).
+- **Truthfulness guard** (`src/lib/carson-direct-tool-override.ts`, `sanitizeTypedAdvisoryReply`): applied only when `requestedChannel === "text"`, immediately after the existing, byte-for-byte unchanged `resolveSanitizedCarsonDisplayMessage` call. Replaces the entire reply with a generic truthful fallback when it matches one of the 7 exact banned phrasings from the bug report ("I'll have Grace handle it", "I'll take care of it", "I'll remind you", "I'll send it", "I'll assign it", "I'll add it", "it's done") — unless the reply already mentions Talk to Carson, since the confirmed bug reply never did.
+
+Independent review (`review:bug-hunter`, run twice): first pass found the `[A-Z]`/`/i` case-insensitivity bug above (fixed) and two bare-verb false positives ("Book club is...", "Pay attention to..." — fixed by narrowing those two patterns); confirmed no path reaches `handleOperationalHostingTurn`/`executeProposedPlan`/`executeDirectMessageFastPath`/`executeDelegationFastPath` for typed while advisory-only; confirmed voice is structurally unaffected (`resolveSanitizedCarsonDisplayMessage`'s call site/arguments unchanged); confirmed full reversibility via `TYPED_MODE_IS_ADVISORY_ONLY`.
+
+Tests: `src/lib/typed-advisory-redirect.test.ts` (23), `src/lib/carson-direct-tool-override.test.ts` (new `sanitizeTypedAdvisoryReply` cases), and a new describe block in `src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts` — mutation-spot-checked.
+
+Protect: the immediate-redirect ordering (before any clarification/proposal/dispatch), the truthfulness guard's typed-only gating, and the People-list validation for staff-address detection. Do not reintroduce a capitalization-only name heuristic.
+
 ### Type to Carson is advisory-only — Talk to Carson remains the execution channel
 
 Status: implemented. Merged to `main`. Deployment status and exact production evidence recorded at completion of this task below (see delivery notes at the end of this task's work, or the final task report).
