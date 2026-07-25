@@ -197,3 +197,50 @@ export function resolveSanitizedCarsonDisplayMessage({
       : toolAwareMessage,
   );
 }
+
+// ── Typed advisory-only truthfulness guard (2026-07-25 product decision) ────
+// Every state-changing client tool is already blocked for typed mode (see
+// TYPED_BLOCKED_TOOL_MESSAGES in ElevenLabsAgentWidget.tsx) — no real
+// delegation, reminder, or message send can happen. But the free-form typed
+// model generates its own natural-language reply independently of any tool
+// call, and a confirmed production bug showed it can fabricate a false
+// execution promise ("I'll have Grace handle it.") for a request no tool was
+// ever invoked for. Blocking tool calls cannot catch this — it is a pure
+// wording problem, caught here deterministically on the displayed text
+// itself, applied ONLY to the typed channel by its one call site in
+// ElevenLabsAgentWidget.tsx. Voice is untouched — the exact same phrasing is
+// truthful for voice, which really does execute.
+// CodeRabbit finding: the free-form model can phrase the same promise
+// uncontracted ("I will..." instead of "I'll..."), so each alternative
+// matches both forms rather than only the apostrophe contraction.
+const TYPED_FUTURE_RE = /(?:I(?:'|’)ll|I\s+will)/;
+const TYPED_FALSE_PROMISE_PATTERN = new RegExp(
+  `\\b${TYPED_FUTURE_RE.source}\\s+have\\s+[A-Z][a-zA-Z'-]*\\s+handle\\s+(?:it|this|that)\\b` +
+    `|\\b${TYPED_FUTURE_RE.source}\\s+take\\s+care\\s+of\\s+(?:it|this|that)\\b` +
+    `|\\b${TYPED_FUTURE_RE.source}\\s+remind\\s+you\\b` +
+    `|\\b${TYPED_FUTURE_RE.source}\\s+send\\s+(?:it|this|that)\\b` +
+    `|\\b${TYPED_FUTURE_RE.source}\\s+assign\\s+(?:it|this|that)\\b` +
+    `|\\b${TYPED_FUTURE_RE.source}\\s+add\\s+(?:it|this|that)\\b` +
+    `|\\bit(?:'|’)s\\s+done\\b`,
+  "i",
+);
+
+const TYPED_ADVISORY_FALLBACK_REPLY =
+  "I can help you prepare that, but I can't complete it from typed chat. Use Talk to Carson to do it.";
+
+/**
+ * Typed-only. Replaces a reply that falsely claims a state-changing action
+ * was (or will be) performed with a truthful advisory + redirect message.
+ * Never called for voice, where the same claim can be genuinely true.
+ *
+ * A reply that already mentions Talk to Carson is left untouched even if it
+ * also matches the pattern below — the confirmed bug reply never mentioned
+ * Talk to Carson at all ("For the electricity bill, I'll have Grace handle
+ * it."), while a correctly-hedged advisory reply naturally does ("I'll remind
+ * you that Talk to Carson is the only way to actually create it."). This
+ * avoids discarding an already-truthful reply's real content.
+ */
+export function sanitizeTypedAdvisoryReply(message: string): string {
+  if (/Talk to Carson/i.test(message)) return message;
+  return TYPED_FALSE_PROMISE_PATTERN.test(message) ? TYPED_ADVISORY_FALLBACK_REPLY : message;
+}

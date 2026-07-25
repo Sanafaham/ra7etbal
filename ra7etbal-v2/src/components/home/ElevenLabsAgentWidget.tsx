@@ -109,7 +109,8 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
-import { resolveSanitizedCarsonDisplayMessage, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
+import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
+import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import {
   executeVoiceTaskControl,
   resolveVoiceTaskControl,
@@ -158,6 +159,14 @@ type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
 type CarsonChannel = "voice" | "text";
 const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id";
+// How recently the prior same-wording reminder must have been created for a
+// new create_reminder call to be treated as a correction of it, rather than
+// an unrelated later reminder that happens to reuse the same wording. A real
+// correction ("actually make it 5 PM") is the very next turn in the same
+// back-and-forth; this window is generous enough to cover normal
+// conversational pacing without being long enough to plausibly span an
+// unrelated later request.
+const REMINDER_CORRECTION_WINDOW_MS = 2 * 60 * 1000;
 
 function getOrCreateTypedSessionId(): string {
   if (typeof window === "undefined") return crypto.randomUUID();
@@ -186,6 +195,11 @@ const TYPED_ADVISORY_RECURRING_REMINDER = "I can help you plan that. Use Talk to
 const TYPED_ADVISORY_CALENDAR = "I can help you plan the event. Use Talk to Carson to add it to your calendar.";
 const TYPED_ADVISORY_STAFF_MESSAGE = "I can help you draft the message. Use Talk to Carson to send it.";
 const TYPED_ADVISORY_HOSTING_EXECUTION = "I can help you plan the hosting details. Use Talk to Carson when you are ready to execute the plan.";
+// Brief, immediate redirect for a fresh hosting execution request ("Handle
+// dinner tomorrow.") — deliberately terser than TYPED_ADVISORY_HOSTING_EXECUTION
+// above (which follows an already-built proposal): no clarification question,
+// no proposal, no advisory preamble first.
+const TYPED_ADVISORY_HOSTING_REQUEST = "Use Talk to Carson to plan and arrange it.";
 const TYPED_ADVISORY_TASK_STATE = "I can help you think that through. Use Talk to Carson to update it.";
 const TYPED_ADVISORY_GENERIC = "I can help you prepare that, but I can't complete it from typed chat. Use Talk to Carson to do it.";
 
@@ -1290,6 +1304,16 @@ export default function ElevenLabsAgentWidget({
    *  Flushed to carson_memory on disconnect. */
   const sessionActionsRef = useRef<string[]>([]);
   const createdReminderKeysRef = useRef<Map<string, string>>(new Map());
+  /** The most recently created one-time reminder task in this session, if still
+   *  active. create_reminder is the only reminder tool exposed to the model —
+   *  a time/date correction necessarily arrives as another create_reminder
+   *  call, not a distinct "update" call — so this lets a same-description
+   *  follow-up replace the prior reminder instead of creating a duplicate.
+   *  createdAt gates the replacement to a short window (see
+   *  REMINDER_CORRECTION_WINDOW_MS) so a genuinely new, later reminder that
+   *  happens to reuse the same wording is never silently deleted — only an
+   *  immediate correction in the same back-and-forth is treated as one. */
+  const lastCreatedReminderRef = useRef<{ id: string; normalizedDescription: string; createdAt: number } | null>(null);
 
   /** Holds an unconfirmed operational plan proposed by Operations Intelligence.
    *  Cleared on execution or when a new instruction doesn't confirm it. */
@@ -2446,8 +2470,35 @@ export default function ElevenLabsAgentWidget({
         return existingReminderReply;
       }
 
+      // ── Reminder replacement (time/date/wording correction) ──────────────
+      // create_reminder is the only reminder tool exposed to the model, so an
+      // immediate correction ("actually make that 5 PM") necessarily arrives
+      // as another create_reminder call with the same description, not a
+      // distinct "update" call. When the normalized description exactly
+      // matches the last reminder created THIS session (still active — not
+      // already superseded/deleted) AND that creation happened within
+      // REMINDER_CORRECTION_WINDOW_MS, this is a replacement, not a second
+      // reminder. The time window matters as much as the description match:
+      // without it, an owner intentionally creating two reminders with
+      // identical wording later in the same session (e.g. the same reminder
+      // repeated on purpose) would have the first one silently deleted —
+      // description equality alone can't tell a live correction apart from
+      // an unrelated later request that happens to reuse the same wording.
+      // New-first-then-cancel-old ordering: if creating the corrected
+      // reminder fails, the original stays untouched and active (never zero
+      // active reminders); "changed" is only spoken once the old one is
+      // confirmed cancelled below.
+      const normalizedDescription = text.toLowerCase().replace(/\s+/g, " ").trim();
+      const candidatePriorReminder = lastCreatedReminderRef.current;
+      const priorReminder =
+        candidatePriorReminder?.normalizedDescription === normalizedDescription &&
+        Date.now() - candidatePriorReminder.createdAt <= REMINDER_CORRECTION_WINDOW_MS
+          ? candidatePriorReminder
+          : null;
+
+      let task: Awaited<ReturnType<typeof createReminderTask>>;
       try {
-        const task = await createReminderTask({
+        task = await createReminderTask({
           userId,
           text,
           dueAt: resolvedDueAt,
@@ -2465,6 +2516,7 @@ export default function ElevenLabsAgentWidget({
         recordCreateReminderFailure(failureText, text);
         return failureText;
       }
+      lastCreatedReminderRef.current = { id: task.id, normalizedDescription, createdAt: Date.now() };
 
       // Human-readable confirmation for the agent to speak back.
       const dueDate = new Date(resolvedDueAt);
@@ -2480,16 +2532,36 @@ export default function ElevenLabsAgentWidget({
         ? "tomorrow"
         : dueDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
 
-      // Prefix with CREATED: so the agent system prompt can pattern-match
-      // success vs error without ambiguity.
-      const reply = `I'll remind you ${dateLabel} at ${timeStr}.`;
+      if (priorReminder) {
+        try {
+          await useTasksStore.getState().remove(priorReminder.id);
+        } catch (err) {
+          // The corrected reminder is persisted and scheduled, but the old
+          // one could not be confirmed cancelled — both are now active.
+          // Never say "changed"/"moved"/"updated" here; report truthfully.
+          const mixedStateText =
+            `I created the new reminder for ${dateLabel} at ${timeStr}, but could not cancel the earlier one. ` +
+            `${sanitizeCarsonErrorDetail(err)} Please check your reminders.`;
+          recordCreateReminderFailure(mixedStateText, text);
+          return mixedStateText;
+        }
+      }
+
+      const reply = priorReminder
+        ? `I've changed that reminder to ${dateLabel} at ${timeStr}.`
+        : `I'll remind you ${dateLabel} at ${timeStr}.`;
       createdReminderKeysRef.current.set(reminderKey, reply);
-      sessionActionsRef.current.push(`Created reminder: ${text} (${dateLabel} at ${timeStr})`);
+      sessionActionsRef.current.push(
+        priorReminder
+          ? `Replaced reminder: ${text} (${dateLabel} at ${timeStr})`
+          : `Created reminder: ${text} (${dateLabel} at ${timeStr})`,
+      );
       lastDirectToolSuccessRef.current = {
         toolName: "create_reminder",
         resultText: reply,
         at: new Date().toISOString(),
-        inputSummary: { description: text, dueAt: resolvedDueAt },
+        outcome: "success",
+        inputSummary: { description: text, dueAt: resolvedDueAt, replaced: Boolean(priorReminder) },
       };
       return reply;
     },
@@ -3149,6 +3221,13 @@ export default function ElevenLabsAgentWidget({
 
         if (result.action === "delete" && result.task) {
           currentTaskContextRef.current = null;
+          // CodeRabbit finding: without this, a same-wording create_reminder
+          // within REMINDER_CORRECTION_WINDOW_MS of a task deleted here would
+          // still be treated as a "correction" of an already-gone reminder —
+          // Carson would say "changed" for what is really a fresh creation.
+          if (lastCreatedReminderRef.current?.id === result.task.id) {
+            lastCreatedReminderRef.current = null;
+          }
           sessionActionsRef.current.push(`Deleted ${result.task.type === "reminder" ? "reminder" : "task"}: ${result.task.description}`);
           lastDirectToolSuccessRef.current = {
             toolName: "control_task",
@@ -3161,6 +3240,9 @@ export default function ElevenLabsAgentWidget({
 
         if (result.action === "mark_done" && result.task) {
           currentTaskContextRef.current = null;
+          if (lastCreatedReminderRef.current?.id === result.task.id) {
+            lastCreatedReminderRef.current = null;
+          }
           sessionActionsRef.current.push(`Marked ${result.task.type === "reminder" ? "reminder" : "task"} done: ${result.task.description}`);
           lastDirectToolSuccessRef.current = {
             toolName: "control_task",
@@ -4867,6 +4949,7 @@ export default function ElevenLabsAgentWidget({
         sentDelegationsRef.current = [];
         currentTaskContextRef.current = null;
         createdReminderKeysRef.current.clear();
+        lastCreatedReminderRef.current = null;
 
         let conversationSummary: string | null = null;
         try {
@@ -5075,6 +5158,7 @@ export default function ElevenLabsAgentWidget({
         sentDelegationsRef.current = [];
         currentTaskContextRef.current = null;
         createdReminderKeysRef.current.clear();
+        lastCreatedReminderRef.current = null;
       }
     },
     [
@@ -5218,6 +5302,7 @@ export default function ElevenLabsAgentWidget({
     sentDelegationsRef.current = [];
     currentTaskContextRef.current = null;
     createdReminderKeysRef.current.clear();
+    lastCreatedReminderRef.current = null;
     recurringRawRef.current = null;
     invalidCaptureRef.current = null;
     sessionConnectedAtRef.current = null;
@@ -5918,24 +6003,33 @@ export default function ElevenLabsAgentWidget({
               lastSuccess: lastDirectToolSuccessRef.current,
               noteSaveOutcome: noteSaveOutcomeRef.current,
             });
-            if (!displayMessage || shouldSuppressCarsonIdlePrompt(message)) {
+            // Typed-only truthfulness guard: no state-changing tool call can
+            // ever succeed for typed (every one is blocked before it runs —
+            // see TYPED_BLOCKED_TOOL_MESSAGES), but the free-form typed model
+            // still composes this reply independently and can fabricate a
+            // false execution promise no tool was ever invoked for. Voice is
+            // untouched — the identical wording is truthful there.
+            const finalDisplayMessage = requestedChannel === "text"
+              ? sanitizeTypedAdvisoryReply(displayMessage)
+              : displayMessage;
+            if (!finalDisplayMessage || shouldSuppressCarsonIdlePrompt(message)) {
               sessionTranscriptRef.current.pop();
               console.log("[carson-idle] suppressed idle prompt", {
                 eventId: event_id ?? null,
               });
               return;
             }
-            if (displayMessage !== message) {
+            if (finalDisplayMessage !== message) {
               sessionTranscriptRef.current[sessionTranscriptRef.current.length - 1] = {
                 role,
-                message: displayMessage,
+                message: finalDisplayMessage,
               };
               console.log("[carson-text] sanitized Carson reply text", {
                 eventId: event_id ?? null,
               });
             }
-            console.log("[transcript] agent role confirmed, message len=%d", displayMessage.length);
-            setLastCarsonMessage(displayMessage);
+            console.log("[transcript] agent role confirmed, message len=%d", finalDisplayMessage.length);
+            setLastCarsonMessage(finalDisplayMessage);
 
             if (requestedChannel === "text") {
               if (typedResponseTimeoutRef.current) {
@@ -5958,7 +6052,7 @@ export default function ElevenLabsAgentWidget({
                 clearPendingImages();
               }
               const eventKey = event_id == null
-                ? `${pendingClientMessageId ?? "opening"}:${displayMessage}`
+                ? `${pendingClientMessageId ?? "opening"}:${finalDisplayMessage}`
                 : String(event_id);
               if (!persistedTypedAgentEventsRef.current.has(eventKey)) {
                 persistedTypedAgentEventsRef.current.add(eventKey);
@@ -5970,7 +6064,7 @@ export default function ElevenLabsAgentWidget({
                   client_message_id: null,
                   reply_to_client_message_id: pendingClientMessageId,
                   role: "agent",
-                  content: displayMessage,
+                  content: finalDisplayMessage,
                   delivery_status: "responded",
                   elevenlabs_conversation_id: typedConversationIdRef.current,
                   elevenlabs_event_id: event_id ?? null,
@@ -5981,7 +6075,7 @@ export default function ElevenLabsAgentWidget({
                 void createTypedAgentMessage({
                   sessionId: typedSessionIdRef.current,
                   replyToClientMessageId: pendingClientMessageId,
-                  content: displayMessage,
+                  content: finalDisplayMessage,
                   elevenlabsConversationId: typedConversationIdRef.current,
                   elevenlabsEventId: event_id ?? null,
                 })
@@ -6481,7 +6575,29 @@ export default function ElevenLabsAgentWidget({
       if (typedGuestAction === "none" && !pendingHostingClarificationRef.current) {
         pendingHostingClarificationRef.current = await loadActiveHostingDraft().catch(() => null);
       }
+      // Type to Carson is advisory-only: a hosting execution request must
+      // redirect immediately, before any clarification question or proposal
+      // is generated — whether it's a brand-new hosting request
+      // (typedGuestAction !== "none") or a continuation of a clarification
+      // already pending (from this session or a prior one, possibly started
+      // via Talk to Carson). handleOperationalHostingTurn — the only call
+      // site that can build/persist a proposal — is never reached from typed
+      // for either case while advisory-only. The underlying pending
+      // operation, if any, is left completely untouched so Talk to Carson
+      // can still pick it up. Flip TYPED_MODE_IS_ADVISORY_ONLY to false to
+      // fully and reversibly restore the prior "planning allowed, only
+      // approval/execution blocked" behavior in the else branch below.
       const pendingHostingClarification = pendingHostingClarificationRef.current;
+      if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: TYPED_ADVISORY_HOSTING_REQUEST,
+          clearPendingPhotos: true,
+        });
+        return;
+      }
+
       if (pendingHostingClarification) {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
 
@@ -6771,6 +6887,31 @@ export default function ElevenLabsAgentWidget({
             }
           }
         }
+      }
+
+      // Final deterministic gate before the free-form typed model ever runs.
+      // Hosting, staff direct-message, and delegation execution requests are
+      // already caught above by dedicated detectors; this catches everything
+      // else with no detector of its own today (reminders, calendar) plus the
+      // edge cases those detectors correctly return null for — a bodyless
+      // staff address ("Tell Grace.") and bare imperative actions ("Take
+      // care of it.", "Pay the electricity bill.") — before the model can
+      // improvise a reply (including a false execution promise) for a
+      // request no tool was ever invoked for.
+      if (TYPED_MODE_IS_ADVISORY_ONLY && (usePeopleStore.getState().status === "idle" || usePeopleStore.getState().items.length === 0) && authUserId) {
+        await usePeopleStore.getState().loadFor(authUserId);
+      }
+      const typedExecutionRedirect = TYPED_MODE_IS_ADVISORY_ONLY
+        ? classifyTypedExecutionRequest(savedMessage.content, usePeopleStore.getState().items)
+        : null;
+      if (typedExecutionRedirect) {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: typedExecutionRedirect.message,
+          clearPendingPhotos: true,
+        });
+        return;
       }
 
       const typedPhotos = [

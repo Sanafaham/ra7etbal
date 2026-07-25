@@ -14,6 +14,36 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 Do not modify these areas without a reproduced regression or explicit product decision.
 
+### Reminder correction replaces (not duplicates) the reminder — Talk to Carson only
+
+Status: implemented. Merged to `main`.
+
+Confirmed production regression: Talk to Carson created a 9:00 AM reminder; the owner said it should be 5:00 PM instead; Carson said "changed to 5:00 PM"; production showed BOTH reminders active — the original 9:00 AM task and its QStash push job were never cancelled. Root cause: `create_reminder` is the only reminder tool exposed to the voice model, so a correction necessarily arrives as another `create_reminder` call with the same description, not a distinct "update" call — nothing recognized this as a correction of the reminder just created.
+
+Fix, in `createReminder` (`src/components/home/ElevenLabsAgentWidget.tsx`): a new session-scoped ref (`lastCreatedReminderRef`) tracks the last created one-time reminder's id, normalized description, and creation timestamp. A new `create_reminder` call is treated as a correction only when BOTH the normalized description exactly matches AND the prior creation happened within `REMINDER_CORRECTION_WINDOW_MS` (2 minutes) — description match alone was flagged in independent review as able to silently delete an active reminder the owner intentionally repeated later for something unrelated; the time window is what distinguishes a live correction from that case. On a match: the corrected reminder is created FIRST (via the existing, unmodified `createReminderTask` — same QStash scheduling), and only after that succeeds is the original cancelled via the existing, unmodified `useTasksStore.getState().remove()` (the same function `control_task`'s delete action already uses, which deletes the task and cancels its QStash push). Carson only says "I've changed that reminder..." after both steps verifiably succeed; if creating the new one fails, the original is left untouched (never zero active reminders); if creating succeeds but cancelling the old one fails, the reply reports both are active and does not claim success.
+
+This is a voice-only behavior change (the only confirmed regression, and typed's `create_reminder` is already fully blocked by the advisory-only boundary below) — Talk to Carson's tool registration and every other reminder/calendar/delegation behavior is unmodified.
+
+Tests: `src/components/home/ElevenLabsAgentWidget.reminder-replacement.test.ts` (13 tests) — mutation-spot-checked. Independent review (`review:bug-hunter`): confirmed no stale-QStash-job path, confirmed the ref is correctly reassigned on every creation (so a second correction targets the second reminder, not the first), confirmed voice-only, confirmed the description-only false-positive risk (now closed by the time window above).
+
+Protect: the create-then-cancel ordering, the time-window gate, and the truthful mixed-state failure reporting. Do not weaken the time window or the description match without a new reproduced regression.
+
+### Type to Carson redirects execution requests immediately, never fabricates a completion promise
+
+Status: implemented. Merged to `main`. Tightens "Type to Carson is advisory-only" below — see that entry for the underlying tool-blocking boundary, which is unchanged by this fix.
+
+Two further confirmed production regressions on top of the advisory-only boundary: (1) typed "I have a dinner for 4 people at home tomorrow. Handle it." asked for the time, asked about dietary restrictions, built a full hosting proposal, asked for approval, and only THEN mentioned Talk to Carson — instead of redirecting immediately with no clarification, no proposal, no approval flow; (2) typed "I need to make the UI of Ra7etBal better and pay the electricity bill." got the reply "For the electricity bill, I'll have Grace handle it." — no `send_delegation` tool was ever called; the free-form typed model fabricated the claim entirely in its own reply text, which no tool-call block can catch.
+
+Fix, in two parts:
+- **Immediate redirect** (`src/components/home/ElevenLabsAgentWidget.tsx`, `sendTypedMessage`): the hosting-clarification and fresh-hosting-request branches now redirect immediately instead of calling `handleOperationalHostingTurn` (gated behind `TYPED_MODE_IS_ADVISORY_ONLY`, with the prior "planning allowed" code preserved as a dormant, fully reversible path). A new pure classifier, `classifyTypedExecutionRequest` (`src/lib/typed-advisory-redirect.ts`), runs as a final gate immediately before the free-form model would otherwise run, catching reminder/calendar requests (no dedicated detector existed for these at all) plus edge cases the existing staff-message/delegation detectors correctly return null for — a bodyless staff address ("Tell Grace.") and bare imperative actions ("Take care of it.", "Pay the electricity bill."). The staff-address check validates the addressed word against the real People list (not a capitalization heuristic — independent review confirmed a naive `[A-Z]` check is silently defeated by the case-insensitive `/i` flag the rest of the module needs).
+- **Truthfulness guard** (`src/lib/carson-direct-tool-override.ts`, `sanitizeTypedAdvisoryReply`): applied only when `requestedChannel === "text"`, immediately after the existing, byte-for-byte unchanged `resolveSanitizedCarsonDisplayMessage` call. Replaces the entire reply with a generic truthful fallback when it matches one of the 7 exact banned phrasings from the bug report ("I'll have Grace handle it", "I'll take care of it", "I'll remind you", "I'll send it", "I'll assign it", "I'll add it", "it's done") — unless the reply already mentions Talk to Carson, since the confirmed bug reply never did.
+
+Independent review (`review:bug-hunter`, run twice): first pass found the `[A-Z]`/`/i` case-insensitivity bug above (fixed) and two bare-verb false positives ("Book club is...", "Pay attention to..." — fixed by narrowing those two patterns); confirmed no path reaches `handleOperationalHostingTurn`/`executeProposedPlan`/`executeDirectMessageFastPath`/`executeDelegationFastPath` for typed while advisory-only; confirmed voice is structurally unaffected (`resolveSanitizedCarsonDisplayMessage`'s call site/arguments unchanged); confirmed full reversibility via `TYPED_MODE_IS_ADVISORY_ONLY`.
+
+Tests: `src/lib/typed-advisory-redirect.test.ts` (23), `src/lib/carson-direct-tool-override.test.ts` (new `sanitizeTypedAdvisoryReply` cases), and a new describe block in `src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts` — mutation-spot-checked.
+
+Protect: the immediate-redirect ordering (before any clarification/proposal/dispatch), the truthfulness guard's typed-only gating, and the People-list validation for staff-address detection. Do not reintroduce a capitalization-only name heuristic.
+
 ### Type to Carson is advisory-only — Talk to Carson remains the execution channel
 
 Status: implemented. Merged to `main`. Deployment status and exact production evidence recorded at completion of this task below (see delivery notes at the end of this task's work, or the final task report).
