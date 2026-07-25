@@ -811,15 +811,20 @@ export function isRejection(text: string): boolean {
 }
 
 // A compound reply that OPENS with confirmation language but keeps talking
-// ("Yes, and please coordinate the table setup...") does not match
-// CONFIRMATION_RE (anchored end-to-end), so resolvePendingPlanDecision
-// reports "hold" for it. With no active plan, that previously let the
-// trailing content fall through to handleOperationalHostingTurn as a brand
-// new hosting request — misreading an approval reply to a proposal Carson
-// never actually persisted. This only flags the opening; callers still need
-// to confirm there is no active plan before treating it as unconfirmable.
+// ("Yes, and please coordinate the table setup...", "Yes, send both. Please
+// coordinate...") does not match CONFIRMATION_RE (anchored end-to-end), so
+// resolvePendingPlanDecision reports "hold" for it. With no active plan,
+// that previously let the trailing content fall through to
+// handleOperationalHostingTurn as a brand new hosting request — misreading
+// an approval reply to a proposal Carson never actually persisted.
+// Reproduced in production again with "Yes, send both." — "send" wasn't in
+// the continuation-word list, so this phrasing slipped past the guard even
+// though "both" (unlike "it"/"them"/"those") also isn't covered by
+// CONFIRMATION_RE's own "send" alternative, so it never resolved as a bare
+// confirmation either. This only flags the opening; callers still need to
+// confirm there is no active plan before treating it as unconfirmable.
 const LEADING_CONFIRMATION_WITH_TRAILING_CONTENT_RE =
-  /^\s*(?:yes|yeah|yep|yup|sure|ok|okay|go ahead)\b[,.]?\s+(?:and|also|please|then)\b/i;
+  /^\s*(?:yes|yeah|yep|yup|sure|ok|okay|go ahead)\b[,.]?\s+(?:and|also|please|then|send)\b/i;
 
 export function hasLeadingConfirmationLanguage(text: string): boolean {
   return LEADING_CONFIRMATION_WITH_TRAILING_CONTENT_RE.test(text.trim());
