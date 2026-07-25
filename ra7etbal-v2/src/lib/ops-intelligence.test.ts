@@ -113,6 +113,11 @@ describe("hasLeadingConfirmationLanguage", () => {
     "Okay, also send Grace the details for the dinner.",
     "Go ahead, and confirm with Grace too.",
     "Yes, also let Christopher know about the shellfish allergy.",
+    // Reproduced in production: "both" isn't covered by CONFIRMATION_RE's own
+    // "send" alternative (only it/them/those/the messages), so this never
+    // resolves as a bare confirmation either — it must be caught here.
+    "Yes, send both.\nPlease coordinate table setup for dinner tomorrow at 8:00 PM for 4 guests. No shellfish. Ensure everything is ready before guests arrive.",
+    "Yes, send both.",
   ])("returns true for compound reply '%s'", (text) => {
     expect(hasLeadingConfirmationLanguage(text)).toBe(true);
   });
