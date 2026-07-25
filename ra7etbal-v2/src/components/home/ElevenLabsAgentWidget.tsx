@@ -4184,9 +4184,26 @@ export default function ElevenLabsAgentWidget({
           if (turn.action === "executed") {
             sessionActionsRef.current.push(`Ops plan executed: ${activePlan.sourceText}`);
             useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+            // Truthfulness wiring (mirrors the Weekly Planning confirm branch
+            // below): without this, EL's own separately-generated spoken
+            // reply for this turn is never checked against the real
+            // execution result, so it can contradict it — the confirmed
+            // production incident this guards against.
+            lastDirectToolSuccessRef.current = {
+              toolName: "execute_instruction",
+              resultText: turn.summary ?? "",
+              at: new Date().toISOString(),
+              inputSummary: { kind: "guest_plan_execute", instruction: activePlan.sourceText.slice(0, 80) },
+            };
             return turn.summary ?? "";
           }
           if (turn.action === "cancelled") {
+            lastDirectToolSuccessRef.current = {
+              toolName: "execute_instruction",
+              resultText: turn.summary ?? "",
+              at: new Date().toISOString(),
+              inputSummary: { kind: "guest_plan_cancelled", instruction: activePlan.sourceText.slice(0, 80) },
+            };
             return turn.summary ?? "";
           }
           // held: plan preserved for a later turn (or discarded on expiry).
