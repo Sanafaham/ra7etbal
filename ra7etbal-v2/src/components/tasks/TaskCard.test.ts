@@ -87,10 +87,13 @@ describe("TaskCard.tsx — reminder card creation-time display", () => {
     expect(SOURCE).toMatch(/from "\.\.\/\.\.\/lib\/reminder-time"/);
   });
 
-  it("renders the creation time only inside the same reminderDue block as the due date (never for a completed reminder)", () => {
+  it("computes the label once (task.type === reminder, guarded by the formatted value itself so an invalid/missing created_at renders nothing, not an empty row) and passes the shared now prop for consistency with getReminderDue", () => {
+    expect(SOURCE).toContain(
+      'const reminderCreatedLabel =\n    task.type === "reminder" ? formatReminderCreatedTime(task.created_at, now) : null;',
+    );
     const block = reminderDueBlock();
-    expect(block).toContain("task.created_at && (");
-    expect(block).toContain("formatReminderCreatedTime(task.created_at)");
+    expect(block).toContain("{reminderCreatedLabel && (");
+    expect(block).not.toContain("task.created_at && (");
   });
 
   it("does not touch the followup/delegation \"Sent ...\" line or its formatter", () => {

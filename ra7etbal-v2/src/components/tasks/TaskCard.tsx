@@ -91,6 +91,8 @@ export default function TaskCard({
   const showSubstituteReview = qualityLifecycle.state === "needs_owner_decision";
   const showProofImage = Boolean(signedProofImageUrl && !isOperationalProofCorrection);
   const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;
+  const reminderCreatedLabel =
+    task.type === "reminder" ? formatReminderCreatedTime(task.created_at, now) : null;
   const needsYouTimestampLabel = isNeedsYouCard ? getNeedsYouTimestampLabel(task, now) : null;
   // The followup/delegation "Sent ..." line below already shows created_at
   // truthfully — don't repeat the same instant under a second label when
@@ -291,10 +293,8 @@ export default function TaskCard({
               {reminderDue.label}
             </p>
           )}
-          {task.created_at && (
-            <p className="text-[11px] font-normal text-ink/40">
-              {formatReminderCreatedTime(task.created_at)}
-            </p>
+          {reminderCreatedLabel && (
+            <p className="text-[11px] font-normal text-ink/40">{reminderCreatedLabel}</p>
           )}
         </div>
       )}
