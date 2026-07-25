@@ -810,6 +810,21 @@ export function isRejection(text: string): boolean {
   return REJECTION_RE.test(text.trim());
 }
 
+// A compound reply that OPENS with confirmation language but keeps talking
+// ("Yes, and please coordinate the table setup...") does not match
+// CONFIRMATION_RE (anchored end-to-end), so resolvePendingPlanDecision
+// reports "hold" for it. With no active plan, that previously let the
+// trailing content fall through to handleOperationalHostingTurn as a brand
+// new hosting request — misreading an approval reply to a proposal Carson
+// never actually persisted. This only flags the opening; callers still need
+// to confirm there is no active plan before treating it as unconfirmable.
+const LEADING_CONFIRMATION_WITH_TRAILING_CONTENT_RE =
+  /^\s*(?:yes|yeah|yep|yup|sure|ok|okay|go ahead)\b[,.]?\s+(?:and|also|please|then)\b/i;
+
+export function hasLeadingConfirmationLanguage(text: string): boolean {
+  return LEADING_CONFIRMATION_WITH_TRAILING_CONTENT_RE.test(text.trim());
+}
+
 // ── Delivery status question detection ───────────────────────────────────────
 //
 // Detects questions like "Did you send it?", "Did it go through?", "Was it
