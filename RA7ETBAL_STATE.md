@@ -81,6 +81,27 @@ Known pre-existing gap (discovered, not caused by this task, not fixed — out o
 
 Protect: everything above. Do not reintroduce a per-channel hosting parser, a second typed-history loader, or a second reconciliation path. Reopen only on a reproduced production regression against the verified behavior above.
 
+### Hosting plan integrity guards (Guard C, Guard D) + verified multi-person dinner loop — LOCKED, PRODUCTION VERIFIED
+
+Status: implemented and merged to `main` across three PRs, then locked with regression tests (this task, test-only, no runtime file changed).
+
+Confirmed production incident (voice): Carson spoke a two-recipient hosting proposal (dinner, Christopher + Grace) without ever calling `execute_instruction` to persist it. The owner's approval reply ("Yes, and please coordinate the table setup...", later reproduced again as "Yes, send both.") didn't match the exact-match confirmation regex (`CONFIRMATION_RE` — "both" isn't covered by its own "send" alternative), so with no active plan the whole reply fell through to `handleOperationalHostingTurn` in `executeInstruction` and was misread as a brand-new hosting request — producing an orphaned clarification for one recipient while the other's clause got picked up by the ordinary single-recipient delegation path. Carson then claimed both recipients received instructions — false. Separately, even when a real persisted plan DID execute or get cancelled, `lastDirectToolSuccessRef` was never populated for that branch, so Carson's own spoken reply for that turn was never checked against the real tool outcome.
+
+Three merged fixes, all in `src/lib/ops-intelligence.ts` / `src/components/home/ElevenLabsAgentWidget.tsx`:
+- **Guard C** (PR #68, commit `4f4b4c8`): `hasLeadingConfirmationLanguage()` detects a reply that opens with confirmation language but keeps talking ("Yes, and...", "Okay, also..."). When there is no active plan (`!activePlan && !activeWeekPlan`), `executeInstruction` returns "I don't have a saved plan to confirm. Please tell me the hosting plan again." instead of routing the reply into `handleOperationalHostingTurn` as a fresh request. Placed after the pre-existing exact-match confirmation/rejection guard, before the fresh-request hosting turn call.
+- **Guard D** (PR #69, commit `3f11f28`): the `activePlan` `"executed"`/`"cancelled"` branches in `executeInstruction` now populate `lastDirectToolSuccessRef.current` with the real `turn.summary` before returning it, mirroring the adjacent, already-correct Weekly Planning confirm branch — so a fabricated spoken claim can no longer diverge from what `execute_instruction` actually did.
+- **Guard C regex widening** (PR #70, commit `0b104f6`): reproduced live again with "Yes, send both." — "send" wasn't in Guard C's continuation-word list (`and|also|please|then`), so this exact phrasing slipped past the guard. Added `send` to the continuation-word list.
+
+Subsequent verified production retest (dinner for four, tomorrow, at home, 8:00 PM, no shellfish): Christopher received the food instruction; Grace received the coordination instruction; Nasira was assigned but not reached because her phone number was missing on file — Carson reported this truthfully and never claimed she was contacted; no duplicate execution occurred on repeated approval.
+
+Regression protection added (test-only, no runtime file changed):
+- `src/lib/ops-intelligence.test.ts` — new `describe("production baseline — verified dinner hosting loop (Christopher, Grace; missing Nasira number)")`: exact-phrase routing for the dinner trigger, the exact time+dietary-only combined clarification (guest count already known), clean field parsing, correct per-recipient role assignment (Christopher food, Nasira setup, Grace coordination) with one approval question, truthful missing-phone delivery (Christopher and Grace each delivered exactly once, Nasira's attempt made and truthfully reported as not messaged, never implied as contacted), idempotent no-duplicate-send on a repeated approval, and the exact reproduced "Yes, send both." phrasing protected via `hasLeadingConfirmationLanguage`.
+- `src/components/home/ElevenLabsAgentWidget.hosting-plan-integrity.test.ts` (pre-existing from PRs #68/#69, confirmed still green, not modified): Guard C placement/scope (9 tests) and Guard D ref-population (4 of those 9 tests).
+
+Full pre-existing coverage confirmed still green, not modified: `src/lib/ops-intelligence.test.ts` (216 tests total after this task), `src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts` (54 tests — hosting recognition, clarification parsing, one approval, recall, reopen, typed synchronization), `src/components/home/ElevenLabsAgentWidget.weekly-planning.test.ts` (13 tests). `npm run test:carson-protected` (13 files) passes unchanged.
+
+Protect: Guard C's placement (after the exact-match confirmation guard, before the fresh-request `handleOperationalHostingTurn` call) and its `!activePlan && !activeWeekPlan` condition; Guard D's ref-population in both the `"executed"` and `"cancelled"` branches; the deterministic missing-phone truthful-delivery behavior in `executeProposedPlan`/`buildDeterministicGuestPreparationTasks`. Do not weaken Guard C's continuation-word list without a reproduced regression showing a specific new phrasing. Reopen only on a reproduced production regression against the verified behavior above.
+
 ### Inbox Review V1
 
 Status: complete and stable.
