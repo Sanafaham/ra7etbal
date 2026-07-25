@@ -146,4 +146,24 @@ describe("classifyTypedExecutionRequest — typed advisory redirect (2026-07-25)
     expect(classifyTypedExecutionRequest("Book this.", TEAM)?.category).toBe("generic_action");
     expect(classifyTypedExecutionRequest("Pay the internet bill.", TEAM)?.category).toBe("generic_action");
   });
+
+  // CodeRabbit finding (2026-07-25): an unbounded bare verb also matched
+  // past-tense/derived forms — a statement that something is already done,
+  // not an imperative request.
+  it("does not misclassify a past-tense or derived form of the same verb as a new imperative request", () => {
+    for (const text of [
+      "Handled the situation already, no need to worry.",
+      "Arranged everything for tomorrow already.",
+      "Assigned it to Christopher yesterday.",
+      "Assignment is due Friday.",
+    ]) {
+      expect(classifyTypedExecutionRequest(text, TEAM), text).toBeNull();
+    }
+  });
+
+  it("still redirects the bare imperative form of the same verbs", () => {
+    expect(classifyTypedExecutionRequest("Handle it.", TEAM)?.category).toBe("generic_action");
+    expect(classifyTypedExecutionRequest("Arrange the flowers.", TEAM)?.category).toBe("generic_action");
+    expect(classifyTypedExecutionRequest("Assign this.", TEAM)?.category).toBe("generic_action");
+  });
 });

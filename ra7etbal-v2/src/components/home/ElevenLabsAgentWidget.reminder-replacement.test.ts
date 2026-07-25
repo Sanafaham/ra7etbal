@@ -36,9 +36,11 @@ describe("ElevenLabsAgentWidget — reminder replacement on correction (2026-07-
     );
     // Same three reset points as createdReminderKeysRef.current.clear() —
     // session end (x2) and new-session start — so a correction can never be
-    // detected against a reminder from an unrelated, earlier session.
+    // detected against a reminder from an unrelated, earlier session. Two
+    // more resets (control_task delete/mark_done, tested separately below)
+    // bring the total to five.
     const resetCount = SOURCE.split("lastCreatedReminderRef.current = null;").length - 1;
-    expect(resetCount).toBe(3);
+    expect(resetCount).toBe(5);
   });
 
   it("detects a correction only by BOTH exact normalized-description match AND a short time window since the prior reminder", () => {
@@ -157,5 +159,30 @@ describe("ElevenLabsAgentWidget — reminder replacement on correction (2026-07-
   it("keeps create_reminder's client-tool wiring and diagnostic wrapper unchanged", () => {
     expect(SOURCE).toContain("create_reminder: (params: Parameters<typeof createReminder>[0]) => {");
     expect(SOURCE).toContain('guardCurrentToolInvocation("create_reminder")');
+  });
+
+  // CodeRabbit finding (2026-07-25): without this, deleting or marking done
+  // the reminder create_reminder just created (via control_task) left
+  // lastCreatedReminderRef pointing at an already-gone task — a later
+  // same-wording create_reminder within the window would then be mislabeled
+  // "changed" when it was really a fresh creation.
+  it("clears lastCreatedReminderRef when control_task deletes or marks done the reminder it points at", () => {
+    const controlTaskBlock = blockBetween(
+      "const controlTaskTool = useCallback(",
+      "  // ------------------------------------------------------------------\n  // Client tool: get_calendar_events",
+    );
+    const deleteBlock = blockBetween(
+      'if (result.action === "delete" && result.task) {',
+      'if (result.action === "mark_done" && result.task) {',
+    );
+    const markDoneBlock = blockBetween(
+      'if (result.action === "mark_done" && result.task) {',
+      "return result.reply;",
+    );
+    expect(controlTaskBlock).toContain('if (result.action === "delete" && result.task) {');
+    for (const block of [deleteBlock, markDoneBlock]) {
+      expect(block).toContain("lastCreatedReminderRef.current?.id === result.task.id");
+      expect(block).toContain("lastCreatedReminderRef.current = null;");
+    }
   });
 });

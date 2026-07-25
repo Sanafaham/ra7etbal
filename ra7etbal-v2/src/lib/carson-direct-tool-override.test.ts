@@ -563,4 +563,20 @@ describe("sanitizeTypedAdvisoryReply — typed-only false-promise guard", () => 
   ])("leaves a reply that already mentions Talk to Carson untouched, even if it matches the pattern: '%s'", (agentMessage) => {
     expect(sanitizeTypedAdvisoryReply(agentMessage)).toBe(agentMessage);
   });
+
+  // CodeRabbit finding (2026-07-25): the pattern only matched the "I'll"
+  // contraction — the free-form model can phrase the identical false promise
+  // uncontracted ("I will have Grace handle it.").
+  it.each([
+    "For the electricity bill, I will have Grace handle it.",
+    "I will take care of it.",
+    "I will remind you.",
+    "I will send it.",
+    "I will assign it.",
+    "I will add it.",
+  ])("also catches the uncontracted 'I will' phrasing of the same promise: '%s'", (agentMessage) => {
+    const result = sanitizeTypedAdvisoryReply(agentMessage);
+    expect(result).not.toBe(agentMessage);
+    expect(result).toMatch(/Talk to Carson/);
+  });
 });

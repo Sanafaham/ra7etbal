@@ -62,9 +62,11 @@ const TYPED_SEND_TO_RE = /\bsend\s+(?:this|it|that)\s+to\s+([a-zA-Z'-]+)\b/i;
 // club is...", "Pay attention to...") that a bare anchored verb would
 // otherwise catch; the others are safe unrestricted because starting a
 // message with them is already a strong, low-false-positive imperative
-// signal on its own.
+// signal on its own. Every bare verb is word-bounded so a past-tense or
+// derived form ("Handled the situation already.", "Assignment due Friday.")
+// — a statement, not an imperative request — doesn't match.
 const TYPED_GENERIC_ACTION_RE =
-  /^\s*(?:please\s+)?(?:handle|take care of|arrange|book\s+(?:it|this|that)\b|assign|sort out|pay\b(?!\s+attention\b)|create (?:a|the) to-?do|add (?:a|the) to-?do)/i;
+  /^\s*(?:please\s+)?(?:handle\b|take care of\b|arrange\b|book\s+(?:it|this|that)\b|assign\b|sort out\b|pay\b(?!\s+attention\b)|create (?:a|the) to-?do\b|add (?:a|the) to-?do\b)/i;
 
 const REDIRECT_MESSAGES: Record<TypedExecutionCategory, string> = {
   reminder: "Use Talk to Carson to create the reminder.",

@@ -210,8 +210,20 @@ export function resolveSanitizedCarsonDisplayMessage({
 // itself, applied ONLY to the typed channel by its one call site in
 // ElevenLabsAgentWidget.tsx. Voice is untouched — the exact same phrasing is
 // truthful for voice, which really does execute.
-const TYPED_FALSE_PROMISE_PATTERN =
-  /\bI(?:'|’)ll\s+have\s+[A-Z][a-zA-Z'-]*\s+handle\s+(?:it|this|that)\b|\bI(?:'|’)ll\s+take\s+care\s+of\s+(?:it|this|that)\b|\bI(?:'|’)ll\s+remind\s+you\b|\bI(?:'|’)ll\s+send\s+(?:it|this|that)\b|\bI(?:'|’)ll\s+assign\s+(?:it|this|that)\b|\bI(?:'|’)ll\s+add\s+(?:it|this|that)\b|\bit(?:'|’)s\s+done\b/i;
+// CodeRabbit finding: the free-form model can phrase the same promise
+// uncontracted ("I will..." instead of "I'll..."), so each alternative
+// matches both forms rather than only the apostrophe contraction.
+const TYPED_FUTURE_RE = /(?:I(?:'|’)ll|I\s+will)/;
+const TYPED_FALSE_PROMISE_PATTERN = new RegExp(
+  `\\b${TYPED_FUTURE_RE.source}\\s+have\\s+[A-Z][a-zA-Z'-]*\\s+handle\\s+(?:it|this|that)\\b` +
+    `|\\b${TYPED_FUTURE_RE.source}\\s+take\\s+care\\s+of\\s+(?:it|this|that)\\b` +
+    `|\\b${TYPED_FUTURE_RE.source}\\s+remind\\s+you\\b` +
+    `|\\b${TYPED_FUTURE_RE.source}\\s+send\\s+(?:it|this|that)\\b` +
+    `|\\b${TYPED_FUTURE_RE.source}\\s+assign\\s+(?:it|this|that)\\b` +
+    `|\\b${TYPED_FUTURE_RE.source}\\s+add\\s+(?:it|this|that)\\b` +
+    `|\\bit(?:'|’)s\\s+done\\b`,
+  "i",
+);
 
 const TYPED_ADVISORY_FALLBACK_REPLY =
   "I can help you prepare that, but I can't complete it from typed chat. Use Talk to Carson to do it.";

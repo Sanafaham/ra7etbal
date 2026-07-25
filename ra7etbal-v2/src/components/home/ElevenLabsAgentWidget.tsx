@@ -3221,6 +3221,13 @@ export default function ElevenLabsAgentWidget({
 
         if (result.action === "delete" && result.task) {
           currentTaskContextRef.current = null;
+          // CodeRabbit finding: without this, a same-wording create_reminder
+          // within REMINDER_CORRECTION_WINDOW_MS of a task deleted here would
+          // still be treated as a "correction" of an already-gone reminder —
+          // Carson would say "changed" for what is really a fresh creation.
+          if (lastCreatedReminderRef.current?.id === result.task.id) {
+            lastCreatedReminderRef.current = null;
+          }
           sessionActionsRef.current.push(`Deleted ${result.task.type === "reminder" ? "reminder" : "task"}: ${result.task.description}`);
           lastDirectToolSuccessRef.current = {
             toolName: "control_task",
@@ -3233,6 +3240,9 @@ export default function ElevenLabsAgentWidget({
 
         if (result.action === "mark_done" && result.task) {
           currentTaskContextRef.current = null;
+          if (lastCreatedReminderRef.current?.id === result.task.id) {
+            lastCreatedReminderRef.current = null;
+          }
           sessionActionsRef.current.push(`Marked ${result.task.type === "reminder" ? "reminder" : "task"} done: ${result.task.description}`);
           lastDirectToolSuccessRef.current = {
             toolName: "control_task",
