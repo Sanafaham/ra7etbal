@@ -53,6 +53,18 @@ export function formatReminderDueTime(value: string | null, now = new Date()): s
   return `Due: ${formatDate(due)} at ${formatTime(due)}`;
 }
 
+export function formatReminderCreatedTime(value: string | null, now = new Date()): string | null {
+  if (!value) return null;
+  const created = new Date(value);
+  if (Number.isNaN(created.getTime())) return null;
+
+  if (isSameLocalDay(created, now)) {
+    return `Created today at ${formatTime(created)}`;
+  }
+
+  return `Created ${formatDate(created)} at ${formatTime(created)}`;
+}
+
 export function isReminderOverdue(value: string | null, now = new Date()): boolean {
   if (!value) return false;
   const due = new Date(value);

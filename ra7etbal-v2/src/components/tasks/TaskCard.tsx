@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Spinner from "../Spinner";
 import { getSignedImageUrl } from "../../lib/image-upload";
 import {
+  formatReminderCreatedTime,
   formatReminderDue,
   formatReminderDueTime,
   isReminderOverdue,
@@ -288,6 +289,11 @@ export default function TaskCard({
             reminderDue.label.startsWith("Overdue")) && (
             <p className={reminderDue.overdue ? "text-rose-800" : "text-amber-900"}>
               {reminderDue.label}
+            </p>
+          )}
+          {task.created_at && (
+            <p className="text-[11px] font-normal text-ink/40">
+              {formatReminderCreatedTime(task.created_at)}
             </p>
           )}
         </div>

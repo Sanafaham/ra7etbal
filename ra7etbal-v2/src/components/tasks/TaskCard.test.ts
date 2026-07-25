@@ -64,3 +64,53 @@ describe("TaskCard.tsx — substitute_review card wiring", () => {
     expect(cardSource).toMatch(/useTasksStore\.getState\(\)\.loadFor/);
   });
 });
+
+/**
+ * Reminder card creation-time display. UI-only addition — reuses the
+ * existing task.created_at field and a new pure helper
+ * (formatReminderCreatedTime, tested separately in reminder-time.test.ts).
+ * Placed inside the same reminderDue block as the due date, so it only
+ * appears alongside it (never for a completed reminder, matching the due
+ * date's own visibility rule) and never on followup/delegation cards.
+ */
+describe("TaskCard.tsx — reminder card creation-time display", () => {
+  function reminderDueBlock(): string {
+    const start = SOURCE.indexOf("{reminderDue && !isDone && (");
+    const end = SOURCE.indexOf("<footer", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    return SOURCE.slice(start, end);
+  }
+
+  it("imports formatReminderCreatedTime from the shared reminder-time helper, not a new formatter", () => {
+    expect(SOURCE).toContain("formatReminderCreatedTime");
+    expect(SOURCE).toMatch(/from "\.\.\/\.\.\/lib\/reminder-time"/);
+  });
+
+  it("renders the creation time only inside the same reminderDue block as the due date (never for a completed reminder)", () => {
+    const block = reminderDueBlock();
+    expect(block).toContain("task.created_at && (");
+    expect(block).toContain("formatReminderCreatedTime(task.created_at)");
+  });
+
+  it("does not touch the followup/delegation \"Sent ...\" line or its formatter", () => {
+    expect(SOURCE).toContain('(task.type === "followup" || task.type === "delegation") && task.created_at && (');
+    expect(SOURCE).toContain("formatFollowUpSentTime(task.created_at)");
+    // The two created_at displays are independent — neither block references
+    // the other's formatter.
+    const followUpBlock = SOURCE.slice(
+      SOURCE.indexOf('(task.type === "followup" || task.type === "delegation") && task.created_at && ('),
+      SOURCE.indexOf("{showNeedsYouTimestamp"),
+    );
+    expect(followUpBlock).not.toContain("formatReminderCreatedTime");
+  });
+
+  it("does not change reminder scheduling, due-date computation, or the due-date rendering already in place", () => {
+    const block = reminderDueBlock();
+    expect(block).toContain("{reminderDue.dueTime}");
+    expect(block).toContain('reminderDue.overdue ? "text-rose-800" : "text-amber-900"');
+    // getReminderDue / reminderDue itself is computed once, above this
+    // block, and is untouched by this change.
+    expect(SOURCE).toContain('const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;');
+  });
+});
