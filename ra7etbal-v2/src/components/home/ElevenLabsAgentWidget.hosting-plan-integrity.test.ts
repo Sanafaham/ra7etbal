@@ -74,3 +74,65 @@ describe("ElevenLabsAgentWidget — hosting plan integrity guard (Guard C)", () 
     expect(block).not.toContain("TYPED_MODE_IS_ADVISORY_ONLY");
   });
 });
+
+/**
+ * Confirmed second root cause on the same incident: when a persisted
+ * hosting plan DOES execute or get cancelled via the activePlan branch,
+ * lastDirectToolSuccessRef was never populated — so EL's own
+ * separately-generated spoken reply for that turn was never checked
+ * against the real tool outcome and could contradict it. Mirrors the
+ * adjacent, already-correct Weekly Planning confirm branch.
+ */
+describe("ElevenLabsAgentWidget — hosting plan execution truthfulness (Guard D)", () => {
+  function activePlanBlock(): string {
+    return blockBetween(
+      "if (activePlan) {\n          const turn = await handlePendingPlanTurn(",
+      "// ── Carson Weekly Planning V1",
+    );
+  }
+
+  it("populates lastDirectToolSuccessRef with the real turn.summary when a persisted plan executes", () => {
+    const block = activePlanBlock();
+    const executedBranch = block.slice(
+      block.indexOf('if (turn.action === "executed")'),
+      block.indexOf('if (turn.action === "cancelled")'),
+    );
+    expect(executedBranch).toContain("lastDirectToolSuccessRef.current = {");
+    expect(executedBranch).toMatch(/resultText:\s*turn\.summary\s*\?\?\s*""/);
+    expect(executedBranch).toContain('toolName: "execute_instruction"');
+  });
+
+  it("populates lastDirectToolSuccessRef with the real turn.summary when a persisted plan is cancelled", () => {
+    const block = activePlanBlock();
+    const cancelledBranch = block.slice(
+      block.indexOf('if (turn.action === "cancelled")'),
+      block.indexOf("// held: plan preserved"),
+    );
+    expect(cancelledBranch).toContain("lastDirectToolSuccessRef.current = {");
+    expect(cancelledBranch).toMatch(/resultText:\s*turn\.summary\s*\?\?\s*""/);
+    expect(cancelledBranch).toContain('toolName: "execute_instruction"');
+  });
+
+  it("the ref is populated before the summary is returned, in both branches", () => {
+    const block = activePlanBlock();
+    const executedBranch = block.slice(
+      block.indexOf('if (turn.action === "executed")'),
+      block.indexOf('if (turn.action === "cancelled")'),
+    );
+    const cancelledBranch = block.slice(
+      block.indexOf('if (turn.action === "cancelled")'),
+      block.indexOf("// held: plan preserved"),
+    );
+    for (const branch of [executedBranch, cancelledBranch]) {
+      const refIndex = branch.indexOf("lastDirectToolSuccessRef.current = {");
+      const returnIndex = branch.indexOf('return turn.summary ?? "";');
+      expect(refIndex).toBeGreaterThan(-1);
+      expect(returnIndex).toBeGreaterThan(refIndex);
+    }
+  });
+
+  it("does not set an explicit failure outcome for a normal execute or cancel — DirectToolSuccessResult defaults to success", () => {
+    const block = activePlanBlock();
+    expect(block).not.toMatch(/outcome:\s*"failure"/);
+  });
+});
