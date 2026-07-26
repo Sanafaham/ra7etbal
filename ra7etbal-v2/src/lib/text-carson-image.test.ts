@@ -1021,6 +1021,282 @@ describe("executeDelegationFromText image pipeline", () => {
       expect(result).toBeNull();
     });
   });
+
+  // ── Image forwarding privacy guard (2026-07-26) ────────────────────────────
+  // Confirmed production bug: a photo of a handwritten note (buy groceries /
+  // call the doctor / tell Grace guests arrive at 7 PM) was forwarded to
+  // Christopher in full alongside the correctly-extracted "buy groceries"
+  // text — exposing unrelated personal items. shouldForwardAttachedImage
+  // (image-forwarding-guard.ts) now gates every image attachment in this
+  // pipeline; these are the 5 scenarios required to close the bug.
+  describe("image forwarding privacy guard — owner-provided photos are not forwarded by default", () => {
+    it("[1] mixed handwritten note: extracts the grocery task but does not attach the source image", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+      const extractedItem: ExtractedItem = {
+        id: "item-groceries",
+        type: "delegation",
+        description: "buy groceries",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Please buy groceries.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      const noteImage = new File(["note-bytes"], "note.jpg", { type: "image/jpeg" });
+
+      extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([extractedItem]));
+      deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+      const result = await executeDelegationFromText("Ask Christopher to buy groceries", {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people: [person("Christopher")],
+        tasks: [],
+        imageFile: noteImage,
+        imageDescription:
+          "A handwritten note listing: buy groceries, call the doctor, tell Grace guests arrive at 7 PM.",
+      });
+
+      // savePending's imageFiles arg (5th positional) must be undefined —
+      // no image assigned to any item.
+      const imageMapArg = savePendingMock.mock.calls[0][4];
+      expect(imageMapArg).toBeUndefined();
+      expect(result).toContain("Christopher has it");
+    });
+
+    it("[2] pizza photo: preserves image attachment when the instruction names the photographed subject as the task", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+      const extractedItem: ExtractedItem = {
+        id: "item-pizza",
+        type: "delegation",
+        description: "make this pizza",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Please make this pizza.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      const pizzaPhoto = new File(["pizza-bytes"], "pizza.jpg", { type: "image/jpeg" });
+
+      extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([extractedItem]));
+      deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+      await executeDelegationFromText("Tell Christopher to make this pizza", {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people: [person("Christopher")],
+        tasks: [],
+        imageFile: pizzaPhoto,
+        imageDescription: "A pizza with mushroom and olive toppings.",
+      });
+
+      const imageMapArg = savePendingMock.mock.calls[0][4] as Map<string, File>;
+      expect(imageMapArg?.get("item-pizza")).toBe(pizzaPhoto);
+    });
+
+    it("[3] explicit \"send this photo\": preserves image attachment", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+      // Authorization is scoped to this item's own extracted text (see
+      // CodeRabbit-driven fix below) — description/personalNote must itself
+      // preserve the explicit send request, not just the raw instruction.
+      const extractedItem: ExtractedItem = {
+        id: "item-send-photo",
+        type: "delegation",
+        description: "send this photo",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Here is the photo.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      const photo = new File(["photo-bytes"], "photo.jpg", { type: "image/jpeg" });
+
+      extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([extractedItem]));
+      deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+      await executeDelegationFromText("Send this photo to Christopher", {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people: [person("Christopher")],
+        tasks: [],
+        imageFile: photo,
+        imageDescription: "A product reference photo.",
+      });
+
+      const imageMapArg = savePendingMock.mock.calls[0][4] as Map<string, File>;
+      expect(imageMapArg?.get("item-send-photo")).toBe(photo);
+    });
+
+    it("[4] multi-item private screenshot: no unrelated attachment leakage to any recipient", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+      const groceriesItem: ExtractedItem = {
+        id: "item-groceries",
+        type: "delegation",
+        description: "buy groceries",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Please buy groceries.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      const graceItem: ExtractedItem = {
+        id: "item-grace",
+        type: "message",
+        description: "guests arrive at 7 PM",
+        assignedTo: "Grace",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "The guests arrive at 7 PM.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      const screenshot = new File(["screenshot-bytes"], "screenshot.jpg", { type: "image/jpeg" });
+
+      extractItemsMock.mockResolvedValue({ extracted: [groceriesItem, graceItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([groceriesItem, graceItem]));
+      deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+      await executeDelegationFromText(
+        "Ask Christopher to buy groceries, and tell Grace the guests arrive at 7 PM",
+        {
+          displayName: "Sana",
+          userId: "user-1",
+          dailyBrief: "",
+          people: [person("Christopher"), person("Grace")],
+          tasks: [],
+          imageFile: screenshot,
+          imageDescription:
+            "A screenshot listing buy groceries, call the doctor, and guests arrive at 7 PM.",
+        },
+      );
+
+      const imageMapArg = savePendingMock.mock.calls[0][4];
+      expect(imageMapArg).toBeUndefined();
+    });
+
+    // CodeRabbit finding on this PR: a whole-instruction boolean would let a
+    // visual reference in one person's clause authorize forwarding to a
+    // DIFFERENT, unrelated recipient. Authorization must be scoped per item.
+    it("cross-recipient scoping: a pizza reference in Grace's clause must not forward the photo to Christopher's unrelated task", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+      const groceriesItem: ExtractedItem = {
+        id: "item-groceries",
+        type: "delegation",
+        description: "buy groceries",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Please buy groceries.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      const pizzaItem: ExtractedItem = {
+        id: "item-pizza",
+        type: "delegation",
+        description: "make this pizza",
+        assignedTo: "Grace",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Please make this pizza.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      const pizzaPhoto = new File(["pizza-bytes"], "pizza.jpg", { type: "image/jpeg" });
+
+      extractItemsMock.mockResolvedValue({ extracted: [groceriesItem, pizzaItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([groceriesItem, pizzaItem]));
+      deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+      await executeDelegationFromText(
+        "Ask Christopher to buy groceries, and ask Grace to make this pizza",
+        {
+          displayName: "Sana",
+          userId: "user-1",
+          dailyBrief: "",
+          people: [person("Christopher"), person("Grace")],
+          tasks: [],
+          imageFile: pizzaPhoto,
+          imageDescription: "A pizza with mushroom and olive toppings.",
+        },
+      );
+
+      const imageMapArg = savePendingMock.mock.calls[0][4] as Map<string, File>;
+      // Grace's item (the one whose own clause references the photo)
+      // receives it; Christopher's unrelated grocery item never does — even
+      // though it is listed first and would have been picked by a naive
+      // "first delegation item" fallback.
+      expect(imageMapArg?.get("item-pizza")).toBe(pizzaPhoto);
+      expect(imageMapArg?.has("item-groceries")).toBe(false);
+    });
+
+    it("[5] never claims the image was withheld or sent — the reply only reflects the real delivery outcome", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+      const extractedItem: ExtractedItem = {
+        id: "item-groceries",
+        type: "delegation",
+        description: "buy groceries",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Please buy groceries.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      const noteImage = new File(["note-bytes"], "note.jpg", { type: "image/jpeg" });
+
+      extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([extractedItem]));
+      // Delivery of the (text-only, image withheld) message fails — the reply
+      // must reflect that truthfully, and never assert anything about the
+      // withheld photo in either direction.
+      deliverTaskMessageMock.mockResolvedValue({
+        success: false,
+        channel: "failed",
+        error: "Meta rejected the message",
+      });
+
+      const result = await executeDelegationFromText("Ask Christopher to buy groceries", {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people: [person("Christopher")],
+        tasks: [],
+        imageFile: noteImage,
+        imageDescription: "A handwritten note with several personal items.",
+      });
+
+      expect(result).toContain("Christopher was NOT messaged — Meta rejected the message");
+      expect(result).not.toMatch(/photo/i);
+      expect(result).not.toMatch(/image/i);
+      expect(result).not.toContain("Christopher has it");
+    });
+  });
 });
 
 function person(name: string, overrides?: Record<string, unknown> | number) {

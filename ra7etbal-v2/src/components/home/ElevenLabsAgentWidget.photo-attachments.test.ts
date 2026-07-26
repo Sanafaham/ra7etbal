@@ -120,7 +120,7 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
     expect(removeBlock).toContain("URL.revokeObjectURL(removed.previewUrl)");
   });
 
-  it("send_delegation sends every currently-attached photo via imageFiles, not just the first", () => {
+  it("send_delegation sends every currently-attached photo via imageFiles, not just the first, when the privacy guard authorizes forwarding", () => {
     const block = blockBetween(
       "Snapshot pending photos — prefer live ref",
       "recordDelegationSent(person.name, taskText)",
@@ -129,8 +129,13 @@ describe("ElevenLabsAgentWidget — Talk to Carson multi-photo attachments", () 
     expect(block).toContain("pendingPhotosRef.current.length > 0");
     expect(block).toContain("? pendingPhotosRef.current");
     expect(block).toContain(": sessionPhotosRef.current");
-    expect(block).toContain("const delegationImageFile = delegationPhotos[0]?.file ?? null");
-    expect(block).toContain("const delegationImageFiles = delegationPhotos.map((p) => p.file)");
+    expect(block).toContain("shouldForwardAttachedImage(imageGuardSource)");
+    expect(block).toContain(
+      "const delegationImageFile = forwardImage ? delegationPhotos[0]?.file ?? null : null",
+    );
+    expect(block).toContain(
+      "const delegationImageFiles = forwardImage ? delegationPhotos.map((p) => p.file) : []",
+    );
     expect(block).toContain("imageFile: delegationImageFile");
     expect(block).toContain("imageFiles: delegationImageFiles");
     expect(block).toContain("if (delegationPhotos.length > 0) clearPendingImages()");
