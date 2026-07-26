@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { buildSmsBody, sendTwilioSms, sendMetaMessage } from './send-whatsapp-task.js';
 import { sendOwnerPush } from './task-confirm.js';
 import { processStaffMessage } from './_staff-comms-engine.js';
+import { notifyOwnerOfEscalation } from './_escalation-notify.js';
 
 // One text-only Carson turn (WebSocket round trip to ElevenLabs) can run
 // longer than the platform default. Matches the maxDuration already used by
@@ -167,21 +168,61 @@ export async function handleInboundStaffMessage({ supabaseUrl, serviceKey, msg }
   }
   const existing = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
     `user_id=eq.${encodeURIComponent(userId)}&source=eq.whatsapp&external_message_id=eq.${encodeURIComponent(msg.messageId)}&select=*`);
+  // Widened on retry: a redelivery after a crash between complete_staff_message
+  // and the Phase B escalation claim must still see the escalation-relevant
+  // fields, not just ok/messageId/response — otherwise a crash-recovery retry
+  // would silently skip owner notification for an already-classified escalation.
   const outcome = existing[0]?.processing_status === 'completed'
-    ? { ok:true, messageId:existing[0].id, response:existing[0].carson_response }
+    ? {
+        ok: true,
+        messageId: existing[0].id,
+        response: existing[0].carson_response,
+        relatedTaskId: existing[0].task_id,
+        userFacingState: existing[0].user_facing_state,
+        ownerAttentionRequired: existing[0].owner_attention_required,
+        escalationReason: existing[0].escalation_reason,
+        nextActionOwner: existing[0].next_action_owner,
+      }
     : await processStaffMessage({
         userId, personId: person.id, text: msg.body, taskId,
         threadId: msg.contextMessageId || null, receivedAt: timestampToIso(msg.timestamp),
         source:'whatsapp', externalMessageId:msg.messageId,
       }, { supabaseUrl, serviceKey, anthropicApiKey:process.env.ANTHROPIC_API_KEY });
   if (!outcome.ok || !outcome.response) return { handled:false, reason:'processing_failed' };
+
+  // Phase B: a staff-reported blocker/substitution/owner-decision escalation
+  // gets exactly one owner-decision record and exactly one owner WhatsApp
+  // notification attempt, before the staff-facing reply below is finalized.
+  // The reply text staff actually receives is overridden here to be
+  // truthful about whether the owner was really reached — Carson's stored
+  // carson_response (whatever the classification step generated) is never
+  // sent as-is for an escalating message.
+  let staffResponseText = outcome.response;
+  if (outcome.userFacingState === 'Needs You') {
+    const notifyResult = await notifyOwnerOfEscalation({
+      staffMessageId: outcome.messageId,
+      userId,
+      taskId: outcome.relatedTaskId || null,
+      escalationReason: outcome.escalationReason,
+      staffName: person.name,
+    }, { supabaseUrl, serviceKey }).catch((err) => {
+      console.error('[whatsapp-webhook] escalation notify threw (non-fatal, treated as failed)', {
+        messageId: outcome.messageId, error: err?.message || String(err),
+      });
+      return { attempted: true, status: 'failed', reason: 'notify_threw' };
+    });
+    staffResponseText = notifyResult.status === 'sent'
+      ? "I'm checking with the owner. I'll come back to you."
+      : "I've recorded this for the owner, but I couldn't reach them on WhatsApp yet.";
+  }
+
   const [claim] = await rpc(supabaseUrl, serviceKey, 'claim_staff_response_delivery',
     { p_id:outcome.messageId,p_user_id:userId,p_lease_seconds:120 });
   if (!claim?.claimed) return { handled:true, reason:'already_claimed' };
   const meta = await sendMetaMessage({
     url:`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
     accessToken:process.env.WHATSAPP_ACCESS_TOKEN,
-    payload:{ messaging_product:'whatsapp',recipient_type:'individual',to:sender,type:'text',text:{body:claim.response_text} },
+    payload:{ messaging_product:'whatsapp',recipient_type:'individual',to:sender,type:'text',text:{body:staffResponseText} },
   }).catch((e)=>({ok:false,metaError:{message:e.message}}));
   if (meta.ok) {
     await rpc(supabaseUrl,serviceKey,'complete_staff_response_delivery',

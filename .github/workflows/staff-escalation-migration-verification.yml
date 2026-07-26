@@ -17,10 +17,12 @@ name: staff-escalation-migration-verification
       - "ra7etbal-v2/supabase/migrations/20260724_staff_message_response_delivery.sql"
       - "ra7etbal-v2/supabase/migrations/20260726_staff_escalation_owner_decisions.sql"
       - "ra7etbal-v2/supabase/migrations/20260726_staff_escalation_owner_decisions.rollback.sql"
+      - "ra7etbal-v2/supabase/migrations/20260727_staff_escalation_owner_notification_lease.sql"
+      - "ra7etbal-v2/supabase/migrations/20260727_staff_escalation_owner_notification_lease.rollback.sql"
       - "ra7etbal-v2/supabase/migrations/verification/**"
       - ".github/workflows/staff-escalation-migration-verification.yml"
   push:
-    branches: [feat/staff-escalation-owner-decisions-schema]
+    branches: [feat/staff-escalation-owner-decisions-schema, feat/staff-escalation-phase-b-notify]
   workflow_dispatch: {}
 
 permissions:
@@ -85,3 +87,21 @@ jobs:
 
       - name: Real-database lifecycle verification (after reapply)
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/02_lifecycle_verification.sql"
+
+      - name: Apply forward migration — owner_notification_lease
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260727_staff_escalation_owner_notification_lease.sql"
+
+      - name: Owner-notification lease verification (first apply)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/04_owner_notification_lease_verification.sql"
+
+      - name: Apply rollback migration — owner_notification_lease
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260727_staff_escalation_owner_notification_lease.rollback.sql"
+
+      - name: Owner-notification lease post-rollback verification
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/05_owner_notification_lease_post_rollback_verification.sql"
+
+      - name: Reapply forward migration — owner_notification_lease
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260727_staff_escalation_owner_notification_lease.sql"
+
+      - name: Owner-notification lease verification (after reapply)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/04_owner_notification_lease_verification.sql"
