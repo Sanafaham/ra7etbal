@@ -1,7 +1,7 @@
 import type { Person } from "../types/person";
 import type { Task } from "../types/task";
 import type { Message } from "../types/message";
-import type { ExtractionResult } from "../types/extraction";
+import type { ExtractedItem, ExtractionResult } from "../types/extraction";
 import { upsertUserFacts } from "./carson-facts";
 import { saveSessionMemory } from "./carson-memory";
 import { extractItems } from "./ai/extract";
@@ -166,24 +166,29 @@ export async function executeDelegationFromText(
       ? [context.imageFile]
       : [];
 
-  // Assign the first image to the item that can actually carry it through to
-  // WhatsApp. Only "delegation" items get a companion message row with a
-  // task_id (save.ts), which is what threads image_path into the send below —
-  // a "message" item's row has task_id: null and save.ts never even reads
-  // imageFiles for it, so picking one here silently dropped the photo even
-  // when a real delegation existed in the same batch. Prefer delegation;
-  // fall back to any other image-capable task type so the photo still shows
-  // on the task card even when there's nothing to send over WhatsApp.
+  // Assign the image to the item that both can carry it through to WhatsApp
+  // AND whose own clause authorizes forwarding it. Only "delegation" items
+  // get a companion message row with a task_id (save.ts), which is what
+  // threads image_path into the send below — a "message" item's row has
+  // task_id: null and save.ts never even reads imageFiles for it. Prefer
+  // delegation; fall back to any other image-capable task type so the photo
+  // still shows on the task card even when there's nothing to send over
+  // WhatsApp.
   //
-  // Privacy guard: the photo is only attached when the instruction itself
-  // authorizes it (see image-forwarding-guard.ts) — a photo attached only for
-  // Carson's own understanding must not automatically ride along to staff.
+  // Privacy guard: authorization is scoped to each item's OWN text (item.
+  // description/personalNote), not the whole raw instruction — "Ask
+  // Christopher to buy groceries, and ask Grace to make this pizza" must
+  // only forward the photo to Grace, never to Christopher just because a
+  // visual reference exists somewhere else in the same turn. See
+  // image-forwarding-guard.ts.
+  const imageAuthorized = (item: ExtractedItem) =>
+    shouldForwardAttachedImage([item.description, item.personalNote].filter(Boolean).join(" "));
   const imageFiles = new Map<string, File>();
-  if (resolvedFiles.length > 0 && shouldForwardAttachedImage(input)) {
-    const firstDelegation =
-      allItems.find((i) => i.type === "delegation") ??
-      allItems.find((i) => i.type !== "message" && i.type !== "parked");
-    if (firstDelegation) imageFiles.set(firstDelegation.id, resolvedFiles[0]);
+  if (resolvedFiles.length > 0) {
+    const authorizedItem =
+      allItems.find((i) => i.type === "delegation" && imageAuthorized(i)) ??
+      allItems.find((i) => i.type !== "message" && i.type !== "parked" && imageAuthorized(i));
+    if (authorizedItem) imageFiles.set(authorizedItem.id, resolvedFiles[0]);
   }
 
   // Save every extracted item (reminders, delegations, actions, follow-ups…)
@@ -211,9 +216,13 @@ export async function executeDelegationFromText(
   // it through. The task exists, but the WhatsApp send is not proven complete.
   const attachmentCountByTaskId = new Map<string, number>();
   const attachmentFailedTaskIds = new Set<string>();
-  if (resolvedFiles.length > 1 && shouldForwardAttachedImage(input)) {
+  if (resolvedFiles.length > 1) {
+    // Scoped to this task's own description, same reasoning as the
+    // single-image assignment above.
     const firstDelegationTask = saved.tasks.find(
-      (t) => t.type === "delegation" || t.type === "followup",
+      (t) =>
+        (t.type === "delegation" || t.type === "followup") &&
+        shouldForwardAttachedImage(t.description),
     );
     if (firstDelegationTask && context.userId) {
       try {

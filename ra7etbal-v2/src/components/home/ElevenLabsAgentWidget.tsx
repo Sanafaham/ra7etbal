@@ -2189,9 +2189,13 @@ export default function ElevenLabsAgentWidget({
       // Privacy guard: a pending photo is private source material by default
       // (confirmed production bug — a private note's full image reached
       // staff alongside the correctly-extracted task text). Only forward the
-      // original image when the instruction authorizes it — see
-      // image-forwarding-guard.ts.
-      const imageGuardSource = [latestUserMessageForOps, taskText, message, note]
+      // original image when THIS delegation's own text authorizes it — see
+      // image-forwarding-guard.ts. Deliberately scoped to taskText/message/
+      // note (all specific to this one call) rather than the raw session
+      // transcript: an unrelated earlier remark like "show me this photo"
+      // (addressed to Carson, not this recipient) must not authorize
+      // forwarding to whoever this delegation happens to be for.
+      const imageGuardSource = [taskText, message, note]
         .filter((value): value is string => !!value?.trim())
         .join(" ");
       const forwardImage = shouldForwardAttachedImage(imageGuardSource);
