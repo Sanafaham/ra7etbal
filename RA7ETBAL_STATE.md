@@ -146,6 +146,32 @@ Protect:
 
 Routine invalid proof should return to the worker for correction. The owner should only be interrupted for repeated invalid proof, uncertainty, or a real decision.
 
+### Protected photo workflow — golden regression contract (LOCKED, baseline 447a685)
+
+Status: complete and stable. Production baseline commit: `447a685`.
+
+Why this exists: the same class of production incident recurred repeatedly in one day — a private handwritten note's photo leaked to staff (PR #78), then a legitimate visual-reference photo was silently dropped (PR #79), then real WhatsApp media never sent for 2+ photos and proof photos nearly leaked back to the assignee (PRs #80/#81), then a second reference photo was silently dropped from Quality Intelligence review (PR #82). Each fix was correct in isolation; the whole photo journey had no single permanent test contract tying it together.
+
+**Protected photo journey**:
+1. Owner attaches a photo (1 or many) to a delegation. A private note or screenshot is read by Carson but never forwarded to staff unless explicitly authorized or genuinely visually required (`src/lib/image-forwarding-guard.ts`).
+2. An authorized image is persisted (`tasks.image_path` for the first photo; `task_attachments` with `file_name IS NULL` for every reference photo) and reaches the real WhatsApp send — single photo via the `ra7etbal_task_image` header template, 2+ photos via the primary text template plus one real freeform image message per photo (`api/send-whatsapp-task.js`).
+3. The assignee submits proof photos, stored in the same `task_attachments` table but discriminated by `file_name = 'proof'` — never mixed with, and never re-sent as, reference photos.
+4. Quality Intelligence loads **every** reference photo (not just the first) and **every** proof photo, and judges the two sets together with no assumed positional pairing (`api/task-confirm.js`, `api/_quality-review.js`). A fresh proof submission always clears prior review state before the new review runs.
+5. A photo authorized for one delegation recipient never leaks to a different recipient in the same turn.
+
+**Golden test command** (also the mandatory CI gate — `.github/workflows/carson-protected-behaviors.yml` runs `npm run test:carson-protected` on every PR to `main`, unconditionally, no path filter):
+```
+npm run test:carson-protected
+```
+or to run just the golden contract in isolation:
+```
+npx vitest run src/lib/photo-workflow-golden-contract.test.ts api/photo-workflow-golden-contract.test.js
+```
+
+**Critical files covered**: `src/lib/image-forwarding-guard.ts`, `src/lib/text-carson.ts`, `src/components/home/ElevenLabsAgentWidget.tsx` (image/delegation paths), `api/send-whatsapp-task.js`, `api/task-confirm.js`, `api/_quality-review.js`, plus their existing detailed test files (`image-forwarding-guard.test.ts`, `text-carson-image.test.ts`, `send-whatsapp-task.test.js`, `task-confirm.test.js`, `_quality-review.test.js`) which the golden contract complements rather than replaces.
+
+**Rule**: this workflow must not be changed without running the golden contract (`npm run test:carson-protected`) before and after the change, and the change must not weaken, skip, or remove any golden scenario. Do not reopen without a reproduced regression.
+
 ### Recurring owner reminders
 
 Status: completed and production verified.
