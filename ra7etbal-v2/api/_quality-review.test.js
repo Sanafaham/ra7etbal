@@ -51,7 +51,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'plate the chicken like the reference',
       delegationMessage: 'Please plate the chicken like the photo.',
-      referenceImageBase64: 'ref-base64',
+      referenceImagesBase64: ['ref-base64'],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -72,7 +72,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'make the salad bowl',
       delegationMessage: 'Please make the salad bowl like the photo.',
-      referenceImageBase64: 'reference-salad-base64',
+      referenceImagesBase64: ['reference-salad-base64'],
       proofImagesBase64: ['corrected-live-salad-base64'],
     });
 
@@ -96,7 +96,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'plate the chicken like the reference',
       delegationMessage: 'Please plate the chicken like the photo.',
-      referenceImageBase64: 'ref-base64',
+      referenceImagesBase64: ['ref-base64'],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -120,7 +120,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist and send a photo.',
       delegationMessage: 'Grace, please find the perfume and send Sana a photo.',
-      referenceImageBase64: 'cheirosa-68-reference-base64',
+      referenceImagesBase64: ['cheirosa-68-reference-base64'],
       proofImagesBase64: ['live-cheirosa-68-on-fabric-base64'],
     });
 
@@ -144,7 +144,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist in the toilet cabinet and send a photo.',
       delegationMessage: 'Grace, please find the perfume in the toilet cabinet and send Sana a photo.',
-      referenceImageBase64: 'cheirosa-68-reference-base64',
+      referenceImagesBase64: ['cheirosa-68-reference-base64'],
       proofImagesBase64: ['live-cheirosa-68-on-couch-base64'],
     });
 
@@ -168,7 +168,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist and send a photo.',
       delegationMessage: 'Grace, please find the perfume and send Sana a photo.',
-      referenceImageBase64: 'cheirosa-68-reference-base64',
+      referenceImagesBase64: ['cheirosa-68-reference-base64'],
       proofImagesBase64: ['wrong-product-base64'],
     });
 
@@ -190,7 +190,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'Show me the Sol de Janeiro Cheirosa 68 perfume mist inside the cabinet.',
       delegationMessage: 'Grace, please send proof that the perfume is inside the cabinet.',
-      referenceImageBase64: 'cheirosa-68-reference-base64',
+      referenceImagesBase64: ['cheirosa-68-reference-base64'],
       proofImagesBase64: ['live-cheirosa-68-on-couch-base64'],
     });
 
@@ -212,7 +212,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist and send a photo.',
       delegationMessage: 'Grace, please find the perfume and send Sana a photo.',
-      referenceImageBase64: 'cheirosa-68-reference-base64',
+      referenceImagesBase64: ['cheirosa-68-reference-base64'],
       proofImagesBase64: ['screenshot-proof-base64'],
     });
 
@@ -234,7 +234,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist and send a photo.',
       delegationMessage: 'Grace, please find the perfume and send Sana a photo.',
-      referenceImageBase64: 'cheirosa-68-reference-base64',
+      referenceImagesBase64: ['cheirosa-68-reference-base64'],
       proofImagesBase64: ['cropped-bottle-base64'],
     });
 
@@ -254,7 +254,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -275,7 +275,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'make the salad bowl',
       delegationMessage: 'Please make the salad bowl like the reference.',
-      referenceImageBase64: 'reference-salad-base64',
+      referenceImagesBase64: ['reference-salad-base64'],
       proofImagesBase64: ['wrong-live-item-base64'],
     });
 
@@ -296,7 +296,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: null,
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -315,7 +315,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: 'ref-base64',
+      referenceImagesBase64: ['ref-base64'],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -340,7 +340,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'confirm the bowl is on the shelf',
       delegationMessage: 'Please confirm the bowl is on the shelf.',
-      referenceImageBase64: 'bowl-reference-base64',
+      referenceImagesBase64: ['bowl-reference-base64'],
       proofImagesBase64: ['bowl-reference-base64'],
     });
 
@@ -362,7 +362,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'make the salad bowl',
       delegationMessage: 'Please make the salad bowl like the reference.',
-      referenceImageBase64: 'reference-salad-base64',
+      referenceImagesBase64: ['reference-salad-base64'],
       proofImagesBase64: ['new-live-salad-proof-base64'],
     });
 
@@ -386,7 +386,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'buy the pearl bracelet shown',
       delegationMessage: 'Please buy this and send a photo.',
-      referenceImageBase64: 'ref-base64',
+      referenceImagesBase64: ['ref-base64'],
       proofImagesBase64: ['screenshot-base64'],
     });
 
@@ -408,7 +408,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'order dinner from the usual place',
       delegationMessage: null,
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['menu-screenshot-base64'],
     });
 
@@ -425,7 +425,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -451,7 +451,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -465,7 +465,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -480,7 +480,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: 'ref-base64',
+      referenceImagesBase64: ['ref-base64'],
       proofImagesBase64: [],
     });
 
@@ -496,7 +496,7 @@ describe('runQualityReview', () => {
       apiKey: undefined,
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -514,7 +514,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: 'ref-base64',
+      referenceImagesBase64: ['ref-base64'],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -523,6 +523,40 @@ describe('runQualityReview', () => {
     expect(images).toHaveLength(2);
     expect(images[0].source.data).toBe('ref-base64');
     expect(images[1].source.data).toBe('proof-base64');
+  });
+
+  // Regression (2026-07-26): confirmed production bug — a task with 2
+  // reference photos only had the first sent to the model, so a proof photo
+  // meant to match the second reference was judged against the wrong (only
+  // available) reference and falsely flagged as CORRECTION_REQUIRED.
+  it('sends all reference images and all proof images together — 2 references + 2 proofs = 4 image blocks, references first', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"Both dishes match."}'),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'make these for dinner, referring to the attached photos',
+      delegationMessage: 'Make these for dinner.',
+      referenceImagesBase64: ['ref-salad-base64', 'ref-second-dish-base64'],
+      proofImagesBase64: ['proof-salad-base64', 'proof-second-dish-base64'],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const images = body.messages[0].content.filter((block) => block.type === 'image');
+    expect(images).toHaveLength(4);
+    expect(images.map((img) => img.source.data)).toEqual([
+      'ref-salad-base64',
+      'ref-second-dish-base64',
+      'proof-salad-base64',
+      'proof-second-dish-base64',
+    ]);
+
+    const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
+    expect(promptText).toMatch(/2 reference images/i);
+    expect(promptText).toMatch(/2 proof photos/i);
+    expect(promptText).toMatch(/do not assume any specific reference photo corresponds to any specific proof photo by position or order/i);
   });
 
   it('instructs the model that a clearly wrong/mismatched item is CORRECTION_REQUIRED, not UNCERTAIN', async () => {
@@ -540,7 +574,7 @@ describe('runQualityReview', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['proof-base64'],
     });
 
@@ -566,7 +600,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'Ask Christopher to make this for lunch.',
         delegationMessage: 'Christopher, please make this pizza for lunch.',
-        referenceImageBase64: 'pizza-reference-base64',
+        referenceImagesBase64: ['pizza-reference-base64'],
         proofImagesBase64: ['pepperoni-pizza-proof-base64'],
       });
 
@@ -590,7 +624,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'Ask Christopher to make this for lunch.',
         delegationMessage: 'Christopher, please make this pizza for lunch.',
-        referenceImageBase64: 'pizza-reference-base64',
+        referenceImagesBase64: ['pizza-reference-base64'],
         proofImagesBase64: ['salad-proof-base64'],
       });
 
@@ -612,7 +646,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'Buy a pack of TEREA Silver and send a photo.',
         delegationMessage: 'Please buy TEREA Silver and send a photo.',
-        referenceImageBase64: 'terea-silver-reference-base64',
+        referenceImagesBase64: ['terea-silver-reference-base64'],
         proofImagesBase64: ['terea-silver-studio-proof-base64'],
       });
 
@@ -636,7 +670,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'Find the black blouse and send a photo.',
         delegationMessage: 'Please find the black blouse and send a photo.',
-        referenceImageBase64: 'blouse-reference-base64',
+        referenceImagesBase64: ['blouse-reference-base64'],
         proofImagesBase64: ['blouse-proof-base64'],
       });
 
@@ -662,7 +696,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'Buy this bracelet and send a photo of it.',
         delegationMessage: 'Please buy this and send a photo.',
-        referenceImageBase64: 'bracelet-reference-base64',
+        referenceImagesBase64: ['bracelet-reference-base64'],
         proofImagesBase64: ['bracelet-reference-base64'],
       });
 
@@ -680,7 +714,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'task',
         delegationMessage: 'message',
-        referenceImageBase64: 'ref-base64',
+        referenceImagesBase64: ['ref-base64'],
         proofImagesBase64: ['proof-base64'],
       });
 
@@ -705,7 +739,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'Find the Sol de Janeiro Cheirosa 68 perfume mist and send a photo.',
         delegationMessage: 'Grace, please find the perfume and send Sana a photo.',
-        referenceImageBase64: 'cheirosa-68-reference-base64',
+        referenceImagesBase64: ['cheirosa-68-reference-base64'],
         proofImagesBase64: ['unrelated-object-base64'],
       });
 
@@ -727,7 +761,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'Find the black blouse shown and send a photo.',
         delegationMessage: 'Please find the black blouse and send a photo.',
-        referenceImageBase64: 'black-blouse-reference-base64',
+        referenceImagesBase64: ['black-blouse-reference-base64'],
         proofImagesBase64: ['white-blouse-proof-base64'],
       });
 
@@ -760,7 +794,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'confirm the bowl is on the shelf',
         delegationMessage: 'Please confirm the bowl is on the shelf and send a photo.',
-        referenceImageBase64: 'bowl-reference-base64',
+        referenceImagesBase64: ['bowl-reference-base64'],
         proofImagesBase64: ['bowl-reference-base64'],
       });
 
@@ -782,7 +816,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'Ask Christopher to make this for lunch.',
         delegationMessage: 'Christopher, please make this pizza for lunch.',
-        referenceImageBase64: 'pizza-reference-base64',
+        referenceImagesBase64: ['pizza-reference-base64'],
         proofImagesBase64: ['internet-looking-pizza-proof-base64'],
       });
 
@@ -803,7 +837,7 @@ describe('runQualityReview', () => {
         apiKey: 'test-key',
         taskDescription: 'Ask Christopher to make a salad for lunch.',
         delegationMessage: 'Christopher, please make a salad for lunch.',
-        referenceImageBase64: 'salad-reference-base64',
+        referenceImagesBase64: ['salad-reference-base64'],
         proofImagesBase64: ['pizza-proof-base64'],
       });
 
@@ -836,7 +870,7 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       apiKey: 'test-key',
       taskDescription: 'Buy a pack of TEREA Silver and send a photo.',
       delegationMessage: 'Please buy TEREA Silver and send a photo.',
-      referenceImageBase64: 'terea-silver-reference-base64',
+      referenceImagesBase64: ['terea-silver-reference-base64'],
       proofImagesBase64: ['terea-turquoise-proof-base64'],
       workerReply: 'Could not find TEREA Silver, found Turquoise instead.',
     });
@@ -857,7 +891,7 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       apiKey: 'test-key',
       taskDescription: 'Buy the usual flowers and send a photo.',
       delegationMessage: null,
-      referenceImageBase64: 'flowers-reference-base64',
+      referenceImagesBase64: ['flowers-reference-base64'],
       proofImagesBase64: ['different-flowers-proof-base64'],
     });
 
@@ -878,7 +912,7 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['proof-base64'],
       workerReply: 'Could not find the exact item, sent a similar one.',
     });
@@ -903,7 +937,7 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       apiKey: 'test-key',
       taskDescription: 'make the pasta like the reference photo',
       delegationMessage: 'Please make this pasta for dinner.',
-      referenceImageBase64: 'pasta-reference-base64',
+      referenceImagesBase64: ['pasta-reference-base64'],
       proofImagesBase64: ['home-made-pasta-different-plate-base64'],
     });
 
@@ -925,7 +959,7 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       apiKey: 'test-key',
       taskDescription: 'Ask Christopher to make this for lunch.',
       delegationMessage: 'Christopher, please make this pizza for lunch.',
-      referenceImageBase64: 'pizza-reference-base64',
+      referenceImagesBase64: ['pizza-reference-base64'],
       proofImagesBase64: ['salad-proof-base64'],
     });
 
@@ -943,7 +977,7 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       apiKey: 'test-key',
       taskDescription: 'task',
       delegationMessage: 'message',
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['proof-base64'],
     });
 
