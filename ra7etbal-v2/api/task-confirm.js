@@ -1437,7 +1437,7 @@ async function findAssigneePerson({ supabaseUrl, serviceKey, userId, assignedTo 
 
 // ── Storage helpers (from get-confirm-task.js) ────────────────────────────────
 
-async function findOwnerPhone({ supabaseUrl, serviceKey, userId }) {
+export async function findOwnerPhone({ supabaseUrl, serviceKey, userId }) {
   if (!userId) return null;
 
   const response = await fetch(
