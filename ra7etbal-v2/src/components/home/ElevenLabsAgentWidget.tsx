@@ -884,6 +884,8 @@ export default function ElevenLabsAgentWidget({
   onChannelChange,
   onRequestClose,
   isOpen = false,
+  pendingTypedDraft = null,
+  onPendingTypedDraftConsumed,
 }: {
   briefStateText: string;
   /** Pre-built spoken daily brief paragraph injected as `daily_brief` dynamic variable. */
@@ -921,6 +923,18 @@ export default function ElevenLabsAgentWidget({
   onRequestClose?: () => void;
   /** True while the persistent Carson sheet is visible. */
   isOpen?: boolean;
+  /**
+   * Text queued to appear in the typed input once a text session is
+   * connected — e.g. "Send to Carson" on a Note card. Inserted, never
+   * auto-submitted: the owner still reviews and taps Send themselves, so
+   * this carries no execution authority of its own — it goes through the
+   * exact same sendTypedMessage() path (and the same advisory-only
+   * boundary) as anything the owner types directly.
+   */
+  pendingTypedDraft?: string | null;
+  /** Called once pendingTypedDraft has been inserted into the typed input,
+   *  so the caller can clear it and it never re-applies later. */
+  onPendingTypedDraftConsumed?: () => void;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
   const audioEnvironmentRef = useRef<CarsonAudioEnvironment>(getCarsonAudioEnvironment());
@@ -1040,6 +1054,19 @@ export default function ElevenLabsAgentWidget({
     previousTypedOpenRef.current = isOpen;
     if (opened) void reconcileTypedHistory();
   }, [isOpen, reconcileTypedHistory]);
+
+  // "Send to Carson" (Note cards) queues note text here; insert it into the
+  // typed input the moment a text session is connected and ready, then tell
+  // the caller to clear the queued value so it never re-applies to a later,
+  // unrelated typed session. Never overwrites text the owner already typed,
+  // and never submits — the owner still reviews and taps Send themselves.
+  useEffect(() => {
+    if (!pendingTypedDraft) return;
+    if (status !== "connected" || channel !== "text") return;
+    if (typedInput.trim()) return;
+    setTypedInput(pendingTypedDraft);
+    onPendingTypedDraftConsumed?.();
+  }, [pendingTypedDraft, status, channel, typedInput, onPendingTypedDraftConsumed]);
 
   const ensureTypedHistoryLoaded = useCallback(async (): Promise<CarsonTypedMessage[]> => {
     return reconcileTypedHistory(false);

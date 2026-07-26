@@ -922,3 +922,55 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
 function TYPED_ADVISORY_HOSTING_REQUEST_VALUE(): string {
   return sourceConstant("TYPED_ADVISORY_HOSTING_REQUEST");
 }
+
+/**
+ * "Send to Carson" (Note cards, 2026-07-26): the widget accepts a queued
+ * pendingTypedDraft prop and inserts it into the typed input once a text
+ * session is connected — never auto-submitted, so it goes through the exact
+ * same sendTypedMessage() path (and the same advisory-only boundary) as
+ * anything the owner types directly. See stores/carson.test.ts for the
+ * store field itself and routes/Inbox.test.ts for the Note-card handler
+ * that queues it.
+ */
+describe("ElevenLabsAgentWidget — pendingTypedDraft insertion (Send to Carson)", () => {
+  function insertionEffectSource(): string {
+    return blockBetween(
+      "// \"Send to Carson\" (Note cards) queues note text here;",
+      "  const ensureTypedHistoryLoaded",
+    );
+  }
+
+  it("accepts pendingTypedDraft and onPendingTypedDraftConsumed as props", () => {
+    expect(SOURCE).toContain("pendingTypedDraft = null,");
+    expect(SOURCE).toContain("onPendingTypedDraftConsumed,");
+    expect(SOURCE).toMatch(/pendingTypedDraft\?: string \| null;/);
+    expect(SOURCE).toMatch(/onPendingTypedDraftConsumed\?: \(\) => void;/);
+  });
+
+  it("only inserts once a text session is connected, and never overwrites text the owner already typed", () => {
+    const block = insertionEffectSource();
+    expect(block).toContain('if (!pendingTypedDraft) return;');
+    expect(block).toContain('if (status !== "connected" || channel !== "text") return;');
+    expect(block).toContain("if (typedInput.trim()) return;");
+    expect(block).toContain("setTypedInput(pendingTypedDraft);");
+  });
+
+  it("consumes (reports back) the draft after inserting it, so it cannot re-apply to a later, unrelated typed session", () => {
+    const block = insertionEffectSource();
+    const setIndex = block.indexOf("setTypedInput(pendingTypedDraft);");
+    const consumeIndex = block.indexOf("onPendingTypedDraftConsumed?.();");
+    expect(setIndex).toBeGreaterThan(-1);
+    expect(consumeIndex).toBeGreaterThan(setIndex);
+  });
+
+  it("never auto-submits the draft — inserting it into typedInput does not call sendTypedMessage", () => {
+    const block = insertionEffectSource();
+    expect(block).not.toContain("sendTypedMessage(");
+  });
+
+  it("App.tsx threads pendingTypedDraft from useCarsonStore into the widget, and clears it via setPendingTypedDraft(null) once consumed", () => {
+    expect(APP_SOURCE).toMatch(/pendingTypedDraft,\s*\n\s*setPendingTypedDraft,/);
+    expect(APP_SOURCE).toContain("pendingTypedDraft={pendingTypedDraft}");
+    expect(APP_SOURCE).toContain("onPendingTypedDraftConsumed={() => setPendingTypedDraft(null)}");
+  });
+});
