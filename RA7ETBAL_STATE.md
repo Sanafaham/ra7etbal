@@ -154,6 +154,14 @@ Protect:
 
 Routine invalid proof should return to the worker for correction. The owner should only be interrupted for repeated invalid proof, uncertainty, or a real decision.
 
+### Alternative review (substitute_review) — golden regression contract (LOCKED, branch `test/alternative-review-golden-contract`)
+
+Status: test-only stabilization, no runtime file changed. Protects the Approve Alternative / Reject Alternative / Custom Instruction decision lifecycle: `quality_review_status: "substitute_review"` as the correct trigger state; the Needs You decision surface (`isQualitySubstituteReviewStatus`/`resolveQualityLifecycle` → `needs_owner_decision`); Approve using `reserve_rejected_alternative`/`complete_custom_instruction`-style approval RPCs distinct from Reject's own `reserve_rejected_alternative`/`complete_rejected_alternative` pair; Custom Instruction text reaching the outbound WhatsApp payload verbatim; no cross-task bleed between simultaneous `substitute_review` tasks; exactly-once execution via the claim RPC's `status: 'completed'` short-circuit; no duplicate WhatsApp send on retry; failure paths (missing auth, wrong owner, Meta rejection, network error) never reporting success; and the correct final task state per decision (`completed` / `waiting_for_confirmation` / `proof_submitted`).
+
+New files: `src/lib/alternative-review-golden-contract.test.ts` (client, 11 tests) and `api/alternative-review-golden-contract.test.js` (server, 11 tests) — real calls into `api/task-confirm.js`'s `handlePost`/`handleOwnerDecision`, `src/lib/quality-lifecycle.ts`, and `src/lib/quality-substitute-decision.ts`, with only Supabase REST, the Meta Graph API, and the Anthropic API mocked. Deliberate-failure proof: inverted the Reject/Approve RPC branch mapping in `task-confirm.js`, confirmed the Reject-path test failed precisely, reverted, confirmed green again. Part of `npm run test:carson-protected`.
+
+Protect: the RPC-pair separation between Approve/Reject/Custom Instruction; the exactly-once claim short-circuit; the failure-never-claims-success contract on both the client helper and the server handler. Reopen only on a reproduced production regression.
+
 ### Protected photo workflow — golden regression contract (LOCKED, baseline 447a685)
 
 Status: complete and stable. Production baseline commit: `447a685`.
