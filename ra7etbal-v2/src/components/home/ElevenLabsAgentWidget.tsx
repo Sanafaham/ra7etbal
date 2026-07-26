@@ -112,6 +112,7 @@ import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
+import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
 import {
   executeVoiceTaskControl,
   resolveVoiceTaskControl,
@@ -2185,8 +2186,17 @@ export default function ElevenLabsAgentWidget({
         pendingPhotosRef.current.length > 0
           ? pendingPhotosRef.current
           : sessionPhotosRef.current;
-      const delegationImageFile = delegationPhotos[0]?.file ?? null;
-      const delegationImageFiles = delegationPhotos.map((p) => p.file);
+      // Privacy guard: a pending photo is private source material by default
+      // (confirmed production bug — a private note's full image reached
+      // staff alongside the correctly-extracted task text). Only forward the
+      // original image when the instruction authorizes it — see
+      // image-forwarding-guard.ts.
+      const imageGuardSource = [latestUserMessageForOps, taskText, message, note]
+        .filter((value): value is string => !!value?.trim())
+        .join(" ");
+      const forwardImage = shouldForwardAttachedImage(imageGuardSource);
+      const delegationImageFile = forwardImage ? delegationPhotos[0]?.file ?? null : null;
+      const delegationImageFiles = forwardImage ? delegationPhotos.map((p) => p.file) : [];
 
       let result: DelegationSendResult;
       try {

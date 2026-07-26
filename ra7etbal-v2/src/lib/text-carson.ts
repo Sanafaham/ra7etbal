@@ -9,6 +9,7 @@ import { savePending, saveTaskAttachments } from "./save";
 import { resizeImage } from "./image-upload";
 import { detectAllRecurringSchedules } from "./routine-detection";
 import { deliverTaskMessage, type DeliveryResult } from "./delivery";
+import { shouldForwardAttachedImage } from "./image-forwarding-guard";
 import { sendDirectMessageRecord } from "./direct-messages";
 import { useTasksStore } from "../stores/tasks";
 import { summarizeConversation } from "./carson-summarize";
@@ -173,8 +174,12 @@ export async function executeDelegationFromText(
   // when a real delegation existed in the same batch. Prefer delegation;
   // fall back to any other image-capable task type so the photo still shows
   // on the task card even when there's nothing to send over WhatsApp.
+  //
+  // Privacy guard: the photo is only attached when the instruction itself
+  // authorizes it (see image-forwarding-guard.ts) — a photo attached only for
+  // Carson's own understanding must not automatically ride along to staff.
   const imageFiles = new Map<string, File>();
-  if (resolvedFiles.length > 0) {
+  if (resolvedFiles.length > 0 && shouldForwardAttachedImage(input)) {
     const firstDelegation =
       allItems.find((i) => i.type === "delegation") ??
       allItems.find((i) => i.type !== "message" && i.type !== "parked");
@@ -206,7 +211,7 @@ export async function executeDelegationFromText(
   // it through. The task exists, but the WhatsApp send is not proven complete.
   const attachmentCountByTaskId = new Map<string, number>();
   const attachmentFailedTaskIds = new Set<string>();
-  if (resolvedFiles.length > 1) {
+  if (resolvedFiles.length > 1 && shouldForwardAttachedImage(input)) {
     const firstDelegationTask = saved.tasks.find(
       (t) => t.type === "delegation" || t.type === "followup",
     );
