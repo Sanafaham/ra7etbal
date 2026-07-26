@@ -889,6 +889,16 @@ describe('photo attachment pipeline', () => {
       { storagePath: 'user-1/task-1/attachments/0.jpg', sent: true, messageId: 'wamid.photo0', reason: null },
       { storagePath: 'user-1/task-1/attachments/1.jpg', sent: true, messageId: 'wamid.photo1', reason: null },
     ]);
+
+    // task_attachments is shared with Proof Photo V2 (api/task-confirm.js),
+    // which stores the assignee's own submitted proof photos in the same
+    // table with file_name = 'proof'. The lookup must exclude those, or a
+    // task with proof already submitted would send the assignee's own proof
+    // photos back to them.
+    const attachmentsLookupCall = fetchMock.mock.calls.find(([lookupUrl]) =>
+      String(lookupUrl).includes('/rest/v1/task_attachments'),
+    );
+    expect(String(attachmentsLookupCall[0])).toContain('file_name=is.null');
   });
 
   it('multi-photo: one photo failing to send is reported truthfully and does not block the other photo or the overall response', async () => {
