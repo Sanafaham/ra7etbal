@@ -103,6 +103,27 @@ describe("createReminderTask", () => {
     expect(h.schedules).toHaveLength(0);
   });
 
+  // Protected behavior: the reminder's creation timestamp must remain present
+  // and unaltered on the returned/persisted record. created_at is a
+  // DB-assigned column (see tasks.ts's createTask, a plain insert+select) —
+  // createReminderTask must never set, override, or drop it from either the
+  // outgoing draft or the returned task, so what's displayed later
+  // (formatReminderCreatedTime, locked separately in reminder-time.test.ts)
+  // always reflects the real creation moment.
+  it("never sets created_at on the outgoing draft and returns whatever the DB/store assigned, unaltered", async () => {
+    const dueAt = "2026-06-29T09:00:00.000Z";
+
+    const task = await createReminderTask({
+      userId: "user-1",
+      text: "buy flowers",
+      dueAt,
+      source: "test",
+    });
+
+    expect(h.drafts[0]).not.toHaveProperty("created_at");
+    expect(task.created_at).toBe("2026-06-28T12:00:00.000Z");
+  });
+
   it("can use an injected createTask function for store-backed Voice creation", async () => {
     const createTaskFn = vi.fn(async (draft: TaskDraft) => ({
       id: "store-task-1",

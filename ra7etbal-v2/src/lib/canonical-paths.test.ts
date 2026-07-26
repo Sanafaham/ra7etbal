@@ -516,4 +516,31 @@ describe("canonical path source adapters", () => {
     expect(recurringRunner).toContain("/confirm?task=");
     expect(recurringRunner).not.toContain("/confirm?task_id=");
   });
+
+  // Protected behavior (item 10): createReminderTask (src/lib/reminders.ts)
+  // is explicitly documented as the canonical *one-off* reminder creation
+  // boundary, "intentionally not used for recurring reminder routines, which
+  // currently create action tasks plus immediate owner push notifications
+  // from the server routine runner." This proves that separation actually
+  // holds in the code, not just in the comment: the recurring runner
+  // (runAutomationsCore / processAutomation in
+  // api/process-delegation-escalations.js) never imports or calls
+  // createReminderTask, and creates its task row through its own local
+  // createTask() REST helper instead.
+  it("keeps the recurring automation runner structurally separate from the one-off reminder creation boundary (createReminderTask)", () => {
+    const recurringRunner = source("api/process-delegation-escalations.js");
+    const reminders = source("src/lib/reminders.ts");
+
+    expect(recurringRunner).not.toContain("createReminderTask");
+    expect(recurringRunner).not.toMatch(/from\s+["'][^"']*lib\/reminders["']/);
+    expect(recurringRunner).not.toMatch(/require\(\s*["'][^"']*lib\/reminders["']\s*\)/);
+    // The recurring runner creates its task row through its own local
+    // createTask(supabaseUrl, serviceKey, fields) helper, defined in this
+    // same file — a plain Supabase REST insert, not the canonical boundary.
+    expect(recurringRunner).toMatch(/const taskId = await createTask\(supabaseUrl, serviceKey, \{/);
+    expect(recurringRunner).toMatch(/async function createTask\(supabaseUrl, serviceKey, fields\)/);
+    // And reminders.ts's own doc comment still states the intentional split,
+    // so this test and the source it protects can't silently drift apart.
+    expect(reminders).toMatch(/not used for recurring\s*\n\s*\* reminder routines/);
+  });
 });

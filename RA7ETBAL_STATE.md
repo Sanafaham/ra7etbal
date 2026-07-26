@@ -112,6 +112,14 @@ Regression protection added (test-only, no runtime file changed): a new widget-l
 
 Protect: `parsed.dayOnly` gating create_reminder's ask-vs-create decision; `pendingReminderTimeClarificationRef`'s day-preserving merge; the weekday regex's optional `"next"` and shared clock grammar; `reminder-time.ts` staying import-free. Reopen only on a reproduced production regression.
 
+### Reminder Lock — protected-gate promotion (branch `test/reminder-lock-protected-gate`) — LOCKED
+
+Status: test-only stabilization, no runtime file changed. Maps 10 protected one-off-reminder behaviors (clear-creation, day-only ask + day preservation, follow-up completes the same request, correction replaces without duplicating, bare-weekday parsing, stored-vs-displayed due time agreement, creation timestamp integrity, scheduling-failure truthfulness, and structural separation from the recurring-automation runner) to existing or newly added tests. Existing coverage (unchanged): `ElevenLabsAgentWidget.reminder-replacement.test.ts`, `parse-voice-time.test.ts`, `reminder-time.test.ts`, `reminders.test.ts`, `canonical-paths.test.ts`.
+
+Gap-fill added this task: `reminder-time.test.ts` — `formatReminderDue` round-tripped against `parseVoiceTime` output, proving no stored-vs-displayed drift. `reminders.test.ts` — proves `createReminderTask` never sets `created_at` on the outgoing draft and returns it unaltered. `api/qstash-reminder.test.js` — new `describe("qstash-reminder default handler — 'schedule' action")`: a QStash publish failure returns `success:false` and never persists a `qstash_message_id` (mutation-spot-checked: inverted the `!response.ok` check, confirmed the success-path test fails with 500 instead of 200, reverted, confirmed green again). `src/lib/qstash-reminder.test.ts` (new file) — proves the browser-side `scheduleReminderPush`/`cancelReminderPush`/`rescheduleReminderPush` fire-and-log contract never throws on API or network failure. `canonical-paths.test.ts` — new test proving the recurring-automation runner (`api/process-delegation-escalations.js`'s `runAutomationsCore`/`processAutomation`) never imports or calls `createReminderTask`, using its own local `createTask()` REST helper instead.
+
+Protect: `formatReminderDue`'s direct `new Date(value)` read with no re-derivation; `createReminderTask` never touching `created_at`; the qstash-reminder handler's `schedule` action never persisting a message ID on a failed/incomplete QStash publish; the recurring runner staying structurally separate from `createReminderTask`. Files to add to `package.json`'s `test:carson-protected` script (not edited here — applied once during integration): `src/lib/reminder-time.test.ts`, `src/lib/reminders.test.ts`, `src/lib/qstash-reminder.test.ts`, `src/lib/canonical-paths.test.ts`, `api/qstash-reminder.test.js`, `src/components/home/ElevenLabsAgentWidget.reminder-replacement.test.ts`, `src/lib/parse-voice-time.test.ts`. Reopen only on a reproduced production regression.
+
 ### Inbox Review V1
 
 Status: complete and stable.
@@ -145,6 +153,14 @@ Protect:
 - Exact product text preservation
 
 Routine invalid proof should return to the worker for correction. The owner should only be interrupted for repeated invalid proof, uncertainty, or a real decision.
+
+### Alternative review (substitute_review) — golden regression contract (LOCKED, branch `test/alternative-review-golden-contract`)
+
+Status: test-only stabilization, no runtime file changed. Protects the Approve Alternative / Reject Alternative / Custom Instruction decision lifecycle: `quality_review_status: "substitute_review"` as the correct trigger state; the Needs You decision surface (`isQualitySubstituteReviewStatus`/`resolveQualityLifecycle` → `needs_owner_decision`); Approve using `reserve_rejected_alternative`/`complete_custom_instruction`-style approval RPCs distinct from Reject's own `reserve_rejected_alternative`/`complete_rejected_alternative` pair; Custom Instruction text reaching the outbound WhatsApp payload verbatim; no cross-task bleed between simultaneous `substitute_review` tasks; exactly-once execution via the claim RPC's `status: 'completed'` short-circuit; no duplicate WhatsApp send on retry; failure paths (missing auth, wrong owner, Meta rejection, network error) never reporting success; and the correct final task state per decision (`completed` / `waiting_for_confirmation` / `proof_submitted`).
+
+New files: `src/lib/alternative-review-golden-contract.test.ts` (client, 11 tests) and `api/alternative-review-golden-contract.test.js` (server, 11 tests) — real calls into `api/task-confirm.js`'s `handlePost`/`handleOwnerDecision`, `src/lib/quality-lifecycle.ts`, and `src/lib/quality-substitute-decision.ts`, with only Supabase REST, the Meta Graph API, and the Anthropic API mocked. Deliberate-failure proof: inverted the Reject/Approve RPC branch mapping in `task-confirm.js`, confirmed the Reject-path test failed precisely, reverted, confirmed green again. Part of `npm run test:carson-protected`.
+
+Protect: the RPC-pair separation between Approve/Reject/Custom Instruction; the exactly-once claim short-circuit; the failure-never-claims-success contract on both the client helper and the server handler. Reopen only on a reproduced production regression.
 
 ### Protected photo workflow — golden regression contract (LOCKED, baseline 447a685)
 
