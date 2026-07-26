@@ -1295,12 +1295,20 @@ async function uploadImageToMeta({ accessToken, phoneNumberId, imageUrl }) {
  * that copy). Returns storage paths in sort_order so photos arrive in the
  * order they were attached. Never throws — an empty array degrades to
  * "no additional photos sent", the same as before this fix existed.
+ *
+ * file_name=is.null is required: task_attachments is shared with Proof
+ * Photo V2 (api/task-confirm.js), which stores the assignee's own submitted
+ * proof photos in the same table with file_name set to the literal string
+ * 'proof' (reference-photo rows never set file_name — see task-confirm.js's
+ * own file_name=is.null / file_name=eq.proof split). Without this filter, a
+ * task with proof already submitted would send the assignee's own proof
+ * photos back to them mixed in with the owner's original reference photos.
  */
 async function fetchTaskAttachmentPaths({ supabaseUrl, serviceKey, taskId }) {
   if (!taskId || !supabaseUrl || !serviceKey) return [];
   try {
     const response = await fetch(
-      `${supabaseUrl}/rest/v1/task_attachments?task_id=eq.${encodeURIComponent(taskId)}&select=storage_path&order=sort_order.asc`,
+      `${supabaseUrl}/rest/v1/task_attachments?task_id=eq.${encodeURIComponent(taskId)}&file_name=is.null&select=storage_path&order=sort_order.asc`,
       {
         headers: {
           apikey: serviceKey,
