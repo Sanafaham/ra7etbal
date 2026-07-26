@@ -1069,6 +1069,84 @@ describe("executeDelegationFromText image pipeline", () => {
       expect(result).toContain("Christopher has it");
     });
 
+    it("message/attachment consistency: the outgoing WhatsApp text never claims a photo is attached unless one actually is, in either direction", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+
+      // Direction 1 — withheld: suggestedMessage has no photo reference, and
+      // savePending's imagePathsByTaskId correctly has no entry for the task
+      // (mirrors what real save.ts does when imageFiles was empty).
+      const groceriesItem: ExtractedItem = {
+        id: "item-groceries",
+        type: "delegation",
+        description: "buy groceries",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Please buy groceries.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      extractItemsMock.mockResolvedValue({ extracted: [groceriesItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([groceriesItem]));
+      deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+      await executeDelegationFromText("Ask Christopher to buy groceries", {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people: [person("Christopher")],
+        tasks: [],
+        imageFile: new File(["note-bytes"], "note.jpg", { type: "image/jpeg" }),
+      });
+
+      const withheldCall = deliverTaskMessageMock.mock.calls[0][0];
+      expect(withheldCall.imagePath).toBeNull();
+      expect(withheldCall.messageText).not.toMatch(/photo|picture|image/i);
+
+      // Direction 2 — forwarded: suggestedMessage does reference the photo,
+      // and savePending's imagePathsByTaskId has a real entry for the task —
+      // the text and the actual attachment agree.
+      vi.clearAllMocks();
+      const pizzaItem: ExtractedItem = {
+        id: "item-pizza",
+        type: "delegation",
+        description: "make the pizza",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Make the pizza shown in the attached photo for dinner.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      extractItemsMock.mockResolvedValue({ extracted: [pizzaItem], summary: "" });
+      savePendingMock.mockResolvedValue({
+        ...saveResultForItems([pizzaItem]),
+        tasks: saveResultForItems([pizzaItem]).tasks.map((t) => ({
+          ...t,
+          image_path: "task-images/user-1/task-1/pizza.jpg",
+        })),
+        imagePathsByTaskId: new Map([["task-1", "task-images/user-1/task-1/pizza.jpg"]]),
+      });
+      deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+      await executeDelegationFromText("Tell Christopher to make the pizza shown in the photo", {
+        displayName: "Sana",
+        userId: "user-1",
+        dailyBrief: "",
+        people: [person("Christopher")],
+        tasks: [],
+        imageFile: new File(["pizza-bytes"], "pizza.jpg", { type: "image/jpeg" }),
+      });
+
+      const forwardedCall = deliverTaskMessageMock.mock.calls[0][0];
+      expect(forwardedCall.imagePath).toBe("task-images/user-1/task-1/pizza.jpg");
+      expect(forwardedCall.messageText).toMatch(/photo/i);
+    });
+
     it("[2] pizza photo: preserves image attachment when the instruction names the photographed subject as the task", async () => {
       const { executeDelegationFromText } = await import("./text-carson");
       const extractedItem: ExtractedItem = {
@@ -1102,6 +1180,56 @@ describe("executeDelegationFromText image pipeline", () => {
 
       const imageMapArg = savePendingMock.mock.calls[0][4] as Map<string, File>;
       expect(imageMapArg?.get("item-pizza")).toBe(pizzaPhoto);
+    });
+
+    // Regression (2026-07-26): confirmed production bug introduced by the
+    // per-item scoping fix above. "Tell Christopher to make the pizza shown
+    // in the photo" produced the staff message "Make the pizza shown in the
+    // attached photo for dinner." with NO photo attached — Christopher
+    // replied "Which pizza Carson. There is no attached photo." The guard
+    // only recognized a bare demonstrative ("this pizza"), not this
+    // non-demonstrative "shown in the photo" phrasing that a real extraction
+    // model naturally produces, and only checked item.description, not the
+    // fuller suggestedMessage that actually became the sent text.
+    it("[2b] pizza reference via natural language (\"shown in the attached photo\"): preserves image attachment and reproduces the exact production text", async () => {
+      const { executeDelegationFromText } = await import("./text-carson");
+      const extractedItem: ExtractedItem = {
+        id: "item-pizza-photo",
+        type: "delegation",
+        // Realistic extraction output: a terse description but a fuller,
+        // naturally-worded suggestedMessage — exactly what reached
+        // Christopher in the reproduced production incident.
+        description: "make the pizza for dinner",
+        assignedTo: "Christopher",
+        dueAt: null,
+        dueText: null,
+        suggestedMessage: "Make the pizza shown in the attached photo for dinner.",
+        personalNote: null,
+        needsPerson: false,
+        needsClarification: false,
+        clarificationQuestion: null,
+      };
+      const pizzaPhoto = new File(["pizza-bytes"], "pizza.jpg", { type: "image/jpeg" });
+
+      extractItemsMock.mockResolvedValue({ extracted: [extractedItem], summary: "" });
+      savePendingMock.mockResolvedValue(saveResultForItems([extractedItem]));
+      deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+      await executeDelegationFromText(
+        "Tell Christopher to make the pizza shown in the photo",
+        {
+          displayName: "Sana",
+          userId: "user-1",
+          dailyBrief: "",
+          people: [person("Christopher")],
+          tasks: [],
+          imageFile: pizzaPhoto,
+          imageDescription: "A pizza with mushroom and olive toppings.",
+        },
+      );
+
+      const imageMapArg = savePendingMock.mock.calls[0][4] as Map<string, File>;
+      expect(imageMapArg?.get("item-pizza-photo")).toBe(pizzaPhoto);
     });
 
     it("[3] explicit \"send this photo\": preserves image attachment", async () => {

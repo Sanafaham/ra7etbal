@@ -175,14 +175,20 @@ export async function executeDelegationFromText(
   // still shows on the task card even when there's nothing to send over
   // WhatsApp.
   //
-  // Privacy guard: authorization is scoped to each item's OWN text (item.
-  // description/personalNote), not the whole raw instruction — "Ask
-  // Christopher to buy groceries, and ask Grace to make this pizza" must
-  // only forward the photo to Grace, never to Christopher just because a
-  // visual reference exists somewhere else in the same turn. See
+  // Privacy guard: authorization is scoped to each item's OWN text, not the
+  // whole raw instruction — "Ask Christopher to buy groceries, and ask Grace
+  // to make this pizza" must only forward the photo to Grace, never to
+  // Christopher just because a visual reference exists somewhere else in the
+  // same turn. Checks description/personalNote AND suggestedMessage — the
+  // actual outgoing WhatsApp text (content ?? description, see save.ts) is
+  // often the fuller sentence ("Make the pizza shown in the attached photo
+  // for dinner.") and must not be skipped just because the terser
+  // description omitted the same visual reference. See
   // image-forwarding-guard.ts.
   const imageAuthorized = (item: ExtractedItem) =>
-    shouldForwardAttachedImage([item.description, item.personalNote].filter(Boolean).join(" "));
+    shouldForwardAttachedImage(
+      [item.description, item.personalNote, item.suggestedMessage].filter(Boolean).join(" "),
+    );
   const imageFiles = new Map<string, File>();
   if (resolvedFiles.length > 0) {
     const authorizedItem =
@@ -217,13 +223,15 @@ export async function executeDelegationFromText(
   const attachmentCountByTaskId = new Map<string, number>();
   const attachmentFailedTaskIds = new Set<string>();
   if (resolvedFiles.length > 1) {
-    // Scoped to this task's own description, same reasoning as the
-    // single-image assignment above.
-    const firstDelegationTask = saved.tasks.find(
-      (t) =>
-        (t.type === "delegation" || t.type === "followup") &&
-        shouldForwardAttachedImage(t.description),
-    );
+    // Scoped to this task's own description AND its actual outgoing message
+    // content, same reasoning as the single-image assignment above.
+    const firstDelegationTask = saved.tasks.find((t) => {
+      if (t.type !== "delegation" && t.type !== "followup") return false;
+      const relatedMessage = saved.messages.find((m) => m.task_id === t.id);
+      return shouldForwardAttachedImage(
+        [t.description, relatedMessage?.content].filter(Boolean).join(" "),
+      );
+    });
     if (firstDelegationTask && context.userId) {
       try {
         const count = await saveTaskAttachments(
