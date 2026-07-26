@@ -232,7 +232,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       expect.objectContaining({
         taskDescription: 'plate the chicken',
         delegationMessage: 'Please plate the chicken like the photo.',
-        referenceImageBase64: 'base64-bytes',
+        referenceImagesBase64: ['base64-bytes'],
         proofImagesBase64: ['base64-bytes'],
       }),
     );
@@ -259,6 +259,125 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
           String(options?.method || '').toUpperCase() === 'DELETE',
       ),
     ).toBe(false);
+  });
+
+  // Regression (2026-07-26): confirmed production bug — a task with 2 owner-
+  // attached reference photos had only the first (tasks.image_path) sent
+  // into Quality Intelligence review. The second reference photo
+  // (task_attachments, file_name IS NULL, sort_order 1) was never loaded, so
+  // the model judged all submitted proof photos against one incomplete
+  // reference and produced a false CORRECTION_REQUIRED. Fix: load every
+  // file_name IS NULL row for the task, ordered by sort_order.
+  it('2 reference photos: both are downloaded and passed to review, not just tasks.image_path', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Both dishes match.' });
+    downloadImageAsBase64Mock
+      .mockReset()
+      .mockResolvedValueOnce('ref-salad-base64')
+      .mockResolvedValueOnce('ref-second-dish-base64')
+      .mockResolvedValueOnce('proof-salad-base64')
+      .mockResolvedValueOnce('proof-second-dish-base64');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'make these for dinner, referring to the attached photos.',
+        assigned_to: 'Christopher',
+        image_path: 'task-images/u/t/attachments/0.jpg',
+        attachment_count: 2,
+        proof_image_path: null,
+        quality_review_status: null,
+        quality_review_cycle_count: 0,
+      }]))
+      // task_attachments reference lookup (file_name IS NULL) — the fix
+      .mockResolvedValueOnce(jsonResponse([
+        { storage_path: 'task-images/u/t/attachments/0.jpg' },
+        { storage_path: 'task-images/u/t/attachments/1.jpg' },
+      ]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Make these for dinner.' }])) // messages lookup
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments (proof replace)
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments (proof replace)
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        taskId: 'task-1',
+        proofImagePaths: ['task-images/u/t/proof/0.jpg', 'task-images/u/t/proof/1.jpg'],
+      }),
+      res,
+    );
+
+    // The task_attachments reference query used the same file_name=is.null
+    // filter as the GET/display handler, ordered by sort_order.
+    const referenceQuery = fetchMock.mock.calls.find(
+      ([url]) => String(url).includes('/rest/v1/task_attachments') && String(url).includes('file_name=is.null'),
+    );
+    expect(referenceQuery).toBeTruthy();
+    expect(String(referenceQuery[0])).toContain('order=sort_order.asc');
+
+    expect(downloadImageAsBase64Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ imagePath: 'task-images/u/t/attachments/0.jpg' }),
+    );
+    expect(downloadImageAsBase64Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ imagePath: 'task-images/u/t/attachments/1.jpg' }),
+    );
+    expect(runQualityReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        referenceImagesBase64: ['ref-salad-base64', 'ref-second-dish-base64'],
+        proofImagesBase64: ['proof-salad-base64', 'proof-second-dish-base64'],
+      }),
+    );
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+  });
+
+  it('legacy fallback: no task_attachments reference rows falls back to tasks.image_path alone (attachment_count 0)', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Matches.' });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1',
+        user_id: 'user-1',
+        status: 'pending',
+        description: 'plate the chicken',
+        assigned_to: 'Christopher',
+        image_path: 'task-images/u/t/photo.jpg',
+        attachment_count: 0,
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken.' }])) // messages lookup
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments (proof replace)
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments (proof replace)
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }),
+      res,
+    );
+
+    // No task_attachments GET at all — attachment_count <= 0 skips the query
+    // entirely and goes straight to tasks.image_path, exactly as before this
+    // fix for the (still overwhelmingly common) single-reference-photo case.
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, options]) =>
+          String(url).includes('/rest/v1/task_attachments') &&
+          (!options || String(options?.method || 'GET').toUpperCase() === 'GET'),
+      ),
+    ).toBe(false);
+    expect(downloadImageAsBase64Mock).toHaveBeenCalledWith(
+      expect.objectContaining({ imagePath: 'task-images/u/t/photo.jpg' }),
+    );
+    expect(runQualityReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({ referenceImagesBase64: ['base64-bytes'] }),
+    );
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
   });
 
   it('Custom Instruction source of truth: "get two Turquoise" overrides the original Silver target and completes with one confirmed owner push', async () => {
@@ -307,7 +426,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(runQualityReviewMock).toHaveBeenCalledWith(expect.objectContaining({
       taskDescription: 'Get two TEREA Turquoise.',
       delegationMessage: 'Get two TEREA Turquoise.',
-      referenceImageBase64: null,
+      referenceImagesBase64: [],
       proofImagesBase64: ['proof-turquoise-1', 'proof-turquoise-2'],
     }));
     expect(downloadImageAsBase64Mock).toHaveBeenCalledTimes(2);
@@ -750,11 +869,11 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls[9][1].method).toBe('PATCH');
     expect(runQualityReviewMock).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ referenceImageBase64: 'ref-salad', proofImagesBase64: ['proof-pizza'] }),
+      expect.objectContaining({ referenceImagesBase64: ['ref-salad'], proofImagesBase64: ['proof-pizza'] }),
     );
     expect(runQualityReviewMock).toHaveBeenNthCalledWith(
       2,
-      expect.objectContaining({ referenceImageBase64: 'ref-salad', proofImagesBase64: ['proof-salad'] }),
+      expect.objectContaining({ referenceImagesBase64: ['ref-salad'], proofImagesBase64: ['proof-salad'] }),
     );
 
     const secondPatchBody = JSON.parse(fetchMock.mock.calls[11][1].body);
@@ -932,7 +1051,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       worker_reply: null,
     });
     expect(runQualityReviewMock).toHaveBeenCalledWith(
-      expect.objectContaining({ referenceImageBase64: 'ref-salad', proofImagesBase64: ['fresh-salad-proof'] }),
+      expect.objectContaining({ referenceImagesBase64: ['ref-salad'], proofImagesBase64: ['fresh-salad-proof'] }),
     );
     const approvedPatchBody = JSON.parse(fetchMock.mock.calls[3][1].body);
     expect(approvedPatchBody.status).toBe('done');

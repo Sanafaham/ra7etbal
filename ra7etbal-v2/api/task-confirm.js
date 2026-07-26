@@ -454,13 +454,22 @@ async function handlePost(req, res) {
       const reviewDelegationMessage = activeCustomInstruction || null;
 
       step = 'load_review_images';
-      const [delegationMessage, referenceImageBase64, proofImagesBase64] = await Promise.all([
+      // Same attachment_count > 0 gate the GET handler already uses (see
+      // attachmentUrls above) — only the multi-reference-photo case needs
+      // the extra task_attachments query; a single-reference task goes
+      // straight to task.image_path with no additional round trip.
+      const referenceImagePaths = activeCustomInstruction
+        ? []
+        : task.attachment_count > 0
+          ? await loadReferenceImagePaths({ supabaseUrl, headers, taskId, fallbackImagePath: task.image_path })
+          : (task.image_path ? [task.image_path] : []);
+      const [delegationMessage, referenceImagesBase64, proofImagesBase64] = await Promise.all([
         reviewDelegationMessage
           ? Promise.resolve(reviewDelegationMessage)
           : fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }),
-        activeCustomInstruction
-          ? Promise.resolve(null)
-          : downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath: task.image_path }),
+        Promise.all(
+          referenceImagePaths.map((imagePath) => downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath })),
+        ),
         Promise.all(
           proofImagePaths.map((imagePath) => downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath })),
         ),
@@ -471,7 +480,7 @@ async function handlePost(req, res) {
         apiKey,
         taskDescription: reviewTaskDescription,
         delegationMessage,
-        referenceImageBase64,
+        referenceImagesBase64,
         proofImagesBase64,
         workerReply,
       });
@@ -1142,6 +1151,39 @@ async function clearPreviousQualityReviewForFreshProof({ supabaseUrl, headers, t
       }),
     },
   );
+}
+
+/**
+ * Confirmed production bug: a task with 2 owner-attached reference photos
+ * had only the first (tasks.image_path) sent into Quality Intelligence — the
+ * second reference photo (task_attachments, file_name IS NULL, sort_order 1)
+ * was never loaded, so the model judged all submitted proof photos against
+ * one incomplete reference and produced a false CORRECTION_REQUIRED.
+ *
+ * Returns every reference-photo storage path for the task, ordered by
+ * sort_order — the same file_name=is.null query the GET handler already uses
+ * to build attachmentUrls for display. Falls back to [fallbackImagePath]
+ * only when no task_attachments reference rows exist (single-photo tasks,
+ * and tasks created before Multi-Attachment Task V1).
+ */
+async function loadReferenceImagePaths({ supabaseUrl, headers, taskId, fallbackImagePath }) {
+  try {
+    const response = await fetch(
+      supabaseUrl + '/rest/v1/task_attachments?task_id=eq.' + encodeURIComponent(taskId) +
+        '&file_name=is.null&order=sort_order.asc&select=storage_path',
+      { headers },
+    );
+    if (response.ok) {
+      const rows = await response.json().catch(() => []);
+      const paths = (Array.isArray(rows) ? rows : [])
+        .map((row) => row.storage_path)
+        .filter(Boolean);
+      if (paths.length > 0) return paths;
+    }
+  } catch {
+    // Falls through to the single-image fallback below.
+  }
+  return fallbackImagePath ? [fallbackImagePath] : [];
 }
 
 export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant }) {

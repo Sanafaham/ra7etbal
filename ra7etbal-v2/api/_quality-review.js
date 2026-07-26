@@ -46,15 +46,20 @@ export async function downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath
   }
 }
 
-function buildReviewPrompt({ taskDescription, delegationMessage, hasReferenceImage, proofImageCount, workerReply }) {
+function buildReviewPrompt({ taskDescription, delegationMessage, referenceImageCount, proofImageCount, workerReply }) {
   const proofLabel = proofImageCount === 1 ? 'a proof photo' : `${proofImageCount} proof photos`;
+  const referenceLabel = referenceImageCount === 1 ? 'A reference image' : `${referenceImageCount} reference images`;
   return `You are Carson, a meticulous quality reviewer for household/work task proof photos.
 
 Task: "${taskDescription}"
 Delegation message sent to the assignee: "${delegationMessage || 'none'}"
 ${workerReply ? `The assignee added this note when submitting proof: "${workerReply}"\n` : ''}${
-  hasReferenceImage
-    ? `A reference image showing what the result should look like is attached first, followed by ${proofLabel} submitted by the assignee.`
+  referenceImageCount > 0
+    ? `${referenceLabel} showing what the result should look like ${referenceImageCount === 1 ? 'is' : 'are'} attached first, followed by ${proofLabel} submitted by the assignee.${
+        referenceImageCount > 1 || proofImageCount > 1
+          ? ' When there is more than one reference image or more than one proof photo, treat each group as a whole: the reference images together show everything that was requested, and the proof photos together show everything that was submitted. Do not assume any specific reference photo corresponds to any specific proof photo by position or order — judge whether the full set of proof photos, taken together, satisfies everything shown across the full set of reference photos.'
+          : ''
+      }`
     : `No reference image was provided for this task. Only ${proofLabel} submitted by the assignee ${proofImageCount === 1 ? 'is' : 'are'} attached. Judge them against the task description and delegation message alone.`
 }
 ${proofImageCount > 1 ? 'Treat all attached proof photos together as one submission — approve only if they collectively satisfy the task.' : ''}
@@ -309,12 +314,13 @@ export async function runQualityReview({
   apiKey,
   taskDescription,
   delegationMessage,
-  referenceImageBase64,
+  referenceImagesBase64,
   proofImagesBase64,
   workerReply,
 }) {
   const fallback = { status: 'uncertain', note: 'Could not complete an automated review — please check manually.' };
 
+  const referenceImages = (Array.isArray(referenceImagesBase64) ? referenceImagesBase64 : []).filter(Boolean);
   const proofImages = (Array.isArray(proofImagesBase64) ? proofImagesBase64 : []).filter(Boolean);
   if (!apiKey || proofImages.length === 0) return fallback;
 
@@ -329,13 +335,13 @@ export async function runQualityReview({
       text: buildReviewPrompt({
         taskDescription,
         delegationMessage,
-        hasReferenceImage: !!referenceImageBase64,
+        referenceImageCount: referenceImages.length,
         proofImageCount: proofImages.length,
         workerReply,
       }),
     },
   ];
-  if (referenceImageBase64) {
+  for (const referenceImageBase64 of referenceImages) {
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: referenceImageBase64 } });
   }
   for (const proofImageBase64 of proofImages) {
