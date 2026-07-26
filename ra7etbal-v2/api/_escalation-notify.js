@@ -14,20 +14,34 @@
  *  - sendMetaMessage / buildOwnerDecisionTemplatePayload /
  *    normalizeWhatsAppPhone (api/send-whatsapp-task.js)
  *
- * Idempotency contract:
- *  - staff_messages.owner_notification_status is the single source of
- *    truth for whether an owner notification has already succeeded. Every
- *    call re-reads it fresh (never trusts a caller-supplied value) — a
- *    duplicate webhook redelivery, a retry after a crash, or a retry after
- *    a prior failure all converge on the same live row.
- *  - claim_escalation_owner_decision (Phase A) is itself idempotent — one
- *    row per staff_message_id — so calling it again on retry never creates
- *    a second escalation and always returns the same deep_link_token.
- *  - Only owner_notification_status='sent' short-circuits before any RPC
- *    or Meta call. 'not_attempted', 'skipped_no_phone', and 'failed' are
- *    all treated as "safe to (re)attempt" — this is what makes a failed
- *    notification explicitly retryable without creating a second
- *    escalation or a second successful send.
+ * Idempotency contract (atomic — see 20260727_staff_escalation_owner_
+ * notification_lease.sql):
+ *  - claim_owner_escalation_notification is the single atomic guard for
+ *    the Meta send itself. It is NOT a check-then-act read — it is a
+ *    row-locked SQL UPDATE that only one concurrent caller can win. Two
+ *    overlapping invocations for the same staff_message_id (e.g. Meta
+ *    redelivering the same webhook while the first attempt is still
+ *    in flight) can never both receive claimed:true, so at most one real
+ *    Meta send ever happens per attempt.
+ *  - Only 'sent' is terminal. 'not_attempted' and 'failed' are directly
+ *    claimable; a 'sending' lease is claimable again only once its
+ *    lease_until has passed (crash/stuck-attempt recovery). A live
+ *    'sending' lease held by a concurrent caller is never claimable.
+ *  - complete_owner_escalation_notification / fail_owner_escalation_
+ *    notification both require the exact live claim_token — a stale token
+ *    from a superseded attempt can never resolve a newer one.
+ *  - claim_escalation_owner_decision (Phase A) remains separately
+ *    idempotent for the escalation *row* itself (one row per
+ *    staff_message_id) — the notification lease above guards the *send*,
+ *    this guards the *escalation record*. Both together are what make a
+ *    retry safe: at most one escalation row, at most one real Meta send.
+ *
+ * Success ordering (independent-review fix): the persistent 'sent' state
+ * is recorded via complete_owner_escalation_notification FIRST — that
+ * write is the idempotency guard itself. markWhatsappDeliveryAccepted
+ * (best-effort bookkeeping in a separate table) runs AFTER, wrapped in its
+ * own try/catch, so a bookkeeping failure can never leave the guard
+ * unwritten and can never cause a resend on retry.
  */
 
 import { findOwnerPhone } from './task-confirm.js';
@@ -35,6 +49,7 @@ import { sendMetaMessage, buildOwnerDecisionTemplatePayload, normalizeWhatsAppPh
 import { beginWhatsappDelivery, markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 
 const OWNER_DECISION_TEMPLATE_NAME = 'ra7etbal_owner_decision';
+const LEASE_SECONDS = 120;
 
 /**
  * @param {object} input
@@ -47,20 +62,37 @@ const OWNER_DECISION_TEMPLATE_NAME = 'ra7etbal_owner_decision';
  * @param {string} deps.supabaseUrl
  * @param {string} deps.serviceKey
  * @param {typeof fetch} [deps.fetchImpl]
- * @returns {Promise<{attempted: boolean, status: 'sent'|'skipped_no_phone'|'failed', reason?: string, escalationId?: string, deepLinkToken?: string, notifiedAt?: string}>}
+ * @returns {Promise<{attempted: boolean, status: 'sent'|'skipped_no_phone'|'failed'|'in_progress', reason?: string, escalationId?: string, deepLinkToken?: string, notifiedAt?: string}>}
  */
 export async function notifyOwnerOfEscalation(input, deps) {
   const fetchImpl = deps.fetchImpl || fetch;
   const { supabaseUrl, serviceKey } = deps;
   const { staffMessageId, userId, taskId, escalationReason, staffName } = input;
 
-  const [current] = await restSelect(
-    supabaseUrl, serviceKey, fetchImpl, 'staff_messages',
-    `id=eq.${encodeURIComponent(staffMessageId)}&user_id=eq.${encodeURIComponent(userId)}&select=owner_notification_status`,
-  );
-  if (current?.owner_notification_status === 'sent') {
-    return { attempted: false, status: 'sent', reason: 'already_sent' };
+  let claim;
+  try {
+    claim = await rpc(supabaseUrl, serviceKey, fetchImpl, 'claim_owner_escalation_notification', {
+      p_id: staffMessageId,
+      p_user_id: userId,
+      p_lease_seconds: LEASE_SECONDS,
+    });
+  } catch (err) {
+    console.error('[escalation-notify] claim_owner_escalation_notification failed', { staffMessageId, error: err?.message || String(err) });
+    return { attempted: false, status: 'failed', reason: 'claim_rpc_failed' };
   }
+
+  if (!claim?.claimed) {
+    // Already sent: treat as success, never resend. A live lease held by a
+    // concurrent caller (this same message, overlapping redelivery): report
+    // truthfully as in-progress — never claim a new successful contact
+    // unless the stored state is genuinely 'sent'.
+    if (claim?.notification_status === 'sent') {
+      return { attempted: false, status: 'sent', reason: 'already_sent' };
+    }
+    return { attempted: false, status: 'in_progress', reason: 'lease_held_elsewhere' };
+  }
+
+  const claimToken = claim.claim_token;
 
   let escalation;
   try {
@@ -71,33 +103,33 @@ export async function notifyOwnerOfEscalation(input, deps) {
     });
   } catch (err) {
     console.error('[escalation-notify] claim_escalation_owner_decision failed', { staffMessageId, error: err?.message || String(err) });
-    await markStaffMessageNotification(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, 'failed');
+    await failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, claimToken, 'escalation_claim_failed');
     return { attempted: true, status: 'failed', reason: 'claim_failed' };
   }
 
   const deepLinkToken = escalation?.deep_link_token;
   const escalationId = escalation?.id;
   if (!deepLinkToken || !escalationId) {
-    await markStaffMessageNotification(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, 'failed');
+    await failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, claimToken, 'no_deep_link_token');
     return { attempted: true, status: 'failed', reason: 'no_deep_link_token' };
   }
 
   const ownerPhone = await findOwnerPhone({ supabaseUrl, serviceKey, userId });
   if (!ownerPhone) {
-    await markStaffMessageNotification(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, 'skipped_no_phone');
+    await failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, claimToken, 'no_owner_phone_on_file');
     return { attempted: true, status: 'skipped_no_phone', escalationId, deepLinkToken };
   }
 
   const normalizedPhone = normalizeWhatsAppPhone(ownerPhone);
   if (!normalizedPhone) {
-    await markStaffMessageNotification(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, 'skipped_no_phone');
+    await failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, claimToken, 'invalid_owner_phone');
     return { attempted: true, status: 'skipped_no_phone', escalationId, deepLinkToken, reason: 'invalid_phone' };
   }
 
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!accessToken || !phoneNumberId) {
-    await markStaffMessageNotification(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, 'failed');
+    await failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, claimToken, 'whatsapp_not_configured');
     return { attempted: true, status: 'failed', reason: 'not_configured', escalationId, deepLinkToken };
   }
 
@@ -133,69 +165,75 @@ export async function notifyOwnerOfEscalation(input, deps) {
     await markWhatsappDeliveryFailed({
       supabaseUrl, serviceKey, deliveryId, failureStage: 'network',
       reason: err instanceof Error ? err.message : String(err), templateName,
-    });
-    await markStaffMessageNotification(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, 'failed');
+    }).catch(() => {});
+    await failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, claimToken, 'network_error');
     return { attempted: true, status: 'failed', reason: 'network_error', escalationId, deepLinkToken };
   }
 
   if (!sendResult.ok) {
     const failure = getMetaFailure(sendResult);
-    await markWhatsappDeliveryFailed({ supabaseUrl, serviceKey, deliveryId, failureStage: 'meta_api', ...failure, templateName });
-    await markStaffMessageNotification(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, 'failed');
+    await markWhatsappDeliveryFailed({ supabaseUrl, serviceKey, deliveryId, failureStage: 'meta_api', ...failure, templateName }).catch(() => {});
+    await failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, claimToken, 'meta_rejected');
     return { attempted: true, status: 'failed', reason: 'meta_rejected', escalationId, deepLinkToken };
   }
 
-  await markWhatsappDeliveryAccepted({
-    supabaseUrl, serviceKey, deliveryId, metaMessageId: sendResult.messageId, templateName,
-    metadata: { escalation_id: escalationId, staff_message_id: staffMessageId },
-  });
+  // Meta genuinely accepted the message. Persist the terminal 'sent' state
+  // FIRST — this write is the idempotency guard itself, so it must land
+  // before any non-critical bookkeeping, not after.
+  let completed;
+  try {
+    completed = await rpc(supabaseUrl, serviceKey, fetchImpl, 'complete_owner_escalation_notification', {
+      p_id: staffMessageId,
+      p_user_id: userId,
+      p_claim_token: claimToken,
+    });
+  } catch (err) {
+    // Meta already accepted the send — never report this as a failed
+    // contact. Log loudly for follow-up; the lease will still expire and
+    // become reclaimable, which is an accepted, narrow residual risk of
+    // any lease-based design (matches the same tradeoff already accepted
+    // for claim_staff_response_delivery / claim_escalation_answer_delivery).
+    console.error('[escalation-notify] complete_owner_escalation_notification failed after a real Meta acceptance', {
+      staffMessageId, error: err?.message || String(err),
+    });
+    return { attempted: true, status: 'sent', escalationId, deepLinkToken, notifiedAt: new Date().toISOString(), reason: 'sent_but_not_recorded' };
+  }
 
-  const notifiedAt = new Date().toISOString();
-  await markStaffMessageNotification(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, 'sent', notifiedAt);
-  return { attempted: true, status: 'sent', escalationId, deepLinkToken, notifiedAt };
+  // Delivery bookkeeping runs AFTER the guard is safely recorded, and its
+  // own failure must never undo the recorded 'sent' state or cause a resend.
+  try {
+    await markWhatsappDeliveryAccepted({
+      supabaseUrl, serviceKey, deliveryId, metaMessageId: sendResult.messageId, templateName,
+      metadata: { escalation_id: escalationId, staff_message_id: staffMessageId },
+    });
+  } catch (err) {
+    console.warn('[escalation-notify] delivery acceptance bookkeeping failed (non-fatal, sent state already recorded)', {
+      staffMessageId, deliveryId, error: err?.message || String(err),
+    });
+  }
+
+  return { attempted: true, status: 'sent', escalationId, deepLinkToken, notifiedAt: completed.owner_notified_at };
+}
+
+async function failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, claimToken, reason) {
+  try {
+    await rpc(supabaseUrl, serviceKey, fetchImpl, 'fail_owner_escalation_notification', {
+      p_id: staffMessageId,
+      p_user_id: userId,
+      p_claim_token: claimToken,
+      p_error: reason,
+    });
+  } catch (err) {
+    console.warn('[escalation-notify] fail_owner_escalation_notification failed (non-fatal)', {
+      staffMessageId, reason, error: err?.message || String(err),
+    });
+  }
 }
 
 function buildEscalationMessage(staffName, escalationReason) {
   const reason = String(escalationReason || 'needs your decision').trim();
   const withName = staffName ? `${staffName}: ${reason}` : reason;
   return withName.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
-}
-
-async function markStaffMessageNotification(supabaseUrl, serviceKey, fetchImpl, staffMessageId, userId, status, notifiedAt) {
-  const body = { owner_notification_status: status };
-  if (notifiedAt) body.owner_notified_at = notifiedAt;
-  try {
-    const response = await fetchImpl(
-      `${supabaseUrl}/rest/v1/staff_messages?id=eq.${encodeURIComponent(staffMessageId)}&user_id=eq.${encodeURIComponent(userId)}`,
-      {
-        method: 'PATCH',
-        headers: {
-          apikey: serviceKey,
-          Authorization: `Bearer ${serviceKey}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal',
-        },
-        body: JSON.stringify(body),
-      },
-    );
-    if (!response.ok) {
-      const details = await response.text().catch(() => '');
-      console.warn('[escalation-notify] owner_notification_status update failed (non-fatal)', { staffMessageId, status, details });
-    }
-  } catch (err) {
-    console.warn('[escalation-notify] owner_notification_status update threw (non-fatal)', {
-      staffMessageId, status, error: err?.message || String(err),
-    });
-  }
-}
-
-async function restSelect(supabaseUrl, serviceKey, fetchImpl, table, query) {
-  const response = await fetchImpl(`${supabaseUrl}/rest/v1/${table}?${query}`, {
-    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
-  });
-  if (!response.ok) throw new Error(`${table}_lookup_failed`);
-  const rows = await response.json().catch(() => []);
-  return Array.isArray(rows) ? rows : [];
 }
 
 async function rpc(supabaseUrl, serviceKey, fetchImpl, name, args) {

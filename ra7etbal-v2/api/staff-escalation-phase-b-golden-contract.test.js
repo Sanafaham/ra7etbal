@@ -10,12 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * contracts this session:
  *
  *  - "notifyOwnerOfEscalation" — the real function from
- *    api/_escalation-notify.js, calling the real claim_escalation_owner_
- *    decision RPC shape, the real findOwnerPhone, the real
- *    buildOwnerDecisionTemplatePayload — only true I/O boundaries mocked
- *    (global fetch for Supabase REST/RPC, sendMetaMessage and the whole
- *    _whatsapp-delivery.js bookkeeping module, both already covered by
- *    their own test suites elsewhere).
+ *    api/_escalation-notify.js, calling the real claim_owner_escalation_
+ *    notification / complete_.../fail_... lease RPCs, the real
+ *    claim_escalation_owner_decision RPC shape, the real findOwnerPhone,
+ *    the real buildOwnerDecisionTemplatePayload — only true I/O boundaries
+ *    mocked (global fetch for Supabase REST/RPC, sendMetaMessage and the
+ *    whole _whatsapp-delivery.js bookkeeping module, both already covered
+ *    by their own test suites elsewhere).
  *
  *  - "handleInboundStaffMessage" — the real function from
  *    api/whatsapp-webhook.js, proving the Phase B hook is wired at the
@@ -23,6 +24,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *    processStaffMessage and notifyOwnerOfEscalation mocked (both have
  *    their own dedicated correctness coverage; this layer's job is to
  *    prove the wiring between them, not re-prove their internals).
+ *
+ * Post-independent-review addition (blocking defects #1/#2): the
+ * check-then-act owner_notification_status read/write is replaced by an
+ * atomic claim/complete/fail lease (claim_owner_escalation_notification /
+ * complete_.../fail_...), and the success ordering now records the
+ * persistent 'sent' state before the best-effort delivery-acceptance
+ * bookkeeping. Layer 1 below includes dedicated concurrency/race tests
+ * proving the client correctly respects the atomic claim's result, and a
+ * deliberate-failure proof (see the end of this file's accompanying
+ * commit) removing the atomic claim and showing the concurrency test then
+ * fails.
  */
 
 // ── Layer 1: notifyOwnerOfEscalation (real implementation) ────────────────
@@ -60,6 +72,11 @@ const USER_A = 'owner-a';
 const MSG_A = 'staff-msg-a';
 const ESCALATION_A = { id: 'escalation-a', deep_link_token: 'aaaaaaaa-1111-4111-8111-111111111111', status: 'open' };
 
+// claim_owner_escalation_notification's RETURNS TABLE shape.
+function claimResponse({ claimed, claimToken = null, status }) {
+  return jsonResponse([{ message_id: MSG_A, claimed, claim_token: claimToken, notification_status: status }]);
+}
+
 beforeEach(() => {
   vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'test-access-token');
   vi.stubEnv('WHATSAPP_PHONE_NUMBER_ID', 'phone-number-id-1');
@@ -76,12 +93,12 @@ afterEach(() => {
 });
 
 describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries', () => {
-  it('[1] a fresh escalating outcome claims exactly one decision row with the correct staff_message_id/user_id/task_id', async () => {
+  it('[1] a fresh escalating outcome claims the notification lease, then exactly one decision row, with correct RPC args', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'not_attempted' }])) // restSelect current status
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' })) // claim_owner_escalation_notification
       .mockResolvedValueOnce(jsonResponse(ESCALATION_A)) // claim_escalation_owner_decision
       .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }])) // findOwnerPhone
-      .mockResolvedValueOnce(jsonResponse({})); // final PATCH owner_notification_status='sent'
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'sent', owner_notified_at: '2026-07-27T00:00:00.000Z' })); // complete_owner_escalation_notification
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfEscalation(
@@ -93,21 +110,25 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     expect(result.escalationId).toBe('escalation-a');
     expect(result.deepLinkToken).toBe('aaaaaaaa-1111-4111-8111-111111111111');
 
-    const claimCall = fetchMock.mock.calls[1];
-    expect(claimCall[0]).toContain('/rpc/claim_escalation_owner_decision');
-    const claimBody = JSON.parse(claimCall[1].body);
-    expect(claimBody).toEqual({ p_staff_message_id: MSG_A, p_user_id: USER_A, p_task_id: 'task-1' });
+    const claimLeaseCall = fetchMock.mock.calls[0];
+    expect(claimLeaseCall[0]).toContain('/rpc/claim_owner_escalation_notification');
+    expect(JSON.parse(claimLeaseCall[1].body)).toEqual({ p_id: MSG_A, p_user_id: USER_A, p_lease_seconds: 120 });
+
+    const claimEscalationCall = fetchMock.mock.calls[1];
+    expect(claimEscalationCall[0]).toContain('/rpc/claim_escalation_owner_decision');
+    expect(JSON.parse(claimEscalationCall[1].body)).toEqual({ p_staff_message_id: MSG_A, p_user_id: USER_A, p_task_id: 'task-1' });
   });
 
-  it('[2] calling notifyOwnerOfEscalation twice reuses the same escalation and sends Meta only once (idempotent on already-sent)', async () => {
+  it('[2] calling notifyOwnerOfEscalation twice sequentially sends Meta only once (idempotent on already-sent)', async () => {
     const fetchMock = vi.fn()
       // First call: not yet attempted -> full send path.
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'not_attempted' }]))
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
       .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
-      .mockResolvedValueOnce(jsonResponse({}))
-      // Second call: already sent -> short-circuits before any RPC/Meta call.
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'sent' }]));
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'sent', owner_notified_at: '2026-07-27T00:00:00.000Z' }))
+      // Second call: the lease claim itself reports the row already sent —
+      // short-circuits before any further RPC or Meta call.
+      .mockResolvedValueOnce(claimResponse({ claimed: false, status: 'sent' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const args = { staffMessageId: MSG_A, userId: USER_A, taskId: 'task-1', escalationReason: 'Oven broken', staffName: 'Christopher' };
@@ -117,15 +138,61 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     expect(first.status).toBe('sent');
     expect(second).toEqual({ attempted: false, status: 'sent', reason: 'already_sent' });
     expect(sendMetaMessageMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledTimes(5); // 4 for the first call + 1 status check for the second
+    expect(fetchMock).toHaveBeenCalledTimes(5); // 4 for the first call + 1 lease-claim check for the second
   });
 
-  it('[3][4] owner phone found and Meta accepts: status sent, owner_notified_at set only in the acceptance PATCH', async () => {
+  it('[concurrent] two overlapping calls for the same staff message result in exactly one Meta send', async () => {
+    // Simulates what the real atomic claim_owner_escalation_notification
+    // RPC would return for two genuinely concurrent redeliveries: only the
+    // first caller's claim wins (claimed:true); the second observes the
+    // row already 'sending' (claimed:false) before either has sent
+    // anything — proven for real against Postgres in
+    // 04_owner_notification_lease_verification.sql's scenario 2. This test
+    // proves the JS client correctly respects that result and never sends
+    // twice, using the deterministic ordering of two `fetch` calls sharing
+    // one mock queue in a single-threaded run.
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'not_attempted' }]))
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'winner-token', status: 'sending' })) // caller 1 wins the claim
+      .mockResolvedValueOnce(claimResponse({ claimed: false, status: 'sending' })) // caller 2 loses — live lease
       .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
-      .mockResolvedValueOnce(jsonResponse({}));
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'sent', owner_notified_at: '2026-07-27T00:00:00.000Z' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const args = { staffMessageId: MSG_A, userId: USER_A, taskId: 'task-1', escalationReason: 'Oven broken', staffName: 'Christopher' };
+    const [resultA, resultB] = await Promise.all([
+      notifyOwnerOfEscalation(args, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY }),
+      notifyOwnerOfEscalation(args, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY }),
+    ]);
+
+    const statuses = [resultA.status, resultB.status].sort();
+    expect(statuses).toEqual(['in_progress', 'sent']);
+    expect(sendMetaMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('[in-progress] a caller that receives a live lease from another attempt never sends and never falsely reports success', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(claimResponse({ claimed: false, status: 'sending' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await notifyOwnerOfEscalation(
+      { staffMessageId: MSG_A, userId: USER_A, taskId: 'task-1', escalationReason: 'Oven broken', staffName: 'Christopher' },
+      { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
+    );
+
+    expect(result.attempted).toBe(false);
+    expect(result.status).toBe('in_progress');
+    expect(result.status).not.toBe('sent');
+    expect(sendMetaMessageMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('[3][4] owner phone found and Meta accepts: status sent, owner_notified_at set only by complete_owner_escalation_notification', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
+      .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'sent', owner_notified_at: '2026-07-27T00:00:00.000Z' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfEscalation(
@@ -134,21 +201,19 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     );
 
     expect(result.status).toBe('sent');
-    expect(result.notifiedAt).toBeTruthy();
+    expect(result.notifiedAt).toBe('2026-07-27T00:00:00.000Z');
 
-    const patchCall = fetchMock.mock.calls[3];
-    expect(patchCall[1].method).toBe('PATCH');
-    const patchBody = JSON.parse(patchCall[1].body);
-    expect(patchBody.owner_notification_status).toBe('sent');
-    expect(patchBody.owner_notified_at).toBe(result.notifiedAt);
+    const completeCall = fetchMock.mock.calls[3];
+    expect(completeCall[0]).toContain('/rpc/complete_owner_escalation_notification');
+    expect(JSON.parse(completeCall[1].body)).toEqual({ p_id: MSG_A, p_user_id: USER_A, p_claim_token: 'lease-token-1' });
   });
 
-  it('[5] missing owner phone: status skipped_no_phone, no Meta call attempted, no false owner-contact claim', async () => {
+  it('[5] missing owner phone: status skipped_no_phone, fails the lease truthfully, no Meta call attempted', async () => {
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'not_attempted' }]))
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
       .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
       .mockResolvedValueOnce(jsonResponse([])) // findOwnerPhone: no "boss" row
-      .mockResolvedValueOnce(jsonResponse({})); // final PATCH skipped_no_phone
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'failed' })); // fail_owner_escalation_notification
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfEscalation(
@@ -158,18 +223,20 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
 
     expect(result.status).toBe('skipped_no_phone');
     expect(sendMetaMessageMock).not.toHaveBeenCalled();
-    const patchBody = JSON.parse(fetchMock.mock.calls[3][1].body);
-    expect(patchBody.owner_notification_status).toBe('skipped_no_phone');
-    expect(patchBody.owner_notified_at).toBeUndefined();
+    const failCall = fetchMock.mock.calls[3];
+    expect(failCall[0]).toContain('/rpc/fail_owner_escalation_notification');
+    const failBody = JSON.parse(failCall[1].body);
+    expect(failBody.p_claim_token).toBe('lease-token-1');
+    expect(failBody.p_error).toBe('no_owner_phone_on_file');
   });
 
   it('[6] Meta rejects the send: status failed, no false success', async () => {
     sendMetaMessageMock.mockResolvedValueOnce({ ok: false, status: 400, metaError: { code: 131047, message: 'Re-engagement message' } });
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'not_attempted' }]))
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
       .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
-      .mockResolvedValueOnce(jsonResponse({}));
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'failed' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfEscalation(
@@ -179,17 +246,17 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
 
     expect(result.status).toBe('failed');
     expect(whatsappDeliveryMocks.markWhatsappDeliveryFailed).toHaveBeenCalledTimes(1);
-    const patchBody = JSON.parse(fetchMock.mock.calls[3][1].body);
-    expect(patchBody.owner_notification_status).toBe('failed');
+    const failBody = JSON.parse(fetchMock.mock.calls[3][1].body);
+    expect(failBody.p_error).toBe('meta_rejected');
   });
 
   it('[7] a thrown network error from sendMetaMessage: status failed, no false success', async () => {
     sendMetaMessageMock.mockRejectedValueOnce(new Error('fetch failed'));
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'not_attempted' }]))
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
       .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
-      .mockResolvedValueOnce(jsonResponse({}));
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'failed' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfEscalation(
@@ -202,19 +269,19 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     expect(whatsappDeliveryMocks.markWhatsappDeliveryFailed).toHaveBeenCalledTimes(1);
   });
 
-  it('[failed delivery may be explicitly retried] a prior failed attempt reuses the same escalation and can succeed on retry', async () => {
-    // First attempt: not_attempted -> Meta rejects -> failed.
+  it('[failed retry] a prior failed attempt is explicitly retryable and can succeed on retry, reusing the same escalation', async () => {
     sendMetaMessageMock.mockResolvedValueOnce({ ok: false, status: 500, metaError: { message: 'temporary' } });
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'not_attempted' }]))
+      // First attempt: claim succeeds, Meta rejects -> failed.
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
       .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
-      .mockResolvedValueOnce(jsonResponse({}))
-      // Retry: status is now 'failed', still not 'sent' -> attempts again, claims the SAME escalation, Meta now accepts.
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'failed' }]))
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'failed' }))
+      // Retry: the lease is claimable again from 'failed', with a fresh token; Meta now accepts.
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-2', status: 'sending' }))
       .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
-      .mockResolvedValueOnce(jsonResponse({}));
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'sent', owner_notified_at: '2026-07-27T00:00:00.000Z' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const args = { staffMessageId: MSG_A, userId: USER_A, taskId: null, escalationReason: 'Needs a decision', staffName: 'Christopher' };
@@ -224,28 +291,94 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     const retry = await notifyOwnerOfEscalation(args, { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY });
     expect(retry.status).toBe('sent');
     expect(retry.escalationId).toBe(ESCALATION_A.id);
-    expect(retry.deepLinkToken).toBe(ESCALATION_A.deep_link_token);
 
-    // Both claim calls targeted the same staff_message_id — no second escalation created.
+    // Both claim_escalation_owner_decision calls targeted the same staff_message_id — no second escalation created.
     const claimBodies = fetchMock.mock.calls
       .filter(([url]) => String(url).includes('/rpc/claim_escalation_owner_decision'))
       .map(([, init]) => JSON.parse(init.body));
     expect(claimBodies).toHaveLength(2);
     expect(claimBodies[0].p_staff_message_id).toBe(MSG_A);
     expect(claimBodies[1].p_staff_message_id).toBe(MSG_A);
+
+    // The retry used a fresh lease token, never the stale first one.
+    const completeCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/complete_owner_escalation_notification'));
+    expect(JSON.parse(completeCall[1].body).p_claim_token).toBe('lease-token-2');
+  });
+
+  it('[stale claim-lease token] complete_owner_escalation_notification rejecting a stale token is handled truthfully, not resent', async () => {
+    // A real stale-token rejection from complete_owner_escalation_notification
+    // only happens after Meta has already genuinely accepted the send (the
+    // function is only called post-acceptance) — so the correct, truthful
+    // behavior is to report 'sent' (a real message went out) while logging
+    // the persistence gap, never to silently resend.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
+      .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
+      .mockResolvedValueOnce(jsonResponse({ message: 'stale_notification_claim', code: '40001' }, false));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await notifyOwnerOfEscalation(
+      { staffMessageId: MSG_A, userId: USER_A, taskId: null, escalationReason: 'Needs a decision', staffName: 'Christopher' },
+      { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
+    );
+
+    expect(sendMetaMessageMock).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('sent');
+    expect(result.reason).toBe('sent_but_not_recorded');
+  });
+
+  it('[stale fail-lease token] fail_owner_escalation_notification rejecting a stale token never crashes the caller', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
+      .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
+      .mockResolvedValueOnce(jsonResponse([])) // no owner phone -> triggers failLease
+      .mockResolvedValueOnce(jsonResponse({ message: 'stale_notification_claim', code: '40001' }, false));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await notifyOwnerOfEscalation(
+      { staffMessageId: MSG_A, userId: USER_A, taskId: null, escalationReason: 'Needs a decision', staffName: 'Christopher' },
+      { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
+    );
+
+    // The stale fail-token rejection is swallowed (non-fatal, logged) —
+    // the caller still gets the truthful skipped_no_phone result rather
+    // than an unhandled rejection.
+    expect(result.status).toBe('skipped_no_phone');
+  });
+
+  it('[bookkeeping-failure-after-sent] a markWhatsappDeliveryAccepted failure after the persistent sent state never causes a resend', async () => {
+    whatsappDeliveryMocks.markWhatsappDeliveryAccepted.mockRejectedValueOnce(new Error('whatsapp_deliveries insert failed'));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
+      .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'sent', owner_notified_at: '2026-07-27T00:00:00.000Z' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await notifyOwnerOfEscalation(
+      { staffMessageId: MSG_A, userId: USER_A, taskId: null, escalationReason: 'Needs a decision', staffName: 'Christopher' },
+      { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
+    );
+
+    // The 'sent' state was already recorded via complete_owner_escalation_notification
+    // BEFORE the bookkeeping call — its failure must not change the outcome.
+    expect(result.status).toBe('sent');
+    expect(result.notifiedAt).toBe('2026-07-27T00:00:00.000Z');
+    expect(sendMetaMessageMock).toHaveBeenCalledTimes(1);
   });
 
   it('[12] no cross-user or cross-staff-message bleed between two independent escalations', async () => {
     const escalationB = { id: 'escalation-b', deep_link_token: 'bbbbbbbb-2222-4222-8222-222222222222', status: 'open' };
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'not_attempted' }]))
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-a', status: 'sending' }))
       .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
-      .mockResolvedValueOnce(jsonResponse({}))
-      .mockResolvedValueOnce(jsonResponse([{ owner_notification_status: 'not_attempted' }]))
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'sent', owner_notified_at: '2026-07-27T00:00:00.000Z' }))
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-b', status: 'sending' }))
       .mockResolvedValueOnce(jsonResponse(escalationB))
       .mockResolvedValueOnce(jsonResponse([{ name: 'Grace', role: 'boss', phone: '+15550000088' }]))
-      .mockResolvedValueOnce(jsonResponse({}));
+      .mockResolvedValueOnce(jsonResponse({ ...escalationB, owner_notification_status: 'sent', owner_notified_at: '2026-07-27T00:01:00.000Z' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const resultA = await notifyOwnerOfEscalation(
@@ -261,15 +394,17 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     expect(resultB.escalationId).toBe('escalation-b');
     expect(resultA.deepLinkToken).not.toBe(resultB.deepLinkToken);
 
-    const claimBodies = fetchMock.mock.calls
+    const leaseClaimBodies = fetchMock.mock.calls
+      .filter(([url]) => String(url).includes('/rpc/claim_owner_escalation_notification'))
+      .map(([, init]) => JSON.parse(init.body));
+    expect(leaseClaimBodies[0]).toEqual({ p_id: 'staff-msg-a', p_user_id: 'owner-a', p_lease_seconds: 120 });
+    expect(leaseClaimBodies[1]).toEqual({ p_id: 'staff-msg-b', p_user_id: 'owner-b', p_lease_seconds: 120 });
+
+    const claimEscalationBodies = fetchMock.mock.calls
       .filter(([url]) => String(url).includes('/rpc/claim_escalation_owner_decision'))
       .map(([, init]) => JSON.parse(init.body));
-    expect(claimBodies[0]).toEqual({ p_staff_message_id: 'staff-msg-a', p_user_id: 'owner-a', p_task_id: 'task-a' });
-    expect(claimBodies[1]).toEqual({ p_staff_message_id: 'staff-msg-b', p_user_id: 'owner-b', p_task_id: 'task-b' });
-
-    const patchCalls = fetchMock.mock.calls.filter(([url, init]) => init?.method === 'PATCH');
-    expect(patchCalls[0][0]).toContain('staff-msg-a');
-    expect(patchCalls[1][0]).toContain('staff-msg-b');
+    expect(claimEscalationBodies[0]).toEqual({ p_staff_message_id: 'staff-msg-a', p_user_id: 'owner-a', p_task_id: 'task-a' });
+    expect(claimEscalationBodies[1]).toEqual({ p_staff_message_id: 'staff-msg-b', p_user_id: 'owner-b', p_task_id: 'task-b' });
   });
 });
 
@@ -355,6 +490,27 @@ describe('handleInboundStaffMessage — Phase B hook wiring', () => {
     const [sentPayload] = sendMetaMessageMock.mock.calls.at(-1);
     expect(sentPayload.payload.text.body).toBe("I've recorded this for the owner, but I couldn't reach them on WhatsApp yet.");
     expect(sentPayload.payload.text.body).not.toContain('checking with the owner');
+  });
+
+  it('[9b] truthful staff response when the owner notification is in-progress elsewhere', async () => {
+    staffEngineMocks.processStaffMessage.mockResolvedValueOnce({
+      ok: true, messageId: 'staff-msg-a', response: 'I will check on this.',
+      userFacingState: 'Needs You', ownerAttentionRequired: true,
+      escalationReason: 'Oven broken', relatedTaskId: 'task-1', nextActionOwner: 'owner',
+    });
+    notifyMock.mockResolvedValueOnce({ attempted: false, status: 'in_progress', reason: 'lease_held_elsewhere' });
+    const fetchMock = baseFetchSequence();
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'token');
+
+    await handleInboundStaffMessage({
+      supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY,
+      msg: { phoneNumberId: 'pnid-1', from: '15551112222', body: 'The oven is broken', messageId: 'wamid.in-2b', timestamp: '1735689600' },
+    });
+
+    // Never a false claim of a new successful contact unless status is genuinely 'sent'.
+    const [sentPayload] = sendMetaMessageMock.mock.calls.at(-1);
+    expect(sentPayload.payload.text.body).not.toContain("I'm checking with the owner. I'll come back to you.");
   });
 
   it('[10] a duplicate webhook delivery never sends a second staff-facing message', async () => {
