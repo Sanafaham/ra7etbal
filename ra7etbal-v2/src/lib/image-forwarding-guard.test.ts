@@ -56,4 +56,32 @@ describe("shouldForwardAttachedImage", () => {
     expect(shouldForwardAttachedImage(null)).toBe(false);
     expect(shouldForwardAttachedImage(undefined)).toBe(false);
   });
+
+  // Regression (2026-07-26): "Tell Christopher to make the pizza shown in
+  // the photo" produced the staff message "Make the pizza shown in the
+  // attached photo for dinner." with NO photo attached — the guard only
+  // recognized a bare demonstrative ("this pizza"), not this equally
+  // explicit non-demonstrative phrasing.
+  describe("photo-depicts-subject phrasing (regression fix)", () => {
+    it("allows 'shown/pictured/seen/depicted in the/this [attached] photo'", () => {
+      expect(
+        shouldForwardAttachedImage("Make the pizza shown in the attached photo for dinner."),
+      ).toBe(true);
+      expect(shouldForwardAttachedImage("Tell Christopher to make the pizza shown in the photo")).toBe(
+        true,
+      );
+      expect(shouldForwardAttachedImage("Order the sofa pictured in this picture")).toBe(true);
+      expect(shouldForwardAttachedImage("Buy the item seen in that image")).toBe(true);
+    });
+
+    it("allows the simpler bare 'in the/this [attached] photo' without a verb", () => {
+      expect(shouldForwardAttachedImage("Make the pizza in the photo")).toBe(true);
+      expect(shouldForwardAttachedImage("Order the couch in this picture")).toBe(true);
+    });
+
+    it("still denies a private note with no such phrasing — the regression fix must not reopen bug #1", () => {
+      expect(shouldForwardAttachedImage("Ask Christopher to buy groceries")).toBe(false);
+      expect(shouldForwardAttachedImage("Please buy groceries.")).toBe(false);
+    });
+  });
 });
