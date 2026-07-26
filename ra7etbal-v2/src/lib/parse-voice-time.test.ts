@@ -281,8 +281,20 @@ describe("parseVoiceTime — AM/PM resolution (regression: confirmed 3:15 AM →
   });
 
   it("confirms Europe/Istanbul is the resolved timezone for all of the above (matches the real production account's timezone)", () => {
-    const result = parseVoiceTime("3:15 AM", now);
-    expect(result.timezone).toBe("Europe/Istanbul");
+    // parseVoiceTime reads Intl.DateTimeFormat().resolvedOptions().timeZone,
+    // which follows the running process's TZ — pin it here so this
+    // assertion is deterministic regardless of the machine/CI runner's
+    // default timezone (this describe block's other tests are TZ-invariant
+    // by construction and don't need this).
+    const originalTz = process.env.TZ;
+    process.env.TZ = "Europe/Istanbul";
+    try {
+      const result = parseVoiceTime("3:15 AM", now);
+      expect(result.timezone).toBe("Europe/Istanbul");
+    } finally {
+      if (originalTz === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTz;
+    }
   });
 
   it("no 12-hour inversion: for every hour 1-12 with both AM and PM stated explicitly, the two results are always exactly 12 hours apart, never equal and never off by a different amount", () => {
