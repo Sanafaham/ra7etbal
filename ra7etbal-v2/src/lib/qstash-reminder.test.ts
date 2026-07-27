@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./supabase", () => ({
   supabase: {
@@ -12,6 +12,12 @@ vi.mock("./supabase", () => ({
 }));
 
 import { cancelReminderPush, rescheduleReminderPush, scheduleReminderPush } from "./qstash-reminder";
+
+// System time frozen so "due in the future" fixtures below never go stale as
+// real calendar time passes (they were previously hardcoded wall-clock
+// dates that silently fell into the past and started failing).
+const FROZEN_NOW = new Date("2026-01-01T00:00:00.000Z");
+const FUTURE_DUE_AT = new Date(FROZEN_NOW.getTime() + 60 * 60 * 1000).toISOString(); // +1 hour
 
 /**
  * Protected behavior (item 9): a QStash scheduling failure must never cause
@@ -29,7 +35,13 @@ import { cancelReminderPush, rescheduleReminderPush, scheduleReminderPush } from
  * that already happened.
  */
 describe("scheduleReminderPush — a QStash scheduling failure never throws and never claims success", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FROZEN_NOW);
+  });
+
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -46,7 +58,7 @@ describe("scheduleReminderPush — a QStash scheduling failure never throws and 
     );
 
     await expect(
-      scheduleReminderPush("task-1", "2026-07-27T09:00:00.000Z"),
+      scheduleReminderPush("task-1", FUTURE_DUE_AT),
     ).resolves.toBeUndefined();
 
     expect(errorSpy).toHaveBeenCalledWith(
@@ -66,7 +78,7 @@ describe("scheduleReminderPush — a QStash scheduling failure never throws and 
     );
 
     await expect(
-      scheduleReminderPush("task-1", "2026-07-27T09:00:00.000Z"),
+      scheduleReminderPush("task-1", FUTURE_DUE_AT),
     ).resolves.toBeUndefined();
 
     expect(errorSpy).toHaveBeenCalledWith(
@@ -102,13 +114,19 @@ describe("scheduleReminderPush — a QStash scheduling failure never throws and 
     );
 
     await expect(
-      scheduleReminderPush("task-1", "2026-07-27T09:00:00.000Z"),
+      scheduleReminderPush("task-1", FUTURE_DUE_AT),
     ).resolves.toBeUndefined();
   });
 });
 
 describe("cancelReminderPush / rescheduleReminderPush — same fire-and-log contract", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FROZEN_NOW);
+  });
+
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -131,7 +149,7 @@ describe("cancelReminderPush / rescheduleReminderPush — same fire-and-log cont
     );
 
     await expect(
-      rescheduleReminderPush("task-1", "2026-07-27T09:00:00.000Z"),
+      rescheduleReminderPush("task-1", FUTURE_DUE_AT),
     ).resolves.toBeUndefined();
   });
 });
