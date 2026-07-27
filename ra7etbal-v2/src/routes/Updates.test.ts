@@ -170,3 +170,41 @@ describe("Updates.tsx — Needs You / Waiting stay mounted through background re
     expect(SOURCE).toMatch(/const initialLoading = tasksStatus === "loading" && tasks\.length === 0;/);
   });
 });
+
+/**
+ * Phase C — open staff escalations (Phase B) appear inside the existing
+ * Needs You list, without restoring the removed Staff tab and without
+ * duplicating a staff escalation already represented by its linked task.
+ */
+describe("Updates.tsx — Phase C staff escalations inside the existing Needs You list", () => {
+  it("1. renders open staff escalations via the shared hook and card, inside the needs-you tab", () => {
+    expect(SOURCE).toContain('import { useOpenStaffEscalations } from "../hooks/useOpenStaffEscalations";');
+    expect(SOURCE).toContain('import StaffEscalationCard from "../components/tasks/StaffEscalationCard";');
+    expect(SOURCE).toMatch(/visibleStaffEscalations\.map\(\(escalation\) => \(/);
+  });
+
+  it("5. routes staff escalations through the shared filterVisibleStaffEscalations helper — never suppresses one by task_id alone (fixed: PR #90 re-review)", () => {
+    expect(SOURCE).toContain(
+      'import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";',
+    );
+    expect(SOURCE).toMatch(/filterVisibleStaffEscalations\(staffEscalations, brief\.needsAttention\.map/);
+    // The old, unsafe "dedup" framing must not reappear in this file.
+    expect(SOURCE).not.toMatch(/dropped here to avoid showing the same decision twice/);
+  });
+
+  it("the empty state only shows when both real tasks and staff escalations are empty", () => {
+    expect(SOURCE).toMatch(
+      /brief\.needsAttention\.length === 0 && visibleStaffEscalations\.length === 0/,
+    );
+  });
+
+  it("does not restore the removed Staff tab — no tab id/label reappears", () => {
+    expect(SOURCE).not.toMatch(/id: "staff"/);
+    expect(SOURCE).not.toMatch(/label: "Staff"/);
+  });
+
+  it("6. real task-based Needs You cards are still rendered via the unmodified TaskCard, unchanged by this addition", () => {
+    expect(SOURCE).toMatch(/\{brief\.needsAttention\.map\(\(task\) => \(/);
+    expect(SOURCE).toMatch(/<TaskCard\s/);
+  });
+});

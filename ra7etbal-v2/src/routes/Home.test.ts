@@ -62,7 +62,9 @@ describe("Home.tsx — V1 two-layer simplification", () => {
   it("shows Needs You from brief.needsAttention exactly once, with a calm empty state", () => {
     expect(SOURCE).toContain('data-testid="home-needs-you"');
     expect(SOURCE).toContain("brief.needsAttention.length");
-    expect(SOURCE).toContain("brief.needsAttention[0].description");
+    // Phase C: falls back to a staff-escalation preview when the only
+    // Needs You items are staff escalations, not real tasks.
+    expect(SOURCE).toContain("brief.needsAttention[0]?.description");
     expect(SOURCE).toContain("Nothing needs you right now.");
     // Exactly one Needs You section — not duplicated through a separate tile.
     expect((SOURCE.match(/data-testid="home-needs-you"/g) ?? []).length).toBe(1);
@@ -171,7 +173,9 @@ describe("Home.tsx — Waiting/Handled compact summaries (no individual task tex
   });
 
   it("Needs You is unchanged", () => {
-    expect(SOURCE).toContain("brief.needsAttention[0].description");
+    // Phase C: falls back to a staff-escalation preview when the only
+    // Needs You items are staff escalations, not real tasks.
+    expect(SOURCE).toContain("brief.needsAttention[0]?.description");
     expect(SOURCE).toContain("Nothing needs you right now.");
   });
 
@@ -183,5 +187,25 @@ describe("Home.tsx — Waiting/Handled compact summaries (no individual task tex
   it("View What's Happening is unchanged", () => {
     expect(SOURCE).toContain('onClick={() => navigate("/updates")}');
     expect(SOURCE).toContain("View What's Happening");
+  });
+});
+
+/**
+ * Phase C — Home's Needs You count/preview include open staff escalations.
+ */
+describe("Home.tsx — Phase C staff escalations counted in Needs You", () => {
+  it("2. sums real needsAttention tasks and visible staff escalations for the badge/count", () => {
+    expect(SOURCE).toContain('import { useOpenStaffEscalations } from "../hooks/useOpenStaffEscalations";');
+    expect(SOURCE).toMatch(
+      /const totalNeedsAttention = brief\.needsAttention\.length \+ staffEscalationCount;/,
+    );
+  });
+
+  it("falls back to a staff-escalation preview line when no real task preview text is available", () => {
+    expect(SOURCE).toContain("buildStaffEscalationPreview(staffEscalationCount)");
+  });
+
+  it("6. still shows the real task's own description first when one exists — unchanged priority", () => {
+    expect(SOURCE).toMatch(/brief\.needsAttention\[0\]\?\.description \?\? buildStaffEscalationPreview/);
   });
 });
