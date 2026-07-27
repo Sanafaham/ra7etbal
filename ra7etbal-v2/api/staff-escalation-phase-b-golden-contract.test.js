@@ -117,6 +117,14 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     const claimEscalationCall = fetchMock.mock.calls[1];
     expect(claimEscalationCall[0]).toContain('/rpc/claim_escalation_owner_decision');
     expect(JSON.parse(claimEscalationCall[1].body)).toEqual({ p_staff_message_id: MSG_A, p_user_id: USER_A, p_task_id: 'task-1' });
+
+    // Audit-gap fix (2026-07-27): beginWhatsappDelivery must be called with
+    // staffMessageId so it can resolve a trusted owner context for a
+    // taskless escalation — see api/_whatsapp-delivery.test.js for the full
+    // resolveDeliveryContext coverage; this only proves the caller wiring.
+    expect(whatsappDeliveryMocks.beginWhatsappDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({ staffMessageId: MSG_A }),
+    );
   });
 
   it('[2] calling notifyOwnerOfEscalation twice sequentially sends Meta only once (idempotent on already-sent)', async () => {
@@ -139,6 +147,10 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     expect(second).toEqual({ attempted: false, status: 'sent', reason: 'already_sent' });
     expect(sendMetaMessageMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(5); // 4 for the first call + 1 lease-claim check for the second
+    // The already-sent short-circuit returns before beginWhatsappDelivery is
+    // ever reached, so retrying after 'sent' must never attempt a second
+    // audit row.
+    expect(whatsappDeliveryMocks.beginWhatsappDelivery).toHaveBeenCalledTimes(1);
   });
 
   it('[concurrent] two overlapping calls for the same staff message result in exactly one Meta send', async () => {

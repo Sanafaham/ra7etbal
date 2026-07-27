@@ -21,6 +21,7 @@ export async function beginWhatsappDelivery({
   taskId,
   routineId,
   automationRunId,
+  staffMessageId,
   parentDeliveryId,
   sourceType,
   messageKind = 'template',
@@ -39,6 +40,7 @@ export async function beginWhatsappDelivery({
       taskId,
       routineId,
       automationRunId,
+      staffMessageId,
     });
     if (!context?.userId) {
       console.warn('[whatsapp-delivery] skipped: no trusted owner context', {
@@ -46,6 +48,7 @@ export async function beginWhatsappDelivery({
         hasTaskId: Boolean(taskId),
         hasRoutineId: Boolean(routineId),
         hasAutomationRunId: Boolean(automationRunId),
+        hasStaffMessageId: Boolean(staffMessageId),
       });
       return null;
     }
@@ -183,6 +186,7 @@ async function resolveDeliveryContext({
   taskId,
   routineId,
   automationRunId,
+  staffMessageId,
 }) {
   const lookups = [];
 
@@ -252,6 +256,22 @@ async function resolveDeliveryContext({
     );
   }
 
+  if (staffMessageId) {
+    lookups.push(
+      fetchSingle({
+        supabaseUrl,
+        serviceKey,
+        table: 'staff_messages',
+        id: staffMessageId,
+        select: 'id,user_id,task_id',
+      }).then((row) => ({
+        kind: 'staff_message',
+        userId: row?.user_id ?? null,
+        taskId: row?.task_id ?? null,
+      })),
+    );
+  }
+
   if (lookups.length === 0) return null;
 
   const records = await Promise.all(lookups);
@@ -269,11 +289,17 @@ async function resolveDeliveryContext({
   const task = records.find((record) => record.kind === 'task');
   const routine = records.find((record) => record.kind === 'routine');
   const automationRun = records.find((record) => record.kind === 'automation_run');
+  const staffMessage = records.find((record) => record.kind === 'staff_message');
 
+  // staff_messages.id is never written into whatsapp_deliveries.message_id —
+  // that column's FK targets public.messages, a different table. The
+  // staff-message linkage is carried in metadata.staff_message_id (set by
+  // the caller) instead; only task_id is safe to inherit from it here.
   const linkedTaskIds = [
     message?.taskId,
     task?.taskId,
     automationRun?.taskId,
+    staffMessage?.taskId,
   ].filter(Boolean);
   if (new Set(linkedTaskIds).size > 1) {
     console.warn('[whatsapp-delivery] linked records reference different tasks');
@@ -309,7 +335,15 @@ async function patchDeliveryFailOpen({
   fields,
   label,
 }) {
-  if (!supabaseUrl || !serviceKey || !deliveryId) return;
+  if (!supabaseUrl || !serviceKey) return;
+  if (!deliveryId) {
+    // Visible on purpose: a missing deliveryId here almost always means
+    // beginWhatsappDelivery already failed/skipped earlier (logged there),
+    // so this update was always going to be a silent no-op otherwise. This
+    // never blocks or retries the send — the update was already skipped.
+    console.warn(`[whatsapp-delivery] ${label} skipped: no deliveryId (audit row was not created)`);
+    return;
+  }
   try {
     const response = await fetch(
       `${supabaseUrl}/rest/v1/whatsapp_deliveries?id=eq.${encodeURIComponent(deliveryId)}`,
