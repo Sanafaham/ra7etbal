@@ -5,6 +5,9 @@ const mocks = vi.hoisted(() => ({
   callRpcSingle: vi.fn(),
   resolve: vi.fn(),
   sendMetaMessage: vi.fn(),
+  executeCommand: vi.fn(),
+  recordInbound: vi.fn(),
+  updateCommand: vi.fn(),
 }));
 
 vi.mock('./task-confirm.js', () => ({
@@ -13,7 +16,13 @@ vi.mock('./task-confirm.js', () => ({
   resolveAndDeliverEscalationAnswer: mocks.resolve,
 }));
 vi.mock('./send-whatsapp-task.js', () => ({
+  default: vi.fn(),
   sendMetaMessage: mocks.sendMetaMessage,
+}));
+vi.mock('./_owner-command-executor.js', () => ({
+  persistAndExecuteOwnerCommand: mocks.executeCommand,
+  recordOwnerInbound: mocks.recordInbound,
+  updateCommand: mocks.updateCommand,
 }));
 
 import {
@@ -61,12 +70,26 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   process.env.WHATSAPP_ACCESS_TOKEN = 'token';
+  process.env.OWNER_WHATSAPP_ROUTING_USER_IDS = 'user-1';
   mocks.callRpcRows.mockReset();
   mocks.callRpcSingle.mockReset();
   mocks.resolve.mockReset();
   mocks.sendMetaMessage.mockReset();
+  mocks.executeCommand.mockReset();
+  mocks.recordInbound.mockReset();
+  mocks.updateCommand.mockReset();
   mocks.callRpcSingle.mockResolvedValue({ data: { status: 'completed' } });
   mocks.sendMetaMessage.mockResolvedValue({ ok: true, messageId: 'wamid.ack-1' });
+  mocks.executeCommand.mockResolvedValue({
+    kind: 'completed',
+    acknowledgement: 'Done — command completed.',
+    acknowledgementAlreadyAccepted: false,
+  });
+  mocks.recordInbound.mockResolvedValue({
+    data: { acknowledgement_status: 'pending' },
+    error: null,
+  });
+  mocks.updateCommand.mockResolvedValue({});
 });
 
 describe('general owner command safety', () => {
@@ -89,15 +112,16 @@ describe('general owner command safety', () => {
         isOwner: true,
         handled: true,
         route: 'general_command',
-        execution: 'not_implemented_in_slice_1',
+        execution: 'completed',
       });
       expect(mocks.resolve).not.toHaveBeenCalled();
-      expect(mocks.sendMetaMessage).not.toHaveBeenCalled();
+      expect(mocks.executeCommand).toHaveBeenCalledTimes(1);
+      expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
       expect(fetchMock.mock.calls.some(([url]) =>
         String(url).includes('staff_escalation_owner_decisions'))).toBe(false);
       expect(mocks.callRpcSingle).toHaveBeenCalledWith(
         SUPABASE, KEY, 'complete_owner_whatsapp_reply',
-        expect.objectContaining({ p_outcome: 'general_command_deferred', p_escalation_id: null }),
+        expect.objectContaining({ p_outcome: 'general_command_executed', p_escalation_id: null }),
       );
     });
   }
@@ -289,7 +313,7 @@ describe('idempotency and identity', () => {
     const result = await resolveCanonicalOwner({
       supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ from: '971599999999' }),
     });
-    expect(result).toEqual({ isOwner: false, reason: 'not_owner' });
+    expect(result).toMatchObject({ isOwner: false, routingEnabled: true, reason: 'not_owner' });
   });
 
   it('ambiguous Boss candidates perform no owner action', async () => {
@@ -299,7 +323,26 @@ describe('idempotency and identity', () => {
     const result = await handleInboundOwnerMessage({
       supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg(),
     });
-    expect(result).toEqual({ isOwner: false, reason: 'canonical_owner_not_unique' });
+    expect(result).toEqual({
+      isOwner: true,
+      handled: false,
+      route: 'identity_ambiguous',
+      reason: 'canonical_owner_not_unique',
+    });
+    expect(mocks.callRpcRows).not.toHaveBeenCalled();
+  });
+
+  it('default-off flag preserves the existing downstream routing behavior', async () => {
+    delete process.env.OWNER_WHATSAPP_ROUTING_USER_IDS;
+    const fetchMock = vi.fn().mockResolvedValueOnce(response([{ user_id: 'user-1' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg(),
+    });
+    expect(result).toMatchObject({
+      isOwner: false, routingEnabled: false, userId: 'user-1', reason: 'routing_disabled',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(mocks.callRpcRows).not.toHaveBeenCalled();
   });
 

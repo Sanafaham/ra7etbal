@@ -1,3 +1,33 @@
+/*
+ * Coordinated rollback only: deploy code that no longer supplies the reply
+ * channel or reads command-state columns before applying this file.
+ *
+ * This preflight intentionally runs before any schema change. New channel or
+ * command outcome rows contain audit truth that cannot be losslessly coerced
+ * to the old schema, so rollback fails clearly instead of partially mutating
+ * or silently rewriting production history.
+ */
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.staff_escalation_owner_decisions
+    WHERE owner_reply_channel = 'whatsapp'
+  ) THEN
+    RAISE EXCEPTION 'rollback_blocked: whatsapp owner reply audit rows exist; coordinate an explicit archival strategy';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.owner_whatsapp_reply_receipts
+    WHERE outcome IN ('general_command_executed', 'unsupported_command', 'general_command_deferred')
+       OR inbound_text IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'rollback_blocked: owner command audit rows exist; coordinate an explicit archival strategy';
+  END IF;
+END;
+$$;
+
+DROP FUNCTION IF EXISTS public.record_owner_whatsapp_command(uuid, uuid, uuid, text, text, text, text, text);
+DROP FUNCTION IF EXISTS public.reconcile_accepted_escalation_answer_delivery(uuid, uuid, text);
+
 DROP FUNCTION IF EXISTS public.answer_escalation_owner_decision(uuid, text, text);
 
 CREATE OR REPLACE FUNCTION public.answer_escalation_owner_decision(
@@ -83,3 +113,24 @@ ALTER TABLE public.owner_whatsapp_reply_receipts
   CHECK (outcome IS NULL OR outcome IN (
     'resolved_escalation', 'clarification_sent', 'zero_match'
   ));
+
+DROP INDEX IF EXISTS public.owner_whatsapp_reply_receipts_retry_idx;
+
+ALTER TABLE public.owner_whatsapp_reply_receipts
+  DROP COLUMN IF EXISTS inbound_text,
+  DROP COLUMN IF EXISTS sender_phone,
+  DROP COLUMN IF EXISTS phone_number_id,
+  DROP COLUMN IF EXISTS context_message_id,
+  DROP COLUMN IF EXISTS route,
+  DROP COLUMN IF EXISTS execution_status,
+  DROP COLUMN IF EXISTS execution_result,
+  DROP COLUMN IF EXISTS execution_error,
+  DROP COLUMN IF EXISTS acknowledgement_status,
+  DROP COLUMN IF EXISTS acknowledgement_transport_message_id,
+  DROP COLUMN IF EXISTS acknowledgement_error,
+  DROP COLUMN IF EXISTS staff_transport_message_id,
+  DROP COLUMN IF EXISTS action_task_id,
+  DROP COLUMN IF EXISTS action_message_id,
+  DROP COLUMN IF EXISTS retry_count,
+  DROP COLUMN IF EXISTS max_retries,
+  DROP COLUMN IF EXISTS next_retry_at;

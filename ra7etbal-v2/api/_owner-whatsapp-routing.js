@@ -4,6 +4,7 @@ import {
   resolveAndDeliverEscalationAnswer,
 } from './task-confirm.js';
 import { sendMetaMessage } from './send-whatsapp-task.js';
+import { persistAndExecuteOwnerCommand, recordOwnerInbound, updateCommand } from './_owner-command-executor.js';
 
 const RECEIPT_LEASE_SECONDS = 120;
 const UNMATCHED_QUOTE_TEXT =
@@ -28,6 +29,10 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     // possible owner message fall through into consent or staff side effects.
     return { isOwner: true, handled: false, route: 'identity_error', reason: 'identity_lookup_failed' };
   }
+  if (!identity.routingEnabled) return identity;
+  if (identity.possibleOwner) {
+    return { isOwner: true, handled: false, route: 'identity_ambiguous', reason: identity.reason };
+  }
   if (!identity.isOwner) return identity;
 
   const receipt = await claimReceipt({
@@ -48,23 +53,66 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     };
   }
 
+  let durableInbound = null;
+  if (msg.contextMessageId) {
+    const recorded = await recordOwnerInbound({
+      supabaseUrl, serviceKey, identity, msg, receipt: receipt.row, route: 'quoted_escalation',
+    });
+    if (recorded.error) {
+      await failReceipt({
+        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+        error: recorded.error.message || 'quoted_reply_record_failed',
+      });
+      return { isOwner: true, handled: false, route: 'quoted_escalation', reason: 'durability_failed' };
+    }
+    durableInbound = recorded.data;
+  }
+
   if (!msg.contextMessageId) {
+    const result = await persistAndExecuteOwnerCommand({
+      supabaseUrl, serviceKey, identity, msg, receipt: receipt.row,
+    });
+    if (!result.acknowledgement) {
+      await failReceipt({
+        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+        error: result.error || 'command_record_failed',
+      });
+      return { isOwner: true, handled: false, route: 'general_command', reason: result.kind };
+    }
+    const ack = result.acknowledgementAlreadyAccepted
+      ? { ok: true, alreadyAccepted: true }
+      : await sendOwnerAcknowledgement({
+          phoneNumberId: msg.phoneNumberId, to: identity.ownerPhone, text: result.acknowledgement,
+        });
+    if (!ack.ok) {
+      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+        acknowledgement_status: 'failed',
+        acknowledgement_error: ack.reason || 'owner_ack_failed',
+        next_retry_at: new Date(Date.now() + 60_000).toISOString(),
+      }).catch(() => {});
+      await failReceipt({
+        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+        error: ack.reason || 'owner_ack_failed',
+      });
+      return { isOwner: true, handled: false, route: 'general_command', reason: 'owner_ack_failed' };
+    }
+    if (!ack.alreadyAccepted) {
+      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+        acknowledgement_status: 'accepted',
+        acknowledgement_transport_message_id: ack.messageId,
+      });
+    }
     const completed = await completeReceipt({
-      supabaseUrl,
-      serviceKey,
-      userId: identity.userId,
-      receipt: receipt.row,
-      outcome: 'general_command_deferred',
+      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+      outcome: result.kind === 'unsupported' ? 'unsupported_command' : 'general_command_executed',
       escalationId: null,
     });
-    if (!completed) {
-      return { isOwner: true, handled: false, route: 'general_command', reason: 'receipt_complete_failed' };
-    }
     return {
       isOwner: true,
-      handled: true,
+      handled: completed,
       route: 'general_command',
-      execution: 'not_implemented_in_slice_1',
+      execution: result.kind,
+      reason: completed ? result.kind : 'receipt_complete_failed',
     };
   }
 
@@ -82,17 +130,26 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   }
 
   if (!escalation) {
-    const ack = await sendOwnerAcknowledgement({
-      phoneNumberId: msg.phoneNumberId,
-      to: identity.ownerPhone,
-      text: UNMATCHED_QUOTE_TEXT,
-    });
+    const ack = durableInbound?.acknowledgement_status === 'accepted'
+      ? { ok: true, alreadyAccepted: true }
+      : await sendOwnerAcknowledgement({
+          phoneNumberId: msg.phoneNumberId,
+          to: identity.ownerPhone,
+          text: UNMATCHED_QUOTE_TEXT,
+        });
     if (!ack.ok) {
+      await markRetryable({ supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row, error: ack.reason });
       await failReceipt({
         supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
         error: ack.reason || 'owner_ack_failed',
       });
       return { isOwner: true, handled: false, route: 'unmatched_quote', reason: 'owner_ack_failed' };
+    }
+    if (!ack.alreadyAccepted) {
+      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+        acknowledgement_status: 'accepted',
+        acknowledgement_transport_message_id: ack.messageId,
+      });
     }
     const completed = await completeReceipt({
       supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
@@ -125,18 +182,40 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
 
   let result;
   try {
-    result = await resolveAndDeliverEscalationAnswer({
-      supabaseUrl,
-      serviceKey,
-      userId: identity.userId,
-      deepLinkToken: escalation.deep_link_token,
-      escalation,
-      staffMessage,
-      staffContextText,
-      decision: 'custom_instruction',
-      instructionText,
-      replyChannel: 'whatsapp',
-    });
+    if (durableInbound?.staff_transport_message_id) {
+      const reconciled = await callRpcSingle(
+        supabaseUrl, serviceKey, 'reconcile_accepted_escalation_answer_delivery',
+        {
+          p_id: escalation.id,
+          p_user_id: identity.userId,
+          p_transport_message_id: durableInbound.staff_transport_message_id,
+        },
+      );
+      result = reconciled.error
+        ? {
+            kind: 'success', status: 'sent_unconfirmed',
+            ownerReplyText: escalation.owner_reply_text,
+            transportMessageId: durableInbound.staff_transport_message_id,
+          }
+        : {
+            kind: 'success', status: 'delivered',
+            ownerReplyText: reconciled.data.owner_reply_text,
+            transportMessageId: durableInbound.staff_transport_message_id,
+          };
+    } else {
+      result = await resolveAndDeliverEscalationAnswer({
+        supabaseUrl,
+        serviceKey,
+        userId: identity.userId,
+        deepLinkToken: escalation.deep_link_token,
+        escalation,
+        staffMessage,
+        staffContextText,
+        decision: 'custom_instruction',
+        instructionText,
+        replyChannel: 'whatsapp',
+      });
+    }
   } catch (error) {
     await failReceipt({ supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row, error });
     return {
@@ -149,10 +228,17 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   }
 
   if (result.kind !== 'success') {
+    const persisted = result.kind !== 'rpc_error';
     await sendOwnerAcknowledgement({
       phoneNumberId: msg.phoneNumberId,
       to: identity.ownerPhone,
-      text: DELIVERY_FAILED_TEXT,
+      text: persisted
+        ? DELIVERY_FAILED_TEXT
+        : 'I could not save your answer, so I did not claim it was sent. Please reply to the same quoted message again.',
+    });
+    await markRetryable({
+      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+      error: result.kind || 'staff_delivery_failed',
     });
     await failReceipt({
       supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
@@ -176,12 +262,15 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
         : result.status === 'sent_unconfirmed'
           ? `I sent your answer to ${staffName}, but delivery recording is still being reconciled.`
           : `Got it — I sent your answer to ${staffName}.`;
-  const ack = await sendOwnerAcknowledgement({
-    phoneNumberId: msg.phoneNumberId,
-    to: identity.ownerPhone,
-    text: acknowledgement,
-  });
+  const ack = durableInbound?.acknowledgement_status === 'accepted'
+    ? { ok: true, alreadyAccepted: true }
+    : await sendOwnerAcknowledgement({
+        phoneNumberId: msg.phoneNumberId,
+        to: identity.ownerPhone,
+        text: acknowledgement,
+      });
   if (!ack.ok) {
+    await markRetryable({ supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row, error: ack.reason });
     await failReceipt({
       supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
       error: ack.reason || 'owner_ack_failed',
@@ -191,6 +280,30 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
       handled: false,
       route: 'quoted_escalation',
       reason: 'owner_ack_failed',
+      staffDelivery: result.status,
+    };
+  }
+  if (!ack.alreadyAccepted) {
+    await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+      acknowledgement_status: 'accepted',
+      acknowledgement_transport_message_id: ack.messageId,
+      staff_transport_message_id: result.transportMessageId || null,
+    });
+  }
+  if (result.status === 'sent_unconfirmed') {
+    await markRetryable({
+      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+      error: 'staff_delivery_completion_unconfirmed',
+    });
+    await failReceipt({
+      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+      error: 'staff_delivery_completion_unconfirmed',
+    });
+    return {
+      isOwner: true,
+      handled: false,
+      route: 'quoted_escalation',
+      reason: 'staff_delivery_completion_unconfirmed',
       staffDelivery: result.status,
     };
   }
@@ -221,9 +334,12 @@ export async function resolveCanonicalOwner({ supabaseUrl, serviceKey, msg }) {
   );
   const userIds = [...new Set(accounts.map((row) => row.user_id).filter(Boolean))];
   if (userIds.length !== 1) {
-    return { isOwner: false, reason: 'account_not_unique' };
+    return { isOwner: false, routingEnabled: false, reason: 'account_not_unique' };
   }
   const userId = userIds[0];
+  if (!isOwnerRoutingEnabledForUser(userId)) {
+    return { isOwner: false, routingEnabled: false, userId, reason: 'routing_disabled' };
+  }
   const people = await restSelect(
     supabaseUrl,
     serviceKey,
@@ -235,15 +351,67 @@ export async function resolveCanonicalOwner({ supabaseUrl, serviceKey, msg }) {
     const role = String(person.role || '').trim().toLowerCase();
     return (name === 'boss' || role === 'boss') && normalizePhone(person.phone);
   });
-  if (ownerCandidates.length !== 1) {
-    return { isOwner: false, reason: 'canonical_owner_not_unique' };
-  }
   const sender = normalizePhone(msg.from);
+  if (ownerCandidates.length !== 1) {
+    const exactPeople = people.filter((person) => normalizePhone(person.phone) === sender);
+    const definitelyStaff = exactPeople.length === 1 && !ownerCandidates.includes(exactPeople[0]);
+    return definitelyStaff
+      ? { isOwner: false, routingEnabled: true, userId, reason: 'definitely_not_owner' }
+      : { isOwner: false, possibleOwner: true, routingEnabled: true, userId, reason: 'canonical_owner_not_unique' };
+  }
   const ownerPhone = normalizePhone(ownerCandidates[0].phone);
   if (!sender || sender !== ownerPhone) {
-    return { isOwner: false, reason: 'not_owner' };
+    return { isOwner: false, routingEnabled: true, userId, reason: 'not_owner' };
   }
-  return { isOwner: true, userId, ownerPhone };
+  return { isOwner: true, routingEnabled: true, userId, ownerPhone };
+}
+
+export function isOwnerRoutingEnabledForUser(userId) {
+  const enabled = String(process.env.OWNER_WHATSAPP_ROUTING_USER_IDS || '')
+    .split(',').map((value) => value.trim()).filter(Boolean);
+  return Boolean(userId) && enabled.includes(userId);
+}
+
+export async function reconcileOwnerWhatsappMessages({ supabaseUrl, serviceKey, limit = 20 }) {
+  let rows;
+  try {
+    rows = await restSelect(
+      supabaseUrl,
+      serviceKey,
+      'owner_whatsapp_reply_receipts',
+      `status=eq.failed&next_retry_at=lte.${encodeURIComponent(new Date().toISOString())}` +
+        `&retry_count=lt.5&select=user_id,external_message_id,inbound_text,sender_phone,phone_number_id,context_message_id&limit=${limit}`,
+    );
+  } catch {
+    // Migration may deliberately be absent while the default-off code is
+    // deployed. Reconciliation is fail-isolated from the existing cron work.
+    return [];
+  }
+  const results = [];
+  for (const row of rows) {
+    if (!isOwnerRoutingEnabledForUser(row.user_id) || !row.inbound_text) continue;
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl,
+      serviceKey,
+      msg: {
+        messageId: row.external_message_id,
+        from: row.sender_phone,
+        body: row.inbound_text,
+        phoneNumberId: row.phone_number_id,
+        contextMessageId: row.context_message_id || null,
+      },
+    });
+    results.push(result);
+  }
+  return results;
+}
+
+async function markRetryable({ supabaseUrl, serviceKey, userId, receipt, error }) {
+  await updateCommand(supabaseUrl, serviceKey, receipt, userId, {
+    execution_status: 'failed',
+    execution_error: String(error || 'processing_failed'),
+    next_retry_at: new Date(Date.now() + 60_000).toISOString(),
+  }).catch(() => {});
 }
 
 async function findQuotedEscalation({ supabaseUrl, serviceKey, userId, contextMessageId }) {

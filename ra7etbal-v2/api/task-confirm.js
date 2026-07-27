@@ -1357,7 +1357,12 @@ export async function resolveAndDeliverEscalationAnswer({
     console.error('[task-confirm] escalation delivery sent but completion bookkeeping failed', {
       escalationId: escalation.id, error: complete.error,
     });
-    return { kind: 'success', status: 'sent_unconfirmed', ownerReplyText: claimResult.reply_text };
+    return {
+      kind: 'success',
+      status: 'sent_unconfirmed',
+      ownerReplyText: claimResult.reply_text,
+      transportMessageId: sendResult.messageId,
+    };
   }
 
   return { kind: 'success', status: 'delivered', ownerReplyText: complete.data.owner_reply_text };

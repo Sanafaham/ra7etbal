@@ -11,8 +11,10 @@ const rollback = readFileSync(
 );
 
 describe('owner WhatsApp safe routing Slice 1 migration', () => {
-  it('adds only the deferred general-command outcome needed by this slice', () => {
-    expect(forward).toContain("'general_command_deferred'");
+  it('adds durable executed and unsupported general-command outcomes', () => {
+    expect(forward).toContain("'general_command_executed'");
+    expect(forward).toContain("'unsupported_command'");
+    expect(forward).not.toContain("'general_command_deferred'");
     expect(forward).toContain("'resolved_escalation'");
     expect(forward).toContain("'clarification_sent'");
   });
@@ -39,6 +41,7 @@ describe('owner WhatsApp safe routing Slice 1 migration', () => {
       'DROP FUNCTION IF EXISTS public.answer_escalation_owner_decision(uuid, text, text)',
     );
     expect(rollback).toContain("owner_reply_channel IN ('app')");
-    expect(rollback).not.toContain("'general_command_deferred'");
+    expect(rollback).toContain('rollback_blocked: whatsapp owner reply audit rows exist');
+    expect(rollback).toContain('rollback_blocked: owner command audit rows exist');
   });
 });

@@ -1157,3 +1157,59 @@ Migration gotcha:
 • `20260728_owner_whatsapp_safe_routing_slice_1.sql` is prepared but was not
   applied. The branch must not deploy until that forward migration is reviewed
   and deliberately applied in the correct order.
+
+OWNER WHATSAPP SAFE ROUTING — REQUIRED FIXES + SLICE 2
+
+Date:
+2026-07-28
+
+Status:
+Implemented on `feat/owner-whatsapp-safe-routing-slice-1`; flag remains off,
+not deployed, migrations not applied.
+
+What now works:
+
+• `OWNER_WHATSAPP_ROUTING_USER_IDS` is a default-off, exact user-id allowlist.
+• Possible-owner identity ambiguity fails closed before consent/staff routing.
+• Unquoted direct messages, delegations, and reminders execute through a
+  server-only boundary; unsupported commands are durably recorded and answered
+  truthfully.
+• Receipt rows retain original text, sender/account context, classification,
+  execution/ack state, action IDs, transport IDs, errors, and bounded retries.
+• Deterministic receipt-derived task/message IDs and delivery-state checks fence
+  duplicate command side effects.
+• The authenticated 10-minute QStash job reconciles retryable rows only when
+  the account allowlist is non-empty.
+• Accepted acknowledgements are not resent after receipt completion failure.
+• Accepted-but-unconfirmed staff escalation sends retain the Meta transport ID
+  and reconcile without a second staff send.
+• Quoted Meta context remains the only authority for escalation resolution.
+
+What was tested:
+
+• Focused owner routing/webhook/Phase D: 170 passed, 4 skipped.
+• Protected Carson gate: 567 passed, 4 skipped, 3 todo.
+• Full suite: 2211 passed, 4 skipped, 3 todo across 138 files.
+• Typecheck passed.
+• Production build passed with the pre-existing CSS and bundle-size warnings.
+• PostgreSQL 16: forward migration executed; clean rollback restored the old
+  two-argument function; rollback with WhatsApp/new-command audit rows failed
+  at the deliberate preflight before schema mutation.
+
+Current next task:
+
+• Independent review of the new exact commit. Keep the flag off and do not
+  apply the migration until that review approves sequencing.
+
+Do not touch:
+
+• Production migrations/data, live escalations, Meta templates, auth/RLS,
+  Quality Intelligence, PWA/push, or deployment during review.
+
+Gotchas:
+
+• Controlled activation requires the exact production owner `user_id` in
+  `OWNER_WHATSAPP_ROUTING_USER_IDS`; an empty/missing value preserves current
+  production routing.
+• Schema rollback must be coordinated with code rollback and deliberately
+  refuses to discard new audit truth.
