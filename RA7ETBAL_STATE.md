@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-07-25
+Last updated: 2026-07-28
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -9,6 +9,10 @@ This file is the operational source of truth for agents working in this reposito
 Ra7etBal is a personal Chief of Staff that reduces mental load. Carson is the AI Chief of Staff.
 
 Typed Carson and voice Carson are the same person, sharing the same memory, identity, and reasoning. Product decision (2026-07-25): Type to Carson is advisory-only — thinking, planning, drafting, research, and review only. Talk to Carson (voice) remains the sole execution channel for reminders, recurring reminders, push notifications, calendar events, staff messages, hosting plans, delegations, and any other state-changing action. See "Type to Carson is advisory-only" below.
+
+## Current next task
+
+PR #93 (`agent/server-backed-banner-dismissal`) persists completed-confirmation banner dismissal on `tasks.dismissed_at`. Independent verification on 2026-07-28 added client/server eligibility guards and optimistic rollback coverage; focused tests, typecheck, the protected suite, and production build pass. The migration is additive and idempotent, but it was not applied because this environment has no authenticated Supabase CLI session and no repository project link. Before production verification, confirm and apply `20260727_add_dismissed_at_to_tasks.sql` to the Ra7etBal production Supabase project, then test dismissal across refresh, logout/login, web, and installed app. Do not merge PR #93 until that migration and production verification are complete.
 
 ## Stable and protected
 

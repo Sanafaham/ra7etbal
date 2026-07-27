@@ -184,7 +184,15 @@ export const useTasksStore = create<TasksState>((set, get) => {
 
     async dismissConfirmationNotice(id) {
       const prev = get().items.find((task) => task.id === id);
-      if (!prev || prev.dismissed_at) return;
+      if (
+        !prev ||
+        prev.dismissed_at ||
+        prev.type !== "delegation" ||
+        prev.status !== "done" ||
+        !prev.confirmed_at
+      ) {
+        return;
+      }
 
       const optimistic = { ...prev, dismissed_at: new Date().toISOString() };
       set((state) => ({
@@ -193,11 +201,15 @@ export const useTasksStore = create<TasksState>((set, get) => {
 
       try {
         const [updated] = await apiDismissConfirmationNotices([id]);
-        if (updated) {
+        if (!updated) {
           set((state) => ({
-            items: state.items.map((task) => (task.id === id ? updated : task)),
+            items: state.items.map((task) => (task.id === id ? prev : task)),
           }));
+          return;
         }
+        set((state) => ({
+          items: state.items.map((task) => (task.id === id ? updated : task)),
+        }));
       } catch (err) {
         set((state) => ({
           items: state.items.map((task) => (task.id === id ? prev : task)),

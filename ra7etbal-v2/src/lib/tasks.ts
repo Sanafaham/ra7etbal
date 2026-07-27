@@ -85,6 +85,7 @@ export async function dismissConfirmationNotices(ids: string[]): Promise<Task[]>
     .from("tasks")
     .update({ dismissed_at: new Date().toISOString() })
     .in("id", uniqueIds)
+    .eq("type", "delegation")
     .eq("status", "done")
     .not("confirmed_at", "is", null)
     .is("dismissed_at", null)

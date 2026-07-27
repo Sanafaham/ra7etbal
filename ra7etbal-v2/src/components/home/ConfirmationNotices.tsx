@@ -69,7 +69,7 @@ export default function ConfirmationNotices() {
             <button
               data-testid={`confirmation-notice-dismiss-${task.id}`}
               type="button"
-              onClick={() => void dismiss(task.id)}
+              onClick={() => void dismiss(task.id).catch(() => {})}
               aria-label="Dismiss notification"
               className="-mr-1 shrink-0 rounded-full p-1 text-ink/45 transition hover:bg-gold/10 hover:text-ink/80"
             >
