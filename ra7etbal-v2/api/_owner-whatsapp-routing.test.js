@@ -134,6 +134,78 @@ describe('general owner command safety', () => {
     expect(source).not.toMatch(/openRows|openEscalations|open_escalation_count/i);
     expect(source).not.toMatch(/staff_escalation_owner_decisions[^`]*status=eq\.open/i);
   });
+
+  it('an already-accepted owner acknowledgement is not resent', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.executeCommand.mockResolvedValue({
+      kind: 'completed',
+      acknowledgement: 'Done — command completed.',
+      acknowledgementAlreadyAccepted: true,
+    });
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'Ask Grace to call me.' }),
+    });
+
+    expect(result).toMatchObject({ handled: true, execution: 'completed' });
+    expect(mocks.sendMetaMessage).not.toHaveBeenCalled();
+  });
+
+  it('retryable execution failure remains failed instead of being falsely completed', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.executeCommand.mockResolvedValue({
+      kind: 'execution_failed',
+      acknowledgement: 'I could not complete it; Ra7etBal will retry safely.',
+      acknowledgementAlreadyAccepted: false,
+      error: 'transient_failure',
+    });
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'Ask Grace to clean the kitchen.' }),
+    });
+
+    expect(result).toMatchObject({
+      handled: false,
+      execution: 'execution_failed',
+      reason: 'command_execution_failed',
+    });
+    expect(mocks.callRpcSingle).toHaveBeenCalledWith(
+      SUPABASE, KEY, 'fail_owner_whatsapp_reply',
+      expect.objectContaining({ p_error: 'transient_failure' }),
+    );
+    expect(mocks.callRpcSingle).not.toHaveBeenCalledWith(
+      SUPABASE, KEY, 'complete_owner_whatsapp_reply', expect.anything(),
+    );
+  });
+
+  it('terminal execution failure completes with a durable non-success outcome', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.executeCommand.mockResolvedValue({
+      kind: 'terminal_failed',
+      acknowledgement: 'Nothing was scheduled and no further retry is scheduled.',
+      acknowledgementAlreadyAccepted: false,
+      error: 'reminder_time_parse_failed',
+    });
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'Remind me tomorrow.' }),
+    });
+
+    expect(result).toMatchObject({ handled: true, execution: 'terminal_failed' });
+    expect(mocks.callRpcSingle).toHaveBeenCalledWith(
+      SUPABASE, KEY, 'complete_owner_whatsapp_reply',
+      expect.objectContaining({ p_outcome: 'terminal_failure' }),
+    );
+  });
 });
 
 describe('authoritative quoted escalation routing', () => {
@@ -222,6 +294,36 @@ describe('authoritative quoted escalation routing', () => {
     expect(mocks.resolve).toHaveBeenCalledWith(expect.objectContaining({
       escalation: expect.objectContaining({ status: 'delivered_to_staff' }),
       replyChannel: 'whatsapp',
+    }));
+  });
+
+  it('quoted escalation plus an unrelated command is rejected without staff leakage or partial execution', async () => {
+    const fetchMock = vi.fn();
+    stubQuoted(fetchMock);
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+      msg: msg({
+        contextMessageId: 'wamid.owner-notification-2',
+        body: 'Yes, and tell Grace to call me.',
+      }),
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      route: 'quoted_escalation',
+      reason: 'compound_rejected',
+    });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
+    expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.sendMetaMessage).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        text: expect.objectContaining({ body: expect.stringContaining('Nothing was sent') }),
+      }),
     }));
   });
 

@@ -23,11 +23,16 @@ ALTER TABLE public.owner_whatsapp_reply_receipts
   ADD COLUMN IF NOT EXISTS max_retries integer NOT NULL DEFAULT 5,
   ADD COLUMN IF NOT EXISTS next_retry_at timestamptz;
 
+-- Older production histories may not yet contain the Phase D audit column.
+-- It must exist before the channel constraint below references it.
+ALTER TABLE public.staff_escalation_owner_decisions
+  ADD COLUMN IF NOT EXISTS owner_reply_channel text;
+
 ALTER TABLE public.owner_whatsapp_reply_receipts
   DROP CONSTRAINT IF EXISTS owner_whatsapp_reply_receipts_execution_status_check;
 ALTER TABLE public.owner_whatsapp_reply_receipts
   ADD CONSTRAINT owner_whatsapp_reply_receipts_execution_status_check
-  CHECK (execution_status IN ('pending','action_created','completed','failed','unsupported'));
+  CHECK (execution_status IN ('pending','action_created','completed','failed','terminal_failed','unsupported'));
 
 ALTER TABLE public.owner_whatsapp_reply_receipts
   DROP CONSTRAINT IF EXISTS owner_whatsapp_reply_receipts_acknowledgement_status_check;
@@ -48,7 +53,8 @@ ALTER TABLE public.owner_whatsapp_reply_receipts
     'clarification_sent',
     'zero_match',
     'general_command_executed',
-    'unsupported_command'
+    'unsupported_command',
+    'terminal_failure'
   ));
 
 CREATE OR REPLACE FUNCTION public.complete_owner_whatsapp_reply(
@@ -70,7 +76,8 @@ BEGIN
     'clarification_sent',
     'zero_match',
     'general_command_executed',
-    'unsupported_command'
+    'unsupported_command',
+    'terminal_failure'
   ) THEN
     RAISE EXCEPTION 'invalid_outcome' USING ERRCODE = '22023';
   END IF;
@@ -107,6 +114,9 @@ ALTER TABLE public.staff_escalation_owner_decisions
   ADD CONSTRAINT staff_escalation_owner_decisions_owner_reply_channel_check
   CHECK (owner_reply_channel IS NULL OR owner_reply_channel IN ('app', 'whatsapp'));
 
+-- The three-argument replacement keeps a DEFAULT for p_owner_reply_channel,
+-- so existing two-argument app calls remain valid after the old signature is
+-- removed. PostgreSQL resolves those calls to this function using the default.
 DROP FUNCTION IF EXISTS public.answer_escalation_owner_decision(uuid, text);
 
 CREATE OR REPLACE FUNCTION public.answer_escalation_owner_decision(

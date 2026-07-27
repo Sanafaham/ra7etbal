@@ -11,6 +11,8 @@ const UNMATCHED_QUOTE_TEXT =
   "I couldn't identify the staff question you replied to. Please reply directly to the latest message about that request.";
 const DELIVERY_FAILED_TEXT =
   "I saved your answer, but I couldn't deliver it to the staff member yet. Please try again shortly.";
+const QUOTED_COMPOUND_TEXT =
+  "I couldn't safely separate your answer from the additional command. Nothing was sent. Please reply to the staff question only, then send the other command separately.";
 
 /**
  * Safe owner WhatsApp boundary for Slice 1.
@@ -103,9 +105,26 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
         acknowledgement_transport_message_id: ack.messageId,
       });
     }
+    if (result.kind === 'execution_failed') {
+      await failReceipt({
+        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+        error: result.error || 'command_execution_failed',
+      });
+      return {
+        isOwner: true,
+        handled: false,
+        route: 'general_command',
+        execution: result.kind,
+        reason: 'command_execution_failed',
+      };
+    }
     const completed = await completeReceipt({
       supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
-      outcome: result.kind === 'unsupported' ? 'unsupported_command' : 'general_command_executed',
+      outcome: result.kind === 'unsupported'
+        ? 'unsupported_command'
+        : result.kind === 'terminal_failed'
+          ? 'terminal_failure'
+          : 'general_command_executed',
       escalationId: null,
     });
     return {
@@ -181,6 +200,42 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
       error: 'invalid_escalation_context',
     });
     return { isOwner: true, handled: false, route: 'quoted_escalation', reason: 'invalid_context' };
+  }
+  if (containsAdditionalOwnerCommand(instructionText)) {
+    const ack = durableInbound?.acknowledgement_status === 'accepted' &&
+      durableInbound?.acknowledgement_text === QUOTED_COMPOUND_TEXT
+      ? { ok: true, alreadyAccepted: true }
+      : await sendOwnerAcknowledgement({
+          phoneNumberId: msg.phoneNumberId,
+          to: identity.ownerPhone,
+          text: QUOTED_COMPOUND_TEXT,
+        });
+    if (!ack.ok) {
+      await failReceipt({
+        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+        error: ack.reason || 'owner_ack_failed',
+      });
+      return { isOwner: true, handled: false, route: 'quoted_escalation', reason: 'owner_ack_failed' };
+    }
+    if (!ack.alreadyAccepted) {
+      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+        execution_status: 'unsupported',
+        execution_error: 'quoted_compound_command',
+        acknowledgement_status: 'accepted',
+        acknowledgement_text: QUOTED_COMPOUND_TEXT,
+        acknowledgement_transport_message_id: ack.messageId,
+      });
+    }
+    const completed = await completeReceipt({
+      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+      outcome: 'clarification_sent', escalationId: escalation.id,
+    });
+    return {
+      isOwner: true,
+      handled: completed,
+      route: 'quoted_escalation',
+      reason: completed ? 'compound_rejected' : 'receipt_complete_failed',
+    };
   }
 
   let result;
@@ -328,6 +383,10 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     reason: completed ? 'resolved_escalation' : 'receipt_complete_failed',
     staffDelivery: result.status,
   };
+}
+
+export function containsAdditionalOwnerCommand(text) {
+  return /\b(?:tell|ask)\s+[A-Za-z][A-Za-z'’-]*\b|\bremind\s+me\b/i.test(String(text || ''));
 }
 
 export async function resolveCanonicalOwner({ supabaseUrl, serviceKey, msg }) {
