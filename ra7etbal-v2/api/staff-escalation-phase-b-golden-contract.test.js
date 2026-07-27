@@ -418,6 +418,44 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     expect(claimEscalationBodies[0]).toEqual({ p_staff_message_id: 'staff-msg-a', p_user_id: 'owner-a', p_task_id: 'task-a' });
     expect(claimEscalationBodies[1]).toEqual({ p_staff_message_id: 'staff-msg-b', p_user_id: 'owner-b', p_task_id: 'task-b' });
   });
+
+  it('[unresolved] a successful owner notification never answers, delivers, or resolves the escalation — Phase C/D territory', async () => {
+    // Phase B's job ends once the owner has been notified. It must never
+    // call any Phase C/D RPC (answer_escalation_owner_decision,
+    // claim/complete/fail_escalation_answer_delivery — all defined in the
+    // same Phase A migration but reserved for the owner's actual reply and
+    // routing it back to staff) and must never touch escalation_resolved_at.
+    // claim_escalation_owner_decision's response (ESCALATION_A, status:
+    // 'open') is the last write this flow makes to the escalation row —
+    // nothing after it mutates status, owner_reply_text, or answered_at.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
+      .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'sent', owner_notified_at: '2026-07-27T00:00:00.000Z' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await notifyOwnerOfEscalation(
+      { staffMessageId: MSG_A, userId: USER_A, taskId: 'task-1', escalationReason: 'Needs a decision', staffName: 'Christopher' },
+      { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
+    );
+
+    expect(result.status).toBe('sent');
+    expect(ESCALATION_A.status).toBe('open'); // the fixture itself — never mutated by this flow
+
+    const PHASE_C_D_RPCS = [
+      'answer_escalation_owner_decision',
+      'claim_escalation_answer_delivery',
+      'complete_escalation_answer_delivery',
+      'fail_escalation_answer_delivery',
+    ];
+    const calledUrls = fetchMock.mock.calls.map(([url]) => String(url));
+    for (const rpcName of PHASE_C_D_RPCS) {
+      expect(calledUrls.some((url) => url.includes(`/rpc/${rpcName}`))).toBe(false);
+    }
+    // Exactly the 4-call Phase B contract — nothing more.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
 });
 
 // ── Layer 2: handleInboundStaffMessage wiring (mocked processStaffMessage + notifyOwnerOfEscalation) ─
