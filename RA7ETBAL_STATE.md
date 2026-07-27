@@ -294,6 +294,33 @@ Visual verification: Sana confirmed on production — Home shows "Nothing needs 
 
 Protect: this classifier gate (`task.type === "decision"` on the self-owned fallback) — do not reintroduce a broader self-assignment check or any title/description keyword matching. Reopen only on a reproduced production regression.
 
+### Phase B — staff-to-owner escalation loop
+
+Status: FULLY VERIFIED AND CLOSED. PRODUCTION VERIFIED. PROTECTED.
+
+Production baseline: commit `4d71fc4f409acf973898f33a49e0b586bdc54695`, deployment `dpl_7eqkMzJ4va9S794QbcnrtAXA9hP4`, verified 2026-07-27.
+
+What it is: when a non-family, WhatsApp-opted-in staff member sends Carson an explicit permission/approval/authorization request (e.g. "Can I buy X instead?"), Carson must escalate to the owner rather than deciding itself, unless the exact action is already pre-approved in supplied task/household-rule context. The chain: `api/_staff-comms-engine.js` classifies and, for a genuine escalation, sets `owner_attention_required=true`/`next_action_owner=owner`/`user_facing_state=Needs You` → `api/whatsapp-webhook.js`'s `handleInboundStaffMessage` calls `api/_escalation-notify.js`'s `notifyOwnerOfEscalation` → an atomic lease (`claim/complete/fail_owner_escalation_notification`, migration `20260727_staff_escalation_owner_notification_lease.sql`) guarantees at most one real Meta send per escalation → one `staff_escalation_owner_decisions` row is created (Phase A, `20260726_staff_escalation_owner_decisions.sql`) → one `ra7etbal_owner_decision` WhatsApp template message is sent to the owner → one `whatsapp_deliveries` audit row is created and linked via `metadata.staff_message_id` (never via `message_id`, whose FK targets `public.messages`, a different table) → the staff member receives exactly one truthful holding reply, the literal string `"I'm checking with the owner. I'll come back to you."`, sent only after Meta genuinely accepted the owner send.
+
+Delivered across 4 PRs, each independently reviewed and production-verified before the next started:
+- PR #85/#86 (merge `c87d167`/`c7b32b0`) — Phase A schema + Phase B wiring into the real inbound path.
+- PR #87 (merge `1200f4e581be8fbc6b665daec3cf714aa2520ea1`) — closed a confirmed live failure where Carson self-authorized a staff substitution request ("go ahead... that's a standard kitchen swap") with no stored approval. Added a `HARD RULE` to `_staff-comms-engine.js`'s `SYSTEM_PROMPT`: explicit staff permission requests must escalate unless the exact action is pre-approved in context; Carson must never invent approval wording.
+- PR #88 (merge `4d71fc4f409acf973898f33a49e0b586bdc54695`) — closed a confirmed live gap where the real Meta send succeeded but no `whatsapp_deliveries` audit row was ever created, because `beginWhatsappDelivery` had no trusted-context lookup for a staff-message-originated, often taskless send. Added a `staffMessageId` → `public.staff_messages` lookup to `api/_whatsapp-delivery.js`, mirroring the existing `messages`/`tasks`/`routines`/`automation_runs` pattern.
+
+Both fixes were proven against real production traffic, not just tests: a controlled live test (Christopher, non-family opted-in staff; Sana, the household's only Boss/owner) sent an explicit permission request and the full chain was independently confirmed end-to-end from real Supabase rows and Sana's own WhatsApp inbox.
+
+**Two test escalations exist in production as of the verification date below — they are test data, not real owner decisions, and must never be treated as answered or resolved:**
+- `staff_messages.id 8a90931f-cd03-4638-824d-1493a9a2d61a` / `staff_escalation_owner_decisions.id 8740ed2f-a81d-47ff-bb3e-8f2610b5aacd` ("regular olive oil... extra virgin olive oil", 2026-07-26) — predates PR #88, so it has no `whatsapp_deliveries` audit row; this is expected and not a regression.
+- `staff_messages.id e02938bb-5a04-401b-8b60-79967b5a89fa` / `staff_escalation_owner_decisions.id dedcff26-dad5-4f87-afa8-4cf9f00aa0d8` / `whatsapp_deliveries.id 55ddae6a-644c-4e51-a0f9-0f2456dc12d0` ("regular balsamic vinegar... red wine vinegar", 2026-07-27) — the first live proof the audit row now exists and is correctly linked.
+
+Both remain `status: open`, `owner_reply_text: null`, `answered_at: null` by design — this is correct Phase B behavior, not an incomplete task.
+
+**Exact Phase B/C/D boundary:** Phase B's job ends the moment the owner has been notified and the staff member has a truthful holding reply. It never resolves the escalation, never writes an owner decision, and never routes anything back to staff. **Phase C** (the owner answering, e.g. via the WhatsApp template's "Visit Task" link) and **Phase D** (relaying that answer back to the staff member) are both not implemented — do not build them into this task's scope without a separate, explicitly-scoped task.
+
+**Separate, explicitly out-of-scope backlog item:** `_staff-comms-engine.js`'s `loadStaffContext` still loads zero prior `staff_messages` conversation turns — each inbound message (including a direct follow-up to Carson's own prior question) is classified with no awareness of what was said moments before. Tracked as a Carson Reliability Engineering item, not fixed by PR #87 or #88.
+
+Protect: the four-PR contract above in full — classification/escalation fields, the atomic notification lease as the sole idempotency/resend guard, the `staff_messages`-linked delivery audit row (never via `message_id`), the exact deterministic staff holding reply and its Meta-acceptance gating, and the unresolved-by-design escalation state. The full regression suite for this contract (`api/_staff-comms-engine.test.js`, `api/staff-escalation-phase-b-golden-contract.test.js`, `api/_whatsapp-delivery.test.js`) runs under `TZ=UTC npm run test:carson-protected`. Reopen only on a reproduced production regression — do not redesign this flow to add Phase C/D behavior without a separate task.
+
 ## Current product rules
 
 ### Carson communication
@@ -358,7 +385,7 @@ Test interface: `api/_staff-comms-engine.test.js`, 12 focused Vitest tests (all 
 
 Independent review (separate agent, `review:bug-hunter`): 0 critical/high/medium findings across second-Carson risk, cross-household leakage, idempotency, false completion, accidental ElevenLabs/WhatsApp changes, and test-meaningfulness (2 findings mutation-tested to confirm the tests actually fail without the implementation). One Low/nit, not a blocker: if `fail_staff_message` itself throws inside the outer catch block's nested try/catch, the row is left silently stuck in `claimed` with no distinguishing signal — logged at the same level as normal errors. Left as a documented follow-up, not fixed in this task (narrow, pre-existing-shape gap, not a regression risk to protected behavior).
 
-Remaining for issue #46, deferred until ElevenLabs is unblocked (explicit non-goal of this task): wiring an actual transport (WhatsApp inbound or ElevenLabs) to call `processStaffMessage`; owner-facing UI surfacing of escalations (currently persisted on `staff_messages.escalation_reason`/`user_facing_state`/`next_action_owner` only, not yet shown in any UI — "do not redesign the UI" was an explicit non-goal here).
+Remaining for issue #46 at the time this section was written: wiring an actual transport to call `processStaffMessage`, and owner-facing UI surfacing of escalations. **Update:** the WhatsApp inbound transport is now wired — see "Phase B — staff-to-owner escalation loop" below, PROTECTED and CLOSED. Owner-facing UI surfacing of escalations (Phase C: the owner answering) and routing that answer back to staff (Phase D) remain not implemented — see that section for the exact boundary.
 
 Protect: this table/module design must not be duplicated by a future transport integration — reuse `processStaffMessage`, do not build a second reasoning path.
 

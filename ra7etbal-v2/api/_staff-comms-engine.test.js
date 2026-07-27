@@ -390,10 +390,33 @@ describe('processStaffMessage', () => {
 // 'substitution_request' but owner_attention_required was false,
 // next_action_owner was 'staff', and no escalation ever reached Sana.
 //
-// The forbidden-wording regex below (/go ahead|approved|that's fine|standard
-// swap|standard practice|\bproceed\b/i) is the literal wording Carson used
-// in the live failure.
-const FORBIDDEN_SELF_AUTHORIZATION_WORDING = /go ahead|approved|that's fine|standard swap|standard practice|\bproceed\b/i;
+// The forbidden-wording regex below is the literal wording Carson used in
+// the live failure. Two corrections vs. the version merged in PR #87:
+// "approved" is now guarded by a negative lookbehind (not preceded by a
+// letter or hyphen) so it never false-matches a legitimate, truthful
+// compound like "pre-approved", "preapproved", "unapproved", or
+// "disapproved" (CodeRabbit-confirmed weakness on PR #87); and "standard
+// swap" now tolerates one intervening word so it actually catches the
+// exact live-failure phrase "standard kitchen swap", which the original
+// fixed two-word phrase silently missed.
+const FORBIDDEN_SELF_AUTHORIZATION_WORDING = /go ahead|(?<![a-z-])approved\b|that's fine|standard (?:\w+ )?swap|standard practice|\bproceed\b/i;
+
+describe('FORBIDDEN_SELF_AUTHORIZATION_WORDING regex', () => {
+  it('does not false-match legitimate truthful compounds', () => {
+    expect("I don't have this pre-approved, so I'm checking with the owner.").not.toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    expect('This substitution is currently unapproved.').not.toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    expect('The owner has disapproved similar swaps before.').not.toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+  });
+
+  it('still catches the real self-authorization wording from the live failure', () => {
+    expect('Go ahead and use extra virgin olive oil.').toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    expect("That's approved.").toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    expect("That's a standard swap.").toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    // The exact live-failure sentence — verbatim from production.
+    expect("Go ahead and use extra virgin olive oil as the substitute — that's a standard kitchen swap.").toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    expect('Please proceed with the substitution.').toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+  });
+});
 
 describe('SYSTEM_PROMPT — staff permission escalation hard rule', () => {
   it('locks in the mandatory-escalation clause for staff permission requests (deliberate-failure guard)', () => {
