@@ -99,6 +99,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     if (!ack.alreadyAccepted) {
       await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
         acknowledgement_status: 'accepted',
+        acknowledgement_text: result.acknowledgement,
         acknowledgement_transport_message_id: ack.messageId,
       });
     }
@@ -130,7 +131,8 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   }
 
   if (!escalation) {
-    const ack = durableInbound?.acknowledgement_status === 'accepted'
+    const ack = durableInbound?.acknowledgement_status === 'accepted' &&
+      durableInbound?.acknowledgement_text === UNMATCHED_QUOTE_TEXT
       ? { ok: true, alreadyAccepted: true }
       : await sendOwnerAcknowledgement({
           phoneNumberId: msg.phoneNumberId,
@@ -148,6 +150,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     if (!ack.alreadyAccepted) {
       await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
         acknowledgement_status: 'accepted',
+        acknowledgement_text: UNMATCHED_QUOTE_TEXT,
         acknowledgement_transport_message_id: ack.messageId,
       });
     }
@@ -262,7 +265,8 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
         : result.status === 'sent_unconfirmed'
           ? `I sent your answer to ${staffName}, but delivery recording is still being reconciled.`
           : `Got it — I sent your answer to ${staffName}.`;
-  const ack = durableInbound?.acknowledgement_status === 'accepted'
+  const ack = durableInbound?.acknowledgement_status === 'accepted' &&
+    durableInbound?.acknowledgement_text === acknowledgement
     ? { ok: true, alreadyAccepted: true }
     : await sendOwnerAcknowledgement({
         phoneNumberId: msg.phoneNumberId,
@@ -286,6 +290,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   if (!ack.alreadyAccepted) {
     await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
       acknowledgement_status: 'accepted',
+      acknowledgement_text: acknowledgement,
       acknowledgement_transport_message_id: ack.messageId,
       staff_transport_message_id: result.transportMessageId || null,
     });

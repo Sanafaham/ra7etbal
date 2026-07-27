@@ -126,6 +126,7 @@ ALTER TABLE public.owner_whatsapp_reply_receipts
   DROP COLUMN IF EXISTS execution_result,
   DROP COLUMN IF EXISTS execution_error,
   DROP COLUMN IF EXISTS acknowledgement_status,
+  DROP COLUMN IF EXISTS acknowledgement_text,
   DROP COLUMN IF EXISTS acknowledgement_transport_message_id,
   DROP COLUMN IF EXISTS acknowledgement_error,
   DROP COLUMN IF EXISTS staff_transport_message_id,

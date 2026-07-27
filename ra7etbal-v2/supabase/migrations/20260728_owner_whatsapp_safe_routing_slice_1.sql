@@ -13,6 +13,7 @@ ALTER TABLE public.owner_whatsapp_reply_receipts
   ADD COLUMN IF NOT EXISTS execution_result jsonb NOT NULL DEFAULT '{}'::jsonb,
   ADD COLUMN IF NOT EXISTS execution_error text,
   ADD COLUMN IF NOT EXISTS acknowledgement_status text NOT NULL DEFAULT 'pending',
+  ADD COLUMN IF NOT EXISTS acknowledgement_text text,
   ADD COLUMN IF NOT EXISTS acknowledgement_transport_message_id text,
   ADD COLUMN IF NOT EXISTS acknowledgement_error text,
   ADD COLUMN IF NOT EXISTS staff_transport_message_id text,

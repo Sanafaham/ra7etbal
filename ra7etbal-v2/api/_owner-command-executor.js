@@ -53,10 +53,12 @@ export async function persistAndExecuteOwnerCommand({
       execution_status: 'unsupported',
       execution_result: { command_type: 'unsupported' },
     });
+    const acknowledgement = 'I recorded this command, but this WhatsApp command type is not supported yet. I did not create or send anything.';
     return {
       kind: 'unsupported',
-      acknowledgement: 'I recorded this command, but this WhatsApp command type is not supported yet. I did not create or send anything.',
-      acknowledgementAlreadyAccepted: row.acknowledgement_status === 'accepted',
+      acknowledgement,
+      acknowledgementAlreadyAccepted:
+        row.acknowledgement_status === 'accepted' && row.acknowledgement_text === acknowledgement,
     };
   }
 
@@ -67,7 +69,11 @@ export async function persistAndExecuteOwnerCommand({
       : await executePersonCommand({
           supabaseUrl, serviceKey, userId: identity.userId, receipt, row, classification, ownerName,
         });
-    return { ...result, acknowledgementAlreadyAccepted: row.acknowledgement_status === 'accepted' };
+    return {
+      ...result,
+      acknowledgementAlreadyAccepted:
+        row.acknowledgement_status === 'accepted' && row.acknowledgement_text === result.acknowledgement,
+    };
   } catch (error) {
     await updateCommand(supabaseUrl, serviceKey, receipt, identity.userId, {
       execution_status: 'failed',
