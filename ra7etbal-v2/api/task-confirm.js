@@ -178,7 +178,17 @@ async function responseSnippet(response) {
 export default async function handler(req, res) {
   if (req.method === 'GET') return handleGet(req, res);
   if (req.method === 'POST') return handlePost(req, res);
-  if (req.method === 'PATCH') return handleOwnerDecision(req, res);
+  if (req.method === 'PATCH') {
+    // Phase D — a deepLinkToken body field identifies the owner-escalation
+    // answer flow (staff_escalation_owner_decisions), never sent by the
+    // Alternative Review UI. Everything else (taskId-based) keeps routing
+    // to the existing, unchanged handleOwnerDecision.
+    const body = req.body || {};
+    if (typeof body.deepLinkToken === 'string' && body.deepLinkToken) {
+      return handleEscalationAnswer(req, res);
+    }
+    return handleOwnerDecision(req, res);
+  }
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
@@ -991,6 +1001,325 @@ async function handleOwnerDecision(req, res) {
   }
 }
 
+// ── PATCH (deepLinkToken): Phase D — owner answers a staff escalation ───────
+
+const ESCALATION_DECISIONS = ['approved', 'rejected', 'custom_instruction'];
+
+/**
+ * Approve/Reject build a generic, escalation-specific reply from data
+ * already on the staff_messages row — never a fixed, scenario-specific
+ * string. A fixed string (e.g. "Yes, buy the red wine vinegar instead.")
+ * would be actively wrong for every escalation except the one it was
+ * written for; this codebase already has exactly this problem solved
+ * once, for a structurally identical owner-decision flow — see
+ * buildApprovalMessageText/buildRejectionMessageText above, which
+ * interpolate {recipientName, taskDescription} (real stored fields, never
+ * invented) rather than hardcoding wording. This mirrors that pattern:
+ * {staffName, inboundText} are both real, stored, already-verified fields
+ * (staff_messages.staff_name/inbound_text), quoted verbatim — the exact
+ * same "quote it back" technique the owner-decision page itself already
+ * uses to show the request to the owner (OwnerEscalationDecision.tsx's
+ * read-only card). Quoting the staff member's own words is not inventing
+ * an owner response — it identifies *which* request this reply answers,
+ * which matters because a staff member can have more than one pending
+ * question open with Carson over time. No other field is used, and
+ * nothing beyond "approved"/"not approved" + a quote of their own
+ * question is asserted — the actual decision content for Approve/Reject
+ * is exactly what the owner selected by tapping the button, nothing more.
+ */
+function buildEscalationApprovalReplyText(staffName, inboundText) {
+  return `${staffName}, this was approved: "${inboundText}" — please go ahead.`;
+}
+function buildEscalationRejectionReplyText(staffName, inboundText) {
+  return `${staffName}, this was not approved: "${inboundText}" — please hold off for now.`;
+}
+
+/**
+ * Phase D — owner answers an open staff escalation
+ * (staff_escalation_owner_decisions, reached via deep_link_token) and
+ * Ra7etBal delivers that answer to the staff member who asked, exactly
+ * once, as a plain-text WhatsApp message (never a template — the staff
+ * member messaged first, so this send is inside Meta's customer-service
+ * window, same as Carson's own auto-reply to staff in
+ * api/whatsapp-webhook.js's handleInboundStaffMessage).
+ *
+ * Reuses the Phase A state machine and RPCs unchanged
+ * (answer_escalation_owner_decision, claim/complete/fail_escalation_
+ * answer_delivery — supabase/migrations/20260726_staff_escalation_owner_
+ * decisions.sql, plus the Phase D delivery_transport_message_id widening
+ * in 20260727_phase_d_escalation_answer_delivery_message_id.sql). No
+ * parallel state machine, no new lease pattern.
+ *
+ * answer_escalation_owner_decision itself authorizes by token possession
+ * only (it has no p_user_id parameter — see its own doc comment in the
+ * migration) because the Phase C read-only page has no session to check
+ * against. This PATCH route DOES have a real signed-in session, so it adds
+ * its own explicit ownership check here, before any write: the escalation
+ * row is looked up by token first, and a mismatched or nonexistent
+ * user_id gets the exact same generic "invalid link" response — never a
+ * different one that would disclose whether the token exists at all for
+ * another household.
+ */
+async function handleEscalationAnswer(req, res) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !serviceKey || !anonKey) {
+    return res.status(500).json({ error: 'Server configuration error.' });
+  }
+
+  const auth = await requireOwnerUser(req, { supabaseUrl, anonKey });
+  if (auth.error) {
+    return res.status(401).json({ error: auth.error });
+  }
+  const userId = auth.uid;
+
+  const { deepLinkToken, decision, instructionText: rawInstructionText } = req.body || {};
+  if (typeof deepLinkToken !== 'string' || !deepLinkToken) {
+    return res.status(400).json({ error: 'deepLinkToken is required.' });
+  }
+  // decision/instructionText are only required (and only used) when this
+  // request will actually record a new answer — i.e. the escalation is
+  // still 'open' below. A retry on a 'failed' delivery reuses the answer
+  // already stored and never needs a decision resubmitted.
+  const instructionText =
+    typeof rawInstructionText === 'string' && rawInstructionText.trim()
+      ? rawInstructionText.trim().slice(0, 1000)
+      : null;
+
+  const headers = {
+    apikey: serviceKey,
+    Authorization: 'Bearer ' + serviceKey,
+    'Content-Type': 'application/json',
+  };
+  const invalidLinkResponse = () =>
+    res.status(404).json({ error: 'This link is invalid, expired, or not associated with your account.' });
+
+  try {
+    // 1. Look up by token, verify ownership — see the function doc comment
+    // above for why this can't be left to the RPC alone.
+    const lookupRes = await fetch(
+      supabaseUrl + '/rest/v1/staff_escalation_owner_decisions?deep_link_token=eq.' +
+        encodeURIComponent(deepLinkToken) +
+        '&select=id,user_id,staff_message_id,status,owner_reply_text',
+      { headers },
+    );
+    const lookupRows = await lookupRes.json().catch(() => []);
+    if (!lookupRes.ok || !Array.isArray(lookupRows) || lookupRows.length === 0) {
+      return invalidLinkResponse();
+    }
+    const existing = lookupRows[0];
+    if (existing.user_id !== userId) {
+      return invalidLinkResponse();
+    }
+
+    // 2. Fetch the linked staff_messages row once, up front — needed both
+    // to build a safe, escalation-specific Approve/Reject reply text
+    // below, and later to resolve the recipient/opt-in state. If this
+    // can't be resolved, or lacks the one field an approval/rejection
+    // reply structurally needs (inbound_text — NOT NULL at the schema
+    // level, but re-checked here rather than assumed), stop entirely:
+    // nothing is written, nothing is sent, no guess is substituted.
+    const staffMsgRes = await fetch(
+      supabaseUrl + '/rest/v1/staff_messages?id=eq.' + encodeURIComponent(existing.staff_message_id) +
+        '&select=id,person_id,staff_name,staff_phone,inbound_text',
+      { headers },
+    );
+    const staffMsgRows = await staffMsgRes.json().catch(() => []);
+    const staffMessage = Array.isArray(staffMsgRows) ? staffMsgRows[0] : null;
+    const staffContextText = typeof staffMessage?.inbound_text === 'string' ? staffMessage.inbound_text.trim() : '';
+    if (!staffMessage || !staffContextText) {
+      console.error('[task-confirm] escalation answer blocked — could not resolve safe reply context', {
+        escalationId: existing.id, staffMessageId: existing.staff_message_id,
+      });
+      return res.status(500).json({ error: 'Could not determine the staff request. Please try again.' });
+    }
+
+    // 3. Save the answer, exactly once. Only a genuinely open escalation
+    // gets a new answer; anything else already has one stored, and the
+    // caller's freshly submitted decision/text is deliberately ignored in
+    // favor of what's already persisted — this is what makes a duplicate
+    // submit, a second browser tab, or a resubmit-after-refresh all safe.
+    let escalation = existing;
+    if (existing.status === 'open') {
+      if (!ESCALATION_DECISIONS.includes(decision)) {
+        return res.status(400).json({ error: 'A valid decision is required.' });
+      }
+      if (decision === 'custom_instruction' && !instructionText) {
+        return res.status(400).json({ error: 'Custom instruction text is required.' });
+      }
+      const submittedReplyText =
+        decision === 'rejected'
+          ? buildEscalationRejectionReplyText(staffMessage.staff_name, staffContextText)
+          : decision === 'approved'
+          ? buildEscalationApprovalReplyText(staffMessage.staff_name, staffContextText)
+          : instructionText;
+
+      const answer = await callRpcSingle(supabaseUrl, serviceKey, 'answer_escalation_owner_decision', {
+        p_deep_link_token: deepLinkToken,
+        p_owner_reply_text: submittedReplyText,
+      });
+      if (answer.error) return respondRpcError(res, answer.error);
+      escalation = answer.data;
+    }
+
+    if (escalation.status === 'delivered_to_staff') {
+      return res.status(200).json({
+        success: true,
+        status: 'delivered',
+        ownerReplyText: escalation.owner_reply_text,
+      });
+    }
+
+    // 3. Claim the delivery lease. Idempotent/atomic — see
+    // claim_escalation_answer_delivery's own doc comment in the migration.
+    const claim = await callRpcRows(supabaseUrl, serviceKey, 'claim_escalation_answer_delivery', {
+      p_id: escalation.id,
+      p_user_id: userId,
+      p_lease_seconds: 120,
+    });
+    if (claim.error) return respondRpcError(res, claim.error);
+    const claimResult = claim.data[0];
+
+    if (!claimResult.claimed) {
+      // Either this escalation just won a race and is already fully
+      // delivered, or a live lease is held elsewhere (this or a
+      // concurrent request already sending) — report truthfully, never
+      // guess, never send a second message.
+      if (claimResult.delivery_status === 'delivered_to_staff') {
+        return res.status(200).json({ success: true, status: 'delivered', ownerReplyText: claimResult.reply_text });
+      }
+      return res.status(200).json({ success: true, status: 'in_progress', ownerReplyText: claimResult.reply_text });
+    }
+
+    // 4. Resolve the staff recipient and current WhatsApp eligibility,
+    // reusing the staffMessage row already fetched in step 2 — no second
+    // staff_messages lookup needed. Never trust staff_phone alone for
+    // opt-in, though — re-check the live people row.
+    let recipientPhone = staffMessage.staff_phone || null;
+    let optedIn = false;
+    if (staffMessage?.person_id) {
+      const personRes = await fetch(
+        supabaseUrl + '/rest/v1/people?id=eq.' + encodeURIComponent(staffMessage.person_id) +
+          '&select=id,phone,whatsapp_opted_in',
+        { headers },
+      );
+      const personRows = await personRes.json().catch(() => []);
+      const person = Array.isArray(personRows) ? personRows[0] : null;
+      if (person) {
+        recipientPhone = person.phone || recipientPhone;
+        optedIn = Boolean(person.whatsapp_opted_in);
+      }
+    }
+    const normalizedPhone = recipientPhone ? normalizeWhatsAppPhone(recipientPhone) : null;
+
+    if (!staffMessage || !normalizedPhone || !optedIn) {
+      await failEscalationDeliveryLease(
+        supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'staff_unreachable',
+      );
+      return res.status(200).json({
+        success: true,
+        status: 'saved_unreachable',
+        ownerReplyText: claimResult.reply_text,
+      });
+    }
+
+    // 5. Send — plain text, the owner's exact stored reply, nothing
+    // prepended or invented, no mention of internal state.
+    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    if (!accessToken || !phoneNumberId) {
+      await failEscalationDeliveryLease(
+        supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'whatsapp_not_configured',
+      );
+      return res.status(500).json({ error: 'WhatsApp is not configured.' });
+    }
+
+    const messageText = String(claimResult.reply_text || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+    if (!messageText) {
+      await failEscalationDeliveryLease(
+        supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'empty_reply_text',
+      );
+      return res.status(500).json({ error: 'Could not send an empty message. Please try again.' });
+    }
+
+    let sendResult;
+    try {
+      sendResult = await sendMetaMessage({
+        url: `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+        accessToken,
+        payload: {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: normalizedPhone,
+          type: 'text',
+          text: { body: messageText },
+        },
+      });
+    } catch (err) {
+      await failEscalationDeliveryLease(
+        supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token,
+        err instanceof Error ? err.message : String(err),
+      );
+      return res.status(502).json({ error: 'Could not send the message. Please retry.' });
+    }
+
+    if (!sendResult.ok) {
+      const failure = getMetaFailure(sendResult);
+      await failEscalationDeliveryLease(
+        supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, failure.reason,
+      );
+      return res.status(502).json({ error: 'Could not send the message. Please retry.' });
+    }
+
+    // 6. Complete — atomic, gated on the exact live claim token; a
+    // superseded/stale token can never resolve this call.
+    const complete = await callRpcSingle(supabaseUrl, serviceKey, 'complete_escalation_answer_delivery', {
+      p_id: escalation.id,
+      p_user_id: userId,
+      p_claim_token: claimResult.claim_token,
+      p_transport_message_id: sendResult.messageId,
+    });
+    if (complete.error) {
+      // Meta already accepted the send — this is a bookkeeping failure
+      // afterward, not a delivery failure. Truthful partial-success
+      // response: the message really did go out, so this must never read
+      // as a plain error implying nothing happened.
+      console.error('[task-confirm] escalation delivery sent but completion bookkeeping failed', {
+        escalationId: escalation.id, error: complete.error,
+      });
+      return res.status(200).json({
+        success: true,
+        status: 'sent_unconfirmed',
+        ownerReplyText: claimResult.reply_text,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      status: 'delivered',
+      ownerReplyText: complete.data.owner_reply_text,
+    });
+  } catch (err) {
+    console.error('[task-confirm] escalation answer failed', {
+      deepLinkToken, decision, message: err?.message || String(err),
+    });
+    return res.status(500).json({ error: 'Could not process this decision. Please try again.' });
+  }
+}
+
+async function failEscalationDeliveryLease(supabaseUrl, serviceKey, escalationId, userId, claimToken, reason) {
+  try {
+    await callRpcSingle(supabaseUrl, serviceKey, 'fail_escalation_answer_delivery', {
+      p_id: escalationId, p_user_id: userId, p_claim_token: claimToken, p_error: reason,
+    });
+  } catch (err) {
+    console.error('[task-confirm] fail_escalation_answer_delivery threw (non-fatal)', {
+      escalationId, error: err?.message || String(err),
+    });
+  }
+}
+
 async function markApprovedAlternativeConfirmationOnly({ supabaseUrl, serviceKey, taskId }) {
   const response = await fetch(
     `${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}&status=eq.pending`,
@@ -1085,6 +1414,11 @@ function respondRpcError(res, error) {
     delivery_not_accepted: 409,
     invalid_decision: 400,
     wrong_outcome_path: 400,
+    // Phase D — staff_escalation_owner_decisions RPCs
+    empty_reply: 400,
+    invalid_transition: 409,
+    invalid_lease: 400,
+    stale_delivery_claim: 409,
   };
   const friendlyMap = {
     not_authorized: 'Not authorized for this task.',
@@ -1098,6 +1432,11 @@ function respondRpcError(res, error) {
     delivery_not_accepted: 'The message was not confirmed sent — please try again.',
     invalid_decision: 'This decision is not valid for this task.',
     wrong_outcome_path: 'This decision was already resolved differently — please reload.',
+    // Phase D
+    empty_reply: 'A decision is required.',
+    invalid_transition: 'This request has already been answered — please reload to see the current status.',
+    invalid_lease: 'Could not process this decision right now — please try again.',
+    stale_delivery_claim: 'This send was superseded by another attempt — please reload and try again.',
   };
   return res
     .status(statusMap[message] || 500)
