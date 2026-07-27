@@ -3,6 +3,7 @@ import { buildSmsBody, sendTwilioSms, sendMetaMessage } from './send-whatsapp-ta
 import { sendOwnerPush } from './task-confirm.js';
 import { processStaffMessage } from './_staff-comms-engine.js';
 import { notifyOwnerOfEscalation } from './_escalation-notify.js';
+import { handleInboundOwnerReply } from './_owner-escalation-reply.js';
 
 // One text-only Carson turn (WebSocket round trip to ElevenLabs) can run
 // longer than the platform default. Matches the maxDuration already used by
@@ -103,14 +104,25 @@ export default async function handler(req, res) {
     console.warn('WhatsApp delivery persistence warnings', { failed: failedDeliveryUpdates });
   }
 
-  // --- Process inbound messages (consent replies, then the Carson bridge PoC) ---
+  // --- Process inbound messages (consent replies, then owner-reply
+  // correlation, then ordinary staff-message processing) ---
   const consentResults = [];
+  const ownerResults = [];
   const staffResults = [];
   for (const msg of inboundMessages) {
     const result = await handleInboundConsentReply({ supabaseUrl, serviceKey, msg });
     consentResults.push(result);
 
     if (!result.handled && result.reason === 'not_consent_reply') {
+      // The account owner's own reply (e.g. a direct WhatsApp answer to
+      // Carson's escalation notification) must be intercepted here, before
+      // ordinary staff-message processing — it must never create a
+      // staff_messages row or be classified as a new staff request.
+      const ownerResult = await handleInboundOwnerReply({ supabaseUrl, serviceKey, msg });
+      if (ownerResult.isOwner) {
+        ownerResults.push(ownerResult);
+        continue;
+      }
       staffResults.push(await handleInboundStaffMessage({ supabaseUrl, serviceKey, msg }));
     }
   }
@@ -122,6 +134,7 @@ export default async function handler(req, res) {
     deliveryMatched:    deliveryResults.filter((r) => r.matched).length,
     deliveryUpdated:    deliveryResults.filter((r) => r.updated).length,
     consentHandled:     consentResults.filter((r) => r.handled).length,
+    ownerHandled:       ownerResults.filter((r) => r.handled).length,
     staffHandled:        staffResults.filter((r) => r.handled).length,
   });
 }

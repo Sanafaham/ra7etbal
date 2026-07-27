@@ -24,6 +24,10 @@ const staffEngineMocks = vi.hoisted(() => ({
   })),
 }));
 
+const ownerReplyMocks = vi.hoisted(() => ({
+  handleInboundOwnerReply: vi.fn(async () => ({ isOwner: false, reason: 'not_owner' })),
+}));
+
 vi.mock('./send-whatsapp-task.js', () => ({
   buildSmsBody: smsMocks.buildSmsBody,
   sendTwilioSms: smsMocks.sendTwilioSms,
@@ -36,6 +40,10 @@ vi.mock('./task-confirm.js', () => ({
 
 vi.mock('./_staff-comms-engine.js', () => ({
   processStaffMessage: staffEngineMocks.processStaffMessage,
+}));
+
+vi.mock('./_owner-escalation-reply.js', () => ({
+  handleInboundOwnerReply: ownerReplyMocks.handleInboundOwnerReply,
 }));
 
 import handler, {
@@ -56,6 +64,7 @@ afterEach(() => {
   smsMocks.sendMetaMessage.mockClear();
   taskConfirmMocks.sendOwnerPush.mockClear();
   staffEngineMocks.processStaffMessage.mockClear();
+  ownerReplyMocks.handleInboundOwnerReply.mockReset().mockResolvedValue({ isOwner: false, reason: 'not_owner' });
 });
 
 function makeReqRes(body) {
@@ -754,6 +763,81 @@ describe('verified inbound staff transport', () => {
     expect(result.reason).toBe('not_opted_in');
     expect(staffEngineMocks.processStaffMessage).not.toHaveBeenCalled();
     expect(smsMocks.sendMetaMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/whatsapp-webhook — owner-reply routing intercepts before staff processing', () => {
+  it('an owner reply is handled by handleInboundOwnerReply and never reaches handleInboundStaffMessage or creates a staff_messages row', async () => {
+    stubBaseEnv();
+    ownerReplyMocks.handleInboundOwnerReply.mockResolvedValueOnce({ isOwner: true, handled: true, reason: 'resolved_escalation' });
+    const fetchMock = vi.fn(); // handleInboundConsentReply's findPersonByPhone call, then nothing else — staff path must never run
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { req, res } = makeReqRes(
+      inboundMessagePayload({ messageId: 'wamid.owner-1', text: 'Yes, go ahead.' }),
+    );
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.ownerHandled).toBe(1);
+    expect(res.body.staffHandled).toBe(0);
+    expect(ownerReplyMocks.handleInboundOwnerReply).toHaveBeenCalledTimes(1);
+    expect(staffEngineMocks.processStaffMessage).not.toHaveBeenCalled();
+    for (const call of fetchMock.mock.calls) {
+      expect(String(call[0])).not.toContain('/staff_messages');
+    }
+  });
+
+  it('a non-owner sender falls through to staff processing exactly as before', async () => {
+    stubBaseEnv();
+    ownerReplyMocks.handleInboundOwnerReply.mockResolvedValueOnce({ isOwner: false, reason: 'not_owner' });
+    // Routed by URL/method rather than call order — the webhook's own
+    // heartbeat bookkeeping (recordWebhookHeartbeat) issues its own fetch
+    // calls first, ahead of handleInboundStaffMessage's, and how many it
+    // makes is an implementation detail this test shouldn't have to track.
+    const routes = [
+      { match: (u, m) => m === 'GET' && u.includes('/whatsapp_health_state') && u.includes('select=user_id'),
+        response: jsonResponse([{ user_id: 'user-1' }]) },
+      { match: (u, m) => m === 'GET' && u.includes('/people?'),
+        response: jsonResponse([{ id: 'person-1', phone: '+971501234567', is_family: false, whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed' }]) },
+      { match: (u, m) => m === 'GET' && u.includes('/staff_messages?'),
+        response: jsonResponse([]) },
+      { match: (u) => u.includes('/rpc/claim_staff_response_delivery'),
+        response: jsonResponse([{ message_id: 'staff-message-1', claimed: true, claim_token: 'claim-1', response_text: 'Recorded.' }]) },
+      { match: (u) => u.includes('/rpc/complete_staff_response_delivery'),
+        response: jsonResponse([{ id: 'staff-message-1' }]) },
+    ];
+    const fetchMock = vi.fn(async (url, opts) => {
+      const method = opts?.method || 'GET';
+      const urlStr = String(url);
+      const route = routes.find((r) => r.match(urlStr, method));
+      return route ? route.response : jsonResponse([]);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { req, res } = makeReqRes(
+      inboundMessagePayload({ messageId: 'wamid.staff-3', text: 'We are out of milk.' }),
+    );
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.ownerHandled).toBe(0);
+    expect(res.body.staffHandled).toBe(1);
+    expect(ownerReplyMocks.handleInboundOwnerReply).toHaveBeenCalledTimes(1);
+    expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('a consent reply (opt-in/opt-out) is never routed to owner-reply handling at all', async () => {
+    stubBaseEnv();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([]))); // findPersonByPhone -> no match, consent flow no-ops safely
+
+    const { req, res } = makeReqRes(
+      inboundMessagePayload({ messageId: 'wamid.consent-2', text: 'STOP' }),
+    );
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(ownerReplyMocks.handleInboundOwnerReply).not.toHaveBeenCalled();
   });
 });
 
