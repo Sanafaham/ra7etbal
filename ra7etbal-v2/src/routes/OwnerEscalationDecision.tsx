@@ -123,9 +123,11 @@ export function OwnerEscalationDecisionView({
             </p>
           </article>
 
-          <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-4 text-sm text-ink/60">
-            Decision controls aren't available yet — for now, reply to {detail.staffName} directly.
-          </div>
+          {!detail.alreadyAnswered && (
+            <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-4 text-sm text-ink/60">
+              Decision controls are coming next. This request will remain in Needs You until you respond through Carson.
+            </div>
+          )}
         </div>
       )}
     </div>
