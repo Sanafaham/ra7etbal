@@ -6,6 +6,8 @@
  * DOM/testing-library dependency (see StaffUpdates.test.tsx).
  */
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // This test only exercises the pure resolveConfirmLinkKind export below,
 // but importing the module also statically imports Confirm.tsx and
@@ -56,5 +58,29 @@ describe("resolveConfirmLinkKind", () => {
   it("a network failure on the probe falls through to 'task' rather than the owner-escalation branch", async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
     expect(await resolveConfirmLinkKind("x", fetchMock)).toBe("task");
+  });
+});
+
+/**
+ * Stale-state fix (CodeRabbit finding on PR #90, addressed alongside the
+ * deduplication blocker): if `token` changes while ConfirmRouter stays
+ * mounted (no full remount), the effect used to re-probe the new token
+ * without first resetting `kind` — so the previous token's resolved kind
+ * briefly rendered against the new token while the new probe was still in
+ * flight. Source-text guard, matching this repo's established convention
+ * (Home.test.ts/Updates.test.ts/BottomNav.*.test.ts) for asserting
+ * hook/effect ordering that isn't reachable through a pure-function test
+ * and that this repo doesn't pull in jsdom/testing-library to render.
+ */
+describe("ConfirmRouter — resets to 'loading' before re-probing a changed token", () => {
+  const SOURCE = readFileSync(join(__dirname, "ConfirmRouter.tsx"), "utf-8");
+
+  it("calls setKind('loading') synchronously, before resolveConfirmLinkKind, on every effect run for a present token", () => {
+    const effectBody = SOURCE.slice(SOURCE.indexOf("useEffect(() => {"), SOURCE.indexOf("}, [token]);"));
+    const resetIndex = effectBody.indexOf('setKind("loading")');
+    const probeIndex = effectBody.indexOf("resolveConfirmLinkKind(token)");
+    expect(resetIndex).toBeGreaterThan(-1);
+    expect(probeIndex).toBeGreaterThan(-1);
+    expect(resetIndex).toBeLessThan(probeIndex);
   });
 });

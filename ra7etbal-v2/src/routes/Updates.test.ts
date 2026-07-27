@@ -183,11 +183,13 @@ describe("Updates.tsx — Phase C staff escalations inside the existing Needs Yo
     expect(SOURCE).toMatch(/visibleStaffEscalations\.map\(\(escalation\) => \(/);
   });
 
-  it("5. dedupes against a staff escalation's linked task via the shared filterVisibleStaffEscalations helper", () => {
+  it("5. routes staff escalations through the shared filterVisibleStaffEscalations helper — never suppresses one by task_id alone (fixed: PR #90 re-review)", () => {
     expect(SOURCE).toContain(
       'import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";',
     );
     expect(SOURCE).toMatch(/filterVisibleStaffEscalations\(staffEscalations, brief\.needsAttention\.map/);
+    // The old, unsafe "dedup" framing must not reappear in this file.
+    expect(SOURCE).not.toMatch(/dropped here to avoid showing the same decision twice/);
   });
 
   it("the empty state only shows when both real tasks and staff escalations are empty", () => {

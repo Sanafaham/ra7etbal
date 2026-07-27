@@ -210,9 +210,13 @@ export default function Updates() {
   // Phase C — open staff escalations (Phase B) merged into the same Needs
   // You list. Deliberately not folded into buildDailyBrief()/needsAttention
   // itself: staff escalations are not `Task` rows, and isNeedsYouTask() is
-  // a protected, locked classifier — see RA7ETBAL_STATE.md. A staff
-  // escalation already linked to a task shown in needsAttention is
-  // dropped here to avoid showing the same decision twice.
+  // a protected, locked classifier — see RA7ETBAL_STATE.md.
+  //
+  // filterVisibleStaffEscalations no longer deduplicates by task_id — a
+  // task_id match does not mean "the same decision" (a task can appear in
+  // Needs You for a reason unrelated to Phase B while a staff escalation
+  // on it is a genuinely separate decision), so nothing is ever dropped
+  // here. See that function's own doc comment for the full explanation.
   const { escalations: staffEscalations } = useOpenStaffEscalations();
   const visibleStaffEscalations = useMemo(
     () => filterVisibleStaffEscalations(staffEscalations, brief.needsAttention.map((t) => t.id)),

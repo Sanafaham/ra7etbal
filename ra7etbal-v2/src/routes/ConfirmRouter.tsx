@@ -55,6 +55,11 @@ export default function ConfirmRouter() {
       setKind("task");
       return;
     }
+    // Reset to "loading" synchronously before probing: if `token` changes
+    // while this component stays mounted (no full remount), the previous
+    // `kind` must not be rendered against the new token while the probe for
+    // the new token is still in flight.
+    setKind("loading");
     let cancelled = false;
     void resolveConfirmLinkKind(token).then((resolved) => {
       if (!cancelled) setKind(resolved);
