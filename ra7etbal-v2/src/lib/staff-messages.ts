@@ -49,22 +49,21 @@ export function getStaffMessageDisplayState(
 // ── Phase C: open staff escalations for the Needs You list ─────────────────
 
 /**
- * Only what's needed to decide "is this genuinely open and undecided" plus
- * display fields. `decision:staff_escalation_owner_decisions(...)` embeds
- * via the existing staff_message_id FK and is itself subject to that
- * table's own owner-scoped RLS policy — same convention as `task:tasks(...)`
- * above. Never selects owner_reply_text's *content* for display, only
- * whether it's set (used to filter, not shown).
+ * Only what's needed to decide "is this genuinely open (or failed and
+ * still needing owner attention) and undecided" plus display fields.
+ * `decision:staff_escalation_owner_decisions(...)` embeds via the existing
+ * staff_message_id FK and is itself subject to that table's own
+ * owner-scoped RLS policy — same convention as `task:tasks(...)` above.
+ * Never selects owner_reply_text — this list never shows or needs the
+ * answer's content, only status.
  */
 const OPEN_ESCALATION_COLUMNS =
-  "id, staff_name, inbound_text, escalation_reason, received_at, task_id, escalation_resolved_at, owner_attention_required, user_facing_state, decision:staff_escalation_owner_decisions(id, status, deep_link_token, owner_reply_text, answered_at)";
+  "id, staff_name, inbound_text, escalation_reason, received_at, task_id, escalation_resolved_at, owner_attention_required, user_facing_state, decision:staff_escalation_owner_decisions(id, status, deep_link_token)";
 
 interface RawDecisionEmbed {
   id: string;
   status: string;
   deep_link_token: string;
-  owner_reply_text: string | null;
-  answered_at: string | null;
 }
 
 interface RawOpenEscalationRow {
@@ -88,10 +87,23 @@ interface RawOpenEscalationRow {
  * Open staff escalations eligible for the owner's Needs You list, most
  * recent first. A row qualifies only when ALL of:
  *   - owner_attention_required is true OR user_facing_state is 'Needs You'
- *   - escalation_resolved_at is null (Phase B never sets this; kept as a
- *     truthful guard for whenever Phase D exists)
- *   - the paired staff_escalation_owner_decisions row exists, is still
- *     status 'open', and has no owner_reply_text/answered_at recorded
+ *   - escalation_resolved_at is null (set only by
+ *     complete_escalation_answer_delivery on the delivered_to_staff
+ *     terminal transition — the exact "removed from Needs You" condition)
+ *   - the paired staff_escalation_owner_decisions row exists and its
+ *     status is 'open' OR 'failed'
+ *
+ * Phase D: 'failed' stays visible deliberately, not just 'open'. The
+ * owner tapping Approve/Reject/Custom must never make the escalation
+ * disappear before delivery is actually confirmed — if the WhatsApp send
+ * to staff failed, the owner's job is not done yet and this must keep
+ * asking for attention (with a retry action on the owner-decision page),
+ * exactly the same way it did before any answer was submitted.
+ * 'answered'/'delivering' (a live attempt in flight, normally seconds
+ * long) are excluded — the escalation should not visibly flicker in and
+ * out of Needs You for a fast, in-progress send; a 'failed' send is the
+ * one non-terminal state expected to persist long enough that hiding it
+ * would be actively misleading.
  *
  * Same RLS-only convention as listStaffMessages(): no manual user_id
  * filter, standard anon-key client. A staff message with no paired
@@ -114,9 +126,7 @@ export async function listOpenStaffEscalationsForNeedsYou(): Promise<OpenStaffEs
 
     const decision = Array.isArray(row.decision) ? row.decision[0] : row.decision;
     if (!decision) continue;
-    if (decision.status !== "open") continue;
-    if (decision.owner_reply_text != null) continue;
-    if (decision.answered_at != null) continue;
+    if (decision.status !== "open" && decision.status !== "failed") continue;
 
     result.push({
       id: row.id,

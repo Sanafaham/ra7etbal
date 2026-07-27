@@ -133,8 +133,6 @@ function openEscalationRow(overrides: Record<string, unknown> = {}) {
       id: "decision-1",
       status: "open",
       deep_link_token: "162865ee-4ad6-4b73-b6c4-ae4945a2f545",
-      owner_reply_text: null,
-      answered_at: null,
     },
     ...overrides,
   };
@@ -174,7 +172,7 @@ describe("listOpenStaffEscalationsForNeedsYou", () => {
     expect(rows).toHaveLength(0);
   });
 
-  it("4a. an escalation already answered (decision status not 'open') does not appear", async () => {
+  it("4a. an escalation already answered (decision status 'answered', delivery not yet resolved) does not appear", async () => {
     state.selectResult = {
       data: [openEscalationRow({ decision: { ...openEscalationRow().decision, status: "answered" } })],
       error: null,
@@ -182,20 +180,30 @@ describe("listOpenStaffEscalationsForNeedsYou", () => {
     expect(await listOpenStaffEscalationsForNeedsYou()).toHaveLength(0);
   });
 
-  it("4b. an escalation with owner_reply_text already set does not appear", async () => {
+  it("4b. an escalation actively delivering does not appear (brief, seconds-long — no visible flicker)", async () => {
     state.selectResult = {
-      data: [openEscalationRow({ decision: { ...openEscalationRow().decision, owner_reply_text: "Go ahead" } })],
+      data: [openEscalationRow({ decision: { ...openEscalationRow().decision, status: "delivering" } })],
       error: null,
     };
     expect(await listOpenStaffEscalationsForNeedsYou()).toHaveLength(0);
   });
 
-  it("4c. an escalation with answered_at already set does not appear", async () => {
+  it("4c. a delivered_to_staff escalation does not appear (this is the actual Needs You removal condition — see also escalation_resolved_at below)", async () => {
     state.selectResult = {
-      data: [openEscalationRow({ decision: { ...openEscalationRow().decision, answered_at: "2026-07-27T01:00:00.000Z" } })],
+      data: [openEscalationRow({ decision: { ...openEscalationRow().decision, status: "delivered_to_staff" } })],
       error: null,
     };
     expect(await listOpenStaffEscalationsForNeedsYou()).toHaveLength(0);
+  });
+
+  it("Phase D: a failed delivery DOES remain visible — the owner's job isn't done until staff is actually notified, so a failed send must never silently disappear from Needs You", async () => {
+    state.selectResult = {
+      data: [openEscalationRow({ decision: { ...openEscalationRow().decision, status: "failed" } })],
+      error: null,
+    };
+    const rows = await listOpenStaffEscalationsForNeedsYou();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe("staff-msg-1");
   });
 
   it("a staff message flagged for owner attention with no paired decision row is excluded, not shown broken", async () => {
