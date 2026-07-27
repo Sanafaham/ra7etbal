@@ -146,6 +146,7 @@ export async function notifyOwnerOfEscalation(input, deps) {
   const deliveryId = await beginWhatsappDelivery({
     supabaseUrl,
     serviceKey,
+    staffMessageId,
     taskId: taskId || null,
     sourceType: 'message',
     recipientPhone: normalizedPhone,
