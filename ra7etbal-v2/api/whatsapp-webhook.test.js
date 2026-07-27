@@ -24,6 +24,10 @@ const staffEngineMocks = vi.hoisted(() => ({
   })),
 }));
 
+const ownerRoutingMocks = vi.hoisted(() => ({
+  handleInboundOwnerMessage: vi.fn(async () => ({ isOwner: false, reason: 'not_owner' })),
+}));
+
 vi.mock('./send-whatsapp-task.js', () => ({
   buildSmsBody: smsMocks.buildSmsBody,
   sendTwilioSms: smsMocks.sendTwilioSms,
@@ -36,6 +40,10 @@ vi.mock('./task-confirm.js', () => ({
 
 vi.mock('./_staff-comms-engine.js', () => ({
   processStaffMessage: staffEngineMocks.processStaffMessage,
+}));
+
+vi.mock('./_owner-whatsapp-routing.js', () => ({
+  handleInboundOwnerMessage: ownerRoutingMocks.handleInboundOwnerMessage,
 }));
 
 import handler, {
@@ -56,6 +64,8 @@ afterEach(() => {
   smsMocks.sendMetaMessage.mockClear();
   taskConfirmMocks.sendOwnerPush.mockClear();
   staffEngineMocks.processStaffMessage.mockClear();
+  ownerRoutingMocks.handleInboundOwnerMessage.mockClear();
+  ownerRoutingMocks.handleInboundOwnerMessage.mockResolvedValue({ isOwner: false, reason: 'not_owner' });
 });
 
 function makeReqRes(body) {

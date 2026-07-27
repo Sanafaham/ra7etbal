@@ -1107,3 +1107,53 @@ Remaining risks:
   (same preview-tool limitation noted in prior entries) — recommend
   Sana manually confirm Delete works in the Done list on iPhone PWA
   and that active to-dos/tasks are unaffected.
+
+OWNER WHATSAPP SAFE ROUTING — SLICE 1
+
+Date:
+2026-07-27
+
+Status:
+Implemented on `feat/owner-whatsapp-safe-routing-slice-1`; not deployed.
+
+What now works:
+
+• Owner identity is resolved before consent/staff handling.
+• Only a quoted Meta context ID mapped to one owner escalation notification
+  can resolve an escalation.
+• Ordinary owner commands enter a separate, explicitly deferred path and
+  never query or infer from open-escalation count.
+• Duplicate webhook claims are fenced by the existing production receipt
+  lease.
+• App and WhatsApp escalation answers carry explicit reply channels.
+• Owner acknowledgement-bearing routes complete only after Meta acceptance.
+
+What was tested:
+
+• Focused routing + Phase B/D + webhook: 191 passed, 4 skipped.
+• Protected Carson gate: 566 passed, 4 skipped, 3 todo.
+• Full suite: 2196 passed, 4 skipped, 3 todo across 137 files.
+• Typecheck passed.
+• Production build passed with pre-existing CSS and bundle-size warnings.
+
+What failed and was fixed:
+
+• Initial full suite: one base test searched the widget for hosting copy that
+  lives in `ops-intelligence.ts`. The test source target was corrected without
+  changing Carson behavior; the full rerun exited zero.
+
+Current next task:
+
+• Independent review, then Slice 2: implement the real server-side general
+  owner command executor. Do not add unquoted short-answer inference yet.
+
+Do not touch:
+
+• Production migrations, live escalation rows, templates, confirmation links,
+  auth/RLS, Quality Intelligence, PWA/push, or deployment during review.
+
+Migration gotcha:
+
+• `20260728_owner_whatsapp_safe_routing_slice_1.sql` is prepared but was not
+  applied. The branch must not deploy until that forward migration is reviewed
+  and deliberately applied in the correct order.

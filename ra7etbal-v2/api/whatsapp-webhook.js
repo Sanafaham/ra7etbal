@@ -3,6 +3,7 @@ import { buildSmsBody, sendTwilioSms, sendMetaMessage } from './send-whatsapp-ta
 import { sendOwnerPush } from './task-confirm.js';
 import { processStaffMessage } from './_staff-comms-engine.js';
 import { notifyOwnerOfEscalation } from './_escalation-notify.js';
+import { handleInboundOwnerMessage } from './_owner-whatsapp-routing.js';
 
 // One text-only Carson turn (WebSocket round trip to ElevenLabs) can run
 // longer than the platform default. Matches the maxDuration already used by
@@ -103,10 +104,18 @@ export default async function handler(req, res) {
     console.warn('WhatsApp delivery persistence warnings', { failed: failedDeliveryUpdates });
   }
 
-  // --- Process inbound messages (consent replies, then the Carson bridge PoC) ---
+  // Owner identity is resolved before consent/staff routing. Consent-like
+  // owner text must remain an owner command, never a staff consent reply.
   const consentResults = [];
+  const ownerResults = [];
   const staffResults = [];
   for (const msg of inboundMessages) {
+    const ownerResult = await handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg });
+    if (ownerResult.isOwner) {
+      ownerResults.push(ownerResult);
+      continue;
+    }
+
     const result = await handleInboundConsentReply({ supabaseUrl, serviceKey, msg });
     consentResults.push(result);
 
@@ -122,6 +131,7 @@ export default async function handler(req, res) {
     deliveryMatched:    deliveryResults.filter((r) => r.matched).length,
     deliveryUpdated:    deliveryResults.filter((r) => r.updated).length,
     consentHandled:     consentResults.filter((r) => r.handled).length,
+    ownerHandled:       ownerResults.filter((r) => r.handled).length,
     staffHandled:        staffResults.filter((r) => r.handled).length,
   });
 }
