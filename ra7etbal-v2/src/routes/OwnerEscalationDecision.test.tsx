@@ -92,7 +92,17 @@ describe("OwnerEscalationDecisionView", () => {
     expect(html).not.toContain("<form");
     expect(html).not.toMatch(/<button/i);
     expect(html).not.toMatch(/approve|reject|answer_escalation_owner_decision/i);
-    expect(html).toContain("Decision controls aren");
-    expect(html).toContain("available yet");
+    expect(html).toContain("Decision controls are coming next.");
+    expect(html).toContain("This request will remain in Needs You until you respond through Carson.");
+  });
+
+  it("never tells the owner to bypass Carson — no instruction to reply, contact, or message staff directly (fixed: copy contradicted the Carson-owns-the-loop operating model)", () => {
+    const html = renderToStaticMarkup(
+      <OwnerEscalationDecisionView authStatus="signed_in" loadState="ready" loadError={null} detail={baseDetail()} now={NOW} />,
+    );
+    expect(html).not.toMatch(/reply[^.]*directly/i);
+    expect(html).not.toMatch(/contact[^.]*directly/i);
+    expect(html).not.toMatch(/message[^.]*directly/i);
+    expect(html).not.toMatch(/reply to christopher/i);
   });
 });
