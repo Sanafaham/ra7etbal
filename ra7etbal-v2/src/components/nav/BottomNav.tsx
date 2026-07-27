@@ -2,6 +2,8 @@ import { useMemo } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { useCarsonStore } from "../../stores/carson";
 import { useTasksStore } from "../../stores/tasks";
+import { useOpenStaffEscalations } from "../../hooks/useOpenStaffEscalations";
+import { filterVisibleStaffEscalations } from "../../lib/needs-you-staff-escalations";
 import { buildDailyBrief } from "../../lib/daily-brief";
 
 function Badge({ count }: { count: number }) {
@@ -21,22 +23,24 @@ function Badge({ count }: { count: number }) {
  * Home / What's Happening / People / Tell Carson
  *
  * What's Happening badge: genuine unresolved owner attention only
- * (brief.needsAttention.length — never Waiting, Handled, or any other
- * count). Route stays /updates internally; only the owner-facing label
- * changed.
+ * (brief.needsAttention.length plus open staff escalations, Phase C —
+ * never Waiting, Handled, or any other count). Route stays /updates
+ * internally; only the owner-facing label changed.
  * Carson: pulsing green dot when connected.
  */
 export default function BottomNav() {
   const { setOpen: setCarsonOpen, callStatus, open: carsonOpen } = useCarsonStore();
   const tasks = useTasksStore((s) => s.items);
   const { pathname } = useLocation();
+  const { escalations: staffEscalations } = useOpenStaffEscalations();
 
   const updatesIsActive = pathname === "/updates" || pathname.startsWith("/updates");
 
   const updatesBadge = useMemo(() => {
     const brief = buildDailyBrief(tasks, new Date());
-    return brief.needsAttention.length;
-  }, [tasks]);
+    const visible = filterVisibleStaffEscalations(staffEscalations, brief.needsAttention.map((t) => t.id));
+    return brief.needsAttention.length + visible.length;
+  }, [tasks, staffEscalations]);
 
   return (
     <nav

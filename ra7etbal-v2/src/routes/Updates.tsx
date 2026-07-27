@@ -9,8 +9,11 @@ import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import Spinner from "../components/Spinner";
 import TaskCard from "../components/tasks/TaskCard";
+import StaffEscalationCard from "../components/tasks/StaffEscalationCard";
 import Modal from "../components/ui/Modal";
 import { useTaskList } from "../hooks/useTaskList";
+import { useOpenStaffEscalations } from "../hooks/useOpenStaffEscalations";
+import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";
 import { buildDailyBrief } from "../lib/daily-brief";
 import { getUpcomingReminderTasks } from "../lib/updates-reminders";
 import { usePeopleStore } from "../stores/people";
@@ -203,6 +206,19 @@ export default function Updates() {
   }, [people]);
 
   const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
+
+  // Phase C — open staff escalations (Phase B) merged into the same Needs
+  // You list. Deliberately not folded into buildDailyBrief()/needsAttention
+  // itself: staff escalations are not `Task` rows, and isNeedsYouTask() is
+  // a protected, locked classifier — see RA7ETBAL_STATE.md. A staff
+  // escalation already linked to a task shown in needsAttention is
+  // dropped here to avoid showing the same decision twice.
+  const { escalations: staffEscalations } = useOpenStaffEscalations();
+  const visibleStaffEscalations = useMemo(
+    () => filterVisibleStaffEscalations(staffEscalations, brief.needsAttention.map((t) => t.id)),
+    [staffEscalations, brief.needsAttention],
+  );
+
   const doneTasks = useMemo(() => tasks.filter((t) => t.status === "done"), [tasks]);
   const initialLoading = tasksStatus === "loading" && tasks.length === 0;
   // Background refreshes (15s/30s/60s polls, focus, visibilitychange, and the
@@ -345,12 +361,17 @@ export default function Updates() {
       ══════════════════════════════════════════════════════════════ */}
       {activeTab === "needs-you" && !initialLoading && listReady && (
         <div className="space-y-3">
-          {brief.needsAttention.length === 0 ? (
+          {brief.needsAttention.length === 0 && visibleStaffEscalations.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
               Nothing needs your attention right now.
             </div>
           ) : (
             <ul className="space-y-3">
+              {visibleStaffEscalations.map((escalation) => (
+                <li key={`staff-escalation-${escalation.id}`}>
+                  <StaffEscalationCard escalation={escalation} now={now} />
+                </li>
+              ))}
               {brief.needsAttention.map((task) => (
                 <li key={task.id}>
                   <TaskCard

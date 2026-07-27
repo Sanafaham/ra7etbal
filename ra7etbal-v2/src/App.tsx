@@ -6,7 +6,7 @@ import Actions from "./routes/Actions";
 import Active from "./routes/Active";
 import Updates from "./routes/Updates";
 import Auth from "./routes/Auth";
-import Confirm from "./routes/Confirm";
+import ConfirmRouter from "./routes/ConfirmRouter";
 import Debug from "./routes/Debug";
 import CarsonDebugOverlay from "./routes/CarsonDebug";
 import FollowUps from "./routes/FollowUps";
@@ -492,7 +492,7 @@ export default function App() {
           <Route path="/people" element={<ProtectedRoute><People /></ProtectedRoute>} />
           <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
           <Route path="/routines" element={<Navigate to="/updates?tab=routines" replace />} />
-          <Route path="/confirm" element={<Confirm />} />
+          <Route path="/confirm" element={<ConfirmRouter />} />
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/terms" element={<Terms />} />
           <Route path="/debug" element={<Debug />} />
