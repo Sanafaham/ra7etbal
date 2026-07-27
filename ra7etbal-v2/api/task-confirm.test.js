@@ -2660,12 +2660,19 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
   }
 
   function staffMessageRow(overrides = {}) {
-    return { id: 'staff-msg-1', person_id: 'person-1', staff_name: 'Christopher', staff_phone: '+15551234567', ...overrides };
+    return {
+      id: 'staff-msg-1', person_id: 'person-1', staff_name: 'Christopher',
+      staff_phone: '+15551234567', inbound_text: 'Can I buy red wine vinegar instead?',
+      ...overrides,
+    };
   }
 
   function personRow(overrides = {}) {
     return { id: 'person-1', phone: '+15551234567', whatsapp_opted_in: true, ...overrides };
   }
+
+  const APPROVE_TEXT = 'Christopher, this was approved: "Can I buy red wine vinegar instead?" — please go ahead.';
+  const REJECT_TEXT = 'Christopher, this was not approved: "Can I buy red wine vinegar instead?" — please hold off for now.';
 
   it('routes deepLinkToken-based PATCH bodies to this flow, not the taskId-based Alternative Review branch — dispatch never touches taskId handling', async () => {
     const fetchMock = vi
@@ -2711,58 +2718,89 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/'))).toBe(false); // never even attempts a write
   });
 
-  it('1. Approve is saved, delivered, and sends the exact fixed approve text — nothing invented, nothing prepended', async () => {
+  it('1. Approve is saved and delivered using an escalation-specific reply built from the actual staff request — never a fixed, unrelated string', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' })) // auth
       .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()])) // token lookup
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: 'Yes, buy the red wine vinegar instead.' })) // answer RPC
-      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: 'Yes, buy the red wine vinegar instead.', delivery_status: 'delivering' }])) // claim RPC
-      .mockResolvedValueOnce(jsonResponse([staffMessageRow()])) // staff_messages lookup
+      .mockResolvedValueOnce(jsonResponse([staffMessageRow()])) // staff_messages lookup (now fetched before the answer RPC)
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: APPROVE_TEXT })) // answer RPC
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: APPROVE_TEXT, delivery_status: 'delivering' }])) // claim RPC
       .mockResolvedValueOnce(jsonResponse([personRow()])) // people lookup
       .mockResolvedValueOnce(metaAcceptedResponse('wamid.111')) // Meta send
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', status: 'delivered_to_staff', owner_reply_text: 'Yes, buy the red wine vinegar instead.' })); // complete RPC
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', status: 'delivered_to_staff', owner_reply_text: APPROVE_TEXT })); // complete RPC
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'approved' }), res);
 
-    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'delivered', ownerReplyText: 'Yes, buy the red wine vinegar instead.' });
+    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'delivered', ownerReplyText: APPROVE_TEXT });
+    const answerCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/answer_escalation_owner_decision'));
+    expect(JSON.parse(answerCall[1].body).p_owner_reply_text).toBe(APPROVE_TEXT);
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
     const metaBody = JSON.parse(metaCall[1].body);
     expect(metaBody.type).toBe('text');
-    expect(metaBody.text.body).toBe('Yes, buy the red wine vinegar instead.');
+    expect(metaBody.text.body).toBe(APPROVE_TEXT);
     expect(metaBody.to).toBe('15551234567');
   });
 
-  it('Reject sends the exact fixed reject text', async () => {
+  it('2. Reject uses the correct escalation-specific rejection reply, built the same way, distinct from Approve', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
       .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: 'No, do not buy it. Continue without it.' }))
-      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: 'No, do not buy it. Continue without it.', delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: REJECT_TEXT }))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: REJECT_TEXT, delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([personRow()]))
       .mockResolvedValueOnce(metaAcceptedResponse())
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', status: 'delivered_to_staff', owner_reply_text: 'No, do not buy it. Continue without it.' }));
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', status: 'delivered_to_staff', owner_reply_text: REJECT_TEXT }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'rejected' }), res);
 
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
-    expect(JSON.parse(metaCall[1].body).text.body).toBe('No, do not buy it. Continue without it.');
+    expect(JSON.parse(metaCall[1].body).text.body).toBe(REJECT_TEXT);
+    expect(REJECT_TEXT).not.toBe(APPROVE_TEXT);
   });
 
-  it('3. Custom instruction sends the owner\'s exact typed text, verbatim', async () => {
+  it('CRITICAL: an unrelated escalation (different staff member, different request) never sends the vinegar wording or any other escalation\'s wording — Approve/Reject text always reflects the actual current escalation', async () => {
+    const unrelatedStaffMessage = staffMessageRow({
+      id: 'staff-msg-2', staff_name: 'Ghulam', staff_phone: '+15559998888',
+      inbound_text: 'Should I pick up dry cleaning today or tomorrow?',
+    });
+    const expectedText = 'Ghulam, this was approved: "Should I pick up dry cleaning today or tomorrow?" — please go ahead.';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow({ id: 'decision-2', staff_message_id: 'staff-msg-2' })]))
+      .mockResolvedValueOnce(jsonResponse([unrelatedStaffMessage]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-2', user_id: 'user-1', staff_message_id: 'staff-msg-2', status: 'answered', owner_reply_text: expectedText }))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-2', claimed: true, claim_token: 'claim-9', reply_text: expectedText, delivery_status: 'delivering' }]))
+      .mockResolvedValueOnce(jsonResponse([personRow({ id: 'person-2', phone: '+15559998888' })]))
+      .mockResolvedValueOnce(metaAcceptedResponse())
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-2', status: 'delivered_to_staff', owner_reply_text: expectedText }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ deepLinkToken: 'tok-2', decision: 'approved' }), res);
+
+    const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
+    const sentText = JSON.parse(metaCall[1].body).text.body;
+    expect(sentText).toBe(expectedText);
+    expect(sentText).not.toMatch(/vinegar/i);
+    expect(sentText).not.toContain('Christopher');
+  });
+
+  it('3. Custom instruction sends the owner\'s exact typed text, verbatim — unaffected by the Approve/Reject text-building change', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
       .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
+      .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
       .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: 'Wait until Friday, then decide.' }))
       .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: 'Wait until Friday, then decide.', delivery_status: 'delivering' }]))
-      .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
       .mockResolvedValueOnce(jsonResponse([personRow()]))
       .mockResolvedValueOnce(metaAcceptedResponse())
       .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', status: 'delivered_to_staff', owner_reply_text: 'Wait until Friday, then decide.' }));
@@ -2779,7 +2817,8 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
-      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]));
+      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
+      .mockResolvedValueOnce(jsonResponse([staffMessageRow()]));
     vi.stubGlobal('fetch', fetchMock);
     const res = createRes();
     await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'custom_instruction' }), res);
@@ -2787,16 +2826,16 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/answer_escalation_owner_decision'))).toBe(false);
   });
 
-  it('8 & 13. an already-answered escalation (status answered) never calls the answer RPC again — reuses the stored reply and moves straight to delivery', async () => {
+  it('8 & 13. an already-answered escalation (status answered) never calls the answer RPC again — reuses the stored reply and moves straight to delivery, ignoring a duplicate/second submit\'s different decision', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
-      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow({ status: 'answered', owner_reply_text: 'Yes, buy the red wine vinegar instead.' })]))
-      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-2', reply_text: 'Yes, buy the red wine vinegar instead.', delivery_status: 'delivering' }])) // claim RPC — no answer RPC call precedes this
+      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow({ status: 'answered', owner_reply_text: APPROVE_TEXT })]))
       .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-2', reply_text: APPROVE_TEXT, delivery_status: 'delivering' }])) // claim RPC — no answer RPC call precedes this
       .mockResolvedValueOnce(jsonResponse([personRow()]))
       .mockResolvedValueOnce(metaAcceptedResponse())
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', status: 'delivered_to_staff', owner_reply_text: 'Yes, buy the red wine vinegar instead.' }));
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', status: 'delivered_to_staff', owner_reply_text: APPROVE_TEXT }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -2805,52 +2844,56 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
 
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/answer_escalation_owner_decision'))).toBe(false);
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
-    // The staff message sent is the ORIGINAL stored answer, never the newly submitted "rejected" text.
-    expect(JSON.parse(metaCall[1].body).text.body).toBe('Yes, buy the red wine vinegar instead.');
+    // The staff message sent is the ORIGINAL stored answer, never a text
+    // built from the newly submitted (and ignored) "rejected" decision.
+    expect(JSON.parse(metaCall[1].body).text.body).toBe(APPROVE_TEXT);
   });
 
   it('a fully delivered escalation returns success immediately, with no claim RPC and no second Meta send', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
-      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow({ status: 'delivered_to_staff', owner_reply_text: 'Yes, buy the red wine vinegar instead.' })]));
+      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow({ status: 'delivered_to_staff', owner_reply_text: APPROVE_TEXT })]))
+      .mockResolvedValueOnce(jsonResponse([staffMessageRow()]));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'approved' }), res);
 
-    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'delivered', ownerReplyText: 'Yes, buy the red wine vinegar instead.' });
+    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'delivered', ownerReplyText: APPROVE_TEXT });
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/claim_escalation_answer_delivery'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
   });
 
-  it('9. two concurrent requests: the loser of the claim race reports truthfully and never sends a second message', async () => {
+  it('9. two concurrent requests: the loser of the claim race reports truthfully and never sends a second message — duplicate submissions remain idempotent', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
-      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow({ status: 'answered', owner_reply_text: 'Yes, buy the red wine vinegar instead.' })]))
-      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: false, claim_token: null, reply_text: 'Yes, buy the red wine vinegar instead.', delivery_status: 'delivering' }])); // lease held elsewhere
+      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow({ status: 'answered', owner_reply_text: APPROVE_TEXT })]))
+      .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: false, claim_token: null, reply_text: APPROVE_TEXT, delivery_status: 'delivering' }])); // lease held elsewhere
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(patchReq({ deepLinkToken: 'tok-1' }), res);
 
-    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'in_progress', ownerReplyText: 'Yes, buy the red wine vinegar instead.' });
+    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'in_progress', ownerReplyText: APPROVE_TEXT });
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
   });
 
-  it('9. retry after Meta already accepted (claim reports delivered_to_staff): reports delivered, sends nothing again', async () => {
+  it('9. retry after Meta already accepted (claim reports delivered_to_staff): reports delivered, sends nothing again — duplicate submissions remain idempotent', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
-      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow({ status: 'answered', owner_reply_text: 'Yes, buy the red wine vinegar instead.' })]))
-      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: false, claim_token: null, reply_text: 'Yes, buy the red wine vinegar instead.', delivery_status: 'delivered_to_staff' }]));
+      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow({ status: 'answered', owner_reply_text: APPROVE_TEXT })]))
+      .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: false, claim_token: null, reply_text: APPROVE_TEXT, delivery_status: 'delivered_to_staff' }]));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
     await handler(patchReq({ deepLinkToken: 'tok-1' }), res);
 
-    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'delivered', ownerReplyText: 'Yes, buy the red wine vinegar instead.' });
+    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'delivered', ownerReplyText: APPROVE_TEXT });
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
   });
 
@@ -2859,9 +2902,9 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
       .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: 'Yes, buy the red wine vinegar instead.' }))
-      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: 'Yes, buy the red wine vinegar instead.', delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: APPROVE_TEXT }))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: APPROVE_TEXT, delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([personRow({ whatsapp_opted_in: false })]))
       .mockResolvedValueOnce(emptyResponse()); // fail_escalation_answer_delivery RPC
     vi.stubGlobal('fetch', fetchMock);
@@ -2869,9 +2912,41 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     const res = createRes();
     await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'approved' }), res);
 
-    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'saved_unreachable', ownerReplyText: 'Yes, buy the red wine vinegar instead.' });
+    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'saved_unreachable', ownerReplyText: APPROVE_TEXT });
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/fail_escalation_answer_delivery'))).toBe(true);
+  });
+
+  it('5. no staff_messages row can be found for this escalation: no safe reply text can be determined, so nothing is saved and no WhatsApp message is sent', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
+      .mockResolvedValueOnce(jsonResponse([])); // staff_messages lookup: no row
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'approved' }), res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/answer_escalation_owner_decision'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
+  });
+
+  it('5. staff_messages exists but inbound_text is blank: no safe reply text can be determined, so nothing is saved and no WhatsApp message is sent', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
+      .mockResolvedValueOnce(jsonResponse([staffMessageRow({ inbound_text: '   ' })]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'approved' }), res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/answer_escalation_owner_decision'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
   });
 
   it('6. Meta rejects the send: truthful 502 failure, delivery lease marked failed, escalation stays retryable', async () => {
@@ -2879,9 +2954,9 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
       .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: 'Yes, buy the red wine vinegar instead.' }))
-      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: 'Yes, buy the red wine vinegar instead.', delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: APPROVE_TEXT }))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: APPROVE_TEXT, delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([personRow()]))
       .mockResolvedValueOnce(jsonResponse({ error: { message: 'recipient not on WhatsApp' } }, 400)) // Meta rejects
       .mockResolvedValueOnce(emptyResponse()); // fail_escalation_answer_delivery RPC
@@ -2901,9 +2976,9 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
       .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: 'Yes, buy the red wine vinegar instead.' }))
-      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: 'Yes, buy the red wine vinegar instead.', delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: APPROVE_TEXT }))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: APPROVE_TEXT, delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([personRow()]))
       .mockRejectedValueOnce(new Error('network down')) // Meta send throws
       .mockResolvedValueOnce(emptyResponse()); // fail_escalation_answer_delivery RPC
@@ -2921,9 +2996,9 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
       .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: 'Yes, buy the red wine vinegar instead.' }))
-      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: 'Yes, buy the red wine vinegar instead.', delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: APPROVE_TEXT }))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: APPROVE_TEXT, delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([personRow()]))
       .mockResolvedValueOnce(metaAcceptedResponse('wamid.999'))
       .mockResolvedValueOnce(jsonResponse({ message: 'stale_delivery_claim' }, 409)); // complete RPC fails
@@ -2933,16 +3008,17 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'approved' }), res);
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'sent_unconfirmed', ownerReplyText: 'Yes, buy the red wine vinegar instead.' });
+    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'sent_unconfirmed', ownerReplyText: APPROVE_TEXT });
     const completeCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/complete_escalation_answer_delivery'));
     expect(JSON.parse(completeCall[1].body).p_transport_message_id).toBe('wamid.999');
   });
 
-  it('rejects a not-yet-open-but-open-required decision value when the escalation is actually open', async () => {
+  it('rejects an invalid decision value when the escalation is actually open', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
-      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]));
+      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
+      .mockResolvedValueOnce(jsonResponse([staffMessageRow()]));
     vi.stubGlobal('fetch', fetchMock);
     const res = createRes();
     await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'not_a_real_decision' }), res);

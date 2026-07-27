@@ -1004,8 +1004,35 @@ async function handleOwnerDecision(req, res) {
 // ── PATCH (deepLinkToken): Phase D — owner answers a staff escalation ───────
 
 const ESCALATION_DECISIONS = ['approved', 'rejected', 'custom_instruction'];
-const ESCALATION_APPROVE_REPLY_TEXT = 'Yes, buy the red wine vinegar instead.';
-const ESCALATION_REJECT_REPLY_TEXT = 'No, do not buy it. Continue without it.';
+
+/**
+ * Approve/Reject build a generic, escalation-specific reply from data
+ * already on the staff_messages row — never a fixed, scenario-specific
+ * string. A fixed string (e.g. "Yes, buy the red wine vinegar instead.")
+ * would be actively wrong for every escalation except the one it was
+ * written for; this codebase already has exactly this problem solved
+ * once, for a structurally identical owner-decision flow — see
+ * buildApprovalMessageText/buildRejectionMessageText above, which
+ * interpolate {recipientName, taskDescription} (real stored fields, never
+ * invented) rather than hardcoding wording. This mirrors that pattern:
+ * {staffName, inboundText} are both real, stored, already-verified fields
+ * (staff_messages.staff_name/inbound_text), quoted verbatim — the exact
+ * same "quote it back" technique the owner-decision page itself already
+ * uses to show the request to the owner (OwnerEscalationDecision.tsx's
+ * read-only card). Quoting the staff member's own words is not inventing
+ * an owner response — it identifies *which* request this reply answers,
+ * which matters because a staff member can have more than one pending
+ * question open with Carson over time. No other field is used, and
+ * nothing beyond "approved"/"not approved" + a quote of their own
+ * question is asserted — the actual decision content for Approve/Reject
+ * is exactly what the owner selected by tapping the button, nothing more.
+ */
+function buildEscalationApprovalReplyText(staffName, inboundText) {
+  return `${staffName}, this was approved: "${inboundText}" — please go ahead.`;
+}
+function buildEscalationRejectionReplyText(staffName, inboundText) {
+  return `${staffName}, this was not approved: "${inboundText}" — please hold off for now.`;
+}
 
 /**
  * Phase D — owner answers an open staff escalation
@@ -1086,7 +1113,29 @@ async function handleEscalationAnswer(req, res) {
       return invalidLinkResponse();
     }
 
-    // 2. Save the answer, exactly once. Only a genuinely open escalation
+    // 2. Fetch the linked staff_messages row once, up front — needed both
+    // to build a safe, escalation-specific Approve/Reject reply text
+    // below, and later to resolve the recipient/opt-in state. If this
+    // can't be resolved, or lacks the one field an approval/rejection
+    // reply structurally needs (inbound_text — NOT NULL at the schema
+    // level, but re-checked here rather than assumed), stop entirely:
+    // nothing is written, nothing is sent, no guess is substituted.
+    const staffMsgRes = await fetch(
+      supabaseUrl + '/rest/v1/staff_messages?id=eq.' + encodeURIComponent(existing.staff_message_id) +
+        '&select=id,person_id,staff_name,staff_phone,inbound_text',
+      { headers },
+    );
+    const staffMsgRows = await staffMsgRes.json().catch(() => []);
+    const staffMessage = Array.isArray(staffMsgRows) ? staffMsgRows[0] : null;
+    const staffContextText = typeof staffMessage?.inbound_text === 'string' ? staffMessage.inbound_text.trim() : '';
+    if (!staffMessage || !staffContextText) {
+      console.error('[task-confirm] escalation answer blocked — could not resolve safe reply context', {
+        escalationId: existing.id, staffMessageId: existing.staff_message_id,
+      });
+      return res.status(500).json({ error: 'Could not determine the staff request. Please try again.' });
+    }
+
+    // 3. Save the answer, exactly once. Only a genuinely open escalation
     // gets a new answer; anything else already has one stored, and the
     // caller's freshly submitted decision/text is deliberately ignored in
     // favor of what's already persisted — this is what makes a duplicate
@@ -1101,9 +1150,9 @@ async function handleEscalationAnswer(req, res) {
       }
       const submittedReplyText =
         decision === 'rejected'
-          ? ESCALATION_REJECT_REPLY_TEXT
+          ? buildEscalationRejectionReplyText(staffMessage.staff_name, staffContextText)
           : decision === 'approved'
-          ? ESCALATION_APPROVE_REPLY_TEXT
+          ? buildEscalationApprovalReplyText(staffMessage.staff_name, staffContextText)
           : instructionText;
 
       const answer = await callRpcSingle(supabaseUrl, serviceKey, 'answer_escalation_owner_decision', {
@@ -1143,18 +1192,11 @@ async function handleEscalationAnswer(req, res) {
       return res.status(200).json({ success: true, status: 'in_progress', ownerReplyText: claimResult.reply_text });
     }
 
-    // 4. Resolve the staff recipient and current WhatsApp eligibility.
-    // Never trust the staff_messages.staff_phone snapshot alone for
-    // opt-in — re-check the live people row.
-    const staffMsgRes = await fetch(
-      supabaseUrl + '/rest/v1/staff_messages?id=eq.' + encodeURIComponent(escalation.staff_message_id) +
-        '&select=id,person_id,staff_name,staff_phone',
-      { headers },
-    );
-    const staffMsgRows = await staffMsgRes.json().catch(() => []);
-    const staffMessage = Array.isArray(staffMsgRows) ? staffMsgRows[0] : null;
-
-    let recipientPhone = staffMessage?.staff_phone || null;
+    // 4. Resolve the staff recipient and current WhatsApp eligibility,
+    // reusing the staffMessage row already fetched in step 2 — no second
+    // staff_messages lookup needed. Never trust staff_phone alone for
+    // opt-in, though — re-check the live people row.
+    let recipientPhone = staffMessage.staff_phone || null;
     let optedIn = false;
     if (staffMessage?.person_id) {
       const personRes = await fetch(

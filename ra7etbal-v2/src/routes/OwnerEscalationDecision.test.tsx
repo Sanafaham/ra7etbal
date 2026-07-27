@@ -116,24 +116,37 @@ describe("OwnerEscalationDecisionView — open-state copy and decision controls"
     expect(filledHtml).not.toMatch(/<button[^>]*\sdisabled(=|\s|>)[^>]*>Continue/);
   });
 
-  it("confirming phase for Approve shows the exact fixed approve text as a lightweight confirmation step", () => {
+  it("confirming phase for Approve shows an escalation-specific preview built from the actual staff name and request — never a fixed string", () => {
     const html = render({ submitPhase: "confirming", pendingDecision: "approved" });
     expect(html).toContain("Send this to Christopher?");
-    expect(html).toContain("Yes, buy the red wine vinegar instead.");
+    expect(html).toContain("Christopher, this was approved:");
+    expect(html).toContain("Can I buy red wine vinegar instead?");
+    expect(html).toContain("please go ahead.");
     expect(html).toContain(">Send<");
     expect(html).toContain(">Cancel<");
   });
 
-  it("confirming phase for Reject shows the exact fixed reject text", () => {
+  it("confirming phase for Reject shows the correct escalation-specific rejection preview, distinct from Approve", () => {
     const html = render({ submitPhase: "confirming", pendingDecision: "rejected" });
-    expect(html).toContain("No, do not buy it. Continue without it.");
+    expect(html).toContain("Christopher, this was not approved:");
+    expect(html).toContain("Can I buy red wine vinegar instead?");
+    expect(html).toContain("please hold off for now.");
   });
 
-  it("confirming phase for Custom instruction shows the owner's own typed text, not a fixed string", () => {
+  it("CRITICAL: an unrelated escalation's Approve/Reject preview reflects that escalation, never another escalation's wording", () => {
+    const unrelatedDetail = baseDetail({ staffName: "Ghulam", inboundText: "Should I pick up dry cleaning today or tomorrow?" });
+    const approveHtml = render({ detail: unrelatedDetail, submitPhase: "confirming", pendingDecision: "approved" });
+    expect(approveHtml).toContain("Ghulam, this was approved:");
+    expect(approveHtml).toContain("Should I pick up dry cleaning today or tomorrow?");
+    expect(approveHtml).not.toMatch(/vinegar/i);
+    expect(approveHtml).not.toContain("Christopher");
+  });
+
+  it("confirming phase for Custom instruction shows the owner's own typed text, quoted, not a built sentence", () => {
     const html = render({ submitPhase: "confirming", pendingDecision: "custom_instruction", customText: "Please wait until Friday." });
     expect(html).toContain("Please wait until Friday.");
-    expect(html).not.toContain("Yes, buy the red wine vinegar instead.");
-    expect(html).not.toContain("No, do not buy it. Continue without it.");
+    expect(html).not.toContain("this was approved");
+    expect(html).not.toContain("this was not approved");
   });
 
   it("sending phase shows a truthful in-progress state, never 'Sent'", () => {

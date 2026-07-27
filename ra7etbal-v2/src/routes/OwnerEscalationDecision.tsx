@@ -91,10 +91,23 @@ function statusNoticeText(status: OwnerEscalationDetail["status"], staffName: st
   }
 }
 
-const DECISION_PREVIEW_TEXT: Record<Exclude<EscalationDecision, "custom_instruction">, string> = {
-  approved: "Yes, buy the red wine vinegar instead.",
-  rejected: "No, do not buy it. Continue without it.",
-};
+/**
+ * Must match api/task-confirm.js's buildEscalationApprovalReplyText /
+ * buildEscalationRejectionReplyText exactly — this is only a preview of
+ * what will actually be sent, computed the same way from the same two
+ * fields (staff name + their own original request), never a fixed
+ * string. A fixed preview here would be just as wrong as the server-side
+ * bug it mirrors: correct for one escalation, misleading for every other
+ * one. The server is still the source of truth for what's actually sent;
+ * this only has to match closely enough that the confirmation step is
+ * truthful, not byte-identical.
+ */
+function buildApprovalPreviewText(staffName: string, inboundText: string): string {
+  return `${staffName}, this was approved: "${inboundText}" — please go ahead.`;
+}
+function buildRejectionPreviewText(staffName: string, inboundText: string): string {
+  return `${staffName}, this was not approved: "${inboundText}" — please hold off for now.`;
+}
 
 export function OwnerEscalationDecisionView({
   authStatus,
@@ -253,11 +266,11 @@ export function OwnerEscalationDecisionView({
                 <div className="space-y-2">
                   <p className="text-sm text-ink/70">Send this to {detail.staffName}?</p>
                   <p className="rounded-lg border border-border bg-cream/40 px-3 py-2 text-sm italic text-ink/85">
-                    "
                     {pendingDecision === "custom_instruction"
-                      ? customText.trim()
-                      : DECISION_PREVIEW_TEXT[pendingDecision]}
-                    "
+                      ? `"${customText.trim()}"`
+                      : pendingDecision === "approved"
+                      ? buildApprovalPreviewText(detail.staffName, detail.inboundText)
+                      : buildRejectionPreviewText(detail.staffName, detail.inboundText)}
                   </p>
                   <div className="flex gap-2">
                     <button
