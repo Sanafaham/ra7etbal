@@ -238,11 +238,16 @@ async function failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, use
 }
 
 function buildEscalationMessage(staffName, escalationReason) {
-  const reason = String(escalationReason || 'needs your decision').trim();
+  // Meta template text parameters reject newline/tab characters (132018).
+  // Keep the entire reply-first request in one normalized line.
+  const reason = String(escalationReason || 'needs your decision')
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/ {2,}/g, ' ')
+    .trim();
   const request = staffName
-    ? `${staffName} needs your decision:\n\n${reason}`
+    ? `${staffName} needs your decision: ${reason}`
     : reason;
-  return `${request}\n\nReply to this message with your decision.`.trim();
+  return `${request} Reply to this message with your decision.`.trim();
 }
 
 async function rpc(supabaseUrl, serviceKey, fetchImpl, name, args) {

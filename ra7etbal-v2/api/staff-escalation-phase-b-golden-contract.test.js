@@ -158,6 +158,9 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     expect(serialized).not.toContain('ra7etbal.com');
     expect(serialized).toContain('Reply to this message with your decision.');
     expect(serialized).toContain('Christopher needs your decision:');
+    const messageParameter = payload.template.components[0].parameters[1].text;
+    expect(messageParameter).not.toMatch(/[\r\n\t]/);
+    expect(messageParameter).not.toMatch(/ {4}/);
   });
 
   it('[2] calling notifyOwnerOfEscalation twice sequentially sends Meta only once (idempotent on already-sent)', async () => {
