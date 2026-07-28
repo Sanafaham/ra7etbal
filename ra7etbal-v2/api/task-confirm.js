@@ -1293,8 +1293,9 @@ export async function resolveAndDeliverEscalationAnswer({
     return { kind: 'success', status: 'saved_unreachable', ownerReplyText: claimResult.reply_text };
   }
 
-  // 6. Send — plain text, the owner's exact stored reply, nothing
-  // prepended or invented, no mention of internal state.
+  // 6. Send — preserve the owner's exact stored reply as the audit source,
+  // while making only recipient-certain third-person references natural for
+  // the staff member who is receiving the message directly.
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!accessToken || !phoneNumberId) {
@@ -1304,7 +1305,10 @@ export async function resolveAndDeliverEscalationAnswer({
     return { kind: 'config_error', message: 'WhatsApp is not configured.' };
   }
 
-  const messageText = String(claimResult.reply_text || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  const messageText = normalizeOwnerReplyForRecipient(
+    claimResult.reply_text,
+    staffMessage.staff_name,
+  );
   if (!messageText) {
     await failEscalationDeliveryLease(
       supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'empty_reply_text',
@@ -1371,6 +1375,60 @@ export async function resolveAndDeliverEscalationAnswer({
     ownerReplyText: complete.data.owner_reply_text,
     transportMessageId: sendResult.messageId,
   };
+}
+
+export function normalizeOwnerReplyForRecipient(replyText, staffName) {
+  const exact = String(replyText || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  if (!exact) return '';
+
+  // Quoted wording may be legally or operationally significant. Transform
+  // only unquoted spans and leave every quoted span byte-for-byte intact.
+  const spans = exact.split(/((?:["“]).*?(?:["”]))/g);
+  return spans.map((span, index) => {
+    if (index % 2 === 1) return span;
+
+    let text = span;
+    const escapedName = String(staffName || '').trim()
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (escapedName) {
+      text = text.replace(
+        new RegExp(
+          `\\b${escapedName}\\s+(can|cannot|can't|should|shouldn't|must|mustn't|may|will|won't|needs to|has to)\\b`,
+          'gi',
+        ),
+        (_match, modal) => {
+          const normalizedModal = /^needs to$/i.test(modal)
+            ? 'need to'
+            : /^has to$/i.test(modal)
+              ? 'have to'
+              : modal.toLowerCase();
+          return `you ${normalizedModal}`;
+        },
+      );
+    }
+
+    // A mixed-pronoun or reported-speech sentence does not identify the
+    // recipient safely enough for a rewrite.
+    const hasHe = /\bhe\b/i.test(text);
+    const hasShe = /\bshe\b/i.test(text);
+    const hasReportedSpeech = /\b(?:said|says|told|asked|reported)\b/i.test(text);
+    if ((hasHe && hasShe) || hasReportedSpeech) return text;
+
+    text = text.replace(/\btell\s+(?:him|her)\s+to\s+/gi, '');
+    text = text.replace(
+      /\b(?:he|she)\s+(can|cannot|can't|should|shouldn't|must|mustn't|may|will|won't|needs to|has to)\b/gi,
+      (_match, modal) => {
+        const normalizedModal = /^needs to$/i.test(modal)
+          ? 'need to'
+          : /^has to$/i.test(modal)
+            ? 'have to'
+            : modal.toLowerCase();
+        return `you ${normalizedModal}`;
+      },
+    );
+    text = text.replace(/\b(Yes|No)\s+(?=you\b)/g, '$1, ');
+    return text;
+  }).join('');
 }
 
 async function markApprovedAlternativeConfirmationOnly({ supabaseUrl, serviceKey, taskId }) {

@@ -20,10 +20,11 @@ vi.mock('web-push', () => ({
 
 let handler;
 let buildOwnerPushBody;
+let normalizeOwnerReplyForRecipient;
 
 beforeEach(async () => {
   vi.resetModules();
-  ({ default: handler, buildOwnerPushBody } = await import('./task-confirm.js'));
+  ({ default: handler, buildOwnerPushBody, normalizeOwnerReplyForRecipient } = await import('./task-confirm.js'));
   vi.stubEnv('SUPABASE_URL', 'https://example.supabase.co');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
   vi.stubEnv('ANTHROPIC_API_KEY', 'test-anthropic-key');
@@ -2633,6 +2634,34 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
   });
 });
 
+describe('owner decision staff-facing recipient normalization', () => {
+  it.each([
+    ['Yes he can buy the bouquet.', 'Christopher', 'Yes, you can buy the bouquet.'],
+    ['Yes, she can buy the bouquet.', 'Grace', 'Yes, you can buy the bouquet.'],
+    ['Yes, Christopher can buy two bottles.', 'Christopher', 'Yes, you can buy two bottles.'],
+    ['No, he should wait until tomorrow.', 'Christopher', 'No, you should wait until tomorrow.'],
+    ['Yes, but he must not serve it to guests.', 'Christopher', 'Yes, but you must not serve it to guests.'],
+    ['No, she has to buy exactly three bottles at 6 PM.', 'Grace', 'No, you have to buy exactly three bottles at 6 PM.'],
+    ['Please tell him to wait until tomorrow.', 'Christopher', 'Please wait until tomorrow.'],
+  ])('normalizes only the certain recipient in %s', (ownerReply, staffName, expected) => {
+    expect(normalizeOwnerReplyForRecipient(ownerReply, staffName)).toBe(expected);
+  });
+
+  it('does not rewrite ambiguous mixed pronouns', () => {
+    expect(normalizeOwnerReplyForRecipient(
+      'He said she can buy the bouquet.',
+      'Christopher',
+    )).toBe('He said she can buy the bouquet.');
+  });
+
+  it('does not rewrite quoted verbatim wording', () => {
+    expect(normalizeOwnerReplyForRecipient(
+      'Tell Christopher: “He can sign the exact quote: 2 bottles at 6 PM.”',
+      'Christopher',
+    )).toBe('Tell Christopher: “He can sign the exact quote: 2 bottles at 6 PM.”');
+  });
+});
+
 describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
   function patchReq(body, headers = { authorization: 'Bearer good-token' }) {
     return { method: 'PATCH', headers, body };
@@ -2793,24 +2822,32 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     expect(sentText).not.toContain('Christopher');
   });
 
-  it('3. Custom instruction sends the owner\'s exact typed text, verbatim — unaffected by the Approve/Reject text-building change', async () => {
+  it('3. Custom instruction preserves the exact owner audit while normalizing only the staff-facing recipient reference', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
       .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()]))
       .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: 'Wait until Friday, then decide.' }))
-      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: 'Wait until Friday, then decide.', delivery_status: 'delivering' }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1', status: 'answered', owner_reply_text: 'Yes, he can buy two bottles tomorrow.' }))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: 'Yes, he can buy two bottles tomorrow.', delivery_status: 'delivering' }]))
       .mockResolvedValueOnce(jsonResponse([personRow()]))
       .mockResolvedValueOnce(metaAcceptedResponse())
-      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', status: 'delivered_to_staff', owner_reply_text: 'Wait until Friday, then decide.' }));
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', status: 'delivered_to_staff', owner_reply_text: 'Yes, he can buy two bottles tomorrow.' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'custom_instruction', instructionText: '  Wait until Friday, then decide.  ' }), res);
+    await handler(patchReq({
+      deepLinkToken: 'tok-1',
+      decision: 'custom_instruction',
+      instructionText: '  Yes, he can buy two bottles tomorrow.  ',
+    }), res);
 
+    const answerCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes('/rpc/answer_escalation_owner_decision'));
+    expect(JSON.parse(answerCall[1].body).p_owner_reply_text)
+      .toBe('Yes, he can buy two bottles tomorrow.');
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
-    expect(JSON.parse(metaCall[1].body).text.body).toBe('Wait until Friday, then decide.');
+    expect(JSON.parse(metaCall[1].body).text.body).toBe('Yes, you can buy two bottles tomorrow.');
   });
 
   it('rejects custom_instruction with no instruction text before touching the answer RPC', async () => {
