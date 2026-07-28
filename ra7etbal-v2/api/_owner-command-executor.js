@@ -14,7 +14,7 @@ export function classifyOwnerCommand(text) {
 
   if (/^remind me\b/i.test(input)) {
     const temporal = input.match(
-      /\b(next\s+(?:sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|tomorrow(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b)/i,
+      /\b(next\s+(?:sun(?:day)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+(?:today|tomorrow)|(?:today|tomorrow)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?|\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b)/i,
     );
     if (!temporal) return { type: 'unsupported', text: input, reason: 'reminder_time_missing' };
     const body = input
@@ -300,12 +300,12 @@ export function parseOwnerReminderDue(timeText, timezone, now = new Date()) {
 }
 
 function formatDue(iso, timeZone) {
-  return new Date(iso).toLocaleString('en', {
-    timeZone,
-    weekday: 'long',
-    hour: 'numeric',
-    minute: '2-digit',
+  const due = new Date(iso);
+  const weekday = due.toLocaleString('en', { timeZone, weekday: 'long' });
+  const time = due.toLocaleString('en', {
+    timeZone, hour: 'numeric', minute: '2-digit',
   });
+  return `${weekday}, ${time}`;
 }
 
 async function invokeSendWhatsappTask(body) {

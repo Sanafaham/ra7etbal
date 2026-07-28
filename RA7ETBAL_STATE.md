@@ -22,7 +22,53 @@ The owner command boundary now fails closed for ambiguous and compound commands;
 
 Protect: receipt lease/claim tokens, deterministic idempotency, accepted-send/acknowledgement fences, exact quoted-context correlation, default-off `OWNER_WHATSAPP_ROUTING_USER_IDS`, and the prohibition on open-escalation-count inference. Before any activation: reconcile migration history, apply and verify migrations separately, deploy with the flag disabled, then enable one account only after command tests pass.
 
-Hotfix pending: compare reminder timestamps by canonical instant, preserve accepted acknowledgement transport IDs across retries, and exclude terminal execution states from reconciliation. Do not send another owner WhatsApp command until that hotfix is merged and deployed.
+Resolved and superseded (verified 2026-07-28): PR #96 fixed canonical-instant
+comparison, accepted-acknowledgement preservation, terminal retry exclusion, and
+truthful reminder delivery observability. Merge
+`fdd9b78495926e283d83824b725db01e3c6634c6` deployed as
+`dpl_4v33EpiicEDs5pKUtbznoyRW58EB`; migration
+`20260730_reminder_delivery_observability.sql` is present on production
+Supabase project `ggarvhgqzpooloacjgcj`.
+
+### Owner WhatsApp one-time reminder — production verified and protected
+
+Status: production verified and permanently protected. Rollout remains Sana-only
+(`645ddb96-6e09-4d91-b650-cbc75bac9a5d`); staff WhatsApp routing is unchanged.
+
+Controlled production evidence (sent exactly once):
+
+- Command: `Remind me at 7:03 PM today to check the owner WhatsApp acknowledgement.`
+- Local acknowledgement: `Done — I created one reminder for Tuesday, 7:03 PM.`
+- Canonical UTC `due_at`: `2026-07-28T16:03:00.000Z`
+- Result: one correctly worded Ra7etBal notification was visible on Sana's
+  iPhone at 7:03 PM Europe/Istanbul, with no duplicate acknowledgement and no
+  duplicate iPhone notification.
+
+The production ledger contains one inbound receipt, one reminder task, one
+QStash message ID, one callback, and one send attempt per each of five distinct
+active push endpoints. One service worker recorded
+`service_worker_received`, `show_notification_attempted`, and
+`show_notification_resolved`. Provider acceptance and service-worker display
+attempts do **not** prove visible delivery. Without a supported
+`notification_clicked` receipt, the task truthfully remains `pending` with
+`reminder_delivery_status=delivery_unconfirmed`; it is never marked done merely
+because a provider accepted the push.
+
+Permanent contract:
+`ra7etbal-v2/api/owner-whatsapp-reminder-golden-contract.test.js`, together with
+its focused execution, routing, QStash, push, receipt, and service-worker tests,
+runs in `npm run test:carson-protected` under deterministic `TZ=UTC`. The
+always-on Carson pull-request workflow deliberately has no path filter, so
+changes to the critical owner-classification, acknowledgement, task, QStash,
+callback, push, service-worker, completion, reconciliation, and migration files
+cannot bypass the protected gate. Phase D, staff routing, reminder correction
+replacement, and banner dismissal remain unchanged and retain their existing
+protected tests.
+
+Stable baseline tag:
+`ra7etbal-stable-owner-whatsapp-reminder-2026-07-28`. Its target is the final
+merged protection commit for this contract (the exact remote target is verified
+and reported after merge).
 
 ## Stable and protected
 

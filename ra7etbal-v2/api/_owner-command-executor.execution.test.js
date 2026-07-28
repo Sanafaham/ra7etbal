@@ -44,6 +44,8 @@ beforeEach(() => {
 
 describe('owner command execution boundary', () => {
   it('persists timezone-aware due_at before scheduling one reminder push', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-28T15:59:40.000Z'));
     const calls = [];
     vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
       calls.push({ url: String(url), options });
@@ -76,7 +78,7 @@ describe('owner command execution boundary', () => {
       identity,
       receipt,
       msg: {
-        body: 'Remind me to pay the electricity bill tomorrow at 5:30 PM.',
+        body: 'Remind me at 7:03 PM today to check the owner WhatsApp acknowledgement.',
         phoneNumberId: 'phone-1',
       },
     });
@@ -84,14 +86,21 @@ describe('owner command execution boundary', () => {
     expect(result.kind).toBe('completed');
     const taskCreate = calls.find((call) =>
       call.url.endsWith('/rest/v1/tasks') && call.options.method === 'POST');
-    expect(JSON.parse(taskCreate.options.body).due_at).toBeTruthy();
+    expect(JSON.parse(taskCreate.options.body)).toMatchObject({
+      description: 'check the owner WhatsApp acknowledgement',
+      due_at: '2026-07-28T16:03:00.000Z',
+      status: 'pending',
+      type: 'reminder',
+    });
     const taskCreateIndex = calls.indexOf(taskCreate);
     const qstashIndex = calls.findIndex((call) => call.url.startsWith('https://qstash.upstash.io/'));
     expect(taskCreateIndex).toBeLessThan(qstashIndex);
     expect(calls.filter((call) =>
       call.url.endsWith('/rest/v1/tasks') && call.options.method === 'POST')).toHaveLength(1);
     expect(calls.filter((call) => call.url.startsWith('https://qstash.upstash.io/'))).toHaveLength(1);
-    expect(result.acknowledgement).toContain('5:30 PM');
+    expect(result.acknowledgement)
+      .toBe('Done — I created one reminder for Tuesday, 7:03 PM.');
+    vi.useRealTimers();
   });
 
   it('retries the failed action without resending an already accepted failure acknowledgement', async () => {
