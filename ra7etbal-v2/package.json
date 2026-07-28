@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "pretest:carson-protected": "TZ=UTC vitest run api/owner-whatsapp-decision-message-quality.test.js",
+    "pretest:carson-protected": "TZ=UTC vitest run api/owner-whatsapp-decision-message-quality.test.js api/owner-whatsapp-decision-production-path.test.js",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",

@@ -279,6 +279,28 @@ function normalizeEscalationReason(value) {
   return normalized;
 }
 
+/**
+ * Enforce source fidelity for explicit, single-action purchase questions at
+ * the persistence boundary. The classifier still decides whether escalation
+ * is required, but household context is never allowed to rewrite this
+ * unambiguous request into additional people, rules, or decisions.
+ */
+function sourceFaithfulEscalationReason({ inboundText, staffName, outcome }) {
+  if (!outcome.escalate || !outcome.ownerAttentionRequired) return outcome.escalationReason;
+  if (typeof inboundText !== 'string' || typeof staffName !== 'string') return outcome.escalationReason;
+
+  const source = inboundText.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  const match = source.match(/^can i buy\s+([^?]+)\?$/i);
+  if (!match) return outcome.escalationReason;
+
+  const requestedPurchase = match[1].trim().replace(/[.!]+$/, '');
+  if (!requestedPurchase) return outcome.escalationReason;
+
+  return normalizeEscalationReason(
+    `${staffName.trim()} is asking for permission to buy ${requestedPurchase}.`,
+  );
+}
+
 function safeFallback(reason) {
   return {
     classification: 'unclear',
@@ -391,6 +413,11 @@ export async function processStaffMessage(input, deps) {
       anthropicApiKey, fetchImpl, model, inboundText: input.text, contextBlock,
     });
     const outcome = parseClassificationResponse(rawResponse);
+    outcome.escalationReason = sourceFaithfulEscalationReason({
+      inboundText: input.text,
+      staffName: context.person?.name,
+      outcome,
+    });
 
     const completedResult = await supabaseRpc({
       supabaseUrl, serviceKey, fetchImpl, fn: 'complete_staff_message',
@@ -463,4 +490,5 @@ export {
   USER_FACING_STATES,
   MAX_ESCALATION_REASON_LENGTH,
   normalizeEscalationReason,
+  sourceFaithfulEscalationReason,
 };

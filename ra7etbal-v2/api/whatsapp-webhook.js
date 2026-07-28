@@ -153,7 +153,14 @@ async function readRawBody(req) {
   return Buffer.concat(chunks);
 }
 
-export async function handleInboundStaffMessage({ supabaseUrl, serviceKey, msg }) {
+export async function handleInboundStaffMessage(
+  { supabaseUrl, serviceKey, msg },
+  {
+    processStaffMessageImpl = processStaffMessage,
+    notifyOwnerOfEscalationImpl = notifyOwnerOfEscalation,
+    sendMetaMessageImpl = sendMetaMessage,
+  } = {},
+) {
   const phoneNumberId = msg.phoneNumberId;
   const owners = await restSelect(supabaseUrl, serviceKey, 'whatsapp_health_state',
     `phone_number_id=eq.${encodeURIComponent(phoneNumberId)}&select=user_id`);
@@ -193,7 +200,7 @@ export async function handleInboundStaffMessage({ supabaseUrl, serviceKey, msg }
         escalationReason: existing[0].escalation_reason,
         nextActionOwner: existing[0].next_action_owner,
       }
-    : await processStaffMessage({
+    : await processStaffMessageImpl({
         userId, personId: person.id, text: msg.body, taskId,
         threadId: msg.contextMessageId || null, receivedAt: timestampToIso(msg.timestamp),
         source:'whatsapp', externalMessageId:msg.messageId,
@@ -209,7 +216,7 @@ export async function handleInboundStaffMessage({ supabaseUrl, serviceKey, msg }
   // sent as-is for an escalating message.
   let staffResponseText = outcome.response;
   if (outcome.userFacingState === 'Needs You') {
-    const notifyResult = await notifyOwnerOfEscalation({
+    const notifyResult = await notifyOwnerOfEscalationImpl({
       staffMessageId: outcome.messageId,
       userId,
       taskId: outcome.relatedTaskId || null,
@@ -229,7 +236,7 @@ export async function handleInboundStaffMessage({ supabaseUrl, serviceKey, msg }
   const [claim] = await rpc(supabaseUrl, serviceKey, 'claim_staff_response_delivery',
     { p_id:outcome.messageId,p_user_id:userId,p_lease_seconds:120 });
   if (!claim?.claimed) return { handled:true, reason:'already_claimed' };
-  const meta = await sendMetaMessage({
+  const meta = await sendMetaMessageImpl({
     url:`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
     accessToken:process.env.WHATSAPP_ACCESS_TOKEN,
     payload:{ messaging_product:'whatsapp',recipient_type:'individual',to:sender,type:'text',text:{body:staffResponseText} },
