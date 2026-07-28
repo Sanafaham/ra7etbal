@@ -53,6 +53,7 @@ const CLAIM_REJECTION_REASONS = new Set([
 ]);
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
+const MAX_ESCALATION_REASON_LENGTH = 500;
 
 // ── Supabase REST helpers (service role — bypasses RLS by design) ──────────
 
@@ -181,6 +182,12 @@ For completion_confirmation: only mark this interaction Completed when the repor
 
 For unclear messages, ask exactly one short clarification question rather than guessing or inventing context — do not classify anything other than unclear, do not escalate, and do not fabricate a response as if the message were understood.
 
+OWNER-FACING DECISION SUMMARY — when escalate is true, escalation_reason is not internal reasoning. It is the complete, concise sentence that will be shown directly to the owner. Start with the staff member's name and summarize the smallest unresolved decision in the STAFF MESSAGE, normally in this form: "[Name] is asking for permission to [specific action]." For a substitution, use "[Name] is asking whether to [substitution and any associated purchase genuinely requested]." Preserve material item, quantity, timing, spending limit, substitution, and stated conditions. Produce one sentence by default. Never introduce a person, item, task, responsibility, rule, or choice absent from the source evidence, and never turn one request into hypothetical extra decisions. Do not copy internal classification reasoning, repeat the request, recommend an option, or add the direct-reply instruction.
+
+A supplied rule may influence classification silently. Mention it in escalation_reason only when it creates a real blocking conflict whose omission could let the owner approve an action that still cannot safely execute. In that case, add at most one short sentence identifying only that conflict and asking whether the staff member should proceed. Optional responsibilities, background memory, and unrelated household rules must never appear. If the requested action cannot be identified safely from the STAFF MESSAGE, classify it as unclear, ask the staff member one focused clarification question, and do not escalate to the owner.
+
+The escalation_reason must be a single line with no newline or tab characters and no more than 500 characters. It must not contain a URL, Visit Task, View Task, an app-routing instruction, or the instruction to reply; the notification layer adds the direct WhatsApp reply instruction exactly once.
+
 Reply style to staff: brief, practical, respectful, states the answer or action first, no internal process disclosure, no mention of tools/databases/AI.
 
 Respond with ONLY a single JSON object, no other text, in exactly this shape:
@@ -188,7 +195,7 @@ Respond with ONLY a single JSON object, no other text, in exactly this shape:
   "classification": "one of the eight categories above",
   "reply_to_staff": "the brief message to send back to the staff member",
   "escalate": true or false,
-  "escalation_reason": "the exact decision the owner needs to make, or null when escalate is false",
+  "escalation_reason": "the concise, source-faithful owner-facing decision sentence defined above, or null when escalate is false",
   "recommended_option": "your recommendation for the owner, or null",
   "next_action_owner": "carson" | "staff" | "owner" | "nobody",
   "user_facing_state": "Waiting" | "Needs You" | "Completed" | "In Progress",
@@ -253,12 +260,23 @@ function parseClassificationResponse(rawText) {
     classification,
     replyToStaff,
     escalate: Boolean(parsed.escalate),
-    escalationReason: typeof parsed.escalation_reason === 'string' ? parsed.escalation_reason.trim() || null : null,
+    escalationReason: normalizeEscalationReason(parsed.escalation_reason),
     recommendedOption: typeof parsed.recommended_option === 'string' ? parsed.recommended_option.trim() || null : null,
     nextActionOwner,
     userFacingState,
     ownerAttentionRequired: Boolean(parsed.owner_attention_required),
   };
+}
+
+function normalizeEscalationReason(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  if (!normalized) return null;
+  // Never cut off a price, time, quantity, or condition while leaving an
+  // apparently actionable sentence. The prompt owns concise generation;
+  // over-limit output is invalid and must be rejected as a whole.
+  if (normalized.length > MAX_ESCALATION_REASON_LENGTH) return null;
+  return normalized;
 }
 
 function safeFallback(reason) {
@@ -443,4 +461,6 @@ export {
   CLASSIFICATIONS,
   NEXT_ACTION_OWNERS,
   USER_FACING_STATES,
+  MAX_ESCALATION_REASON_LENGTH,
+  normalizeEscalationReason,
 };

@@ -14,6 +14,30 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 PR #93 (`agent/server-backed-banner-dismissal`) persists completed-confirmation banner dismissal on `tasks.dismissed_at`. Independent verification on 2026-07-28 added client/server eligibility guards and optimistic rollback coverage; focused tests, typecheck, the protected suite, and production build pass. The additive, nullable, idempotent migration was applied directly and verified on the confirmed Ra7etBal production Supabase project `ggarvhgqzpooloacjgcj`. After current `main` introduced the canonical `20260727 owner_whatsapp_reply_receipts` migration, this PR's migration was renumbered to `20260729_add_dismissed_at_to_tasks.sql` so migration tooling will not skip it because of the occupied version. Production UI verification across refresh, logout/login, Safari, and the installed app still requires deployment of the PR code; do not merge PR #93 until that verification can be completed.
 
+### Owner WhatsApp decision message quality
+
+Status: focused implementation complete and protected locally; production
+verification pending. The confirmed defect was that the classifier's broadly
+reasoned `escalation_reason` was copied into the owner notification, allowing
+irrelevant household context and hypothetical decisions into a simple staff
+permission request.
+
+The existing stored field is now contracted as a concise, source-faithful,
+owner-ready decision sentence. New values are single-line and length-bounded;
+the buttonless notifier passes owner-ready sentences through and retains the
+legacy wrapper for historical stored wording and retries. Transport, Meta
+templates, owner reply matching, app resolution, leases, acknowledgements,
+retry behavior, and duplicate suppression are unchanged.
+
+Permanent focused contract:
+`ra7etbal-v2/api/owner-whatsapp-decision-message-quality.test.js`. It covers
+simple purchases, the bouquet regression, connected substitutions, material
+and non-material ownership context, ambiguity, genuine multi-part decisions,
+irrelevant rules, purchase limits, invention prevention, Meta-safe
+normalization, direct-reply wording, legacy retry wording, and task-link/button
+exclusion. It runs automatically before the existing curated suite whenever
+`npm run test:carson-protected` executes.
+
 ## Owner WhatsApp safe routing Slice 1
 
 Status: deployed at `cdededee7006c2af4c614006863487d08f258cf0`; production migration applied; routing enabled only for Sana. A controlled reminder test exposed two contained defects: equivalent PostgreSQL/ISO `timestamptz` strings were compared literally after the deterministic task insert, and retry processing resent an already accepted failure acknowledgement. Production receipt `2be3086c-910e-4f7f-9dc9-c22588223c45` was contained with `execution_status=terminal_failed`, `next_retry_at=NULL`, and its orphan task deleted; the receipt `status` remains `failed` because the production status constraint does not allow `terminal_failed`.
