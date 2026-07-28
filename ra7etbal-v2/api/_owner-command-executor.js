@@ -149,7 +149,7 @@ async function executeReminder({ supabaseUrl, serviceKey, userId, receipt, row, 
   return {
     kind: 'completed',
     acknowledgement: dueAt
-      ? `Done — I created one reminder for ${formatDue(dueAt)}.`
+      ? `Done — I created one reminder for ${formatDue(dueAt, timezone)}.`
       : 'Done — I created one reminder.',
   };
 }
@@ -299,8 +299,13 @@ export function parseOwnerReminderDue(timeText, timezone, now = new Date()) {
   return Number.isNaN(due.getTime()) ? null : due.toISOString();
 }
 
-function formatDue(iso) {
-  return new Date(iso).toLocaleString('en', { weekday: 'long', hour: 'numeric', minute: '2-digit' });
+function formatDue(iso, timeZone) {
+  return new Date(iso).toLocaleString('en', {
+    timeZone,
+    weekday: 'long',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 async function invokeSendWhatsappTask(body) {
@@ -336,7 +341,11 @@ export async function scheduleReminderPush({ supabaseUrl, serviceKey, taskId, du
     {
       method: 'PATCH',
       headers: { ...headers(serviceKey), Prefer: 'return=minimal' },
-      body: JSON.stringify({ qstash_message_id: messageId }),
+      body: JSON.stringify({
+        qstash_message_id: messageId,
+        reminder_delivery_status: 'scheduled',
+        reminder_delivery_error: null,
+      }),
     },
   );
   if (!response.ok) throw new Error('reminder_schedule_persist_failed');
