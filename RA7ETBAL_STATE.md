@@ -14,6 +14,16 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 PR #93 (`agent/server-backed-banner-dismissal`) persists completed-confirmation banner dismissal on `tasks.dismissed_at`. Independent verification on 2026-07-28 added client/server eligibility guards and optimistic rollback coverage; focused tests, typecheck, the protected suite, and production build pass. The migration is additive and idempotent, but it was not applied because this environment has no authenticated Supabase CLI session and no repository project link. Before production verification, confirm and apply `20260727_add_dismissed_at_to_tasks.sql` to the Ra7etBal production Supabase project, then test dismissal across refresh, logout/login, web, and installed app. Do not merge PR #93 until that migration and production verification are complete.
 
+## Owner WhatsApp safe routing Slice 1
+
+Status: deployed at `cdededee7006c2af4c614006863487d08f258cf0`; production migration applied; routing enabled only for Sana. A controlled reminder test exposed two contained defects: equivalent PostgreSQL/ISO `timestamptz` strings were compared literally after the deterministic task insert, and retry processing resent an already accepted failure acknowledgement. Production receipt `2be3086c-910e-4f7f-9dc9-c22588223c45` was contained with `execution_status=terminal_failed`, `next_retry_at=NULL`, and its orphan task deleted; the receipt `status` remains `failed` because the production status constraint does not allow `terminal_failed`.
+
+The owner command boundary now fails closed for ambiguous and compound commands; quoted Meta context remains the only escalation-answer authority. Direct messages and tracked delegations are classified separately, owner references use the shared canonical normalizer, reminders resolve in `profiles.morning_brief_timezone` and schedule QStash only after a non-null `due_at` is persisted, delegations preserve deterministic task/message/confirmation IDs and schedule escalation, and retry exhaustion records a durable terminal failure without promising more retries. Migration deployment order and the 20260727 history mismatch are documented in `ra7etbal-v2/docs/OWNER_WHATSAPP_SAFE_ROUTING_DEPLOYMENT.md`.
+
+Protect: receipt lease/claim tokens, deterministic idempotency, accepted-send/acknowledgement fences, exact quoted-context correlation, default-off `OWNER_WHATSAPP_ROUTING_USER_IDS`, and the prohibition on open-escalation-count inference. Before any activation: reconcile migration history, apply and verify migrations separately, deploy with the flag disabled, then enable one account only after command tests pass.
+
+Hotfix pending: compare reminder timestamps by canonical instant, preserve accepted acknowledgement transport IDs across retries, and exclude terminal execution states from reconciliation. Do not send another owner WhatsApp command until that hotfix is merged and deployed.
+
 ## Stable and protected
 
 Do not modify these areas without a reproduced regression or explicit product decision.
