@@ -24,6 +24,10 @@ const staffEngineMocks = vi.hoisted(() => ({
   })),
 }));
 
+const ownerRoutingMocks = vi.hoisted(() => ({
+  handleInboundOwnerMessage: vi.fn(async () => ({ isOwner: false, reason: 'not_owner' })),
+}));
+
 vi.mock('./send-whatsapp-task.js', () => ({
   buildSmsBody: smsMocks.buildSmsBody,
   sendTwilioSms: smsMocks.sendTwilioSms,
@@ -36,6 +40,10 @@ vi.mock('./task-confirm.js', () => ({
 
 vi.mock('./_staff-comms-engine.js', () => ({
   processStaffMessage: staffEngineMocks.processStaffMessage,
+}));
+
+vi.mock('./_owner-whatsapp-routing.js', () => ({
+  handleInboundOwnerMessage: ownerRoutingMocks.handleInboundOwnerMessage,
 }));
 
 import handler, {
@@ -56,6 +64,8 @@ afterEach(() => {
   smsMocks.sendMetaMessage.mockClear();
   taskConfirmMocks.sendOwnerPush.mockClear();
   staffEngineMocks.processStaffMessage.mockClear();
+  ownerRoutingMocks.handleInboundOwnerMessage.mockClear();
+  ownerRoutingMocks.handleInboundOwnerMessage.mockResolvedValue({ isOwner: false, reason: 'not_owner' });
 });
 
 function makeReqRes(body) {
@@ -88,6 +98,29 @@ function inboundMessagePayload({ from = '971501234567', messageId, text, context
     }],
   };
 }
+
+describe('owner routing precedence', () => {
+  it('possible-owner ambiguity never reaches consent or staff routing', async () => {
+    vi.stubEnv('META_APP_SECRET', 'meta-app-secret');
+    vi.stubEnv('SUPABASE_URL', 'https://example.supabase.co');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
+    ownerRoutingMocks.handleInboundOwnerMessage.mockResolvedValueOnce({
+      isOwner: true, handled: false, route: 'identity_ambiguous',
+      reason: 'canonical_owner_not_unique',
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: vi.fn().mockResolvedValue([]),
+    }));
+    const { req, res } = makeReqRes(inboundMessagePayload({
+      messageId: 'wamid.owner-ambiguous', text: 'STOP',
+    }));
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.ownerHandled).toBe(0);
+    expect(staffEngineMocks.processStaffMessage).not.toHaveBeenCalled();
+    expect(fetch.mock.calls.some(([url]) => String(url).includes('whatsapp_consent_log'))).toBe(false);
+  });
+});
 
 function stubBaseEnv() {
   vi.stubEnv('SUPABASE_URL', 'https://x.supabase.co');

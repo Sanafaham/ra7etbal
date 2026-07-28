@@ -96,6 +96,7 @@
 import webpush from 'web-push';
 import { Receiver } from '@upstash/qstash';
 import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
+import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -177,6 +178,17 @@ export default async function handler(req, res) {
   });
 
   webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
+
+  // The existing authenticated 10-minute QStash wake-up also reconciles
+  // bounded owner-command failures. The account-scoped routing flag defaults
+  // off, and this work is isolated so it cannot block delegation escalation.
+  if (String(process.env.OWNER_WHATSAPP_ROUTING_USER_IDS || '').trim()) {
+    await reconcileOwnerWhatsappMessages({ supabaseUrl, serviceKey }).catch((error) => {
+      console.error('[owner-whatsapp] reconciliation failed (cron continues)', {
+        error: error?.message || String(error),
+      });
+    });
+  }
 
   // ── Action dispatch ────────────────────────────────────────────────────────
   const requestBody = (typeof req.body === 'object' && req.body !== null) ? req.body : {};

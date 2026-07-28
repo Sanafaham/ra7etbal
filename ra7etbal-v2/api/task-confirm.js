@@ -1135,170 +1135,23 @@ async function handleEscalationAnswer(req, res) {
       return res.status(500).json({ error: 'Could not determine the staff request. Please try again.' });
     }
 
-    // 3. Save the answer, exactly once. Only a genuinely open escalation
-    // gets a new answer; anything else already has one stored, and the
-    // caller's freshly submitted decision/text is deliberately ignored in
-    // favor of what's already persisted — this is what makes a duplicate
-    // submit, a second browser tab, or a resubmit-after-refresh all safe.
-    let escalation = existing;
-    if (existing.status === 'open') {
-      if (!ESCALATION_DECISIONS.includes(decision)) {
-        return res.status(400).json({ error: 'A valid decision is required.' });
-      }
-      if (decision === 'custom_instruction' && !instructionText) {
-        return res.status(400).json({ error: 'Custom instruction text is required.' });
-      }
-      const submittedReplyText =
-        decision === 'rejected'
-          ? buildEscalationRejectionReplyText(staffMessage.staff_name, staffContextText)
-          : decision === 'approved'
-          ? buildEscalationApprovalReplyText(staffMessage.staff_name, staffContextText)
-          : instructionText;
-
-      const answer = await callRpcSingle(supabaseUrl, serviceKey, 'answer_escalation_owner_decision', {
-        p_deep_link_token: deepLinkToken,
-        p_owner_reply_text: submittedReplyText,
-      });
-      if (answer.error) return respondRpcError(res, answer.error);
-      escalation = answer.data;
-    }
-
-    if (escalation.status === 'delivered_to_staff') {
-      return res.status(200).json({
-        success: true,
-        status: 'delivered',
-        ownerReplyText: escalation.owner_reply_text,
-      });
-    }
-
-    // 3. Claim the delivery lease. Idempotent/atomic — see
-    // claim_escalation_answer_delivery's own doc comment in the migration.
-    const claim = await callRpcRows(supabaseUrl, serviceKey, 'claim_escalation_answer_delivery', {
-      p_id: escalation.id,
-      p_user_id: userId,
-      p_lease_seconds: 120,
+    // 3-6. Save the answer (if needed), claim the delivery lease, resolve
+    // the recipient, and send — the reusable Phase D core, shared with the
+    // authoritative owner WhatsApp quoted-reply path
+    // (api/_owner-whatsapp-routing.js).
+    const result = await resolveAndDeliverEscalationAnswer({
+      supabaseUrl, serviceKey, userId, deepLinkToken,
+      escalation: existing, staffMessage, staffContextText, decision, instructionText,
+      replyChannel: 'app',
     });
-    if (claim.error) return respondRpcError(res, claim.error);
-    const claimResult = claim.data[0];
-
-    if (!claimResult.claimed) {
-      // Either this escalation just won a race and is already fully
-      // delivered, or a live lease is held elsewhere (this or a
-      // concurrent request already sending) — report truthfully, never
-      // guess, never send a second message.
-      if (claimResult.delivery_status === 'delivered_to_staff') {
-        return res.status(200).json({ success: true, status: 'delivered', ownerReplyText: claimResult.reply_text });
-      }
-      return res.status(200).json({ success: true, status: 'in_progress', ownerReplyText: claimResult.reply_text });
-    }
-
-    // 4. Resolve the staff recipient and current WhatsApp eligibility,
-    // reusing the staffMessage row already fetched in step 2 — no second
-    // staff_messages lookup needed. Never trust staff_phone alone for
-    // opt-in, though — re-check the live people row.
-    let recipientPhone = staffMessage.staff_phone || null;
-    let optedIn = false;
-    if (staffMessage?.person_id) {
-      const personRes = await fetch(
-        supabaseUrl + '/rest/v1/people?id=eq.' + encodeURIComponent(staffMessage.person_id) +
-          '&select=id,phone,whatsapp_opted_in',
-        { headers },
-      );
-      const personRows = await personRes.json().catch(() => []);
-      const person = Array.isArray(personRows) ? personRows[0] : null;
-      if (person) {
-        recipientPhone = person.phone || recipientPhone;
-        optedIn = Boolean(person.whatsapp_opted_in);
-      }
-    }
-    const normalizedPhone = recipientPhone ? normalizeWhatsAppPhone(recipientPhone) : null;
-
-    if (!staffMessage || !normalizedPhone || !optedIn) {
-      await failEscalationDeliveryLease(
-        supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'staff_unreachable',
-      );
-      return res.status(200).json({
-        success: true,
-        status: 'saved_unreachable',
-        ownerReplyText: claimResult.reply_text,
-      });
-    }
-
-    // 5. Send — plain text, the owner's exact stored reply, nothing
-    // prepended or invented, no mention of internal state.
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-    if (!accessToken || !phoneNumberId) {
-      await failEscalationDeliveryLease(
-        supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'whatsapp_not_configured',
-      );
-      return res.status(500).json({ error: 'WhatsApp is not configured.' });
-    }
-
-    const messageText = String(claimResult.reply_text || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
-    if (!messageText) {
-      await failEscalationDeliveryLease(
-        supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'empty_reply_text',
-      );
-      return res.status(500).json({ error: 'Could not send an empty message. Please try again.' });
-    }
-
-    let sendResult;
-    try {
-      sendResult = await sendMetaMessage({
-        url: `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
-        accessToken,
-        payload: {
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: normalizedPhone,
-          type: 'text',
-          text: { body: messageText },
-        },
-      });
-    } catch (err) {
-      await failEscalationDeliveryLease(
-        supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token,
-        err instanceof Error ? err.message : String(err),
-      );
-      return res.status(502).json({ error: 'Could not send the message. Please retry.' });
-    }
-
-    if (!sendResult.ok) {
-      const failure = getMetaFailure(sendResult);
-      await failEscalationDeliveryLease(
-        supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, failure.reason,
-      );
-      return res.status(502).json({ error: 'Could not send the message. Please retry.' });
-    }
-
-    // 6. Complete — atomic, gated on the exact live claim token; a
-    // superseded/stale token can never resolve this call.
-    const complete = await callRpcSingle(supabaseUrl, serviceKey, 'complete_escalation_answer_delivery', {
-      p_id: escalation.id,
-      p_user_id: userId,
-      p_claim_token: claimResult.claim_token,
-      p_transport_message_id: sendResult.messageId,
-    });
-    if (complete.error) {
-      // Meta already accepted the send — this is a bookkeeping failure
-      // afterward, not a delivery failure. Truthful partial-success
-      // response: the message really did go out, so this must never read
-      // as a plain error implying nothing happened.
-      console.error('[task-confirm] escalation delivery sent but completion bookkeeping failed', {
-        escalationId: escalation.id, error: complete.error,
-      });
-      return res.status(200).json({
-        success: true,
-        status: 'sent_unconfirmed',
-        ownerReplyText: claimResult.reply_text,
-      });
-    }
-
+    if (result.kind === 'rpc_error') return respondRpcError(res, result.error);
+    if (result.kind === 'validation_error') return res.status(400).json({ error: result.message });
+    if (result.kind === 'config_error') return res.status(500).json({ error: result.message });
+    if (result.kind === 'send_error') return res.status(502).json({ error: 'Could not send the message. Please retry.' });
     return res.status(200).json({
       success: true,
-      status: 'delivered',
-      ownerReplyText: complete.data.owner_reply_text,
+      status: result.status,
+      ownerReplyText: result.ownerReplyText,
     });
   } catch (err) {
     console.error('[task-confirm] escalation answer failed', {
@@ -1318,6 +1171,201 @@ async function failEscalationDeliveryLease(supabaseUrl, serviceKey, escalationId
       escalationId, error: err?.message || String(err),
     });
   }
+}
+
+/**
+ * The reusable Phase D core: save the owner's answer (idempotently, if the
+ * escalation is still 'open'), claim the delivery lease, resolve the staff
+ * recipient, and send the plain-text WhatsApp reply. Extracted from
+ * handleEscalationAnswer's PATCH-route body so the exact same logic can be
+ * reused by the authoritative owner WhatsApp quoted-reply path
+ * (api/_owner-whatsapp-routing.js) without a second, independently
+ * maintained Phase D implementation.
+ *
+ * Returns a plain result object instead of writing to an HTTP response —
+ * callers translate `kind` into whatever response shape (HTTP JSON, plain
+ * return value, etc.) fits their own context:
+ *   { kind: 'validation_error', message }         — bad decision/instructionText (open-escalation path only)
+ *   { kind: 'rpc_error', error }                  — answer/claim RPC failed; caller should use respondRpcError-equivalent handling
+ *   { kind: 'config_error', message }              — WhatsApp not configured, or the stored reply text is empty
+ *   { kind: 'send_error' }                         — Meta rejected the send or the network call failed
+ *   { kind: 'success', status, ownerReplyText }    — status is one of
+ *       'delivered' | 'in_progress' | 'saved_unreachable' | 'sent_unconfirmed'
+ *
+ * `escalation` must already be ownership-verified by the caller (token
+ * lookup + user_id match, or an equivalent check) — this function does not
+ * re-verify ownership. `staffMessage`/`staffContextText` must already be
+ * resolved and non-blank (staffContextText is staffMessage.inbound_text,
+ * trimmed) — this function does not re-fetch or re-validate them.
+ */
+export async function resolveAndDeliverEscalationAnswer({
+  supabaseUrl, serviceKey, userId, deepLinkToken, escalation: existing, staffMessage, staffContextText,
+  decision, instructionText, replyChannel = 'app',
+}) {
+  const headers = {
+    apikey: serviceKey,
+    Authorization: 'Bearer ' + serviceKey,
+    'Content-Type': 'application/json',
+  };
+
+  // 3. Save the answer, exactly once. Only a genuinely open escalation
+  // gets a new answer; anything else already has one stored, and the
+  // caller's freshly submitted decision/text is deliberately ignored in
+  // favor of what's already persisted — this is what makes a duplicate
+  // submit, a second browser tab, or a resubmit-after-refresh all safe.
+  let escalation = existing;
+  if (existing.status === 'open') {
+    if (!['app', 'whatsapp'].includes(replyChannel)) {
+      return { kind: 'validation_error', message: 'A valid reply channel is required.' };
+    }
+    if (!ESCALATION_DECISIONS.includes(decision)) {
+      return { kind: 'validation_error', message: 'A valid decision is required.' };
+    }
+    if (decision === 'custom_instruction' && !instructionText) {
+      return { kind: 'validation_error', message: 'Custom instruction text is required.' };
+    }
+    const submittedReplyText =
+      decision === 'rejected'
+        ? buildEscalationRejectionReplyText(staffMessage.staff_name, staffContextText)
+        : decision === 'approved'
+        ? buildEscalationApprovalReplyText(staffMessage.staff_name, staffContextText)
+        : instructionText;
+
+    const answer = await callRpcSingle(supabaseUrl, serviceKey, 'answer_escalation_owner_decision', {
+      p_deep_link_token: deepLinkToken,
+      p_owner_reply_text: submittedReplyText,
+      p_owner_reply_channel: replyChannel,
+    });
+    if (answer.error) return { kind: 'rpc_error', error: answer.error };
+    escalation = answer.data;
+  }
+
+  if (escalation.status === 'delivered_to_staff') {
+    return { kind: 'success', status: 'delivered', ownerReplyText: escalation.owner_reply_text };
+  }
+
+  // 4. Claim the delivery lease. Idempotent/atomic — see
+  // claim_escalation_answer_delivery's own doc comment in the migration.
+  const claim = await callRpcRows(supabaseUrl, serviceKey, 'claim_escalation_answer_delivery', {
+    p_id: escalation.id,
+    p_user_id: userId,
+    p_lease_seconds: 120,
+  });
+  if (claim.error) return { kind: 'rpc_error', error: claim.error };
+  const claimResult = claim.data[0];
+
+  if (!claimResult.claimed) {
+    // Either this escalation just won a race and is already fully
+    // delivered, or a live lease is held elsewhere (this or a
+    // concurrent request already sending) — report truthfully, never
+    // guess, never send a second message.
+    if (claimResult.delivery_status === 'delivered_to_staff') {
+      return { kind: 'success', status: 'delivered', ownerReplyText: claimResult.reply_text };
+    }
+    return { kind: 'success', status: 'in_progress', ownerReplyText: claimResult.reply_text };
+  }
+
+  // 5. Resolve the staff recipient and current WhatsApp eligibility,
+  // reusing the staffMessage row already fetched by the caller — no second
+  // staff_messages lookup needed. Never trust staff_phone alone for
+  // opt-in, though — re-check the live people row.
+  let recipientPhone = staffMessage.staff_phone || null;
+  let optedIn = false;
+  if (staffMessage?.person_id) {
+    const personRes = await fetch(
+      supabaseUrl + '/rest/v1/people?id=eq.' + encodeURIComponent(staffMessage.person_id) +
+        '&select=id,phone,whatsapp_opted_in',
+      { headers },
+    );
+    const personRows = await personRes.json().catch(() => []);
+    const person = Array.isArray(personRows) ? personRows[0] : null;
+    if (person) {
+      recipientPhone = person.phone || recipientPhone;
+      optedIn = Boolean(person.whatsapp_opted_in);
+    }
+  }
+  const normalizedPhone = recipientPhone ? normalizeWhatsAppPhone(recipientPhone) : null;
+
+  if (!staffMessage || !normalizedPhone || !optedIn) {
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'staff_unreachable',
+    );
+    return { kind: 'success', status: 'saved_unreachable', ownerReplyText: claimResult.reply_text };
+  }
+
+  // 6. Send — plain text, the owner's exact stored reply, nothing
+  // prepended or invented, no mention of internal state.
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!accessToken || !phoneNumberId) {
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'whatsapp_not_configured',
+    );
+    return { kind: 'config_error', message: 'WhatsApp is not configured.' };
+  }
+
+  const messageText = String(claimResult.reply_text || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  if (!messageText) {
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'empty_reply_text',
+    );
+    return { kind: 'config_error', message: 'Could not send an empty message. Please try again.' };
+  }
+
+  let sendResult;
+  try {
+    sendResult = await sendMetaMessage({
+      url: `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+      accessToken,
+      payload: {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: normalizedPhone,
+        type: 'text',
+        text: { body: messageText },
+      },
+    });
+  } catch (err) {
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token,
+      err instanceof Error ? err.message : String(err),
+    );
+    return { kind: 'send_error' };
+  }
+
+  if (!sendResult.ok) {
+    const failure = getMetaFailure(sendResult);
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, failure.reason,
+    );
+    return { kind: 'send_error' };
+  }
+
+  // 7. Complete — atomic, gated on the exact live claim token; a
+  // superseded/stale token can never resolve this call.
+  const complete = await callRpcSingle(supabaseUrl, serviceKey, 'complete_escalation_answer_delivery', {
+    p_id: escalation.id,
+    p_user_id: userId,
+    p_claim_token: claimResult.claim_token,
+    p_transport_message_id: sendResult.messageId,
+  });
+  if (complete.error) {
+    // Meta already accepted the send — this is a bookkeeping failure
+    // afterward, not a delivery failure. Truthful partial-success result:
+    // the message really did go out, so this must never read as a plain
+    // error implying nothing happened.
+    console.error('[task-confirm] escalation delivery sent but completion bookkeeping failed', {
+      escalationId: escalation.id, error: complete.error,
+    });
+    return {
+      kind: 'success',
+      status: 'sent_unconfirmed',
+      ownerReplyText: claimResult.reply_text,
+      transportMessageId: sendResult.messageId,
+    };
+  }
+
+  return { kind: 'success', status: 'delivered', ownerReplyText: complete.data.owner_reply_text };
 }
 
 async function markApprovedAlternativeConfirmationOnly({ supabaseUrl, serviceKey, taskId }) {
@@ -1380,14 +1428,14 @@ async function callRpcRaw(supabaseUrl, serviceKey, fnName, args) {
 }
 
 /** For functions returning a single composite row (PostgREST returns a JSON object). */
-async function callRpcSingle(supabaseUrl, serviceKey, fnName, args) {
+export async function callRpcSingle(supabaseUrl, serviceKey, fnName, args) {
   const result = await callRpcRaw(supabaseUrl, serviceKey, fnName, args);
   if (result.error) return result;
   return { data: result.data };
 }
 
 /** For functions returning TABLE(...) (PostgREST returns a JSON array). */
-async function callRpcRows(supabaseUrl, serviceKey, fnName, args) {
+export async function callRpcRows(supabaseUrl, serviceKey, fnName, args) {
   const result = await callRpcRaw(supabaseUrl, serviceKey, fnName, args);
   if (result.error) return result;
   return { data: Array.isArray(result.data) ? result.data : [result.data] };
