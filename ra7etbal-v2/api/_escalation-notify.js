@@ -244,9 +244,16 @@ function buildEscalationMessage(staffName, escalationReason) {
     .replace(/[\r\n\t]+/g, ' ')
     .replace(/ {2,}/g, ' ')
     .trim();
-  const request = staffName
-    ? `${staffName} needs your decision: ${reason}`
-    : reason;
+  // New classifications persist the complete owner-ready sentence. Keep
+  // legacy stored reasons meaningful on retry rather than regenerating or
+  // rewriting historical wording.
+  const isOwnerReadySentence = staffName
+    && reason.toLocaleLowerCase().startsWith(`${staffName.toLocaleLowerCase()} is asking `);
+  const request = isOwnerReadySentence
+    ? reason
+    : staffName
+      ? `${staffName} needs your decision: ${reason}`
+      : reason;
   return `${request} Reply to this message with your decision.`.trim();
 }
 
