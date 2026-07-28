@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  *    api/_escalation-notify.js, calling the real claim_owner_escalation_
  *    notification / complete_.../fail_... lease RPCs, the real
  *    claim_escalation_owner_decision RPC shape, the real findOwnerPhone,
- *    the real buildOwnerDecisionTemplatePayload — only true I/O boundaries
+ *    the real buttonless buildDirectMessagePayload — only true I/O boundaries
  *    mocked (global fetch for Supabase REST/RPC, sendMetaMessage and the
  *    whole _whatsapp-delivery.js bookkeeping module, both already covered
  *    by their own test suites elsewhere).
@@ -125,6 +125,39 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     expect(whatsappDeliveryMocks.beginWhatsappDelivery).toHaveBeenCalledWith(
       expect.objectContaining({ staffMessageId: MSG_A }),
     );
+  });
+
+  it('[reply-first] owner notification has no task button or task-link instruction and asks for a direct WhatsApp reply', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(claimResponse({ claimed: true, claimToken: 'lease-token-1', status: 'sending' }))
+      .mockResolvedValueOnce(jsonResponse(ESCALATION_A))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'boss', phone: '+15550000099' }]))
+      .mockResolvedValueOnce(jsonResponse({ ...ESCALATION_A, owner_notification_status: 'sent', owner_notified_at: '2026-07-27T00:00:00.000Z' }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await notifyOwnerOfEscalation(
+      {
+        staffMessageId: MSG_A,
+        userId: USER_A,
+        taskId: null,
+        escalationReason: 'The guests asked for sparkling water. Can I buy two bottles for tonight?',
+        staffName: 'Christopher',
+      },
+      { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY },
+    );
+
+    const payload = sendMetaMessageMock.mock.calls[0][0].payload;
+    const serialized = JSON.stringify(payload);
+    expect(payload.template.name).toBe('ra7etbal_direct_operational_message');
+    expect(payload.template.components).toHaveLength(1);
+    expect(payload.template.components[0].type).toBe('body');
+    expect(serialized).not.toContain('"type":"button"');
+    expect(serialized).not.toContain('Visit Task');
+    expect(serialized).not.toContain('View Task');
+    expect(serialized).not.toContain(ESCALATION_A.deep_link_token);
+    expect(serialized).not.toContain('ra7etbal.com');
+    expect(serialized).toContain('Reply to this message with your decision.');
+    expect(serialized).toContain('Christopher needs your decision:');
   });
 
   it('[2] calling notifyOwnerOfEscalation twice sequentially sends Meta only once (idempotent on already-sent)', async () => {

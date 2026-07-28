@@ -73,6 +73,17 @@ describe('golden owner WhatsApp decision-reply contract', () => {
       .toBeLessThan(sources['whatsapp-webhook.js'].indexOf('await handleInboundConsentReply'));
   });
 
+  it('keeps owner decision requests reply-first without removing the independent app flow', async () => {
+    const notification = await readFile(new URL('_escalation-notify.js', import.meta.url), 'utf8');
+    const appRoute = await readFile(new URL('../src/routes/OwnerEscalationDecision.tsx', import.meta.url), 'utf8');
+    expect(notification).toContain('buildDirectMessagePayload');
+    expect(notification).toContain('Reply to this message with your decision.');
+    expect(notification).not.toContain('buildOwnerDecisionTemplatePayload');
+    expect(notification).not.toContain("taskUuid: deepLinkToken");
+    expect(appRoute).toContain('submitEscalationDecision');
+    expect(appRoute).toContain('deepLinkToken');
+  });
+
   it('protects the focused contract and direct behavior suites in Carson CI', async () => {
     const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
     const gate = packageJson.scripts['test:carson-protected'];
