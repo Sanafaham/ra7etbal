@@ -37,12 +37,20 @@ describe('owner WhatsApp decision message quality — protected contract', () =>
     expect(candles).not.toMatch(/Nasira|flowers|driver|alternative|guest safety/i);
   });
 
-  it('normalizes Meta-unsafe whitespace and caps newly stored summaries', () => {
-    const normalized = normalizeEscalationReason(`  Christopher\tis asking\nfor permission to ${'buy candles '.repeat(80)}  `);
+  it('normalizes Meta-unsafe whitespace for newly stored summaries', () => {
+    const normalized = normalizeEscalationReason('  Christopher\tis asking\nfor permission to buy candles.  ');
     expect(normalized).not.toMatch(/[\r\n\t]/);
     expect(normalized).not.toMatch(/ {2}/);
-    expect(normalized.length).toBeLessThanOrEqual(MAX_ESCALATION_REASON_LENGTH);
-    expect(normalized.length).toBeGreaterThan(450);
+    expect(normalized).toBe('Christopher is asking for permission to buy candles.');
+  });
+
+  it('rejects an over-limit reason rather than truncating a decision-critical constraint', () => {
+    const padding = 'background detail '.repeat(35);
+    const constraint = 'Do not serve it to guests.';
+    const reason = `Christopher is asking for permission to buy candles. ${padding}${constraint}`;
+    expect(reason.length).toBeGreaterThan(MAX_ESCALATION_REASON_LENGTH);
+    expect(reason).toContain(constraint);
+    expect(normalizeEscalationReason(reason)).toBeNull();
   });
 
   it('stores the normalized owner-ready wording returned by classification', () => {

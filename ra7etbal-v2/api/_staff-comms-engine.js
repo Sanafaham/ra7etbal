@@ -272,7 +272,11 @@ function normalizeEscalationReason(value) {
   if (typeof value !== 'string') return null;
   const normalized = value.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
   if (!normalized) return null;
-  return normalized.slice(0, MAX_ESCALATION_REASON_LENGTH).trimEnd();
+  // Never cut off a price, time, quantity, or condition while leaving an
+  // apparently actionable sentence. The prompt owns concise generation;
+  // over-limit output is invalid and must be rejected as a whole.
+  if (normalized.length > MAX_ESCALATION_REASON_LENGTH) return null;
+  return normalized;
 }
 
 function safeFallback(reason) {
