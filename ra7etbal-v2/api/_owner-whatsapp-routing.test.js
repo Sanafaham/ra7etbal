@@ -27,10 +27,12 @@ vi.mock('./_owner-command-executor.js', () => ({
 
 import {
   handleInboundOwnerMessage,
+  isDisambiguationSelectorMessage,
   isDecisionShapedMessage,
   normalizeOwnerDecisionReply,
   reconcileOwnerWhatsappMessages,
   resolveCanonicalOwner,
+  selectDisambiguationCandidate,
 } from './_owner-whatsapp-routing.js';
 
 const SUPABASE = 'https://example.supabase.co';
@@ -538,6 +540,25 @@ describe('natural owner decision matching and normalization', () => {
 
     expect(result).toMatchObject({ handled: true, reason: 'clarification_sent' });
     expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.updateCommand).toHaveBeenCalledWith(
+      SUPABASE,
+      KEY,
+      claim,
+      'user-1',
+      expect.objectContaining({
+        execution_result: expect.objectContaining({
+          match_method: 'ambiguous',
+          clarification_status: 'pending',
+          original_answer: 'Yes',
+          candidates: expect.arrayContaining([
+            expect.objectContaining({ decision_id: openDecision.id }),
+            expect.objectContaining({ decision_id: '33333333-3333-4333-8333-333333333333' }),
+          ]),
+        }),
+      }),
+    );
+    const persisted = mocks.updateCommand.mock.calls[0][4].execution_result;
+    expect(persisted.candidates).toHaveLength(2);
     expect(mocks.sendMetaMessage).toHaveBeenCalledWith(expect.objectContaining({
       payload: expect.objectContaining({
         text: {
@@ -632,6 +653,258 @@ describe('idempotency and identity', () => {
       reason: 'identity_lookup_failed',
     });
     expect(mocks.callRpcRows).not.toHaveBeenCalled();
+  });
+});
+
+describe('durable owner-decision disambiguation', () => {
+  const candidates = [
+    {
+      decision_id: '11111111-1111-4111-8111-111111111111',
+      staff_message_id: 'staff-new',
+      created_at: '2026-07-28T21:51:38.255Z',
+      inbound_text: 'Can I buy a small bouquet of flowers for the dining table tonight?',
+    },
+    {
+      decision_id: '22222222-2222-4222-8222-222222222222',
+      staff_message_id: 'staff-old',
+      created_at: '2026-07-28T21:18:16.341Z',
+      inbound_text: 'Can I buy two bottles of sparkling water for tonight?',
+    },
+  ];
+
+  it.each([
+    ['the first one', candidates[0]],
+    ['The second one.', candidates[1]],
+    ['the latest one', candidates[0]],
+    ['the earlier one', candidates[1]],
+    ['the one from 00:51', candidates[0]],
+    ['the bouquet one', candidates[0]],
+    ['the sparkling-water one', candidates[1]],
+  ])('selects %s deterministically', (selector, expected) => {
+    expect(isDisambiguationSelectorMessage(selector)).toBe(true);
+    expect(selectDisambiguationCandidate(selector, candidates)).toBe(expected);
+  });
+
+  it('keeps a still-ambiguous description unresolved', () => {
+    const sameTopic = [
+      candidates[0],
+      { ...candidates[1], inbound_text: candidates[0].inbound_text },
+    ];
+    expect(selectDisambiguationCandidate('the bouquet one', sameTopic)).toBeNull();
+  });
+
+  it('applies the preserved original answer to the selected decision, never the selector text', async () => {
+    const clarification = {
+      id: 'clarification-receipt',
+      created_at: '2026-07-28T21:53:29.918Z',
+      execution_result: {
+        command_type: 'owner_decision',
+        match_method: 'ambiguous',
+        clarification_status: 'pending',
+        original_answer: 'Yes he can buy the bouquet',
+        expires_at: '2099-07-28T22:03:29.918Z',
+        candidates,
+      },
+    };
+    const selectedDecision = {
+      id: candidates[1].decision_id,
+      user_id: 'user-1',
+      staff_message_id: candidates[1].staff_message_id,
+      status: 'open',
+      owner_reply_text: null,
+      deep_link_token: 'deep-link-2',
+      created_at: candidates[1].created_at,
+    };
+    const selectedStaffMessage = {
+      id: candidates[1].staff_message_id,
+      user_id: 'user-1',
+      staff_name: 'Christopher',
+      staff_phone: '+12025550123',
+      inbound_text: candidates[1].inbound_text,
+      owner_notification_status: 'sent',
+    };
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock
+      .mockResolvedValueOnce(response([clarification]))
+      .mockResolvedValueOnce(response([{ ...clarification, execution_result: {
+        ...clarification.execution_result,
+        clarification_status: 'claimed',
+        selector_receipt_id: claim.receipt_id,
+      } }]))
+      .mockResolvedValueOnce(response([selectedDecision]))
+      .mockResolvedValueOnce(response([selectedStaffMessage]))
+      .mockResolvedValueOnce(response([{ execution_result: {
+        ...clarification.execution_result,
+        clarification_status: 'claimed',
+        selector_receipt_id: claim.receipt_id,
+      } }]))
+      .mockResolvedValueOnce(response([{}]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.resolve.mockResolvedValue({
+      kind: 'success',
+      status: 'delivered',
+      ownerReplyText: 'Yes he can buy the bouquet',
+      transportMessageId: 'wamid.staff-answer',
+    });
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+      msg: msg({ body: 'The second one' }),
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      route: 'quoted_escalation',
+      reason: 'resolved_escalation',
+    });
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
+    expect(mocks.resolve).toHaveBeenCalledOnce();
+    expect(mocks.resolve).toHaveBeenCalledWith(expect.objectContaining({
+      escalation: expect.objectContaining({ id: candidates[1].decision_id }),
+      decision: 'custom_instruction',
+      instructionText: 'Yes he can buy the bouquet',
+      replyChannel: 'whatsapp',
+    }));
+    expect(mocks.resolve).not.toHaveBeenCalledWith(expect.objectContaining({
+      instructionText: 'The second one',
+    }));
+    const decisionLookup = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes('/staff_escalation_owner_decisions?'));
+    expect(String(decisionLookup?.[0])).toContain(`id=eq.${candidates[1].decision_id}`);
+    expect(String(decisionLookup?.[0])).not.toContain(candidates[0].decision_id);
+    expect(mocks.updateCommand).toHaveBeenCalledWith(
+      SUPABASE,
+      KEY,
+      claim,
+      'user-1',
+      expect.objectContaining({
+        execution_result: expect.objectContaining({
+          exact_reply: 'Yes he can buy the bouquet',
+          selector_text: 'The second one',
+        }),
+      }),
+    );
+  });
+
+  it('fails an expired selector truthfully without entering unsupported-command routing', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock.mockResolvedValueOnce(response([{
+      id: 'expired-clarification',
+      created_at: '2026-07-28T20:00:00.000Z',
+      execution_result: {
+        match_method: 'ambiguous',
+        clarification_status: 'pending',
+        original_answer: 'Yes',
+        expires_at: '2026-07-28T20:10:00.000Z',
+        candidates,
+      },
+    }]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+      msg: msg({ body: 'The second one' }),
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      route: 'owner_decision_disambiguation',
+      reason: 'disambiguation_expired',
+    });
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.sendMetaMessage).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        text: { body: expect.stringContaining('clarification has expired') },
+      }),
+    }));
+  });
+
+  it('a repeated selector after resolution never delivers or falls into unsupported-command routing', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock.mockResolvedValueOnce(response([{
+      id: 'resolved-clarification',
+      created_at: '2026-07-28T21:53:29.918Z',
+      execution_result: {
+        match_method: 'ambiguous',
+        clarification_status: 'resolved',
+        original_answer: 'Yes he can buy the bouquet',
+        expires_at: '2099-07-28T22:03:29.918Z',
+        selected_decision_id: candidates[1].decision_id,
+        candidates,
+      },
+    }]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+      msg: msg({ body: 'The second one' }),
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      route: 'owner_decision_disambiguation',
+      reason: 'disambiguation_already_resolved',
+    });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
+    expect(mocks.sendMetaMessage).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        text: { body: expect.stringContaining('did not send another answer') },
+      }),
+    }));
+  });
+
+  it('does not resend an already accepted disambiguation acknowledgement during webhook replay', async () => {
+    const acknowledgement = 'That decision clarification is already being handled. I did not send another answer.';
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock.mockResolvedValueOnce(response([{
+      id: 'resolved-clarification',
+      created_at: '2026-07-28T21:53:29.918Z',
+      execution_result: {
+        match_method: 'ambiguous',
+        clarification_status: 'resolved',
+        original_answer: 'Yes he can buy the bouquet',
+        expires_at: '2099-07-28T22:03:29.918Z',
+        selected_decision_id: candidates[1].decision_id,
+        candidates,
+      },
+    }]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.recordInbound.mockResolvedValue({
+      data: {
+        acknowledgement_status: 'accepted',
+        acknowledgement_text: acknowledgement,
+      },
+      error: null,
+    });
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+      msg: msg({ body: 'The second one' }),
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      route: 'owner_decision_disambiguation',
+      reason: 'disambiguation_already_resolved',
+    });
+    expect(mocks.sendMetaMessage).not.toHaveBeenCalled();
+    expect(mocks.updateCommand).not.toHaveBeenCalled();
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
   });
 });
 

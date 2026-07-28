@@ -14,6 +14,15 @@ const DELIVERY_FAILED_TEXT =
 const QUOTED_COMPOUND_TEXT =
   "I couldn't safely separate your answer from the additional command. Nothing was sent. Please reply to the staff question only, then send the other command separately.";
 const DECISION_LOOKBACK_DAYS = 14;
+const DISAMBIGUATION_TTL_MS = 10 * 60 * 1000;
+const DISAMBIGUATION_EXPIRED_TEXT =
+  'That decision clarification has expired. Please reply to the decision request again with your answer.';
+const DISAMBIGUATION_STILL_AMBIGUOUS_TEXT =
+  'I still cannot tell which decision you mean. Please say the first one, the second one, or name the request.';
+const DISAMBIGUATION_ALREADY_HANDLED_TEXT =
+  'That decision clarification is already being handled. I did not send another answer.';
+const DISAMBIGUATION_CONTEXT_UNAVAILABLE_TEXT =
+  'I identified the decision, but could not load its staff context. Nothing was sent. Please try again.';
 
 /**
  * Safe owner WhatsApp boundary for Slice 1.
@@ -59,9 +68,17 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
 
   let match;
   try {
-    match = await matchOwnerDecision({
-      supabaseUrl, serviceKey, userId: identity.userId, msg,
-    });
+    match = msg.contextMessageId || !isDisambiguationSelectorMessage(msg.body)
+      ? await matchOwnerDecision({ supabaseUrl, serviceKey, userId: identity.userId, msg })
+      : await matchPendingDisambiguation({
+          supabaseUrl,
+          serviceKey,
+          userId: identity.userId,
+          selectorText: msg.body,
+          selectorReceiptId: receipt.row.receipt_id,
+        }) || await matchOwnerDecision({
+          supabaseUrl, serviceKey, userId: identity.userId, msg,
+        });
   } catch (error) {
     await failReceipt({ supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row, error });
     return { isOwner: true, handled: false, route: 'owner_decision', reason: 'correlation_failed' };
@@ -148,6 +165,60 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     };
   }
 
+  if ([
+    'disambiguation_expired',
+    'disambiguation_ambiguous',
+    'disambiguation_in_progress',
+    'disambiguation_already_resolved',
+    'disambiguation_context_unavailable',
+  ].includes(match.kind)) {
+    const clarification = match.kind === 'disambiguation_expired'
+      ? DISAMBIGUATION_EXPIRED_TEXT
+      : match.kind === 'disambiguation_ambiguous'
+        ? DISAMBIGUATION_STILL_AMBIGUOUS_TEXT
+        : match.kind === 'disambiguation_context_unavailable'
+          ? DISAMBIGUATION_CONTEXT_UNAVAILABLE_TEXT
+          : DISAMBIGUATION_ALREADY_HANDLED_TEXT;
+    const ack = durableInbound?.acknowledgement_status === 'accepted' &&
+      durableInbound?.acknowledgement_text === clarification
+      ? { ok: true, alreadyAccepted: true }
+      : await sendOwnerAcknowledgement({
+          phoneNumberId: msg.phoneNumberId,
+          to: identity.ownerPhone,
+          text: clarification,
+        });
+    if (!ack.ok) {
+      await failReceipt({
+        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+        error: ack.reason || 'owner_ack_failed',
+      });
+      return { isOwner: true, handled: false, route: 'owner_decision_disambiguation', reason: 'owner_ack_failed' };
+    }
+    if (!ack.alreadyAccepted) {
+      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+        execution_status: 'unsupported',
+        execution_result: {
+          command_type: 'owner_decision',
+          match_method: match.kind,
+          clarification_receipt_id: match.clarificationReceiptId || null,
+        },
+        acknowledgement_status: 'accepted',
+        acknowledgement_text: clarification,
+        acknowledgement_transport_message_id: ack.messageId,
+      });
+    }
+    const completed = await completeReceipt({
+      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+      outcome: 'clarification_sent', escalationId: null,
+    });
+    return {
+      isOwner: true,
+      handled: completed,
+      route: 'owner_decision_disambiguation',
+      reason: completed ? match.kind : 'receipt_complete_failed',
+    };
+  }
+
   if (match.kind === 'unmatched_quote' || match.kind === 'unmatched_identifier') {
     const clarification = match.kind === 'unmatched_quote'
       ? UNMATCHED_QUOTE_TEXT
@@ -205,7 +276,19 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     if (!ack.alreadyAccepted) {
       await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
         execution_status: 'unsupported',
-        execution_result: { command_type: 'owner_decision', match_method: 'ambiguous' },
+        execution_result: {
+          command_type: 'owner_decision',
+          match_method: 'ambiguous',
+          clarification_status: 'pending',
+          original_answer: msg.body.trim().slice(0, 1000),
+          expires_at: new Date(Date.now() + DISAMBIGUATION_TTL_MS).toISOString(),
+          candidates: match.matches.slice(0, 2).map(({ escalation, staffMessage }) => ({
+            decision_id: escalation.id,
+            staff_message_id: escalation.staff_message_id,
+            created_at: escalation.created_at,
+            inbound_text: staffMessage.inbound_text,
+          })),
+        },
         acknowledgement_status: 'accepted',
         acknowledgement_text: clarification,
         acknowledgement_transport_message_id: ack.messageId,
@@ -227,7 +310,8 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   });
   const staffContextText =
     typeof staffMessage?.inbound_text === 'string' ? staffMessage.inbound_text.trim() : '';
-  const instructionText = stripDecisionIdentifier(msg.body).trim().slice(0, 1000);
+  const effectiveReplyText = match.originalAnswer || msg.body;
+  const instructionText = stripDecisionIdentifier(effectiveReplyText).trim().slice(0, 1000);
   if (!staffMessage || !staffContextText || !instructionText) {
     await failReceipt({
       supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
@@ -395,6 +479,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
         match_method: match.method,
         normalized_decision: normalized.decision,
         exact_reply: instructionText,
+        selector_text: match.originalAnswer ? msg.body.trim().slice(0, 1000) : null,
         staff_delivery: result.status,
       },
     });
@@ -429,6 +514,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
         match_method: match.method,
         normalized_decision: normalized.decision,
         exact_reply: instructionText,
+        selector_text: match.originalAnswer ? msg.body.trim().slice(0, 1000) : null,
       },
       acknowledgement_status: 'accepted',
       acknowledgement_text: acknowledgement,
@@ -462,6 +548,16 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     outcome: 'resolved_escalation',
     escalationId: escalation.id,
   });
+  if (completed && match.clarificationReceiptId) {
+    await markDisambiguationResolved({
+      supabaseUrl,
+      serviceKey,
+      userId: identity.userId,
+      clarificationReceiptId: match.clarificationReceiptId,
+      selectorReceiptId: receipt.row.receipt_id,
+      escalationId: escalation.id,
+    }).catch(() => {});
+  }
   return {
     isOwner: true,
     handled: completed,
@@ -469,6 +565,192 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     reason: completed ? 'resolved_escalation' : 'receipt_complete_failed',
     staffDelivery: result.status,
   };
+}
+
+async function matchPendingDisambiguation({
+  supabaseUrl, serviceKey, userId, selectorText, selectorReceiptId,
+}) {
+  const rows = await restSelect(
+    supabaseUrl,
+    serviceKey,
+    'owner_whatsapp_reply_receipts',
+    `user_id=eq.${encodeURIComponent(userId)}&outcome=eq.clarification_sent` +
+      '&execution_result->>match_method=eq.ambiguous' +
+      '&select=id,created_at,execution_result&order=created_at.desc&limit=1',
+  );
+  const pending = rows[0];
+  if (!pending?.execution_result) return null;
+  const state = pending.execution_result;
+  if (state.clarification_status === 'resolved') {
+    return { kind: 'disambiguation_already_resolved', clarificationReceiptId: pending.id };
+  }
+  if (state.clarification_status === 'claimed' &&
+      state.selector_receipt_id !== selectorReceiptId) {
+    return { kind: 'disambiguation_in_progress', clarificationReceiptId: pending.id };
+  }
+  if (!['pending', 'claimed'].includes(state.clarification_status)) return null;
+  const expiresAt = Date.parse(state.expires_at || pending.created_at);
+  if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+    return { kind: 'disambiguation_expired', clarificationReceiptId: pending.id };
+  }
+  const candidates = Array.isArray(state.candidates) ? state.candidates : [];
+  const selected = selectDisambiguationCandidate(selectorText, candidates);
+  if (!selected) {
+    return { kind: 'disambiguation_ambiguous', clarificationReceiptId: pending.id };
+  }
+  const claimed = state.clarification_status === 'claimed'
+    ? state.selector_receipt_id === selectorReceiptId
+    : await claimDisambiguation({
+        supabaseUrl, serviceKey, userId, pending, selectorReceiptId,
+      });
+  if (!claimed) return { kind: 'disambiguation_ambiguous', clarificationReceiptId: pending.id };
+  const escalationRows = await restSelect(
+    supabaseUrl,
+    serviceKey,
+    'staff_escalation_owner_decisions',
+    `id=eq.${encodeURIComponent(selected.decision_id)}&user_id=eq.${encodeURIComponent(userId)}` +
+      '&select=id,user_id,staff_message_id,status,owner_reply_text,deep_link_token,created_at&limit=1',
+  );
+  if (escalationRows.length !== 1) {
+    await releaseDisambiguation({
+      supabaseUrl, serviceKey, userId, pending, selectorReceiptId,
+    });
+    return { kind: 'disambiguation_context_unavailable', clarificationReceiptId: pending.id };
+  }
+  if (escalationRows[0].status !== 'open') {
+    await markDisambiguationResolved({
+      supabaseUrl,
+      serviceKey,
+      userId,
+      clarificationReceiptId: pending.id,
+      selectorReceiptId,
+      escalationId: escalationRows[0].id,
+    });
+    return { kind: 'disambiguation_already_resolved', clarificationReceiptId: pending.id };
+  }
+  const staffMessage = await fetchStaffMessage({
+    supabaseUrl,
+    serviceKey,
+    userId,
+    staffMessageId: escalationRows[0].staff_message_id,
+    requireOwnerNotification: true,
+  });
+  if (!staffMessage) {
+    await releaseDisambiguation({
+      supabaseUrl, serviceKey, userId, pending, selectorReceiptId,
+    });
+    return { kind: 'disambiguation_context_unavailable', clarificationReceiptId: pending.id };
+  }
+  return {
+    kind: 'matched',
+    method: 'clarification_selector',
+    escalation: escalationRows[0],
+    staffMessage,
+    originalAnswer: String(state.original_answer || '').trim(),
+    clarificationReceiptId: pending.id,
+  };
+}
+
+export function selectDisambiguationCandidate(selectorText, candidates) {
+  if (!Array.isArray(candidates) || candidates.length < 2) return null;
+  const value = String(selectorText || '').toLowerCase().replace(/[.!?]+$/g, '').trim();
+  if (/^(?:the\s+)?first(?:\s+one)?$/.test(value)) return candidates[0];
+  if (/^(?:the\s+)?second(?:\s+one)?$/.test(value)) return candidates[1];
+  if (/^(?:the\s+)?latest(?:\s+one)?$/.test(value)) {
+    return [...candidates].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+  }
+  if (/^(?:the\s+)?earlier(?:\s+one)?$/.test(value)) {
+    return [...candidates].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))[0];
+  }
+  const clock = value.match(/\b(?:the\s+one\s+from\s+)?([01]?\d|2[0-3]):([0-5]\d)\b/);
+  if (clock) {
+    const target = `${clock[1].padStart(2, '0')}:${clock[2]}`;
+    const matches = candidates.filter((candidate) => new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).format(new Date(candidate.created_at)) === target);
+    return matches.length === 1 ? matches[0] : null;
+  }
+  const terms = value
+    .replace(/\b(?:the|one|request|decision|from)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((term) => term.length >= 4);
+  if (!terms.length) return null;
+  const matches = candidates.filter((candidate) => {
+    const source = String(candidate.inbound_text || '').toLowerCase();
+    return terms.every((term) => source.includes(term));
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
+export function isDisambiguationSelectorMessage(text) {
+  const value = String(text || '').toLowerCase().replace(/[.!?]+$/g, '').trim();
+  return /^(?:the\s+)?(?:first|second|latest|earlier)(?:\s+one)?$/.test(value) ||
+    /^(?:the\s+)?one\s+from\s+(?:[01]?\d|2[0-3]):[0-5]\d$/.test(value) ||
+    /^(?:the\s+)?[a-z0-9][a-z0-9 -]{1,80}\s+one$/.test(value);
+}
+
+async function claimDisambiguation({
+  supabaseUrl, serviceKey, userId, pending, selectorReceiptId,
+}) {
+  const nextState = {
+    ...pending.execution_result,
+    clarification_status: 'claimed',
+    selector_receipt_id: selectorReceiptId,
+  };
+  const rows = await restPatch(
+    supabaseUrl,
+    serviceKey,
+    'owner_whatsapp_reply_receipts',
+    `id=eq.${encodeURIComponent(pending.id)}&user_id=eq.${encodeURIComponent(userId)}` +
+      '&execution_result->>clarification_status=eq.pending',
+    { execution_result: nextState },
+  );
+  return rows.length === 1;
+}
+
+async function markDisambiguationResolved({
+  supabaseUrl, serviceKey, userId, clarificationReceiptId, selectorReceiptId, escalationId,
+}) {
+  const rows = await restSelect(
+    supabaseUrl, serviceKey, 'owner_whatsapp_reply_receipts',
+    `id=eq.${encodeURIComponent(clarificationReceiptId)}&user_id=eq.${encodeURIComponent(userId)}` +
+      '&select=execution_result&limit=1',
+  );
+  if (rows.length !== 1) return false;
+  const state = rows[0].execution_result || {};
+  const updated = await restPatch(
+    supabaseUrl,
+    serviceKey,
+    'owner_whatsapp_reply_receipts',
+    `id=eq.${encodeURIComponent(clarificationReceiptId)}&user_id=eq.${encodeURIComponent(userId)}` +
+      `&execution_result->>selector_receipt_id=eq.${encodeURIComponent(selectorReceiptId)}`,
+    {
+      execution_result: {
+        ...state,
+        clarification_status: 'resolved',
+        selected_decision_id: escalationId,
+        resolved_at: new Date().toISOString(),
+      },
+    },
+  );
+  return updated.length === 1;
+}
+
+async function releaseDisambiguation({
+  supabaseUrl, serviceKey, userId, pending, selectorReceiptId,
+}) {
+  const { selector_receipt_id: _discard, ...state } = pending.execution_result || {};
+  const updated = await restPatch(
+    supabaseUrl,
+    serviceKey,
+    'owner_whatsapp_reply_receipts',
+    `id=eq.${encodeURIComponent(pending.id)}&user_id=eq.${encodeURIComponent(userId)}` +
+      `&execution_result->>selector_receipt_id=eq.${encodeURIComponent(selectorReceiptId)}`,
+    { execution_result: { ...state, clarification_status: 'pending' } },
+  );
+  return updated.length === 1;
 }
 
 export function containsAdditionalOwnerCommand(text) {
@@ -777,6 +1059,22 @@ async function restSelect(url, key, table, query) {
     headers: { apikey: key, Authorization: `Bearer ${key}` },
   });
   if (!response.ok) throw new Error(`${table}_lookup_failed`);
+  const rows = await response.json().catch(() => []);
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function restPatch(url, key, table, query, body) {
+  const response = await fetch(`${url}/rest/v1/${table}?${query}`, {
+    method: 'PATCH',
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(`${table}_update_failed`);
   const rows = await response.json().catch(() => []);
   return Array.isArray(rows) ? rows : [];
 }
