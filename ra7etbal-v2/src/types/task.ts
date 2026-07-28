@@ -39,6 +39,8 @@ export interface Task {
   confirmed_at: string | null;
   /** Optional reminder/action due timestamp. */
   due_at: string | null;
+  /** Non-null after the owner dismisses the completed confirmation banner. */
+  dismissed_at?: string | null;
   /**
    * Non-null when the task has been moved out of the active workspace via
    * "Archive history". Archived rows are filtered out of Actions / Follow-ups
