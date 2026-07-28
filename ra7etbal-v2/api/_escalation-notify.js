@@ -11,7 +11,7 @@
  *  - findOwnerPhone (api/task-confirm.js)
  *  - beginWhatsappDelivery / markWhatsappDeliveryAccepted /
  *    markWhatsappDeliveryFailed / getMetaFailure (api/_whatsapp-delivery.js)
- *  - sendMetaMessage / buildOwnerDecisionTemplatePayload /
+ *  - sendMetaMessage / buildDirectMessagePayload /
  *    normalizeWhatsAppPhone (api/send-whatsapp-task.js)
  *
  * Idempotency contract (atomic — see 20260727_staff_escalation_owner_
@@ -45,10 +45,10 @@
  */
 
 import { findOwnerPhone } from './task-confirm.js';
-import { sendMetaMessage, buildOwnerDecisionTemplatePayload, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
+import { sendMetaMessage, buildDirectMessagePayload, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 import { beginWhatsappDelivery, markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 
-const OWNER_DECISION_TEMPLATE_NAME = 'ra7etbal_owner_decision';
+const OWNER_DECISION_REPLY_TEMPLATE_NAME = 'ra7etbal_direct_operational_message';
 const LEASE_SECONDS = 120;
 
 /**
@@ -133,14 +133,20 @@ export async function notifyOwnerOfEscalation(input, deps) {
     return { attempted: true, status: 'failed', reason: 'not_configured', escalationId, deepLinkToken };
   }
 
-  const templateName = (process.env.WHATSAPP_OWNER_DECISION_TEMPLATE || OWNER_DECISION_TEMPLATE_NAME).trim();
-  const templateLanguage = (process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'en_US').trim();
-  const payload = buildOwnerDecisionTemplatePayload({
+  // Owner decision requests are reply-first. The legacy owner-decision
+  // template contains a Visit Task URL button and tells the owner to confirm
+  // through the task link, which competes with the direct WhatsApp reply
+  // path. Reuse the approved buttonless direct-message utility template;
+  // the deep-link token still exists for independent app use, but is never
+  // placed in this WhatsApp notification.
+  const templateName = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || OWNER_DECISION_REPLY_TEMPLATE_NAME).trim();
+  const templateLanguage = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || 'en').trim();
+  const payload = buildDirectMessagePayload({
     to: normalizedPhone,
+    ownerName: 'Carson',
     message: buildEscalationMessage(staffName, escalationReason),
     templateName,
     templateLanguage,
-    taskUuid: deepLinkToken,
   });
 
   const deliveryId = await beginWhatsappDelivery({
@@ -233,8 +239,10 @@ async function failLease(supabaseUrl, serviceKey, fetchImpl, staffMessageId, use
 
 function buildEscalationMessage(staffName, escalationReason) {
   const reason = String(escalationReason || 'needs your decision').trim();
-  const withName = staffName ? `${staffName}: ${reason}` : reason;
-  return withName.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  const request = staffName
+    ? `${staffName} needs your decision:\n\n${reason}`
+    : reason;
+  return `${request}\n\nReply to this message with your decision.`.trim();
 }
 
 async function rpc(supabaseUrl, serviceKey, fetchImpl, name, args) {
@@ -253,4 +261,4 @@ async function rpc(supabaseUrl, serviceKey, fetchImpl, name, args) {
   return Array.isArray(data) ? data[0] : data;
 }
 
-export { buildEscalationMessage, OWNER_DECISION_TEMPLATE_NAME };
+export { buildEscalationMessage, OWNER_DECISION_REPLY_TEMPLATE_NAME };
