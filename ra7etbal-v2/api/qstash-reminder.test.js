@@ -314,7 +314,11 @@ describe("qstash-reminder default handler — 'schedule' action (item 9 lock)", 
     const [patchUrl, patchInit] = fetchMock.mock.calls[3];
     expect(String(patchUrl)).toContain("/rest/v1/tasks?id=eq.task-1");
     expect(patchInit.method).toBe("PATCH");
-    expect(JSON.parse(patchInit.body)).toEqual({ qstash_message_id: "msg-ok" });
+    expect(JSON.parse(patchInit.body)).toEqual({
+      qstash_message_id: "msg-ok",
+      reminder_delivery_status: "scheduled",
+      reminder_delivery_error: null,
+    });
   });
 
   it("returns success:false and NEVER persists a message ID when the QStash publish fails", async () => {

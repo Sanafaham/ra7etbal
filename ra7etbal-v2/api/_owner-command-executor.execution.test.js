@@ -91,6 +91,7 @@ describe('owner command execution boundary', () => {
     expect(calls.filter((call) =>
       call.url.endsWith('/rest/v1/tasks') && call.options.method === 'POST')).toHaveLength(1);
     expect(calls.filter((call) => call.url.startsWith('https://qstash.upstash.io/'))).toHaveLength(1);
+    expect(result.acknowledgement).toContain('5:30 PM');
   });
 
   it('retries the failed action without resending an already accepted failure acknowledgement', async () => {

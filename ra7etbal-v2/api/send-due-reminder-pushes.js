@@ -1,4 +1,5 @@
 import webpush from 'web-push';
+import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -137,7 +138,7 @@ export default async function handler(req, res) {
       const overdueMs = new Date(runStartedAt).getTime() - new Date(task.due_at).getTime();
       const overdueSec = Math.round(overdueMs / 1000);
       console.log(`[safety-net] sending overdue reminder push after 30s grace — taskId=${task.id} overdue=${overdueSec}s due_at=${task.due_at}`);
-      const result = await sendTaskReminder(task, subscriptions, config.values);
+      const result = await sendTaskReminder(task, subscriptions, config.values, runStartedAt);
       sent += result.sent;
       failed += result.failed;
       errors.push(...result.errors);
@@ -152,7 +153,10 @@ export default async function handler(req, res) {
           errors.push(`markTaskPushSent failed for task ${task.id}: ${markError}`);
         }
       } else {
-        await clearTaskPushClaim(config.values, task.id, runStartedAt);
+        const retryable = result.perSubscription.some(
+          (item) => item.result === 'failed' && item.statusCode !== 404 && item.statusCode !== 410,
+        );
+        await clearTaskPushClaim(config.values, task.id, runStartedAt, retryable);
       }
 
       debugTasks.push({
@@ -292,6 +296,7 @@ function getConfig() {
     vapidPublicKey: process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY,
     vapidPrivateKey: process.env.VAPID_PRIVATE_KEY,
     vapidSubject: process.env.VAPID_SUBJECT,
+    receiptSecret: process.env.CRON_SECRET,
   };
   const missing = Object.entries(values)
     .filter(([, value]) => !value)
@@ -317,7 +322,7 @@ async function fetchDueReminderTasks(config, nowIso) {
 
   const url =
     `${config.supabaseUrl}/rest/v1/tasks` +
-    '?select=id,user_id,description,due_at,status,last_push_sent_at' +
+    '?select=id,user_id,description,due_at,status,last_push_sent_at,reminder_delivery_status' +
     '&type=eq.reminder' +
     '&status=eq.pending' +
     '&archived_at=is.null' +
@@ -390,12 +395,7 @@ async function removeExpiredSubscription(config, subId) {
   }
 }
 
-async function sendTaskReminder(task, subscriptions, config) {
-  const payload = JSON.stringify({
-    title: 'Ra7etBal reminder',
-    body: `${task.description} is due now.`,
-  });
-
+async function sendTaskReminder(task, subscriptions, config, attemptAt) {
   let sent = 0;
   let failed = 0;
   const errors = [];
@@ -403,8 +403,29 @@ async function sendTaskReminder(task, subscriptions, config) {
 
   for (const row of subscriptions) {
     const endpointShort = row.endpoint ? row.endpoint.slice(-40) : '(missing)';
+    const receiptFields = {
+      taskId: task.id, userId: task.user_id, subscriptionId: row.id, dueAt: task.due_at,
+    };
+    const payload = JSON.stringify({
+      title: 'Ra7etBal reminder',
+      body: `${task.description} is due now.`,
+      receipt: {
+        url: '/api/qstash-reminder',
+        taskId: task.id,
+        subscriptionId: row.id,
+        dueAt: task.due_at,
+        token: signReminderReceipt(receiptFields, config.receiptSecret),
+      },
+    });
+    await recordDeliveryEvent({
+      supabaseUrl: config.supabaseUrl, serviceRoleKey: config.serviceRoleKey,
+      taskId: task.id, userId: task.user_id, subscriptionId: row.id,
+      eventKey: `provider_send_attempted:${row.id}:${attemptAt}`,
+      stage: 'provider_send_attempted',
+      metadata: { source: 'safety_net' },
+    });
     try {
-      await webpush.sendNotification(
+      const providerResponse = await webpush.sendNotification(
         {
           endpoint: row.endpoint,
           keys: {
@@ -418,6 +439,14 @@ async function sendTaskReminder(task, subscriptions, config) {
         { urgency: 'high', TTL: 60 },
       );
       sent += 1;
+      await recordDeliveryEvent({
+        supabaseUrl: config.supabaseUrl, serviceRoleKey: config.serviceRoleKey,
+        taskId: task.id, userId: task.user_id, subscriptionId: row.id,
+        eventKey: `provider_accepted:${row.id}:${attemptAt}`,
+        stage: 'provider_accepted',
+        providerStatusCode: providerResponse?.statusCode ?? 201,
+        metadata: { source: 'safety_net' },
+      });
       perSubscription.push({
         subscriptionId: row.id,
         endpointTail: endpointShort,
@@ -438,6 +467,14 @@ async function sendTaskReminder(task, subscriptions, config) {
       errors.push(
         `sub=${row.id} status=${detail.statusCode} msg=${detail.message} body=${JSON.stringify(detail.body)}`,
       );
+      await recordDeliveryEvent({
+        supabaseUrl: config.supabaseUrl, serviceRoleKey: config.serviceRoleKey,
+        taskId: task.id, userId: task.user_id, subscriptionId: row.id,
+        eventKey: `provider_rejected:${row.id}:${attemptAt}`,
+        stage: 'provider_rejected',
+        providerStatusCode: statusCode,
+        metadata: { source: 'safety_net', permanent: statusCode === 404 || statusCode === 410 },
+      });
 
       // 410 Gone or 404 Not Found = permanently invalid subscription. Remove it.
       if (statusCode === 410 || statusCode === 404) {
@@ -462,8 +499,8 @@ async function markTaskPushSent(config, taskId, sentAt) {
     },
     body: JSON.stringify({
       last_push_sent_at: sentAt,
-      status: 'done',
-      confirmed_at: sentAt,
+      reminder_delivery_status: 'delivery_unconfirmed',
+      reminder_provider_accepted_at: sentAt,
     }),
   });
 
@@ -480,7 +517,7 @@ async function claimTaskForPush(config, taskId, sentAt) {
     '&type=eq.reminder' +
     '&status=eq.pending' +
     '&archived_at=is.null' +
-    '&last_push_sent_at=is.null' +
+    '&reminder_dispatch_attempted_at=is.null' +
     '&select=id';
 
   const response = await fetch(url, {
@@ -489,7 +526,10 @@ async function claimTaskForPush(config, taskId, sentAt) {
       ...supabaseHeaders(config),
       Prefer: 'return=representation',
     },
-    body: JSON.stringify({ last_push_sent_at: sentAt }),
+    body: JSON.stringify({
+      reminder_delivery_status: 'dispatch_attempted',
+      reminder_dispatch_attempted_at: sentAt,
+    }),
   });
 
   if (!response.ok) {
@@ -501,16 +541,20 @@ async function claimTaskForPush(config, taskId, sentAt) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
-async function clearTaskPushClaim(config, taskId, sentAt) {
+async function clearTaskPushClaim(config, taskId, sentAt, retryable) {
   try {
     await fetch(
       `${config.supabaseUrl}/rest/v1/tasks` +
         `?id=eq.${encodeURIComponent(taskId)}` +
-        `&last_push_sent_at=eq.${encodeURIComponent(sentAt)}`,
+        `&reminder_dispatch_attempted_at=eq.${encodeURIComponent(sentAt)}`,
       {
         method: 'PATCH',
         headers: { ...supabaseHeaders(config), Prefer: 'return=minimal' },
-        body: JSON.stringify({ last_push_sent_at: null }),
+        body: JSON.stringify({
+          reminder_delivery_status: 'failed',
+          reminder_delivery_error: 'All provider sends failed.',
+          ...(retryable ? { reminder_dispatch_attempted_at: null } : {}),
+        }),
       },
     );
   } catch {
