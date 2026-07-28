@@ -12,11 +12,13 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 ## Owner WhatsApp safe routing Slice 1
 
-Status: code-complete on `feat/owner-whatsapp-safe-routing-slice-1`, not deployed, feature flag disabled, migrations not applied.
+Status: deployed at `cdededee7006c2af4c614006863487d08f258cf0`; production migration applied; routing enabled only for Sana. A controlled reminder test exposed two contained defects: equivalent PostgreSQL/ISO `timestamptz` strings were compared literally after the deterministic task insert, and retry processing resent an already accepted failure acknowledgement. Production receipt `2be3086c-910e-4f7f-9dc9-c22588223c45` was contained with `execution_status=terminal_failed`, `next_retry_at=NULL`, and its orphan task deleted; the receipt `status` remains `failed` because the production status constraint does not allow `terminal_failed`.
 
 The owner command boundary now fails closed for ambiguous and compound commands; quoted Meta context remains the only escalation-answer authority. Direct messages and tracked delegations are classified separately, owner references use the shared canonical normalizer, reminders resolve in `profiles.morning_brief_timezone` and schedule QStash only after a non-null `due_at` is persisted, delegations preserve deterministic task/message/confirmation IDs and schedule escalation, and retry exhaustion records a durable terminal failure without promising more retries. Migration deployment order and the 20260727 history mismatch are documented in `ra7etbal-v2/docs/OWNER_WHATSAPP_SAFE_ROUTING_DEPLOYMENT.md`.
 
 Protect: receipt lease/claim tokens, deterministic idempotency, accepted-send/acknowledgement fences, exact quoted-context correlation, default-off `OWNER_WHATSAPP_ROUTING_USER_IDS`, and the prohibition on open-escalation-count inference. Before any activation: reconcile migration history, apply and verify migrations separately, deploy with the flag disabled, then enable one account only after command tests pass.
+
+Hotfix pending: compare reminder timestamps by canonical instant, preserve accepted acknowledgement transport IDs across retries, and exclude terminal execution states from reconciliation. Do not send another owner WhatsApp command until that hotfix is merged and deployed.
 
 ## Stable and protected
 

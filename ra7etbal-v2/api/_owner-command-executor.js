@@ -92,13 +92,17 @@ export async function persistAndExecuteOwnerCommand({
       execution_error: error?.message || String(error),
       next_retry_at: exhausted ? null : new Date(Date.now() + 60_000).toISOString(),
     });
+    const acknowledgement = parseFailed
+      ? "I couldn't understand the reminder time, so nothing was scheduled."
+      : exhausted
+        ? 'I recorded your command, but I could not complete it after the allowed attempts. Nothing was claimed as done and no further retry is scheduled.'
+        : 'I recorded your command, but I could not complete it. Nothing further was claimed as done; Ra7etBal will retry it safely.';
     return {
       kind: exhausted ? 'terminal_failed' : 'execution_failed',
-      acknowledgement: parseFailed
-        ? "I couldn't understand the reminder time, so nothing was scheduled."
-        : exhausted
-          ? 'I recorded your command, but I could not complete it after the allowed attempts. Nothing was claimed as done and no further retry is scheduled.'
-          : 'I recorded your command, but I could not complete it. Nothing further was claimed as done; Ra7etBal will retry it safely.',
+      acknowledgement,
+      acknowledgementAlreadyAccepted:
+        row.acknowledgement_status === 'accepted' &&
+        row.acknowledgement_text === acknowledgement,
       error: error?.message || String(error),
     };
   }
@@ -134,7 +138,7 @@ async function executeReminder({ supabaseUrl, serviceKey, userId, receipt, row, 
     supabaseUrl, serviceKey, 'tasks',
     `id=eq.${encodeURIComponent(taskId)}&user_id=eq.${encodeURIComponent(userId)}&select=id,due_at,qstash_message_id&limit=1`,
   ))[0];
-  if (!task || task.due_at !== dueAt) throw new Error('reminder_task_state_mismatch');
+  if (!task || !sameInstant(task.due_at, dueAt)) throw new Error('reminder_task_state_mismatch');
   if (!task.qstash_message_id) {
     await scheduleReminderPush({ supabaseUrl, serviceKey, taskId, dueAt });
   }
@@ -148,6 +152,12 @@ async function executeReminder({ supabaseUrl, serviceKey, userId, receipt, row, 
       ? `Done — I created one reminder for ${formatDue(dueAt)}.`
       : 'Done — I created one reminder.',
   };
+}
+
+function sameInstant(left, right) {
+  const leftMs = Date.parse(String(left || ''));
+  const rightMs = Date.parse(String(right || ''));
+  return Number.isFinite(leftMs) && Number.isFinite(rightMs) && leftMs === rightMs;
 }
 
 async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, row, classification, ownerName }) {
