@@ -70,6 +70,52 @@ Stable baseline tag:
 merged protection commit for this contract (the exact remote target is verified
 and reported after merge).
 
+### Owner decision replies through WhatsApp — production verified and protected
+
+Status: production verified and permanently protected on 2026-07-28. Rollout
+remains Sana-only; Phase B staff escalation, Phase C Needs You visibility, the
+Phase D app controls, staff routing, and the owner reminder contract are
+unchanged.
+
+Controlled production evidence (one owner reply, with no additional test
+decision created):
+
+- Christopher decision: `87b539e7-c0a3-4f1a-aa99-bbc20253a975`
+- Original request: `I need Sana’s permission to test a new dessert plate today. This is only a harmless test and nothing will be served to guests. Please ask Sana yes or no.`
+- Exact Sana reply: `Decision 87b539e7-c0a3-4f1a-aa99-bbc20253a975: Yes, but do not serve it to guests`
+- Exact Sana acknowledgement: `Got it — I sent your answer to Christopher.`
+- Receipt: `4ce34678-7177-4bf2-b925-52529672b7af`, completed once with
+  `match_method=explicit_identifier`, `normalized_decision=custom_instruction`,
+  no error, and no eligible retry
+- Final decision state: `delivered_to_staff`; the exact owner reply is stored
+  with `owner_reply_channel=whatsapp`
+- Christopher transport ID:
+  `wamid.HBgLMTIwMjU2OTEzNzcVAgARGBI3OTA5NEE0MkI2RDNFQjAxQ0MA`
+- Sana acknowledgement transport ID:
+  `wamid.HBgMOTA1MDEwNTg5NjE0FQIAERgSOTE1RDA0NzFGQTQ1RjAzREYwAA==`
+- Answered at `2026-07-28T17:35:31.729086Z`; delivered to Christopher at
+  `2026-07-28T17:35:33.434857Z`
+- The production Needs You count changed from three to two. The resolved card
+  cannot be resolved or delivered again through either the app or WhatsApp.
+
+The permanent contract is
+`ra7etbal-v2/api/owner-whatsapp-decision-golden-contract.test.js`. It protects
+quoted-message matching, explicit identifiers, the single-recent-decision
+fallback, ambiguity clarification, supported natural replies, exact-reply
+audit storage, the shared Phase D resolution state machine, staff-delivery and
+owner-acknowledgement fences, transport IDs, retry behavior, cross-household
+isolation, and duplicate app/WhatsApp attempts. It and its direct routing and
+Phase D dependencies run in `npm run test:carson-protected`; the contract also
+locks the existing protected-file boundary.
+
+Release PR: #98. Implementation commit:
+`f01f47a02fd3eeca9e1e9f806e9f7134ff2a59ce`. The controlled test ran on READY
+production deployment `dpl_7hYkwXyCzPAoAC2nqYx3riFpvMWK` against Supabase
+project `ggarvhgqzpooloacjgcj`. The immutable final baseline tag is
+`ra7etbal-stable-owner-whatsapp-decision-replies-2026-07-28`; release records
+and the remote tag resolve the final merge commit without requiring a
+self-referential documentation commit.
+
 ## Stable and protected
 
 Do not modify these areas without a reproduced regression or explicit product decision.

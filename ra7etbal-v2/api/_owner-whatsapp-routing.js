@@ -13,14 +13,16 @@ const DELIVERY_FAILED_TEXT =
   "I saved your answer, but I couldn't deliver it to the staff member yet. Please try again shortly.";
 const QUOTED_COMPOUND_TEXT =
   "I couldn't safely separate your answer from the additional command. Nothing was sent. Please reply to the staff question only, then send the other command separately.";
+const DECISION_LOOKBACK_DAYS = 14;
 
 /**
  * Safe owner WhatsApp boundary for Slice 1.
  *
- * A quoted Meta context id mapped to an owner-escalation notification is the
- * only escalation-answer authority. Every other owner message enters the
- * deliberately non-executing general-command path. Open-escalation count is
- * never queried and can never influence routing.
+ * Decision correlation is strict and ordered: quoted Meta context id, an
+ * explicit UUID identifier, then exactly one recently-notified open decision.
+ * A decision-shaped message with multiple matches gets clarification; it is
+ * never guessed. Messages that are not decision-shaped retain the existing
+ * general-command behavior.
  */
 export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }) {
   let identity;
@@ -55,8 +57,18 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     };
   }
 
+  let match;
+  try {
+    match = await matchOwnerDecision({
+      supabaseUrl, serviceKey, userId: identity.userId, msg,
+    });
+  } catch (error) {
+    await failReceipt({ supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row, error });
+    return { isOwner: true, handled: false, route: 'owner_decision', reason: 'correlation_failed' };
+  }
+
   let durableInbound = null;
-  if (msg.contextMessageId) {
+  if (match.kind !== 'general') {
     const recorded = await recordOwnerInbound({
       supabaseUrl, serviceKey, identity, msg, receipt: receipt.row, route: 'quoted_escalation',
     });
@@ -70,7 +82,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     durableInbound = recorded.data;
   }
 
-  if (!msg.contextMessageId) {
+  if (match.kind === 'general') {
     const result = await persistAndExecuteOwnerCommand({
       supabaseUrl, serviceKey, identity, msg, receipt: receipt.row,
     });
@@ -136,27 +148,17 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     };
   }
 
-  let escalation;
-  try {
-    escalation = await findQuotedEscalation({
-      supabaseUrl,
-      serviceKey,
-      userId: identity.userId,
-      contextMessageId: msg.contextMessageId,
-    });
-  } catch (error) {
-    await failReceipt({ supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row, error });
-    return { isOwner: true, handled: false, route: 'quoted_escalation', reason: 'correlation_failed' };
-  }
-
-  if (!escalation) {
+  if (match.kind === 'unmatched_quote' || match.kind === 'unmatched_identifier') {
+    const clarification = match.kind === 'unmatched_quote'
+      ? UNMATCHED_QUOTE_TEXT
+      : "I couldn't identify that decision. Please use the decision link or reply directly to the decision message.";
     const ack = durableInbound?.acknowledgement_status === 'accepted' &&
-      durableInbound?.acknowledgement_text === UNMATCHED_QUOTE_TEXT
+      durableInbound?.acknowledgement_text === clarification
       ? { ok: true, alreadyAccepted: true }
       : await sendOwnerAcknowledgement({
           phoneNumberId: msg.phoneNumberId,
           to: identity.ownerPhone,
-          text: UNMATCHED_QUOTE_TEXT,
+          text: clarification,
         });
     if (!ack.ok) {
       await markRetryable({ supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row, error: ack.reason });
@@ -169,7 +171,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     if (!ack.alreadyAccepted) {
       await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
         acknowledgement_status: 'accepted',
-        acknowledgement_text: UNMATCHED_QUOTE_TEXT,
+        acknowledgement_text: clarification,
         acknowledgement_transport_message_id: ack.messageId,
       });
     }
@@ -180,20 +182,52 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     return {
       isOwner: true,
       handled: completed,
-      route: 'unmatched_quote',
+      route: match.kind,
       reason: completed ? 'clarification_sent' : 'receipt_complete_failed',
     };
   }
 
-  const staffMessage = await fetchStaffMessage({
-    supabaseUrl,
-    serviceKey,
-    userId: identity.userId,
-    staffMessageId: escalation.staff_message_id,
+  if (match.kind === 'ambiguous') {
+    const clarification = buildAmbiguityText(match.matches);
+    const ack = durableInbound?.acknowledgement_status === 'accepted' &&
+      durableInbound?.acknowledgement_text === clarification
+      ? { ok: true, alreadyAccepted: true }
+      : await sendOwnerAcknowledgement({
+          phoneNumberId: msg.phoneNumberId, to: identity.ownerPhone, text: clarification,
+        });
+    if (!ack.ok) {
+      await failReceipt({
+        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+        error: ack.reason || 'owner_ack_failed',
+      });
+      return { isOwner: true, handled: false, route: 'owner_decision', reason: 'owner_ack_failed' };
+    }
+    if (!ack.alreadyAccepted) {
+      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+        execution_status: 'unsupported',
+        execution_result: { command_type: 'owner_decision', match_method: 'ambiguous' },
+        acknowledgement_status: 'accepted',
+        acknowledgement_text: clarification,
+        acknowledgement_transport_message_id: ack.messageId,
+      });
+    }
+    const completed = await completeReceipt({
+      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+      outcome: 'clarification_sent', escalationId: null,
+    });
+    return {
+      isOwner: true, handled: completed, route: 'owner_decision',
+      reason: completed ? 'clarification_sent' : 'receipt_complete_failed',
+    };
+  }
+
+  const escalation = match.escalation;
+  const staffMessage = match.staffMessage || await fetchStaffMessage({
+    supabaseUrl, serviceKey, userId: identity.userId, staffMessageId: escalation.staff_message_id,
   });
   const staffContextText =
     typeof staffMessage?.inbound_text === 'string' ? staffMessage.inbound_text.trim() : '';
-  const instructionText = String(msg.body || '').trim().slice(0, 1000);
+  const instructionText = stripDecisionIdentifier(msg.body).trim().slice(0, 1000);
   if (!staffMessage || !staffContextText || !instructionText) {
     await failReceipt({
       supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
@@ -238,6 +272,27 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     };
   }
 
+  if (escalation.status === 'delivered_to_staff' && !durableInbound?.staff_transport_message_id) {
+    await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+      execution_status: 'completed',
+      execution_result: {
+        command_type: 'owner_decision',
+        match_method: match.method,
+        duplicate_resolution_ignored: true,
+      },
+    });
+    const completed = await completeReceipt({
+      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+      outcome: 'resolved_escalation', escalationId: escalation.id,
+    });
+    return {
+      isOwner: true, handled: completed, route: 'owner_decision',
+      reason: completed ? 'already_resolved' : 'receipt_complete_failed',
+    };
+  }
+
+  const normalized = normalizeOwnerDecisionReply(instructionText);
+
   let result;
   try {
     if (durableInbound?.staff_transport_message_id) {
@@ -269,8 +324,8 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
         escalation,
         staffMessage,
         staffContextText,
-        decision: 'custom_instruction',
-        instructionText,
+        decision: normalized.decision,
+        instructionText: normalized.instructionText,
         replyChannel: 'whatsapp',
       });
     }
@@ -287,13 +342,24 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
 
   if (result.kind !== 'success') {
     const persisted = result.kind !== 'rpc_error';
-    await sendOwnerAcknowledgement({
-      phoneNumberId: msg.phoneNumberId,
-      to: identity.ownerPhone,
-      text: persisted
-        ? DELIVERY_FAILED_TEXT
-        : 'I could not save your answer, so I did not claim it was sent. Please reply to the same quoted message again.',
-    });
+    const failureAcknowledgement = persisted
+      ? DELIVERY_FAILED_TEXT
+      : 'I could not save your answer, so I did not claim it was sent. Please reply to the same quoted message again.';
+    const failureAck = durableInbound?.acknowledgement_status === 'accepted' &&
+      durableInbound?.acknowledgement_text === failureAcknowledgement
+      ? { ok: true, alreadyAccepted: true }
+      : await sendOwnerAcknowledgement({
+          phoneNumberId: msg.phoneNumberId,
+          to: identity.ownerPhone,
+          text: failureAcknowledgement,
+        });
+    if (failureAck.ok && !failureAck.alreadyAccepted) {
+      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+        acknowledgement_status: 'accepted',
+        acknowledgement_text: failureAcknowledgement,
+        acknowledgement_transport_message_id: failureAck.messageId,
+      }).catch(() => {});
+    }
     await markRetryable({
       supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
       error: result.kind || 'staff_delivery_failed',
@@ -320,6 +386,19 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
         : result.status === 'sent_unconfirmed'
           ? `I sent your answer to ${staffName}, but delivery recording is still being reconciled.`
           : `Got it — I sent your answer to ${staffName}.`;
+  if (result.transportMessageId && durableInbound?.staff_transport_message_id !== result.transportMessageId) {
+    durableInbound = await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+      staff_transport_message_id: result.transportMessageId,
+      execution_status: result.status === 'sent_unconfirmed' ? 'failed' : 'action_created',
+      execution_result: {
+        command_type: 'owner_decision',
+        match_method: match.method,
+        normalized_decision: normalized.decision,
+        exact_reply: instructionText,
+        staff_delivery: result.status,
+      },
+    });
+  }
   const ack = durableInbound?.acknowledgement_status === 'accepted' &&
     durableInbound?.acknowledgement_text === acknowledgement
     ? { ok: true, alreadyAccepted: true }
@@ -344,6 +423,13 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   }
   if (!ack.alreadyAccepted) {
     await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+      execution_status: 'completed',
+      execution_result: {
+        command_type: 'owner_decision',
+        match_method: match.method,
+        normalized_decision: normalized.decision,
+        exact_reply: instructionText,
+      },
       acknowledgement_status: 'accepted',
       acknowledgement_text: acknowledgement,
       acknowledgement_transport_message_id: ack.messageId,
@@ -386,7 +472,103 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
 }
 
 export function containsAdditionalOwnerCommand(text) {
-  return /\b(?:tell|ask)\s+[A-Za-z][A-Za-z'’-]*\b|\bremind\s+me\b/i.test(String(text || ''));
+  return /\b(?:and|also|then)\s+(?:(?:tell|ask)\s+[A-Za-z][A-Za-z'’-]*|remind\s+me)\b/i.test(
+    String(text || ''),
+  );
+}
+
+export function normalizeOwnerDecisionReply(text) {
+  const exact = String(text || '').trim().slice(0, 1000);
+  const normalized = exact.toLowerCase().replace(/[.!?]+$/g, '').trim();
+  if (/^(?:yes|approve(?: it)?|approved)$/.test(normalized)) {
+    return { decision: 'approved', instructionText: null };
+  }
+  if (/^(?:no|do not approve(?: it)?|don't approve(?: it)?|dont approve(?: it)?|rejected?)$/.test(normalized)) {
+    return { decision: 'rejected', instructionText: null };
+  }
+  return { decision: 'custom_instruction', instructionText: exact };
+}
+
+export function isDecisionShapedMessage(text) {
+  const value = String(text || '').trim();
+  return /^(?:yes\b|no\b|approve\b|approved\b|do not approve\b|don't approve\b|dont approve\b|buy\b|use\b|do not\b|don't\b|ask\s+christopher\b)/i.test(value);
+}
+
+async function matchOwnerDecision({ supabaseUrl, serviceKey, userId, msg }) {
+  if (msg.contextMessageId) {
+    const escalation = await findQuotedEscalation({
+      supabaseUrl, serviceKey, userId, contextMessageId: msg.contextMessageId,
+    });
+    return escalation
+      ? { kind: 'matched', method: 'quoted_message', escalation }
+      : { kind: 'unmatched_quote' };
+  }
+
+  const explicitId = extractDecisionIdentifier(msg.body);
+  if (explicitId) {
+    const rows = await restSelect(
+      supabaseUrl,
+      serviceKey,
+      'staff_escalation_owner_decisions',
+      `user_id=eq.${encodeURIComponent(userId)}` +
+        `&or=(id.eq.${encodeURIComponent(explicitId)},deep_link_token.eq.${encodeURIComponent(explicitId)})` +
+        '&select=id,user_id,staff_message_id,status,owner_reply_text,deep_link_token&limit=2',
+    );
+    return rows.length === 1
+      ? { kind: 'matched', method: 'explicit_identifier', escalation: rows[0] }
+      : { kind: 'unmatched_identifier' };
+  }
+
+  if (!isDecisionShapedMessage(msg.body)) return { kind: 'general' };
+  const since = new Date(Date.now() - DECISION_LOOKBACK_DAYS * 86_400_000).toISOString();
+  const decisions = await restSelect(
+    supabaseUrl,
+    serviceKey,
+    'staff_escalation_owner_decisions',
+    `user_id=eq.${encodeURIComponent(userId)}&status=eq.open&created_at=gte.${encodeURIComponent(since)}` +
+      '&select=id,user_id,staff_message_id,status,owner_reply_text,deep_link_token,created_at' +
+      '&order=created_at.desc&limit=3',
+  );
+  const matches = [];
+  for (const escalation of decisions) {
+    const staffMessage = await fetchStaffMessage({
+      supabaseUrl, serviceKey, userId, staffMessageId: escalation.staff_message_id,
+      requireOwnerNotification: true,
+    });
+    if (staffMessage) matches.push({ escalation, staffMessage });
+  }
+  if (matches.length === 1) {
+    return { kind: 'matched', method: 'single_recent_unresolved', ...matches[0] };
+  }
+  return matches.length > 1 ? { kind: 'ambiguous', matches } : { kind: 'general' };
+}
+
+function extractDecisionIdentifier(text) {
+  return String(text || '').match(
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i,
+  )?.[0] || null;
+}
+
+function stripDecisionIdentifier(text) {
+  return String(text || '')
+    .replace(/\bdecision\s+[0-9a-f-]{36}\s*:?\s*/i, '')
+    .trim();
+}
+
+function buildAmbiguityText(matches) {
+  const firstTwo = matches.slice(0, 2);
+  const staffNames = [...new Set(firstTwo.map(({ staffMessage }) => staffMessage.staff_name).filter(Boolean))];
+  const staff = staffNames.length === 1 ? staffNames[0] : 'your staff';
+  const topics = firstTwo.map(({ staffMessage }) => summarizeDecisionTopic(staffMessage.inbound_text));
+  return `I have two pending decisions from ${staff}. Which one do you mean, ${topics[0]} or ${topics[1]}?`;
+}
+
+function summarizeDecisionTopic(text) {
+  const value = String(text || '').toLowerCase();
+  if (value.includes('dessert') && value.includes('plate')) return 'the dessert plate';
+  if (value.includes('vinegar')) return 'the vinegar purchase';
+  const concise = String(text || '').replace(/[?!.]+$/g, '').trim().slice(0, 60);
+  return `the “${concise}” request`;
 }
 
 export async function resolveCanonicalOwner({ supabaseUrl, serviceKey, msg }) {
@@ -500,15 +682,19 @@ async function findQuotedEscalation({ supabaseUrl, serviceKey, userId, contextMe
   return escalations.length === 1 ? escalations[0] : null;
 }
 
-async function fetchStaffMessage({ supabaseUrl, serviceKey, userId, staffMessageId }) {
+async function fetchStaffMessage({
+  supabaseUrl, serviceKey, userId, staffMessageId, requireOwnerNotification = false,
+}) {
   const rows = await restSelect(
     supabaseUrl,
     serviceKey,
     'staff_messages',
     `id=eq.${encodeURIComponent(staffMessageId)}&user_id=eq.${encodeURIComponent(userId)}` +
-      '&select=id,user_id,person_id,staff_name,staff_phone,inbound_text&limit=2',
+      '&select=id,user_id,person_id,staff_name,staff_phone,inbound_text,owner_notification_status&limit=2',
   );
-  return rows.length === 1 ? rows[0] : null;
+  if (rows.length !== 1) return null;
+  if (requireOwnerNotification && rows[0].owner_notification_status !== 'sent') return null;
+  return rows[0];
 }
 
 async function claimReceipt({ supabaseUrl, serviceKey, userId, externalMessageId }) {

@@ -1365,7 +1365,12 @@ export async function resolveAndDeliverEscalationAnswer({
     };
   }
 
-  return { kind: 'success', status: 'delivered', ownerReplyText: complete.data.owner_reply_text };
+  return {
+    kind: 'success',
+    status: 'delivered',
+    ownerReplyText: complete.data.owner_reply_text,
+    transportMessageId: sendResult.messageId,
+  };
 }
 
 async function markApprovedAlternativeConfirmationOnly({ supabaseUrl, serviceKey, taskId }) {
