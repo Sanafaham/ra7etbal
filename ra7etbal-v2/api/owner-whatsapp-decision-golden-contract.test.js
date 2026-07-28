@@ -80,6 +80,7 @@ describe('golden owner WhatsApp decision-reply contract', () => {
     expect(notification).toContain('Reply to this message with your decision.');
     expect(notification).not.toContain('buildOwnerDecisionTemplatePayload');
     expect(notification).not.toContain("taskUuid: deepLinkToken");
+    expect(notification).toContain(".replace(/[\\r\\n\\t]+/g, ' ')");
     expect(appRoute).toContain('submitEscalationDecision');
     expect(appRoute).toContain('deepLinkToken');
   });
