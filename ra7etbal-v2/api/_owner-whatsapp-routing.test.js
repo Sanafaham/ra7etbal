@@ -27,6 +27,8 @@ vi.mock('./_owner-command-executor.js', () => ({
 
 import {
   handleInboundOwnerMessage,
+  isDecisionShapedMessage,
+  normalizeOwnerDecisionReply,
   reconcileOwnerWhatsappMessages,
   resolveCanonicalOwner,
 } from './_owner-whatsapp-routing.js';
@@ -127,13 +129,12 @@ describe('general owner command safety', () => {
     });
   }
 
-  it('contains no open-count inference implementation', async () => {
+  it('queries recent open decisions only behind the explicit decision-shape guard', async () => {
     const source = await import('node:fs/promises').then((fs) =>
       fs.readFile(new URL('./_owner-whatsapp-routing.js', import.meta.url), 'utf8'));
-    expect(source).not.toContain('status=eq.open');
-    expect(source).not.toContain('fetchOpenEscalations');
-    expect(source).not.toMatch(/openRows|openEscalations|open_escalation_count/i);
-    expect(source).not.toMatch(/staff_escalation_owner_decisions[^`]*status=eq\.open/i);
+    expect(source).toContain('isDecisionShapedMessage(msg.body)');
+    expect(source).toContain('&status=eq.open&created_at=gte.');
+    expect(source).toContain("requireOwnerNotification: true");
   });
 
   it('an already-accepted owner acknowledgement is not resent', async () => {
@@ -328,7 +329,7 @@ describe('authoritative quoted escalation routing', () => {
       String(url).includes('staff_escalation_owner_decisions'))).toBe(false);
   });
 
-  it('already-resolved quoted escalation delegates to idempotent Phase D and never supplies a new channel-less answer', async () => {
+  it('already-resolved quoted escalation is recorded and silently ignored without another staff send or owner acknowledgement', async () => {
     const fetchMock = vi.fn();
     stubQuoted(fetchMock, 'delivered_to_staff');
     vi.stubGlobal('fetch', fetchMock);
@@ -343,10 +344,14 @@ describe('authoritative quoted escalation routing', () => {
       msg: msg({ contextMessageId: 'wamid.owner-notification-2' }),
     });
 
-    expect(mocks.resolve).toHaveBeenCalledWith(expect.objectContaining({
-      escalation: expect.objectContaining({ status: 'delivered_to_staff' }),
-      replyChannel: 'whatsapp',
-    }));
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.sendMetaMessage).not.toHaveBeenCalled();
+    expect(mocks.updateCommand).toHaveBeenCalledWith(
+      SUPABASE, KEY, expect.anything(), 'user-1',
+      expect.objectContaining({
+        execution_result: expect.objectContaining({ duplicate_resolution_ignored: true }),
+      }),
+    );
   });
 
   it('quoted escalation plus an unrelated command is rejected without staff leakage or partial execution', async () => {
@@ -425,6 +430,121 @@ describe('authoritative quoted escalation routing', () => {
       SUPABASE, KEY, 'fail_owner_whatsapp_reply',
       expect.objectContaining({ p_error: 'meta_rejected' }),
     );
+  });
+});
+
+describe('natural owner decision matching and normalization', () => {
+  const openDecision = {
+    id: '11111111-1111-4111-8111-111111111111',
+    user_id: 'user-1',
+    staff_message_id: 'staff-msg-2',
+    status: 'open',
+    owner_reply_text: null,
+    deep_link_token: '22222222-2222-4222-8222-222222222222',
+    created_at: '2026-07-28T15:00:00.000Z',
+  };
+  const christopherMessage = {
+    id: 'staff-msg-2',
+    user_id: 'user-1',
+    person_id: 'person-2',
+    staff_name: 'Christopher',
+    staff_phone: '+971500000002',
+    inbound_text: 'Can I buy red wine vinegar instead?',
+    owner_notification_status: 'sent',
+  };
+
+  it.each([
+    ['Yes', 'approved', null],
+    ['Approve it', 'approved', null],
+    ['No', 'rejected', null],
+    ["Don't approve it", 'rejected', null],
+    ['Yes, but do not serve it to guests', 'custom_instruction', 'Yes, but do not serve it to guests'],
+    ['Buy the red wine vinegar', 'custom_instruction', 'Buy the red wine vinegar'],
+    ['No, use another substitute', 'custom_instruction', 'No, use another substitute'],
+    ['Ask Christopher for more information', 'custom_instruction', 'Ask Christopher for more information'],
+  ])('normalizes %s without losing a conditional or exact instruction', (body, decision, instructionText) => {
+    expect(normalizeOwnerDecisionReply(body)).toEqual({ decision, instructionText });
+  });
+
+  it('does not classify unrelated yes/no-containing prose or another staff command as a decision reply', () => {
+    expect(isDecisionShapedMessage('What still needs my attention?')).toBe(false);
+    expect(isDecisionShapedMessage('Ask Grace to call me.')).toBe(false);
+    expect(isDecisionShapedMessage('Remind me to check tomorrow.')).toBe(false);
+  });
+
+  it('matches a decision-shaped reply to exactly one recently notified open decision', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock
+      .mockResolvedValueOnce(response([openDecision]))
+      .mockResolvedValueOnce(response([christopherMessage]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.resolve.mockResolvedValue({ kind: 'success', status: 'delivered', ownerReplyText: 'approved' });
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'Approve it' }),
+    });
+
+    expect(result).toMatchObject({ handled: true, reason: 'resolved_escalation' });
+    expect(mocks.resolve).toHaveBeenCalledWith(expect.objectContaining({
+      escalation: expect.objectContaining({ id: openDecision.id }),
+      decision: 'approved',
+      instructionText: null,
+      replyChannel: 'whatsapp',
+    }));
+  });
+
+  it('matches an explicit decision UUID before recent-open inference', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock
+      .mockResolvedValueOnce(response([openDecision]))
+      .mockResolvedValueOnce(response([christopherMessage]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.resolve.mockResolvedValue({ kind: 'success', status: 'delivered', ownerReplyText: 'instruction' });
+
+    await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+      msg: msg({ body: `Decision ${openDecision.id}: Buy the red wine vinegar` }),
+    });
+
+    expect(String(fetchMock.mock.calls[2][0])).toContain('or=(id.eq.');
+    expect(String(fetchMock.mock.calls[2][0])).not.toContain('status=eq.open');
+    expect(mocks.resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('clarifies two Christopher decisions with the required wording and resolves neither', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock
+      .mockResolvedValueOnce(response([
+        openDecision,
+        { ...openDecision, id: '33333333-3333-4333-8333-333333333333', staff_message_id: 'staff-msg-3' },
+      ]))
+      .mockResolvedValueOnce(response([{
+        ...christopherMessage,
+        inbound_text: 'Can I use the dessert plate for tonight?',
+      }]))
+      .mockResolvedValueOnce(response([christopherMessage]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'Yes' }),
+    });
+
+    expect(result).toMatchObject({ handled: true, reason: 'clarification_sent' });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.sendMetaMessage).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        text: {
+          body: 'I have two pending decisions from Christopher. Which one do you mean, the dessert plate or the vinegar purchase?',
+        },
+      }),
+    }));
   });
 });
 
