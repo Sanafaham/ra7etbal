@@ -55,7 +55,12 @@ describe('owner command execution boundary', () => {
       }
       if (target.endsWith('/rest/v1/tasks') && options.method === 'POST') {
         const body = JSON.parse(options.body);
-        return response([{ ...body, created_at: '2026-07-28T00:00:00.000Z', qstash_message_id: null }]);
+        return response([{
+          ...body,
+          due_at: body.due_at.replace('T', ' ').replace('.000Z', '+00'),
+          created_at: '2026-07-28T00:00:00.000Z',
+          qstash_message_id: null,
+        }]);
       }
       if (target.startsWith('https://qstash.upstash.io/')) return response({ messageId: 'qstash-1' });
       if (target.includes('/rest/v1/tasks?id=eq.') && options.method === 'PATCH') return response({});
@@ -83,7 +88,53 @@ describe('owner command execution boundary', () => {
     const taskCreateIndex = calls.indexOf(taskCreate);
     const qstashIndex = calls.findIndex((call) => call.url.startsWith('https://qstash.upstash.io/'));
     expect(taskCreateIndex).toBeLessThan(qstashIndex);
+    expect(calls.filter((call) =>
+      call.url.endsWith('/rest/v1/tasks') && call.options.method === 'POST')).toHaveLength(1);
     expect(calls.filter((call) => call.url.startsWith('https://qstash.upstash.io/'))).toHaveLength(1);
+  });
+
+  it('retries the failed action without resending an already accepted failure acknowledgement', async () => {
+    const acknowledgement =
+      'I recorded your command, but I could not complete it. Nothing further was claimed as done; Ra7etBal will retry it safely.';
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      const target = String(url);
+      if (target.includes('/rpc/record_owner_whatsapp_command')) {
+        return response(recorded({
+          acknowledgement_status: 'accepted',
+          acknowledgement_text: acknowledgement,
+          acknowledgement_transport_message_id: 'wamid.original-ack',
+        }));
+      }
+      if (target.includes('/profiles?')) return response([{ display_name: 'Sana' }]);
+      if (target.includes('/people?')) return response([]);
+      if (target.includes('/owner_whatsapp_reply_receipts?') && options.method === 'PATCH') {
+        return response([recorded()]);
+      }
+      throw new Error(`unexpected fetch ${target}`);
+    }));
+
+    const result = await persistAndExecuteOwnerCommand({
+      supabaseUrl: SUPABASE,
+      serviceKey: 'service-key',
+      identity,
+      receipt,
+      msg: { body: 'Ask Grace to clean the kitchen.', phoneNumberId: 'phone-1' },
+    });
+
+    expect(result).toMatchObject({
+      kind: 'execution_failed',
+      acknowledgement,
+      acknowledgementAlreadyAccepted: true,
+    });
+    expect(calls.filter((call) => call.url.includes('/people?'))).toHaveLength(1);
+    expect(calls.some((call) => {
+      if (!call.url.includes('/owner_whatsapp_reply_receipts?') || call.options.method !== 'PATCH') {
+        return false;
+      }
+      return Object.hasOwn(JSON.parse(call.options.body), 'acknowledgement_transport_message_id');
+    })).toBe(false);
   });
 
   it('reminder parsing failure creates nothing and truthfully says nothing was scheduled', async () => {

@@ -27,6 +27,7 @@ vi.mock('./_owner-command-executor.js', () => ({
 
 import {
   handleInboundOwnerMessage,
+  reconcileOwnerWhatsappMessages,
   resolveCanonicalOwner,
 } from './_owner-whatsapp-routing.js';
 
@@ -184,6 +185,37 @@ describe('general owner command safety', () => {
     );
   });
 
+  it('does not resend or overwrite an already accepted failure acknowledgement during retry', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.executeCommand.mockResolvedValue({
+      kind: 'execution_failed',
+      acknowledgement: 'I could not complete it; Ra7etBal will retry safely.',
+      acknowledgementAlreadyAccepted: true,
+      error: 'transient_failure',
+    });
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'Ask Grace to clean the kitchen.' }),
+    });
+
+    expect(result).toMatchObject({
+      handled: false,
+      execution: 'execution_failed',
+      reason: 'command_execution_failed',
+    });
+    expect(mocks.sendMetaMessage).not.toHaveBeenCalled();
+    expect(mocks.updateCommand).not.toHaveBeenCalledWith(
+      SUPABASE,
+      KEY,
+      expect.anything(),
+      'user-1',
+      expect.objectContaining({ acknowledgement_transport_message_id: expect.anything() }),
+    );
+  });
+
   it('terminal execution failure completes with a durable non-success outcome', async () => {
     const fetchMock = vi.fn();
     stubIdentity(fetchMock);
@@ -205,6 +237,26 @@ describe('general owner command safety', () => {
       SUPABASE, KEY, 'complete_owner_whatsapp_reply',
       expect.objectContaining({ p_outcome: 'terminal_failure' }),
     );
+  });
+});
+
+describe('owner command reconciliation safety', () => {
+  it('excludes terminal_failed receipts before retry processing', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const results = await reconcileOwnerWhatsappMessages({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+    });
+
+    expect(results).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0][0])).toContain(
+      'execution_status=neq.terminal_failed',
+    );
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
+    expect(mocks.sendMetaMessage).not.toHaveBeenCalled();
   });
 });
 

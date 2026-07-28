@@ -444,6 +444,7 @@ export async function reconcileOwnerWhatsappMessages({ supabaseUrl, serviceKey, 
       serviceKey,
       'owner_whatsapp_reply_receipts',
       `status=eq.failed&next_retry_at=lte.${encodeURIComponent(new Date().toISOString())}` +
+        '&execution_status=neq.terminal_failed' +
         `&retry_count=lt.5&select=user_id,external_message_id,inbound_text,sender_phone,phone_number_id,context_message_id&limit=${limit}`,
     );
   } catch {
