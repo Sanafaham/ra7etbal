@@ -38,7 +38,7 @@ describe("ElevenLabsAgentWidget — server-side tool diagnostics (2026-07-29)", 
 
   it("records 'typed_blocked' when the typed-advisory-only guard fires", () => {
     const block = blockBetween(
-      "if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {",
+      'if (requestedChannel === "text" && TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {',
       "return TYPED_BLOCKED_TOOL_MESSAGES[toolName];",
     );
     expect(block).toContain('stage: "typed_blocked"');

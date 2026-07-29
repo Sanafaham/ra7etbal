@@ -5710,8 +5710,13 @@ export default function ElevenLabsAgentWidget({
       }
       // Type to Carson is advisory-only — a typed request must never reach a
       // state-changing tool, even if the model attempts the call. Checked
-      // before the owner-turn guard below so it applies unconditionally.
-      if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {
+      // before the owner-turn guard below so it applies unconditionally across
+      // every typed call site. Gated on requestedChannel === "text": Talk to
+      // Carson (voice) is the sole execution channel and must never be
+      // blocked here (confirmed production incident 2026-07-29: this check
+      // had no channel guard and silently blocked send_direct_whatsapp_message
+      // on real voice calls, before the tool-policy gate or handler ever ran).
+      if (requestedChannel === "text" && TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {
         const diagnostic = {
           kind: "tool_policy_rejected",
           toolName,
