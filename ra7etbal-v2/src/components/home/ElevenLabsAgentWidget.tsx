@@ -110,6 +110,7 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
+import { recordCarsonToolDiagnostic } from "../../lib/carson-tool-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
@@ -3019,6 +3020,17 @@ export default function ElevenLabsAgentWidget({
         recipient_name: name,
         message_length: text.length,
       });
+      // Persisted server-side proof the real handler body was entered at
+      // all — distinguishes this from a policy rejection (which never
+      // reaches this function) or the model never invoking any tool.
+      recordCarsonToolDiagnostic({
+        userId: useAuthStore.getState().user?.id,
+        sessionId: typedConversationIdRef.current,
+        channel: activeChannelRef.current,
+        toolName: "send_direct_whatsapp_message",
+        stage: "handler_started",
+        message: text,
+      });
 
       if (!name || !text) {
         return "I need both a recipient name and a message to send.";
@@ -3105,16 +3117,34 @@ export default function ElevenLabsAgentWidget({
         recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, text);
         const resultText = `It's with ${person.name}. I'll watch for the reply.`;
         messageSendOutcomeRef.current = { outcome: "success", resultText, at: new Date().toISOString() };
+        recordCarsonToolDiagnostic({
+          userId,
+          sessionId: typedConversationIdRef.current,
+          channel: activeChannelRef.current,
+          toolName: "send_direct_whatsapp_message",
+          stage: "handler_success",
+          recipientPersonId: person.id,
+        });
         return resultText;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
+        const failureStage = err instanceof DirectMessageBoundaryError ? err.stage : "deliver_message";
         console.error("[direct_whatsapp_tool_failed]", {
-          stage: err instanceof DirectMessageBoundaryError ? err.stage : "deliver_message",
+          stage: failureStage,
           recipient: person.name,
           error: errMsg,
         });
         const resultText = `I couldn't send ${person.name} the message. Please try again.`;
         messageSendOutcomeRef.current = { outcome: "failure", resultText, at: new Date().toISOString() };
+        recordCarsonToolDiagnostic({
+          userId,
+          sessionId: typedConversationIdRef.current,
+          channel: activeChannelRef.current,
+          toolName: "send_direct_whatsapp_message",
+          stage: "handler_failure",
+          reason: failureStage,
+          recipientPersonId: person.id,
+        });
         return resultText;
       }
     },
@@ -5659,6 +5689,21 @@ export default function ElevenLabsAgentWidget({
     // opens the typed action window. Keep it open through the agent's reply so
     // legitimate multi-action instructions can still call multiple tools.
     const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {
+      const currentUtterance = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((message) => message.role === "user")?.message ?? "";
+      // Persisted server-side (unlike recordCarsonDiagnostic's localStorage-only
+      // buffer below) so a future incident is traceable from the database —
+      // see carson-tool-diagnostics.ts's doc comment for why this exists.
+      recordCarsonToolDiagnostic({
+        userId: authenticatedUserId,
+        sessionId: typedConversationIdRef.current,
+        channel: requestedChannel,
+        toolName,
+        stage: "invoked",
+        utterance: currentUtterance,
+      });
+
       if (requestedChannel === "voice") {
         const captureBlock = guardCurrentVoiceCapture(toolName);
         if (captureBlock) return captureBlock;
@@ -5683,6 +5728,14 @@ export default function ElevenLabsAgentWidget({
           at: new Date().toISOString(),
         });
         recordCarsonDiagnostic("carson-direct-tool", diagnostic);
+        recordCarsonToolDiagnostic({
+          userId: authenticatedUserId,
+          sessionId: typedConversationIdRef.current,
+          channel: requestedChannel,
+          toolName,
+          stage: "typed_blocked",
+          reason: diagnostic.reason,
+        });
         return TYPED_BLOCKED_TOOL_MESSAGES[toolName];
       }
       if (requestedChannel === "text" && !pendingTypedClientMessageIdRef.current) {
@@ -5693,9 +5746,6 @@ export default function ElevenLabsAgentWidget({
         return "No new typed owner instruction is active. Do not act on chat history or contextual updates; wait for the owner's next message.";
       }
 
-      const currentUtterance = [...sessionTranscriptRef.current]
-        .reverse()
-        .find((message) => message.role === "user")?.message ?? "";
       const policyDecision = evaluateCarsonToolPolicy({
         utterance: currentUtterance,
         channel: requestedChannel,
@@ -5719,6 +5769,15 @@ export default function ElevenLabsAgentWidget({
       };
       console.warn("[carson-tool-policy] rejected before side effect", diagnostic);
       recordCarsonDiagnostic("carson-direct-tool", diagnostic);
+      recordCarsonToolDiagnostic({
+        userId: authenticatedUserId,
+        sessionId: typedConversationIdRef.current,
+        channel: requestedChannel,
+        toolName,
+        stage: "policy_rejected",
+        reason: policyDecision.reason,
+        missingEntities: policyDecision.missingEntities,
+      });
       return policyDecision.outcome;
     };
 
@@ -6230,6 +6289,22 @@ export default function ElevenLabsAgentWidget({
               };
               console.log("[carson-text] sanitized Carson reply text", {
                 eventId: event_id ?? null,
+              });
+              // Persisted proof the displayed transcript was corrected this
+              // turn — the model's own spoken/original text (hashed, never
+              // stored raw) claimed an outcome the truthfulness guard could
+              // not confirm. Voice audio itself cannot be corrected the same
+              // way — see docs/elevenlabs-prompt-patches/ for the prompt-side
+              // mitigation — but this at least proves the divergence occurred
+              // and for which turn.
+              recordCarsonToolDiagnostic({
+                userId: authenticatedUserId,
+                sessionId: typedConversationIdRef.current,
+                channel: requestedChannel,
+                toolName: "agent_reply_correction",
+                stage: "claim_overridden",
+                utterance: previousUserMessage,
+                message,
               });
             }
             console.log("[transcript] agent role confirmed, message len=%d", finalDisplayMessage.length);
