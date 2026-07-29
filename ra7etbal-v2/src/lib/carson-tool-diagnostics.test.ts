@@ -113,4 +113,40 @@ describe("recordCarsonToolDiagnostic", () => {
     const row = h.insert.mock.calls[0][0];
     expect(row.recipient_person_id).toBe("person-123");
   });
+
+  // Carson intent-architecture (2026-07-30): route_people_action's routing
+  // decisions must be traceable (action type, app-selected tool) without
+  // ever storing the model's raw intendedOutcome/content text.
+  it("records action_type and selected_tool for people_action_mapped, never raw envelope content", async () => {
+    h.insert.mockClear();
+    recordCarsonToolDiagnostic({
+      userId: "user-1",
+      sessionId: "conv-1",
+      channel: "voice",
+      toolName: "route_people_action",
+      stage: "people_action_mapped",
+      actionType: "interpersonal_communication",
+      selectedTool: "send_direct_whatsapp_message",
+    });
+    await flush();
+    const row = h.insert.mock.calls[0][0];
+    expect(row.action_type).toBe("interpersonal_communication");
+    expect(row.selected_tool).toBe("send_direct_whatsapp_message");
+    expect(row.utterance_hash).toBeNull();
+    expect(row.message_hash).toBeNull();
+  });
+
+  it("records legacy_people_tool_bypass when a legacy tool is called directly", async () => {
+    h.insert.mockClear();
+    recordCarsonToolDiagnostic({
+      userId: "user-1",
+      sessionId: "conv-1",
+      channel: "voice",
+      toolName: "send_direct_whatsapp_message",
+      stage: "legacy_people_tool_bypass",
+    });
+    await flush();
+    const row = h.insert.mock.calls[0][0];
+    expect(row.stage).toBe("legacy_people_tool_bypass");
+  });
 });

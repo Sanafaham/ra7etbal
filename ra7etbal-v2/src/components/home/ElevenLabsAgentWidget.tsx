@@ -112,6 +112,7 @@ import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { recordCarsonToolDiagnostic } from "../../lib/carson-tool-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, detectsUnconfirmedMessageSendClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
+import { resolveCarsonPeopleAction, type CarsonPeopleActionEnvelope } from "../../lib/carson-people-action";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
 import {
@@ -213,6 +214,7 @@ const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {
   send_followup: TYPED_ADVISORY_STAFF_MESSAGE,
   send_delegation: TYPED_ADVISORY_STAFF_MESSAGE,
   send_direct_whatsapp_message: TYPED_ADVISORY_STAFF_MESSAGE,
+  route_people_action: TYPED_ADVISORY_STAFF_MESSAGE,
   create_reminder: TYPED_ADVISORY_REMINDER,
   create_automation: TYPED_ADVISORY_RECURRING_REMINDER,
   create_calendar_event: TYPED_ADVISORY_CALENDAR,
@@ -230,6 +232,13 @@ const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {
   // Brain dumps remain advisory in typed mode; persisting the note is still a
   // state-changing action and is protected by the same execution boundary.
 };
+
+// Carson intent-architecture (2026-07-30): route_people_action is the new
+// semantic entry point for communication/delegation. These two remain
+// registered, functioning tools (execution + rollback), but the model is no
+// longer directed to call them directly for new requests — see
+// guardCurrentToolInvocation's legacy_people_tool_bypass instrumentation.
+const LEGACY_PEOPLE_TOOLS = new Set(["send_direct_whatsapp_message", "send_delegation"]);
 
 const CARSON_TYPED_ADVISORY_POLICY =
   "Type to Carson is advisory-only. You may answer questions, help plan, accept brain dumps, draft content and messages, research information, and review existing information. You must never claim to create a reminder or recurring reminder, schedule a push notification, create or change a calendar event, send a staff message, execute or approve a hosting plan, create an assignment or delegation, or change any task or operation state. Every tool that performs one of those actions is blocked in typed mode and returns a short message telling the owner to use Talk to Carson — relay that message plainly and briefly. Never say or imply that an action was completed.";
@@ -5720,6 +5729,22 @@ export default function ElevenLabsAgentWidget({
         stage: "invoked",
         utterance: currentUtterance,
       });
+      // Carson intent-architecture (2026-07-30): route_people_action is now
+      // the semantic entry point for communication/delegation. These two
+      // tools remain registered for execution and rollback, but a direct
+      // model call to either of them — bypassing route_people_action — is
+      // compatibility telemetry to watch during rollout, not the desired
+      // steady state. Recorded here (not inside each handler) so it covers
+      // every call site uniformly.
+      if (LEGACY_PEOPLE_TOOLS.has(toolName)) {
+        recordCarsonToolDiagnostic({
+          userId: authenticatedUserId,
+          sessionId: typedConversationIdRef.current,
+          channel: requestedChannel,
+          toolName,
+          stage: "legacy_people_tool_bypass",
+        });
+      }
 
       if (requestedChannel === "voice") {
         const captureBlock = guardCurrentVoiceCapture(toolName);
@@ -5767,6 +5792,14 @@ export default function ElevenLabsAgentWidget({
         });
         return "No new typed owner instruction is active. Do not act on chat history or contextual updates; wait for the owner's next message.";
       }
+
+      // route_people_action (Carson intent architecture, 2026-07-30) carries
+      // its own dedicated, structured-evidence authorization
+      // (resolveCarsonPeopleAction) — it must never also be gated by the
+      // raw-text regex classifier below, which exists only for capabilities
+      // not yet migrated off it. Gating it here would reintroduce exactly
+      // the brittleness this tool was built to remove (see RA7ETBAL_STATE.md).
+      if (toolName === "route_people_action") return null;
 
       const policyDecision = evaluateCarsonToolPolicy({
         utterance: currentUtterance,
@@ -5924,6 +5957,70 @@ export default function ElevenLabsAgentWidget({
             try {
               return await runDirectToolWithDiagnostic("send_followup", params, () =>
                 sendFollowup(params),
+              );
+            } finally {
+              toolInFlightRef.current = null;
+            }
+          },
+          // ------------------------------------------------------------------
+          // Client tool: route_people_action (Carson intent architecture, 2026-07-30)
+          // Semantic entry point for communication/delegation — the model
+          // describes the intended outcome as structured evidence fields; it
+          // no longer chooses between send_direct_whatsapp_message and
+          // send_delegation itself. resolveCarsonPeopleAction is the
+          // deterministic layer that reads those fields (never raw text) and
+          // decides which of the two existing, unchanged handlers to call.
+          // ------------------------------------------------------------------
+          route_people_action: async (params: CarsonPeopleActionEnvelope) => {
+            const captureBlock = guardCurrentToolInvocation("route_people_action", params);
+            if (captureBlock) return captureBlock;
+
+            const decision = resolveCarsonPeopleAction(params);
+
+            if (decision.status === "clarify") {
+              recordCarsonToolDiagnostic({
+                userId: authenticatedUserId,
+                sessionId: typedConversationIdRef.current,
+                channel: requestedChannel,
+                toolName: "route_people_action",
+                stage: "people_action_clarify",
+                reason: decision.reason,
+                actionType: params?.actionType ?? null,
+              });
+              return decision.question;
+            }
+
+            recordCarsonToolDiagnostic({
+              userId: authenticatedUserId,
+              sessionId: typedConversationIdRef.current,
+              channel: requestedChannel,
+              toolName: "route_people_action",
+              stage: "people_action_mapped",
+              actionType: params?.actionType ?? null,
+              selectedTool: decision.tool,
+            });
+
+            if (decision.tool === "send_direct_whatsapp_message") {
+              toolInFlightRef.current = "send_direct_whatsapp_message";
+              const resultPromise = runDirectToolWithDiagnostic("send_direct_whatsapp_message", decision.params, () =>
+                sendDirectWhatsAppMessage(decision.params),
+              );
+              // Same reasoning as the direct send_direct_whatsapp_message
+              // registration below — see messageSendInFlightRef doc comment.
+              messageSendInFlightRef.current = resultPromise
+                .then(() => messageSendOutcomeRef.current)
+                .catch(() => null);
+              try {
+                return await resultPromise;
+              } finally {
+                toolInFlightRef.current = null;
+              }
+            }
+
+            toolInFlightRef.current = "send_delegation";
+            try {
+              return await runDirectToolWithDiagnostic("send_delegation", decision.params, () =>
+                sendDelegation(decision.params),
               );
             } finally {
               toolInFlightRef.current = null;
