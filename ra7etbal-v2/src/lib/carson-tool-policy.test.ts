@@ -119,6 +119,16 @@ describe("Carson deterministic pre-dispatch policy", () => {
     })).toMatchObject({ allowed: false, eligibleTools: [] });
   });
 
+  it("denies an unclassified future tool instead of failing open", () => {
+    expect(decide("Handle this somehow.", "future_state_changing_tool", {
+      instruction: "Handle this somehow.",
+    })).toMatchObject({
+      allowed: false,
+      eligibleTools: [],
+      reason: "The selected tool is not classified by the deterministic policy and is denied by default.",
+    });
+  });
+
   it("preserves the existing hosting execution path", () => {
     const utterance = "Arrange dinner for the guests tonight.";
     expect(decide(utterance, "execute_instruction", { instruction: utterance }))

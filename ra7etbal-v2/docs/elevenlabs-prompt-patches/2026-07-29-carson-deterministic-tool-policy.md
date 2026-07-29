@@ -11,7 +11,7 @@
 - Verified agent version: `agtvrsn_9101kynn4fj4e7vbthwmt6bn4cfx`
 - Previous prompt SHA-256: `839ff27ab78bd2e74c0b6bc874b5c73299418b8bcb483e125b96ae88f01ca37e`
 - Verified prompt SHA-256: `256e7b8b38e83e681516a3c93f18d2bdf1eb1d6aa20c0f7511de34a3cf3c699f`
-- Tool schema SHA-256 before and after: `826c26f26b88c833ad87993e0070b97d78854ffcea58ff812d693e2875c4408f`
+- Canonical tool-schema SHA-256 before and after: `2f1257381b36d49706b73d96d6eae707c4b0176f12e819aab5c34c7f6a0991bd`
 - Precedence-section occurrences: `1`
 - Each description-suffix occurrence: `1`
 - Tool IDs unchanged: yes
@@ -58,7 +58,9 @@ Append the corresponding sentence to each existing tool description:
 ## Verification
 
 1. Read the live agent before modification and record its version ID plus prompt/tool hashes.
-2. Apply only the additive prompt section and description suffixes.
-3. Read the agent back.
-4. Confirm the exact section exists once, each suffix exists once, unrelated prompt text is preserved, and tool schemas are unchanged.
-5. Record the new version ID and hashes in the PR report.
+2. Immediately before each write, read the relevant agent or tool again and abort if its version or canonical content has drifted.
+3. Apply only the additive prompt section and description suffixes.
+4. Read the agent and tools back.
+5. Confirm the exact section exists once, each suffix exists once, unrelated prompt text is preserved, and tool schemas are unchanged.
+6. Compute prompt SHA-256 over the exact UTF-8 prompt string. Compute tool-schema SHA-256 over UTF-8 JSON whose tool keys are sorted by tool name and whose object keys are recursively sorted, excluding only `description`.
+7. Record the new version ID and hashes in the PR report.

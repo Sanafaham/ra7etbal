@@ -52,6 +52,7 @@ const DELEGATION_TOOLS = ["execute_instruction", "send_delegation", "send_follow
 const MEMORY_TOOLS = ["save_instruction"] as const;
 const NOTE_TOOLS = ["save_note"] as const;
 const CALENDAR_READ_TOOLS = ["get_calendar_events"] as const;
+const KNOWN_SAFE_READ_TOOLS = new Set<string>(CALENDAR_READ_TOOLS);
 const CALENDAR_MUTATION_TOOLS = [
   "create_calendar_event",
   "update_calendar_event",
@@ -389,15 +390,15 @@ export function evaluateCarsonToolPolicy(input: CarsonToolPolicyInput): CarsonTo
     eligibleTools = ["control_task"];
   } else {
     const fallbackPolicy = policyForIntent("no_action");
-    if (!MUTATING_TOOLS.has(input.selectedTool)) {
+    if (KNOWN_SAFE_READ_TOOLS.has(input.selectedTool)) {
       return {
         allowed: true,
-        intent: "read_or_unmanaged",
+        intent: "read",
         precedence: 8,
         selectedTool: input.selectedTool,
         eligibleTools: [input.selectedTool],
         risk: "read",
-        reason: "The selected read-only or unmanaged tool is outside this mutation gate.",
+        reason: "The selected tool is explicitly classified as read-only.",
         outcome: "",
         routingDomain: routing.primary_domain,
         missingEntities: [],
@@ -407,7 +408,9 @@ export function evaluateCarsonToolPolicy(input: CarsonToolPolicyInput): CarsonTo
       { ...fallbackPolicy, precedence: 8, risk: "external_side_effect" },
       input,
       routing.primary_domain,
-      "The current owner utterance does not provide enough deterministic evidence for this side effect.",
+      MUTATING_TOOLS.has(input.selectedTool)
+        ? "The current owner utterance does not provide enough deterministic evidence for this side effect."
+        : "The selected tool is not classified by the deterministic policy and is denied by default.",
       routing.clarification_question ?? "What would you like me to do?",
     );
   }
