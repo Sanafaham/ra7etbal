@@ -168,26 +168,75 @@ export function detectsUnconfirmedNoteSaveClaim(
   return noteSaveOutcome?.outcome !== "success";
 }
 
+/**
+ * Confirmed production regression (2026-07-29): "Ask Christopher to reply
+ * 'test received'." produced the spoken reply "Message sent to Christopher."
+ * with zero `messages` row, zero `whatsapp_deliveries` row, and zero
+ * `/api/send-whatsapp-task` request — send_direct_whatsapp_message was never
+ * invoked at all this turn. This is the exact "no tool ran at all" gap this
+ * module's own top-of-file comment already documents for save_note (the
+ * 2026-07-13 P0): the override above only corrects a contradiction against a
+ * tool call that DID run. Mirrors detectsUnconfirmedNoteSaveClaim /
+ * noteSaveOutcomeRef exactly rather than reusing lastDirectToolSuccessRef's
+ * shared 15s-window override — CodeRabbit already flagged that a shared
+ * window lets an earlier turn's unrelated success suppress this fabrication
+ * check for a later turn within that same window.
+ */
+export interface DirectMessageSendOutcome {
+  outcome: "success" | "failure";
+  resultText: string;
+  at: string;
+}
+
+const DIRECT_MESSAGE_REQUEST_PATTERN = /\b(?:tell|message|text|whatsapp|ask)\s+[A-Za-z]+\b/i;
+
+const MESSAGE_SEND_CONFIRMATION_PATTERN =
+  /\b(?:message|text|whatsapp)\s+(?:has\s+been\s+|was\s+)?sent\b|\bsent\s+(?:the\s+|that\s+|your\s+)?message\b|\bi(?:'|’)ve\s+sent\b|\bit(?:'|’)s\s+with\s+[A-Z][a-z]+\b|\bthat(?:'|’)s\s+(?:been\s+)?sent\b/i;
+
+/**
+ * True when the previous owner message reads as an explicit send/tell/ask
+ * request to a named person, the agent's reply claims that message was sent,
+ * and send_direct_whatsapp_message did not verifiably succeed THIS turn —
+ * i.e. Carson is about to (or did) narrate a delivery that never happened.
+ */
+export function detectsUnconfirmedMessageSendClaim(
+  agentMessage: string,
+  previousUserMessage: string,
+  messageSendOutcome: DirectMessageSendOutcome | null,
+): boolean {
+  if (!DIRECT_MESSAGE_REQUEST_PATTERN.test(previousUserMessage)) return false;
+  if (!MESSAGE_SEND_CONFIRMATION_PATTERN.test(agentMessage)) return false;
+  return messageSendOutcome?.outcome !== "success";
+}
+
 interface ResolveSanitizedCarsonDisplayMessageInput {
   agentMessage: string;
   previousUserMessage?: string;
   lastSuccess: DirectToolSuccessResult | null;
   noteSaveOutcome?: NoteSaveOutcome | null;
+  messageSendOutcome?: DirectMessageSendOutcome | null;
   now?: number;
 }
 
 const UNCONFIRMED_NOTE_SAVE_REPLY =
   "I couldn't confirm that was saved. Please say it again so I can save it properly.";
 
+const UNCONFIRMED_MESSAGE_SEND_REPLY =
+  "I couldn't confirm that message actually sent. Please ask me to try again.";
+
 export function resolveSanitizedCarsonDisplayMessage({
   agentMessage,
   previousUserMessage = "",
   lastSuccess,
   noteSaveOutcome = null,
+  messageSendOutcome = null,
   now = Date.now(),
 }: ResolveSanitizedCarsonDisplayMessageInput): string {
   if (detectsUnconfirmedNoteSaveClaim(agentMessage, previousUserMessage, noteSaveOutcome)) {
     return sanitizeCarsonReplyText(UNCONFIRMED_NOTE_SAVE_REPLY);
+  }
+  if (detectsUnconfirmedMessageSendClaim(agentMessage, previousUserMessage, messageSendOutcome)) {
+    return sanitizeCarsonReplyText(UNCONFIRMED_MESSAGE_SEND_REPLY);
   }
 
   const toolAwareMessage = resolveCarsonDisplayMessage(agentMessage, lastSuccess, now);

@@ -858,13 +858,13 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
     // display-override call — is completely unchanged: same arguments, same
     // call site, still runs for both channels exactly as before.
     expect(onMessageBlock).toContain(
-      "resolveSanitizedCarsonDisplayMessage({\n              agentMessage: message,\n              previousUserMessage,\n              lastSuccess: lastDirectToolSuccessRef.current,\n              noteSaveOutcome: noteSaveOutcomeRef.current,\n            });",
+      "resolveSanitizedCarsonDisplayMessage({\n              agentMessage: message,\n              previousUserMessage,\n              lastSuccess: lastDirectToolSuccessRef.current,\n              noteSaveOutcome: noteSaveOutcomeRef.current,\n              messageSendOutcome: messageSendOutcomeRef.current,\n            });",
     );
   });
 
   it("imports sanitizeTypedAdvisoryReply alongside the existing, unmodified resolveSanitizedCarsonDisplayMessage import", () => {
     expect(SOURCE).toContain(
-      'import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";',
+      'import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";',
     );
   });
 
