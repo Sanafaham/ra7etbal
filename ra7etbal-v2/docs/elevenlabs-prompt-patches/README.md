@@ -25,6 +25,8 @@ This directory stores **patches only**: the specific, minimal additions needed w
 
 | Date | File | Summary |
 |---|---|---|
+| 2026-07-29 | [2026-07-29-carson-deterministic-tool-policy.md](2026-07-29-carson-deterministic-tool-policy.md) | Deterministic tool precedence for the new pre-dispatch policy gate |
+| 2026-07-29 | [2026-07-29-direct-message-truthfulness-and-routing.md](2026-07-29-direct-message-truthfulness-and-routing.md) | Reply/respond routes to direct communication, not delegation; never claim a send without tool confirmation |
 
 ## Historical patches
 
