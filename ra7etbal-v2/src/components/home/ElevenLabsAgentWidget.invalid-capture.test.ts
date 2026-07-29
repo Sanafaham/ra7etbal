@@ -75,7 +75,7 @@ describe("ElevenLabsAgentWidget — invalid voice capture guard", () => {
     ];
 
     for (const toolName of toolNames) {
-      expect(sessionBlock).toContain(`guardCurrentToolInvocation("${toolName}")`);
+      expect(sessionBlock).toContain(`guardCurrentToolInvocation("${toolName}",`);
     }
   });
 
