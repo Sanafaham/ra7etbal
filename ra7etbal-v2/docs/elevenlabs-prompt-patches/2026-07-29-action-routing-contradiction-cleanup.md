@@ -39,4 +39,6 @@ Include "I'm on the way" inside the task message.
 
 ## Verification
 
-Applied directly by Sana through the dashboard UI. No API read-back was performed (no `ELEVENLABS_API_KEY` available in this task's environment) — if a future task has API access, confirm the section no longer appears anywhere in the live prompt and that "MESSAGE VERSUS TASK ROUTING" is otherwise unchanged.
+Applied by Sana on 2026-07-29 as a full prompt replacement: she pasted the entire live prompt into this task for review, the "ACTION ROUTING — REQUIRED" section above was identified and removed (with the already-applied "DIRECT COMMUNICATION AND EXECUTION TRUTHFULNESS" section from the sibling patch retained, unchanged, at the end), and Sana confirmed pasting the complete corrected text back into the live dashboard, replacing the whole system prompt. This is a stronger verification method than a manual in-place deletion, since the entire prompt — not just the removed section — was reproduced and re-applied in full, minimizing the chance of an unrelated accidental edit elsewhere.
+
+No API read-back was performed (no `ELEVENLABS_API_KEY` available in this task's environment) — if a future task has API access, confirm the section no longer appears anywhere in the live prompt and that all other sections are otherwise unchanged from what's recorded here.
