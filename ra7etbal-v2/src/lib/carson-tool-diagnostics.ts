@@ -30,7 +30,23 @@ export type CarsonToolDiagnosticStage =
   | "handler_started"
   | "handler_success"
   | "handler_failure"
-  | "claim_overridden";
+  | "claim_overridden"
+  // Carson intent-architecture (2026-07-30): route_people_action is the new
+  // semantic entry point for communication/delegation — these three stages
+  // trace its routing decisions without ever recording raw utterance text.
+  // people_action_mapped: the envelope was coherent and entities were
+  // present; records which existing tool (send_direct_whatsapp_message or
+  // send_delegation) the deterministic mapping selected.
+  | "people_action_mapped"
+  // people_action_clarify: the envelope was missing information, the model
+  // flagged its own ambiguity, or actionType disagreed with the evidence
+  // booleans — Carson asked one clarifying question instead of guessing.
+  | "people_action_clarify"
+  // legacy_people_tool_bypass: the model called send_direct_whatsapp_message
+  // or send_delegation directly, bypassing route_people_action. Recorded as
+  // compatibility telemetry during rollout, not treated as the desired
+  // steady state — see RA7ETBAL_STATE.md.
+  | "legacy_people_tool_bypass";
 
 export interface RecordCarsonToolDiagnosticInput {
   userId: string | null | undefined;
@@ -43,6 +59,10 @@ export interface RecordCarsonToolDiagnosticInput {
   recipientPersonId?: string | null;
   utterance?: string | null;
   message?: string | null;
+  /** route_people_action only — the model's own actionType, never raw text. */
+  actionType?: string | null;
+  /** route_people_action only — the app-selected internal execution tool. */
+  selectedTool?: string | null;
 }
 
 async function sha256Hex(text: string): Promise<string | null> {
@@ -78,6 +98,8 @@ export function recordCarsonToolDiagnostic(input: RecordCarsonToolDiagnosticInpu
         recipient_person_id: input.recipientPersonId ?? null,
         utterance_hash: utteranceHash,
         message_hash: messageHash,
+        action_type: input.actionType ?? null,
+        selected_tool: input.selectedTool ?? null,
       });
       if (error) {
         console.warn("[carson-tool-diagnostics] insert failed", error.message);
