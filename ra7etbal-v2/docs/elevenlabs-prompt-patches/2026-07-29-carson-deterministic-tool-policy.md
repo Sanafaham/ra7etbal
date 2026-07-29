@@ -3,7 +3,20 @@
 **Date:** 2026-07-29
 **Agent:** CARSON (`agent_3001kt3zzkcxfb3bwejd8yzzhnmy`)
 **Code contract:** `src/lib/carson-tool-policy.ts`
-**Application status:** repository patch prepared; live application must be verified by API read-back.
+**Application status:** applied to the live agent and verified by API read-back.
+
+## Live verification record
+
+- Previous agent version: `agtvrsn_1301ky5xpstken3vcm327z7y9pxq`
+- Verified agent version: `agtvrsn_9101kynn4fj4e7vbthwmt6bn4cfx`
+- Previous prompt SHA-256: `839ff27ab78bd2e74c0b6bc874b5c73299418b8bcb483e125b96ae88f01ca37e`
+- Verified prompt SHA-256: `256e7b8b38e83e681516a3c93f18d2bdf1eb1d6aa20c0f7511de34a3cf3c699f`
+- Tool schema SHA-256 before and after: `826c26f26b88c833ad87993e0070b97d78854ffcea58ff812d693e2875c4408f`
+- Precedence-section occurrences: `1`
+- Each description-suffix occurrence: `1`
+- Tool IDs unchanged: yes
+- Tool schemas excluding descriptions unchanged: yes
+- Unrelated prompt content preserved: yes
 
 ## Additive system-prompt section
 
