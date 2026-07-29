@@ -64,6 +64,32 @@ describe("Carson deterministic pre-dispatch policy", () => {
     })).toMatchObject({ allowed: true, intent: "direct_communication" });
   });
 
+  // Confirmed production regression (2026-07-29): this exact utterance was
+  // misrouted to "delegation" (router matched the generic "Ask [Name] to"
+  // pattern), so send_direct_whatsapp_message was rejected — "Required
+  // entities are missing: task." — with zero network call (0ms), and
+  // Carson's own reply then fabricated an unrelated "sent" claim. Fixed by
+  // teaching isCommunicationStyleTaskText that "reply/respond" as the whole
+  // delegated task is inherently communication, not trackable work.
+  it("allows the exact confirmed 'ask X to reply' regression through send_direct_whatsapp_message", () => {
+    const utterance =
+      "Ask Christopher to reply, \"Test received.\" This is just a PolicyGate test. No action needed.";
+    expect(decide(utterance, "send_direct_whatsapp_message", {
+      recipient_name: "Christopher", message: "Test received.",
+    })).toMatchObject({ allowed: true, intent: "direct_communication" });
+    expect(decide(utterance, "execute_instruction", { instruction: utterance }))
+      .toMatchObject({ allowed: false, intent: "direct_communication" });
+  });
+
+  it.each([
+    ["Tell Christopher test received.", { recipient_name: "Christopher", message: "test received." }],
+    ["Send Christopher a message saying test received.",
+      { recipient_name: "Christopher", message: "test received." }],
+  ])("routes '%s' to direct communication (already correct, permanent coverage)", (utterance, args) => {
+    expect(decide(utterance, "send_direct_whatsapp_message", args))
+      .toMatchObject({ allowed: true, intent: "direct_communication" });
+  });
+
   it("allows clear operational delegation through existing execution", () => {
     const utterance = "Tell Grace to prepare dinner.";
     expect(decide(utterance, "execute_instruction", { instruction: utterance }))

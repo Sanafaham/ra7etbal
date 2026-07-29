@@ -120,6 +120,13 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     // grammar must not silently require a word after them.
     "wait outside for me",
     "wait inside for us",
+    // Production regression (2026-07-29): "reply"/"respond" as the entire
+    // delegated task is a communication act, not trackable work, regardless
+    // of who it's addressed to (distinct from the owner-target cases above).
+    "reply, \"Test received.\"",
+    "reply, \"Test received.\" This is just a PolicyGate test. No action needed.",
+    "respond with test received",
+    "text back test received",
   ])("%s -> communication (does not create a tracked task)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(true);
   });
@@ -146,6 +153,10 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     // anchored to the end of the string, so it could still match as the
     // trailing fragment of a leading compound instruction.
     "clean the kitchen, then wait until 8",
+    // REPLY_CONTENT_TASK (2026-07-29 fix) is anchored to the START of the
+    // task text only — real work first, "reply" only as a trailing
+    // afterthought, must not be swallowed entirely as communication.
+    "clean the kitchen and reply when done",
   ])("%s -> tracked delegated work (%s)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(false);
   });
@@ -216,6 +227,21 @@ describe("Regression: confirmed production evidence must never reproduce", () =>
 
   it("'Ask Christopher to clean the kitchen.' remains tracked delegated work — a location word ('kitchen') alone must not trigger the communication classifier", () => {
     expect(isCommunicationStyleTaskText("clean the kitchen.")).toBe(false);
+  });
+
+  // Confirmed production regression (2026-07-29): the exact live-tested
+  // utterance was classified as delegation (router confidence 0.97,
+  // matching the generic "Ask [Name] to" pattern), not direct communication
+  // — send_direct_whatsapp_message was rejected by the deterministic
+  // tool-policy gate with "Required entities are missing: task." (0ms, no
+  // network call), and Carson's own separately-generated reply then
+  // fabricated a "sent" claim disconnected from that real rejection.
+  it("'Ask Christopher to reply, \"Test received.\"...' task text is communication, not trackable work", () => {
+    expect(
+      isCommunicationStyleTaskText(
+        "reply, \"Test received.\" This is just a PolicyGate test. No action needed.",
+      ),
+    ).toBe(true);
   });
 });
 

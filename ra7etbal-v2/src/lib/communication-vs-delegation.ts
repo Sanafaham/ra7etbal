@@ -66,6 +66,27 @@ const OWNER_TARGET_COMMUNICATION =
 // genuinely new logic, not a small extension of this regex, and not proven
 // by any confirmed production incident. See the it.todo entries in
 // carson-protected-behaviors.test.ts and RA7ETBAL_STATE.md.
+// Confirmed production regression (2026-07-29): "Ask Christopher to reply,
+// 'Test received.' This is just a PolicyGate test. No action needed." was
+// classified as delegation (the router's generic "Ask [Name] to" pattern),
+// not direct communication, because the delegated task text ("reply,
+// 'Test received.'...") doesn't target the owner ("call me"/"wait for me"),
+// yet it isn't trackable operational work either — the entire assigned
+// action IS the act of communicating content back, regardless of who it's
+// addressed to. This produced a deterministic-gate rejection for
+// send_direct_whatsapp_message (required entity "task" missing, since that
+// tool's params are recipient_name/message, not instruction/task) — Carson
+// then narrated a fabricated "sent" reply disconnected from the real
+// (rejected) tool result. Distinct from OWNER_TARGET_COMMUNICATION (which is
+// about who the action targets): this is about whether the task itself is
+// inherently communication, independent of target. Anchored to the START of
+// the task text only (not `\b` anywhere) so a compound instruction with real
+// work first ("clean the kitchen, then reply when done") is not swallowed
+// entirely as communication — same compound-instruction caution already
+// documented above for the "wait for me" pattern.
+const REPLY_CONTENT_TASK = /^\s*(?:reply|respond|text\s+back|write\s+back)\b/i;
+
 export function isCommunicationStyleTaskText(taskText: string): boolean {
-  return OWNER_TARGET_COMMUNICATION.test(taskText.trim());
+  const trimmed = taskText.trim();
+  return OWNER_TARGET_COMMUNICATION.test(trimmed) || REPLY_CONTENT_TASK.test(trimmed);
 }
