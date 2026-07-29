@@ -223,6 +223,46 @@ export function detectsUnconfirmedMessageSendClaim(
   return messageSendOutcome?.outcome !== "success";
 }
 
+// Confirmed production incident (2026-07-29, ~18:39 and ~20:19 Turkey time):
+// a genuine voice call to send_direct_whatsapp_message succeeded — Christopher
+// received the WhatsApp message — yet the displayed transcript still showed
+// the honest-sounding "I couldn't confirm that message actually sent." fallback.
+// carson_tool_diagnostics traced the exact cause: the agent's own separately-
+// generated reply (this file's own top-of-file doc comment already explains
+// this is a distinct generation from the tool's return value) arrived and was
+// classified ~35ms BEFORE the tool's own handler_success diagnostic — i.e.
+// while the real WhatsApp send was still in flight over the network (a ~2.3s
+// round trip in the confirmed incident). Reading a still-null outcome ref at
+// that exact instant and immediately concluding "not confirmed" cannot tell
+// "genuinely failed/never called" apart from "still resolving" — both look
+// identical to a synchronous snapshot. This resolves that ambiguity: when a
+// tool call is still in flight for this exact turn, wait for its own
+// authoritative settle before finalizing the classification, instead of
+// treating "not yet known" the same as "confirmed not successful". Bounded by
+// a generous timeout so a genuine hang still falls back to the honest
+// "unconfirmed" reply rather than leaving the turn unresolved forever.
+export const MESSAGE_SEND_AWAIT_TIMEOUT_MS = 12_000;
+
+export async function resolvePendingMessageSendOutcome(
+  pendingOutcome: Promise<DirectMessageSendOutcome | null> | null,
+  timeoutMs: number = MESSAGE_SEND_AWAIT_TIMEOUT_MS,
+): Promise<DirectMessageSendOutcome | null> {
+  if (!pendingOutcome) return null;
+  const timeout = new Promise<null>((resolve) => {
+    setTimeout(() => resolve(null), timeoutMs);
+  });
+  try {
+    return await Promise.race([pendingOutcome, timeout]);
+  } catch {
+    // The tool's own promise chain never rejects in practice (every real
+    // failure is caught and recorded as outcome: "failure"), but never let an
+    // unexpected rejection here surface as an unhandled error — treat it the
+    // same as "still unknown", which correctly falls back to the honest
+    // unconfirmed reply.
+    return null;
+  }
+}
+
 interface ResolveSanitizedCarsonDisplayMessageInput {
   agentMessage: string;
   previousUserMessage?: string;

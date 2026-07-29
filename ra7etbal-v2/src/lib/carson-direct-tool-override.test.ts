@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   detectsUnconfirmedNoteSaveClaim,
   detectsUnconfirmedMessageSendClaim,
   resolveCarsonDisplayMessage,
   resolveSanitizedCarsonDisplayMessage,
+  resolvePendingMessageSendOutcome,
   sanitizeTypedAdvisoryReply,
+  MESSAGE_SEND_AWAIT_TIMEOUT_MS,
   type DirectToolSuccessResult,
   type DirectMessageSendOutcome,
 } from "./carson-direct-tool-override";
@@ -664,6 +666,74 @@ describe("resolveSanitizedCarsonDisplayMessage — unconfirmed message send", ()
       now: NOW,
     });
     expect(result).toBe("Message sent to Christopher.");
+  });
+});
+
+// Confirmed production incident (2026-07-29, ~18:39 and ~20:19 Turkey time):
+// a genuine voice send actually succeeded (Christopher received the WhatsApp
+// message), but carson_tool_diagnostics shows the agent's own reply was
+// classified by the truthfulness guard ~35ms BEFORE the tool's own
+// handler_success — i.e. while the real network send was still in flight —
+// producing a false-negative "I couldn't confirm..." displayed reply for a
+// send that truly worked. resolvePendingMessageSendOutcome closes this: when
+// a tool call is still in flight, wait for its own settle instead of reading
+// a still-null ref as "confirmed not successful".
+describe("resolvePendingMessageSendOutcome", () => {
+  it("returns null immediately when no tool call is in flight (the genuine fabrication case)", async () => {
+    vi.useFakeTimers();
+    try {
+      const promise = resolvePendingMessageSendOutcome(null);
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(promise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves to the real success outcome once the in-flight call settles, well before the timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveTool!: (value: DirectMessageSendOutcome) => void;
+      const toolPromise = new Promise<DirectMessageSendOutcome>((resolve) => {
+        resolveTool = resolve;
+      });
+      const resultPromise = resolvePendingMessageSendOutcome(toolPromise);
+      // Simulate the confirmed incident's ~2.3s real WhatsApp send completing
+      // well inside the timeout window.
+      await vi.advanceTimersByTimeAsync(2_300);
+      resolveTool(messageSendSuccess());
+      await expect(resultPromise).resolves.toEqual(messageSendSuccess());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resolves to the real failure outcome once the in-flight call settles — a genuine failure is never masked", async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveTool!: (value: DirectMessageSendOutcome) => void;
+      const toolPromise = new Promise<DirectMessageSendOutcome>((resolve) => {
+        resolveTool = resolve;
+      });
+      const resultPromise = resolvePendingMessageSendOutcome(toolPromise);
+      await vi.advanceTimersByTimeAsync(500);
+      resolveTool(messageSendFailure());
+      await expect(resultPromise).resolves.toEqual(messageSendFailure());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("falls back to null once the timeout elapses, if the in-flight call never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const neverSettles = new Promise<DirectMessageSendOutcome>(() => {});
+      const resultPromise = resolvePendingMessageSendOutcome(neverSettles, MESSAGE_SEND_AWAIT_TIMEOUT_MS);
+      await vi.advanceTimersByTimeAsync(MESSAGE_SEND_AWAIT_TIMEOUT_MS);
+      await expect(resultPromise).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
