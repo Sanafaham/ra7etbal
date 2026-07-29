@@ -128,6 +128,7 @@ import {
   type ExecutedDelegationRecord,
 } from "../../lib/carson-action-coverage";
 import { CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD } from "../../lib/carson-status-policy";
+import { evaluateCarsonToolPolicy } from "../../lib/carson-tool-policy";
 import {
   CARSON_REPEAT_PROMPT,
   evaluateCarsonTranscriptCapture,
@@ -220,15 +221,13 @@ const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {
   complete_todo: TYPED_ADVISORY_TASK_STATE,
   control_task: TYPED_ADVISORY_TASK_STATE,
   act_on_note: TYPED_ADVISORY_TASK_STATE,
+  save_note: TYPED_ADVISORY_TASK_STATE,
   save_city: TYPED_ADVISORY_GENERIC,
   save_instruction: TYPED_ADVISORY_GENERIC,
   // get_calendar_events is intentionally absent — read-only lookups remain
   // available for typed research/planning ("what's on my calendar Friday?").
-  // save_note is intentionally absent — it only persists a note (no worker
-  // notification, no task/calendar/reminder state change), and "accept brain
-  // dumps" is an explicitly required typed capability. act_on_note (turning a
-  // saved note into a task/delegation/reminder) stays blocked above — that is
-  // the state-changing step.
+  // Brain dumps remain advisory in typed mode; persisting the note is still a
+  // state-changing action and is protected by the same execution boundary.
 };
 
 const CARSON_TYPED_ADVISORY_POLICY =
@@ -5639,27 +5638,68 @@ export default function ElevenLabsAgentWidget({
     // never authority to act. Only a durable, newly-submitted owner message
     // opens the typed action window. Keep it open through the agent's reply so
     // legitimate multi-action instructions can still call multiple tools.
-    const guardCurrentToolInvocation = (toolName: string): string | null => {
+    const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {
       if (requestedChannel === "voice") {
-        return guardCurrentVoiceCapture(toolName);
+        const captureBlock = guardCurrentVoiceCapture(toolName);
+        if (captureBlock) return captureBlock;
       }
       // Type to Carson is advisory-only — a typed request must never reach a
       // state-changing tool, even if the model attempts the call. Checked
       // before the owner-turn guard below so it applies unconditionally.
       if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {
+        const diagnostic = {
+          kind: "tool_policy_rejected",
+          toolName,
+          channel: requestedChannel,
+          intent: "channel_authority",
+          routingDomain: "unknown",
+          reason: "Type to Carson is advisory-only and cannot authorize a mutation.",
+          missingEntities: [],
+          eligibleTools: [],
+          at: new Date().toISOString(),
+        };
         console.warn("[carson-typed] blocked state-changing tool — typed mode is advisory-only", {
           toolName,
           at: new Date().toISOString(),
         });
+        recordCarsonDiagnostic("carson-direct-tool", diagnostic);
         return TYPED_BLOCKED_TOOL_MESSAGES[toolName];
       }
-      if (pendingTypedClientMessageIdRef.current) return null;
+      if (requestedChannel === "text" && !pendingTypedClientMessageIdRef.current) {
+        console.warn("[carson-typed] blocked tool without an active owner turn", {
+          toolName,
+          at: new Date().toISOString(),
+        });
+        return "No new typed owner instruction is active. Do not act on chat history or contextual updates; wait for the owner's next message.";
+      }
 
-      console.warn("[carson-typed] blocked tool without an active owner turn", {
-        toolName,
-        at: new Date().toISOString(),
+      const currentUtterance = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((message) => message.role === "user")?.message ?? "";
+      const policyDecision = evaluateCarsonToolPolicy({
+        utterance: currentUtterance,
+        channel: requestedChannel,
+        selectedTool: toolName,
+        toolArguments,
+        people: usePeopleStore.getState().items,
+        hasActiveHostingClarification: Boolean(pendingHostingClarificationRef.current),
       });
-      return "No new typed owner instruction is active. Do not act on chat history or contextual updates; wait for the owner's next message.";
+      if (policyDecision.allowed) return null;
+
+      const diagnostic = {
+        kind: "tool_policy_rejected",
+        toolName,
+        channel: requestedChannel,
+        intent: policyDecision.intent,
+        routingDomain: policyDecision.routingDomain,
+        reason: policyDecision.reason,
+        missingEntities: policyDecision.missingEntities,
+        eligibleTools: policyDecision.eligibleTools,
+        at: new Date().toISOString(),
+      };
+      console.warn("[carson-tool-policy] rejected before side effect", diagnostic);
+      recordCarsonDiagnostic("carson-direct-tool", diagnostic);
+      return policyDecision.outcome;
     };
 
     try {
@@ -5728,7 +5768,7 @@ export default function ElevenLabsAgentWidget({
           // through the same shared Carson instruction pipeline. Use this for all
           // compound instructions, personal notes, and ambiguous cases.
           execute_instruction: async (params: ExecuteInstructionParams) => {
-            const captureBlock = guardCurrentToolInvocation("execute_instruction");
+            const captureBlock = guardCurrentToolInvocation("execute_instruction", params);
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "execute_instruction";
             setTurnPhase("acting");
@@ -5777,7 +5817,7 @@ export default function ElevenLabsAgentWidget({
           // Diagnostic wrappers only set/clear toolInFlightRef — behavior is
           // identical to calling sendFollowup / sendDelegation directly.
           send_followup: async (params: Parameters<typeof sendFollowup>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("send_followup");
+            const captureBlock = guardCurrentToolInvocation("send_followup", params);
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_followup";
             try {
@@ -5789,7 +5829,7 @@ export default function ElevenLabsAgentWidget({
             }
           },
           send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("send_delegation");
+            const captureBlock = guardCurrentToolInvocation("send_delegation", params);
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_delegation";
             try {
@@ -5801,14 +5841,14 @@ export default function ElevenLabsAgentWidget({
             }
           },
           create_reminder: (params: Parameters<typeof createReminder>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_reminder");
+            const captureBlock = guardCurrentToolInvocation("create_reminder", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_reminder", params, () =>
               createReminder(params),
             );
           },
           create_automation: (params: Parameters<typeof createAutomation>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_automation");
+            const captureBlock = guardCurrentToolInvocation("create_automation", params);
             if (captureBlock) return captureBlock;
             setTurnPhase("acting");
             toolRanForCurrentTranscriptRef.current = true;
@@ -5817,7 +5857,7 @@ export default function ElevenLabsAgentWidget({
             });
           },
           send_direct_whatsapp_message: async (params: { recipient_name: string; message: string }) => {
-            const captureBlock = guardCurrentToolInvocation("send_direct_whatsapp_message");
+            const captureBlock = guardCurrentToolInvocation("send_direct_whatsapp_message", params);
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_direct_whatsapp_message";
             try {
@@ -5829,58 +5869,58 @@ export default function ElevenLabsAgentWidget({
             }
           },
           save_city: (params: Parameters<typeof saveCity>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("save_city");
+            const captureBlock = guardCurrentToolInvocation("save_city", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("save_city", params, () => saveCity(params));
           },
           save_note: (params: Parameters<typeof saveNote>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("save_note");
+            const captureBlock = guardCurrentToolInvocation("save_note", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("save_note", params, () => saveNote(params));
           },
           act_on_note: (params: Parameters<typeof actOnNote>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("act_on_note");
+            const captureBlock = guardCurrentToolInvocation("act_on_note", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("act_on_note", params, () => actOnNote(params));
           },
           create_todo: (params: Parameters<typeof createTodoTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_todo");
+            const captureBlock = guardCurrentToolInvocation("create_todo", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_todo", params, () => createTodoTool(params));
           },
           complete_todo: (params: Parameters<typeof completeTodoTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("complete_todo");
+            const captureBlock = guardCurrentToolInvocation("complete_todo", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("complete_todo", params, () => completeTodoTool(params));
           },
           control_task: (params: Parameters<typeof controlTaskTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("control_task");
+            const captureBlock = guardCurrentToolInvocation("control_task", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("control_task", params, () => controlTaskTool(params));
           },
           get_calendar_events: (params: Parameters<typeof getCalendarEvents>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("get_calendar_events");
+            const captureBlock = guardCurrentToolInvocation("get_calendar_events", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("get_calendar_events", params, () =>
               getCalendarEvents(params),
             );
           },
           create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_calendar_event");
+            const captureBlock = guardCurrentToolInvocation("create_calendar_event", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_calendar_event", params, () =>
               createCalendarEvent(params),
             );
           },
           update_calendar_event: (params: Parameters<typeof updateCalendarEventTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("update_calendar_event");
+            const captureBlock = guardCurrentToolInvocation("update_calendar_event", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("update_calendar_event", params, () =>
               updateCalendarEventTool(params),
             );
           },
           delete_calendar_event: (params: Parameters<typeof deleteCalendarEventTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("delete_calendar_event");
+            const captureBlock = guardCurrentToolInvocation("delete_calendar_event", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("delete_calendar_event", params, () =>
               deleteCalendarEventTool(params),
@@ -5894,7 +5934,7 @@ export default function ElevenLabsAgentWidget({
             category?: string;
           }) =>
             {
-              const captureBlock = guardCurrentToolInvocation("save_instruction");
+              const captureBlock = guardCurrentToolInvocation("save_instruction", { instruction, category });
               if (captureBlock) return captureBlock;
               return runDirectToolWithDiagnostic(
                 "save_instruction",
