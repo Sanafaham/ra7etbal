@@ -190,8 +190,21 @@ export interface DirectMessageSendOutcome {
 
 const DIRECT_MESSAGE_REQUEST_PATTERN = /\b(?:tell|message|text|whatsapp|ask)\s+[A-Za-z]+\b/i;
 
+// Confirmed production retest (2026-07-29, same day as the fix): "Sent to
+// Christopher." — a shorter paraphrase of the original "Message sent to
+// Christopher." incident — did not match the pattern below, so the guard
+// never fired a second time. Broadened with a "sent [it/that/the message]
+// to <Name>" alternative to close this specific paraphrase without widening
+// the net to ordinary unrelated uses of "sent" — NEGATED_SEND_PATTERN below
+// still excludes any negated/failure phrasing of the same shape.
 const MESSAGE_SEND_CONFIRMATION_PATTERN =
-  /\b(?:message|text|whatsapp)\s+(?:has\s+been\s+|was\s+)?sent\b|\bsent\s+(?:the\s+|that\s+|your\s+)?message\b|\bi(?:'|’)ve\s+sent\b|\bit(?:'|’)s\s+with\s+[A-Z][a-z]+\b|\bthat(?:'|’)s\s+(?:been\s+)?sent\b/i;
+  /\b(?:message|text|whatsapp)\s+(?:has\s+been\s+|was\s+)?sent\b|\bsent\s+(?:the\s+|that\s+|your\s+)?message\b|\bi(?:'|’)ve\s+sent\b|\bit(?:'|’)s\s+with\s+[A-Z][a-z]+\b|\bthat(?:'|’)s\s+(?:been\s+)?sent\b|\bsent\s+(?:it\s+|that\s+|the\s+message\s+)?to\s+[A-Z][a-z]+\b/i;
+
+// Excludes a truthful negated/failure phrasing of the exact same "sent"
+// shape ("I couldn't get that sent to Christopher.", "It wasn't sent.") from
+// being misread as a completion claim.
+const NEGATED_SEND_PATTERN =
+  /\b(?:wasn|isn|didn|couldn|can|won)['’]?t\s+(?:able\s+to\s+)?(?:get\s+)?(?:it\s+|that\s+|the\s+message\s+)?sen[dt]\b|\bnot\s+sent\b|\bnever\s+sent\b|\bfailed\s+to\s+send\b/i;
 
 /**
  * True when the previous owner message reads as an explicit send/tell/ask
@@ -206,6 +219,7 @@ export function detectsUnconfirmedMessageSendClaim(
 ): boolean {
   if (!DIRECT_MESSAGE_REQUEST_PATTERN.test(previousUserMessage)) return false;
   if (!MESSAGE_SEND_CONFIRMATION_PATTERN.test(agentMessage)) return false;
+  if (NEGATED_SEND_PATTERN.test(agentMessage)) return false;
   return messageSendOutcome?.outcome !== "success";
 }
 
