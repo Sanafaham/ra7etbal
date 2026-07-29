@@ -90,6 +90,36 @@ describe("Carson deterministic pre-dispatch policy", () => {
       .toMatchObject({ allowed: true, intent: "direct_communication" });
   });
 
+  // Confirmed production incident (2026-07-29, ~21:57 Turkey time): a garbled
+  // voice transcript of "Ask Christopher to reply yes if he can come tomorrow
+  // night." was heard as an "Ask Christopher if he can ... to reply/send yes"
+  // shape — the router's own "check-in delegation" pattern for "Ask [Name]
+  // if/whether". directCommunicationIntent's extraction regex previously
+  // required "to" within one word of the name, so it never even tried
+  // isCommunicationStyleTaskText for this shape — evaluateCarsonToolPolicy
+  // rejected send_direct_whatsapp_message with "Required entities are
+  // missing: task." confirmed via carson_tool_diagnostics (policy_rejected,
+  // 0ms after invoked, no handler_started, no backend/transport reached).
+  it("allows an 'Ask [Name] if he can ... to reply' check-in-shaped phrasing through send_direct_whatsapp_message", () => {
+    const utterance = "Ask Christopher if he can to reply yes if he can come tomorrow night.";
+    expect(decide(utterance, "send_direct_whatsapp_message", {
+      recipient_name: "Christopher", message: "yes if he can come tomorrow night",
+    })).toMatchObject({ allowed: true, intent: "direct_communication" });
+  });
+
+  // The router's "check-in delegation" pattern for "Ask [Name] if/whether"
+  // must still work when there is no reply/respond clause at all — this fix
+  // only reclassifies when the text after "to" itself reads as
+  // communication-style; it must not swallow genuine check-in delegation.
+  it("keeps a genuine 'Ask [Name] if he can help' check-in as delegation, with no reply clause", () => {
+    const utterance = "Ask Christopher if he can help me clean the garage.";
+    expect(decide(utterance, "execute_instruction", { instruction: utterance }))
+      .toMatchObject({ allowed: true, intent: "delegation" });
+    expect(decide(utterance, "send_direct_whatsapp_message", {
+      recipient_name: "Christopher", message: "help me clean the garage",
+    })).toMatchObject({ allowed: false, intent: "delegation" });
+  });
+
   it("allows clear operational delegation through existing execution", () => {
     const utterance = "Tell Grace to prepare dinner.";
     expect(decide(utterance, "execute_instruction", { instruction: utterance }))
