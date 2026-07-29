@@ -3,7 +3,7 @@
 **Date:** 2026-07-29
 **Agent:** CARSON (`agent_3001kt3zzkcxfb3bwejd8yzzhnmy`)
 **Code contract:** `src/lib/carson-tool-policy.ts`, `src/lib/communication-vs-delegation.ts`, `src/lib/carson-direct-tool-override.ts`
-**Application status:** NOT YET APPLIED — this patch is additive guidance for a human to paste into the ElevenLabs dashboard, per this directory's own [README](README.md). It has not been written to the live agent by any automated process.
+**Application status:** APPLIED — pasted by Sana directly into the live ElevenLabs dashboard (at the end of the main Carson system prompt) and published. See [2026-07-29-action-routing-contradiction-cleanup.md](2026-07-29-action-routing-contradiction-cleanup.md) for a conflict found during that review and its cleanup.
 
 ## Reason
 
@@ -39,4 +39,6 @@ Mentioning a person's name, or being asked to relay something to them, is a requ
 
 ## Live verification record
 
-Not yet applied — no version ID or hash to record. Update this section only after a human has pasted this patch and confirmed the read-back above.
+Applied by Sana on 2026-07-29: pasted at the end of the main Carson system prompt and published. No version ID or before/after hash was recorded by this task (applied directly through the dashboard UI, not via API read-back) — if a future task has API access, confirm the section exists exactly once and no unrelated content changed.
+
+During this same review, Sana found and reported a pre-existing contradiction elsewhere in the live prompt ("ACTION ROUTING — REQUIRED" instructed `send_delegation` for phrasing already confirmed as communication elsewhere in this same prompt and in the codebase) — see [2026-07-29-action-routing-contradiction-cleanup.md](2026-07-29-action-routing-contradiction-cleanup.md).
