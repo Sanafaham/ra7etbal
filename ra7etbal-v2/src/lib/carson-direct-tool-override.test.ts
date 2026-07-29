@@ -667,6 +667,27 @@ describe("resolveSanitizedCarsonDisplayMessage — unconfirmed message send", ()
     });
     expect(result).toBe("Message sent to Christopher.");
   });
+
+  // PROTECTED REGRESSION TEST — do not remove or weaken. This is the exact
+  // confirmed-working production case (2026-07-29, ~20:57 Turkey time,
+  // session conv_4401kyqgbn93e17rxzjry5k8rzqs): "Ask Christopher to reply
+  // yes if he can come tomorrow." via Talk to Carson. carson_tool_diagnostics
+  // shows invoked -> handler_started -> handler_success (2.53s later) with NO
+  // claim_overridden for this invocation at all — Christopher received the
+  // real WhatsApp, Carson spoke "Sent to Christopher.", and the displayed
+  // transcript showed the identical text. This is the positive control for
+  // the PR #118 fix: a confirmed settled success must be left completely
+  // untouched, so spoken and displayed always agree for this exact scenario.
+  it("PROTECTED: the confirmed 2026-07-29 ~20:57 production success case is never overridden", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "Sent to Christopher.",
+      previousUserMessage: "Ask Christopher to reply yes if he can come tomorrow.",
+      lastSuccess: null,
+      messageSendOutcome: messageSendSuccess({ resultText: "Sent to Christopher." }),
+      now: NOW,
+    });
+    expect(result).toBe("Sent to Christopher.");
+  });
 });
 
 // Confirmed production incident (2026-07-29, ~18:39 and ~20:19 Turkey time):

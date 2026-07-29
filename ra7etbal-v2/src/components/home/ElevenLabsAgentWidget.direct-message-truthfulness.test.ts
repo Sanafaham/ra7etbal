@@ -169,3 +169,38 @@ describe("ElevenLabsAgentWidget — awaiting the authoritative send result befor
     expect(rerenderIndex).toBeGreaterThan(diagnosticIndex);
   });
 });
+
+/**
+ * Confirmed gap found during the 2026-07-29 spoken-execution-truthfulness
+ * review: messageSendOutcomeRef/messageSendInFlightRef/noteSaveOutcomeRef
+ * were cleared at every turn boundary but NOT in onDisconnect/onError. This
+ * codebase already has an established precedent for exactly this class of
+ * bug — other per-session refs (activeExecuteLatencyRef,
+ * lastUserTranscriptTimingRef, etc.) are explicitly cleared there with the
+ * comment "a NEXT session's ... event could log or complete a trace using
+ * this session's stale timing." Without the same treatment here, a stale
+ * in-flight promise or outcome from a call that never settled (or settled
+ * after the session ended) could be read by a brand-new, unrelated session's
+ * onMessage as if it belonged to a fresh turn — a cross-session leak.
+ */
+describe("ElevenLabsAgentWidget — no cross-session leakage on reconnect (2026-07-29 hardening)", () => {
+  it("clears messageSendOutcomeRef, messageSendInFlightRef, and noteSaveOutcomeRef in onDisconnect", () => {
+    const block = blockBetween(
+      "onDisconnect: (details?: {",
+      "onError: (msg, context?: unknown) => {",
+    );
+    expect(block).toContain("noteSaveOutcomeRef.current = null");
+    expect(block).toContain("messageSendOutcomeRef.current = null");
+    expect(block).toContain("messageSendInFlightRef.current = null");
+  });
+
+  it("clears messageSendOutcomeRef, messageSendInFlightRef, and noteSaveOutcomeRef in onError", () => {
+    const block = blockBetween(
+      "onError: (msg, context?: unknown) => {",
+      "onConnect: ({ conversationId }) => {",
+    );
+    expect(block).toContain("noteSaveOutcomeRef.current = null");
+    expect(block).toContain("messageSendOutcomeRef.current = null");
+    expect(block).toContain("messageSendInFlightRef.current = null");
+  });
+});
