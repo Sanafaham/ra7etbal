@@ -84,19 +84,32 @@ describe("Carson deterministic pre-dispatch policy", () => {
   });
 
   it.each([
-    ["What is on my calendar tomorrow?", "get_calendar_events", "calendar_read"],
-    ["Add dentist to my calendar tomorrow at 11.", "create_calendar_event", "calendar_mutation"],
-    ["Move my dentist calendar event to noon.", "update_calendar_event", "calendar_mutation"],
-    ["Delete the dentist event from my calendar.", "delete_calendar_event", "calendar_mutation"],
-  ])("distinguishes calendar operation: %s", (utterance, tool, intent) => {
-    expect(decide(utterance, tool, { title: "Dentist", date: "tomorrow", time: "11:00" }))
-      .toMatchObject({ allowed: true, intent });
+    ["What is on my calendar tomorrow?", "get_calendar_events", "calendar_read",
+      {}],
+    ["Add dentist to my calendar tomorrow at 11.", "create_calendar_event", "calendar_mutation",
+      { title: "Dentist", date: "2026-08-01", time: "11:00" }],
+    ["Move my dentist calendar event to noon.", "update_calendar_event", "calendar_mutation",
+      { event_id: "evt_123", time: "12:00" }],
+    ["Delete the dentist event from my calendar.", "delete_calendar_event", "calendar_mutation",
+      { event_id: "evt_123" }],
+  ])("distinguishes calendar operation: %s", (utterance, tool, intent, toolArgs) => {
+    expect(decide(utterance, tool, toolArgs)).toMatchObject({ allowed: true, intent });
   });
 
   it("rejects a conflicting calendar mutation tool", () => {
     expect(decide("Delete the dentist event from my calendar.", "create_calendar_event", {
-      title: "Dentist",
+      title: "Dentist", date: "2026-08-01", time: "11:00",
     })).toMatchObject({ allowed: false, intent: "calendar_mutation" });
+  });
+
+  it.each([
+    ["Add dentist to my calendar.", "create_calendar_event", {}, "calendar_action"],
+    ["Move my dentist calendar event.", "update_calendar_event", {}, "calendar_action"],
+    ["Delete the dentist event from my calendar.", "delete_calendar_event", {}, "calendar_action"],
+  ])("blocks calendar mutation missing required evidence: %s", (utterance, tool, args, missing) => {
+    const result = decide(utterance, tool, args);
+    expect(result.allowed).toBe(false);
+    expect(result.missingEntities).toContain(missing);
   });
 
   it.each([

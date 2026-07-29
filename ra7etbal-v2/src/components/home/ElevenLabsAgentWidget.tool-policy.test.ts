@@ -26,7 +26,7 @@ describe("ElevenLabsAgentWidget — pre-dispatch policy boundary", () => {
       "execute_instruction", "send_followup", "send_delegation", "create_reminder",
       "create_automation", "send_direct_whatsapp_message", "save_note", "act_on_note",
       "create_todo", "complete_todo", "control_task", "get_calendar_events",
-      "create_calendar_event", "update_calendar_event", "delete_calendar_event",
+      "create_calendar_event", "update_calendar_event", "delete_calendar_event", "save_city",
     ]) expect(SOURCE).toContain(`guardCurrentToolInvocation("${tool}", params)`);
   });
 

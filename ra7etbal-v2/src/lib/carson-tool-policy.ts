@@ -375,6 +375,14 @@ export function evaluateCarsonToolPolicy(input: CarsonToolPolicyInput): CarsonTo
     expectedCalendarTool = calendarMutationToolForText(text);
     intent = expectedCalendarTool ? "calendar_mutation" : "calendar_read";
     eligibleTools = expectedCalendarTool ? [expectedCalendarTool] : CALENDAR_READ_TOOLS;
+    if (expectedCalendarTool === "create_calendar_event") {
+      const hasTitle = Boolean(firstString(args, ["title", "text", "description"]));
+      const hasDate = Boolean(firstString(args, ["date"])) || hasTimeEvidence(text, args);
+      const hasTime = Boolean(firstString(args, ["time"])) || hasTimeEvidence(text, args);
+      if (!hasTitle || !hasDate || !hasTime) required.push("calendar_action");
+    } else if (expectedCalendarTool) {
+      if (!firstString(args, ["event_id"])) required.push("calendar_action");
+    }
   } else if (routing.domains.includes("todo")) {
     intent = "todo";
     eligibleTools = TODO_TOOLS;
