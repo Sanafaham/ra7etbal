@@ -87,3 +87,85 @@ describe("ElevenLabsAgentWidget — send_direct_whatsapp_message truthfulness (2
     expect(SOURCE).toContain("type DirectMessageSendOutcome } from \"../../lib/carson-direct-tool-override\"");
   });
 });
+
+/**
+ * Confirmed production incident (2026-07-29, ~18:39 and ~20:19 Turkey time):
+ * a genuine voice send_direct_whatsapp_message call succeeded — Christopher
+ * received the WhatsApp message — but carson_tool_diagnostics shows the
+ * agent's reply was classified by the truthfulness guard ~35ms BEFORE the
+ * tool's own handler_success, while the real network send was still in
+ * flight. Reading messageSendOutcomeRef as still-null at that exact instant
+ * produced a false-negative "I couldn't confirm..." displayed reply for a
+ * send that truly worked. These tests protect the fix: onMessage now awaits
+ * the in-flight call's own settle (via messageSendInFlightRef /
+ * resolvePendingMessageSendOutcome) before finalizing an unconfirmed-claim
+ * correction, instead of reading an instantaneous snapshot.
+ */
+describe("ElevenLabsAgentWidget — awaiting the authoritative send result before overriding (2026-07-29 race fix)", () => {
+  it("declares messageSendInFlightRef and clears it at every reset point alongside messageSendOutcomeRef", () => {
+    expect(SOURCE).toContain(
+      "const messageSendInFlightRef = useRef<Promise<DirectMessageSendOutcome | null> | null>(null);",
+    );
+    const voiceTurnBlock = blockBetween('if (role === "user") {', "const receivedAt = new Date().toISOString();");
+    expect(voiceTurnBlock).toContain("messageSendOutcomeRef.current = null");
+    expect(voiceTurnBlock).toContain("messageSendInFlightRef.current = null");
+    const typedTurnBlock = blockBetween(
+      "pendingTypedClientMessageIdRef.current = clientMessageId;",
+      "typedResponseTimeoutRef.current = setTimeout(",
+    );
+    expect(typedTurnBlock).toContain("messageSendOutcomeRef.current = null");
+    expect(typedTurnBlock).toContain("messageSendInFlightRef.current = null");
+  });
+
+  it("captures the in-flight promise at the send_direct_whatsapp_message call site before awaiting it", () => {
+    const block = blockBetween(
+      'send_direct_whatsapp_message: async (params: { recipient_name: string; message: string }) => {',
+      "toolInFlightRef.current = null;",
+    );
+    const resultPromiseIndex = block.indexOf("const resultPromise = runDirectToolWithDiagnostic(");
+    const captureIndex = block.indexOf("messageSendInFlightRef.current = resultPromise");
+    const awaitIndex = block.indexOf("return await resultPromise;");
+    expect(resultPromiseIndex).toBeGreaterThan(-1);
+    expect(captureIndex).toBeGreaterThan(resultPromiseIndex);
+    expect(awaitIndex).toBeGreaterThan(captureIndex);
+  });
+
+  it("only defers for voice, only when no outcome is known yet, and only when a real call is in flight", () => {
+    const block = blockBetween(
+      "const pendingMessageSend = messageSendInFlightRef.current;",
+      "// This onMessage callback delivers the agent's own separately-generated",
+    );
+    expect(block).toContain('requestedChannel === "voice"');
+    expect(block).toContain("messageSendOutcomeRef.current === null");
+    expect(block).toContain("pendingMessageSend &&");
+    expect(block).toContain("detectsUnconfirmedMessageSendClaim(message, previousUserMessage, null)");
+  });
+
+  it("awaits resolvePendingMessageSendOutcome before finalizing the corrected transcript entry", () => {
+    const block = blockBetween(
+      "const pendingMessageSend = messageSendInFlightRef.current;",
+      "// This onMessage callback delivers the agent's own separately-generated",
+    );
+    const awaitIndex = block.indexOf("const resolvedOutcome = await resolvePendingMessageSendOutcome(pendingMessageSend);");
+    const resolveIndex = block.indexOf("const correctedDisplayMessage = resolveSanitizedCarsonDisplayMessage({");
+    const outcomeFieldIndex = block.indexOf("messageSendOutcome: resolvedOutcome ?? messageSendOutcomeRef.current,");
+    expect(awaitIndex).toBeGreaterThan(-1);
+    expect(resolveIndex).toBeGreaterThan(awaitIndex);
+    expect(outcomeFieldIndex).toBeGreaterThan(resolveIndex);
+    // A confirmed success (correctedDisplayMessage === message) is left
+    // untouched — no override, no diagnostic write, no re-render.
+    expect(block).toContain("if (correctedDisplayMessage === message) return;");
+  });
+
+  it("still records claim_overridden and re-renders only when the awaited result is a genuine, confirmed non-success", () => {
+    const block = blockBetween(
+      "const pendingMessageSend = messageSendInFlightRef.current;",
+      "// This onMessage callback delivers the agent's own separately-generated",
+    );
+    const guardIndex = block.indexOf("if (correctedDisplayMessage === message) return;");
+    const diagnosticIndex = block.indexOf('stage: "claim_overridden"', guardIndex);
+    const rerenderIndex = block.indexOf("setLastCarsonMessage(correctedDisplayMessage);", guardIndex);
+    expect(diagnosticIndex).toBeGreaterThan(guardIndex);
+    expect(rerenderIndex).toBeGreaterThan(diagnosticIndex);
+  });
+});

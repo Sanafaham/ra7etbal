@@ -111,7 +111,7 @@ import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { recordCarsonToolDiagnostic } from "../../lib/carson-tool-diagnostics";
-import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
+import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, detectsUnconfirmedMessageSendClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
 import {
@@ -1419,6 +1419,23 @@ export default function ElevenLabsAgentWidget({
    * verified success/failure paths.
    */
   const messageSendOutcomeRef = useRef<DirectMessageSendOutcome | null>(null);
+
+  /**
+   * Promise for the CURRENT turn's in-flight send_direct_whatsapp_message
+   * call, resolving to its own eventual messageSendOutcomeRef value (or null
+   * once settled with no promise, or if none is in flight this turn). Set
+   * only at the send_direct_whatsapp_message clientTools call site; reset to
+   * null at every turn boundary alongside messageSendOutcomeRef, so it can
+   * never leak into a later, unrelated invocation. Confirmed production
+   * incident (2026-07-29, ~20:19 Turkey time): a real send succeeded, but the
+   * agent's own reply was classified by the truthfulness guard ~35ms BEFORE
+   * the tool's own handler_success — the ref this promise resolves to was
+   * still null at that exact instant purely because the real network send
+   * hadn't settled yet, not because it had failed. onMessage awaits this
+   * promise (see resolvePendingMessageSendOutcome) before finalizing an
+   * unconfirmed-claim correction, instead of reading a still-null snapshot.
+   */
+  const messageSendInFlightRef = useRef<Promise<DirectMessageSendOutcome | null> | null>(null);
 
   /**
    * Last user utterance that contained recurring language, captured in onMessage
@@ -5944,10 +5961,18 @@ export default function ElevenLabsAgentWidget({
             const captureBlock = guardCurrentToolInvocation("send_direct_whatsapp_message", params);
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_direct_whatsapp_message";
+            const resultPromise = runDirectToolWithDiagnostic("send_direct_whatsapp_message", params, () =>
+              sendDirectWhatsAppMessage(params),
+            );
+            // Captured for THIS invocation only, before awaiting — onMessage
+            // can await this to learn the real outcome instead of reading a
+            // still-null messageSendOutcomeRef snapshot while the real send
+            // is still in flight (see messageSendInFlightRef doc comment).
+            messageSendInFlightRef.current = resultPromise
+              .then(() => messageSendOutcomeRef.current)
+              .catch(() => null);
             try {
-              return await runDirectToolWithDiagnostic("send_direct_whatsapp_message", params, () =>
-                sendDirectWhatsAppMessage(params),
-              );
+              return await resultPromise;
             } finally {
               toolInFlightRef.current = null;
             }
@@ -6128,6 +6153,10 @@ export default function ElevenLabsAgentWidget({
             noteSaveOutcomeRef.current = null;
             // Same reasoning — see messageSendOutcomeRef doc comment.
             messageSendOutcomeRef.current = null;
+            // Same reasoning — see messageSendInFlightRef doc comment. A
+            // stale in-flight promise from an earlier turn must never be
+            // awaited as if it belonged to this new turn.
+            messageSendInFlightRef.current = null;
 
             const receivedAt = new Date().toISOString();
             const captureEvaluation = evaluateCarsonTranscriptCapture(message);
@@ -6260,6 +6289,60 @@ export default function ElevenLabsAgentWidget({
                 .slice(0, -1)
                 .reverse()
                 .find((entry) => entry.role === "user")?.message ?? "";
+            // Confirmed production incident (2026-07-29, ~20:19 Turkey time): a
+            // genuine voice send_direct_whatsapp_message call succeeded, but
+            // this onMessage event was processed ~35ms BEFORE the tool's own
+            // handler_success — i.e. while the real WhatsApp network send was
+            // still in flight — so messageSendOutcomeRef.current was still
+            // null at this exact instant purely because the result wasn't
+            // known yet, not because it had failed. Reading that snapshot
+            // immediately below would incorrectly conclude "unconfirmed" for
+            // a call that goes on to succeed moments later. When a real
+            // in-flight promise exists for this turn, await its authoritative
+            // settle before finalizing the classification instead — this
+            // never delays or changes the case where no tool was invoked at
+            // all this turn (the original 2026-07-13/07-29 fabrication bug
+            // this guard exists for), since messageSendInFlightRef is only
+            // ever set by a genuine send_direct_whatsapp_message call.
+            const pendingMessageSend = messageSendInFlightRef.current;
+            if (
+              requestedChannel === "voice" &&
+              messageSendOutcomeRef.current === null &&
+              pendingMessageSend &&
+              detectsUnconfirmedMessageSendClaim(message, previousUserMessage, null)
+            ) {
+              const entryIndex = sessionTranscriptRef.current.length - 1;
+              setLastCarsonMessage(message);
+              void (async () => {
+                const resolvedOutcome = await resolvePendingMessageSendOutcome(pendingMessageSend);
+                if (!isCurrentSession()) return;
+                const correctedDisplayMessage = resolveSanitizedCarsonDisplayMessage({
+                  agentMessage: message,
+                  previousUserMessage,
+                  lastSuccess: lastDirectToolSuccessRef.current,
+                  noteSaveOutcome: noteSaveOutcomeRef.current,
+                  messageSendOutcome: resolvedOutcome ?? messageSendOutcomeRef.current,
+                });
+                if (correctedDisplayMessage === message) return;
+                if (sessionTranscriptRef.current[entryIndex]?.message === message) {
+                  sessionTranscriptRef.current[entryIndex] = { role, message: correctedDisplayMessage };
+                }
+                console.log("[carson-text] sanitized Carson reply text after awaiting in-flight tool result", {
+                  eventId: event_id ?? null,
+                });
+                recordCarsonToolDiagnostic({
+                  userId: authenticatedUserId,
+                  sessionId: typedConversationIdRef.current,
+                  channel: requestedChannel,
+                  toolName: "agent_reply_correction",
+                  stage: "claim_overridden",
+                  utterance: previousUserMessage,
+                  message,
+                });
+                setLastCarsonMessage(correctedDisplayMessage);
+              })();
+              return;
+            }
             // This onMessage callback delivers the agent's own separately-generated
             // reply — it can contradict a direct tool call that just succeeded
             // (create_todo P0). Prefer the tool's own success result when the
@@ -7229,6 +7312,7 @@ export default function ElevenLabsAgentWidget({
       // New typed turn starting — see noteSaveOutcomeRef doc comment.
       noteSaveOutcomeRef.current = null;
       messageSendOutcomeRef.current = null;
+      messageSendInFlightRef.current = null;
       typedResponseTimeoutRef.current = setTimeout(() => {
         if (pendingTypedClientMessageIdRef.current !== clientMessageId) return;
         typedResponseTimeoutRef.current = null;
