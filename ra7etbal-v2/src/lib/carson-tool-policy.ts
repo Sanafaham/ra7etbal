@@ -257,7 +257,24 @@ function directCommunicationIntent(text: string): boolean {
   if (/\b(?:whatsapp|message|text|dm)\s+[A-Za-z]+(?:\s+[A-Za-z]+)?\b/i.test(text)) return true;
   if (/\bsend\s+[A-Za-z]+(?:\s+[A-Za-z]+)?\s+(?:a\s+)?message\b/i.test(text)) return true;
   if (/\btell\s+[A-Za-z]+\s+(?!to\b).+/i.test(text)) return true;
-  const delegatedTask = text.match(/\b(?:ask|tell|have|get)\s+[A-Za-z]+(?:\s+[A-Za-z]+)?\s+to\s+(.+)/i)?.[1];
+  // Confirmed production incident (2026-07-29, ~21:57 Turkey time): a garbled
+  // voice transcript of "Ask Christopher to reply yes if he can come tomorrow
+  // night." was heard as an "Ask [Name] if he can ... to [verb]" shape — the
+  // check-in-delegation construction the router explicitly recognizes
+  // elsewhere ("'Ask Christopher if/whether' is a check-in delegation").
+  // This extraction regex previously allowed at most one word between the
+  // name and "to", so it never even attempted isCommunicationStyleTaskText
+  // for that shape — evaluateCarsonToolPolicy rejected send_direct_whatsapp_message
+  // with "Required entities are missing: task." before the handler ever ran,
+  // confirmed via carson_tool_diagnostics (policy_rejected, 0ms after invoked,
+  // no handler_started). Non-greedy `.*?` before "to" allows any number of
+  // intervening words (an "if/whether he/she can" check-in clause, a middle
+  // name, etc.) without changing behavior for the already-working "Ask [Name]
+  // to [task]" shape (0 intervening words matches identically). This still
+  // only reclassifies as communication when the text captured after "to"
+  // itself reads as communication-style (isCommunicationStyleTaskText) — a
+  // genuine check-in delegation with no reply/respond clause is unaffected.
+  const delegatedTask = text.match(/\b(?:ask|tell|have|get)\s+[A-Za-z]+\b.*?\bto\s+(.+)/i)?.[1];
   return delegatedTask ? isCommunicationStyleTaskText(delegatedTask) : false;
 }
 
