@@ -110,7 +110,7 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
-import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
+import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
 import {
@@ -1406,6 +1406,18 @@ export default function ElevenLabsAgentWidget({
    * can never leak across turns because it's nulled at every turn boundary.
    */
   const noteSaveOutcomeRef = useRef<NoteSaveOutcome | null>(null);
+
+  /**
+   * send_direct_whatsapp_message's outcome for the CURRENT user turn only —
+   * same design as noteSaveOutcomeRef immediately above, for the identical
+   * class of bug: confirmed production regression (2026-07-29) where Carson
+   * said "Message sent to Christopher." with no messages row, no
+   * whatsapp_deliveries row, and no /api/send-whatsapp-task request at all —
+   * the tool was never invoked this turn. Reset to null at every turn
+   * boundary; set only by sendDirectWhatsAppMessage itself, on its own
+   * verified success/failure paths.
+   */
+  const messageSendOutcomeRef = useRef<DirectMessageSendOutcome | null>(null);
 
   /**
    * Last user utterance that contained recurring language, captured in onMessage
@@ -2996,6 +3008,10 @@ export default function ElevenLabsAgentWidget({
       recipient_name: string;
       message: string;
     }): Promise<string> => {
+      // Clear any prior tool's recorded outcome immediately, matching
+      // save_note — a validation failure below must never inherit a stale,
+      // unrelated success/failure result.
+      messageSendOutcomeRef.current = null;
       const name = extractPersonNameParam(params, "recipient_name").trim();
       const text = extractMessageParam(params).trim();
 
@@ -3087,7 +3103,9 @@ export default function ElevenLabsAgentWidget({
           deliveryId: delivery.deliveryId,
         });
         recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, text);
-        return `It's with ${person.name}. I'll watch for the reply.`;
+        const resultText = `It's with ${person.name}. I'll watch for the reply.`;
+        messageSendOutcomeRef.current = { outcome: "success", resultText, at: new Date().toISOString() };
+        return resultText;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error("[direct_whatsapp_tool_failed]", {
@@ -3095,7 +3113,9 @@ export default function ElevenLabsAgentWidget({
           recipient: person.name,
           error: errMsg,
         });
-        return `I couldn't send ${person.name} the message. Please try again.`;
+        const resultText = `I couldn't send ${person.name} the message. Please try again.`;
+        messageSendOutcomeRef.current = { outcome: "failure", resultText, at: new Date().toISOString() };
+        return resultText;
       }
     },
     [],
@@ -6042,6 +6062,8 @@ export default function ElevenLabsAgentWidget({
             // earlier, unrelated turn must never be read as "this turn's"
             // result (see noteSaveOutcomeRef doc comment).
             noteSaveOutcomeRef.current = null;
+            // Same reasoning — see messageSendOutcomeRef doc comment.
+            messageSendOutcomeRef.current = null;
 
             const receivedAt = new Date().toISOString();
             const captureEvaluation = evaluateCarsonTranscriptCapture(message);
@@ -6183,6 +6205,7 @@ export default function ElevenLabsAgentWidget({
               previousUserMessage,
               lastSuccess: lastDirectToolSuccessRef.current,
               noteSaveOutcome: noteSaveOutcomeRef.current,
+              messageSendOutcome: messageSendOutcomeRef.current,
             });
             // Typed-only truthfulness guard: no state-changing tool call can
             // ever succeed for typed (every one is blocked before it runs —
@@ -7125,6 +7148,7 @@ export default function ElevenLabsAgentWidget({
       pendingTypedClientMessageIdRef.current = clientMessageId;
       // New typed turn starting — see noteSaveOutcomeRef doc comment.
       noteSaveOutcomeRef.current = null;
+      messageSendOutcomeRef.current = null;
       typedResponseTimeoutRef.current = setTimeout(() => {
         if (pendingTypedClientMessageIdRef.current !== clientMessageId) return;
         typedResponseTimeoutRef.current = null;

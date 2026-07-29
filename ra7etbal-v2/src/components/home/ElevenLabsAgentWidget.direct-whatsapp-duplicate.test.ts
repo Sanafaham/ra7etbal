@@ -44,13 +44,15 @@ describe("ElevenLabsAgentWidget — direct WhatsApp duplicate guard", () => {
   it("records the duplicate key only after a successful direct WhatsApp send", () => {
     const successBlock = blockBetween(
       "console.log(\"[direct_whatsapp_tool_delivery_result]\", {",
-      "return `It's with ${person.name}. I'll watch for the reply.`;",
+      "} catch (err) {\n        const errMsg = err instanceof Error ? err.message : String(err);",
     );
 
     expect(successBlock).toContain("success: true");
     expect(successBlock).toContain(
       "recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, text);",
     );
+    expect(successBlock).toContain("const resultText = `It's with ${person.name}. I'll watch for the reply.`;");
+    expect(successBlock).toContain('messageSendOutcomeRef.current = { outcome: "success"');
   });
 
   it("keeps WhatsApp failure reporting truthful and does not mark failures as sent", () => {
@@ -59,7 +61,10 @@ describe("ElevenLabsAgentWidget — direct WhatsApp duplicate guard", () => {
       "}\n    },\n    [],\n  );\n\n  // ------------------------------------------------------------------\n  // Client tool: save_city",
     );
 
-    expect(catchBlock).toContain("return `I couldn't send ${person.name} the message. Please try again.`;");
+    expect(catchBlock).toContain(
+      "const resultText = `I couldn't send ${person.name} the message. Please try again.`;",
+    );
+    expect(catchBlock).toContain('messageSendOutcomeRef.current = { outcome: "failure"');
     expect(catchBlock).not.toContain("recordDirectWhatsappSent");
   });
 

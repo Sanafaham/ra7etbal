@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   detectsUnconfirmedNoteSaveClaim,
+  detectsUnconfirmedMessageSendClaim,
   resolveCarsonDisplayMessage,
   resolveSanitizedCarsonDisplayMessage,
   sanitizeTypedAdvisoryReply,
   type DirectToolSuccessResult,
+  type DirectMessageSendOutcome,
 } from "./carson-direct-tool-override";
 
 const NOW = Date.parse("2026-06-28T00:02:20.000Z");
@@ -512,6 +514,106 @@ describe("resolveSanitizedCarsonDisplayMessage — unconfirmed note save", () =>
       now: NOW,
     });
     expect(result).toBe("Saved.");
+  });
+});
+
+function messageSendSuccess(
+  overrides: Partial<{ resultText: string; at: string }> = {},
+): DirectMessageSendOutcome {
+  return {
+    outcome: "success",
+    resultText: "It's with Christopher. I'll watch for the reply.",
+    at: new Date(NOW).toISOString(),
+    ...overrides,
+  };
+}
+
+function messageSendFailure(
+  overrides: Partial<{ resultText: string; at: string }> = {},
+): DirectMessageSendOutcome {
+  return {
+    outcome: "failure",
+    resultText: "I couldn't send Christopher the message. Please try again.",
+    at: new Date(NOW).toISOString(),
+    ...overrides,
+  };
+}
+
+// Confirmed production regression (2026-07-29): "Ask Christopher to reply
+// 'test received'." produced the spoken reply "Message sent to Christopher."
+// with zero messages row, zero whatsapp_deliveries row, and zero
+// /api/send-whatsapp-task request — send_direct_whatsapp_message was never
+// invoked at all this turn.
+describe("detectsUnconfirmedMessageSendClaim", () => {
+  it("flags the exact reported production scenario: explicit send request, 'sent' reply, no tool ran", () => {
+    expect(
+      detectsUnconfirmedMessageSendClaim(
+        "Message sent to Christopher.",
+        "Ask Christopher to reply \"test received\". This is just a policy-gate test, no action needed.",
+        null,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag when a real send_direct_whatsapp_message success backs up the claim this turn", () => {
+    expect(
+      detectsUnconfirmedMessageSendClaim(
+        "It's with Christopher. I'll watch for the reply.",
+        "Tell Christopher to bring extra water bottles.",
+        messageSendSuccess(),
+      ),
+    ).toBe(false);
+  });
+
+  it("still flags when a verified send failure is on record this turn — the reply is fabricated either way", () => {
+    expect(
+      detectsUnconfirmedMessageSendClaim(
+        "Message sent to Christopher.",
+        "Tell Christopher to bring extra water bottles.",
+        messageSendFailure(),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag when the previous message isn't an explicit send request", () => {
+    expect(
+      detectsUnconfirmedMessageSendClaim("Message sent to Christopher.", "What's on my to-do list?", null),
+    ).toBe(false);
+  });
+
+  it("does not flag when the agent's reply doesn't claim a send", () => {
+    expect(
+      detectsUnconfirmedMessageSendClaim(
+        "What would you like me to tell Christopher?",
+        "Tell Christopher to bring extra water bottles.",
+        null,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("resolveSanitizedCarsonDisplayMessage — unconfirmed message send", () => {
+  it("replaces the exact fabricated 'Message sent' reply with a truthful retry message", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "Message sent to Christopher.",
+      previousUserMessage:
+        "Ask Christopher to reply \"test received\". This is just a policy-gate test, no action needed.",
+      lastSuccess: null,
+      messageSendOutcome: null,
+      now: NOW,
+    });
+    expect(result).toBe("I couldn't confirm that message actually sent. Please ask me to try again.");
+  });
+
+  it("leaves a genuine send_direct_whatsapp_message success reply untouched", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "Message sent to Christopher.",
+      previousUserMessage: "Tell Christopher to bring extra water bottles.",
+      lastSuccess: null,
+      messageSendOutcome: messageSendSuccess(),
+      now: NOW,
+    });
+    expect(result).toBe("Message sent to Christopher.");
   });
 });
 
