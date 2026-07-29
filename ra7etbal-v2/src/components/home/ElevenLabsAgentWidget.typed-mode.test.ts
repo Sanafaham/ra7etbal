@@ -473,9 +473,9 @@ describe("typed Carson migration — privacy and idempotency", () => {
 // completely untouched.
 describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
   const TOOL_GUARD_BLOCK_MARKER =
-    "if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {";
+    'if (requestedChannel === "text" && TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {';
 
-  it("blocks every state-changing client tool for typed mode via one shared, unconditional guard", () => {
+  it("blocks every state-changing client tool for typed mode via one shared guard, gated on the typed channel", () => {
     const guardBlock = blockBetween(
       "const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {",
       "    try {",
@@ -485,9 +485,21 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
       .toBeLessThan(guardBlock.indexOf(TOOL_GUARD_BLOCK_MARKER));
     expect(guardBlock).toContain(TOOL_GUARD_BLOCK_MARKER);
     expect(guardBlock).toContain("return TYPED_BLOCKED_TOOL_MESSAGES[toolName];");
+    // Confirmed production incident (2026-07-29): this condition previously
+    // had no channel guard at all — `TYPED_MODE_IS_ADVISORY_ONLY &&
+    // TYPED_BLOCKED_TOOL_MESSAGES[toolName]` is true regardless of channel,
+    // so a genuine Talk to Carson (voice) call to send_direct_whatsapp_message
+    // was silently blocked and returned the typed-advisory string instead of
+    // reaching the real handler — zero messages/whatsapp_deliveries rows,
+    // zero transport logs, confirmed via carson_tool_diagnostics stage
+    // "typed_blocked" recorded with channel "voice". The condition must
+    // always test requestedChannel === "text" first — never reintroduce a
+    // channel-blind version of this guard.
+    expect(guardBlock).toContain('requestedChannel === "text" && TYPED_MODE_IS_ADVISORY_ONLY');
     // The typed-advisory check runs before the existing "no active owner
-    // turn" fallback, so it applies unconditionally — a matched tool name is
-    // blocked whether or not a typed owner turn is currently open.
+    // turn" fallback, so it applies unconditionally among typed requests — a
+    // matched tool name is blocked whether or not a typed owner turn is
+    // currently open (but only ever for the typed channel).
     expect(guardBlock.indexOf(TOOL_GUARD_BLOCK_MARKER))
       .toBeLessThan(guardBlock.indexOf('requestedChannel === "text" && !pendingTypedClientMessageIdRef.current'));
 
@@ -712,7 +724,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
     expect(reconcileBlock).not.toContain("TYPED_BLOCKED_TOOL_MESSAGES");
   });
 
-  it("never lets Talk to Carson reach the typed-advisory guard — voice returns before it is checked", () => {
+  it("never lets Talk to Carson be blocked by the typed-advisory guard, even when voice-capture does not itself return", () => {
     const guardBlock = blockBetween(
       "const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {",
       "    try {",
@@ -723,6 +735,17 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
     expect(voiceBranchIndex).toBeGreaterThan(-1);
     expect(voiceReturnIndex).toBeGreaterThan(voiceBranchIndex);
     expect(voiceReturnIndex).toBeLessThan(advisoryIndex);
+    // guardCurrentVoiceCapture only returns early when it itself finds a
+    // capture problem (`if (captureBlock) return captureBlock;`) — it is NOT
+    // an unconditional return for every voice call. A prior version of this
+    // test asserted only source ordering here and missed that the advisory
+    // block below is still reached, uncontested, whenever captureBlock is
+    // null — which is exactly what happened in the confirmed 2026-07-29
+    // production incident. The real protection is that the advisory
+    // condition itself can never be true for voice: it must always start
+    // with requestedChannel === "text".
+    expect(guardBlock).toContain(TOOL_GUARD_BLOCK_MARKER);
+    expect(TOOL_GUARD_BLOCK_MARKER.indexOf('requestedChannel === "text"')).toBe(4);
   });
 
   it("keeps Talk to Carson's reminder, calendar, and delegation tools calling their real executors unconditionally", () => {
