@@ -6528,6 +6528,15 @@ export default function ElevenLabsAgentWidget({
           lastUserTranscriptTimingRef.current = null;
           turnLatencyLoggedForEventIdRef.current = null;
           toolRanForCurrentTranscriptRef.current = false;
+          // Same reasoning as the latency refs above — a stale in-flight
+          // promise or outcome from a call that never got to settle (or
+          // settled after this session already ended) must never be read by
+          // a NEXT session's onMessage as if it belonged to a fresh turn.
+          // Confirmed gap during the 2026-07-29 spoken-truthfulness review:
+          // these three were cleared at every turn boundary but not here.
+          noteSaveOutcomeRef.current = null;
+          messageSendOutcomeRef.current = null;
+          messageSendInFlightRef.current = null;
           setSessionEndedMsg("Session ended.");
           setLastUserTranscript(null);
           if (requestedChannel === "voice") {
@@ -6585,6 +6594,11 @@ export default function ElevenLabsAgentWidget({
           lastUserTranscriptTimingRef.current = null;
           turnLatencyLoggedForEventIdRef.current = null;
           toolRanForCurrentTranscriptRef.current = false;
+          // See onDisconnect: same reasoning for these three — a stale
+          // in-flight promise or outcome must never leak into a later session.
+          noteSaveOutcomeRef.current = null;
+          messageSendOutcomeRef.current = null;
+          messageSendInFlightRef.current = null;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
           // Save whatever transcript we have so the session isn't lost.
