@@ -590,6 +590,44 @@ describe("detectsUnconfirmedMessageSendClaim", () => {
       ),
     ).toBe(false);
   });
+
+  // Confirmed production retest (2026-07-29, same day as the fix above):
+  // "Ask Christopher to reply, 'Test received.' This is just a PolicyGate
+  // test. No action needed." reproduced the incident again — the same
+  // send_direct_whatsapp_message tool call resolved in ~0ms with zero
+  // messages/whatsapp_deliveries rows, but Carson's own displayed reply was
+  // the shorter paraphrase "Sent to Christopher." — which the original
+  // MESSAGE_SEND_CONFIRMATION_PATTERN (built only around "Message sent to
+  // Christopher.") did not match, so the guard never fired a second time.
+  it("flags the exact confirmed retest paraphrase: 'Sent to Christopher.' with no tool ran", () => {
+    expect(
+      detectsUnconfirmedMessageSendClaim(
+        "Sent to Christopher.",
+        "Ask Christopher to reply, \"Test received.\" This is just a PolicyGate test. No action needed.",
+        null,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag a truthful negated 'sent' reply as a fabricated claim", () => {
+    expect(
+      detectsUnconfirmedMessageSendClaim(
+        "I couldn't get that sent to Christopher. Please try again.",
+        "Tell Christopher to bring extra water bottles.",
+        null,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not flag when a real success backs up the shorter 'Sent to Name.' paraphrase", () => {
+    expect(
+      detectsUnconfirmedMessageSendClaim(
+        "Sent to Christopher.",
+        "Tell Christopher to bring extra water bottles.",
+        messageSendSuccess(),
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("resolveSanitizedCarsonDisplayMessage — unconfirmed message send", () => {
@@ -598,6 +636,18 @@ describe("resolveSanitizedCarsonDisplayMessage — unconfirmed message send", ()
       agentMessage: "Message sent to Christopher.",
       previousUserMessage:
         "Ask Christopher to reply \"test received\". This is just a policy-gate test, no action needed.",
+      lastSuccess: null,
+      messageSendOutcome: null,
+      now: NOW,
+    });
+    expect(result).toBe("I couldn't confirm that message actually sent. Please ask me to try again.");
+  });
+
+  it("replaces the exact confirmed retest paraphrase 'Sent to Christopher.' with a truthful retry message", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "Sent to Christopher.",
+      previousUserMessage:
+        "Ask Christopher to reply, \"Test received.\" This is just a PolicyGate test. No action needed.",
       lastSuccess: null,
       messageSendOutcome: null,
       now: NOW,
