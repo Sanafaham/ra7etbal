@@ -158,7 +158,7 @@ describe("ElevenLabsAgentWidget — reminder replacement on correction (2026-07-
 
   it("keeps create_reminder's client-tool wiring and diagnostic wrapper unchanged", () => {
     expect(SOURCE).toContain("create_reminder: (params: Parameters<typeof createReminder>[0]) => {");
-    expect(SOURCE).toContain('guardCurrentToolInvocation("create_reminder", params)');
+    expect(SOURCE).toContain('guardCurrentToolInvocation("create_reminder")');
   });
 
   // CodeRabbit finding (2026-07-25): without this, deleting or marking done
