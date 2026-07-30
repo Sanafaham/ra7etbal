@@ -69,6 +69,7 @@ import {
   createDelegationTaskAndMessage,
 } from "../../lib/delegations";
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
+import { preserveDirectMessageReplyIntent } from "../../lib/direct-message-reply-intent";
 import { isCommunicationStyleTaskText } from "../../lib/communication-vs-delegation";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
@@ -2998,7 +2999,15 @@ export default function ElevenLabsAgentWidget({
       message: string;
     }): Promise<string> => {
       const name = extractPersonNameParam(params, "recipient_name").trim();
-      const text = extractMessageParam(params).trim();
+      const toolMessage = extractMessageParam(params).trim();
+      const latestUserMessage = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((entry) => entry.role === "user")?.message ?? null;
+      const text = preserveDirectMessageReplyIntent(
+        latestUserMessage,
+        name,
+        toolMessage,
+      );
 
       console.log("[direct_whatsapp_tool_called]", {
         recipient_name: name,
