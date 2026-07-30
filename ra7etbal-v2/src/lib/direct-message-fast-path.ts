@@ -166,7 +166,7 @@ export async function executeDirectMessageFastPath(
       // reroute in ElevenLabsAgentWidget.tsx (see PR #52 / CARSON PROTECTED
       // BEHAVIORS). Reused here rather than duplicated, since both callers
       // send a plain message with no tracked task behind it.
-      response: `I let ${person.name} know. I'll watch for the reply.`,
+      response: `I sent ${person.name} the message.`,
     };
   } catch (err) {
     console.error("[fast_path_direct_message_failed]", {

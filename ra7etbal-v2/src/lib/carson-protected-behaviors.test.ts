@@ -363,7 +363,7 @@ describe("Acknowledgement wording — communication reroute keeps message-style,
       "if (isCommunicationStyleTaskText(taskText)) {",
       "// 3. Cooldown.",
     );
-    expect(block).toContain("const successText = `I let ${person.name} know. I'll watch for the reply.`;");
+    expect(block).toContain("const successText = `I sent ${person.name} the message.`;");
     expect(block).not.toMatch(/\$\{person\.name\}\s+has it/);
   });
 
@@ -381,7 +381,7 @@ describe("Acknowledgement wording — communication reroute keeps message-style,
     // New plain-message phrasing, and an explicit instruction not to use
     // task-style wording for it.
     expect(CARSON_VOICE_SESSION_GUARD).toContain(
-      "I let Christopher know. I'll watch for the reply.",
+      "I sent Christopher the message.",
     );
     expect(CARSON_VOICE_SESSION_GUARD).toContain('Never say "[name] has it" for a plain message');
   });
@@ -455,7 +455,7 @@ describe("Typed direct-message dispatch — deterministic, before the free-form 
 
   it("executeDirectMessageFastPath's success wording is message-style ('I let X know'), matching the approved communication acknowledgement", () => {
     const source = readFileSync(join(__dirname, "direct-message-fast-path.ts"), "utf-8");
-    expect(source).toContain("response: `I let ${person.name} know. I'll watch for the reply.`,");
+    expect(source).toContain("response: `I sent ${person.name} the message.`,");
     expect(source).not.toMatch(/response:\s*`\$\{person\.name\}\s+has it/);
   });
 

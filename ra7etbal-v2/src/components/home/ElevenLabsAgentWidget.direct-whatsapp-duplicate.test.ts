@@ -44,7 +44,7 @@ describe("ElevenLabsAgentWidget — direct WhatsApp duplicate guard", () => {
   it("records the duplicate key only after a successful direct WhatsApp send", () => {
     const successBlock = blockBetween(
       "console.log(\"[direct_whatsapp_tool_delivery_result]\", {",
-      "return `It's with ${person.name}. I'll watch for the reply.`;",
+      "return `I sent ${person.name} the message.`;",
     );
 
     expect(successBlock).toContain("success: true");

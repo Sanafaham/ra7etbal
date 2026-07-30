@@ -2152,7 +2152,7 @@ export default function ElevenLabsAgentWidget({
           // one ("has it" implies tracked work). See CARSON_VOICE_SESSION_GUARD
           // in carson-status-policy.ts, which mirrors this same distinction
           // for Talk to Carson's own generated reply.
-          const successText = `I let ${person.name} know. I'll watch for the reply.`;
+          const successText = `I sent ${person.name} the message.`;
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
             resultText: successText,
@@ -3085,6 +3085,7 @@ export default function ElevenLabsAgentWidget({
           messageText: text,
           phone: person.phone,
           ownerName,
+          ownerInstruction: latestUserMessage,
           createMessageFn: createMessage,
         });
         console.log("[direct_whatsapp_tool_saved]", {
@@ -3097,7 +3098,7 @@ export default function ElevenLabsAgentWidget({
           deliveryId: delivery.deliveryId,
         });
         recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, text);
-        return `It's with ${person.name}. I'll watch for the reply.`;
+        return `I sent ${person.name} the message.`;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error("[direct_whatsapp_tool_failed]", {
