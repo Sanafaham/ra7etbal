@@ -129,4 +129,31 @@ describe("createDelegationTaskAndMessage schedules escalation using task.created
     expect(sentAtArg).toBe(dbCreatedAt);
     expect(sentAtArg).not.toBe(new Date().toISOString());
   });
+
+  it("keeps genuine tracked assignments on the delegation path", async () => {
+    mocks.createTask.mockImplementation(async (draft) => taskFixture({ ...draft, id: draft.id }));
+
+    const result = await createDelegationTaskAndMessage({
+      source: "test",
+      userId: "user-1",
+      assignee: { name: "Christopher" },
+      taskText: "Buy milk tomorrow morning.",
+      ownerName: "Sana",
+      confirmationOrigin: "https://ra7etbal.test",
+    });
+
+    expect(result.task).toMatchObject({
+      type: "delegation",
+      assigned_to: "Christopher",
+      needs_follow_up: true,
+    });
+    expect(result.confirmationUrl).toContain("/confirm?task=");
+    expect(mocks.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_id: result.task.id,
+        confirmation_url: result.confirmationUrl,
+      }),
+    );
+    expect(mocks.scheduleEscalationMessages).toHaveBeenCalledTimes(1);
+  });
 });

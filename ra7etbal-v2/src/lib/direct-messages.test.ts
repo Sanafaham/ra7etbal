@@ -171,6 +171,73 @@ describe("direct message boundary", () => {
     );
   });
 
+  it.each([
+    {
+      order: "raw tool payload reaches the shared boundary first",
+      messageText: `I'll be there in 10 minutes.`,
+    },
+    {
+      order: "callback reconstruction runs before the shared boundary",
+      messageText: `Please reply: "I'll be there in 10 minutes."`,
+    },
+    {
+      order: "model rewrite reaches the shared boundary",
+      messageText: `Please reply — Sana will be there in 10 minutes.`,
+    },
+  ])("produces the same verbatim single delivery when $order", async ({ messageText }) => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+    const deliverTaskMessageFn = vi.fn(async () => ({
+      success: true,
+      channel: "whatsapp" as const,
+      deliveryId: "delivery-1",
+    }));
+
+    const result = await createAndSendDirectMessage({
+      source: "send_direct_whatsapp_message",
+      userId: "user-1",
+      recipient: "Christopher",
+      messageText,
+      ownerInstruction: `Ask Christopher to reply, "I'll be there in 10 minutes."`,
+      phone: "+971500000000",
+      ownerName: "Sana",
+      createMessageFn,
+      deliverTaskMessageFn,
+    });
+
+    expect(result.message.content).toBe(`Please reply: "I'll be there in 10 minutes."`);
+    expect(result.message.content).not.toContain("Sana will");
+    expect(createMessageFn).toHaveBeenCalledTimes(1);
+    expect(deliverTaskMessageFn).toHaveBeenCalledTimes(1);
+    expect(deliverTaskMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageText: `Please reply: "I'll be there in 10 minutes."`,
+      }),
+    );
+  });
+
+  it.each([
+    `I'm outside.`,
+    `I've received it.`,
+    `I'd prefer tomorrow.`,
+    `My delivery arrived.`,
+    `The blue bag is mine.`,
+  ])("never applies owner normalization inside the quoted reply %s", async (reply) => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+
+    const message = await createDirectMessageRecord({
+      source: "test",
+      userId: "user-1",
+      recipient: "Christopher",
+      messageText: reply,
+      ownerInstruction: `Ask Christopher to reply, "${reply}"`,
+      ownerName: "Sana",
+      createMessageFn,
+    });
+
+    expect(message.content).toBe(`Please reply: "${reply}"`);
+    expect(message.content).not.toMatch(/\bSana(?:'s| is| has| would)\b/);
+  });
+
   it("preserves failure stage for message creation failures", async () => {
     await expect(
       createAndSendDirectMessage({

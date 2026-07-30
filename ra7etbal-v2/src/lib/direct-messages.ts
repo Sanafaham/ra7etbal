@@ -70,6 +70,10 @@ export async function createDirectMessageRecord({
   // reroute; Type's executeDirectMessageFastPath and the same sendDelegation
   // reroute) converges on before a message row is ever created — see
   // direct-message-owner-normalization.ts.
+  // Ordering invariant: reconstruct explicit reply requests AFTER ordinary
+  // owner normalization. The verbatim owner instruction is authoritative, so
+  // this repairs either a raw first-person tool payload or one the model has
+  // already rewritten, while ordinary direct messages retain normalization.
   const ownerNormalizedMessage = normalizeFirstPersonForOwner(messageText, ownerName).trim();
   const cleanMessage = preserveDirectMessageReplyIntent(
     ownerInstruction,
