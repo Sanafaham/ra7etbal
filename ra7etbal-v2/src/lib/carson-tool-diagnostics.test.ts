@@ -149,4 +149,24 @@ describe("recordCarsonToolDiagnostic", () => {
     const row = h.insert.mock.calls[0][0];
     expect(row.stage).toBe("legacy_people_tool_bypass");
   });
+
+  it("records the original and final tools for a deterministic legacy redirect", async () => {
+    h.insert.mockClear();
+    recordCarsonToolDiagnostic({
+      userId: "user-1",
+      sessionId: "session-redirect",
+      channel: "voice",
+      toolName: "send_delegation",
+      stage: "legacy_people_tool_redirected",
+      reason: "plain_communication_selected_as_delegation",
+      selectedTool: "send_direct_whatsapp_message",
+    });
+    await flush();
+
+    expect(h.insert).toHaveBeenCalledWith(expect.objectContaining({
+      tool_name: "send_delegation",
+      stage: "legacy_people_tool_redirected",
+      selected_tool: "send_direct_whatsapp_message",
+    }));
+  });
 });

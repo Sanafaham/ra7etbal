@@ -84,9 +84,14 @@ const OWNER_TARGET_COMMUNICATION =
 // work first ("clean the kitchen, then reply when done") is not swallowed
 // entirely as communication — same compound-instruction caution already
 // documented above for the "wait for me" pattern.
-const REPLY_CONTENT_TASK = /^\s*(?:reply|respond|text\s+back|write\s+back)\b/i;
+const TRACKED_COMMUNICATION_QUALIFIER =
+  /\b(?:track|tracked|keep\s+(?:checking|following\s+up)|follow\s+up|escalat(?:e|ion)|until\s+(?:it(?:'s|\s+is)\s+done|completion)|when\s+done)\b/i;
+
+const REPLY_CONTENT_TASK =
+  /^\s*(?:reply|respond|text\s+back|write\s+back|say|confirm)\b/i;
 
 export function isCommunicationStyleTaskText(taskText: string): boolean {
   const trimmed = taskText.trim();
-  return OWNER_TARGET_COMMUNICATION.test(trimmed) || REPLY_CONTENT_TASK.test(trimmed);
+  return OWNER_TARGET_COMMUNICATION.test(trimmed)
+    || (REPLY_CONTENT_TASK.test(trimmed) && !TRACKED_COMMUNICATION_QUALIFIER.test(trimmed));
 }

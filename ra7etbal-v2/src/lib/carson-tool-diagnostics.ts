@@ -46,7 +46,11 @@ export type CarsonToolDiagnosticStage =
   // or send_delegation directly, bypassing route_people_action. Recorded as
   // compatibility telemetry during rollout, not treated as the desired
   // steady state — see RA7ETBAL_STATE.md.
-  | "legacy_people_tool_bypass";
+  | "legacy_people_tool_bypass"
+  // The model selected legacy send_delegation, but the deterministic policy
+  // classified the live request as plain communication and dispatched the
+  // existing direct-message handler instead.
+  | "legacy_people_tool_redirected";
 
 export interface RecordCarsonToolDiagnosticInput {
   userId: string | null | undefined;
