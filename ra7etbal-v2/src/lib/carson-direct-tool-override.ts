@@ -223,6 +223,55 @@ export function detectsUnconfirmedMessageSendClaim(
   return messageSendOutcome?.outcome !== "success";
 }
 
+// Confirmed production incident (2026-07-30, ~03:03 Turkey time): a genuine
+// voice call to send_direct_whatsapp_message succeeded (handler_success
+// confirmed, Christopher received the WhatsApp) but Carson spoke and
+// displayed "I wasn't able to send that. Please try again." — with zero
+// claim_overridden diagnostic for the turn, proving this was the agent's own
+// original, uncorrected reply, not a client-side correction. Every prior
+// truthfulness fix in this file (PR #106/#108/#118) only ever checked for a
+// FALSE SUCCESS claim — nothing checked the opposite direction: a false
+// FAILURE claim on a send that actually succeeded. This is the symmetric
+// counterpart to detectsUnconfirmedMessageSendClaim.
+const FAILURE_CLAIM_PATTERN =
+  /\b(?:i\s+)?wasn['’]?t\s+able\s+to\s+send\b|\bcouldn['’]?t\s+send\b|\bunable\s+to\s+send\b|\bfailed\s+to\s+send\b|\bdidn['’]?t\s+send\b|\bnot\s+able\s+to\s+send\b/i;
+
+/**
+ * True when the previous owner message reads as an explicit send/tell/ask
+ * request to a named person, the agent's reply falsely claims the send
+ * failed (or is uncertain), and send_direct_whatsapp_message actually
+ * verifiably succeeded THIS turn — i.e. Carson is about to (or did) narrate
+ * a failure that never happened.
+ */
+export function detectsUnconfirmedMessageSendFailureClaim(
+  agentMessage: string,
+  previousUserMessage: string,
+  messageSendOutcome: DirectMessageSendOutcome | null,
+): boolean {
+  if (!DIRECT_MESSAGE_REQUEST_PATTERN.test(previousUserMessage)) return false;
+  if (!FAILURE_CLAIM_PATTERN.test(agentMessage)) return false;
+  return messageSendOutcome?.outcome === "success";
+}
+
+/**
+ * Pattern-match only (ignores the actual outcome) — true whenever the
+ * agent's reply makes ANY claim, success or failure, about a message-send
+ * request. Used by the client to decide whether to defer and await the
+ * tool's own in-flight settle before finalizing what's displayed, since
+ * either direction of claim can turn out to be false while the real result
+ * is still resolving.
+ */
+export function looksLikeMessageSendOutcomeClaim(
+  agentMessage: string,
+  previousUserMessage: string,
+): boolean {
+  if (!DIRECT_MESSAGE_REQUEST_PATTERN.test(previousUserMessage)) return false;
+  return (
+    (MESSAGE_SEND_CONFIRMATION_PATTERN.test(agentMessage) && !NEGATED_SEND_PATTERN.test(agentMessage)) ||
+    FAILURE_CLAIM_PATTERN.test(agentMessage)
+  );
+}
+
 // Confirmed production incident (2026-07-29, ~18:39 and ~20:19 Turkey time):
 // a genuine voice call to send_direct_whatsapp_message succeeded — Christopher
 // received the WhatsApp message — yet the displayed transcript still showed
@@ -291,6 +340,12 @@ export function resolveSanitizedCarsonDisplayMessage({
   }
   if (detectsUnconfirmedMessageSendClaim(agentMessage, previousUserMessage, messageSendOutcome)) {
     return sanitizeCarsonReplyText(UNCONFIRMED_MESSAGE_SEND_REPLY);
+  }
+  // Symmetric case (confirmed 2026-07-30 incident): the agent falsely claimed
+  // the send FAILED while the tool actually confirmed success — use the
+  // tool's own true result text, never the agent's false failure claim.
+  if (detectsUnconfirmedMessageSendFailureClaim(agentMessage, previousUserMessage, messageSendOutcome)) {
+    return sanitizeCarsonReplyText(messageSendOutcome!.resultText);
   }
 
   const toolAwareMessage = resolveCarsonDisplayMessage(agentMessage, lastSuccess, now);

@@ -138,7 +138,11 @@ describe("ElevenLabsAgentWidget — awaiting the authoritative send result befor
     expect(block).toContain('requestedChannel === "voice"');
     expect(block).toContain("messageSendOutcomeRef.current === null");
     expect(block).toContain("pendingMessageSend &&");
-    expect(block).toContain("detectsUnconfirmedMessageSendClaim(message, previousUserMessage, null)");
+    // Confirmed 2026-07-30 incident: the old gate here only matched
+    // success-shaped claims (detectsUnconfirmedMessageSendClaim), so a false
+    // FAILURE claim ("I wasn't able to send that.") never deferred at all.
+    // looksLikeMessageSendOutcomeClaim matches either direction.
+    expect(block).toContain("looksLikeMessageSendOutcomeClaim(message, previousUserMessage)");
   });
 
   it("awaits resolvePendingMessageSendOutcome before finalizing the corrected transcript entry", () => {

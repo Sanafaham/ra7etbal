@@ -111,7 +111,7 @@ import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { recordCarsonToolDiagnostic } from "../../lib/carson-tool-diagnostics";
-import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, detectsUnconfirmedMessageSendClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
+import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, looksLikeMessageSendOutcomeClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
 import { resolveCarsonPeopleAction, type CarsonPeopleActionEnvelope } from "../../lib/carson-people-action";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
@@ -6406,7 +6406,13 @@ export default function ElevenLabsAgentWidget({
               requestedChannel === "voice" &&
               messageSendOutcomeRef.current === null &&
               pendingMessageSend &&
-              detectsUnconfirmedMessageSendClaim(message, previousUserMessage, null)
+              // Confirmed 2026-07-30 incident: a false FAILURE claim ("I
+              // wasn't able to send that.") never triggered this deferral at
+              // all, because the old gate only matched success-shaped
+              // claims — looksLikeMessageSendOutcomeClaim matches either
+              // direction, so a premature/false claim of either kind now
+              // waits for the real result instead of being spoken as-is.
+              looksLikeMessageSendOutcomeClaim(message, previousUserMessage)
             ) {
               const entryIndex = sessionTranscriptRef.current.length - 1;
               setLastCarsonMessage(message);
