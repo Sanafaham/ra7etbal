@@ -52,7 +52,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
 
   it("authorizes typed tools only during a fresh durable owner turn and retains every voice guard", () => {
     const guardBlock = blockBetween(
-      "const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {",
+      "const guardCurrentToolInvocation = (toolName: string): string | null => {",
       "    try {",
     );
     expect(guardBlock).toContain('requestedChannel === "voice"');
@@ -70,7 +70,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "create_calendar_event",
       "save_instruction",
     ]) {
-      expect(toolBlock).toContain(`guardCurrentToolInvocation("${toolName}",`);
+      expect(toolBlock).toContain(`guardCurrentToolInvocation("${toolName}")`);
     }
   });
 
@@ -114,7 +114,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "  // ------------------------------------------------------------------\n  // Session teardown",
     );
     const guestActionIndex = sendBlock.indexOf("const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)");
-    const operationTurnIndex = sendBlock.indexOf("const continuation = await runHostingContinuation(", guestActionIndex);
+    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await handleOperationalHostingTurn({", guestActionIndex);
     const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", operationTurnIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
@@ -122,9 +122,10 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(operationTurnIndex).toBeGreaterThan(guestActionIndex);
     expect(localReplyIndex).toBeGreaterThan(operationTurnIndex);
     expect(operationTurnIndex).toBeLessThan(sendIndex);
-    expect(sendBlock).toContain('continuation.status !== "needs_clarification"');
-    expect(sendBlock).toContain("runHostingContinuation(");
-    expect(sendBlock).toContain("content: continuation.message");
+    expect(sendBlock).toContain('operationTurn.status === "needs_clarification"');
+    expect(sendBlock).toContain("handleOperationalHostingTurn({");
+    expect(sendBlock).toContain("pendingPlanRef.current = plan");
+    expect(sendBlock).toContain("content: plan.proposalSpeech");
   });
 
   it("links a typed hosting clarification answer back to the original request before planning", () => {
@@ -134,10 +135,10 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     );
     const pendingRefIndex = SOURCE.indexOf("const pendingHostingClarificationRef = useRef<PendingOperationDraft | null>(null)");
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
-    const operationTurnIndex = sendBlock.indexOf("const continuation = await runHostingContinuation(", pendingBranchIndex);
-    const pendingDraftIndex = sendBlock.indexOf("clientMessageId,", operationTurnIndex);
-    const proposalIndex = sendBlock.indexOf("content: continuation.message", operationTurnIndex);
-    const setClarificationIndex = sendBlock.indexOf('continuation.status !== "needs_clarification"', operationTurnIndex);
+    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await handleOperationalHostingTurn({", pendingBranchIndex);
+    const pendingDraftIndex = sendBlock.indexOf("pendingDraft: pendingHostingClarification", operationTurnIndex);
+    const proposalIndex = sendBlock.indexOf("content: plan.proposalSpeech", operationTurnIndex);
+    const setClarificationIndex = sendBlock.indexOf("pendingHostingClarificationRef.current = operationTurn.draft", operationTurnIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
     expect(pendingRefIndex).toBeGreaterThan(-1);
@@ -159,7 +160,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     const classifyIndex = sendBlock.indexOf("const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)");
     const restoreIndex = sendBlock.indexOf("await loadActiveHostingDraft().catch(() => null)");
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
-    const operationTurnIndex = sendBlock.indexOf("const continuation = await runHostingContinuation(", pendingBranchIndex);
+    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await handleOperationalHostingTurn({", pendingBranchIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
     expect(classifyIndex).toBeGreaterThan(-1);
@@ -176,7 +177,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       'const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = "voice") => {',
       "  const startCall = useCallback(() => {",
     );
-    const restoreIndex = startBlock.indexOf("const activeHostingContinuation = pendingHostingContinuationRef.current");
+    const restoreIndex = startBlock.indexOf("const activeHostingDraft = pendingHostingClarificationRef.current");
     const openingIndex = startBlock.indexOf("const openingLine = activeHostingDraft");
 
     expect(restoreIndex).toBeGreaterThan(-1);
@@ -234,7 +235,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     );
     const decisionIndex = sendBlock.indexOf("const typedPendingDecision = resolvePendingPlanDecision(savedMessage.content)");
     const pendingPlanIndex = sendBlock.indexOf("let activeTypedPlan = pendingPlanRef.current");
-    const handlerIndex = sendBlock.indexOf("const continuation = await runHostingContinuation(savedMessage.content, people)");
+    const handlerIndex = sendBlock.indexOf("handlePendingPlanTurn([savedMessage.content], activeTypedPlan");
     const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", handlerIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
@@ -243,9 +244,9 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(handlerIndex).toBeGreaterThan(pendingPlanIndex);
     expect(localReplyIndex).toBeGreaterThan(handlerIndex);
     expect(handlerIndex).toBeLessThan(sendIndex);
-    expect(sendBlock).toContain('pendingHostingContinuationRef.current = { kind: "approval", plan: activeTypedPlan }');
-    expect(sendBlock).toContain('continuation.status === "completed"');
-    expect(sendBlock).toContain('continuation.status === "cancelled"');
+    expect(sendBlock).toContain("if (turn.clearPlan) pendingPlanRef.current = null");
+    expect(sendBlock).toContain('turn.action === "executed"');
+    expect(sendBlock).toContain('turn.action === "cancelled"');
   });
 
   it("handles typed pending-plan approval before requiring an active ElevenLabs connection", () => {
@@ -256,7 +257,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     const createUserIndex = sendBlock.indexOf("savedMessage = await createTypedUserMessage({");
     const pendingPlanIndex = sendBlock.indexOf("let activeTypedPlan = pendingPlanRef.current");
     const loadPlanIndex = sendBlock.indexOf("activeTypedPlan = await loadLatestPendingPlan().catch(() => null)");
-    const handlerIndex = sendBlock.indexOf("const continuation = await runHostingContinuation(savedMessage.content, people)");
+    const handlerIndex = sendBlock.indexOf("handlePendingPlanTurn([savedMessage.content], activeTypedPlan");
     const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", handlerIndex);
     const connectionGuardIndex = sendBlock.indexOf('throw new Error("The Carson session ended before the message could be sent.")');
     const initialGuardBlock = sendBlock.slice(
@@ -280,7 +281,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "  // ------------------------------------------------------------------\n  // Session teardown",
     );
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
-    const needsClarificationIndex = sendBlock.indexOf('continuation.status !== "needs_clarification"', pendingBranchIndex);
+    const needsClarificationIndex = sendBlock.indexOf('operationTurn.status === "needs_clarification"', pendingBranchIndex);
     const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", needsClarificationIndex);
     const localReturnIndex = sendBlock.indexOf("return;", localReplyIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
@@ -414,10 +415,11 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     );
     for (const requiredText of [
       "You are not signed in. Please sign in and try again.",
-      'continuation.status === "completed"',
-      'continuation.status === "cancelled"',
-      'continuation.status !== "needs_clarification"',
-      "content: continuation.message",
+      'turn.action === "executed"',
+      'turn.action === "cancelled"',
+      'operationTurn.status === "needs_clarification"',
+      "I couldn't put that guest plan together right now. Please try again.",
+      "content: plan.proposalSpeech",
     ]) {
       expect(sendBlock).toContain(requiredText);
     }
@@ -471,35 +473,24 @@ describe("typed Carson migration — privacy and idempotency", () => {
 // completely untouched.
 describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
   const TOOL_GUARD_BLOCK_MARKER =
-    'if (requestedChannel === "text" && TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {';
+    "if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {";
 
-  it("blocks every state-changing client tool for typed mode via one shared guard, gated on the typed channel", () => {
+  it("blocks every state-changing client tool for typed mode via one shared, unconditional guard", () => {
     const guardBlock = blockBetween(
-      "const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {",
+      "const guardCurrentToolInvocation = (toolName: string): string | null => {",
       "    try {",
     );
-    // Voice capture validation remains first, before typed authority checks.
-    expect(guardBlock.indexOf("const captureBlock = guardCurrentVoiceCapture(toolName);"))
+    // Voice returns immediately, before the typed-advisory check ever runs —
+    // Talk to Carson can never be affected by it (test below proves ordering).
+    expect(guardBlock.indexOf('return guardCurrentVoiceCapture(toolName);'))
       .toBeLessThan(guardBlock.indexOf(TOOL_GUARD_BLOCK_MARKER));
     expect(guardBlock).toContain(TOOL_GUARD_BLOCK_MARKER);
     expect(guardBlock).toContain("return TYPED_BLOCKED_TOOL_MESSAGES[toolName];");
-    // Confirmed production incident (2026-07-29): this condition previously
-    // had no channel guard at all — `TYPED_MODE_IS_ADVISORY_ONLY &&
-    // TYPED_BLOCKED_TOOL_MESSAGES[toolName]` is true regardless of channel,
-    // so a genuine Talk to Carson (voice) call to send_direct_whatsapp_message
-    // was silently blocked and returned the typed-advisory string instead of
-    // reaching the real handler — zero messages/whatsapp_deliveries rows,
-    // zero transport logs, confirmed via carson_tool_diagnostics stage
-    // "typed_blocked" recorded with channel "voice". The condition must
-    // always test requestedChannel === "text" first — never reintroduce a
-    // channel-blind version of this guard.
-    expect(guardBlock).toContain('requestedChannel === "text" && TYPED_MODE_IS_ADVISORY_ONLY');
     // The typed-advisory check runs before the existing "no active owner
-    // turn" fallback, so it applies unconditionally among typed requests — a
-    // matched tool name is blocked whether or not a typed owner turn is
-    // currently open (but only ever for the typed channel).
+    // turn" fallback, so it applies unconditionally — a matched tool name is
+    // blocked whether or not a typed owner turn is currently open.
     expect(guardBlock.indexOf(TOOL_GUARD_BLOCK_MARKER))
-      .toBeLessThan(guardBlock.indexOf('requestedChannel === "text" && !pendingTypedClientMessageIdRef.current'));
+      .toBeLessThan(guardBlock.indexOf("if (pendingTypedClientMessageIdRef.current) return null;"));
 
     const blockedToolMap = blockBetween(
       "const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {",
@@ -521,21 +512,29 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
       "act_on_note",
       "save_city",
       "save_instruction",
-      "save_note",
     ]) {
       expect(blockedToolMap).toContain(`${toolName}:`);
     }
     // Read-only research/planning stays available to typed mode.
     expect(blockedToolMap).not.toContain("get_calendar_events:");
-    expect(blockedToolMap).toContain("save_note:");
+    // save_note only persists a note (no worker notification, no task,
+    // calendar, or reminder state change) — "accept brain dumps" is an
+    // explicitly required typed capability. act_on_note (turning a note
+    // into a task/delegation/reminder) is the state-changing step and
+    // stays blocked, verified above.
+    expect(blockedToolMap).not.toContain("save_note:");
   });
 
-  it("blocks both typed note persistence and turning a note into a tracked action", () => {
+  it("lets typed mode accept a brain dump (save_note) but blocks turning it into a tracked action (act_on_note)", () => {
+    // save_note's own guardCurrentToolInvocation call is unchanged (it still
+    // enforces the pre-existing "no active owner turn" check for both
+    // channels) — it is simply absent from TYPED_BLOCKED_TOOL_MESSAGES
+    // (verified above), so a typed brain dump reaches saveNote(params).
     const saveNoteBlock = blockBetween(
       "save_note: (params: Parameters<typeof saveNote>[0]) => {",
       "  },",
     );
-    const saveNoteGuardIndex = saveNoteBlock.indexOf('guardCurrentToolInvocation("save_note", params)');
+    const saveNoteGuardIndex = saveNoteBlock.indexOf('guardCurrentToolInvocation("save_note")');
     const saveNoteExecutorIndex = saveNoteBlock.indexOf("saveNote(params)");
     expect(saveNoteGuardIndex).toBeGreaterThan(-1);
     expect(saveNoteExecutorIndex).toBeGreaterThan(saveNoteGuardIndex);
@@ -544,7 +543,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
       "act_on_note: (params: Parameters<typeof actOnNote>[0]) => {",
       "  },",
     );
-    const guardIndex = actOnNoteBlock.indexOf('guardCurrentToolInvocation("act_on_note", params)');
+    const guardIndex = actOnNoteBlock.indexOf('guardCurrentToolInvocation("act_on_note")');
     const executorIndex = actOnNoteBlock.indexOf("actOnNote(params)");
     expect(guardIndex).toBeGreaterThan(-1);
     expect(executorIndex).toBeGreaterThan(guardIndex);
@@ -552,7 +551,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
 
   it("blocks a typed reminder request from creating a reminder or triggering push scheduling", () => {
     const toolBlock = blockBetween('create_reminder: (params: Parameters<typeof createReminder>[0]) => {', "  },");
-    const guardIndex = toolBlock.indexOf('guardCurrentToolInvocation("create_reminder", params)');
+    const guardIndex = toolBlock.indexOf('guardCurrentToolInvocation("create_reminder")');
     const executorIndex = toolBlock.indexOf("createReminder(params)");
     expect(guardIndex).toBeGreaterThan(-1);
     expect(executorIndex).toBeGreaterThan(guardIndex);
@@ -569,7 +568,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
       'create_automation: (params: Parameters<typeof createAutomation>[0]) => {',
       "  },",
     );
-    const guardIndex = toolBlock.indexOf('guardCurrentToolInvocation("create_automation", params)');
+    const guardIndex = toolBlock.indexOf('guardCurrentToolInvocation("create_automation")');
     const executorIndex = toolBlock.indexOf("createAutomation(params)");
     expect(guardIndex).toBeGreaterThan(-1);
     expect(executorIndex).toBeGreaterThan(guardIndex);
@@ -583,7 +582,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
       ["delete_calendar_event", "deleteCalendarEventTool(params)"],
     ] as const) {
       const toolBlock = blockBetween(`${toolName}: (params: Parameters<typeof `, "  },");
-      const guardIndex = toolBlock.indexOf(`guardCurrentToolInvocation("${toolName}", params)`);
+      const guardIndex = toolBlock.indexOf(`guardCurrentToolInvocation("${toolName}")`);
       const executorIndex = toolBlock.indexOf(executorCall);
       expect(guardIndex, toolName).toBeGreaterThan(-1);
       expect(executorIndex, toolName).toBeGreaterThan(guardIndex);
@@ -640,18 +639,40 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
   // must now redirect immediately, before any hosting clarification question
   // or proposal is generated — see "redirects a typed hosting execution
   // request immediately, before any clarification or proposal" below.
-  it("uses the canonical continuation handler for typed hosting planning while keeping typed approval advisory-only", () => {
-    const hostingBlock = blockBetween(
+  it("blocks hosting clarification/proposal generation entirely while advisory-only, but keeps the old planning-allowed path reachable behind TYPED_MODE_IS_ADVISORY_ONLY for reversibility", () => {
+    const redirectBlock = blockBetween(
       "const pendingHostingClarification = pendingHostingClarificationRef.current;",
+      "if (pendingHostingClarification) {",
+    );
+    expect(redirectBlock).toContain(
+      'if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {',
+    );
+    expect(redirectBlock).toContain("content: TYPED_ADVISORY_HOSTING_REQUEST,");
+    expect(redirectBlock).toContain("return;");
+    expect(redirectBlock).not.toContain("handleOperationalHostingTurn");
+
+    // The old "planning allowed" flow (both continuing a clarification and a
+    // fresh request) still exists, reachable only when the redirect above
+    // does not return — i.e. only when TYPED_MODE_IS_ADVISORY_ONLY is false.
+    const clarificationBlock = blockBetween(
+      "if (pendingHostingClarification) {",
+      "if (typedGuestAction !== \"none\") {",
+    );
+    expect(clarificationBlock).toContain("const operationTurn = await handleOperationalHostingTurn({");
+
+    const freshRequestBlock = blockBetween(
+      "if (typedGuestAction !== \"none\") {",
       "// ── Deterministic typed delegation fast path",
     );
-    expect(hostingBlock).toContain("const continuation = await runHostingContinuation(");
-    expect(hostingBlock).toContain("content: continuation.message");
-    expect(hostingBlock).not.toContain("handleOperationalHostingTurn");
+    expect(freshRequestBlock).toContain("const operationTurn = await handleOperationalHostingTurn({");
 
+    // Pending-plan approval/execution remains blocked exactly as before —
+    // handlePendingPlanTurn (the only call site that can invoke
+    // executeProposedPlan) is never reached on "confirm", and the pending
+    // plan is left untouched so Talk to Carson can still execute it.
     const pendingPlanBlock = blockBetween(
       "if (activeTypedPlan) {",
-      "const continuation = await runHostingContinuation(savedMessage.content, people)",
+      "const turn = await handlePendingPlanTurn([savedMessage.content], activeTypedPlan, {",
     );
     expect(pendingPlanBlock).toContain('if (TYPED_MODE_IS_ADVISORY_ONLY && typedPendingDecision === "confirm") {');
     expect(pendingPlanBlock).toContain("content: TYPED_ADVISORY_HOSTING_EXECUTION,");
@@ -700,28 +721,17 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
     expect(reconcileBlock).not.toContain("TYPED_BLOCKED_TOOL_MESSAGES");
   });
 
-  it("never lets Talk to Carson be blocked by the typed-advisory guard, even when voice-capture does not itself return", () => {
+  it("never lets Talk to Carson reach the typed-advisory guard — voice returns before it is checked", () => {
     const guardBlock = blockBetween(
-      "const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {",
+      "const guardCurrentToolInvocation = (toolName: string): string | null => {",
       "    try {",
     );
     const voiceBranchIndex = guardBlock.indexOf('if (requestedChannel === "voice") {');
-    const voiceReturnIndex = guardBlock.indexOf("const captureBlock = guardCurrentVoiceCapture(toolName);");
+    const voiceReturnIndex = guardBlock.indexOf("return guardCurrentVoiceCapture(toolName);");
     const advisoryIndex = guardBlock.indexOf(TOOL_GUARD_BLOCK_MARKER);
     expect(voiceBranchIndex).toBeGreaterThan(-1);
     expect(voiceReturnIndex).toBeGreaterThan(voiceBranchIndex);
     expect(voiceReturnIndex).toBeLessThan(advisoryIndex);
-    // guardCurrentVoiceCapture only returns early when it itself finds a
-    // capture problem (`if (captureBlock) return captureBlock;`) — it is NOT
-    // an unconditional return for every voice call. A prior version of this
-    // test asserted only source ordering here and missed that the advisory
-    // block below is still reached, uncontested, whenever captureBlock is
-    // null — which is exactly what happened in the confirmed 2026-07-29
-    // production incident. The real protection is that the advisory
-    // condition itself can never be true for voice: it must always start
-    // with requestedChannel === "text".
-    expect(guardBlock).toContain(TOOL_GUARD_BLOCK_MARKER);
-    expect(TOOL_GUARD_BLOCK_MARKER.indexOf('requestedChannel === "text"')).toBe(4);
   });
 
   it("keeps Talk to Carson's reminder, calendar, and delegation tools calling their real executors unconditionally", () => {
@@ -776,26 +786,40 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
     );
   }
 
-  it("claims a typed hosting request before the free-form model", () => {
+  it("redirects a typed hosting execution request immediately, before any clarification question or proposal", () => {
     const block = sendBlock();
     const guestActionIndex = block.indexOf('const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)');
-    const continuationIndex = block.indexOf("const continuation = await runHostingContinuation(", guestActionIndex);
-    const replyIndex = block.indexOf("content: continuation.message", continuationIndex);
-    const returnIndex = block.indexOf("return;", replyIndex);
-    const modelIndex = block.indexOf("conversation.sendUserMessage(agentMessage)");
+    const redirectIndex = block.indexOf(
+      'if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {',
+      guestActionIndex,
+    );
+    const redirectContentIndex = block.indexOf("content: TYPED_ADVISORY_HOSTING_REQUEST,", redirectIndex);
+    const redirectReturnIndex = block.indexOf("return;", redirectContentIndex);
+    const firstHostingTurnIndex = block.indexOf("await handleOperationalHostingTurn({", redirectIndex);
 
     expect(guestActionIndex).toBeGreaterThan(-1);
-    expect(continuationIndex).toBeGreaterThan(guestActionIndex);
-    expect(replyIndex).toBeGreaterThan(continuationIndex);
-    expect(returnIndex).toBeGreaterThan(replyIndex);
-    expect(returnIndex).toBeLessThan(modelIndex);
+    expect(redirectIndex).toBeGreaterThan(guestActionIndex);
+    expect(redirectContentIndex).toBeGreaterThan(redirectIndex);
+    expect(redirectReturnIndex).toBeGreaterThan(redirectContentIndex);
+    // No question is asked and no proposal is built before the redirect
+    // returns — the only handleOperationalHostingTurn call (proposal/
+    // clarification generation) in the block comes strictly after the
+    // redirect's own return.
+    expect(firstHostingTurnIndex).toBeGreaterThan(redirectReturnIndex);
+    expect(TYPED_ADVISORY_HOSTING_REQUEST_VALUE()).toMatch(/Talk to Carson/);
+    expect(TYPED_ADVISORY_HOSTING_REQUEST_VALUE()).not.toMatch(/\?/);
   });
 
-  it("does not maintain a second typed hosting planner", () => {
+  it("does not ask for approval before redirecting a fresh hosting request — no plan is ever stored first", () => {
     const block = sendBlock();
-    expect(block).not.toContain("handleOperationalHostingTurn({");
-    expect(block).not.toContain("buildOperationalPlanFromOutcome(");
-    expect(block).not.toContain("evaluateHostingPlanningGate(");
+    const redirectIndex = block.indexOf(
+      'if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {',
+    );
+    const redirectReturnIndex = block.indexOf("return;", redirectIndex);
+    const firstPendingPlanAssignment = block.indexOf("pendingPlanRef.current = plan;", redirectIndex);
+    // pendingPlanRef is only ever populated by the dormant reversibility
+    // path, strictly after the redirect's own return — never before it.
+    expect(firstPendingPlanAssignment).toBeGreaterThan(redirectReturnIndex);
   });
 
   it("redirects a typed reminder, calendar, staff-message, or generic-action request via one final classifier gate before the free-form model", () => {
@@ -839,16 +863,17 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
     expect(sanitizedIndex).toBeGreaterThan(-1);
     expect(guardIndex).toBeGreaterThan(sanitizedIndex);
     expect(scrubberCallIndex).toBeGreaterThan(guardIndex);
-    // The terminal policy guard runs before the shared voice-and-typed
-    // display sanitizer. The typed-only scrubber remains downstream.
+    // resolveSanitizedCarsonDisplayMessage itself — the shared, voice-and-typed
+    // display-override call — is completely unchanged: same arguments, same
+    // call site, still runs for both channels exactly as before.
     expect(onMessageBlock).toContain(
-      "const terminalSafeMessage = resolveTerminalToolRejectionReply(\n              message,\n              terminalToolRejectionRef.current,\n            );\n            const displayMessage = resolveSanitizedCarsonDisplayMessage({\n              agentMessage: terminalSafeMessage,\n              previousUserMessage,\n              lastSuccess: lastDirectToolSuccessRef.current,\n              noteSaveOutcome: noteSaveOutcomeRef.current,\n              messageSendOutcome: messageSendOutcomeRef.current,\n            });",
+      "resolveSanitizedCarsonDisplayMessage({\n              agentMessage: message,\n              previousUserMessage,\n              lastSuccess: lastDirectToolSuccessRef.current,\n              noteSaveOutcome: noteSaveOutcomeRef.current,\n            });",
     );
   });
 
   it("imports sanitizeTypedAdvisoryReply alongside the existing, unmodified resolveSanitizedCarsonDisplayMessage import", () => {
     expect(SOURCE).toContain(
-      'import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, looksLikeMessageSendOutcomeClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";',
+      'import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";',
     );
   });
 
@@ -874,10 +899,10 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
 
   it("never touches Talk to Carson's tool registration, routing, or execution — voice guard still returns before any typed-only check", () => {
     const guardBlock = blockBetween(
-      "const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {",
+      "const guardCurrentToolInvocation = (toolName: string): string | null => {",
       "    try {",
     );
-    const voiceReturnIndex = guardBlock.indexOf("const captureBlock = guardCurrentVoiceCapture(toolName);");
+    const voiceReturnIndex = guardBlock.indexOf("return guardCurrentVoiceCapture(toolName);");
     const typedBlockIndex = guardBlock.indexOf("TYPED_BLOCKED_TOOL_MESSAGES[toolName]");
     expect(voiceReturnIndex).toBeGreaterThan(-1);
     expect(voiceReturnIndex).toBeLessThan(typedBlockIndex);
@@ -893,6 +918,10 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
     }
   });
 });
+
+function TYPED_ADVISORY_HOSTING_REQUEST_VALUE(): string {
+  return sourceConstant("TYPED_ADVISORY_HOSTING_REQUEST");
+}
 
 /**
  * "Send to Carson" (Note cards, 2026-07-26): the widget accepts a queued

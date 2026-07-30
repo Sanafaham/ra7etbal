@@ -168,194 +168,26 @@ export function detectsUnconfirmedNoteSaveClaim(
   return noteSaveOutcome?.outcome !== "success";
 }
 
-/**
- * Confirmed production regression (2026-07-29): "Ask Christopher to reply
- * 'test received'." produced the spoken reply "Message sent to Christopher."
- * with zero `messages` row, zero `whatsapp_deliveries` row, and zero
- * `/api/send-whatsapp-task` request — send_direct_whatsapp_message was never
- * invoked at all this turn. This is the exact "no tool ran at all" gap this
- * module's own top-of-file comment already documents for save_note (the
- * 2026-07-13 P0): the override above only corrects a contradiction against a
- * tool call that DID run. Mirrors detectsUnconfirmedNoteSaveClaim /
- * noteSaveOutcomeRef exactly rather than reusing lastDirectToolSuccessRef's
- * shared 15s-window override — CodeRabbit already flagged that a shared
- * window lets an earlier turn's unrelated success suppress this fabrication
- * check for a later turn within that same window.
- */
-export interface DirectMessageSendOutcome {
-  outcome: "success" | "failure";
-  resultText: string;
-  at: string;
-}
-
-const DIRECT_MESSAGE_REQUEST_PATTERN = /\b(?:tell|message|text|whatsapp|ask)\s+[A-Za-z]+\b/i;
-
-// Confirmed production retest (2026-07-29, same day as the fix): "Sent to
-// Christopher." — a shorter paraphrase of the original "Message sent to
-// Christopher." incident — did not match the pattern below, so the guard
-// never fired a second time. Broadened with a "sent [it/that/the message]
-// to <Name>" alternative to close this specific paraphrase without widening
-// the net to ordinary unrelated uses of "sent" — NEGATED_SEND_PATTERN below
-// still excludes any negated/failure phrasing of the same shape.
-const MESSAGE_SEND_CONFIRMATION_PATTERN =
-  /\b(?:message|text|whatsapp)\s+(?:has\s+been\s+|was\s+)?sent\b|\bsent\s+(?:the\s+|that\s+|your\s+)?message\b|\bi(?:'|’)ve\s+sent\b|\bit(?:'|’)s\s+with\s+[A-Z][a-z]+\b|\bthat(?:'|’)s\s+(?:been\s+)?sent\b|\bsent\s+(?:it\s+|that\s+|the\s+message\s+)?to\s+[A-Z][a-z]+\b/i;
-
-// Excludes a truthful negated/failure phrasing of the exact same "sent"
-// shape ("I couldn't get that sent to Christopher.", "It wasn't sent.") from
-// being misread as a completion claim.
-const NEGATED_SEND_PATTERN =
-  /\b(?:wasn|isn|didn|couldn|can|won)['’]?t\s+(?:able\s+to\s+)?(?:get\s+)?(?:it\s+|that\s+|the\s+message\s+)?sen[dt]\b|\bnot\s+sent\b|\bnever\s+sent\b|\bfailed\s+to\s+send\b/i;
-
-/**
- * True when the previous owner message reads as an explicit send/tell/ask
- * request to a named person, the agent's reply claims that message was sent,
- * and send_direct_whatsapp_message did not verifiably succeed THIS turn —
- * i.e. Carson is about to (or did) narrate a delivery that never happened.
- */
-export function detectsUnconfirmedMessageSendClaim(
-  agentMessage: string,
-  previousUserMessage: string,
-  messageSendOutcome: DirectMessageSendOutcome | null,
-): boolean {
-  if (!DIRECT_MESSAGE_REQUEST_PATTERN.test(previousUserMessage)) return false;
-  if (!MESSAGE_SEND_CONFIRMATION_PATTERN.test(agentMessage)) return false;
-  if (NEGATED_SEND_PATTERN.test(agentMessage)) return false;
-  return messageSendOutcome?.outcome !== "success";
-}
-
-// Confirmed production incident (2026-07-30, ~03:03 Turkey time): a genuine
-// voice call to send_direct_whatsapp_message succeeded (handler_success
-// confirmed, Christopher received the WhatsApp) but Carson spoke and
-// displayed "I wasn't able to send that. Please try again." — with zero
-// claim_overridden diagnostic for the turn, proving this was the agent's own
-// original, uncorrected reply, not a client-side correction. Every prior
-// truthfulness fix in this file (PR #106/#108/#118) only ever checked for a
-// FALSE SUCCESS claim — nothing checked the opposite direction: a false
-// FAILURE claim on a send that actually succeeded. This is the symmetric
-// counterpart to detectsUnconfirmedMessageSendClaim.
-//
-// Confirmed production retest (2026-07-30, ~03:41 Turkey time, session
-// conv_6201kyr7eh6rfyvaymcbk3r5x3nv): the exact same class of failure
-// recurred with different wording — "I wasn't able to save that. Please say
-// it again." — handler_success confirmed the send truly succeeded
-// (recipient_person_id populated), with zero claim_overridden for the turn.
-// The verb below was hardcoded to "send" only, so this paraphrase never
-// matched. The agent's own free-form apology wording varies by verb
-// ("send"/"save"/etc.) while meaning the same thing, so the verb slot is
-// generalized rather than adding another hardcoded word.
-const FAILURE_CLAIM_PATTERN =
-  /\b(?:i\s+)?wasn['’]?t\s+able\s+to\s+[a-z]+\b|\bcouldn['’]?t\s+[a-z]+\b|\bunable\s+to\s+[a-z]+\b|\bfailed\s+to\s+[a-z]+\b|\bdidn['’]?t\s+[a-z]+\b|\bnot\s+able\s+to\s+[a-z]+\b/i;
-
-/**
- * True when the previous owner message reads as an explicit send/tell/ask
- * request to a named person, the agent's reply falsely claims the send
- * failed (or is uncertain), and send_direct_whatsapp_message actually
- * verifiably succeeded THIS turn — i.e. Carson is about to (or did) narrate
- * a failure that never happened.
- */
-export function detectsUnconfirmedMessageSendFailureClaim(
-  agentMessage: string,
-  previousUserMessage: string,
-  messageSendOutcome: DirectMessageSendOutcome | null,
-): boolean {
-  if (!DIRECT_MESSAGE_REQUEST_PATTERN.test(previousUserMessage)) return false;
-  if (!FAILURE_CLAIM_PATTERN.test(agentMessage)) return false;
-  return messageSendOutcome?.outcome === "success";
-}
-
-/**
- * Pattern-match only (ignores the actual outcome) — true whenever the
- * agent's reply makes ANY claim, success or failure, about a message-send
- * request. Used by the client to decide whether to defer and await the
- * tool's own in-flight settle before finalizing what's displayed, since
- * either direction of claim can turn out to be false while the real result
- * is still resolving.
- */
-export function looksLikeMessageSendOutcomeClaim(
-  agentMessage: string,
-  previousUserMessage: string,
-): boolean {
-  if (!DIRECT_MESSAGE_REQUEST_PATTERN.test(previousUserMessage)) return false;
-  return (
-    (MESSAGE_SEND_CONFIRMATION_PATTERN.test(agentMessage) && !NEGATED_SEND_PATTERN.test(agentMessage)) ||
-    FAILURE_CLAIM_PATTERN.test(agentMessage)
-  );
-}
-
-// Confirmed production incident (2026-07-29, ~18:39 and ~20:19 Turkey time):
-// a genuine voice call to send_direct_whatsapp_message succeeded — Christopher
-// received the WhatsApp message — yet the displayed transcript still showed
-// the honest-sounding "I couldn't confirm that message actually sent." fallback.
-// carson_tool_diagnostics traced the exact cause: the agent's own separately-
-// generated reply (this file's own top-of-file doc comment already explains
-// this is a distinct generation from the tool's return value) arrived and was
-// classified ~35ms BEFORE the tool's own handler_success diagnostic — i.e.
-// while the real WhatsApp send was still in flight over the network (a ~2.3s
-// round trip in the confirmed incident). Reading a still-null outcome ref at
-// that exact instant and immediately concluding "not confirmed" cannot tell
-// "genuinely failed/never called" apart from "still resolving" — both look
-// identical to a synchronous snapshot. This resolves that ambiguity: when a
-// tool call is still in flight for this exact turn, wait for its own
-// authoritative settle before finalizing the classification, instead of
-// treating "not yet known" the same as "confirmed not successful". Bounded by
-// a generous timeout so a genuine hang still falls back to the honest
-// "unconfirmed" reply rather than leaving the turn unresolved forever.
-export const MESSAGE_SEND_AWAIT_TIMEOUT_MS = 12_000;
-
-export async function resolvePendingMessageSendOutcome(
-  pendingOutcome: Promise<DirectMessageSendOutcome | null> | null,
-  timeoutMs: number = MESSAGE_SEND_AWAIT_TIMEOUT_MS,
-): Promise<DirectMessageSendOutcome | null> {
-  if (!pendingOutcome) return null;
-  const timeout = new Promise<null>((resolve) => {
-    setTimeout(() => resolve(null), timeoutMs);
-  });
-  try {
-    return await Promise.race([pendingOutcome, timeout]);
-  } catch {
-    // The tool's own promise chain never rejects in practice (every real
-    // failure is caught and recorded as outcome: "failure"), but never let an
-    // unexpected rejection here surface as an unhandled error — treat it the
-    // same as "still unknown", which correctly falls back to the honest
-    // unconfirmed reply.
-    return null;
-  }
-}
-
 interface ResolveSanitizedCarsonDisplayMessageInput {
   agentMessage: string;
   previousUserMessage?: string;
   lastSuccess: DirectToolSuccessResult | null;
   noteSaveOutcome?: NoteSaveOutcome | null;
-  messageSendOutcome?: DirectMessageSendOutcome | null;
   now?: number;
 }
 
 const UNCONFIRMED_NOTE_SAVE_REPLY =
   "I couldn't confirm that was saved. Please say it again so I can save it properly.";
 
-const UNCONFIRMED_MESSAGE_SEND_REPLY =
-  "I couldn't confirm that message actually sent. Please ask me to try again.";
-
 export function resolveSanitizedCarsonDisplayMessage({
   agentMessage,
   previousUserMessage = "",
   lastSuccess,
   noteSaveOutcome = null,
-  messageSendOutcome = null,
   now = Date.now(),
 }: ResolveSanitizedCarsonDisplayMessageInput): string {
   if (detectsUnconfirmedNoteSaveClaim(agentMessage, previousUserMessage, noteSaveOutcome)) {
     return sanitizeCarsonReplyText(UNCONFIRMED_NOTE_SAVE_REPLY);
-  }
-  if (detectsUnconfirmedMessageSendClaim(agentMessage, previousUserMessage, messageSendOutcome)) {
-    return sanitizeCarsonReplyText(UNCONFIRMED_MESSAGE_SEND_REPLY);
-  }
-  // Symmetric case (confirmed 2026-07-30 incident): the agent falsely claimed
-  // the send FAILED while the tool actually confirmed success — use the
-  // tool's own true result text, never the agent's false failure claim.
-  if (detectsUnconfirmedMessageSendFailureClaim(agentMessage, previousUserMessage, messageSendOutcome)) {
-    return sanitizeCarsonReplyText(messageSendOutcome!.resultText);
   }
 
   const toolAwareMessage = resolveCarsonDisplayMessage(agentMessage, lastSuccess, now);

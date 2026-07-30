@@ -53,7 +53,6 @@ import {
   buildSessionRecapWithActions,
   summarizeConversation,
   summarizeSessionRecap,
-  sanitizeTranscriptForDurableMemory,
   isSummaryWorthSaving,
   SESSION_RECAP_PREFIX,
   type TranscriptMessage,
@@ -70,10 +69,7 @@ import {
   createDelegationTaskAndMessage,
 } from "../../lib/delegations";
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
-import {
-  isCommunicationStyleTaskText,
-  preserveDirectCommunicationMeaning,
-} from "../../lib/communication-vs-delegation";
+import { isCommunicationStyleTaskText } from "../../lib/communication-vs-delegation";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath, parseDelegationFastPath } from "../../lib/delegation-fast-path";
@@ -94,20 +90,19 @@ import {
 import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-tool-diagnostics";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText, resolveRecurringAutomationPerson } from "../../lib/routine-detection";
 import {
-  runActionContinuation,
+  handleOperationalHostingTurn,
   resolveGuestOutcomeAction,
+  executeProposedPlan,
   hasLeadingConfirmationLanguage,
   isConfirmation,
   isRejection,
   isStatusQuestion,
   resolvePendingPlanDecision,
+  handlePendingPlanTurn,
   loadActiveHostingDraft,
-  loadActiveHostingContinuation,
-  reconstructHostingContinuationFromTypedHistory,
   loadLatestPendingPlan,
   resolveHostingOperationRecall,
   type PendingOperationDraft,
-  type HostingContinuationState,
   type ProposedPlan,
 } from "../../lib/ops-intelligence";
 import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/people-behavior";
@@ -115,22 +110,7 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
-import { recordCarsonToolDiagnostic } from "../../lib/carson-tool-diagnostics";
-import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, looksLikeMessageSendOutcomeClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
-import { resolveCarsonPeopleAction, type CarsonPeopleActionEnvelope } from "../../lib/carson-people-action";
-import {
-  retainCarsonRoutingOwner,
-  routingOwnerAllowsPeopleAction,
-  selectCarsonRoutingOwner,
-  type CarsonRoutingOwner,
-} from "../../lib/carson-routing-owner";
-import { resolveOrphanedPeopleToolConfirmation } from "../../lib/carson-orphan-confirmation";
-import {
-  CarsonTerminalToolRejection,
-  resolveTerminalToolRejectionReply,
-  shouldClearTerminalToolRejection,
-  type CarsonTerminalToolRejectionState,
-} from "../../lib/carson-terminal-tool-rejection";
+import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
 import {
@@ -148,11 +128,6 @@ import {
   type ExecutedDelegationRecord,
 } from "../../lib/carson-action-coverage";
 import { CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD } from "../../lib/carson-status-policy";
-import {
-  evaluateCarsonToolPolicy,
-  resolveLegacyPeopleToolCommunicationRedirect,
-} from "../../lib/carson-tool-policy";
-import { executeLegacyPeopleCommunicationRedirect } from "../../lib/carson-legacy-communication-redirect";
 import {
   CARSON_REPEAT_PROMPT,
   evaluateCarsonTranscriptCapture,
@@ -222,6 +197,11 @@ const TYPED_ADVISORY_RECURRING_REMINDER = "I can help you plan that. Use Talk to
 const TYPED_ADVISORY_CALENDAR = "I can help you plan the event. Use Talk to Carson to add it to your calendar.";
 const TYPED_ADVISORY_STAFF_MESSAGE = "I can help you draft the message. Use Talk to Carson to send it.";
 const TYPED_ADVISORY_HOSTING_EXECUTION = "I can help you plan the hosting details. Use Talk to Carson when you are ready to execute the plan.";
+// Brief, immediate redirect for a fresh hosting execution request ("Handle
+// dinner tomorrow.") — deliberately terser than TYPED_ADVISORY_HOSTING_EXECUTION
+// above (which follows an already-built proposal): no clarification question,
+// no proposal, no advisory preamble first.
+const TYPED_ADVISORY_HOSTING_REQUEST = "Use Talk to Carson to plan and arrange it.";
 const TYPED_ADVISORY_TASK_STATE = "I can help you think that through. Use Talk to Carson to update it.";
 const TYPED_ADVISORY_GENERIC = "I can help you prepare that, but I can't complete it from typed chat. Use Talk to Carson to do it.";
 
@@ -231,7 +211,6 @@ const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {
   send_followup: TYPED_ADVISORY_STAFF_MESSAGE,
   send_delegation: TYPED_ADVISORY_STAFF_MESSAGE,
   send_direct_whatsapp_message: TYPED_ADVISORY_STAFF_MESSAGE,
-  route_people_action: TYPED_ADVISORY_STAFF_MESSAGE,
   create_reminder: TYPED_ADVISORY_REMINDER,
   create_automation: TYPED_ADVISORY_RECURRING_REMINDER,
   create_calendar_event: TYPED_ADVISORY_CALENDAR,
@@ -241,22 +220,16 @@ const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {
   complete_todo: TYPED_ADVISORY_TASK_STATE,
   control_task: TYPED_ADVISORY_TASK_STATE,
   act_on_note: TYPED_ADVISORY_TASK_STATE,
-  save_note: TYPED_ADVISORY_TASK_STATE,
   save_city: TYPED_ADVISORY_GENERIC,
   save_instruction: TYPED_ADVISORY_GENERIC,
   // get_calendar_events is intentionally absent — read-only lookups remain
   // available for typed research/planning ("what's on my calendar Friday?").
-  // Brain dumps remain advisory in typed mode; persisting the note is still a
-  // state-changing action and is protected by the same execution boundary.
+  // save_note is intentionally absent — it only persists a note (no worker
+  // notification, no task/calendar/reminder state change), and "accept brain
+  // dumps" is an explicitly required typed capability. act_on_note (turning a
+  // saved note into a task/delegation/reminder) stays blocked above — that is
+  // the state-changing step.
 };
-
-// Carson intent-architecture (2026-07-30): route_people_action is the new
-// semantic entry point for communication/delegation. These two remain
-// registered, functioning tools (execution + rollback), but the model is no
-// longer directed to call them directly for new requests — see
-// guardCurrentToolInvocation's legacy_people_tool_bypass instrumentation.
-const LEGACY_PEOPLE_TOOLS = new Set(["send_direct_whatsapp_message", "send_delegation"]);
-const LEGACY_COMMUNICATION_REDIRECT = Symbol("legacy_communication_redirect");
 
 const CARSON_TYPED_ADVISORY_POLICY =
   "Type to Carson is advisory-only. You may answer questions, help plan, accept brain dumps, draft content and messages, research information, and review existing information. You must never claim to create a reminder or recurring reminder, schedule a push notification, create or change a calendar event, send a staff message, execute or approve a hosting plan, create an assignment or delegation, or change any task or operation state. Every tool that performs one of those actions is blocked in typed mode and returns a short message telling the owner to use Talk to Carson — relay that message plainly and briefly. Never say or imply that an action was completed.";
@@ -1009,10 +982,6 @@ export default function ElevenLabsAgentWidget({
   const typedSessionIdRef = useRef(getOrCreateTypedSessionId());
   const typedConversationIdRef = useRef<string | null>(null);
   const pendingTypedClientMessageIdRef = useRef<string | null>(null);
-  /** Canonical hosting slot state. Adapters may cache legacy phase-specific
-   * refs while migrating, but selection and reconstruction use only this
-   * registry-owned value. */
-  const pendingHostingContinuationRef = useRef<HostingContinuationState>(null);
   const pendingHostingClarificationRef = useRef<PendingOperationDraft | null>(null);
   const persistedTypedAgentEventsRef = useRef(new Set<string>());
   const [typedMessages, setTypedMessages] = useState<CarsonTypedMessage[]>([]);
@@ -1399,40 +1368,6 @@ export default function ElevenLabsAgentWidget({
    *  person tasks) and a separate carson_pending_operations "type". */
   const pendingWeekPlanRef = useRef<ProposedWeekPlan | null>(null);
 
-  const runHostingContinuation = useCallback(async (
-    message: string,
-    people: Person[],
-    askedAtClientMessageId: string | null = null,
-  ) => {
-    const authUserId = useAuthStore.getState().user?.id ?? null;
-    const cachedState = pendingHostingContinuationRef.current
-      ?? (pendingHostingClarificationRef.current
-        ? { kind: "clarification" as const, draft: pendingHostingClarificationRef.current }
-        : pendingPlanRef.current
-          ? { kind: "approval" as const, plan: pendingPlanRef.current }
-          : null);
-    const result = await runActionContinuation({
-      message,
-      people,
-      pendingState: cachedState,
-      askedAtClientMessageId,
-      execution: authUserId
-        ? { displayName: displayName ?? null, userId: authUserId, people }
-        : null,
-    });
-
-    pendingHostingContinuationRef.current = result.state;
-    pendingHostingClarificationRef.current =
-      result.state?.kind === "clarification" ? result.state.draft : null;
-    pendingPlanRef.current =
-      result.state?.kind === "approval" ? result.state.plan : null;
-    if (result.status === "completed") {
-      sessionActionsRef.current.push(`Ops plan completed: ${message}`);
-      if (authUserId) useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-    }
-    return result;
-  }, [displayName]);
-
   /** Last executed weekly plan's per-event results, kept briefly so a
    *  follow-up "try again" retries only the events that failed — never the
    *  ones already confirmed created. */
@@ -1472,37 +1407,6 @@ export default function ElevenLabsAgentWidget({
    * can never leak across turns because it's nulled at every turn boundary.
    */
   const noteSaveOutcomeRef = useRef<NoteSaveOutcome | null>(null);
-
-  /**
-   * send_direct_whatsapp_message's outcome for the CURRENT user turn only —
-   * same design as noteSaveOutcomeRef immediately above, for the identical
-   * class of bug: confirmed production regression (2026-07-29) where Carson
-   * said "Message sent to Christopher." with no messages row, no
-   * whatsapp_deliveries row, and no /api/send-whatsapp-task request at all —
-   * the tool was never invoked this turn. Reset to null at every turn
-   * boundary; set only by sendDirectWhatsAppMessage itself, on its own
-   * verified success/failure paths.
-   */
-  const messageSendOutcomeRef = useRef<DirectMessageSendOutcome | null>(null);
-
-  /**
-   * Promise for the CURRENT turn's in-flight send_direct_whatsapp_message
-   * call, resolving to its own eventual messageSendOutcomeRef value (or null
-   * once settled with no promise, or if none is in flight this turn). Set
-   * only at the send_direct_whatsapp_message clientTools call site; reset to
-   * null at every turn boundary alongside messageSendOutcomeRef, so it can
-   * never leak into a later, unrelated invocation. Confirmed production
-   * incident (2026-07-29, ~20:19 Turkey time): a real send succeeded, but the
-   * agent's own reply was classified by the truthfulness guard ~35ms BEFORE
-   * the tool's own handler_success — the ref this promise resolves to was
-   * still null at that exact instant purely because the real network send
-   * hadn't settled yet, not because it had failed. onMessage awaits this
-   * promise (see resolvePendingMessageSendOutcome) before finalizing an
-   * unconfirmed-claim correction, instead of reading a still-null snapshot.
-   */
-  const messageSendInFlightRef = useRef<Promise<DirectMessageSendOutcome | null> | null>(null);
-  const lastCompletedPeopleActionRef = useRef<{ recipient: string; at: number } | null>(null);
-  const terminalToolRejectionRef = useRef<CarsonTerminalToolRejectionState | null>(null);
 
   /**
    * Last user utterance that contained recurring language, captured in onMessage
@@ -1552,11 +1456,6 @@ export default function ElevenLabsAgentWidget({
   // current transcript (same call sites as setTurnPhase("acting")); reset
   // to false only when a fresh valid transcript arrives.
   const toolRanForCurrentTranscriptRef = useRef(false);
-  const routingOwnerRef = useRef<CarsonRoutingOwner | null>(null);
-  const hostingOwnerExecutionRef = useRef<{
-    utterance: string;
-    promise: Promise<string>;
-  } | null>(null);
 
   const clearTurnPhaseThinkingTimeout = useCallback(() => {
     if (turnPhaseThinkingTimeoutRef.current) {
@@ -1994,32 +1893,6 @@ export default function ElevenLabsAgentWidget({
        *  When absent, note is extracted from `message` as best-effort. */
       note?: string;
     }): Promise<string> => {
-      // A pending hosting slot owns the next turn before legacy parameter
-      // validation. ElevenLabs may select send_delegation for a bare answer
-      // such as "6"; requiring name/task first would strand the continuation.
-      if (
-        pendingHostingContinuationRef.current?.kind === "clarification"
-        || pendingHostingClarificationRef.current
-      ) {
-        const authUserId = useAuthStore.getState().user?.id;
-        if (!authUserId) return "You are not signed in. Please sign in and try again.";
-        const peopleState = usePeopleStore.getState();
-        if (peopleState.status === "idle" || peopleState.items.length === 0) {
-          await usePeopleStore.getState().loadFor(authUserId);
-        }
-        const continuationMessage = [...sessionTranscriptRef.current]
-          .reverse()
-          .find((entry) => entry.role === "user")?.message
-          ?? params?.message
-          ?? params?.task
-          ?? "";
-        const continuation = await runHostingContinuation(
-          continuationMessage,
-          usePeopleStore.getState().items,
-        );
-        return continuation.message ?? "I have kept that hosting plan pending.";
-      }
-
       const normalizedName = extractPersonNameParam(params, "name").trim();
       const message = params?.message ?? extractMessageParam(params);
       const note = params?.note;
@@ -2063,17 +1936,45 @@ export default function ElevenLabsAgentWidget({
         .join("\n");
       const guestAction = resolveGuestOutcomeAction(hostingSource);
       if (guestAction !== "none") {
-        const continuation = await runHostingContinuation(hostingSource, people);
-        if (continuation.message) {
+        const operationTurn = await handleOperationalHostingTurn({
+          message: hostingSource,
+          people,
+          pendingDraft: pendingHostingClarificationRef.current,
+        });
+        if (operationTurn.status === "needs_clarification") {
+          pendingHostingClarificationRef.current = operationTurn.draft;
+          pendingPlanRef.current = null;
+          return operationTurn.question ?? "I need a few details before I message anyone.";
+        }
+        pendingHostingClarificationRef.current = null;
+        if (operationTurn.status === "ready") {
+          const plan = operationTurn.plan;
+          if (operationTurn.action === "execute") {
+            const execSummary = await executeProposedPlan(plan, {
+              displayName: displayName ?? null,
+              userId: authUserId,
+              people,
+            });
+            sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+            useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+            lastDirectToolSuccessRef.current = {
+              toolName: "send_delegation",
+              resultText: execSummary,
+              at: new Date().toISOString(),
+              inputSummary: { kind: "guest_operation_execute", instruction: plan.sourceText },
+            };
+            return execSummary;
+          }
+          pendingPlanRef.current = plan;
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
-            resultText: continuation.message,
+            resultText: plan.proposalSpeech,
             at: new Date().toISOString(),
-            inputSummary: { kind: `hosting_${continuation.status}`, instruction: hostingSource },
+            inputSummary: { kind: "guest_operation_reroute", instruction: plan.sourceText },
           };
-          return continuation.message;
+          return plan.proposalSpeech;
         }
-        return "I have kept the hosting plan pending. Tell me when you are ready.";
+        return "Let me put the full plan together for that. One moment, then say yes to send it.";
       }
 
       const matches = people.filter(
@@ -2330,7 +2231,6 @@ export default function ElevenLabsAgentWidget({
       currentTaskContextRef.current = result.taskContext;
       useTasksStore.getState().loadFor(userId, { force: true }).catch(() => {});
       sessionActionsRef.current.push(`Delegated to ${person.name}: ${taskText}`);
-      lastCompletedPeopleActionRef.current = { recipient: person.name, at: Date.now() };
 
       await maybeSendImpliedDinnerDelegation(userId);
 
@@ -2366,7 +2266,6 @@ export default function ElevenLabsAgentWidget({
       clearPendingImages,
       findRecentDuplicateDelegation,
       recordDelegationSent,
-      runHostingContinuation,
     ],
   );
 
@@ -3098,31 +2997,12 @@ export default function ElevenLabsAgentWidget({
       recipient_name: string;
       message: string;
     }): Promise<string> => {
-      // Clear any prior tool's recorded outcome immediately, matching
-      // save_note — a validation failure below must never inherit a stale,
-      // unrelated success/failure result.
-      messageSendOutcomeRef.current = null;
       const name = extractPersonNameParam(params, "recipient_name").trim();
-      const modelMessage = extractMessageParam(params).trim();
-      const currentUtterance = [...sessionTranscriptRef.current]
-        .reverse()
-        .find((message) => message.role === "user")?.message ?? "";
-      const text = preserveDirectCommunicationMeaning(currentUtterance, name, modelMessage);
+      const text = extractMessageParam(params).trim();
 
       console.log("[direct_whatsapp_tool_called]", {
         recipient_name: name,
         message_length: text.length,
-      });
-      // Persisted server-side proof the real handler body was entered at
-      // all — distinguishes this from a policy rejection (which never
-      // reaches this function) or the model never invoking any tool.
-      recordCarsonToolDiagnostic({
-        userId: useAuthStore.getState().user?.id,
-        sessionId: typedConversationIdRef.current,
-        channel: activeChannelRef.current,
-        toolName: "send_direct_whatsapp_message",
-        stage: "handler_started",
-        message: text,
       });
 
       if (!name || !text) {
@@ -3185,16 +3065,6 @@ export default function ElevenLabsAgentWidget({
           recipient: person.name,
           message_length: text.length,
         });
-        recordCarsonToolDiagnostic({
-          userId,
-          sessionId: typedConversationIdRef.current,
-          channel: activeChannelRef.current,
-          toolName: "send_direct_whatsapp_message",
-          stage: "duplicate_suppressed",
-          reason: "recent_recipient_message_match",
-          recipientPersonId: person.id,
-          message: text,
-        });
         return `I already sent ${person.name} that message just now. I won't send it again.`;
       }
 
@@ -3218,41 +3088,15 @@ export default function ElevenLabsAgentWidget({
           deliveryId: delivery.deliveryId,
         });
         recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, text);
-        const resultText = `It's with ${person.name}. I'll watch for the reply.`;
-        messageSendOutcomeRef.current = { outcome: "success", resultText, at: new Date().toISOString() };
-        lastCompletedPeopleActionRef.current = { recipient: person.name, at: Date.now() };
-        recordCarsonToolDiagnostic({
-          userId,
-          sessionId: typedConversationIdRef.current,
-          channel: activeChannelRef.current,
-          toolName: "send_direct_whatsapp_message",
-          stage: "handler_success",
-          recipientPersonId: person.id,
-          message: text,
-          deliveryId: delivery.deliveryId,
-          transportMessageId: delivery.messageId,
-        });
-        return resultText;
+        return `It's with ${person.name}. I'll watch for the reply.`;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
-        const failureStage = err instanceof DirectMessageBoundaryError ? err.stage : "deliver_message";
         console.error("[direct_whatsapp_tool_failed]", {
-          stage: failureStage,
+          stage: err instanceof DirectMessageBoundaryError ? err.stage : "deliver_message",
           recipient: person.name,
           error: errMsg,
         });
-        const resultText = `I couldn't send ${person.name} the message. Please try again.`;
-        messageSendOutcomeRef.current = { outcome: "failure", resultText, at: new Date().toISOString() };
-        recordCarsonToolDiagnostic({
-          userId,
-          sessionId: typedConversationIdRef.current,
-          channel: activeChannelRef.current,
-          toolName: "send_direct_whatsapp_message",
-          stage: "handler_failure",
-          reason: failureStage,
-          recipientPersonId: person.id,
-        });
-        return resultText;
+        return `I couldn't send ${person.name} the message. Please try again.`;
       }
     },
     [],
@@ -4438,22 +4282,37 @@ export default function ElevenLabsAgentWidget({
         }
 
         if (activePlan) {
-          pendingHostingContinuationRef.current = { kind: "approval", plan: activePlan };
-          const continuation = await runHostingContinuation(
-            lastUserMessage || instruction || "",
+          const turn = await handlePendingPlanTurn([lastUserMessage, instruction ?? null], activePlan, {
+            displayName: displayName ?? null,
+            userId: authUserId,
             people,
-          );
-          if (continuation.status === "completed" || continuation.status === "cancelled") {
+          });
+          if (turn.clearPlan) pendingPlanRef.current = null;
+
+          if (turn.action === "executed") {
+            sessionActionsRef.current.push(`Ops plan executed: ${activePlan.sourceText}`);
+            useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+            // Truthfulness wiring (mirrors the Weekly Planning confirm branch
+            // below): without this, EL's own separately-generated spoken
+            // reply for this turn is never checked against the real
+            // execution result, so it can contradict it — the confirmed
+            // production incident this guards against.
             lastDirectToolSuccessRef.current = {
               toolName: "execute_instruction",
-              resultText: continuation.message,
+              resultText: turn.summary ?? "",
               at: new Date().toISOString(),
-              inputSummary: {
-                kind: `guest_plan_${continuation.status}`,
-                instruction: activePlan.sourceText.slice(0, 80),
-              },
+              inputSummary: { kind: "guest_plan_execute", instruction: activePlan.sourceText.slice(0, 80) },
             };
-            return continuation.message;
+            return turn.summary ?? "";
+          }
+          if (turn.action === "cancelled") {
+            lastDirectToolSuccessRef.current = {
+              toolName: "execute_instruction",
+              resultText: turn.summary ?? "",
+              at: new Date().toISOString(),
+              inputSummary: { kind: "guest_plan_cancelled", instruction: activePlan.sourceText.slice(0, 80) },
+            };
+            return turn.summary ?? "";
           }
           // held: plan preserved for a later turn (or discarded on expiry).
           // Fall through to normal handling below.
@@ -4535,23 +4394,57 @@ export default function ElevenLabsAgentWidget({
         // the owner may answer a clarification with short phrases that are not
         // standalone operations. The helper owns accumulated brief → gate →
         // persisted plan for both voice and typed hosting.
-        let pendingHostingState = pendingHostingContinuationRef.current;
-        if (!pendingHostingState && resolveGuestOutcomeAction(rawInstruction) === "none") {
-          pendingHostingState = await loadActiveHostingContinuation().catch(() => null);
-          if (pendingHostingState) pendingHostingContinuationRef.current = pendingHostingState;
+        let pendingOperationDraft = pendingHostingClarificationRef.current;
+        if (!pendingOperationDraft && resolveGuestOutcomeAction(rawInstruction) === "none") {
+          pendingOperationDraft = await loadActiveHostingDraft().catch(() => null);
+          if (pendingOperationDraft) pendingHostingClarificationRef.current = pendingOperationDraft;
         }
-        if (pendingHostingState) {
-          const continuation = await runHostingContinuation(rawInstruction, people);
-          if (continuation.status === "needs_clarification") lastDirectToolSuccessRef.current = null;
-          else if (continuation.message) {
+        if (pendingOperationDraft) {
+          const operationTurn = await handleOperationalHostingTurn({
+            message: rawInstruction,
+            people,
+            pendingDraft: pendingOperationDraft,
+          });
+
+          if (operationTurn.status === "needs_clarification") {
+            pendingHostingClarificationRef.current = operationTurn.draft;
+            lastDirectToolSuccessRef.current = null;
+            return operationTurn.question;
+          }
+
+          pendingHostingClarificationRef.current = null;
+          pendingPlanRef.current = null;
+
+          if (operationTurn.status === "ready") {
+            const plan = operationTurn.plan;
+            if (operationTurn.action === "execute") {
+              const execSummary = await executeProposedPlan(plan, {
+                displayName: displayName ?? null,
+                userId: authUserId,
+                people,
+              });
+              sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+              lastDirectToolSuccessRef.current = {
+                toolName: "execute_instruction",
+                resultText: execSummary,
+                at: new Date().toISOString(),
+                inputSummary: { kind: "guest_plan_execute", instruction: plan.sourceText.slice(0, 80) },
+              };
+              return execSummary;
+            }
+
+            pendingPlanRef.current = plan;
             lastDirectToolSuccessRef.current = {
               toolName: "execute_instruction",
-              resultText: continuation.message,
+              resultText: plan.proposalSpeech,
               at: new Date().toISOString(),
-              inputSummary: { kind: `hosting_${continuation.status}`, instruction: rawInstruction.slice(0, 80) },
+              inputSummary: { kind: "guest_plan_proposal", instruction: plan.sourceText.slice(0, 80) },
             };
+            return plan.proposalSpeech;
           }
-          return continuation.message ?? "I have kept that hosting plan pending.";
+
+          return "I couldn't put that guest plan together right now. Please try again.";
         }
 
         // Guard: a confirmation/rejection with no active plan returns a graceful
@@ -4570,7 +4463,7 @@ export default function ElevenLabsAgentWidget({
         // ("Yes, and please coordinate the table setup...") does not match
         // the exact-match confirmation regex above, so pendingDecision is
         // "hold" and — with no active plan — this would otherwise fall
-        // through to the hosting continuation below and be misread as a
+        // through to handleOperationalHostingTurn below and be misread as a
         // brand new hosting request. Confirmed production incident: Carson
         // spoke a two-person hosting proposal without ever persisting a
         // plan; the owner's "Yes, and..." reply then got misrouted this way,
@@ -4586,22 +4479,54 @@ export default function ElevenLabsAgentWidget({
         // ready", …) → EXECUTE immediately and report the tool-confirmed result.
         // A hosting event WITHOUT operating authority → propose (confirm-before-
         // send). Approval-required sensitive actions are gated at the prompt.
-        const hostingContinuation = await runHostingContinuation(rawInstruction, people);
-        if (hostingContinuation.status !== "not_hosting") {
-          if (hostingContinuation.status === "needs_clarification") {
+        const operationTurn = await handleOperationalHostingTurn({
+          message: rawInstruction,
+          people,
+        });
+        if (operationTurn.status !== "not_operation") {
+          pendingPlanRef.current = null;
+          if (operationTurn.status === "needs_clarification") {
+            pendingHostingClarificationRef.current = operationTurn.draft;
             lastDirectToolSuccessRef.current = null;
-          } else if (hostingContinuation.message) {
+            return operationTurn.question;
+          }
+
+          pendingHostingClarificationRef.current = null;
+
+          if (operationTurn.status === "ready") {
+            const plan = operationTurn.plan;
+            if (operationTurn.action === "execute") {
+              const execSummary = await executeProposedPlan(plan, {
+                displayName: displayName ?? null,
+                userId: authUserId,
+                people,
+              });
+              sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
+              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+              lastDirectToolSuccessRef.current = {
+                toolName: "execute_instruction",
+                resultText: execSummary,
+                at: new Date().toISOString(),
+                inputSummary: {
+                  kind: "guest_plan_execute",
+                  instruction: plan.sourceText.slice(0, 80),
+                },
+              };
+              return execSummary;
+            }
+            pendingPlanRef.current = plan;
             lastDirectToolSuccessRef.current = {
               toolName: "execute_instruction",
-              resultText: hostingContinuation.message,
+              resultText: plan.proposalSpeech,
               at: new Date().toISOString(),
               inputSummary: {
-                kind: `hosting_${hostingContinuation.status}`,
-                instruction: rawInstruction.slice(0, 80),
+                kind: "guest_plan_proposal",
+                instruction: plan.sourceText.slice(0, 80),
               },
             };
+            return plan.proposalSpeech;
           }
-          return hostingContinuation.message ?? "I have kept that hosting plan pending.";
+          return "I couldn't put that guest plan together right now. Please try again.";
         }
 
         // ── Carson Weekly Planning V1 — outcome leg ─────────────────────────
@@ -5112,15 +5037,10 @@ export default function ElevenLabsAgentWidget({
   const saveVoiceSessionSnapshot = useCallback(
     (userId: string | null, transcript: TranscriptMessage[]) => {
       const sessionActions = [...sessionActionsRef.current];
-      const durableMemoryTranscript = sanitizeTranscriptForDurableMemory(transcript);
       if (userId) {
         (async () => {
-          const recap = await summarizeSessionRecap(durableMemoryTranscript.transcript);
-          const recapWithActions = buildSessionRecapWithActions(
-            recap,
-            sessionActions,
-            durableMemoryTranscript.removedOperationalClaims,
-          );
+          const recap = await summarizeSessionRecap(transcript);
+          const recapWithActions = buildSessionRecapWithActions(recap, sessionActions);
           if (recapWithActions) {
             await saveSessionMemory(`${SESSION_RECAP_PREFIX} ${recapWithActions}`);
           }
@@ -5174,9 +5094,7 @@ export default function ElevenLabsAgentWidget({
 
         let conversationSummary: string | null = null;
         try {
-          conversationSummary = await summarizeConversation(
-            durableMemoryTranscript.transcript,
-          );
+          conversationSummary = await summarizeConversation(transcript);
         } catch {
           // Non-fatal — fall back to tool actions only.
         }
@@ -5527,10 +5445,6 @@ export default function ElevenLabsAgentWidget({
     createdReminderKeysRef.current.clear();
     lastCreatedReminderRef.current = null;
     recurringRawRef.current = null;
-    lastCompletedPeopleActionRef.current = null;
-    terminalToolRejectionRef.current = null;
-    routingOwnerRef.current = null;
-    hostingOwnerExecutionRef.current = null;
     invalidCaptureRef.current = null;
     sessionConnectedAtRef.current = null;
     micMuteCallCountRef.current = 0;
@@ -5547,17 +5461,11 @@ export default function ElevenLabsAgentWidget({
     // A persisted hosting clarification survives component remounts and
     // Type/Talk reconnects. Restore its canonical operation before building
     // any opening behavior so a greeting can never interrupt the workflow.
-    const activeHostingContinuation = pendingHostingContinuationRef.current
-      ?? await loadActiveHostingContinuation().catch(() => null)
-      ?? reconstructHostingContinuationFromTypedHistory(restoredTypedMessages);
-    pendingHostingContinuationRef.current = activeHostingContinuation;
-    const activeHostingDraft = activeHostingContinuation?.kind === "clarification"
-      ? activeHostingContinuation.draft
-      : null;
-    pendingHostingClarificationRef.current = activeHostingDraft;
-    pendingPlanRef.current = activeHostingContinuation?.kind === "approval"
-      ? activeHostingContinuation.plan
-      : null;
+    const activeHostingDraft = pendingHostingClarificationRef.current
+      ?? await loadActiveHostingDraft().catch(() => null);
+    if (activeHostingDraft) {
+      pendingHostingClarificationRef.current = activeHostingDraft;
+    }
     if (!isCurrentSession()) return;
 
     // Load structured user memory and recent session summaries before opening
@@ -5731,199 +5639,27 @@ export default function ElevenLabsAgentWidget({
     // never authority to act. Only a durable, newly-submitted owner message
     // opens the typed action window. Keep it open through the agent's reply so
     // legitimate multi-action instructions can still call multiple tools.
-    const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {
-      const currentUtterance = [...sessionTranscriptRef.current]
-        .reverse()
-        .find((message) => message.role === "user")?.message ?? "";
-      const currentRoutingOwner = retainCarsonRoutingOwner(routingOwnerRef.current, {
-        utterance: currentUtterance,
-        people: usePeopleStore.getState().items,
-        hasActiveHostingClarification: Boolean(
-          pendingHostingContinuationRef.current
-          || pendingHostingClarificationRef.current
-          || pendingPlanRef.current
-        ),
-      });
-      routingOwnerRef.current = currentRoutingOwner;
-      // Persisted server-side (unlike recordCarsonDiagnostic's localStorage-only
-      // buffer below) so a future incident is traceable from the database —
-      // see carson-tool-diagnostics.ts's doc comment for why this exists.
-      recordCarsonToolDiagnostic({
-        userId: authenticatedUserId,
-        sessionId: typedConversationIdRef.current,
-        channel: requestedChannel,
-        toolName,
-        stage: "invoked",
-        utterance: currentUtterance,
-      });
-      // Carson intent-architecture (2026-07-30): route_people_action is now
-      // the semantic entry point for communication/delegation. These two
-      // tools remain registered for execution and rollback, but a direct
-      // model call to either of them — bypassing route_people_action — is
-      // compatibility telemetry to watch during rollout, not the desired
-      // steady state. Recorded here (not inside each handler) so it covers
-      // every call site uniformly.
-      if (LEGACY_PEOPLE_TOOLS.has(toolName)) {
-        recordCarsonToolDiagnostic({
-          userId: authenticatedUserId,
-          sessionId: typedConversationIdRef.current,
-          channel: requestedChannel,
-          toolName,
-          stage: "legacy_people_tool_bypass",
-        });
-      }
-
-      const orphanedConfirmationReply = resolveOrphanedPeopleToolConfirmation({
-        utterance: currentUtterance,
-        selectedTool: toolName,
-        hasPendingContinuation: Boolean(
-          pendingHostingContinuationRef.current
-          || pendingPlanRef.current
-          || pendingWeekPlanRef.current
-        ),
-        hasRecentCompletedPeopleAction: Boolean(
-          lastCompletedPeopleActionRef.current
-          && Date.now() - lastCompletedPeopleActionRef.current.at <= 5 * 60 * 1000
-        ),
-      });
-      if (orphanedConfirmationReply) {
-        recordCarsonToolDiagnostic({
-          userId: authenticatedUserId,
-          sessionId: typedConversationIdRef.current,
-          channel: requestedChannel,
-          toolName,
-          stage: "orphaned_confirmation_blocked",
-          reason: "completed_people_action_has_no_pending_continuation",
-        });
-        return orphanedConfirmationReply;
-      }
-
+    const guardCurrentToolInvocation = (toolName: string): string | null => {
       if (requestedChannel === "voice") {
-        const captureBlock = guardCurrentVoiceCapture(toolName);
-        if (captureBlock) return captureBlock;
+        return guardCurrentVoiceCapture(toolName);
       }
       // Type to Carson is advisory-only — a typed request must never reach a
       // state-changing tool, even if the model attempts the call. Checked
-      // before the owner-turn guard below so it applies unconditionally across
-      // every typed call site. Gated on requestedChannel === "text": Talk to
-      // Carson (voice) is the sole execution channel and must never be
-      // blocked here (confirmed production incident 2026-07-29: this check
-      // had no channel guard and silently blocked send_direct_whatsapp_message
-      // on real voice calls, before the tool-policy gate or handler ever ran).
-      if (requestedChannel === "text" && TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {
-        const diagnostic = {
-          kind: "tool_policy_rejected",
-          toolName,
-          channel: requestedChannel,
-          intent: "channel_authority",
-          routingDomain: "unknown",
-          reason: "Type to Carson is advisory-only and cannot authorize a mutation.",
-          missingEntities: [],
-          eligibleTools: [],
-          at: new Date().toISOString(),
-        };
+      // before the owner-turn guard below so it applies unconditionally.
+      if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {
         console.warn("[carson-typed] blocked state-changing tool — typed mode is advisory-only", {
           toolName,
           at: new Date().toISOString(),
         });
-        recordCarsonDiagnostic("carson-direct-tool", diagnostic);
-        recordCarsonToolDiagnostic({
-          userId: authenticatedUserId,
-          sessionId: typedConversationIdRef.current,
-          channel: requestedChannel,
-          toolName,
-          stage: "typed_blocked",
-          reason: diagnostic.reason,
-        });
         return TYPED_BLOCKED_TOOL_MESSAGES[toolName];
       }
-      if (requestedChannel === "text" && !pendingTypedClientMessageIdRef.current) {
-        console.warn("[carson-typed] blocked tool without an active owner turn", {
-          toolName,
-          at: new Date().toISOString(),
-        });
-        return "No new typed owner instruction is active. Do not act on chat history or contextual updates; wait for the owner's next message.";
-      }
+      if (pendingTypedClientMessageIdRef.current) return null;
 
-      // The transcript-scoped capability owner is authoritative. Structured
-      // people evidence still owns the communication-vs-delegation subtype,
-      // but it cannot claim a Hosting-owned transcript.
-      if (toolName === "route_people_action") {
-        if (routingOwnerAllowsPeopleAction(currentRoutingOwner)) return null;
-        const outcome = currentRoutingOwner.intent === "hosting"
-          ? "This request is already being handled by Hosting."
-          : "This request does not belong to a people action.";
-        terminalToolRejectionRef.current = {
-          toolName,
-          outcome,
-          at: new Date().toISOString(),
-        };
-        throw new CarsonTerminalToolRejection(toolName, outcome);
-      }
-
-      const policyDecision = evaluateCarsonToolPolicy({
-        utterance: currentUtterance,
-        channel: requestedChannel,
-        selectedTool: toolName,
-        toolArguments,
-        people: usePeopleStore.getState().items,
-        hasActiveHostingClarification: Boolean(
-          pendingHostingContinuationRef.current
-          || pendingHostingClarificationRef.current
-          || pendingPlanRef.current
-        ),
-      });
-      if (policyDecision.allowed) return null;
-      if (
-        Boolean(
-          toolArguments
-          && typeof toolArguments === "object"
-          && (toolArguments as Record<PropertyKey, unknown>)[LEGACY_COMMUNICATION_REDIRECT],
-        )
-        && toolName === "send_delegation"
-        && policyDecision.intent === "direct_communication"
-        && policyDecision.eligibleTools.includes("send_direct_whatsapp_message")
-      ) {
-        return null;
-      }
-
-      const diagnostic = {
-        kind: "tool_policy_rejected",
+      console.warn("[carson-typed] blocked tool without an active owner turn", {
         toolName,
-        channel: requestedChannel,
-        intent: policyDecision.intent,
-        routingDomain: policyDecision.routingDomain,
-        reason: policyDecision.reason,
-        missingEntities: policyDecision.missingEntities,
-        eligibleTools: policyDecision.eligibleTools,
         at: new Date().toISOString(),
-      };
-      console.warn("[carson-tool-policy] rejected before side effect", diagnostic);
-      recordCarsonDiagnostic("carson-direct-tool", diagnostic);
-      recordCarsonToolDiagnostic({
-        userId: authenticatedUserId,
-        sessionId: typedConversationIdRef.current,
-        channel: requestedChannel,
-        toolName,
-        stage: "policy_rejected",
-        reason: policyDecision.reason,
-        missingEntities: policyDecision.missingEntities,
       });
-      terminalToolRejectionRef.current = {
-        toolName,
-        outcome: policyDecision.outcome,
-        at: new Date().toISOString(),
-      };
-      throw new CarsonTerminalToolRejection(toolName, policyDecision.outcome);
-    };
-    const executeHostingOwnerOnce = (utterance: string): Promise<string> => {
-      const normalizedUtterance = utterance.trim();
-      if (hostingOwnerExecutionRef.current?.utterance === normalizedUtterance) {
-        return hostingOwnerExecutionRef.current.promise;
-      }
-      const promise = executeInstruction({ instruction: normalizedUtterance });
-      hostingOwnerExecutionRef.current = { utterance: normalizedUtterance, promise };
-      return promise;
+      return "No new typed owner instruction is active. Do not act on chat history or contextual updates; wait for the owner's next message.";
     };
 
     try {
@@ -5992,7 +5728,7 @@ export default function ElevenLabsAgentWidget({
           // through the same shared Carson instruction pipeline. Use this for all
           // compound instructions, personal notes, and ambiguous cases.
           execute_instruction: async (params: ExecuteInstructionParams) => {
-            const captureBlock = guardCurrentToolInvocation("execute_instruction", params);
+            const captureBlock = guardCurrentToolInvocation("execute_instruction");
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "execute_instruction";
             setTurnPhase("acting");
@@ -6013,12 +5749,7 @@ export default function ElevenLabsAgentWidget({
               toolCompletedPerf: null,
             };
             try {
-              const currentUtterance = [...sessionTranscriptRef.current]
-                .reverse()
-                .find((message) => message.role === "user")?.message ?? "";
-              const result = routingOwnerRef.current?.intent === "hosting"
-                ? await executeHostingOwnerOnce(currentUtterance)
-                : await executeInstruction(params);
+              const result = await executeInstruction(params);
               trace.outcome = "success";
               return result;
             } catch (err) {
@@ -6046,7 +5777,7 @@ export default function ElevenLabsAgentWidget({
           // Diagnostic wrappers only set/clear toolInFlightRef — behavior is
           // identical to calling sendFollowup / sendDelegation directly.
           send_followup: async (params: Parameters<typeof sendFollowup>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("send_followup", params);
+            const captureBlock = guardCurrentToolInvocation("send_followup");
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_followup";
             try {
@@ -6057,145 +5788,9 @@ export default function ElevenLabsAgentWidget({
               toolInFlightRef.current = null;
             }
           },
-          // ------------------------------------------------------------------
-          // Client tool: route_people_action (Carson intent architecture, 2026-07-30)
-          // Semantic entry point for communication/delegation — the model
-          // describes the intended outcome as structured evidence fields; it
-          // no longer chooses between send_direct_whatsapp_message and
-          // send_delegation itself. resolveCarsonPeopleAction is the
-          // deterministic layer that reads those fields (never raw text) and
-          // decides which of the two existing, unchanged handlers to call.
-          // ------------------------------------------------------------------
-          route_people_action: async (params: CarsonPeopleActionEnvelope) => {
-            const currentUtterance = [...sessionTranscriptRef.current]
-              .reverse()
-              .find((message) => message.role === "user")?.message ?? "";
-            const owner = retainCarsonRoutingOwner(routingOwnerRef.current, {
-              utterance: currentUtterance,
-              people: usePeopleStore.getState().items,
-              hasActiveHostingClarification: Boolean(
-                pendingHostingContinuationRef.current
-                || pendingHostingClarificationRef.current
-                || pendingPlanRef.current
-              ),
-            });
-            routingOwnerRef.current = owner;
-            if (owner.intent === "hosting") {
-              toolInFlightRef.current = "execute_instruction";
-              setTurnPhase("acting");
-              toolRanForCurrentTranscriptRef.current = true;
-              try {
-                return await executeHostingOwnerOnce(currentUtterance);
-              } finally {
-                toolInFlightRef.current = null;
-                setTurnPhase((prev) => (prev === "acting" ? "thinking" : prev));
-              }
-            }
-            const captureBlock = guardCurrentToolInvocation("route_people_action", params);
-            if (captureBlock) return captureBlock;
-
-            const decision = resolveCarsonPeopleAction(params);
-
-            if (decision.status === "clarify") {
-              recordCarsonToolDiagnostic({
-                userId: authenticatedUserId,
-                sessionId: typedConversationIdRef.current,
-                channel: requestedChannel,
-                toolName: "route_people_action",
-                stage: "people_action_clarify",
-                reason: decision.reason,
-                actionType: params?.actionType ?? null,
-              });
-              return decision.question;
-            }
-
-            recordCarsonToolDiagnostic({
-              userId: authenticatedUserId,
-              sessionId: typedConversationIdRef.current,
-              channel: requestedChannel,
-              toolName: "route_people_action",
-              stage: "people_action_mapped",
-              actionType: params?.actionType ?? null,
-              selectedTool: decision.tool,
-            });
-
-            if (decision.tool === "send_direct_whatsapp_message") {
-              toolInFlightRef.current = "send_direct_whatsapp_message";
-              const resultPromise = runDirectToolWithDiagnostic("send_direct_whatsapp_message", decision.params, () =>
-                sendDirectWhatsAppMessage(decision.params),
-              );
-              // Same reasoning as the direct send_direct_whatsapp_message
-              // registration below — see messageSendInFlightRef doc comment.
-              messageSendInFlightRef.current = resultPromise
-                .then(() => messageSendOutcomeRef.current)
-                .catch(() => null);
-              try {
-                return await resultPromise;
-              } finally {
-                toolInFlightRef.current = null;
-              }
-            }
-
-            toolInFlightRef.current = "send_delegation";
-            try {
-              return await runDirectToolWithDiagnostic("send_delegation", decision.params, () =>
-                sendDelegation(decision.params),
-              );
-            } finally {
-              toolInFlightRef.current = null;
-            }
-          },
           send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {
-            const currentUtterance = [...sessionTranscriptRef.current]
-              .reverse()
-              .find((message) => message.role === "user")?.message ?? "";
-            const communicationRedirect = resolveLegacyPeopleToolCommunicationRedirect({
-              utterance: currentUtterance,
-              channel: requestedChannel,
-              selectedTool: "send_delegation",
-              toolArguments: params,
-              people: usePeopleStore.getState().items,
-              hasActiveHostingClarification: Boolean(pendingHostingClarificationRef.current),
-            });
-            if (communicationRedirect) {
-              Object.assign(params, { [LEGACY_COMMUNICATION_REDIRECT]: true });
-            }
-            const captureBlock = guardCurrentToolInvocation("send_delegation", params);
+            const captureBlock = guardCurrentToolInvocation("send_delegation");
             if (captureBlock) return captureBlock;
-
-            if (communicationRedirect) {
-              toolInFlightRef.current = communicationRedirect.finalTool;
-              const resultPromise = runDirectToolWithDiagnostic(
-                communicationRedirect.finalTool,
-                communicationRedirect.params,
-                () => executeLegacyPeopleCommunicationRedirect({
-                  redirect: communicationRedirect,
-                  utterance: currentUtterance,
-                  recordRedirect: (event) => {
-                    recordCarsonToolDiagnostic({
-                      userId: authenticatedUserId,
-                      sessionId: typedConversationIdRef.current,
-                      channel: requestedChannel,
-                      toolName: event.originalTool,
-                      stage: "legacy_people_tool_redirected",
-                      reason: "plain_communication_selected_as_delegation",
-                      selectedTool: event.finalTool,
-                      message: event.normalizedMessage,
-                    });
-                  },
-                  sendDirectMessage: sendDirectWhatsAppMessage,
-                }),
-              );
-              messageSendInFlightRef.current = resultPromise
-                .then(() => messageSendOutcomeRef.current)
-                .catch(() => null);
-              try {
-                return await resultPromise;
-              } finally {
-                toolInFlightRef.current = null;
-              }
-            }
-
             toolInFlightRef.current = "send_delegation";
             try {
               return await runDirectToolWithDiagnostic("send_delegation", params, () =>
@@ -6206,14 +5801,14 @@ export default function ElevenLabsAgentWidget({
             }
           },
           create_reminder: (params: Parameters<typeof createReminder>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_reminder", params);
+            const captureBlock = guardCurrentToolInvocation("create_reminder");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_reminder", params, () =>
               createReminder(params),
             );
           },
           create_automation: (params: Parameters<typeof createAutomation>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_automation", params);
+            const captureBlock = guardCurrentToolInvocation("create_automation");
             if (captureBlock) return captureBlock;
             setTurnPhase("acting");
             toolRanForCurrentTranscriptRef.current = true;
@@ -6222,78 +5817,70 @@ export default function ElevenLabsAgentWidget({
             });
           },
           send_direct_whatsapp_message: async (params: { recipient_name: string; message: string }) => {
-            const captureBlock = guardCurrentToolInvocation("send_direct_whatsapp_message", params);
+            const captureBlock = guardCurrentToolInvocation("send_direct_whatsapp_message");
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_direct_whatsapp_message";
-            const resultPromise = runDirectToolWithDiagnostic("send_direct_whatsapp_message", params, () =>
-              sendDirectWhatsAppMessage(params),
-            );
-            // Captured for THIS invocation only, before awaiting — onMessage
-            // can await this to learn the real outcome instead of reading a
-            // still-null messageSendOutcomeRef snapshot while the real send
-            // is still in flight (see messageSendInFlightRef doc comment).
-            messageSendInFlightRef.current = resultPromise
-              .then(() => messageSendOutcomeRef.current)
-              .catch(() => null);
             try {
-              return await resultPromise;
+              return await runDirectToolWithDiagnostic("send_direct_whatsapp_message", params, () =>
+                sendDirectWhatsAppMessage(params),
+              );
             } finally {
               toolInFlightRef.current = null;
             }
           },
           save_city: (params: Parameters<typeof saveCity>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("save_city", params);
+            const captureBlock = guardCurrentToolInvocation("save_city");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("save_city", params, () => saveCity(params));
           },
           save_note: (params: Parameters<typeof saveNote>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("save_note", params);
+            const captureBlock = guardCurrentToolInvocation("save_note");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("save_note", params, () => saveNote(params));
           },
           act_on_note: (params: Parameters<typeof actOnNote>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("act_on_note", params);
+            const captureBlock = guardCurrentToolInvocation("act_on_note");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("act_on_note", params, () => actOnNote(params));
           },
           create_todo: (params: Parameters<typeof createTodoTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_todo", params);
+            const captureBlock = guardCurrentToolInvocation("create_todo");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_todo", params, () => createTodoTool(params));
           },
           complete_todo: (params: Parameters<typeof completeTodoTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("complete_todo", params);
+            const captureBlock = guardCurrentToolInvocation("complete_todo");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("complete_todo", params, () => completeTodoTool(params));
           },
           control_task: (params: Parameters<typeof controlTaskTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("control_task", params);
+            const captureBlock = guardCurrentToolInvocation("control_task");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("control_task", params, () => controlTaskTool(params));
           },
           get_calendar_events: (params: Parameters<typeof getCalendarEvents>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("get_calendar_events", params);
+            const captureBlock = guardCurrentToolInvocation("get_calendar_events");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("get_calendar_events", params, () =>
               getCalendarEvents(params),
             );
           },
           create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_calendar_event", params);
+            const captureBlock = guardCurrentToolInvocation("create_calendar_event");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_calendar_event", params, () =>
               createCalendarEvent(params),
             );
           },
           update_calendar_event: (params: Parameters<typeof updateCalendarEventTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("update_calendar_event", params);
+            const captureBlock = guardCurrentToolInvocation("update_calendar_event");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("update_calendar_event", params, () =>
               updateCalendarEventTool(params),
             );
           },
           delete_calendar_event: (params: Parameters<typeof deleteCalendarEventTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("delete_calendar_event", params);
+            const captureBlock = guardCurrentToolInvocation("delete_calendar_event");
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("delete_calendar_event", params, () =>
               deleteCalendarEventTool(params),
@@ -6307,7 +5894,7 @@ export default function ElevenLabsAgentWidget({
             category?: string;
           }) =>
             {
-              const captureBlock = guardCurrentToolInvocation("save_instruction", { instruction, category });
+              const captureBlock = guardCurrentToolInvocation("save_instruction");
               if (captureBlock) return captureBlock;
               return runDirectToolWithDiagnostic(
                 "save_instruction",
@@ -6415,19 +6002,6 @@ export default function ElevenLabsAgentWidget({
             // earlier, unrelated turn must never be read as "this turn's"
             // result (see noteSaveOutcomeRef doc comment).
             noteSaveOutcomeRef.current = null;
-            // Same reasoning — see messageSendOutcomeRef doc comment.
-            messageSendOutcomeRef.current = null;
-            // Same reasoning — see messageSendInFlightRef doc comment. A
-            // stale in-flight promise from an earlier turn must never be
-            // awaited as if it belonged to this new turn.
-            messageSendInFlightRef.current = null;
-            // A social acknowledgement ("Thank you") is not new execution
-            // authority and must not erase a just-rejected operation. A
-            // substantive fresh utterance may supply the missing information
-            // or begin an unrelated request, so only that clears the state.
-            if (shouldClearTerminalToolRejection(message)) {
-              terminalToolRejectionRef.current = null;
-            }
 
             const receivedAt = new Date().toISOString();
             const captureEvaluation = evaluateCarsonTranscriptCapture(message);
@@ -6490,16 +6064,6 @@ export default function ElevenLabsAgentWidget({
             }
 
             invalidCaptureRef.current = null;
-            hostingOwnerExecutionRef.current = null;
-            routingOwnerRef.current = selectCarsonRoutingOwner({
-              utterance: message,
-              people: usePeopleStore.getState().items,
-              hasActiveHostingClarification: Boolean(
-                pendingHostingContinuationRef.current
-                || pendingHostingClarificationRef.current
-                || pendingPlanRef.current
-              ),
-            });
             sessionTranscriptRef.current.push({ role, message });
             setLastUserTranscript(message);
             if (userTranscriptTimerRef.current) {
@@ -6570,80 +6134,15 @@ export default function ElevenLabsAgentWidget({
                 .slice(0, -1)
                 .reverse()
                 .find((entry) => entry.role === "user")?.message ?? "";
-            // Confirmed production incident (2026-07-29, ~20:19 Turkey time): a
-            // genuine voice send_direct_whatsapp_message call succeeded, but
-            // this onMessage event was processed ~35ms BEFORE the tool's own
-            // handler_success — i.e. while the real WhatsApp network send was
-            // still in flight — so messageSendOutcomeRef.current was still
-            // null at this exact instant purely because the result wasn't
-            // known yet, not because it had failed. Reading that snapshot
-            // immediately below would incorrectly conclude "unconfirmed" for
-            // a call that goes on to succeed moments later. When a real
-            // in-flight promise exists for this turn, await its authoritative
-            // settle before finalizing the classification instead — this
-            // never delays or changes the case where no tool was invoked at
-            // all this turn (the original 2026-07-13/07-29 fabrication bug
-            // this guard exists for), since messageSendInFlightRef is only
-            // ever set by a genuine send_direct_whatsapp_message call.
-            const pendingMessageSend = messageSendInFlightRef.current;
-            if (
-              requestedChannel === "voice" &&
-              messageSendOutcomeRef.current === null &&
-              pendingMessageSend &&
-              // Confirmed 2026-07-30 incident: a false FAILURE claim ("I
-              // wasn't able to send that.") never triggered this deferral at
-              // all, because the old gate only matched success-shaped
-              // claims — looksLikeMessageSendOutcomeClaim matches either
-              // direction, so a premature/false claim of either kind now
-              // waits for the real result instead of being spoken as-is.
-              looksLikeMessageSendOutcomeClaim(message, previousUserMessage)
-            ) {
-              const entryIndex = sessionTranscriptRef.current.length - 1;
-              setLastCarsonMessage(message);
-              void (async () => {
-                const resolvedOutcome = await resolvePendingMessageSendOutcome(pendingMessageSend);
-                if (!isCurrentSession()) return;
-                const correctedDisplayMessage = resolveSanitizedCarsonDisplayMessage({
-                  agentMessage: message,
-                  previousUserMessage,
-                  lastSuccess: lastDirectToolSuccessRef.current,
-                  noteSaveOutcome: noteSaveOutcomeRef.current,
-                  messageSendOutcome: resolvedOutcome ?? messageSendOutcomeRef.current,
-                });
-                if (correctedDisplayMessage === message) return;
-                if (sessionTranscriptRef.current[entryIndex]?.message === message) {
-                  sessionTranscriptRef.current[entryIndex] = { role, message: correctedDisplayMessage };
-                }
-                console.log("[carson-text] sanitized Carson reply text after awaiting in-flight tool result", {
-                  eventId: event_id ?? null,
-                });
-                recordCarsonToolDiagnostic({
-                  userId: authenticatedUserId,
-                  sessionId: typedConversationIdRef.current,
-                  channel: requestedChannel,
-                  toolName: "agent_reply_correction",
-                  stage: "claim_overridden",
-                  utterance: previousUserMessage,
-                  message,
-                });
-                setLastCarsonMessage(correctedDisplayMessage);
-              })();
-              return;
-            }
             // This onMessage callback delivers the agent's own separately-generated
             // reply — it can contradict a direct tool call that just succeeded
             // (create_todo P0). Prefer the tool's own success result when the
             // agent's message reads as a failure shortly after that tool ran.
-            const terminalSafeMessage = resolveTerminalToolRejectionReply(
-              message,
-              terminalToolRejectionRef.current,
-            );
             const displayMessage = resolveSanitizedCarsonDisplayMessage({
-              agentMessage: terminalSafeMessage,
+              agentMessage: message,
               previousUserMessage,
               lastSuccess: lastDirectToolSuccessRef.current,
               noteSaveOutcome: noteSaveOutcomeRef.current,
-              messageSendOutcome: messageSendOutcomeRef.current,
             });
             // Typed-only truthfulness guard: no state-changing tool call can
             // ever succeed for typed (every one is blocked before it runs —
@@ -6668,22 +6167,6 @@ export default function ElevenLabsAgentWidget({
               };
               console.log("[carson-text] sanitized Carson reply text", {
                 eventId: event_id ?? null,
-              });
-              // Persisted proof the displayed transcript was corrected this
-              // turn — the model's own spoken/original text (hashed, never
-              // stored raw) claimed an outcome the truthfulness guard could
-              // not confirm. Voice audio itself cannot be corrected the same
-              // way — see docs/elevenlabs-prompt-patches/ for the prompt-side
-              // mitigation — but this at least proves the divergence occurred
-              // and for which turn.
-              recordCarsonToolDiagnostic({
-                userId: authenticatedUserId,
-                sessionId: typedConversationIdRef.current,
-                channel: requestedChannel,
-                toolName: "agent_reply_correction",
-                stage: "claim_overridden",
-                utterance: previousUserMessage,
-                message,
               });
             }
             console.log("[transcript] agent role confirmed, message len=%d", finalDisplayMessage.length);
@@ -6819,15 +6302,6 @@ export default function ElevenLabsAgentWidget({
           lastUserTranscriptTimingRef.current = null;
           turnLatencyLoggedForEventIdRef.current = null;
           toolRanForCurrentTranscriptRef.current = false;
-          // Same reasoning as the latency refs above — a stale in-flight
-          // promise or outcome from a call that never got to settle (or
-          // settled after this session already ended) must never be read by
-          // a NEXT session's onMessage as if it belonged to a fresh turn.
-          // Confirmed gap during the 2026-07-29 spoken-truthfulness review:
-          // these three were cleared at every turn boundary but not here.
-          noteSaveOutcomeRef.current = null;
-          messageSendOutcomeRef.current = null;
-          messageSendInFlightRef.current = null;
           setSessionEndedMsg("Session ended.");
           setLastUserTranscript(null);
           if (requestedChannel === "voice") {
@@ -6868,17 +6342,6 @@ export default function ElevenLabsAgentWidget({
             micMuteCallCount: micMuteCallCountRef.current,
             at: new Date().toISOString(),
           });
-          if (
-            terminalToolRejectionRef.current
-            && /client tool execution failed/i.test(String(msg ?? ""))
-          ) {
-            recordCarsonDiagnostic("carson-direct-tool", {
-              kind: "terminal_policy_rejection_ui_suppressed",
-              toolName: terminalToolRejectionRef.current.toolName,
-              at: new Date().toISOString(),
-            });
-            return;
-          }
           checkForSessionChurn("sdk-error");
 
           // Keep error visible until the user closes it.
@@ -6896,11 +6359,6 @@ export default function ElevenLabsAgentWidget({
           lastUserTranscriptTimingRef.current = null;
           turnLatencyLoggedForEventIdRef.current = null;
           toolRanForCurrentTranscriptRef.current = false;
-          // See onDisconnect: same reasoning for these three — a stale
-          // in-flight promise or outcome must never leak into a later session.
-          noteSaveOutcomeRef.current = null;
-          messageSendOutcomeRef.current = null;
-          messageSendInFlightRef.current = null;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
           // Save whatever transcript we have so the session isn't lost.
@@ -7213,22 +6671,30 @@ export default function ElevenLabsAgentWidget({
           await usePeopleStore.getState().loadFor(authUserId);
         }
         const people = usePeopleStore.getState().items;
-        pendingHostingContinuationRef.current = { kind: "approval", plan: activeTypedPlan };
-        const continuation = await runHostingContinuation(savedMessage.content, people);
-        if (continuation.status === "completed") {
+        const turn = await handlePendingPlanTurn([savedMessage.content], activeTypedPlan, {
+          displayName: displayName ?? null,
+          userId: authUserId,
+          people,
+        });
+        if (turn.clearPlan) pendingPlanRef.current = null;
+        if (turn.clearPlan) pendingHostingClarificationRef.current = null;
+
+        if (turn.action === "executed") {
           sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+          sessionActionsRef.current.push(`Ops plan executed: ${activeTypedPlan.sourceText}`);
+          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
           await persistLocalTypedAgentReply({
             replyToClientMessageId: clientMessageId,
-            content: continuation.message,
+            content: turn.summary ?? "",
             clearPendingPhotos: true,
           });
           return;
         }
-        if (continuation.status === "cancelled" || continuation.status === "error") {
+        if (turn.action === "cancelled") {
           sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
           await persistLocalTypedAgentReply({
             replyToClientMessageId: clientMessageId,
-            content: continuation.message,
+            content: turn.summary ?? "",
             clearPendingPhotos: true,
           });
           return;
@@ -7255,26 +6721,129 @@ export default function ElevenLabsAgentWidget({
       // is generated — whether it's a brand-new hosting request
       // (typedGuestAction !== "none") or a continuation of a clarification
       // already pending (from this session or a prior one, possibly started
-      // via Talk to Carson). Planning and clarification still use the
-      // canonical continuation slot in typed mode; only approval execution
-      // remains blocked by the advisory boundary above.
+      // via Talk to Carson). handleOperationalHostingTurn — the only call
+      // site that can build/persist a proposal — is never reached from typed
+      // for either case while advisory-only. The underlying pending
+      // operation, if any, is left completely untouched so Talk to Carson
+      // can still pick it up. Flip TYPED_MODE_IS_ADVISORY_ONLY to false to
+      // fully and reversibly restore the prior "planning allowed, only
+      // approval/execution blocked" behavior in the else branch below.
       const pendingHostingClarification = pendingHostingClarificationRef.current;
-      if (pendingHostingClarification || typedGuestAction !== "none") {
+      if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: TYPED_ADVISORY_HOSTING_REQUEST,
+          clearPendingPhotos: true,
+        });
+        return;
+      }
+
+      if (pendingHostingClarification) {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+
         let people = usePeopleStore.getState().items;
         if (authUserId && (usePeopleStore.getState().status === "idle" || people.length === 0)) {
           await usePeopleStore.getState().loadFor(authUserId);
           people = usePeopleStore.getState().items;
         }
-        const continuation = await runHostingContinuation(
-          savedMessage.content,
+
+        const operationTurn = await handleOperationalHostingTurn({
+          message: savedMessage.content,
           people,
-          clientMessageId,
-        );
+          pendingDraft: pendingHostingClarification,
+          askedAtClientMessageId: clientMessageId,
+        });
+        if (operationTurn.status === "needs_clarification") {
+          pendingHostingClarificationRef.current = operationTurn.draft;
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: operationTurn.question,
+            clearPendingPhotos: false,
+          });
+          return;
+        }
+
+        pendingHostingClarificationRef.current = null;
+        pendingPlanRef.current = null;
+
+        if (!authUserId) {
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: "You are not signed in. Please sign in and try again.",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
+        if (operationTurn.status !== "ready") {
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: "I couldn't put that guest plan together right now. Please try again.",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
+        const plan = operationTurn.plan;
+        pendingPlanRef.current = plan;
         await persistLocalTypedAgentReply({
           replyToClientMessageId: clientMessageId,
-          content: continuation.message ?? "I have kept that hosting plan pending.",
-          clearPendingPhotos: continuation.status !== "needs_clarification",
+          content: plan.proposalSpeech,
+          clearPendingPhotos: true,
+        });
+        return;
+      }
+
+      if (typedGuestAction !== "none") {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        pendingPlanRef.current = null;
+        let people = usePeopleStore.getState().items;
+        if (authUserId && (usePeopleStore.getState().status === "idle" || people.length === 0)) {
+          await usePeopleStore.getState().loadFor(authUserId);
+          people = usePeopleStore.getState().items;
+        }
+        const operationTurn = await handleOperationalHostingTurn({
+          message: savedMessage.content,
+          people,
+          askedAtClientMessageId: clientMessageId,
+        });
+        if (operationTurn.status === "needs_clarification") {
+          pendingHostingClarificationRef.current = operationTurn.draft;
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: operationTurn.question,
+            clearPendingPhotos: false,
+          });
+          return;
+        }
+
+        pendingHostingClarificationRef.current = null;
+
+        if (!authUserId) {
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: "You are not signed in. Please sign in and try again.",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
+        if (operationTurn.status !== "ready") {
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: "I couldn't put that guest plan together right now. Please try again.",
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
+        const plan = operationTurn.plan;
+        pendingPlanRef.current = plan;
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: plan.proposalSpeech,
+          clearPendingPhotos: true,
         });
         return;
       }
@@ -7516,8 +7085,6 @@ export default function ElevenLabsAgentWidget({
       pendingTypedClientMessageIdRef.current = clientMessageId;
       // New typed turn starting — see noteSaveOutcomeRef doc comment.
       noteSaveOutcomeRef.current = null;
-      messageSendOutcomeRef.current = null;
-      messageSendInFlightRef.current = null;
       typedResponseTimeoutRef.current = setTimeout(() => {
         if (pendingTypedClientMessageIdRef.current !== clientMessageId) return;
         typedResponseTimeoutRef.current = null;

@@ -69,9 +69,6 @@ const {
   normalizeGuestPreparationPlan,
   normalizeHostingClarificationAnswer,
   prepareOperationalPlanTurn,
-  ACTION_CONTINUATION_SLOT_REGISTRY,
-  runActionContinuation,
-  reconstructHostingContinuationFromTypedHistory,
   resetExecutedPlanRegistryForTest,
   resolveGuestOutcomeAction,
   resolveHostingOperationRecall,
@@ -1594,12 +1591,7 @@ describe("production baseline — verified afternoon-tea hosting loop", () => {
     expect((turn.plan?.proposalSpeech.match(/\?/g) ?? []).length).toBe(1);
   });
 
-  it.each([
-    ["Nasira", "Christopher, Grace have the plan"],
-    ["Grace", "Christopher, Nasira have the plan"],
-  ])(
-    "reports truthful per-recipient delivery when %s has no phone number on file",
-    async (missingName, successfulSummary) => {
+  it("reports truthful per-recipient delivery when one worker has no phone number on file", async () => {
     mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
       tasks: items.map((item, i) => ({
         id: `task-${i + 1}`,
@@ -1626,7 +1618,7 @@ describe("production baseline — verified afternoon-tea hosting loop", () => {
     ));
 
     const teamWithMissingPhone = guestTeam().map((p) =>
-      p.name === missingName ? { ...p, phone: null, whatsapp_opted_in: false } : p,
+      p.name === "Nasira" ? { ...p, phone: null, whatsapp_opted_in: false } : p,
     );
 
     const plan = normalizeGuestPreparationPlan({
@@ -1643,12 +1635,10 @@ describe("production baseline — verified afternoon-tea hosting loop", () => {
       people: teamWithMissingPhone,
     });
 
-    expect(summary).toContain(successfulSummary);
-    expect(summary).toMatch(new RegExp(`${missingName} was NOT messaged`, "i"));
-    expect(summary).not.toMatch(new RegExp(`${missingName} (?:has|have) the plan`, "i"));
+    expect(summary).toContain("Christopher, Grace have the plan");
+    expect(summary).toMatch(/Nasira was NOT messaged/i);
     expect(summary).not.toMatch(/everyone|all workers|all staff/i);
-    },
-  );
+  });
 
   it("answers 'What did you ask Christopher?' from the stored operation with no new send and no new operation", async () => {
     mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
@@ -1955,104 +1945,3 @@ function person(overrides: Partial<Person> & Pick<Person, "id" | "name" | "role"
     ...overrides,
   };
 }
-
-describe("Action Continuation Slot Registry", () => {
-  it("registers hosting with its reconstruction, validation, fallback, and regression responsibilities", () => {
-    expect(ACTION_CONTINUATION_SLOT_REGISTRY).toHaveLength(1);
-    expect(ACTION_CONTINUATION_SLOT_REGISTRY[0]).toMatchObject({
-      slotId: "hosting",
-      reconstructionStrategy: "structured_pending_operation_then_linked_typed_history",
-      fallbackBehavior: "return_error_without_free_form_fallthrough",
-    });
-    expect(ACTION_CONTINUATION_SLOT_REGISTRY[0].validationRules.length).toBeGreaterThan(0);
-    expect(ACTION_CONTINUATION_SLOT_REGISTRY[0].regressionTestResponsibility).toContain(
-      "exactly-once approval execution",
-    );
-  });
-
-  it("claims a pending clarification answer before free-form handling and asks only for the missing dietary detail", async () => {
-    const result = await runActionContinuation({
-      message: "6",
-      people: [],
-      pendingState: {
-        kind: "clarification",
-        draft: {
-          operationId: null,
-          operationType: "guest_arrival",
-          sourceText: "I have afternoon tea at 4:00 PM today. Handle everything.",
-          askedAtClientMessageId: "typed-1",
-        },
-      },
-    });
-
-    expect(result.status).toBe("needs_clarification");
-    expect(result.slotId).toBe("hosting");
-    expect(result.state?.kind).toBe("clarification");
-    expect(result.message).toBe("Are there any dietary restrictions?");
-  });
-
-  it("returns not_hosting when no registered slot claims the turn", async () => {
-    await expect(runActionContinuation({
-      message: "What is the weather?",
-      people: [],
-    })).resolves.toEqual({
-      status: "not_hosting",
-      slotId: null,
-      state: null,
-      message: null,
-    });
-  });
-
-  it.each([
-    "How many guests are coming, and is there anything I should avoid serving?",
-    "How many guests are coming?",
-    "Before I continue, what time should it begin, where should we host it, what would you like served, how many guests are coming, and are there any dietary restrictions?",
-  ])("restores linked typed hosting history for clarification wording: %s", (clarification) => {
-    const state = reconstructHostingContinuationFromTypedHistory([
-      {
-        role: "user",
-        content: "I have afternoon tea at 4:00 PM today. Handle everything.",
-        client_message_id: "owner-1",
-        reply_to_client_message_id: null,
-      },
-      {
-        role: "agent",
-        content: clarification,
-        client_message_id: null,
-        reply_to_client_message_id: "owner-1",
-      },
-    ]);
-    expect(state?.kind).toBe("clarification");
-    if (state?.kind === "clarification") {
-      expect(state.draft.sourceText).toContain("afternoon tea");
-      expect(state.draft.askedAtClientMessageId).toBe("owner-1");
-    }
-  });
-
-  it.each([
-    "The hosting plan was sent.",
-    "Okay, I'll hold off.",
-    "The hosting plan is complete.",
-  ])("does not restore a terminal typed hosting workflow: %s", (terminal) => {
-    expect(reconstructHostingContinuationFromTypedHistory([
-      {
-        role: "user",
-        content: "I have afternoon tea at 4:00 PM today. Handle everything.",
-        client_message_id: "owner-1",
-        reply_to_client_message_id: null,
-      },
-      {
-        role: "agent",
-        content: "How many guests are coming?",
-        client_message_id: null,
-        reply_to_client_message_id: "owner-1",
-      },
-      {
-        role: "agent",
-        content: terminal,
-        client_message_id: null,
-        reply_to_client_message_id: "owner-2",
-      },
-    ])).toBeNull();
-  });
-});

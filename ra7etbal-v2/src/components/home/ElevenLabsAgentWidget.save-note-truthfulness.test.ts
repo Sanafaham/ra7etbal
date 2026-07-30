@@ -92,7 +92,7 @@ describe("ElevenLabsAgentWidget — save_note truthfulness (2026-07-14 fix)", ()
 
   it("noteSaveOutcomeRef is a dedicated ref, separate from the shared lastDirectToolSuccessRef, typed via the shared NoteSaveOutcome type", () => {
     expect(SOURCE).toContain("const noteSaveOutcomeRef = useRef<NoteSaveOutcome | null>(null);");
-    expect(SOURCE).toContain("type NoteSaveOutcome, type DirectMessageSendOutcome } from \"../../lib/carson-direct-tool-override\"");
+    expect(SOURCE).toContain("type NoteSaveOutcome } from \"../../lib/carson-direct-tool-override\"");
   });
 
   // CodeRabbit finding (2026-07-14): sibling tools (createReminder,

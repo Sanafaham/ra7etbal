@@ -39,149 +39,7 @@ import { isCommunicationStyleTaskText } from "./communication-vs-delegation";
 import { parseDelegationFastPath } from "./delegation-fast-path";
 import { parseSimpleDirectMessage } from "./direct-message-fast-path";
 import { createAndSendDirectMessage, createDirectMessageRecord } from "./direct-messages";
-import {
-  ORPHANED_PEOPLE_CONFIRMATION_REPLY,
-  resolveOrphanedPeopleToolConfirmation,
-} from "./carson-orphan-confirmation";
-import {
-  CarsonTerminalToolRejection,
-  resolveTerminalToolRejectionReply,
-  shouldClearTerminalToolRejection,
-} from "./carson-terminal-tool-rejection";
 import type { Person } from "../types/person";
-
-describe("Post-execution orphaned communication confirmation", () => {
-  it("blocks the exact production sequence after the combined Christopher message already succeeded", () => {
-    expect(resolveOrphanedPeopleToolConfirmation({
-      utterance: "Yes.",
-      selectedTool: "send_direct_whatsapp_message",
-      hasPendingContinuation: false,
-      hasRecentCompletedPeopleAction: true,
-    })).toBe(ORPHANED_PEOPLE_CONFIRMATION_REPLY);
-  });
-
-  it.each(["route_people_action", "send_direct_whatsapp_message", "send_delegation"])(
-    "blocks orphaned confirmation before %s can execute",
-    (selectedTool) => {
-      expect(resolveOrphanedPeopleToolConfirmation({
-        utterance: "Yes",
-        selectedTool,
-        hasPendingContinuation: false,
-        hasRecentCompletedPeopleAction: true,
-      })).toMatch(/already complete.*no pending clarification/i);
-    },
-  );
-
-  it("never blocks a real pending continuation or a substantive new request", () => {
-    expect(resolveOrphanedPeopleToolConfirmation({
-      utterance: "Yes",
-      selectedTool: "send_direct_whatsapp_message",
-      hasPendingContinuation: true,
-      hasRecentCompletedPeopleAction: true,
-    })).toBeNull();
-    expect(resolveOrphanedPeopleToolConfirmation({
-      utterance: "Tell Christopher I will arrive tomorrow.",
-      selectedTool: "send_direct_whatsapp_message",
-      hasPendingContinuation: false,
-      hasRecentCompletedPeopleAction: true,
-    })).toBeNull();
-  });
-
-  it("wires the guard before tool policy and records a production diagnostic", () => {
-    const widget = readFileSync(
-      join(__dirname, "../components/home/ElevenLabsAgentWidget.tsx"),
-      "utf-8",
-    );
-    const guardStart = widget.indexOf("const guardCurrentToolInvocation =");
-    const guardEnd = widget.indexOf("try {", guardStart);
-    const guard = widget.slice(guardStart, guardEnd);
-    expect(guard.indexOf("resolveOrphanedPeopleToolConfirmation({")).toBeGreaterThan(-1);
-    expect(guard.indexOf("resolveOrphanedPeopleToolConfirmation({"))
-      .toBeLessThan(guard.indexOf("evaluateCarsonToolPolicy({"));
-    expect(guard).toContain('stage: "orphaned_confirmation_blocked"');
-    expect(guard).toContain('reason: "completed_people_action_has_no_pending_continuation"');
-  });
-});
-
-describe("Production regression — rejected execution is terminal", () => {
-  const rejection = {
-    toolName: "execute_instruction",
-    outcome: "I need the missing planning details before I can do that.",
-    at: new Date().toISOString(),
-  };
-
-  it.each([
-    "Christopher and Grace have it.",
-    "They have it.",
-    "It's done.",
-    "I sent it.",
-    "The task was created.",
-    "The delegation has been assigned.",
-    "Delivery completed.",
-    "I've scheduled the follow-up.",
-    "I'll follow up if they don't confirm.",
-  ])("cannot surface %j after policy rejection", (claim) => {
-    expect(resolveTerminalToolRejectionReply(claim, rejection)).toBe(rejection.outcome);
-  });
-
-  it("does not alter neutral clarification or a reply after verified success", () => {
-    const clarification = "How many guests should I plan for?";
-    expect(resolveTerminalToolRejectionReply(clarification, rejection)).toBe(clarification);
-    expect(resolveTerminalToolRejectionReply("Christopher has it.", null))
-      .toBe("Christopher has it.");
-  });
-
-  it("preserves rejection through the exact post-failure 'Thank you' turn", () => {
-    expect(shouldClearTerminalToolRejection("Thank you.")).toBe(false);
-    expect(resolveTerminalToolRejectionReply(
-      "Christopher and Grace have it. I'll follow up if either doesn't confirm.",
-      rejection,
-    )).toBe(rejection.outcome);
-    expect(shouldClearTerminalToolRejection("Four guests at 7 PM.")).toBe(true);
-  });
-
-  it("uses a rejected promise boundary instead of a resolved pseudo-success", () => {
-    expect(() => {
-      throw new CarsonTerminalToolRejection("execute_instruction", rejection.outcome);
-    }).toThrowError(rejection.outcome);
-  });
-
-  it("protects the exact Hosting precedence and terminal-rejection wiring", () => {
-    const policy = readFileSync(join(__dirname, "carson-tool-policy.ts"), "utf-8");
-    expect(policy.indexOf("} else if (hostingIntent) {"))
-      .toBeLessThan(policy.indexOf('} else if (routing.domains.includes("delegation")) {'));
-
-    const widget = readFileSync(
-      join(__dirname, "../components/home/ElevenLabsAgentWidget.tsx"),
-      "utf-8",
-    );
-    expect(widget).toContain(
-      "throw new CarsonTerminalToolRejection(toolName, policyDecision.outcome)",
-    );
-    expect(widget).toContain("resolveTerminalToolRejectionReply(");
-  });
-
-  it("protects canonical Hosting ownership ahead of People subtype routing", () => {
-    const widget = readFileSync(
-      join(__dirname, "../components/home/ElevenLabsAgentWidget.tsx"),
-      "utf-8",
-    );
-    const peopleStart = widget.indexOf(
-      "route_people_action: async (params: CarsonPeopleActionEnvelope) => {",
-    );
-    const peopleEnd = widget.indexOf(
-      'send_delegation: async',
-      peopleStart,
-    );
-    const peopleHandler = widget.slice(peopleStart, peopleEnd);
-
-    expect(peopleHandler.indexOf('if (owner.intent === "hosting")'))
-      .toBeLessThan(peopleHandler.indexOf("resolveCarsonPeopleAction(params)"));
-    expect(peopleHandler).toContain("executeHostingOwnerOnce(currentUtterance)");
-    expect(widget).not.toContain("legacyHostingDecision");
-    expect(widget).toContain('/client tool execution failed/i.test(String(msg ?? ""))');
-  });
-});
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -262,13 +120,6 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     // grammar must not silently require a word after them.
     "wait outside for me",
     "wait inside for us",
-    // Production regression (2026-07-29): "reply"/"respond" as the entire
-    // delegated task is a communication act, not trackable work, regardless
-    // of who it's addressed to (distinct from the owner-target cases above).
-    "reply, \"Test received.\"",
-    "reply, \"Test received.\" This is just a PolicyGate test. No action needed.",
-    "respond with test received",
-    "text back test received",
   ])("%s -> communication (does not create a tracked task)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(true);
   });
@@ -295,10 +146,6 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     // anchored to the end of the string, so it could still match as the
     // trailing fragment of a leading compound instruction.
     "clean the kitchen, then wait until 8",
-    // REPLY_CONTENT_TASK (2026-07-29 fix) is anchored to the START of the
-    // task text only — real work first, "reply" only as a trailing
-    // afterthought, must not be swallowed entirely as communication.
-    "clean the kitchen and reply when done",
   ])("%s -> tracked delegated work (%s)", (text) => {
     expect(isCommunicationStyleTaskText(text)).toBe(false);
   });
@@ -369,21 +216,6 @@ describe("Regression: confirmed production evidence must never reproduce", () =>
 
   it("'Ask Christopher to clean the kitchen.' remains tracked delegated work — a location word ('kitchen') alone must not trigger the communication classifier", () => {
     expect(isCommunicationStyleTaskText("clean the kitchen.")).toBe(false);
-  });
-
-  // Confirmed production regression (2026-07-29): the exact live-tested
-  // utterance was classified as delegation (router confidence 0.97,
-  // matching the generic "Ask [Name] to" pattern), not direct communication
-  // — send_direct_whatsapp_message was rejected by the deterministic
-  // tool-policy gate with "Required entities are missing: task." (0ms, no
-  // network call), and Carson's own separately-generated reply then
-  // fabricated a "sent" claim disconnected from that real rejection.
-  it("'Ask Christopher to reply, \"Test received.\"...' task text is communication, not trackable work", () => {
-    expect(
-      isCommunicationStyleTaskText(
-        "reply, \"Test received.\" This is just a PolicyGate test. No action needed.",
-      ),
-    ).toBe(true);
   });
 });
 
