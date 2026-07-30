@@ -112,4 +112,28 @@ describe("ElevenLabsAgentWidget — route_people_action wiring (2026-07-30 inten
     );
     expect(block).toContain("messageSendInFlightRef.current = resultPromise");
   });
+
+  it("deterministically redirects a mistaken legacy delegation through the direct handler once", () => {
+    const block = blockBetween(
+      "send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {",
+      "create_reminder: (params",
+    );
+    expect(block).toContain("resolveLegacyPeopleToolCommunicationRedirect({");
+    expect(block).toContain("[LEGACY_COMMUNICATION_REDIRECT]: true");
+    expect(block).toContain('stage: "legacy_people_tool_redirected"');
+    expect(block).toContain("toolName: communicationRedirect.originalTool");
+    expect(block).toContain("selectedTool: communicationRedirect.finalTool");
+    expect(block).toContain("() => sendDirectWhatsAppMessage(communicationRedirect.params)");
+    expect(block.match(/sendDirectWhatsAppMessage\(communicationRedirect\.params\)/g)).toHaveLength(1);
+  });
+
+  it("keeps the normal delegation handler as the only fallback when no redirect exists", () => {
+    const block = blockBetween(
+      "send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {",
+      "create_reminder: (params",
+    );
+    const redirectEnd = block.indexOf('toolInFlightRef.current = "send_delegation";');
+    expect(redirectEnd).toBeGreaterThan(-1);
+    expect(block.slice(redirectEnd)).toContain("sendDelegation(params)");
+  });
 });

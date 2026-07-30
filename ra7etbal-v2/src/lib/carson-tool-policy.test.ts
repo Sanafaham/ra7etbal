@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { evaluateCarsonToolPolicy } from "./carson-tool-policy";
+import {
+  evaluateCarsonToolPolicy,
+  resolveLegacyPeopleToolCommunicationRedirect,
+} from "./carson-tool-policy";
 
 const PEOPLE = [{ name: "Grace" }, { name: "Christopher" }];
 
@@ -56,6 +59,66 @@ describe("Carson deterministic pre-dispatch policy", () => {
     expect(decide(utterance, "send_delegation", {
       person_name: "Grace", task: "I'll be late.",
     })).toMatchObject({ allowed: false, intent: "direct_communication" });
+  });
+
+  it.each([
+    ["Ask Christopher to reply that we will proceed.", "reply that we will proceed."],
+    ["Tell Christopher the delivery is approved.", "the delivery is approved."],
+    ["Have Christopher confirm he received it.", "confirm he received it."],
+    ["Get Christopher to respond yes.", "respond yes."],
+  ])("redirects mistaken legacy send_delegation for plain communication: %s", (utterance, task) => {
+    const result = resolveLegacyPeopleToolCommunicationRedirect({
+      utterance,
+      channel: "voice",
+      selectedTool: "send_delegation",
+      toolArguments: { name: "Christopher", task },
+      people: PEOPLE,
+    });
+
+    expect(result).toMatchObject({
+      originalTool: "send_delegation",
+      finalTool: "send_direct_whatsapp_message",
+      params: { recipient_name: "Christopher", message: task },
+      policyDecision: { intent: "direct_communication", missingEntities: [] },
+    });
+  });
+
+  it.each([
+    ["Ask Christopher to buy olive oil tomorrow.", "buy olive oil tomorrow."],
+    ["Assign Christopher to prepare dinner and track it until completion.", "prepare dinner and track it until completion."],
+    ["Have Christopher confirm completion and keep following up.", "confirm completion and keep following up."],
+  ])("does not reinterpret genuine tracked work as a message: %s", (utterance, task) => {
+    expect(resolveLegacyPeopleToolCommunicationRedirect({
+      utterance,
+      channel: "voice",
+      selectedTool: "send_delegation",
+      toolArguments: { name: "Christopher", task },
+      people: PEOPLE,
+    })).toBeNull();
+  });
+
+  it("does not redirect typed calls, missing content, or an unknown recipient", () => {
+    expect(resolveLegacyPeopleToolCommunicationRedirect({
+      utterance: "Tell Christopher the delivery is approved.",
+      channel: "text",
+      selectedTool: "send_delegation",
+      toolArguments: { name: "Christopher", task: "the delivery is approved." },
+      people: PEOPLE,
+    })).toBeNull();
+    expect(resolveLegacyPeopleToolCommunicationRedirect({
+      utterance: "Tell Christopher the delivery is approved.",
+      channel: "voice",
+      selectedTool: "send_delegation",
+      toolArguments: { name: "Christopher", task: "" },
+      people: PEOPLE,
+    })).toBeNull();
+    expect(resolveLegacyPeopleToolCommunicationRedirect({
+      utterance: "Tell Ahmad the delivery is approved.",
+      channel: "voice",
+      selectedTool: "send_delegation",
+      toolArguments: { name: "Ahmad", task: "the delivery is approved." },
+      people: PEOPLE,
+    })).toBeNull();
   });
 
   it("keeps call me communication on the direct path", () => {

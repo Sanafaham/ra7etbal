@@ -130,7 +130,10 @@ import {
   type ExecutedDelegationRecord,
 } from "../../lib/carson-action-coverage";
 import { CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD } from "../../lib/carson-status-policy";
-import { evaluateCarsonToolPolicy } from "../../lib/carson-tool-policy";
+import {
+  evaluateCarsonToolPolicy,
+  resolveLegacyPeopleToolCommunicationRedirect,
+} from "../../lib/carson-tool-policy";
 import {
   CARSON_REPEAT_PROMPT,
   evaluateCarsonTranscriptCapture,
@@ -239,6 +242,7 @@ const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {
 // longer directed to call them directly for new requests — see
 // guardCurrentToolInvocation's legacy_people_tool_bypass instrumentation.
 const LEGACY_PEOPLE_TOOLS = new Set(["send_direct_whatsapp_message", "send_delegation"]);
+const LEGACY_COMMUNICATION_REDIRECT = Symbol("legacy_communication_redirect");
 
 const CARSON_TYPED_ADVISORY_POLICY =
   "Type to Carson is advisory-only. You may answer questions, help plan, accept brain dumps, draft content and messages, research information, and review existing information. You must never claim to create a reminder or recurring reminder, schedule a push notification, create or change a calendar event, send a staff message, execute or approve a hosting plan, create an assignment or delegation, or change any task or operation state. Every tool that performs one of those actions is blocked in typed mode and returns a short message telling the owner to use Talk to Carson — relay that message plainly and briefly. Never say or imply that an action was completed.";
@@ -5810,6 +5814,18 @@ export default function ElevenLabsAgentWidget({
         hasActiveHostingClarification: Boolean(pendingHostingClarificationRef.current),
       });
       if (policyDecision.allowed) return null;
+      if (
+        Boolean(
+          toolArguments
+          && typeof toolArguments === "object"
+          && (toolArguments as Record<PropertyKey, unknown>)[LEGACY_COMMUNICATION_REDIRECT],
+        )
+        && toolName === "send_delegation"
+        && policyDecision.intent === "direct_communication"
+        && policyDecision.eligibleTools.includes("send_direct_whatsapp_message")
+      ) {
+        return null;
+      }
 
       const diagnostic = {
         kind: "tool_policy_rejected",
@@ -6027,8 +6043,50 @@ export default function ElevenLabsAgentWidget({
             }
           },
           send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("send_delegation", params);
+            const currentUtterance = [...sessionTranscriptRef.current]
+              .reverse()
+              .find((message) => message.role === "user")?.message ?? "";
+            const communicationRedirect = resolveLegacyPeopleToolCommunicationRedirect({
+              utterance: currentUtterance,
+              channel: requestedChannel,
+              selectedTool: "send_delegation",
+              toolArguments: params,
+              people: usePeopleStore.getState().items,
+              hasActiveHostingClarification: Boolean(pendingHostingClarificationRef.current),
+            });
+            const guardedParams = communicationRedirect
+              ? { ...params, [LEGACY_COMMUNICATION_REDIRECT]: true }
+              : params;
+            const captureBlock = guardCurrentToolInvocation("send_delegation", guardedParams);
             if (captureBlock) return captureBlock;
+
+            if (communicationRedirect) {
+              recordCarsonToolDiagnostic({
+                userId: authenticatedUserId,
+                sessionId: typedConversationIdRef.current,
+                channel: requestedChannel,
+                toolName: communicationRedirect.originalTool,
+                stage: "legacy_people_tool_redirected",
+                reason: "plain_communication_selected_as_delegation",
+                selectedTool: communicationRedirect.finalTool,
+                message: communicationRedirect.params.message,
+              });
+              toolInFlightRef.current = communicationRedirect.finalTool;
+              const resultPromise = runDirectToolWithDiagnostic(
+                communicationRedirect.finalTool,
+                communicationRedirect.params,
+                () => sendDirectWhatsAppMessage(communicationRedirect.params),
+              );
+              messageSendInFlightRef.current = resultPromise
+                .then(() => messageSendOutcomeRef.current)
+                .catch(() => null);
+              try {
+                return await resultPromise;
+              } finally {
+                toolInFlightRef.current = null;
+              }
+            }
+
             toolInFlightRef.current = "send_delegation";
             try {
               return await runDirectToolWithDiagnostic("send_delegation", params, () =>

@@ -45,6 +45,13 @@ export interface CarsonToolPolicyDecision {
   missingEntities: string[];
 }
 
+export interface LegacyPeopleToolCommunicationRedirect {
+  originalTool: "send_delegation";
+  finalTool: "send_direct_whatsapp_message";
+  params: { recipient_name: string; message: string };
+  policyDecision: CarsonToolPolicyDecision;
+}
+
 const NO_ACTION_TOOLS: readonly string[] = [];
 const REMINDER_TOOLS = ["create_reminder", "create_automation"] as const;
 const DIRECT_MESSAGE_TOOLS = ["send_direct_whatsapp_message"] as const;
@@ -275,7 +282,11 @@ function directCommunicationIntent(text: string): boolean {
   // itself reads as communication-style (isCommunicationStyleTaskText) — a
   // genuine check-in delegation with no reply/respond clause is unaffected.
   const delegatedTask = text.match(/\b(?:ask|tell|have|get)\s+[A-Za-z]+\b.*?\bto\s+(.+)/i)?.[1];
-  return delegatedTask ? isCommunicationStyleTaskText(delegatedTask) : false;
+  if (delegatedTask && isCommunicationStyleTaskText(delegatedTask)) return true;
+  const directCommunicationTask = text.match(
+    /\b(?:ask|tell|have|get)\s+[A-Za-z]+\s+(?:to\s+)?((?:reply|respond|text\s+back|write\s+back|say|confirm)\b.+)/i,
+  )?.[1];
+  return directCommunicationTask ? isCommunicationStyleTaskText(directCommunicationTask) : false;
 }
 
 function calendarMutationToolForText(text: string): string | null {
@@ -481,5 +492,48 @@ export function evaluateCarsonToolPolicy(input: CarsonToolPolicyInput): CarsonTo
     outcome: "",
     routingDomain: routing.primary_domain,
     missingEntities: [],
+  };
+}
+
+/**
+ * Compatibility protection for an ElevenLabs model that bypasses
+ * route_people_action and selects send_delegation for plain communication.
+ *
+ * The redirect is fail-closed: it is returned only when the existing policy
+ * independently classifies the live owner utterance as direct communication,
+ * the recipient is known, and the legacy call supplied usable content. All
+ * other calls—including genuine or ambiguous delegations—remain unchanged.
+ */
+export function resolveLegacyPeopleToolCommunicationRedirect(
+  input: CarsonToolPolicyInput,
+): LegacyPeopleToolCommunicationRedirect | null {
+  if (input.channel !== "voice" || input.selectedTool !== "send_delegation") return null;
+
+  const args = argsRecord(input.toolArguments);
+  const recipientName = firstString(args, ["name", "person_name", "assignee_name", "recipient_name"]);
+  const message = firstString(args, ["message", "note", "task", "task_text", "description"]);
+  if (!recipientName || !message) return null;
+
+  const policyDecision = evaluateCarsonToolPolicy({
+    ...input,
+    toolArguments: {
+      ...args,
+      recipient_name: recipientName,
+      message,
+    },
+  });
+  if (
+    policyDecision.intent !== "direct_communication"
+    || !policyDecision.eligibleTools.includes("send_direct_whatsapp_message")
+    || policyDecision.missingEntities.length > 0
+  ) {
+    return null;
+  }
+
+  return {
+    originalTool: "send_delegation",
+    finalTool: "send_direct_whatsapp_message",
+    params: { recipient_name: recipientName, message },
+    policyDecision,
   };
 }
