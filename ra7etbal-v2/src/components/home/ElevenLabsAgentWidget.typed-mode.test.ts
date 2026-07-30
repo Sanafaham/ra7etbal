@@ -887,7 +887,7 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
 
   it("imports sanitizeTypedAdvisoryReply alongside the existing, unmodified resolveSanitizedCarsonDisplayMessage import", () => {
     expect(SOURCE).toContain(
-      'import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, detectsUnconfirmedMessageSendClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";',
+      'import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, looksLikeMessageSendOutcomeClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";',
     );
   });
 

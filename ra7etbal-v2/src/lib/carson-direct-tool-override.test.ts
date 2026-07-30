@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   detectsUnconfirmedNoteSaveClaim,
   detectsUnconfirmedMessageSendClaim,
+  detectsUnconfirmedMessageSendFailureClaim,
+  looksLikeMessageSendOutcomeClaim,
   resolveCarsonDisplayMessage,
   resolveSanitizedCarsonDisplayMessage,
   resolvePendingMessageSendOutcome,
@@ -755,6 +757,152 @@ describe("resolvePendingMessageSendOutcome", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// Confirmed production incident (2026-07-30, 03:03 Turkey time): "Ask
+// Christopher to reply yes if he can come tomorrow." — Christopher actually
+// received exactly one WhatsApp message ("Operational update from Sana:
+// Please reply yes if you can come tomorrow. Thank you."), and
+// send_direct_whatsapp_message truly succeeded, but Carson spoke and
+// displayed "I wasn't able to send that. Please try again." The existing
+// truthfulness guard (detectsUnconfirmedMessageSendClaim) only ever checked
+// for a FALSE SUCCESS claim — it has no symmetric protection for the
+// opposite case, a false FAILURE claim on a send that actually succeeded.
+// These are the new, symmetric checks.
+describe("detectsUnconfirmedMessageSendFailureClaim", () => {
+  it("flags the exact confirmed 2026-07-30 incident: false failure claim on a real success", () => {
+    expect(
+      detectsUnconfirmedMessageSendFailureClaim(
+        "I wasn't able to send that. Please try again.",
+        "Ask Christopher to reply yes if he can come tomorrow.",
+        messageSendSuccess(),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag a genuinely accurate failure claim backed by a real tool failure", () => {
+    expect(
+      detectsUnconfirmedMessageSendFailureClaim(
+        "I wasn't able to send that. Please try again.",
+        "Ask Christopher to reply yes if he can come tomorrow.",
+        messageSendFailure(),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not flag a failure claim when no tool ran at all this turn (handled elsewhere, not a false-negative case)", () => {
+    expect(
+      detectsUnconfirmedMessageSendFailureClaim(
+        "I wasn't able to send that. Please try again.",
+        "Ask Christopher to reply yes if he can come tomorrow.",
+        null,
+      ),
+    ).toBe(false);
+  });
+
+  it("does not flag when the previous message isn't an explicit send request", () => {
+    expect(
+      detectsUnconfirmedMessageSendFailureClaim(
+        "I wasn't able to send that. Please try again.",
+        "What's on my to-do list?",
+        messageSendSuccess(),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not flag a reply that doesn't claim a failure", () => {
+    expect(
+      detectsUnconfirmedMessageSendFailureClaim(
+        "Sent to Christopher.",
+        "Ask Christopher to reply yes if he can come tomorrow.",
+        messageSendSuccess(),
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    "I wasn't able to send that. Please try again.",
+    "I couldn't send that message.",
+    "I was unable to send it.",
+    "I didn't send that.",
+    "I'm not able to send it right now.",
+  ])("flags variant failure phrasing: '%s'", (agentMessage) => {
+    expect(
+      detectsUnconfirmedMessageSendFailureClaim(
+        agentMessage,
+        "Tell Christopher to bring extra water bottles.",
+        messageSendSuccess(),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("looksLikeMessageSendOutcomeClaim", () => {
+  it("matches a success-shaped claim", () => {
+    expect(
+      looksLikeMessageSendOutcomeClaim("Sent to Christopher.", "Tell Christopher to bring extra water bottles."),
+    ).toBe(true);
+  });
+
+  it("matches a failure-shaped claim (the confirmed 2026-07-30 incident wording)", () => {
+    expect(
+      looksLikeMessageSendOutcomeClaim(
+        "I wasn't able to send that. Please try again.",
+        "Ask Christopher to reply yes if he can come tomorrow.",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not match a truthful negated 'sent' reply (neither success-shaped nor the specific failure-claim wording)", () => {
+    expect(
+      looksLikeMessageSendOutcomeClaim(
+        "I couldn't get that sent to Christopher. Please try again.",
+        "Tell Christopher to bring extra water bottles.",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not match when the previous message isn't an explicit send request", () => {
+    expect(looksLikeMessageSendOutcomeClaim("Sent to Christopher.", "What's on my to-do list?")).toBe(false);
+  });
+
+  it("does not match a reply that neither confirms nor denies a send", () => {
+    expect(
+      looksLikeMessageSendOutcomeClaim(
+        "What would you like me to tell Christopher?",
+        "Tell Christopher to bring extra water bottles.",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("resolveSanitizedCarsonDisplayMessage — unconfirmed message send failure claim", () => {
+  // PROTECTED REGRESSION TEST — do not remove or weaken. This is the exact
+  // confirmed-failing production case (2026-07-30, 03:03 Turkey time): a
+  // real send_direct_whatsapp_message success for Christopher, but Carson's
+  // own reply falsely claimed the send failed. The corrected display text
+  // must be the tool's own true result, never the agent's false claim.
+  it("PROTECTED: replaces a false failure claim with the tool's own true success result", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "I wasn't able to send that. Please try again.",
+      previousUserMessage: "Ask Christopher to reply yes if he can come tomorrow.",
+      lastSuccess: null,
+      messageSendOutcome: messageSendSuccess({ resultText: "Sent to Christopher." }),
+      now: NOW,
+    });
+    expect(result).toBe("Sent to Christopher.");
+  });
+
+  it("leaves a genuine, tool-confirmed failure reply untouched", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "I wasn't able to send that. Please try again.",
+      previousUserMessage: "Ask Christopher to reply yes if he can come tomorrow.",
+      lastSuccess: null,
+      messageSendOutcome: messageSendFailure(),
+      now: NOW,
+    });
+    expect(result).toBe("I wasn't able to send that. Please try again.");
   });
 });
 
