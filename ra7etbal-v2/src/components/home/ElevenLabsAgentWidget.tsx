@@ -6072,6 +6072,41 @@ export default function ElevenLabsAgentWidget({
             const currentUtterance = [...sessionTranscriptRef.current]
               .reverse()
               .find((message) => message.role === "user")?.message ?? "";
+            const legacyHostingDecision = evaluateCarsonToolPolicy({
+              utterance: currentUtterance,
+              channel: requestedChannel,
+              selectedTool: "send_delegation",
+              toolArguments: params,
+              people: usePeopleStore.getState().items,
+              hasActiveHostingClarification: Boolean(
+                pendingHostingContinuationRef.current
+                || pendingHostingClarificationRef.current
+                || pendingPlanRef.current
+              ),
+            });
+            if (
+              legacyHostingDecision.intent === "hosting"
+              && legacyHostingDecision.eligibleTools.includes("execute_instruction")
+            ) {
+              recordCarsonToolDiagnostic({
+                userId: authenticatedUserId,
+                sessionId: typedConversationIdRef.current,
+                channel: requestedChannel,
+                toolName: "send_delegation",
+                stage: "legacy_people_tool_redirected",
+                reason: "hosting_selected_as_delegation",
+                selectedTool: "execute_instruction",
+              });
+              toolInFlightRef.current = "execute_instruction";
+              setTurnPhase("acting");
+              toolRanForCurrentTranscriptRef.current = true;
+              try {
+                return await executeInstruction({ instruction: currentUtterance });
+              } finally {
+                toolInFlightRef.current = null;
+                setTurnPhase((prev) => (prev === "acting" ? "thinking" : prev));
+              }
+            }
             const communicationRedirect = resolveLegacyPeopleToolCommunicationRedirect({
               utterance: currentUtterance,
               channel: requestedChannel,
@@ -6781,6 +6816,17 @@ export default function ElevenLabsAgentWidget({
             micMuteCallCount: micMuteCallCountRef.current,
             at: new Date().toISOString(),
           });
+          if (
+            terminalToolRejectionRef.current
+            && /client tool execution failed/i.test(String(msg ?? ""))
+          ) {
+            recordCarsonDiagnostic("carson-direct-tool", {
+              kind: "terminal_policy_rejection_ui_suppressed",
+              toolName: terminalToolRejectionRef.current.toolName,
+              at: new Date().toISOString(),
+            });
+            return;
+          }
           checkForSessionChurn("sdk-error");
 
           // Keep error visible until the user closes it.

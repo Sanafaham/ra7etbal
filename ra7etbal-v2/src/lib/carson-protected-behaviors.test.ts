@@ -160,6 +160,28 @@ describe("Production regression — rejected execution is terminal", () => {
     );
     expect(widget).toContain("resolveTerminalToolRejectionReply(");
   });
+
+  it("protects the production Hosting hotfix at the legacy callback boundary", () => {
+    const widget = readFileSync(
+      join(__dirname, "../components/home/ElevenLabsAgentWidget.tsx"),
+      "utf-8",
+    );
+    const legacyStart = widget.indexOf(
+      'send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {',
+    );
+    const legacyEnd = widget.indexOf(
+      'create_reminder: async',
+      legacyStart,
+    );
+    const legacyHandler = widget.slice(legacyStart, legacyEnd);
+
+    expect(legacyHandler.indexOf('legacyHostingDecision.intent === "hosting"'))
+      .toBeLessThan(legacyHandler.indexOf('guardCurrentToolInvocation("send_delegation", params)'));
+    expect(legacyHandler).toContain(
+      "return await executeInstruction({ instruction: currentUtterance })",
+    );
+    expect(widget).toContain('/client tool execution failed/i.test(String(msg ?? ""))');
+  });
 });
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────

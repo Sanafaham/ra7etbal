@@ -42,6 +42,18 @@ describe("ElevenLabsAgentWidget — pre-dispatch policy boundary", () => {
     expect(SOURCE).toContain("pendingPlanRef.current");
   });
 
+  it("redirects a mistaken legacy hosting delegation into the existing Hosting executor", () => {
+    expect(SOURCE).toContain('legacyHostingDecision.intent === "hosting"');
+    expect(SOURCE).toContain('legacyHostingDecision.eligibleTools.includes("execute_instruction")');
+    expect(SOURCE).toContain('reason: "hosting_selected_as_delegation"');
+    expect(SOURCE).toContain("return await executeInstruction({ instruction: currentUtterance })");
+  });
+
+  it("does not render the SDK client-tool diagnostic for a terminal policy rejection", () => {
+    expect(SOURCE).toContain('/client tool execution failed/i.test(String(msg ?? ""))');
+    expect(SOURCE).toContain('kind: "terminal_policy_rejection_ui_suppressed"');
+  });
+
   it("makes the verified policy outcome authoritative over generated execution claims", () => {
     expect(SOURCE).toContain("resolveTerminalToolRejectionReply(");
     expect(SOURCE).toContain("terminalToolRejectionRef.current = null");
