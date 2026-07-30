@@ -62,8 +62,43 @@ export function isSummaryWorthSaving(summary: string): boolean {
   return durableSingleBullet;
 }
 
-/** Prefix that marks a carson_memory row as a session recap (not durable fact). */
-export const SESSION_RECAP_PREFIX = "• Session recap:";
+/**
+ * Prefix for recaps created after operational truth was made evidence-backed.
+ * Legacy "• Session recap:" rows are intentionally not loaded because their
+ * free-form Carson narration may contain unsupported execution claims.
+ */
+export const SESSION_RECAP_PREFIX = "• Verified session recap:";
+
+const OPERATIONAL_EXECUTION_CLAIM =
+  /\b(?:i(?:'|’)ll\s+(?:get|have|take care of|handle|organize|organise|arrange|send|tell|ask|remind|schedule|book|create|delegate|follow up)|i(?:'|’)ve\s+(?:sent|told|asked|reminded|scheduled|booked|created|delegated|organized|organised|arranged|handled|completed)|i\s+(?:sent|told|asked|reminded|scheduled|booked|created|delegated|organized|organised|arranged|handled|completed)|(?:has|have|had)\s+(?:been\s+)?(?:informed|briefed|notified|assigned|sent|scheduled|booked|organized|organised|arranged|handled|completed)|(?:[\w'-]+(?:\s+and\s+[\w'-]+)?|they|he|she)\s+(?:has|have|had)\s+(?:it|been\s+(?:informed|briefed|notified|assigned))|(?:[\w'-]+(?:\s+and\s+[\w'-]+)?|they|he|she)\s+(?:was|were)\s+(?:informed|briefed|notified|assigned)|it(?:'|’)s\s+(?:done|sent|scheduled|booked|organized|organised|arranged|handled)|(?:message|whatsapp|task|delegation|reminder|event)\s+(?:was\s+)?(?:sent|created|scheduled|assigned|completed)|(?:sent|delegated|assigned|briefed|notified)\s+(?:it|them|him|her|to\b)|i(?:'|’)ll\s+follow\s+up)\b/i;
+
+export interface DurableMemoryTranscript {
+  transcript: TranscriptMessage[];
+  removedOperationalClaims: number;
+}
+
+/**
+ * Carson speech is conversational evidence, never execution evidence.
+ * Remove operational claims before any transcript-derived durable write.
+ * Verified actions are persisted separately by the handler-backed action log.
+ */
+export function sanitizeTranscriptForDurableMemory(
+  transcript: TranscriptMessage[],
+): DurableMemoryTranscript {
+  let removedOperationalClaims = 0;
+  const safeTranscript = transcript.filter((message) => {
+    if (
+      message.role === "agent" &&
+      OPERATIONAL_EXECUTION_CLAIM.test(message.message)
+    ) {
+      removedOperationalClaims += 1;
+      return false;
+    }
+    return true;
+  });
+
+  return { transcript: safeTranscript, removedOperationalClaims };
+}
 
 export function formatSessionActionsForRecap(actions: string[]): string | null {
   const cleanActions = actions
@@ -80,13 +115,19 @@ export function formatSessionActionsForRecap(actions: string[]): string | null {
 export function buildSessionRecapWithActions(
   recap: string | null,
   actions: string[],
+  removedOperationalClaims = 0,
 ): string | null {
-  const cleanRecap = recap?.replace(/\s+/g, " ").trim() ?? "";
+  const normalizedRecap = recap?.replace(/\s+/g, " ").trim() ?? "";
+  const cleanRecap = OPERATIONAL_EXECUTION_CLAIM.test(normalizedRecap)
+    ? ""
+    : normalizedRecap;
   const actionBlock = formatSessionActionsForRecap(actions);
+  const unverifiedOutcome =
+    removedOperationalClaims > 0 && !actionBlock
+      ? "Operational outcome: no execution was verified."
+      : null;
 
-  if (cleanRecap && actionBlock) return `${cleanRecap}\n${actionBlock}`;
-  if (cleanRecap) return cleanRecap;
-  return actionBlock;
+  return [cleanRecap || null, actionBlock, unverifiedOutcome].filter(Boolean).join("\n") || null;
 }
 
 /**
@@ -273,6 +314,7 @@ function filterDurableMemoryText(text: string): string | null {
     .map((line) => line.trim())
     .filter(Boolean)
     .filter((line) => line !== NOTHING)
+    .filter((line) => !OPERATIONAL_EXECUTION_CLAIM.test(line))
     .filter((line) => !isLikelyTemporaryOperationalMemory(line));
 
   return durableLines.length > 0 ? durableLines.join("\n") : null;
