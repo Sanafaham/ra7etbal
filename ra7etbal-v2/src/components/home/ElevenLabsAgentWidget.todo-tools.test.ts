@@ -305,7 +305,7 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
 
 describe("ElevenLabsAgentWidget — hosting planning gate", () => {
   it("imports the reusable operation lifecycle from ops-intelligence", () => {
-    expect(SOURCE).toContain("handleOperationalHostingTurn");
+    expect(SOURCE).toContain("runActionContinuation");
     expect(SOURCE).toContain('from "../../lib/ops-intelligence"');
   });
 
@@ -324,13 +324,12 @@ describe("ElevenLabsAgentWidget — hosting planning gate", () => {
     expect(end).toBeGreaterThan(start);
     const block = SOURCE.slice(start, end);
     const actionIndex = block.indexOf("const guestAction = resolveGuestOutcomeAction(hostingSource)");
-    const plannerIndex = block.indexOf("const operationTurn = await handleOperationalHostingTurn({");
+    const plannerIndex = block.indexOf("const continuation = await runHostingContinuation(hostingSource, people)");
     expect(actionIndex).toBeGreaterThan(-1);
     expect(plannerIndex).toBeGreaterThan(actionIndex);
     expect(block).not.toContain("evaluateHostingPlanningGate(latestUserMessageForOps)");
     expect(block).not.toContain("buildOperationalPlanFromOutcome(latestUserMessageForOps, people)");
-    expect(block).toContain('operationTurn.status === "needs_clarification"');
-    expect(block).toContain("pendingDraft: pendingHostingClarificationRef.current");
+    expect(block).toContain("return continuation.message");
   });
 
   it("uses the same shared planner and execution path as typed Carson", () => {
@@ -338,8 +337,8 @@ describe("ElevenLabsAgentWidget — hosting planning gate", () => {
     const end = SOURCE.indexOf("const matches = people.filter(", start);
     const block = SOURCE.slice(start, end);
     expect(block).toContain("const hostingSource = [latestUserMessageForOps, taskText, message]");
-    expect(block).toContain("handleOperationalHostingTurn({");
-    expect(block).toContain("executeProposedPlan(plan");
+    expect(block).toContain("runHostingContinuation(hostingSource, people)");
+    expect(OPS_SOURCE).toContain("runActionContinuation");
     expect(OPS_SOURCE).toContain("how many guests are coming");
     expect(OPS_SOURCE).toContain("anything I should avoid serving");
   });
@@ -350,13 +349,13 @@ describe("ElevenLabsAgentWidget — hosting planning gate", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const block = SOURCE.slice(start, end);
-    const helperIndex = block.indexOf("const operationTurn = await handleOperationalHostingTurn({");
-    const clarificationIndex = block.indexOf('operationTurn.status === "needs_clarification"', helperIndex);
-    const readyIndex = block.indexOf('operationTurn.status === "ready"', helperIndex);
+    const helperIndex = block.indexOf("const hostingContinuation = await runHostingContinuation(rawInstruction, people)");
+    const clarificationIndex = block.indexOf('hostingContinuation.status === "needs_clarification"', helperIndex);
+    const readyIndex = block.indexOf("return hostingContinuation.message", helperIndex);
     expect(helperIndex).toBeGreaterThan(-1);
     expect(clarificationIndex).toBeGreaterThan(helperIndex);
     expect(readyIndex).toBeGreaterThan(clarificationIndex);
-    expect(block).toContain("pendingHostingClarificationRef.current = operationTurn.draft");
+    expect(block).not.toContain("handleOperationalHostingTurn(");
   });
 });
 
@@ -371,35 +370,24 @@ describe("ElevenLabsAgentWidget — guest plan proposal regression guards", () =
     return SOURCE.slice(start, end);
   }
 
-  it("executes immediately on operating authority and reports the tool result", () => {
+  it("reports the canonical handler's authority execution result", () => {
     const block = guestOutcomeBlock();
-    const executeBranch = block.indexOf('if (operationTurn.action === "execute")');
-    const execCall = block.indexOf("executeProposedPlan(plan", executeBranch);
-    const execReturn = block.indexOf("return execSummary", executeBranch);
-
-    expect(executeBranch).toBeGreaterThan(-1);
-    expect(execCall).toBeGreaterThan(executeBranch);
-    expect(execReturn).toBeGreaterThan(execCall);
-    // The spoken result is the actual tool summary, not a fabricated success.
-    expect(block.slice(executeBranch, execReturn)).toContain("resultText: execSummary");
-    expect(block.slice(executeBranch, execReturn)).toContain('kind: "guest_plan_execute"');
+    expect(block).toContain("await runHostingContinuation(rawInstruction, people)");
+    expect(block).toContain("resultText: hostingContinuation.message");
+    expect(block).toContain("return hostingContinuation.message");
   });
 
-  it("proposes (confirm-before-send) when there is no operating authority", () => {
+  it("leaves proposal-versus-execution selection inside the canonical handler", () => {
     const block = guestOutcomeBlock();
-    const overrideIndex = block.indexOf('kind: "guest_plan_proposal"');
-    const returnIndex = block.indexOf("return plan.proposalSpeech", overrideIndex);
-
-    expect(overrideIndex).toBeGreaterThan(-1);
-    expect(returnIndex).toBeGreaterThan(overrideIndex);
-    expect(block).toContain("pendingPlanRef.current = plan;");
+    expect(block).not.toContain('operationTurn.action === "execute"');
+    expect(block).not.toContain("pendingPlanRef.current = plan");
+    expect(OPS_SOURCE).toContain('status: "ready_for_approval"');
   });
 
   it("does not let a detected guest event fall through to generic delegation when planning fails", () => {
     const block = guestOutcomeBlock();
-    const failureIndex = block.indexOf("return \"I couldn't put that guest plan together right now. Please try again.\";");
-
-    expect(failureIndex).toBeGreaterThan(-1);
+    expect(block).toContain('hostingContinuation.status !== "not_hosting"');
+    expect(block).toContain("return hostingContinuation.message");
     expect(block).not.toMatch(/If plan building fails,\s*fall through to normal delegation/i);
   });
 });

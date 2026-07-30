@@ -88,6 +88,13 @@ export interface PendingOperationDraft {
   askedAtClientMessageId: string | null;
 }
 
+export interface HostingTypedHistoryMessage {
+  role: "user" | "agent";
+  content: string;
+  client_message_id: string | null;
+  reply_to_client_message_id: string | null;
+}
+
 export type OperationalPlanningResult =
   | {
       status: "not_operation";
@@ -121,6 +128,67 @@ export type OperationalPlanningResult =
       plan: null;
       question: null;
     };
+
+export type HostingContinuationState =
+  | { kind: "clarification"; draft: PendingOperationDraft }
+  | { kind: "approval"; plan: ProposedPlan }
+  | null;
+
+export type ActionContinuationResult =
+  | {
+      status: "not_hosting";
+      slotId: null;
+      state: null;
+      message: null;
+    }
+  | {
+      status: "needs_clarification";
+      slotId: "hosting";
+      state: Extract<HostingContinuationState, { kind: "clarification" }>;
+      message: string;
+    }
+  | {
+      status: "ready_for_approval";
+      slotId: "hosting";
+      state: Extract<HostingContinuationState, { kind: "approval" }>;
+      message: string;
+    }
+  | {
+      status: "completed" | "cancelled";
+      slotId: "hosting";
+      state: null;
+      message: string;
+    }
+  | {
+      status: "held";
+      slotId: "hosting";
+      state: Extract<HostingContinuationState, { kind: "approval" }>;
+      message: null;
+    }
+  | {
+      status: "error";
+      slotId: "hosting";
+      state: null;
+      message: string;
+    };
+
+export interface ActionContinuationInput {
+  message: string;
+  people: Person[];
+  pendingState?: HostingContinuationState;
+  askedAtClientMessageId?: string | null;
+  execution?: ExecutePlanOptions | null;
+}
+
+export interface ActionContinuationSlot {
+  slotId: "hosting";
+  reconstructionStrategy: "structured_pending_operation_then_linked_typed_history";
+  validationRules: readonly string[];
+  fallbackBehavior: "return_error_without_free_form_fallthrough";
+  regressionTestResponsibility: readonly string[];
+  claims(input: ActionContinuationInput): boolean;
+  reconstruct(input: ActionContinuationInput): Promise<ActionContinuationResult>;
+}
 
 // ── Outcome detection ──────────────────────────────────────────────────────────
 
@@ -794,6 +862,131 @@ export async function handleOperationalHostingTurn(input: {
   return prepareOperationalPlanTurn(input);
 }
 
+async function reconstructHostingContinuation(
+  input: ActionContinuationInput,
+): Promise<ActionContinuationResult> {
+  const pending = input.pendingState ?? null;
+
+  if (pending?.kind === "approval" && resolveGuestOutcomeAction(input.message) === "none") {
+    if (!input.execution) {
+      return {
+        status: "error",
+        slotId: "hosting",
+        state: null,
+        message: "I can't safely complete that hosting plan without an active owner session.",
+      };
+    }
+    const turn = await handlePendingPlanTurn([input.message], pending.plan, input.execution);
+    if (turn.action === "executed") {
+      return {
+        status: "completed",
+        slotId: "hosting",
+        state: null,
+        message: turn.summary ?? "The hosting plan is complete.",
+      };
+    }
+    if (turn.action === "cancelled") {
+      return {
+        status: "cancelled",
+        slotId: "hosting",
+        state: null,
+        message: turn.summary ?? "Okay, I cancelled the hosting plan.",
+      };
+    }
+    if (turn.clearPlan) {
+      return {
+        status: "error",
+        slotId: "hosting",
+        state: null,
+        message: "That hosting plan has expired. Please tell me the plan again.",
+      };
+    }
+    return { status: "held", slotId: "hosting", state: pending, message: null };
+  }
+
+  const planning = await prepareOperationalPlanTurn({
+    message: input.message,
+    people: input.people,
+    pendingDraft: pending?.kind === "clarification" ? pending.draft : null,
+    askedAtClientMessageId: input.askedAtClientMessageId,
+  });
+  if (planning.status === "not_operation") {
+    return { status: "not_hosting", slotId: null, state: null, message: null };
+  }
+  if (planning.status === "needs_clarification") {
+    return {
+      status: "needs_clarification",
+      slotId: "hosting",
+      state: { kind: "clarification", draft: planning.draft },
+      message: planning.question,
+    };
+  }
+  if (planning.status === "plan_failed") {
+    return {
+      status: "error",
+      slotId: "hosting",
+      state: null,
+      message: "I couldn't put that guest plan together right now. Please try again.",
+    };
+  }
+
+  if (planning.action === "execute") {
+    if (!input.execution) {
+      return {
+        status: "error",
+        slotId: "hosting",
+        state: null,
+        message: "I can't safely complete that hosting plan without an active owner session.",
+      };
+    }
+    const message = await executeProposedPlan(planning.plan, input.execution);
+    return { status: "completed", slotId: "hosting", state: null, message };
+  }
+
+  return {
+    status: "ready_for_approval",
+    slotId: "hosting",
+    state: { kind: "approval", plan: planning.plan },
+    message: planning.plan.proposalSpeech,
+  };
+}
+
+/**
+ * Canonical Action Continuation Slot Registry.
+ *
+ * Slot implementations are independent: a slot receives only its own input
+ * and state, and may not inspect another slot's internal state. The
+ * orchestration function below is the only component that selects a slot.
+ */
+export const ACTION_CONTINUATION_SLOT_REGISTRY: readonly ActionContinuationSlot[] = [
+  {
+    slotId: "hosting",
+    reconstructionStrategy: "structured_pending_operation_then_linked_typed_history",
+    validationRules: [
+      "claim an existing hosting continuation before classifying new input",
+      "retain every explicit hosting detail while reconstructing",
+      "execute only an exact persisted approval plan",
+    ],
+    fallbackBehavior: "return_error_without_free_form_fallthrough",
+    regressionTestResponsibility: [
+      "clarification reconstruction",
+      "typed and voice adapter equivalence",
+      "restored-session continuation",
+      "exactly-once approval execution",
+    ],
+    claims: (input) => Boolean(input.pendingState) || resolveGuestOutcomeAction(input.message) !== "none",
+    reconstruct: reconstructHostingContinuation,
+  },
+];
+
+export async function runActionContinuation(
+  input: ActionContinuationInput,
+): Promise<ActionContinuationResult> {
+  const slot = ACTION_CONTINUATION_SLOT_REGISTRY.find((entry) => entry.claims(input));
+  if (!slot) return { status: "not_hosting", slotId: null, state: null, message: null };
+  return slot.reconstruct(input);
+}
+
 // ── Confirmation / rejection detection ────────────────────────────────────────
 
 const CONFIRMATION_RE =
@@ -981,6 +1174,91 @@ export async function loadActiveHostingDraft(): Promise<PendingOperationDraft | 
     sourceText: data.source_text as string,
     askedAtClientMessageId: null,
   };
+}
+
+/** Restore the one canonical hosting continuation, regardless of lifecycle stage. */
+export async function loadActiveHostingContinuation(): Promise<HostingContinuationState> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data, error } = await supabase
+    .from("carson_pending_operations")
+    .select("*")
+    .eq("user_id", user.id)
+    .eq("type", "guest_arrival")
+    .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  if (Array.isArray(data.tasks) && data.tasks.length > 0) {
+    return {
+      kind: "approval",
+      plan: {
+        dbId: data.id as string,
+        outcomeType: data.type as HouseholdOutcomeType,
+        tasks: data.tasks as ProposedTask[],
+        proposalSpeech: data.summary as string,
+        sourceText: data.source_text as string,
+        brief: buildHostingEventBrief(data.source_text as string),
+        createdAt: new Date(data.created_at as string).getTime(),
+      },
+    };
+  }
+  return {
+    kind: "clarification",
+    draft: {
+      operationId: data.id as string,
+      operationType: data.type as HouseholdOutcomeType,
+      sourceText: data.source_text as string,
+      askedAtClientMessageId: null,
+    },
+  };
+}
+
+const HOSTING_CLARIFICATION_HISTORY_RE =
+  /(?:how many guests|number of guests|guest count|anything .*avoid serving|dietary restrictions?|food allergies|what time .*plan|what time .*begin|where .*host|what .*served)/i;
+const HOSTING_TERMINAL_HISTORY_RE =
+  /(?:plan (?:was |is )?(?:sent|completed|cancelled|canceled|rejected)|okay,? i(?:'ll| will) hold off|hosting plan is complete)/i;
+
+/**
+ * Reconstruct an unresolved typed clarification from durable message
+ * relationships. Wording identifies the slot shape only; the linked original
+ * owner turn is always the source of truth.
+ */
+export function reconstructHostingContinuationFromTypedHistory(
+  history: readonly HostingTypedHistoryMessage[],
+): HostingContinuationState {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const clarification = history[index];
+    if (
+      clarification.role !== "agent"
+      || !clarification.reply_to_client_message_id
+      || !HOSTING_CLARIFICATION_HISTORY_RE.test(clarification.content)
+    ) {
+      continue;
+    }
+    if (history.slice(index + 1).some((entry) =>
+      entry.role === "agent" && HOSTING_TERMINAL_HISTORY_RE.test(entry.content)
+    )) {
+      return null;
+    }
+    const original = history.find((entry) =>
+      entry.role === "user"
+      && entry.client_message_id === clarification.reply_to_client_message_id
+    );
+    if (!original || resolveGuestOutcomeAction(original.content) === "none") continue;
+    const draft = createPendingOperationDraft(
+      original.content,
+      original.client_message_id,
+    );
+    return draft ? { kind: "clarification", draft } : null;
+  }
+  return null;
 }
 
 export async function loadLatestCompletedHostingOperation(): Promise<ProposedPlan | null> {

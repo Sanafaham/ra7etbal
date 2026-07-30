@@ -18,12 +18,12 @@ describe("ElevenLabsAgentWidget — Voice Carson behavior guard", () => {
   it("requires every voice hosting turn to use the shared execute_instruction handler", () => {
     expect(SOURCE).toContain("For every new hosting request or hosting clarification, call execute_instruction");
     expect(SOURCE).toContain("Never answer hosting from conversation history or ra7etbal_state alone.");
-    expect(SOURCE).toContain("pendingOperationDraft = await loadActiveHostingDraft().catch(() => null)");
-    expect(SOURCE).toContain("handleOperationalHostingTurn({");
+    expect(SOURCE).toContain("pendingHostingState = await loadActiveHostingContinuation().catch(() => null)");
+    expect(SOURCE).toContain("runHostingContinuation(rawInstruction, people)");
   });
 
   it("does not start a greeting over a restored hosting clarification", () => {
-    expect(SOURCE).toContain("const activeHostingDraft = pendingHostingClarificationRef.current");
+    expect(SOURCE).toContain("const activeHostingContinuation = pendingHostingContinuationRef.current");
     expect(SOURCE).toContain('const openingLine = activeHostingDraft || hasTypedHistory\n      ? ""');
     expect(SOURCE).toContain("Do not greet or start a new topic; wait for the owner's clarification answer");
   });

@@ -114,7 +114,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "  // ------------------------------------------------------------------\n  // Session teardown",
     );
     const guestActionIndex = sendBlock.indexOf("const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)");
-    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await handleOperationalHostingTurn({", guestActionIndex);
+    const operationTurnIndex = sendBlock.indexOf("const continuation = await runHostingContinuation(", guestActionIndex);
     const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", operationTurnIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
@@ -122,10 +122,9 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(operationTurnIndex).toBeGreaterThan(guestActionIndex);
     expect(localReplyIndex).toBeGreaterThan(operationTurnIndex);
     expect(operationTurnIndex).toBeLessThan(sendIndex);
-    expect(sendBlock).toContain('operationTurn.status === "needs_clarification"');
-    expect(sendBlock).toContain("handleOperationalHostingTurn({");
-    expect(sendBlock).toContain("pendingPlanRef.current = plan");
-    expect(sendBlock).toContain("content: plan.proposalSpeech");
+    expect(sendBlock).toContain('continuation.status !== "needs_clarification"');
+    expect(sendBlock).toContain("runHostingContinuation(");
+    expect(sendBlock).toContain("content: continuation.message");
   });
 
   it("links a typed hosting clarification answer back to the original request before planning", () => {
@@ -135,10 +134,10 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     );
     const pendingRefIndex = SOURCE.indexOf("const pendingHostingClarificationRef = useRef<PendingOperationDraft | null>(null)");
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
-    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await handleOperationalHostingTurn({", pendingBranchIndex);
-    const pendingDraftIndex = sendBlock.indexOf("pendingDraft: pendingHostingClarification", operationTurnIndex);
-    const proposalIndex = sendBlock.indexOf("content: plan.proposalSpeech", operationTurnIndex);
-    const setClarificationIndex = sendBlock.indexOf("pendingHostingClarificationRef.current = operationTurn.draft", operationTurnIndex);
+    const operationTurnIndex = sendBlock.indexOf("const continuation = await runHostingContinuation(", pendingBranchIndex);
+    const pendingDraftIndex = sendBlock.indexOf("clientMessageId,", operationTurnIndex);
+    const proposalIndex = sendBlock.indexOf("content: continuation.message", operationTurnIndex);
+    const setClarificationIndex = sendBlock.indexOf('continuation.status !== "needs_clarification"', operationTurnIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
     expect(pendingRefIndex).toBeGreaterThan(-1);
@@ -160,7 +159,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     const classifyIndex = sendBlock.indexOf("const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)");
     const restoreIndex = sendBlock.indexOf("await loadActiveHostingDraft().catch(() => null)");
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
-    const operationTurnIndex = sendBlock.indexOf("const operationTurn = await handleOperationalHostingTurn({", pendingBranchIndex);
+    const operationTurnIndex = sendBlock.indexOf("const continuation = await runHostingContinuation(", pendingBranchIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
     expect(classifyIndex).toBeGreaterThan(-1);
@@ -177,7 +176,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       'const startCarsonSession = useCallback(async (requestedChannel: CarsonChannel = "voice") => {',
       "  const startCall = useCallback(() => {",
     );
-    const restoreIndex = startBlock.indexOf("const activeHostingDraft = pendingHostingClarificationRef.current");
+    const restoreIndex = startBlock.indexOf("const activeHostingContinuation = pendingHostingContinuationRef.current");
     const openingIndex = startBlock.indexOf("const openingLine = activeHostingDraft");
 
     expect(restoreIndex).toBeGreaterThan(-1);
@@ -235,7 +234,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     );
     const decisionIndex = sendBlock.indexOf("const typedPendingDecision = resolvePendingPlanDecision(savedMessage.content)");
     const pendingPlanIndex = sendBlock.indexOf("let activeTypedPlan = pendingPlanRef.current");
-    const handlerIndex = sendBlock.indexOf("handlePendingPlanTurn([savedMessage.content], activeTypedPlan");
+    const handlerIndex = sendBlock.indexOf("const continuation = await runHostingContinuation(savedMessage.content, people)");
     const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", handlerIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
 
@@ -244,9 +243,9 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     expect(handlerIndex).toBeGreaterThan(pendingPlanIndex);
     expect(localReplyIndex).toBeGreaterThan(handlerIndex);
     expect(handlerIndex).toBeLessThan(sendIndex);
-    expect(sendBlock).toContain("if (turn.clearPlan) pendingPlanRef.current = null");
-    expect(sendBlock).toContain('turn.action === "executed"');
-    expect(sendBlock).toContain('turn.action === "cancelled"');
+    expect(sendBlock).toContain('pendingHostingContinuationRef.current = { kind: "approval", plan: activeTypedPlan }');
+    expect(sendBlock).toContain('continuation.status === "completed"');
+    expect(sendBlock).toContain('continuation.status === "cancelled"');
   });
 
   it("handles typed pending-plan approval before requiring an active ElevenLabs connection", () => {
@@ -257,7 +256,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     const createUserIndex = sendBlock.indexOf("savedMessage = await createTypedUserMessage({");
     const pendingPlanIndex = sendBlock.indexOf("let activeTypedPlan = pendingPlanRef.current");
     const loadPlanIndex = sendBlock.indexOf("activeTypedPlan = await loadLatestPendingPlan().catch(() => null)");
-    const handlerIndex = sendBlock.indexOf("handlePendingPlanTurn([savedMessage.content], activeTypedPlan");
+    const handlerIndex = sendBlock.indexOf("const continuation = await runHostingContinuation(savedMessage.content, people)");
     const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", handlerIndex);
     const connectionGuardIndex = sendBlock.indexOf('throw new Error("The Carson session ended before the message could be sent.")');
     const initialGuardBlock = sendBlock.slice(
@@ -281,7 +280,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "  // ------------------------------------------------------------------\n  // Session teardown",
     );
     const pendingBranchIndex = sendBlock.indexOf("const pendingHostingClarification = pendingHostingClarificationRef.current");
-    const needsClarificationIndex = sendBlock.indexOf('operationTurn.status === "needs_clarification"', pendingBranchIndex);
+    const needsClarificationIndex = sendBlock.indexOf('continuation.status !== "needs_clarification"', pendingBranchIndex);
     const localReplyIndex = sendBlock.indexOf("persistLocalTypedAgentReply({", needsClarificationIndex);
     const localReturnIndex = sendBlock.indexOf("return;", localReplyIndex);
     const sendIndex = sendBlock.indexOf("conversation.sendUserMessage(agentMessage)");
@@ -415,11 +414,10 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     );
     for (const requiredText of [
       "You are not signed in. Please sign in and try again.",
-      'turn.action === "executed"',
-      'turn.action === "cancelled"',
-      'operationTurn.status === "needs_clarification"',
-      "I couldn't put that guest plan together right now. Please try again.",
-      "content: plan.proposalSpeech",
+      'continuation.status === "completed"',
+      'continuation.status === "cancelled"',
+      'continuation.status !== "needs_clarification"',
+      "content: continuation.message",
     ]) {
       expect(sendBlock).toContain(requiredText);
     }
@@ -642,40 +640,18 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
   // must now redirect immediately, before any hosting clarification question
   // or proposal is generated — see "redirects a typed hosting execution
   // request immediately, before any clarification or proposal" below.
-  it("blocks hosting clarification/proposal generation entirely while advisory-only, but keeps the old planning-allowed path reachable behind TYPED_MODE_IS_ADVISORY_ONLY for reversibility", () => {
-    const redirectBlock = blockBetween(
+  it("uses the canonical continuation handler for typed hosting planning while keeping typed approval advisory-only", () => {
+    const hostingBlock = blockBetween(
       "const pendingHostingClarification = pendingHostingClarificationRef.current;",
-      "if (pendingHostingClarification) {",
-    );
-    expect(redirectBlock).toContain(
-      'if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {',
-    );
-    expect(redirectBlock).toContain("content: TYPED_ADVISORY_HOSTING_REQUEST,");
-    expect(redirectBlock).toContain("return;");
-    expect(redirectBlock).not.toContain("handleOperationalHostingTurn");
-
-    // The old "planning allowed" flow (both continuing a clarification and a
-    // fresh request) still exists, reachable only when the redirect above
-    // does not return — i.e. only when TYPED_MODE_IS_ADVISORY_ONLY is false.
-    const clarificationBlock = blockBetween(
-      "if (pendingHostingClarification) {",
-      "if (typedGuestAction !== \"none\") {",
-    );
-    expect(clarificationBlock).toContain("const operationTurn = await handleOperationalHostingTurn({");
-
-    const freshRequestBlock = blockBetween(
-      "if (typedGuestAction !== \"none\") {",
       "// ── Deterministic typed delegation fast path",
     );
-    expect(freshRequestBlock).toContain("const operationTurn = await handleOperationalHostingTurn({");
+    expect(hostingBlock).toContain("const continuation = await runHostingContinuation(");
+    expect(hostingBlock).toContain("content: continuation.message");
+    expect(hostingBlock).not.toContain("handleOperationalHostingTurn");
 
-    // Pending-plan approval/execution remains blocked exactly as before —
-    // handlePendingPlanTurn (the only call site that can invoke
-    // executeProposedPlan) is never reached on "confirm", and the pending
-    // plan is left untouched so Talk to Carson can still execute it.
     const pendingPlanBlock = blockBetween(
       "if (activeTypedPlan) {",
-      "const turn = await handlePendingPlanTurn([savedMessage.content], activeTypedPlan, {",
+      "const continuation = await runHostingContinuation(savedMessage.content, people)",
     );
     expect(pendingPlanBlock).toContain('if (TYPED_MODE_IS_ADVISORY_ONLY && typedPendingDecision === "confirm") {');
     expect(pendingPlanBlock).toContain("content: TYPED_ADVISORY_HOSTING_EXECUTION,");
@@ -800,40 +776,26 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
     );
   }
 
-  it("redirects a typed hosting execution request immediately, before any clarification question or proposal", () => {
+  it("claims a typed hosting request before the free-form model", () => {
     const block = sendBlock();
     const guestActionIndex = block.indexOf('const typedGuestAction = resolveGuestOutcomeAction(savedMessage.content)');
-    const redirectIndex = block.indexOf(
-      'if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {',
-      guestActionIndex,
-    );
-    const redirectContentIndex = block.indexOf("content: TYPED_ADVISORY_HOSTING_REQUEST,", redirectIndex);
-    const redirectReturnIndex = block.indexOf("return;", redirectContentIndex);
-    const firstHostingTurnIndex = block.indexOf("await handleOperationalHostingTurn({", redirectIndex);
+    const continuationIndex = block.indexOf("const continuation = await runHostingContinuation(", guestActionIndex);
+    const replyIndex = block.indexOf("content: continuation.message", continuationIndex);
+    const returnIndex = block.indexOf("return;", replyIndex);
+    const modelIndex = block.indexOf("conversation.sendUserMessage(agentMessage)");
 
     expect(guestActionIndex).toBeGreaterThan(-1);
-    expect(redirectIndex).toBeGreaterThan(guestActionIndex);
-    expect(redirectContentIndex).toBeGreaterThan(redirectIndex);
-    expect(redirectReturnIndex).toBeGreaterThan(redirectContentIndex);
-    // No question is asked and no proposal is built before the redirect
-    // returns — the only handleOperationalHostingTurn call (proposal/
-    // clarification generation) in the block comes strictly after the
-    // redirect's own return.
-    expect(firstHostingTurnIndex).toBeGreaterThan(redirectReturnIndex);
-    expect(TYPED_ADVISORY_HOSTING_REQUEST_VALUE()).toMatch(/Talk to Carson/);
-    expect(TYPED_ADVISORY_HOSTING_REQUEST_VALUE()).not.toMatch(/\?/);
+    expect(continuationIndex).toBeGreaterThan(guestActionIndex);
+    expect(replyIndex).toBeGreaterThan(continuationIndex);
+    expect(returnIndex).toBeGreaterThan(replyIndex);
+    expect(returnIndex).toBeLessThan(modelIndex);
   });
 
-  it("does not ask for approval before redirecting a fresh hosting request — no plan is ever stored first", () => {
+  it("does not maintain a second typed hosting planner", () => {
     const block = sendBlock();
-    const redirectIndex = block.indexOf(
-      'if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {',
-    );
-    const redirectReturnIndex = block.indexOf("return;", redirectIndex);
-    const firstPendingPlanAssignment = block.indexOf("pendingPlanRef.current = plan;", redirectIndex);
-    // pendingPlanRef is only ever populated by the dormant reversibility
-    // path, strictly after the redirect's own return — never before it.
-    expect(firstPendingPlanAssignment).toBeGreaterThan(redirectReturnIndex);
+    expect(block).not.toContain("handleOperationalHostingTurn({");
+    expect(block).not.toContain("buildOperationalPlanFromOutcome(");
+    expect(block).not.toContain("evaluateHostingPlanningGate(");
   });
 
   it("redirects a typed reminder, calendar, staff-message, or generic-action request via one final classifier gate before the free-form model", () => {
@@ -932,10 +894,6 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
     }
   });
 });
-
-function TYPED_ADVISORY_HOSTING_REQUEST_VALUE(): string {
-  return sourceConstant("TYPED_ADVISORY_HOSTING_REQUEST");
-}
 
 /**
  * "Send to Carson" (Note cards, 2026-07-26): the widget accepts a queued

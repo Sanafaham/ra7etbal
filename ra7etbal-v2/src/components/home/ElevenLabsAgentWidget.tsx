@@ -93,19 +93,20 @@ import {
 import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-tool-diagnostics";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText, resolveRecurringAutomationPerson } from "../../lib/routine-detection";
 import {
-  handleOperationalHostingTurn,
+  runActionContinuation,
   resolveGuestOutcomeAction,
-  executeProposedPlan,
   hasLeadingConfirmationLanguage,
   isConfirmation,
   isRejection,
   isStatusQuestion,
   resolvePendingPlanDecision,
-  handlePendingPlanTurn,
   loadActiveHostingDraft,
+  loadActiveHostingContinuation,
+  reconstructHostingContinuationFromTypedHistory,
   loadLatestPendingPlan,
   resolveHostingOperationRecall,
   type PendingOperationDraft,
+  type HostingContinuationState,
   type ProposedPlan,
 } from "../../lib/ops-intelligence";
 import { mergePersonNotes, updatePeopleInsightsFromTasks } from "../../lib/people-behavior";
@@ -207,11 +208,6 @@ const TYPED_ADVISORY_RECURRING_REMINDER = "I can help you plan that. Use Talk to
 const TYPED_ADVISORY_CALENDAR = "I can help you plan the event. Use Talk to Carson to add it to your calendar.";
 const TYPED_ADVISORY_STAFF_MESSAGE = "I can help you draft the message. Use Talk to Carson to send it.";
 const TYPED_ADVISORY_HOSTING_EXECUTION = "I can help you plan the hosting details. Use Talk to Carson when you are ready to execute the plan.";
-// Brief, immediate redirect for a fresh hosting execution request ("Handle
-// dinner tomorrow.") — deliberately terser than TYPED_ADVISORY_HOSTING_EXECUTION
-// above (which follows an already-built proposal): no clarification question,
-// no proposal, no advisory preamble first.
-const TYPED_ADVISORY_HOSTING_REQUEST = "Use Talk to Carson to plan and arrange it.";
 const TYPED_ADVISORY_TASK_STATE = "I can help you think that through. Use Talk to Carson to update it.";
 const TYPED_ADVISORY_GENERIC = "I can help you prepare that, but I can't complete it from typed chat. Use Talk to Carson to do it.";
 
@@ -999,6 +995,10 @@ export default function ElevenLabsAgentWidget({
   const typedSessionIdRef = useRef(getOrCreateTypedSessionId());
   const typedConversationIdRef = useRef<string | null>(null);
   const pendingTypedClientMessageIdRef = useRef<string | null>(null);
+  /** Canonical hosting slot state. Adapters may cache legacy phase-specific
+   * refs while migrating, but selection and reconstruction use only this
+   * registry-owned value. */
+  const pendingHostingContinuationRef = useRef<HostingContinuationState>(null);
   const pendingHostingClarificationRef = useRef<PendingOperationDraft | null>(null);
   const persistedTypedAgentEventsRef = useRef(new Set<string>());
   const [typedMessages, setTypedMessages] = useState<CarsonTypedMessage[]>([]);
@@ -1384,6 +1384,40 @@ export default function ElevenLabsAgentWidget({
    *  shape as pendingPlanRef but a separate ref/type (calendar events, not
    *  person tasks) and a separate carson_pending_operations "type". */
   const pendingWeekPlanRef = useRef<ProposedWeekPlan | null>(null);
+
+  const runHostingContinuation = useCallback(async (
+    message: string,
+    people: Person[],
+    askedAtClientMessageId: string | null = null,
+  ) => {
+    const authUserId = useAuthStore.getState().user?.id ?? null;
+    const cachedState = pendingHostingContinuationRef.current
+      ?? (pendingHostingClarificationRef.current
+        ? { kind: "clarification" as const, draft: pendingHostingClarificationRef.current }
+        : pendingPlanRef.current
+          ? { kind: "approval" as const, plan: pendingPlanRef.current }
+          : null);
+    const result = await runActionContinuation({
+      message,
+      people,
+      pendingState: cachedState,
+      askedAtClientMessageId,
+      execution: authUserId
+        ? { displayName: displayName ?? null, userId: authUserId, people }
+        : null,
+    });
+
+    pendingHostingContinuationRef.current = result.state;
+    pendingHostingClarificationRef.current =
+      result.state?.kind === "clarification" ? result.state.draft : null;
+    pendingPlanRef.current =
+      result.state?.kind === "approval" ? result.state.plan : null;
+    if (result.status === "completed") {
+      sessionActionsRef.current.push(`Ops plan completed: ${message}`);
+      if (authUserId) useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+    }
+    return result;
+  }, [displayName]);
 
   /** Last executed weekly plan's per-event results, kept briefly so a
    *  follow-up "try again" retries only the events that failed — never the
@@ -1939,6 +1973,32 @@ export default function ElevenLabsAgentWidget({
        *  When absent, note is extracted from `message` as best-effort. */
       note?: string;
     }): Promise<string> => {
+      // A pending hosting slot owns the next turn before legacy parameter
+      // validation. ElevenLabs may select send_delegation for a bare answer
+      // such as "6"; requiring name/task first would strand the continuation.
+      if (
+        pendingHostingContinuationRef.current?.kind === "clarification"
+        || pendingHostingClarificationRef.current
+      ) {
+        const authUserId = useAuthStore.getState().user?.id;
+        if (!authUserId) return "You are not signed in. Please sign in and try again.";
+        const peopleState = usePeopleStore.getState();
+        if (peopleState.status === "idle" || peopleState.items.length === 0) {
+          await usePeopleStore.getState().loadFor(authUserId);
+        }
+        const continuationMessage = [...sessionTranscriptRef.current]
+          .reverse()
+          .find((entry) => entry.role === "user")?.message
+          ?? params?.message
+          ?? params?.task
+          ?? "";
+        const continuation = await runHostingContinuation(
+          continuationMessage,
+          usePeopleStore.getState().items,
+        );
+        return continuation.message ?? "I have kept that hosting plan pending.";
+      }
+
       const normalizedName = extractPersonNameParam(params, "name").trim();
       const message = params?.message ?? extractMessageParam(params);
       const note = params?.note;
@@ -1982,45 +2042,17 @@ export default function ElevenLabsAgentWidget({
         .join("\n");
       const guestAction = resolveGuestOutcomeAction(hostingSource);
       if (guestAction !== "none") {
-        const operationTurn = await handleOperationalHostingTurn({
-          message: hostingSource,
-          people,
-          pendingDraft: pendingHostingClarificationRef.current,
-        });
-        if (operationTurn.status === "needs_clarification") {
-          pendingHostingClarificationRef.current = operationTurn.draft;
-          pendingPlanRef.current = null;
-          return operationTurn.question ?? "I need a few details before I message anyone.";
-        }
-        pendingHostingClarificationRef.current = null;
-        if (operationTurn.status === "ready") {
-          const plan = operationTurn.plan;
-          if (operationTurn.action === "execute") {
-            const execSummary = await executeProposedPlan(plan, {
-              displayName: displayName ?? null,
-              userId: authUserId,
-              people,
-            });
-            sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
-            useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-            lastDirectToolSuccessRef.current = {
-              toolName: "send_delegation",
-              resultText: execSummary,
-              at: new Date().toISOString(),
-              inputSummary: { kind: "guest_operation_execute", instruction: plan.sourceText },
-            };
-            return execSummary;
-          }
-          pendingPlanRef.current = plan;
+        const continuation = await runHostingContinuation(hostingSource, people);
+        if (continuation.message) {
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
-            resultText: plan.proposalSpeech,
+            resultText: continuation.message,
             at: new Date().toISOString(),
-            inputSummary: { kind: "guest_operation_reroute", instruction: plan.sourceText },
+            inputSummary: { kind: `hosting_${continuation.status}`, instruction: hostingSource },
           };
-          return plan.proposalSpeech;
+          return continuation.message;
         }
-        return "Let me put the full plan together for that. One moment, then say yes to send it.";
+        return "I have kept the hosting plan pending. Tell me when you are ready.";
       }
 
       const matches = people.filter(
@@ -2312,6 +2344,7 @@ export default function ElevenLabsAgentWidget({
       clearPendingImages,
       findRecentDuplicateDelegation,
       recordDelegationSent,
+      runHostingContinuation,
     ],
   );
 
@@ -4382,37 +4415,22 @@ export default function ElevenLabsAgentWidget({
         }
 
         if (activePlan) {
-          const turn = await handlePendingPlanTurn([lastUserMessage, instruction ?? null], activePlan, {
-            displayName: displayName ?? null,
-            userId: authUserId,
+          pendingHostingContinuationRef.current = { kind: "approval", plan: activePlan };
+          const continuation = await runHostingContinuation(
+            lastUserMessage || instruction || "",
             people,
-          });
-          if (turn.clearPlan) pendingPlanRef.current = null;
-
-          if (turn.action === "executed") {
-            sessionActionsRef.current.push(`Ops plan executed: ${activePlan.sourceText}`);
-            useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-            // Truthfulness wiring (mirrors the Weekly Planning confirm branch
-            // below): without this, EL's own separately-generated spoken
-            // reply for this turn is never checked against the real
-            // execution result, so it can contradict it — the confirmed
-            // production incident this guards against.
+          );
+          if (continuation.status === "completed" || continuation.status === "cancelled") {
             lastDirectToolSuccessRef.current = {
               toolName: "execute_instruction",
-              resultText: turn.summary ?? "",
+              resultText: continuation.message,
               at: new Date().toISOString(),
-              inputSummary: { kind: "guest_plan_execute", instruction: activePlan.sourceText.slice(0, 80) },
+              inputSummary: {
+                kind: `guest_plan_${continuation.status}`,
+                instruction: activePlan.sourceText.slice(0, 80),
+              },
             };
-            return turn.summary ?? "";
-          }
-          if (turn.action === "cancelled") {
-            lastDirectToolSuccessRef.current = {
-              toolName: "execute_instruction",
-              resultText: turn.summary ?? "",
-              at: new Date().toISOString(),
-              inputSummary: { kind: "guest_plan_cancelled", instruction: activePlan.sourceText.slice(0, 80) },
-            };
-            return turn.summary ?? "";
+            return continuation.message;
           }
           // held: plan preserved for a later turn (or discarded on expiry).
           // Fall through to normal handling below.
@@ -4494,57 +4512,23 @@ export default function ElevenLabsAgentWidget({
         // the owner may answer a clarification with short phrases that are not
         // standalone operations. The helper owns accumulated brief → gate →
         // persisted plan for both voice and typed hosting.
-        let pendingOperationDraft = pendingHostingClarificationRef.current;
-        if (!pendingOperationDraft && resolveGuestOutcomeAction(rawInstruction) === "none") {
-          pendingOperationDraft = await loadActiveHostingDraft().catch(() => null);
-          if (pendingOperationDraft) pendingHostingClarificationRef.current = pendingOperationDraft;
+        let pendingHostingState = pendingHostingContinuationRef.current;
+        if (!pendingHostingState && resolveGuestOutcomeAction(rawInstruction) === "none") {
+          pendingHostingState = await loadActiveHostingContinuation().catch(() => null);
+          if (pendingHostingState) pendingHostingContinuationRef.current = pendingHostingState;
         }
-        if (pendingOperationDraft) {
-          const operationTurn = await handleOperationalHostingTurn({
-            message: rawInstruction,
-            people,
-            pendingDraft: pendingOperationDraft,
-          });
-
-          if (operationTurn.status === "needs_clarification") {
-            pendingHostingClarificationRef.current = operationTurn.draft;
-            lastDirectToolSuccessRef.current = null;
-            return operationTurn.question;
-          }
-
-          pendingHostingClarificationRef.current = null;
-          pendingPlanRef.current = null;
-
-          if (operationTurn.status === "ready") {
-            const plan = operationTurn.plan;
-            if (operationTurn.action === "execute") {
-              const execSummary = await executeProposedPlan(plan, {
-                displayName: displayName ?? null,
-                userId: authUserId,
-                people,
-              });
-              sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
-              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-              lastDirectToolSuccessRef.current = {
-                toolName: "execute_instruction",
-                resultText: execSummary,
-                at: new Date().toISOString(),
-                inputSummary: { kind: "guest_plan_execute", instruction: plan.sourceText.slice(0, 80) },
-              };
-              return execSummary;
-            }
-
-            pendingPlanRef.current = plan;
+        if (pendingHostingState) {
+          const continuation = await runHostingContinuation(rawInstruction, people);
+          if (continuation.status === "needs_clarification") lastDirectToolSuccessRef.current = null;
+          else if (continuation.message) {
             lastDirectToolSuccessRef.current = {
               toolName: "execute_instruction",
-              resultText: plan.proposalSpeech,
+              resultText: continuation.message,
               at: new Date().toISOString(),
-              inputSummary: { kind: "guest_plan_proposal", instruction: plan.sourceText.slice(0, 80) },
+              inputSummary: { kind: `hosting_${continuation.status}`, instruction: rawInstruction.slice(0, 80) },
             };
-            return plan.proposalSpeech;
           }
-
-          return "I couldn't put that guest plan together right now. Please try again.";
+          return continuation.message ?? "I have kept that hosting plan pending.";
         }
 
         // Guard: a confirmation/rejection with no active plan returns a graceful
@@ -4563,7 +4547,7 @@ export default function ElevenLabsAgentWidget({
         // ("Yes, and please coordinate the table setup...") does not match
         // the exact-match confirmation regex above, so pendingDecision is
         // "hold" and — with no active plan — this would otherwise fall
-        // through to handleOperationalHostingTurn below and be misread as a
+        // through to the hosting continuation below and be misread as a
         // brand new hosting request. Confirmed production incident: Carson
         // spoke a two-person hosting proposal without ever persisting a
         // plan; the owner's "Yes, and..." reply then got misrouted this way,
@@ -4579,54 +4563,22 @@ export default function ElevenLabsAgentWidget({
         // ready", …) → EXECUTE immediately and report the tool-confirmed result.
         // A hosting event WITHOUT operating authority → propose (confirm-before-
         // send). Approval-required sensitive actions are gated at the prompt.
-        const operationTurn = await handleOperationalHostingTurn({
-          message: rawInstruction,
-          people,
-        });
-        if (operationTurn.status !== "not_operation") {
-          pendingPlanRef.current = null;
-          if (operationTurn.status === "needs_clarification") {
-            pendingHostingClarificationRef.current = operationTurn.draft;
+        const hostingContinuation = await runHostingContinuation(rawInstruction, people);
+        if (hostingContinuation.status !== "not_hosting") {
+          if (hostingContinuation.status === "needs_clarification") {
             lastDirectToolSuccessRef.current = null;
-            return operationTurn.question;
-          }
-
-          pendingHostingClarificationRef.current = null;
-
-          if (operationTurn.status === "ready") {
-            const plan = operationTurn.plan;
-            if (operationTurn.action === "execute") {
-              const execSummary = await executeProposedPlan(plan, {
-                displayName: displayName ?? null,
-                userId: authUserId,
-                people,
-              });
-              sessionActionsRef.current.push(`Ops plan executed: ${plan.sourceText}`);
-              useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
-              lastDirectToolSuccessRef.current = {
-                toolName: "execute_instruction",
-                resultText: execSummary,
-                at: new Date().toISOString(),
-                inputSummary: {
-                  kind: "guest_plan_execute",
-                  instruction: plan.sourceText.slice(0, 80),
-                },
-              };
-              return execSummary;
-            }
-            pendingPlanRef.current = plan;
+          } else if (hostingContinuation.message) {
             lastDirectToolSuccessRef.current = {
               toolName: "execute_instruction",
-              resultText: plan.proposalSpeech,
+              resultText: hostingContinuation.message,
               at: new Date().toISOString(),
               inputSummary: {
-                kind: "guest_plan_proposal",
-                instruction: plan.sourceText.slice(0, 80),
+                kind: `hosting_${hostingContinuation.status}`,
+                instruction: rawInstruction.slice(0, 80),
               },
             };
-            return plan.proposalSpeech;
           }
-          return "I couldn't put that guest plan together right now. Please try again.";
+          return hostingContinuation.message ?? "I have kept that hosting plan pending.";
         }
 
         // ── Carson Weekly Planning V1 — outcome leg ─────────────────────────
@@ -5561,11 +5513,17 @@ export default function ElevenLabsAgentWidget({
     // A persisted hosting clarification survives component remounts and
     // Type/Talk reconnects. Restore its canonical operation before building
     // any opening behavior so a greeting can never interrupt the workflow.
-    const activeHostingDraft = pendingHostingClarificationRef.current
-      ?? await loadActiveHostingDraft().catch(() => null);
-    if (activeHostingDraft) {
-      pendingHostingClarificationRef.current = activeHostingDraft;
-    }
+    const activeHostingContinuation = pendingHostingContinuationRef.current
+      ?? await loadActiveHostingContinuation().catch(() => null)
+      ?? reconstructHostingContinuationFromTypedHistory(restoredTypedMessages);
+    pendingHostingContinuationRef.current = activeHostingContinuation;
+    const activeHostingDraft = activeHostingContinuation?.kind === "clarification"
+      ? activeHostingContinuation.draft
+      : null;
+    pendingHostingClarificationRef.current = activeHostingDraft;
+    pendingPlanRef.current = activeHostingContinuation?.kind === "approval"
+      ? activeHostingContinuation.plan
+      : null;
     if (!isCurrentSession()) return;
 
     // Load structured user memory and recent session summaries before opening
@@ -7099,30 +7057,22 @@ export default function ElevenLabsAgentWidget({
           await usePeopleStore.getState().loadFor(authUserId);
         }
         const people = usePeopleStore.getState().items;
-        const turn = await handlePendingPlanTurn([savedMessage.content], activeTypedPlan, {
-          displayName: displayName ?? null,
-          userId: authUserId,
-          people,
-        });
-        if (turn.clearPlan) pendingPlanRef.current = null;
-        if (turn.clearPlan) pendingHostingClarificationRef.current = null;
-
-        if (turn.action === "executed") {
+        pendingHostingContinuationRef.current = { kind: "approval", plan: activeTypedPlan };
+        const continuation = await runHostingContinuation(savedMessage.content, people);
+        if (continuation.status === "completed") {
           sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
-          sessionActionsRef.current.push(`Ops plan executed: ${activeTypedPlan.sourceText}`);
-          useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
           await persistLocalTypedAgentReply({
             replyToClientMessageId: clientMessageId,
-            content: turn.summary ?? "",
+            content: continuation.message,
             clearPendingPhotos: true,
           });
           return;
         }
-        if (turn.action === "cancelled") {
+        if (continuation.status === "cancelled" || continuation.status === "error") {
           sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
           await persistLocalTypedAgentReply({
             replyToClientMessageId: clientMessageId,
-            content: turn.summary ?? "",
+            content: continuation.message,
             clearPendingPhotos: true,
           });
           return;
@@ -7149,129 +7099,26 @@ export default function ElevenLabsAgentWidget({
       // is generated — whether it's a brand-new hosting request
       // (typedGuestAction !== "none") or a continuation of a clarification
       // already pending (from this session or a prior one, possibly started
-      // via Talk to Carson). handleOperationalHostingTurn — the only call
-      // site that can build/persist a proposal — is never reached from typed
-      // for either case while advisory-only. The underlying pending
-      // operation, if any, is left completely untouched so Talk to Carson
-      // can still pick it up. Flip TYPED_MODE_IS_ADVISORY_ONLY to false to
-      // fully and reversibly restore the prior "planning allowed, only
-      // approval/execution blocked" behavior in the else branch below.
+      // via Talk to Carson). Planning and clarification still use the
+      // canonical continuation slot in typed mode; only approval execution
+      // remains blocked by the advisory boundary above.
       const pendingHostingClarification = pendingHostingClarificationRef.current;
-      if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {
+      if (pendingHostingClarification || typedGuestAction !== "none") {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
-        await persistLocalTypedAgentReply({
-          replyToClientMessageId: clientMessageId,
-          content: TYPED_ADVISORY_HOSTING_REQUEST,
-          clearPendingPhotos: true,
-        });
-        return;
-      }
-
-      if (pendingHostingClarification) {
-        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
-
         let people = usePeopleStore.getState().items;
         if (authUserId && (usePeopleStore.getState().status === "idle" || people.length === 0)) {
           await usePeopleStore.getState().loadFor(authUserId);
           people = usePeopleStore.getState().items;
         }
-
-        const operationTurn = await handleOperationalHostingTurn({
-          message: savedMessage.content,
+        const continuation = await runHostingContinuation(
+          savedMessage.content,
           people,
-          pendingDraft: pendingHostingClarification,
-          askedAtClientMessageId: clientMessageId,
-        });
-        if (operationTurn.status === "needs_clarification") {
-          pendingHostingClarificationRef.current = operationTurn.draft;
-          await persistLocalTypedAgentReply({
-            replyToClientMessageId: clientMessageId,
-            content: operationTurn.question,
-            clearPendingPhotos: false,
-          });
-          return;
-        }
-
-        pendingHostingClarificationRef.current = null;
-        pendingPlanRef.current = null;
-
-        if (!authUserId) {
-          await persistLocalTypedAgentReply({
-            replyToClientMessageId: clientMessageId,
-            content: "You are not signed in. Please sign in and try again.",
-            clearPendingPhotos: true,
-          });
-          return;
-        }
-
-        if (operationTurn.status !== "ready") {
-          await persistLocalTypedAgentReply({
-            replyToClientMessageId: clientMessageId,
-            content: "I couldn't put that guest plan together right now. Please try again.",
-            clearPendingPhotos: true,
-          });
-          return;
-        }
-
-        const plan = operationTurn.plan;
-        pendingPlanRef.current = plan;
+          clientMessageId,
+        );
         await persistLocalTypedAgentReply({
           replyToClientMessageId: clientMessageId,
-          content: plan.proposalSpeech,
-          clearPendingPhotos: true,
-        });
-        return;
-      }
-
-      if (typedGuestAction !== "none") {
-        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
-        pendingPlanRef.current = null;
-        let people = usePeopleStore.getState().items;
-        if (authUserId && (usePeopleStore.getState().status === "idle" || people.length === 0)) {
-          await usePeopleStore.getState().loadFor(authUserId);
-          people = usePeopleStore.getState().items;
-        }
-        const operationTurn = await handleOperationalHostingTurn({
-          message: savedMessage.content,
-          people,
-          askedAtClientMessageId: clientMessageId,
-        });
-        if (operationTurn.status === "needs_clarification") {
-          pendingHostingClarificationRef.current = operationTurn.draft;
-          await persistLocalTypedAgentReply({
-            replyToClientMessageId: clientMessageId,
-            content: operationTurn.question,
-            clearPendingPhotos: false,
-          });
-          return;
-        }
-
-        pendingHostingClarificationRef.current = null;
-
-        if (!authUserId) {
-          await persistLocalTypedAgentReply({
-            replyToClientMessageId: clientMessageId,
-            content: "You are not signed in. Please sign in and try again.",
-            clearPendingPhotos: true,
-          });
-          return;
-        }
-
-        if (operationTurn.status !== "ready") {
-          await persistLocalTypedAgentReply({
-            replyToClientMessageId: clientMessageId,
-            content: "I couldn't put that guest plan together right now. Please try again.",
-            clearPendingPhotos: true,
-          });
-          return;
-        }
-
-        const plan = operationTurn.plan;
-        pendingPlanRef.current = plan;
-        await persistLocalTypedAgentReply({
-          replyToClientMessageId: clientMessageId,
-          content: plan.proposalSpeech,
-          clearPendingPhotos: true,
+          content: continuation.message ?? "I have kept that hosting plan pending.",
+          clearPendingPhotos: continuation.status !== "needs_clarification",
         });
         return;
       }
