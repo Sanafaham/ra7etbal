@@ -41,7 +41,7 @@ describe("Voice Carson direct message fast path", () => {
     expect(result).toMatchObject({
       handled: true,
       status: "sent",
-      response: "I let Sana know. I'll watch for the reply.",
+      response: "I sent Sana the message.",
     });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(

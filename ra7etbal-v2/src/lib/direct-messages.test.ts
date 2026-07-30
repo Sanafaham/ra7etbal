@@ -104,6 +104,40 @@ describe("direct message boundary", () => {
     expect(deliverTaskMessageFn).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves the exact production reply request at the shared delivery boundary", async () => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+    const deliverTaskMessageFn = vi.fn(async () => ({
+      success: true,
+      channel: "whatsapp" as const,
+      deliveryId: "delivery-1",
+    }));
+
+    const result = await createAndSendDirectMessage({
+      source: "send_direct_whatsapp_message",
+      userId: "user-1",
+      recipient: "Christopher",
+      messageText: "I'll be there in 10 minutes.",
+      ownerInstruction: `Ask Christopher to reply, "I'll be there in 10 minutes."`,
+      phone: "+971500000000",
+      ownerName: "Sana",
+      createMessageFn,
+      deliverTaskMessageFn,
+    });
+
+    expect(result.message.content).toBe(`Please reply: "I'll be there in 10 minutes."`);
+    expect(result.message).toMatchObject({ task_id: null, confirmation_url: null });
+    expect(createMessageFn).toHaveBeenCalledTimes(1);
+    expect(deliverTaskMessageFn).toHaveBeenCalledTimes(1);
+    expect(deliverTaskMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageText: `Please reply: "I'll be there in 10 minutes."`,
+        taskId: null,
+        confirmationLink: null,
+        sendMode: "direct_message",
+      }),
+    );
+  });
+
   it("preserves failure stage for message creation failures", async () => {
     await expect(
       createAndSendDirectMessage({
