@@ -32,4 +32,5 @@ jobs:
           cache: npm
           cache-dependency-path: ra7etbal-v2/package-lock.json
       - run: npm ci
+      - run: npm run test:carson-communication-routing
       - run: npm run test:carson-protected

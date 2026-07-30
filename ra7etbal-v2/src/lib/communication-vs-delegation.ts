@@ -117,7 +117,7 @@ export function preserveDirectCommunicationMeaning(
   const match = utterance.match(
     new RegExp(
       `\\b(?:ask|tell|have|get)\\s+${escapedRecipient}\\s+(?:to\\s+)?`
-        + `(reply|respond|say|confirm)\\b\\s*(.*?)(?:\\s+on\\s+whatsapp)?[.!?]*\\s*$`,
+        + `(reply|respond|say|confirm)\\b\\s*(.*?)[.!?]*\\s*$`,
       "i",
     ),
   );

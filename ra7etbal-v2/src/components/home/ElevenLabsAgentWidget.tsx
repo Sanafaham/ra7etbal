@@ -3129,6 +3129,16 @@ export default function ElevenLabsAgentWidget({
           recipient: person.name,
           message_length: text.length,
         });
+        recordCarsonToolDiagnostic({
+          userId,
+          sessionId: typedConversationIdRef.current,
+          channel: activeChannelRef.current,
+          toolName: "send_direct_whatsapp_message",
+          stage: "duplicate_suppressed",
+          reason: "recent_recipient_message_match",
+          recipientPersonId: person.id,
+          message: text,
+        });
         return `I already sent ${person.name} that message just now. I won't send it again.`;
       }
 
@@ -3161,6 +3171,9 @@ export default function ElevenLabsAgentWidget({
           toolName: "send_direct_whatsapp_message",
           stage: "handler_success",
           recipientPersonId: person.id,
+          message: text,
+          deliveryId: delivery.deliveryId,
+          transportMessageId: delivery.messageId,
         });
         return resultText;
       } catch (err) {
