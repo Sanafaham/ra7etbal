@@ -95,3 +95,38 @@ export function isCommunicationStyleTaskText(taskText: string): boolean {
   return OWNER_TARGET_COMMUNICATION.test(trimmed)
     || (REPLY_CONTENT_TASK.test(trimmed) && !TRACKED_COMMUNICATION_QUALIFIER.test(trimmed));
 }
+
+/**
+ * Preserve the requested speech act when ElevenLabs reduces a locked
+ * communication pattern's structured `content` field to only its payload.
+ *
+ * This runs only after routing has already selected direct communication.
+ * It cannot turn a delegation into a message. Phrases outside the locked
+ * ask/tell/have/get + reply/respond/say/confirm shape are returned unchanged.
+ */
+export function preserveDirectCommunicationMeaning(
+  utterance: string,
+  recipientName: string,
+  modelMessage: string,
+): string {
+  const fallback = modelMessage.trim();
+  const recipient = recipientName.trim();
+  if (!utterance.trim() || !recipient || !fallback) return fallback;
+
+  const escapedRecipient = recipient.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = utterance.match(
+    new RegExp(
+      `\\b(?:ask|tell|have|get)\\s+${escapedRecipient}\\s+(?:to\\s+)?`
+        + `(reply|respond|say|confirm)\\b\\s*(.*?)(?:\\s+on\\s+whatsapp)?[.!?]*\\s*$`,
+      "i",
+    ),
+  );
+  if (!match) return fallback;
+
+  const speechAct = match[1]!.toLowerCase();
+  const requestedContent = match[2]!.trim().replace(/[.!?]+$/, "");
+  if (!requestedContent) return fallback;
+
+  const normalized = `Please ${speechAct} ${requestedContent}`.replace(/\s+/g, " ").trim();
+  return `${normalized.charAt(0).toUpperCase()}${normalized.slice(1)}.`;
+}

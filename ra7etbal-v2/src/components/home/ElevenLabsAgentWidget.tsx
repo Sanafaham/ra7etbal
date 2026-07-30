@@ -69,7 +69,10 @@ import {
   createDelegationTaskAndMessage,
 } from "../../lib/delegations";
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
-import { isCommunicationStyleTaskText } from "../../lib/communication-vs-delegation";
+import {
+  isCommunicationStyleTaskText,
+  preserveDirectCommunicationMeaning,
+} from "../../lib/communication-vs-delegation";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
 import { executeDelegationFastPath, parseDelegationFastPath } from "../../lib/delegation-fast-path";
@@ -3044,7 +3047,11 @@ export default function ElevenLabsAgentWidget({
       // unrelated success/failure result.
       messageSendOutcomeRef.current = null;
       const name = extractPersonNameParam(params, "recipient_name").trim();
-      const text = extractMessageParam(params).trim();
+      const modelMessage = extractMessageParam(params).trim();
+      const currentUtterance = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((message) => message.role === "user")?.message ?? "";
+      const text = preserveDirectCommunicationMeaning(currentUtterance, name, modelMessage);
 
       console.log("[direct_whatsapp_tool_called]", {
         recipient_name: name,
@@ -6054,10 +6061,10 @@ export default function ElevenLabsAgentWidget({
               people: usePeopleStore.getState().items,
               hasActiveHostingClarification: Boolean(pendingHostingClarificationRef.current),
             });
-            const guardedParams = communicationRedirect
-              ? { ...params, [LEGACY_COMMUNICATION_REDIRECT]: true }
-              : params;
-            const captureBlock = guardCurrentToolInvocation("send_delegation", guardedParams);
+            if (communicationRedirect) {
+              Object.assign(params, { [LEGACY_COMMUNICATION_REDIRECT]: true });
+            }
+            const captureBlock = guardCurrentToolInvocation("send_delegation", params);
             if (captureBlock) return captureBlock;
 
             if (communicationRedirect) {
