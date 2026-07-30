@@ -22,14 +22,24 @@ describe("preserveDirectMessageReplyIntent", () => {
     ).toBe(`Please reply: "we will proceed."`);
   });
 
-  it("does not double-wrap a tool message that already preserves reply semantics", () => {
+  it("reconstructs an already reply-prefixed tool message from the owner transcript", () => {
     expect(
       preserveDirectMessageReplyIntent(
         "Ask Christopher to reply yes.",
         "Christopher",
         "Please reply yes.",
       ),
-    ).toBe("Please reply yes.");
+    ).toBe(`Please reply: "yes."`);
+  });
+
+  it("replaces a reply-prefixed model rewrite with the owner's verbatim quoted reply", () => {
+    expect(
+      preserveDirectMessageReplyIntent(
+        `Ask Christopher to reply, "I'll be there in 10 minutes."`,
+        "Christopher",
+        "Please reply — Sana will be there in 10 minutes.",
+      ),
+    ).toBe(`Please reply: "I'll be there in 10 minutes."`);
   });
 
   it("does not alter unrelated direct communication", () => {
