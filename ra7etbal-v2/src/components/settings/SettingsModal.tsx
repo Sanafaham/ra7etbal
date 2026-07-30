@@ -15,6 +15,7 @@ import {
   refreshPushSubscription,
   type PushNotificationStatus,
 } from "../../lib/push-notifications";
+import { needsIOSInstallGuidance } from "../../lib/pwa-standalone";
 import { useMessagesStore } from "../../stores/messages";
 import { useProfileStore } from "../../stores/profile";
 import { useTasksStore } from "../../stores/tasks";
@@ -608,6 +609,7 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
   );
   const [busy, setBusy] = useState(false);
   const [busyKind, setBusyKind] = useState<"enabling" | "refreshing" | "disabling">("enabling");
+  const [showInstallGuidance, setShowInstallGuidance] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -692,6 +694,12 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
 
   const isEnabled = status === "enabled";
   const isUnsupported = status === "unsupported";
+  // iOS only exposes the Push API to an installed, standalone app — a plain
+  // browser tab can never enable notifications no matter what this button
+  // does. Showing the normal disabled toggle here just looks broken; show
+  // install guidance instead. Any other "unsupported" reason (non-iOS
+  // browser lacking push) keeps the existing generic row untouched.
+  const showIOSInstallPrompt = isUnsupported && needsIOSInstallGuidance();
 
   const statusText = getReminderStatusText(status, busy, busyKind);
   // Only truly non-actionable states are unsupported and no-user.
@@ -699,30 +707,46 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
 
   return (
     <div className="border-b border-border last:border-b-0">
-      {/* Main row */}
-      <button
-        type="button"
-        onClick={() => void (isEnabled ? handleRefresh() : handleEnable())}
-        disabled={disabledMain}
-        aria-busy={busy}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-cream/60 disabled:cursor-default disabled:hover:bg-transparent"
-      >
-        <span className="min-w-0">
+      {showIOSInstallPrompt ? (
+        <div className="px-4 py-3">
           <span className="block text-base text-ink">Push notifications</span>
-          <span className="block text-xs text-ink/65">{statusText}</span>
-        </span>
-        <span
-          aria-hidden
-          className={
-            "h-3 w-3 shrink-0 rounded-full " +
-            (isEnabled
-              ? "bg-gold"
-              : status === "denied" || status === "error"
-                ? "bg-danger"
-                : "bg-ink/20")
-          }
-        />
-      </button>
+          <p className="mt-1 text-xs text-ink/65">
+            Install Ra7etBal to enable notifications on your iPhone or iPad.
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowInstallGuidance(true)}
+            className="mt-2 text-[11px] text-ink/40 underline underline-offset-2 transition hover:text-ink/70"
+          >
+            How to install Ra7etBal
+          </button>
+        </div>
+      ) : (
+        /* Main row */
+        <button
+          type="button"
+          onClick={() => void (isEnabled ? handleRefresh() : handleEnable())}
+          disabled={disabledMain}
+          aria-busy={busy}
+          className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-cream/60 disabled:cursor-default disabled:hover:bg-transparent"
+        >
+          <span className="min-w-0">
+            <span className="block text-base text-ink">Push notifications</span>
+            <span className="block text-xs text-ink/65">{statusText}</span>
+          </span>
+          <span
+            aria-hidden
+            className={
+              "h-3 w-3 shrink-0 rounded-full " +
+              (isEnabled
+                ? "bg-gold"
+                : status === "denied" || status === "error"
+                  ? "bg-danger"
+                  : "bg-ink/20")
+            }
+          />
+        </button>
+      )}
 
       {/* Disable link — only shown when enabled and not busy */}
       {isEnabled && !busy && (
@@ -743,6 +767,19 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
           Open iOS Settings → Safari (or Ra7etBal app) → Notifications, then enable and return here to subscribe.
         </p>
       )}
+
+      <Modal
+        open={showInstallGuidance}
+        onClose={() => setShowInstallGuidance(false)}
+        title="Install Ra7etBal on iPhone or iPad"
+      >
+        <ol className="list-decimal space-y-2 pl-5 text-sm text-ink">
+          <li>Tap the Share button in Safari.</li>
+          <li>Choose "Add to Home Screen."</li>
+          <li>Open the installed Ra7etBal app.</li>
+          <li>Return to Settings and tap "Enable Notifications."</li>
+        </ol>
+      </Modal>
     </div>
   );
 }
