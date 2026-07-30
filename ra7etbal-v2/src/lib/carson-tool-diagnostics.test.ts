@@ -169,4 +169,47 @@ describe("recordCarsonToolDiagnostic", () => {
       selected_tool: "send_direct_whatsapp_message",
     }));
   });
+
+  it("records duplicate suppression with only the normalized message hash", async () => {
+    h.insert.mockClear();
+    recordCarsonToolDiagnostic({
+      userId: "user-1",
+      sessionId: "session-duplicate",
+      channel: "voice",
+      toolName: "send_direct_whatsapp_message",
+      stage: "duplicate_suppressed",
+      reason: "recent_recipient_message_match",
+      recipientPersonId: "person-123",
+      message: "Please reply yes on WhatsApp.",
+    });
+    await flush();
+
+    const row = h.insert.mock.calls[0][0];
+    expect(row.stage).toBe("duplicate_suppressed");
+    expect(row.reason).toBe("recent_recipient_message_match");
+    expect(row.message_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(row)).not.toContain("Please reply yes");
+  });
+
+  it("records accepted delivery identifiers without raw message content", async () => {
+    h.insert.mockClear();
+    recordCarsonToolDiagnostic({
+      userId: "user-1",
+      sessionId: "session-success",
+      channel: "voice",
+      toolName: "send_direct_whatsapp_message",
+      stage: "handler_success",
+      recipientPersonId: "person-123",
+      message: "Please confirm she received it.",
+      deliveryId: "delivery-123",
+      transportMessageId: "wamid.123",
+    });
+    await flush();
+
+    const row = h.insert.mock.calls[0][0];
+    expect(row.delivery_id).toBe("delivery-123");
+    expect(row.transport_message_id).toBe("wamid.123");
+    expect(row.message_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(row)).not.toContain("Please confirm");
+  });
 });

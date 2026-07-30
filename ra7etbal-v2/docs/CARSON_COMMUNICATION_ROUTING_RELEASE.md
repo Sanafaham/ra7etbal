@@ -1,0 +1,87 @@
+# Carson communication-routing protected release contract
+
+Last production verification: 2026-07-30  
+Verified baseline merge: `29aae0f685d18ed79e8548d565fb77649a538706` (PR #131)
+
+## Canonical rule
+
+For new person-directed requests, Carson must call `route_people_action`.
+
+- `interpersonal_communication` executes `send_direct_whatsapp_message`.
+- `tracked_delegation` executes `send_delegation`.
+- `send_direct_whatsapp_message` and `send_delegation` remain registered as
+  internal execution/rollback tools, not competing model-facing choices.
+- Plain communication includes `send [person] a message`, `tell [person]
+  [content]`, `let [person] know [content]`, and `ask/tell/have/get [person]
+  to reply/respond/say/confirm [content]`.
+- Genuine assigned work remains a delegation.
+- Ambiguous or incomplete requests clarify; they never guess and execute.
+- Meaning is preserved. `Ask Sana to reply yes on WhatsApp.` sends `Please
+  reply yes on WhatsApp.`, never only `yes`.
+- One request reaches at most one outbound handler. The existing direct-message
+  duplicate guard runs on the normalized message before the only delivery call.
+- Carson reports success only after the existing handler confirms acceptance;
+  otherwise it reports that the message was not sent.
+
+This file is the repository-owned rule. The live ElevenLabs dashboard remains
+the production prompt/tool source of truth, so parity with this rule is a
+manual release gate rather than an automated CI publication.
+
+## ElevenLabs parity check
+
+Before publishing any related prompt or tool-description change, confirm:
+
+- `route_people_action` says it is the only model-facing tool for a new
+  person-directed request.
+- `send_direct_whatsapp_message` says it is internal execution/rollback and
+  describes the locked communication forms.
+- `send_delegation` says it is internal execution/rollback and only for real
+  work whose completion is tracked.
+- The production prompt contains the same communication/delegation distinction,
+  requires meaning preservation, and forbids success claims before tool
+  confirmation.
+- No other prompt section contradicts those rules.
+
+Do not publish ElevenLabs changes automatically from CI.
+
+## Required Sana-only production smoke test
+
+Run this checklist after any change touching the ElevenLabs prompt, tool
+descriptions, communication/delegation routing, direct WhatsApp execution,
+transcript handling, or duplicate prevention:
+
+1. Ordinary message: `Tell Sana the delivery arrived.`
+2. Meaning-preserving reply: `Ask Sana to reply yes on WhatsApp.`
+3. Genuine assignment classification: `Ask Christopher to buy olive oil.`
+   Do not execute/send this delegation unless that separate live action is
+   explicitly authorized; classification-only evidence is sufficient.
+4. Confirm exactly one outbound action for each authorized communication.
+5. Confirm Carson's spoken and displayed result matches the real delivery.
+6. Confirm diagnostics show the utterance hash, model-selected tool, any
+   redirect reason, final handler, normalized-message hash, acceptance/failure,
+   delivery/transport identifier when accepted, and duplicate outcome.
+
+## Rollback record
+
+- Last known good production behavior: PR #131 at merge `29aae0f...`.
+- Verified phrase: `Ask Sana to reply yes on WhatsApp.`
+- Verified result: one direct WhatsApp, `Please reply yes on WhatsApp.`, truthful
+  `Sent to Sana.`, no intended delegation/task.
+- Affected runtime files:
+  - `src/components/home/ElevenLabsAgentWidget.tsx`
+  - `src/lib/carson-people-action.ts`
+  - `src/lib/carson-tool-policy.ts`
+  - `src/lib/communication-vs-delegation.ts`
+  - `src/lib/direct-message-duplicate-guard.ts`
+  - `src/lib/carson-tool-diagnostics.ts`
+- Prompt/tool record:
+  `docs/elevenlabs-prompt-patches/2026-07-30-route-people-action.md`.
+- Quickest safe rollback: restore the stable tagged commit, deploy it, and
+  restore the matching live ElevenLabs prompt/tool descriptions recorded by
+  this contract. Do not remove the legacy execution tools.
+- After rollback, rerun the three Sana-only smoke checks above and inspect
+  diagnostics before declaring recovery.
+
+Stable tag: `ra7etbal-stable-carson-communication-routing-2026-07-30`.
+The tag targets the production hardening merge commit; use `git rev-list -n 1
+ra7etbal-stable-carson-communication-routing-2026-07-30` to resolve it.

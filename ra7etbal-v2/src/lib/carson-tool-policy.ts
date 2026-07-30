@@ -264,6 +264,7 @@ function directCommunicationIntent(text: string): boolean {
   if (/\b(?:whatsapp|message|text|dm)\s+[A-Za-z]+(?:\s+[A-Za-z]+)?\b/i.test(text)) return true;
   if (/\bsend\s+[A-Za-z]+(?:\s+[A-Za-z]+)?\s+(?:a\s+)?message\b/i.test(text)) return true;
   if (/\btell\s+[A-Za-z]+\s+(?!to\b).+/i.test(text)) return true;
+  if (/\blet\s+[A-Za-z]+\s+know\s+.+/i.test(text)) return true;
   // Confirmed production incident (2026-07-29, ~21:57 Turkey time): a garbled
   // voice transcript of "Ask Christopher to reply yes if he can come tomorrow
   // night." was heard as an "Ask [Name] if he can ... to [verb]" shape — the

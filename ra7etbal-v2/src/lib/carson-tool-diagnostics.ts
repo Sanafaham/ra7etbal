@@ -50,7 +50,10 @@ export type CarsonToolDiagnosticStage =
   // The model selected legacy send_delegation, but the deterministic policy
   // classified the live request as plain communication and dispatched the
   // existing direct-message handler instead.
-  | "legacy_people_tool_redirected";
+  | "legacy_people_tool_redirected"
+  // The existing direct-message cooldown suppressed a repeated callback
+  // before any message row or transport request was created.
+  | "duplicate_suppressed";
 
 export interface RecordCarsonToolDiagnosticInput {
   userId: string | null | undefined;
@@ -67,6 +70,10 @@ export interface RecordCarsonToolDiagnosticInput {
   actionType?: string | null;
   /** route_people_action only — the app-selected internal execution tool. */
   selectedTool?: string | null;
+  /** Safe delivery-row identifier returned by the existing delivery boundary. */
+  deliveryId?: string | null;
+  /** Provider message identifier returned after transport acceptance. */
+  transportMessageId?: string | null;
 }
 
 async function sha256Hex(text: string): Promise<string | null> {
@@ -104,6 +111,8 @@ export function recordCarsonToolDiagnostic(input: RecordCarsonToolDiagnosticInpu
         message_hash: messageHash,
         action_type: input.actionType ?? null,
         selected_tool: input.selectedTool ?? null,
+        delivery_id: input.deliveryId ?? null,
+        transport_message_id: input.transportMessageId ?? null,
       });
       if (error) {
         console.warn("[carson-tool-diagnostics] insert failed", error.message);

@@ -6,7 +6,7 @@ describe("preserveDirectCommunicationMeaning", () => {
     [
       "Ask Sana to reply yes on WhatsApp.",
       "yes",
-      "Please reply yes.",
+      "Please reply yes on WhatsApp.",
     ],
     [
       "Tell Sana to confirm she received it.",

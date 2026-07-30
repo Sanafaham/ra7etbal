@@ -6,7 +6,10 @@
 
 The architectural fix: the model no longer selects between `send_direct_whatsapp_message` and `send_delegation` directly for new requests. It calls one new tool, `route_people_action`, describing the intended outcome as structured fields. Application code (not the model) decides which of the two existing tools to actually invoke, based on those fields — never by re-parsing the raw utterance.
 
-**Status**: drafted, not yet applied. Per this directory's own policy, this must be pasted into the ElevenLabs dashboard by a human — not applied via API.
+**Status**: applied to the ElevenLabs production agent and production-verified
+on 2026-07-30. The live dashboard remains the source of truth; validate it
+against `docs/CARSON_COMMUNICATION_ROUTING_RELEASE.md` before every related
+release.
 
 ## New tool: `route_people_action`
 

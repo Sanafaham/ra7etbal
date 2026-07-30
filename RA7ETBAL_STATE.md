@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-07-30 (PR #128)
+Last updated: 2026-07-30 (Carson communication-routing hardening)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -11,6 +11,29 @@ Ra7etBal is a personal Chief of Staff that reduces mental load. Carson is the AI
 Typed Carson and voice Carson are the same person, sharing the same memory, identity, and reasoning. Product decision (2026-07-25): Type to Carson is advisory-only — thinking, planning, drafting, research, and review only. Talk to Carson (voice) remains the sole execution channel for reminders, recurring reminders, push notifications, calendar events, staff messages, hosting plans, delegations, and any other state-changing action. See "Type to Carson is advisory-only" below.
 
 ## Current next task
+
+### Carson communication-routing release hardening — VALIDATED, RELEASE IN PROGRESS
+
+PR #131 is live-production verified for `Ask Sana to reply yes on WhatsApp.`:
+one direct WhatsApp, outbound `Please reply yes on WhatsApp.`, truthful success,
+and no intended delegation/task. The follow-up hardening release adds a
+mandatory 35-case communication/delegation contract, payload-shape and
+meaning-preservation coverage, explicit malformed-input rejection, protected
+CI wiring, a canonical ElevenLabs parity/smoke-test/rollback document, and
+additive diagnostics for duplicate suppression plus accepted delivery IDs.
+
+Production Supabase project `ggarvhgqzpooloacjgcj` has the additive
+`20260801_carson_communication_routing_diagnostics.sql` migration applied and
+verified: `delivery_id` and `transport_message_id` exist, and the stage
+constraint includes both `legacy_people_tool_redirected` and
+`duplicate_suppressed`. No production WhatsApp was sent during hardening.
+
+Validation: focused contract 51/51; protected suite 1,006 passed, 4 skipped,
+3 todo (plus 17/17 protected pretests); full suite 2,492 passed, 4 skipped,
+3 todo; typecheck and production build passed. Canonical release/rollback
+record: `ra7etbal-v2/docs/CARSON_COMMUNICATION_ROUTING_RELEASE.md`. Stable tag
+name: `ra7etbal-stable-carson-communication-routing-2026-07-30` (create on the
+production merge commit after merge/deployment).
 
 ### Carson deterministic pre-dispatch tool-policy gate (PR #105) — MERGED, PRODUCTION VERIFIED WITH A FOLLOW-UP FIX
 
