@@ -26,7 +26,13 @@ Production Supabase project `ggarvhgqzpooloacjgcj` has the additive
 `20260801_carson_communication_routing_diagnostics.sql` migration applied and
 verified: `delivery_id` and `transport_message_id` exist, and the stage
 constraint includes both `legacy_people_tool_redirected` and
-`duplicate_suppressed`. No production WhatsApp was sent during hardening.
+`duplicate_suppressed`. It was applied manually through the Supabase dashboard;
+the repository migration file exists, but this pass had neither an
+authenticated production-ledger session nor linked local Supabase CLI state,
+so migration bookkeeping remains unverified. Do not re-run the SQL or insert a
+ledger row by hand; reconcile only after reading the authenticated ledger with
+the project's normal linked migration tooling. No production WhatsApp was sent
+during hardening.
 
 Validation: focused contract 51/51; protected suite 1,006 passed, 4 skipped,
 3 todo (plus 17/17 protected pretests); full suite 2,492 passed, 4 skipped,
@@ -153,9 +159,15 @@ Tests: `src/lib/carson-tool-diagnostics.test.ts` (5 tests — expected row shape
 
 PR #93 (`agent/server-backed-banner-dismissal`) persists completed-confirmation banner dismissal on `tasks.dismissed_at`. Independent verification on 2026-07-28 added client/server eligibility guards and optimistic rollback coverage; focused tests, typecheck, the protected suite, and production build pass. The additive, nullable, idempotent migration was applied directly and verified on the confirmed Ra7etBal production Supabase project `ggarvhgqzpooloacjgcj`. After current `main` introduced the canonical `20260727 owner_whatsapp_reply_receipts` migration, this PR's migration was renumbered to `20260729_add_dismissed_at_to_tasks.sql` so migration tooling will not skip it because of the occupied version. Production UI verification across refresh, logout/login, Safari, and the installed app still requires deployment of the PR code; do not merge PR #93 until that verification can be completed.
 
-### Carson Intent Architecture — Stage 1 (Communication/Delegation) — CODE MERGED AND DEPLOYED, LIVE BEHAVIOR NOT YET CHANGED
+### Carson Intent Architecture — Stage 1 (Communication/Delegation) — CODE/PROMPT DEPLOYED; MAPPING PATH NOT YET LIVE-EVIDENCED
 
-Status: the client-side foundation is merged and deployed to production. **Carson's actual live behavior has not changed yet** — the new tool is not usable until the matching ElevenLabs dashboard change is applied by Sana. Do not treat this as production-verified until that happens and a live retest confirms it.
+Status correction after the independent audit: the client foundation and
+ElevenLabs dashboard rule are deployed. Live evidence confirms direct
+communication, meaning preservation, one outbound message, and truthful Carson
+success. It does **not** prove a `route_people_action` mapping, a
+`legacy_people_tool_redirected` execution, or `duplicate_suppressed`; no such
+live diagnostic has been confirmed. Those mechanisms remain code/CI-protected,
+not production-verified.
 
 **Root-cause pattern across this session's three related incidents**: PR #110 and PR #122 were both the same architectural failure — a client-side deterministic gate (`carson-tool-policy.ts`'s `evaluateCarsonToolPolicy`, via `carson-router.ts`'s `classifyCarsonInstruction` and inline regexes) re-derived intent from raw utterance text independently of whatever tool the ElevenLabs model had already selected, and rejected the model's correct tool choice whenever the regex disagreed — PR #110 for "Ask Christopher to reply..." (generic "Ask X to" delegation pattern), PR #122 for a garbled "Ask Christopher if he can to reply/send..." transcript (extraction regex limited to one intervening word before "to"). (PR #118 was a separate, unrelated async-timing defect, not a regex/classification issue — see its own entry above.) A full architecture review (`src/lib/carson-router.ts`, `carson-tool-policy.ts`, `voice-task-control.ts`, `ops-intelligence.ts`) confirmed this pattern — raw-text regex re-derivation competing with and overriding the model's own semantic tool selection — is structural, not isolated to communication/delegation, though this stage only touches that capability.
 
@@ -167,9 +179,17 @@ Status: the client-side foundation is merged and deployed to production. **Carso
 
 Tests: 12 behavioral tests for `resolveCarsonPeopleAction` (confirmed incidents, both adversarial "confirm" pairs routing differently by evidence not vocabulary, missing-entity clarification, genuine ambiguity via the model's own `ambiguityReason` and `actionType`/evidence mismatch in both directions — proving no clarification is asked when the evidence already resolves it). 2 new diagnostics tests. 9 widget source-shape tests (registration, typed-advisory gate, the regex-gate exemption, legacy-bypass telemetry, dispatch to each handler). Mutation-tested: the regex-gate exemption, the coherence check, and the legacy-bypass instrumentation each reproduce specific failing tests when removed; restoring passes. `TZ=UTC npm run test:carson-protected`: 998 passed. Full suite: 2419 passed, 4 skipped, 3 todo. Typecheck and build both passed.
 
-**ElevenLabs prompt/tool-schema change drafted, not yet applied**: `docs/elevenlabs-prompt-patches/2026-07-30-route-people-action.md` — the new tool's schema, description, behavior rule, and the two-phase rollout sequencing (add additively → observe `legacy_people_tool_bypass` telemetry → later patch tightens the prompt to fully deprecate direct legacy-tool calls). Per this directory's policy, requires Sana to paste it into the dashboard — not applied via API. **Carson cannot actually use `route_people_action` until this is done.**
+**ElevenLabs prompt/tool-schema change applied**:
+`docs/elevenlabs-prompt-patches/2026-07-30-route-people-action.md` records the
+new tool's schema, description, behavior rule, and rollout sequencing. Applying
+the dashboard configuration makes the path available; it does not by itself
+prove that a live turn selected or executed it.
 
-**Do not mark this item production-verified until**: Sana applies the dashboard patch, and a live retest confirms the adversarial pairs (`"Ask Christopher to reply yes if he can come tomorrow."` → communication; `"Tell Christopher to clean the kitchen."` → delegation; the two "confirm" examples routing differently) on `www.ra7etbal.com`. Protect: the scope limit (do not expand to other capabilities without a separate approval); the no-word-based-default rule (do not reintroduce a vocabulary check into `resolveCarsonPeopleAction`); the legacy tools staying registered and untouched (rollback safety net).
+**Do not mark the mapping or legacy redirect production-verified until** a
+controlled live retest produces the corresponding persisted diagnostic
+(`people_action_mapped` or `legacy_people_tool_redirected`). Protect: the scope
+limit; the no-word-based-default rule in `resolveCarsonPeopleAction`; and the
+legacy tools staying registered as a rollback safety net.
 
 **Dashboard patch applied; production verification sequence in progress, paused mid-sequence at Test 1 twice (2026-07-30)**: Sana applied the corrected, iteratively-reviewed dashboard patch (tool schema + prompt text — the final applied version differs from the drafted `docs/elevenlabs-prompt-patches/2026-07-30-route-people-action.md` in several corrected details found during live review; the accurate record of what was actually pasted is kept in Claude's own persistent memory only, per Sana's explicit instruction, not in this repo) and began a controlled 6-test verification sequence on `www.ra7etbal.com`. **Test 1 failed twice in a row** — see the seventh (PR #126) and eighth (PR #128) confirmed production incidents above — but diagnostics proved both failures were the pre-existing message-send truthfulness gap (a false failure claim on a genuinely successful send, first with the word "send", then "save"), not a `route_people_action`/Stage 1 defect (`legacy_people_tool_bypass` confirmed the model bypassed the new tool entirely both times). Per Sana's explicit instruction each time, Test 2 was not started and Test 1 was not repeated until each fix was confirmed and deployed. **Next step**: ask Sana to re-run Test 1 only once more, to confirm PR #128's fix; Tests 2–6 remain outstanding. **Known residual risk**: a third occurrence with yet another free-form apology phrasing is possible — see PR #128's entry above for why this can't be fully enumerated by regex.
 

@@ -28,7 +28,7 @@ This directory stores **patches only**: the specific, minimal additions needed w
 | 2026-07-29 | [2026-07-29-carson-deterministic-tool-policy.md](2026-07-29-carson-deterministic-tool-policy.md) | Deterministic tool precedence for the new pre-dispatch policy gate |
 | 2026-07-29 | [2026-07-29-direct-message-truthfulness-and-routing.md](2026-07-29-direct-message-truthfulness-and-routing.md) | Reply/respond routes to direct communication, not delegation; never claim a send without tool confirmation — APPLIED |
 | 2026-07-29 | [2026-07-29-action-routing-contradiction-cleanup.md](2026-07-29-action-routing-contradiction-cleanup.md) | Removed a pre-existing "ACTION ROUTING — REQUIRED" section that contradicted locked communication-vs-delegation behavior — APPLIED |
-| 2026-07-30 | [2026-07-30-route-people-action.md](2026-07-30-route-people-action.md) | New route_people_action semantic entry tool + schema, replacing regex-based communication/delegation routing — APPLIED AND PRODUCTION-VERIFIED |
+| 2026-07-30 | [2026-07-30-route-people-action.md](2026-07-30-route-people-action.md) | New route_people_action semantic entry tool + schema — APPLIED; direct communication behavior verified, but route_people_action mapping itself is not yet evidenced by live diagnostics |
 
 ## Historical patches
 

@@ -137,6 +137,7 @@ import {
   evaluateCarsonToolPolicy,
   resolveLegacyPeopleToolCommunicationRedirect,
 } from "../../lib/carson-tool-policy";
+import { executeLegacyPeopleCommunicationRedirect } from "../../lib/carson-legacy-communication-redirect";
 import {
   CARSON_REPEAT_PROMPT,
   evaluateCarsonTranscriptCapture,
@@ -6081,21 +6082,27 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
 
             if (communicationRedirect) {
-              recordCarsonToolDiagnostic({
-                userId: authenticatedUserId,
-                sessionId: typedConversationIdRef.current,
-                channel: requestedChannel,
-                toolName: communicationRedirect.originalTool,
-                stage: "legacy_people_tool_redirected",
-                reason: "plain_communication_selected_as_delegation",
-                selectedTool: communicationRedirect.finalTool,
-                message: communicationRedirect.params.message,
-              });
               toolInFlightRef.current = communicationRedirect.finalTool;
               const resultPromise = runDirectToolWithDiagnostic(
                 communicationRedirect.finalTool,
                 communicationRedirect.params,
-                () => sendDirectWhatsAppMessage(communicationRedirect.params),
+                () => executeLegacyPeopleCommunicationRedirect({
+                  redirect: communicationRedirect,
+                  utterance: currentUtterance,
+                  recordRedirect: (event) => {
+                    recordCarsonToolDiagnostic({
+                      userId: authenticatedUserId,
+                      sessionId: typedConversationIdRef.current,
+                      channel: requestedChannel,
+                      toolName: event.originalTool,
+                      stage: "legacy_people_tool_redirected",
+                      reason: "plain_communication_selected_as_delegation",
+                      selectedTool: event.finalTool,
+                      message: event.normalizedMessage,
+                    });
+                  },
+                  sendDirectMessage: sendDirectWhatsAppMessage,
+                }),
               );
               messageSendInFlightRef.current = resultPromise
                 .then(() => messageSendOutcomeRef.current)

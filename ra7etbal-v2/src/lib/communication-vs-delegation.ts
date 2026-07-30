@@ -90,6 +90,14 @@ const TRACKED_COMMUNICATION_QUALIFIER =
 const REPLY_CONTENT_TASK =
   /^\s*(?:reply|respond|text\s+back|write\s+back|say|confirm)\b/i;
 
+// A direct-message reconstruction must never absorb a later independent
+// instruction for another named person. Keep this deliberately narrow:
+// delimiter + coordination + person-action verb + capitalized name. It does
+// not attempt to execute or classify the later clause; it only fences the
+// already-selected recipient's message.
+const INDEPENDENT_NAMED_PERSON_INSTRUCTION =
+  /(?:,\s*|\s+)(?:(?:then|and)\s+)(?:tell|ask|have|get)\s+[A-Z][A-Za-z'-]*\b/;
+
 export function isCommunicationStyleTaskText(taskText: string): boolean {
   const trimmed = taskText.trim();
   return OWNER_TARGET_COMMUNICATION.test(trimmed)
@@ -124,7 +132,12 @@ export function preserveDirectCommunicationMeaning(
   if (!match) return fallback;
 
   const speechAct = match[1]!.toLowerCase();
-  const requestedContent = match[2]!.trim().replace(/[.!?]+$/, "");
+  const capturedContent = match[2]!.trim();
+  const nextInstruction = capturedContent.search(INDEPENDENT_NAMED_PERSON_INSTRUCTION);
+  const requestedContent = (nextInstruction >= 0
+    ? capturedContent.slice(0, nextInstruction)
+    : capturedContent
+  ).trim().replace(/[,\s]+$/, "").replace(/[.!?]+$/, "");
   if (!requestedContent) return fallback;
 
   const normalized = `Please ${speechAct} ${requestedContent}`.replace(/\s+/g, " ").trim();

@@ -121,10 +121,12 @@ describe("ElevenLabsAgentWidget — route_people_action wiring (2026-07-30 inten
     expect(block).toContain("resolveLegacyPeopleToolCommunicationRedirect({");
     expect(block).toContain("[LEGACY_COMMUNICATION_REDIRECT]: true");
     expect(block).toContain('stage: "legacy_people_tool_redirected"');
-    expect(block).toContain("toolName: communicationRedirect.originalTool");
-    expect(block).toContain("selectedTool: communicationRedirect.finalTool");
-    expect(block).toContain("() => sendDirectWhatsAppMessage(communicationRedirect.params)");
-    expect(block.match(/sendDirectWhatsAppMessage\(communicationRedirect\.params\)/g)).toHaveLength(1);
+    expect(block).toContain("executeLegacyPeopleCommunicationRedirect({");
+    expect(block).toContain("toolName: event.originalTool");
+    expect(block).toContain("selectedTool: event.finalTool");
+    expect(block).toContain("message: event.normalizedMessage");
+    expect(block).toContain("sendDirectMessage: sendDirectWhatsAppMessage");
+    expect(block.match(/executeLegacyPeopleCommunicationRedirect\(\{/g)).toHaveLength(1);
   });
 
   it("keeps the normal delegation handler as the only fallback when no redirect exists", () => {
