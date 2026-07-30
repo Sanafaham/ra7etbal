@@ -117,6 +117,7 @@ import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-d
 import { recordCarsonToolDiagnostic } from "../../lib/carson-tool-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, looksLikeMessageSendOutcomeClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
 import { resolveCarsonPeopleAction, type CarsonPeopleActionEnvelope } from "../../lib/carson-people-action";
+import { resolveOrphanedPeopleToolConfirmation } from "../../lib/carson-orphan-confirmation";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
 import {
@@ -1487,6 +1488,7 @@ export default function ElevenLabsAgentWidget({
    * unconfirmed-claim correction, instead of reading a still-null snapshot.
    */
   const messageSendInFlightRef = useRef<Promise<DirectMessageSendOutcome | null> | null>(null);
+  const lastCompletedPeopleActionRef = useRef<{ recipient: string; at: number } | null>(null);
 
   /**
    * Last user utterance that contained recurring language, captured in onMessage
@@ -2309,6 +2311,7 @@ export default function ElevenLabsAgentWidget({
       currentTaskContextRef.current = result.taskContext;
       useTasksStore.getState().loadFor(userId, { force: true }).catch(() => {});
       sessionActionsRef.current.push(`Delegated to ${person.name}: ${taskText}`);
+      lastCompletedPeopleActionRef.current = { recipient: person.name, at: Date.now() };
 
       await maybeSendImpliedDinnerDelegation(userId);
 
@@ -3198,6 +3201,7 @@ export default function ElevenLabsAgentWidget({
         recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, text);
         const resultText = `It's with ${person.name}. I'll watch for the reply.`;
         messageSendOutcomeRef.current = { outcome: "success", resultText, at: new Date().toISOString() };
+        lastCompletedPeopleActionRef.current = { recipient: person.name, at: Date.now() };
         recordCarsonToolDiagnostic({
           userId,
           sessionId: typedConversationIdRef.current,
@@ -5497,6 +5501,7 @@ export default function ElevenLabsAgentWidget({
     createdReminderKeysRef.current.clear();
     lastCreatedReminderRef.current = null;
     recurringRawRef.current = null;
+    lastCompletedPeopleActionRef.current = null;
     invalidCaptureRef.current = null;
     sessionConnectedAtRef.current = null;
     micMuteCallCountRef.current = 0;
@@ -5727,6 +5732,31 @@ export default function ElevenLabsAgentWidget({
           toolName,
           stage: "legacy_people_tool_bypass",
         });
+      }
+
+      const orphanedConfirmationReply = resolveOrphanedPeopleToolConfirmation({
+        utterance: currentUtterance,
+        selectedTool: toolName,
+        hasPendingContinuation: Boolean(
+          pendingHostingContinuationRef.current
+          || pendingPlanRef.current
+          || pendingWeekPlanRef.current
+        ),
+        hasRecentCompletedPeopleAction: Boolean(
+          lastCompletedPeopleActionRef.current
+          && Date.now() - lastCompletedPeopleActionRef.current.at <= 5 * 60 * 1000
+        ),
+      });
+      if (orphanedConfirmationReply) {
+        recordCarsonToolDiagnostic({
+          userId: authenticatedUserId,
+          sessionId: typedConversationIdRef.current,
+          channel: requestedChannel,
+          toolName,
+          stage: "orphaned_confirmation_blocked",
+          reason: "completed_people_action_has_no_pending_continuation",
+        });
+        return orphanedConfirmationReply;
       }
 
       if (requestedChannel === "voice") {

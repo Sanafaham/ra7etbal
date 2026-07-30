@@ -51,6 +51,10 @@ export type CarsonToolDiagnosticStage =
   // classified the live request as plain communication and dispatched the
   // existing direct-message handler instead.
   | "legacy_people_tool_redirected"
+  // A short confirmation arrived after a verified people action completed,
+  // with no continuation awaiting owner input. The legacy tool call was
+  // stopped before policy validation or delivery.
+  | "orphaned_confirmation_blocked"
   // The existing direct-message cooldown suppressed a repeated callback
   // before any message row or transport request was created.
   | "duplicate_suppressed";

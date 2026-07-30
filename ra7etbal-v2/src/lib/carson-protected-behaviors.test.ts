@@ -39,7 +39,64 @@ import { isCommunicationStyleTaskText } from "./communication-vs-delegation";
 import { parseDelegationFastPath } from "./delegation-fast-path";
 import { parseSimpleDirectMessage } from "./direct-message-fast-path";
 import { createAndSendDirectMessage, createDirectMessageRecord } from "./direct-messages";
+import {
+  ORPHANED_PEOPLE_CONFIRMATION_REPLY,
+  resolveOrphanedPeopleToolConfirmation,
+} from "./carson-orphan-confirmation";
 import type { Person } from "../types/person";
+
+describe("Post-execution orphaned communication confirmation", () => {
+  it("blocks the exact production sequence after the combined Christopher message already succeeded", () => {
+    expect(resolveOrphanedPeopleToolConfirmation({
+      utterance: "Yes.",
+      selectedTool: "send_direct_whatsapp_message",
+      hasPendingContinuation: false,
+      hasRecentCompletedPeopleAction: true,
+    })).toBe(ORPHANED_PEOPLE_CONFIRMATION_REPLY);
+  });
+
+  it.each(["route_people_action", "send_direct_whatsapp_message", "send_delegation"])(
+    "blocks orphaned confirmation before %s can execute",
+    (selectedTool) => {
+      expect(resolveOrphanedPeopleToolConfirmation({
+        utterance: "Yes",
+        selectedTool,
+        hasPendingContinuation: false,
+        hasRecentCompletedPeopleAction: true,
+      })).toMatch(/already complete.*no pending clarification/i);
+    },
+  );
+
+  it("never blocks a real pending continuation or a substantive new request", () => {
+    expect(resolveOrphanedPeopleToolConfirmation({
+      utterance: "Yes",
+      selectedTool: "send_direct_whatsapp_message",
+      hasPendingContinuation: true,
+      hasRecentCompletedPeopleAction: true,
+    })).toBeNull();
+    expect(resolveOrphanedPeopleToolConfirmation({
+      utterance: "Tell Christopher I will arrive tomorrow.",
+      selectedTool: "send_direct_whatsapp_message",
+      hasPendingContinuation: false,
+      hasRecentCompletedPeopleAction: true,
+    })).toBeNull();
+  });
+
+  it("wires the guard before tool policy and records a production diagnostic", () => {
+    const widget = readFileSync(
+      join(__dirname, "../components/home/ElevenLabsAgentWidget.tsx"),
+      "utf-8",
+    );
+    const guardStart = widget.indexOf("const guardCurrentToolInvocation =");
+    const guardEnd = widget.indexOf("try {", guardStart);
+    const guard = widget.slice(guardStart, guardEnd);
+    expect(guard.indexOf("resolveOrphanedPeopleToolConfirmation({")).toBeGreaterThan(-1);
+    expect(guard.indexOf("resolveOrphanedPeopleToolConfirmation({"))
+      .toBeLessThan(guard.indexOf("evaluateCarsonToolPolicy({"));
+    expect(guard).toContain('stage: "orphaned_confirmation_blocked"');
+    expect(guard).toContain('reason: "completed_people_action_has_no_pending_continuation"');
+  });
+});
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
