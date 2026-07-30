@@ -13,12 +13,13 @@ describe("ElevenLabsAgentWidget — pre-dispatch policy boundary", () => {
     ]) expect(SOURCE).toContain(evidence);
   });
 
-  it("records and returns rejection before client handlers", () => {
+  it("records and throws terminal rejection before client handlers", () => {
     expect(SOURCE.indexOf("const guardCurrentToolInvocation ="))
       .toBeLessThan(SOURCE.indexOf("clientTools: {"));
     expect(SOURCE).toContain("[carson-tool-policy] rejected before side effect");
     expect(SOURCE).toContain('recordCarsonDiagnostic("carson-direct-tool", diagnostic)');
-    expect(SOURCE).toContain("return policyDecision.outcome");
+    expect(SOURCE).toContain("throw new CarsonTerminalToolRejection(toolName, policyDecision.outcome)");
+    expect(SOURCE).toContain("terminalToolRejectionRef.current = {");
   });
 
   it("passes arguments into every relevant client-tool guard", () => {
@@ -33,5 +34,16 @@ describe("ElevenLabsAgentWidget — pre-dispatch policy boundary", () => {
   it("keeps typed reads available and blocks typed note persistence", () => {
     expect(SOURCE).toContain("save_note: TYPED_ADVISORY_TASK_STATE");
     expect(SOURCE).toContain("// get_calendar_events is intentionally absent");
+  });
+
+  it("keeps all Hosting continuation states ahead of legacy policy routing", () => {
+    expect(SOURCE).toContain("pendingHostingContinuationRef.current");
+    expect(SOURCE).toContain("pendingHostingClarificationRef.current");
+    expect(SOURCE).toContain("pendingPlanRef.current");
+  });
+
+  it("makes the verified policy outcome authoritative over generated execution claims", () => {
+    expect(SOURCE).toContain("resolveTerminalToolRejectionReply(");
+    expect(SOURCE).toContain("terminalToolRejectionRef.current = null");
   });
 });

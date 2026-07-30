@@ -51,6 +51,30 @@ describe("Carson deterministic pre-dispatch policy", () => {
     }
   });
 
+  it("gives explicit hosting intent precedence over generic delegation", () => {
+    const result = decide(
+      "Handle dinner for four tomorrow.",
+      "execute_instruction",
+      { instruction: "Handle dinner for four tomorrow." },
+    );
+    expect(result).toMatchObject({ allowed: true, intent: "hosting", precedence: 5 });
+    expect(result.outcome).not.toMatch(/who should handle it/i);
+  });
+
+  it.each([
+    "Four guests, 7 PM, no shellfish.",
+    "Yes.",
+  ])("keeps hosting continuation in Hosting for %j", (utterance) => {
+    expect(evaluateCarsonToolPolicy({
+      utterance,
+      selectedTool: "execute_instruction",
+      toolArguments: { instruction: utterance },
+      channel: "voice",
+      people: PEOPLE,
+      hasActiveHostingClarification: true,
+    })).toMatchObject({ allowed: true, intent: "hosting" });
+  });
+
   it("keeps direct communication out of tracked delegation", () => {
     const utterance = "Tell Grace I'll be late.";
     expect(decide(utterance, "send_direct_whatsapp_message", {

@@ -1594,7 +1594,12 @@ describe("production baseline — verified afternoon-tea hosting loop", () => {
     expect((turn.plan?.proposalSpeech.match(/\?/g) ?? []).length).toBe(1);
   });
 
-  it("reports truthful per-recipient delivery when one worker has no phone number on file", async () => {
+  it.each([
+    ["Nasira", "Christopher, Grace have the plan"],
+    ["Grace", "Christopher, Nasira have the plan"],
+  ])(
+    "reports truthful per-recipient delivery when %s has no phone number on file",
+    async (missingName, successfulSummary) => {
     mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
       tasks: items.map((item, i) => ({
         id: `task-${i + 1}`,
@@ -1621,7 +1626,7 @@ describe("production baseline — verified afternoon-tea hosting loop", () => {
     ));
 
     const teamWithMissingPhone = guestTeam().map((p) =>
-      p.name === "Nasira" ? { ...p, phone: null, whatsapp_opted_in: false } : p,
+      p.name === missingName ? { ...p, phone: null, whatsapp_opted_in: false } : p,
     );
 
     const plan = normalizeGuestPreparationPlan({
@@ -1638,10 +1643,12 @@ describe("production baseline — verified afternoon-tea hosting loop", () => {
       people: teamWithMissingPhone,
     });
 
-    expect(summary).toContain("Christopher, Grace have the plan");
-    expect(summary).toMatch(/Nasira was NOT messaged/i);
+    expect(summary).toContain(successfulSummary);
+    expect(summary).toMatch(new RegExp(`${missingName} was NOT messaged`, "i"));
+    expect(summary).not.toMatch(new RegExp(`${missingName} (?:has|have) the plan`, "i"));
     expect(summary).not.toMatch(/everyone|all workers|all staff/i);
-  });
+    },
+  );
 
   it("answers 'What did you ask Christopher?' from the stored operation with no new send and no new operation", async () => {
     mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });

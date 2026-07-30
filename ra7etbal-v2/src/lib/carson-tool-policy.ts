@@ -361,7 +361,11 @@ export function evaluateCarsonToolPolicy(input: CarsonToolPolicyInput): CarsonTo
   let expectedCalendarTool: string | null = null;
 
   // Explicit precedence is intentional: do not infer it from router confidence.
+  const explicitPersonDirectedWork =
+    /\b(?:ask|tell|have|get|assign)\s+[A-Za-z]+\b/i.test(text);
   const hostingIntent = Boolean(input.hasActiveHostingClarification) || (
+    !explicitPersonDirectedWork
+    &&
     /\b(host|hosting|guests?|dinner|lunch|breakfast|party|gathering)\b/i.test(text)
     && /\b(arrange|handle|prepare|plan|organize|host|set up|take care)\b/i.test(text)
   );
@@ -382,16 +386,16 @@ export function evaluateCarsonToolPolicy(input: CarsonToolPolicyInput): CarsonTo
     const person = namedPerson(text, args, people);
     if (!person.name || !person.known) required.push("known_person");
     if (!firstString(args, ["message", "message_text", "text", "instruction"])) required.push("message");
+  } else if (hostingIntent) {
+    intent = "hosting";
+    eligibleTools = ["execute_instruction"];
+    if (!firstString(args, ["instruction", "text", "description"])) required.push("instruction");
   } else if (routing.domains.includes("delegation")) {
     intent = "delegation";
     eligibleTools = DELEGATION_TOOLS;
     const person = namedPerson(text, args, people);
     if (!person.name || !person.known) required.push("known_person");
     if (!firstString(args, ["instruction", "task", "task_text", "description"])) required.push("task");
-  } else if (hostingIntent) {
-    intent = "hosting";
-    eligibleTools = ["execute_instruction"];
-    if (!firstString(args, ["instruction", "text", "description"])) required.push("instruction");
   } else if (routing.domains.includes("note")) {
     intent = "note";
     eligibleTools = NOTE_TOOLS;

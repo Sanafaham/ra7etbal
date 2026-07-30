@@ -43,6 +43,11 @@ import {
   ORPHANED_PEOPLE_CONFIRMATION_REPLY,
   resolveOrphanedPeopleToolConfirmation,
 } from "./carson-orphan-confirmation";
+import {
+  CarsonTerminalToolRejection,
+  resolveTerminalToolRejectionReply,
+  shouldClearTerminalToolRejection,
+} from "./carson-terminal-tool-rejection";
 import type { Person } from "../types/person";
 
 describe("Post-execution orphaned communication confirmation", () => {
@@ -95,6 +100,65 @@ describe("Post-execution orphaned communication confirmation", () => {
       .toBeLessThan(guard.indexOf("evaluateCarsonToolPolicy({"));
     expect(guard).toContain('stage: "orphaned_confirmation_blocked"');
     expect(guard).toContain('reason: "completed_people_action_has_no_pending_continuation"');
+  });
+});
+
+describe("Production regression — rejected execution is terminal", () => {
+  const rejection = {
+    toolName: "execute_instruction",
+    outcome: "I need the missing planning details before I can do that.",
+    at: new Date().toISOString(),
+  };
+
+  it.each([
+    "Christopher and Grace have it.",
+    "They have it.",
+    "It's done.",
+    "I sent it.",
+    "The task was created.",
+    "The delegation has been assigned.",
+    "Delivery completed.",
+    "I've scheduled the follow-up.",
+    "I'll follow up if they don't confirm.",
+  ])("cannot surface %j after policy rejection", (claim) => {
+    expect(resolveTerminalToolRejectionReply(claim, rejection)).toBe(rejection.outcome);
+  });
+
+  it("does not alter neutral clarification or a reply after verified success", () => {
+    const clarification = "How many guests should I plan for?";
+    expect(resolveTerminalToolRejectionReply(clarification, rejection)).toBe(clarification);
+    expect(resolveTerminalToolRejectionReply("Christopher has it.", null))
+      .toBe("Christopher has it.");
+  });
+
+  it("preserves rejection through the exact post-failure 'Thank you' turn", () => {
+    expect(shouldClearTerminalToolRejection("Thank you.")).toBe(false);
+    expect(resolveTerminalToolRejectionReply(
+      "Christopher and Grace have it. I'll follow up if either doesn't confirm.",
+      rejection,
+    )).toBe(rejection.outcome);
+    expect(shouldClearTerminalToolRejection("Four guests at 7 PM.")).toBe(true);
+  });
+
+  it("uses a rejected promise boundary instead of a resolved pseudo-success", () => {
+    expect(() => {
+      throw new CarsonTerminalToolRejection("execute_instruction", rejection.outcome);
+    }).toThrowError(rejection.outcome);
+  });
+
+  it("protects the exact Hosting precedence and terminal-rejection wiring", () => {
+    const policy = readFileSync(join(__dirname, "carson-tool-policy.ts"), "utf-8");
+    expect(policy.indexOf("} else if (hostingIntent) {"))
+      .toBeLessThan(policy.indexOf('} else if (routing.domains.includes("delegation")) {'));
+
+    const widget = readFileSync(
+      join(__dirname, "../components/home/ElevenLabsAgentWidget.tsx"),
+      "utf-8",
+    );
+    expect(widget).toContain(
+      "throw new CarsonTerminalToolRejection(toolName, policyDecision.outcome)",
+    );
+    expect(widget).toContain("resolveTerminalToolRejectionReply(");
   });
 });
 

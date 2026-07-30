@@ -839,11 +839,10 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
     expect(sanitizedIndex).toBeGreaterThan(-1);
     expect(guardIndex).toBeGreaterThan(sanitizedIndex);
     expect(scrubberCallIndex).toBeGreaterThan(guardIndex);
-    // resolveSanitizedCarsonDisplayMessage itself — the shared, voice-and-typed
-    // display-override call — is completely unchanged: same arguments, same
-    // call site, still runs for both channels exactly as before.
+    // The terminal policy guard runs before the shared voice-and-typed
+    // display sanitizer. The typed-only scrubber remains downstream.
     expect(onMessageBlock).toContain(
-      "resolveSanitizedCarsonDisplayMessage({\n              agentMessage: message,\n              previousUserMessage,\n              lastSuccess: lastDirectToolSuccessRef.current,\n              noteSaveOutcome: noteSaveOutcomeRef.current,\n              messageSendOutcome: messageSendOutcomeRef.current,\n            });",
+      "const terminalSafeMessage = resolveTerminalToolRejectionReply(\n              message,\n              terminalToolRejectionRef.current,\n            );\n            const displayMessage = resolveSanitizedCarsonDisplayMessage({\n              agentMessage: terminalSafeMessage,\n              previousUserMessage,\n              lastSuccess: lastDirectToolSuccessRef.current,\n              noteSaveOutcome: noteSaveOutcomeRef.current,\n              messageSendOutcome: messageSendOutcomeRef.current,\n            });",
     );
   });
 

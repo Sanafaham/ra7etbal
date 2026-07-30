@@ -118,6 +118,12 @@ import { recordCarsonToolDiagnostic } from "../../lib/carson-tool-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, looksLikeMessageSendOutcomeClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
 import { resolveCarsonPeopleAction, type CarsonPeopleActionEnvelope } from "../../lib/carson-people-action";
 import { resolveOrphanedPeopleToolConfirmation } from "../../lib/carson-orphan-confirmation";
+import {
+  CarsonTerminalToolRejection,
+  resolveTerminalToolRejectionReply,
+  shouldClearTerminalToolRejection,
+  type CarsonTerminalToolRejectionState,
+} from "../../lib/carson-terminal-tool-rejection";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
 import {
@@ -1489,6 +1495,7 @@ export default function ElevenLabsAgentWidget({
    */
   const messageSendInFlightRef = useRef<Promise<DirectMessageSendOutcome | null> | null>(null);
   const lastCompletedPeopleActionRef = useRef<{ recipient: string; at: number } | null>(null);
+  const terminalToolRejectionRef = useRef<CarsonTerminalToolRejectionState | null>(null);
 
   /**
    * Last user utterance that contained recurring language, captured in onMessage
@@ -5502,6 +5509,7 @@ export default function ElevenLabsAgentWidget({
     lastCreatedReminderRef.current = null;
     recurringRawRef.current = null;
     lastCompletedPeopleActionRef.current = null;
+    terminalToolRejectionRef.current = null;
     invalidCaptureRef.current = null;
     sessionConnectedAtRef.current = null;
     micMuteCallCountRef.current = 0;
@@ -5820,7 +5828,11 @@ export default function ElevenLabsAgentWidget({
         selectedTool: toolName,
         toolArguments,
         people: usePeopleStore.getState().items,
-        hasActiveHostingClarification: Boolean(pendingHostingClarificationRef.current),
+        hasActiveHostingClarification: Boolean(
+          pendingHostingContinuationRef.current
+          || pendingHostingClarificationRef.current
+          || pendingPlanRef.current
+        ),
       });
       if (policyDecision.allowed) return null;
       if (
@@ -5858,7 +5870,12 @@ export default function ElevenLabsAgentWidget({
         reason: policyDecision.reason,
         missingEntities: policyDecision.missingEntities,
       });
-      return policyDecision.outcome;
+      terminalToolRejectionRef.current = {
+        toolName,
+        outcome: policyDecision.outcome,
+        at: new Date().toISOString(),
+      };
+      throw new CarsonTerminalToolRejection(toolName, policyDecision.outcome);
     };
 
     try {
@@ -6327,6 +6344,13 @@ export default function ElevenLabsAgentWidget({
             // stale in-flight promise from an earlier turn must never be
             // awaited as if it belonged to this new turn.
             messageSendInFlightRef.current = null;
+            // A social acknowledgement ("Thank you") is not new execution
+            // authority and must not erase a just-rejected operation. A
+            // substantive fresh utterance may supply the missing information
+            // or begin an unrelated request, so only that clears the state.
+            if (shouldClearTerminalToolRejection(message)) {
+              terminalToolRejectionRef.current = null;
+            }
 
             const receivedAt = new Date().toISOString();
             const captureEvaluation = evaluateCarsonTranscriptCapture(message);
@@ -6523,8 +6547,12 @@ export default function ElevenLabsAgentWidget({
             // reply — it can contradict a direct tool call that just succeeded
             // (create_todo P0). Prefer the tool's own success result when the
             // agent's message reads as a failure shortly after that tool ran.
+            const terminalSafeMessage = resolveTerminalToolRejectionReply(
+              message,
+              terminalToolRejectionRef.current,
+            );
             const displayMessage = resolveSanitizedCarsonDisplayMessage({
-              agentMessage: message,
+              agentMessage: terminalSafeMessage,
               previousUserMessage,
               lastSuccess: lastDirectToolSuccessRef.current,
               noteSaveOutcome: noteSaveOutcomeRef.current,
