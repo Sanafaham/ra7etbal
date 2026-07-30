@@ -12,15 +12,18 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 ## Current next task
 
-### Carson communication-routing release hardening — VALIDATED, RELEASE IN PROGRESS
+### Carson compound communication boundary — DEPLOYED, LIVE RETEST PENDING
 
 PR #131 is live-production verified for `Ask Sana to reply yes on WhatsApp.`:
 one direct WhatsApp, outbound `Please reply yes on WhatsApp.`, truthful success,
-and no intended delegation/task. The follow-up hardening release adds a
-mandatory 35-case communication/delegation contract, payload-shape and
-meaning-preservation coverage, explicit malformed-input rejection, protected
-CI wiring, a canonical ElevenLabs parity/smoke-test/rollback document, and
-additive diagnostics for duplicate suppression plus accepted delivery IDs.
+and no intended delegation/task. PR #133 merged at
+`d8b9f84dc2f0024267ca402d3389a58f535b9bda` and deployed `READY` as
+`dpl_5r6rFbJKpF6wapt7W8Bo7XWYRHG3`. It fences direct-message meaning
+reconstruction before a later named-person instruction, adds behavioral
+legacy `send_delegation` redirect coverage, and corrects unsupported live
+diagnostic claims. No live WhatsApp was sent for PR #133; its compound behavior
+must not be called production-message-verified until the controlled Sana-only
+retest succeeds.
 
 Production Supabase project `ggarvhgqzpooloacjgcj` has the additive
 `20260801_carson_communication_routing_diagnostics.sql` migration applied and
@@ -34,12 +37,14 @@ ledger row by hand; reconcile only after reading the authenticated ledger with
 the project's normal linked migration tooling. No production WhatsApp was sent
 during hardening.
 
-Validation: focused contract 51/51; protected suite 1,006 passed, 4 skipped,
-3 todo (plus 17/17 protected pretests); full suite 2,492 passed, 4 skipped,
-3 todo; typecheck and production build passed. Canonical release/rollback
-record: `ra7etbal-v2/docs/CARSON_COMMUNICATION_ROUTING_RELEASE.md`. Stable tag
-name: `ra7etbal-stable-carson-communication-routing-2026-07-30` (create on the
-production merge commit after merge/deployment).
+Validation: focused routing suite 59/59; protected suite 1,006 passed, 4
+skipped, 3 todo (plus 17/17 protected pretests); full suite 2,500 passed, 4
+skipped, 3 todo; typecheck, production build, static checks, protected GitHub
+CI, and the commit-matched Vercel production deployment passed. Canonical
+release/rollback record:
+`ra7etbal-v2/docs/CARSON_COMMUNICATION_ROUTING_RELEASE.md`. Corrective stable
+tag: `ra7etbal-stable-carson-compound-communication-boundary-2026-07-30`;
+the earlier stable tag was not moved.
 
 ### Carson deterministic pre-dispatch tool-policy gate (PR #105) — MERGED, PRODUCTION VERIFIED WITH A FOLLOW-UP FIX
 

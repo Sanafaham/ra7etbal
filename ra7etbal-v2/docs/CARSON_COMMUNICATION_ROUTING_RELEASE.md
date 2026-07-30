@@ -84,20 +84,32 @@ Run this checklist after any change touching the ElevenLabs prompt, tool
 descriptions, communication/delegation routing, direct WhatsApp execution,
 transcript handling, or duplicate prevention:
 
-1. Ordinary message: `Tell Sana the delivery arrived.`
-2. Meaning-preserving reply: `Ask Sana to reply yes on WhatsApp.`
-3. Genuine assignment classification: `Ask Christopher to buy olive oil.`
+1. Compound boundary (Sana-only):
+   `Ask Sana to reply yes if she can come tomorrow, then tell Sana to order
+   more chairs.`
+   Expected: exactly one outbound to Sana containing only
+   `Please reply yes if she can come tomorrow.`; no second message, task, or
+   delegation.
+2. Ordinary message: `Tell Sana the delivery arrived.`
+3. Meaning-preserving reply: `Ask Sana to reply yes on WhatsApp.`
+4. Genuine assignment classification: `Ask Christopher to buy olive oil.`
    Do not execute/send this delegation unless that separate live action is
    explicitly authorized; classification-only evidence is sufficient.
-4. Confirm exactly one outbound action for each authorized communication.
-5. Confirm Carson's spoken and displayed result matches the real delivery.
-6. Confirm diagnostics show the utterance hash, model-selected tool, any
+5. Confirm exactly one outbound action for each authorized communication.
+6. Confirm Carson's spoken and displayed result matches the real delivery.
+7. Confirm diagnostics show the utterance hash, model-selected tool, any
    redirect reason, final handler, normalized-message hash, acceptance/failure,
    delivery/transport identifier when accepted, and duplicate outcome.
 
 ## Rollback record
 
-- Last known good production behavior: PR #131 at merge `29aae0f...`.
+- Last known good deployed code: PR #133 at merge
+  `d8b9f84dc2f0024267ca402d3389a58f535b9bda`.
+- Production deployment:
+  `dpl_5r6rFbJKpF6wapt7W8Bo7XWYRHG3` (`READY`, commit-matched).
+- PR #131 remains the last live-message-verified baseline; PR #133's
+  compound-boundary behavior still requires the controlled Sana-only retest
+  below before it may be called production-message-verified.
 - Verified phrase: `Ask Sana to reply yes on WhatsApp.`
 - Verified result: one direct WhatsApp, `Please reply yes on WhatsApp.`, truthful
   `Sent to Sana.`, no intended delegation/task.
@@ -116,6 +128,9 @@ transcript handling, or duplicate prevention:
 - After rollback, rerun the three Sana-only smoke checks above and inspect
   diagnostics before declaring recovery.
 
-Stable tag: `ra7etbal-stable-carson-communication-routing-2026-07-30`.
-The tag targets the production hardening merge commit; use `git rev-list -n 1
-ra7etbal-stable-carson-communication-routing-2026-07-30` to resolve it.
+Corrective stable tag:
+`ra7etbal-stable-carson-compound-communication-boundary-2026-07-30`.
+It immutably targets PR #133's deployed merge commit; use `git rev-list -n 1
+ra7etbal-stable-carson-compound-communication-boundary-2026-07-30` to resolve
+it. The earlier `ra7etbal-stable-carson-communication-routing-2026-07-30` tag
+was not moved.
