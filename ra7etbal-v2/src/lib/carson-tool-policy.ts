@@ -361,8 +361,12 @@ export function evaluateCarsonToolPolicy(input: CarsonToolPolicyInput): CarsonTo
   let expectedCalendarTool: string | null = null;
 
   // Explicit precedence is intentional: do not infer it from router confidence.
-  const explicitPersonDirectedWork =
-    /\b(?:ask|tell|have|get|assign)\s+[A-Za-z]+\b/i.test(text);
+  const explicitPersonDirectedWork = people.some((person) =>
+    new RegExp(
+      `\\b(?:ask|tell|have|get|assign)\\s+${person.name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
+      "i",
+    ).test(text)
+  );
   const hostingIntent = Boolean(input.hasActiveHostingClarification) || (
     !explicitPersonDirectedWork
     &&

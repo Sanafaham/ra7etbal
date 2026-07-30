@@ -18,8 +18,8 @@ function blockBetween(startNeedle: string, endNeedle: string): string {
  * describes the intended outcome as structured evidence fields;
  * resolveCarsonPeopleAction (deterministic, no raw-text parsing) decides
  * which existing, unchanged handler to invoke. These tests protect the
- * wiring: registration, the typed-advisory gate, the exemption from the
- * old regex-based policy gate, legacy-tool bypass telemetry, and correct
+ * wiring: registration, the typed-advisory gate, canonical capability
+ * ownership, legacy-tool bypass telemetry, and correct
  * dispatch to the two existing execution handlers.
  */
 describe("ElevenLabsAgentWidget — route_people_action wiring (2026-07-30 intent architecture)", () => {
@@ -33,26 +33,25 @@ describe("ElevenLabsAgentWidget — route_people_action wiring (2026-07-30 inten
     expect(SOURCE).toContain("route_people_action: TYPED_ADVISORY_STAFF_MESSAGE,");
   });
 
-  it("is exempted from the raw-text regex policy gate, before that gate is ever reached", () => {
+  it("cannot bypass the transcript-scoped canonical routing owner", () => {
     const guardBlock = blockBetween(
       "const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {",
       "    try {",
     );
-    const exemptionIndex = guardBlock.indexOf('if (toolName === "route_people_action") return null;');
-    const policyCallIndex = guardBlock.indexOf("const policyDecision = evaluateCarsonToolPolicy({");
-    expect(exemptionIndex).toBeGreaterThan(-1);
-    expect(policyCallIndex).toBeGreaterThan(exemptionIndex);
+    expect(guardBlock).not.toContain('if (toolName === "route_people_action") return null;');
+    expect(guardBlock).toContain("routingOwnerAllowsPeopleAction(currentRoutingOwner)");
+    expect(guardBlock).toContain("throw new CarsonTerminalToolRejection(toolName, outcome)");
   });
 
-  it("still runs the voice-capture guard, since the exemption is placed after it", () => {
-    const guardBlock = blockBetween(
-      "const guardCurrentToolInvocation = (toolName: string, toolArguments?: unknown): string | null => {",
-      "    try {",
+  it("dispatches a Hosting-owned people-tool selection through the one Hosting execution", () => {
+    const block = blockBetween(
+      "route_people_action: async (params: CarsonPeopleActionEnvelope) => {",
+      "send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {",
     );
-    const captureIndex = guardBlock.indexOf("const captureBlock = guardCurrentVoiceCapture(toolName);");
-    const exemptionIndex = guardBlock.indexOf('if (toolName === "route_people_action") return null;');
-    expect(captureIndex).toBeGreaterThan(-1);
-    expect(captureIndex).toBeLessThan(exemptionIndex);
+    expect(block).toContain('if (owner.intent === "hosting")');
+    expect(block).toContain("executeHostingOwnerOnce(currentUtterance)");
+    expect(block.indexOf('if (owner.intent === "hosting")'))
+      .toBeLessThan(block.indexOf("resolveCarsonPeopleAction(params)"));
   });
 
   it("records legacy_people_tool_bypass for direct calls to the legacy tools, covering both by name", () => {

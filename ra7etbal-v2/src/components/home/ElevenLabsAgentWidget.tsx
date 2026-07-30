@@ -117,6 +117,12 @@ import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-d
 import { recordCarsonToolDiagnostic } from "../../lib/carson-tool-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, looksLikeMessageSendOutcomeClaim, resolvePendingMessageSendOutcome, type DirectToolSuccessResult, type NoteSaveOutcome, type DirectMessageSendOutcome } from "../../lib/carson-direct-tool-override";
 import { resolveCarsonPeopleAction, type CarsonPeopleActionEnvelope } from "../../lib/carson-people-action";
+import {
+  retainCarsonRoutingOwner,
+  routingOwnerAllowsPeopleAction,
+  selectCarsonRoutingOwner,
+  type CarsonRoutingOwner,
+} from "../../lib/carson-routing-owner";
 import { resolveOrphanedPeopleToolConfirmation } from "../../lib/carson-orphan-confirmation";
 import {
   CarsonTerminalToolRejection,
@@ -1545,6 +1551,11 @@ export default function ElevenLabsAgentWidget({
   // current transcript (same call sites as setTurnPhase("acting")); reset
   // to false only when a fresh valid transcript arrives.
   const toolRanForCurrentTranscriptRef = useRef(false);
+  const routingOwnerRef = useRef<CarsonRoutingOwner | null>(null);
+  const hostingOwnerExecutionRef = useRef<{
+    utterance: string;
+    promise: Promise<string>;
+  } | null>(null);
 
   const clearTurnPhaseThinkingTimeout = useCallback(() => {
     if (turnPhaseThinkingTimeoutRef.current) {
@@ -5510,6 +5521,8 @@ export default function ElevenLabsAgentWidget({
     recurringRawRef.current = null;
     lastCompletedPeopleActionRef.current = null;
     terminalToolRejectionRef.current = null;
+    routingOwnerRef.current = null;
+    hostingOwnerExecutionRef.current = null;
     invalidCaptureRef.current = null;
     sessionConnectedAtRef.current = null;
     micMuteCallCountRef.current = 0;
@@ -5714,6 +5727,16 @@ export default function ElevenLabsAgentWidget({
       const currentUtterance = [...sessionTranscriptRef.current]
         .reverse()
         .find((message) => message.role === "user")?.message ?? "";
+      const currentRoutingOwner = retainCarsonRoutingOwner(routingOwnerRef.current, {
+        utterance: currentUtterance,
+        people: usePeopleStore.getState().items,
+        hasActiveHostingClarification: Boolean(
+          pendingHostingContinuationRef.current
+          || pendingHostingClarificationRef.current
+          || pendingPlanRef.current
+        ),
+      });
+      routingOwnerRef.current = currentRoutingOwner;
       // Persisted server-side (unlike recordCarsonDiagnostic's localStorage-only
       // buffer below) so a future incident is traceable from the database —
       // see carson-tool-diagnostics.ts's doc comment for why this exists.
@@ -5814,13 +5837,21 @@ export default function ElevenLabsAgentWidget({
         return "No new typed owner instruction is active. Do not act on chat history or contextual updates; wait for the owner's next message.";
       }
 
-      // route_people_action (Carson intent architecture, 2026-07-30) carries
-      // its own dedicated, structured-evidence authorization
-      // (resolveCarsonPeopleAction) — it must never also be gated by the
-      // raw-text regex classifier below, which exists only for capabilities
-      // not yet migrated off it. Gating it here would reintroduce exactly
-      // the brittleness this tool was built to remove (see RA7ETBAL_STATE.md).
-      if (toolName === "route_people_action") return null;
+      // The transcript-scoped capability owner is authoritative. Structured
+      // people evidence still owns the communication-vs-delegation subtype,
+      // but it cannot claim a Hosting-owned transcript.
+      if (toolName === "route_people_action") {
+        if (routingOwnerAllowsPeopleAction(currentRoutingOwner)) return null;
+        const outcome = currentRoutingOwner.intent === "hosting"
+          ? "This request is already being handled by Hosting."
+          : "This request does not belong to a people action.";
+        terminalToolRejectionRef.current = {
+          toolName,
+          outcome,
+          at: new Date().toISOString(),
+        };
+        throw new CarsonTerminalToolRejection(toolName, outcome);
+      }
 
       const policyDecision = evaluateCarsonToolPolicy({
         utterance: currentUtterance,
@@ -5876,6 +5907,15 @@ export default function ElevenLabsAgentWidget({
         at: new Date().toISOString(),
       };
       throw new CarsonTerminalToolRejection(toolName, policyDecision.outcome);
+    };
+    const executeHostingOwnerOnce = (utterance: string): Promise<string> => {
+      const normalizedUtterance = utterance.trim();
+      if (hostingOwnerExecutionRef.current?.utterance === normalizedUtterance) {
+        return hostingOwnerExecutionRef.current.promise;
+      }
+      const promise = executeInstruction({ instruction: normalizedUtterance });
+      hostingOwnerExecutionRef.current = { utterance: normalizedUtterance, promise };
+      return promise;
     };
 
     try {
@@ -5965,7 +6005,12 @@ export default function ElevenLabsAgentWidget({
               toolCompletedPerf: null,
             };
             try {
-              const result = await executeInstruction(params);
+              const currentUtterance = [...sessionTranscriptRef.current]
+                .reverse()
+                .find((message) => message.role === "user")?.message ?? "";
+              const result = routingOwnerRef.current?.intent === "hosting"
+                ? await executeHostingOwnerOnce(currentUtterance)
+                : await executeInstruction(params);
               trace.outcome = "success";
               return result;
             } catch (err) {
@@ -6014,6 +6059,30 @@ export default function ElevenLabsAgentWidget({
           // decides which of the two existing, unchanged handlers to call.
           // ------------------------------------------------------------------
           route_people_action: async (params: CarsonPeopleActionEnvelope) => {
+            const currentUtterance = [...sessionTranscriptRef.current]
+              .reverse()
+              .find((message) => message.role === "user")?.message ?? "";
+            const owner = retainCarsonRoutingOwner(routingOwnerRef.current, {
+              utterance: currentUtterance,
+              people: usePeopleStore.getState().items,
+              hasActiveHostingClarification: Boolean(
+                pendingHostingContinuationRef.current
+                || pendingHostingClarificationRef.current
+                || pendingPlanRef.current
+              ),
+            });
+            routingOwnerRef.current = owner;
+            if (owner.intent === "hosting") {
+              toolInFlightRef.current = "execute_instruction";
+              setTurnPhase("acting");
+              toolRanForCurrentTranscriptRef.current = true;
+              try {
+                return await executeHostingOwnerOnce(currentUtterance);
+              } finally {
+                toolInFlightRef.current = null;
+                setTurnPhase((prev) => (prev === "acting" ? "thinking" : prev));
+              }
+            }
             const captureBlock = guardCurrentToolInvocation("route_people_action", params);
             if (captureBlock) return captureBlock;
 
@@ -6072,41 +6141,6 @@ export default function ElevenLabsAgentWidget({
             const currentUtterance = [...sessionTranscriptRef.current]
               .reverse()
               .find((message) => message.role === "user")?.message ?? "";
-            const legacyHostingDecision = evaluateCarsonToolPolicy({
-              utterance: currentUtterance,
-              channel: requestedChannel,
-              selectedTool: "send_delegation",
-              toolArguments: params,
-              people: usePeopleStore.getState().items,
-              hasActiveHostingClarification: Boolean(
-                pendingHostingContinuationRef.current
-                || pendingHostingClarificationRef.current
-                || pendingPlanRef.current
-              ),
-            });
-            if (
-              legacyHostingDecision.intent === "hosting"
-              && legacyHostingDecision.eligibleTools.includes("execute_instruction")
-            ) {
-              recordCarsonToolDiagnostic({
-                userId: authenticatedUserId,
-                sessionId: typedConversationIdRef.current,
-                channel: requestedChannel,
-                toolName: "send_delegation",
-                stage: "legacy_people_tool_redirected",
-                reason: "hosting_selected_as_delegation",
-                selectedTool: "execute_instruction",
-              });
-              toolInFlightRef.current = "execute_instruction";
-              setTurnPhase("acting");
-              toolRanForCurrentTranscriptRef.current = true;
-              try {
-                return await executeInstruction({ instruction: currentUtterance });
-              } finally {
-                toolInFlightRef.current = null;
-                setTurnPhase((prev) => (prev === "acting" ? "thinking" : prev));
-              }
-            }
             const communicationRedirect = resolveLegacyPeopleToolCommunicationRedirect({
               utterance: currentUtterance,
               channel: requestedChannel,
@@ -6448,6 +6482,16 @@ export default function ElevenLabsAgentWidget({
             }
 
             invalidCaptureRef.current = null;
+            hostingOwnerExecutionRef.current = null;
+            routingOwnerRef.current = selectCarsonRoutingOwner({
+              utterance: message,
+              people: usePeopleStore.getState().items,
+              hasActiveHostingClarification: Boolean(
+                pendingHostingContinuationRef.current
+                || pendingHostingClarificationRef.current
+                || pendingPlanRef.current
+              ),
+            });
             sessionTranscriptRef.current.push({ role, message });
             setLastUserTranscript(message);
             if (userTranscriptTimerRef.current) {

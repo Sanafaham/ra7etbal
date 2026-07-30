@@ -161,25 +161,24 @@ describe("Production regression — rejected execution is terminal", () => {
     expect(widget).toContain("resolveTerminalToolRejectionReply(");
   });
 
-  it("protects the production Hosting hotfix at the legacy callback boundary", () => {
+  it("protects canonical Hosting ownership ahead of People subtype routing", () => {
     const widget = readFileSync(
       join(__dirname, "../components/home/ElevenLabsAgentWidget.tsx"),
       "utf-8",
     );
-    const legacyStart = widget.indexOf(
-      'send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {',
+    const peopleStart = widget.indexOf(
+      "route_people_action: async (params: CarsonPeopleActionEnvelope) => {",
     );
-    const legacyEnd = widget.indexOf(
-      'create_reminder: async',
-      legacyStart,
+    const peopleEnd = widget.indexOf(
+      'send_delegation: async',
+      peopleStart,
     );
-    const legacyHandler = widget.slice(legacyStart, legacyEnd);
+    const peopleHandler = widget.slice(peopleStart, peopleEnd);
 
-    expect(legacyHandler.indexOf('legacyHostingDecision.intent === "hosting"'))
-      .toBeLessThan(legacyHandler.indexOf('guardCurrentToolInvocation("send_delegation", params)'));
-    expect(legacyHandler).toContain(
-      "return await executeInstruction({ instruction: currentUtterance })",
-    );
+    expect(peopleHandler.indexOf('if (owner.intent === "hosting")'))
+      .toBeLessThan(peopleHandler.indexOf("resolveCarsonPeopleAction(params)"));
+    expect(peopleHandler).toContain("executeHostingOwnerOnce(currentUtterance)");
+    expect(widget).not.toContain("legacyHostingDecision");
     expect(widget).toContain('/client tool execution failed/i.test(String(msg ?? ""))');
   });
 });
