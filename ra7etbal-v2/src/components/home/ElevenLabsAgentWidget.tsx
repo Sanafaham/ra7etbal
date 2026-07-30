@@ -53,6 +53,7 @@ import {
   buildSessionRecapWithActions,
   summarizeConversation,
   summarizeSessionRecap,
+  sanitizeTranscriptForDurableMemory,
   isSummaryWorthSaving,
   SESSION_RECAP_PREFIX,
   type TranscriptMessage,
@@ -5111,10 +5112,15 @@ export default function ElevenLabsAgentWidget({
   const saveVoiceSessionSnapshot = useCallback(
     (userId: string | null, transcript: TranscriptMessage[]) => {
       const sessionActions = [...sessionActionsRef.current];
+      const durableMemoryTranscript = sanitizeTranscriptForDurableMemory(transcript);
       if (userId) {
         (async () => {
-          const recap = await summarizeSessionRecap(transcript);
-          const recapWithActions = buildSessionRecapWithActions(recap, sessionActions);
+          const recap = await summarizeSessionRecap(durableMemoryTranscript.transcript);
+          const recapWithActions = buildSessionRecapWithActions(
+            recap,
+            sessionActions,
+            durableMemoryTranscript.removedOperationalClaims,
+          );
           if (recapWithActions) {
             await saveSessionMemory(`${SESSION_RECAP_PREFIX} ${recapWithActions}`);
           }
@@ -5168,7 +5174,9 @@ export default function ElevenLabsAgentWidget({
 
         let conversationSummary: string | null = null;
         try {
-          conversationSummary = await summarizeConversation(transcript);
+          conversationSummary = await summarizeConversation(
+            durableMemoryTranscript.transcript,
+          );
         } catch {
           // Non-fatal — fall back to tool actions only.
         }

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   formatRecentMemory,
   isRecapRow,
+  LEGACY_RECAP_PREFIX,
   RECAP_PREFIX,
   SESSION_HISTORY_HEADER,
 } from "./carson-memory-format";
@@ -35,6 +36,38 @@ describe("carson-memory recap labelling", () => {
     expect(isRecapRow("• Routine: every Friday do X")).toBe(false);
     // Tolerate leading whitespace before the bullet.
     expect(isRecapRow(`  ${RECAP_PREFIX} y`)).toBe(true);
+  });
+
+  it("does not inject legacy recaps that may contain unsupported operational history", () => {
+    const out = formatRecentMemory([
+      {
+        created_at: "2026-06-22T02:32:14Z",
+        summary: `${LEGACY_RECAP_PREFIX} Christopher and Grace were briefed.`,
+      },
+    ]);
+
+    expect(out).toContain("No previous sessions.");
+    expect(out).not.toContain("Christopher and Grace were briefed");
+  });
+
+  it("fresh recent memory contains verified actions but never legacy unsupported claims", () => {
+    const out = formatRecentMemory([
+      {
+        created_at: "2026-06-23T02:32:14Z",
+        summary: [
+          `${RECAP_PREFIX} Discussed dinner planning.`,
+          "Session actions:",
+          "* Sent WhatsApp to Christopher: Dinner is at seven.",
+        ].join("\n"),
+      },
+      {
+        created_at: "2026-06-22T02:32:14Z",
+        summary: `${LEGACY_RECAP_PREFIX} Christopher and Grace were briefed.`,
+      },
+    ]);
+
+    expect(out).toContain("Sent WhatsApp to Christopher");
+    expect(out).not.toContain("Christopher and Grace were briefed");
   });
 
   it("labels the newest recap as the Most recent session", () => {

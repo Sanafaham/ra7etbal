@@ -1,5 +1,8 @@
-/** Prefix marking a row as a session recap (the ACTUAL last conversation). */
-export const RECAP_PREFIX = "• Session recap:";
+/** Prefix marking an evidence-safe recap (the ACTUAL last conversation). */
+export const RECAP_PREFIX = "• Verified session recap:";
+
+/** Recaps written before execution claims were evidence-gated. Never load them. */
+export const LEGACY_RECAP_PREFIX = "• Session recap:";
 
 export const SESSION_HISTORY_HEADER = [
   "SESSION HISTORY ONLY:",
