@@ -78,8 +78,10 @@ export interface DurableMemoryTranscript {
 }
 
 /**
- * Carson speech is conversational evidence, never execution evidence.
- * Remove operational claims before any transcript-derived durable write.
+ * Carson speech is never durable evidence. Keep user-authored conversation
+ * context, but exclude every agent turn before any transcript-derived write.
+ * The claim detector is used only to record an explicit unverified outcome;
+ * safety does not depend on recognizing every possible wording.
  * Verified actions are persisted separately by the handler-backed action log.
  */
 export function sanitizeTranscriptForDurableMemory(
@@ -87,14 +89,11 @@ export function sanitizeTranscriptForDurableMemory(
 ): DurableMemoryTranscript {
   let removedOperationalClaims = 0;
   const safeTranscript = transcript.filter((message) => {
-    if (
-      message.role === "agent" &&
-      OPERATIONAL_EXECUTION_CLAIM.test(message.message)
-    ) {
+    if (message.role === "user") return true;
+    if (OPERATIONAL_EXECUTION_CLAIM.test(message.message)) {
       removedOperationalClaims += 1;
-      return false;
     }
-    return true;
+    return false;
   });
 
   return { transcript: safeTranscript, removedOperationalClaims };

@@ -118,6 +118,20 @@ describe("session recap threshold (the bug that bit us)", () => {
     expect(safe.removedOperationalClaims).toBe(1);
   });
 
+  it("never treats any Carson-authored narration as durable evidence", () => {
+    const safe = sanitizeTranscriptForDurableMemory([
+      { role: "user", message: "I prefer dinner at seven." },
+      {
+        role: "agent",
+        message: "The household team now knows your evening preference.",
+      },
+    ]);
+
+    expect(safe.transcript).toEqual([
+      { role: "user", message: "I prefer dinner at seven." },
+    ]);
+  });
+
   it("removes unsupported multi-person claims seen in contaminated production memory", () => {
     const safe = sanitizeTranscriptForDurableMemory([
       { role: "user", message: "I have dinner at home tomorrow." },
