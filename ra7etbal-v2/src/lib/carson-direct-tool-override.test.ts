@@ -827,6 +827,8 @@ describe("detectsUnconfirmedMessageSendFailureClaim", () => {
     "I was unable to send it.",
     "I didn't send that.",
     "I'm not able to send it right now.",
+    // Confirmed 2026-07-30 retest incident: a different verb than "send".
+    "I wasn't able to save that. Please say it again.",
   ])("flags variant failure phrasing: '%s'", (agentMessage) => {
     expect(
       detectsUnconfirmedMessageSendFailureClaim(
@@ -854,13 +856,21 @@ describe("looksLikeMessageSendOutcomeClaim", () => {
     ).toBe(true);
   });
 
-  it("does not match a truthful negated 'sent' reply (neither success-shaped nor the specific failure-claim wording)", () => {
+  // The verb slot in FAILURE_CLAIM_PATTERN is generalized (2026-07-30, second
+  // incident: "wasn't able to save" instead of "wasn't able to send"), so this
+  // negated-"sent" phrasing now also matches as failure-shaped via "couldn't
+  // get" — correctly so, since it IS a failure-shaped claim about the send.
+  // This only controls whether the client awaits the real outcome before
+  // finalizing display text; a genuinely truthful failure is never rewritten
+  // (resolveSanitizedCarsonDisplayMessage only corrects when the tool's own
+  // outcome is a confirmed "success").
+  it("matches a truthful negated 'sent' reply too, since it is still a failure-shaped claim needing the real outcome", () => {
     expect(
       looksLikeMessageSendOutcomeClaim(
         "I couldn't get that sent to Christopher. Please try again.",
         "Tell Christopher to bring extra water bottles.",
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("does not match when the previous message isn't an explicit send request", () => {
@@ -886,6 +896,27 @@ describe("resolveSanitizedCarsonDisplayMessage — unconfirmed message send fail
   it("PROTECTED: replaces a false failure claim with the tool's own true success result", () => {
     const result = resolveSanitizedCarsonDisplayMessage({
       agentMessage: "I wasn't able to send that. Please try again.",
+      previousUserMessage: "Ask Christopher to reply yes if he can come tomorrow.",
+      lastSuccess: null,
+      messageSendOutcome: messageSendSuccess({ resultText: "Sent to Christopher." }),
+      now: NOW,
+    });
+    expect(result).toBe("Sent to Christopher.");
+  });
+
+  // PROTECTED REGRESSION TEST — do not remove or weaken. This is the exact
+  // confirmed-failing production RETEST (2026-07-30, ~03:41 Turkey time,
+  // session conv_6201kyr7eh6rfyvaymcbk3r5x3nv): a real
+  // send_direct_whatsapp_message success for Christopher (handler_success,
+  // recipient_person_id confirmed, zero claim_overridden for the turn), but
+  // Carson's own reply used a DIFFERENT verb ("save" instead of "send") to
+  // falsely claim the send failed. FAILURE_CLAIM_PATTERN previously hardcoded
+  // the verb to "send" only, so this paraphrase escaped the PR #126 fix
+  // entirely. The verb slot is now generalized — this must never regress to
+  // a single hardcoded verb again.
+  it("PROTECTED: replaces a false failure claim using a different verb ('save') with the tool's own true success result", () => {
+    const result = resolveSanitizedCarsonDisplayMessage({
+      agentMessage: "I wasn't able to save that. Please say it again.",
       previousUserMessage: "Ask Christopher to reply yes if he can come tomorrow.",
       lastSuccess: null,
       messageSendOutcome: messageSendSuccess({ resultText: "Sent to Christopher." }),
