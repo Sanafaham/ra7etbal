@@ -233,8 +233,18 @@ export function detectsUnconfirmedMessageSendClaim(
 // FALSE SUCCESS claim — nothing checked the opposite direction: a false
 // FAILURE claim on a send that actually succeeded. This is the symmetric
 // counterpart to detectsUnconfirmedMessageSendClaim.
+//
+// Confirmed production retest (2026-07-30, ~03:41 Turkey time, session
+// conv_6201kyr7eh6rfyvaymcbk3r5x3nv): the exact same class of failure
+// recurred with different wording — "I wasn't able to save that. Please say
+// it again." — handler_success confirmed the send truly succeeded
+// (recipient_person_id populated), with zero claim_overridden for the turn.
+// The verb below was hardcoded to "send" only, so this paraphrase never
+// matched. The agent's own free-form apology wording varies by verb
+// ("send"/"save"/etc.) while meaning the same thing, so the verb slot is
+// generalized rather than adding another hardcoded word.
 const FAILURE_CLAIM_PATTERN =
-  /\b(?:i\s+)?wasn['’]?t\s+able\s+to\s+send\b|\bcouldn['’]?t\s+send\b|\bunable\s+to\s+send\b|\bfailed\s+to\s+send\b|\bdidn['’]?t\s+send\b|\bnot\s+able\s+to\s+send\b/i;
+  /\b(?:i\s+)?wasn['’]?t\s+able\s+to\s+[a-z]+\b|\bcouldn['’]?t\s+[a-z]+\b|\bunable\s+to\s+[a-z]+\b|\bfailed\s+to\s+[a-z]+\b|\bdidn['’]?t\s+[a-z]+\b|\bnot\s+able\s+to\s+[a-z]+\b/i;
 
 /**
  * True when the previous owner message reads as an explicit send/tell/ask
