@@ -6,10 +6,13 @@
 
 The architectural fix: the model no longer selects between `send_direct_whatsapp_message` and `send_delegation` directly for new requests. It calls one new tool, `route_people_action`, describing the intended outcome as structured fields. Application code (not the model) decides which of the two existing tools to actually invoke, based on those fields — never by re-parsing the raw utterance.
 
-**Status**: applied to the ElevenLabs production agent and production-verified
-on 2026-07-30. The live dashboard remains the source of truth; validate it
-against `docs/CARSON_COMMUNICATION_ROUTING_RELEASE.md` before every related
-release.
+**Status**: applied to the ElevenLabs production agent. Live production
+evidence confirms successful direct communication, meaning preservation,
+exactly one outbound message, and a truthful Carson success response. It does
+**not** yet prove that the model selected `route_people_action` or that its
+mapping executed; no live `people_action_mapped` diagnostic has been confirmed.
+The live dashboard remains the source of truth; validate it against
+`docs/CARSON_COMMUNICATION_ROUTING_RELEASE.md` before every related release.
 
 ## New tool: `route_people_action`
 

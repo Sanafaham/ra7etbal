@@ -3,6 +3,40 @@
 Last production verification: 2026-07-30  
 Verified baseline merge: `29aae0f685d18ed79e8548d565fb77649a538706` (PR #131)
 
+## Exact production evidence
+
+Confirmed live:
+
+- A plain communication request sent successfully.
+- `Ask Sana to reply yes on WhatsApp.` preserved its meaning as `Please reply
+  yes on WhatsApp.`
+- Exactly one outbound WhatsApp was sent.
+- Carson truthfully reported `Sent to Sana.`
+
+Not yet confirmed by live production diagnostics:
+
+- A `legacy_people_tool_redirected` execution.
+- A successful `people_action_mapped` / `route_people_action` execution.
+- A `duplicate_suppressed` event.
+
+Those mechanisms are protected by code/CI tests but must not be described as
+production-verified until a controlled live diagnostic proves each path.
+
+## Diagnostics migration history
+
+The production columns and stage constraint from
+`20260801_carson_communication_routing_diagnostics.sql` were verified after the
+SQL was applied manually in the Supabase dashboard. The repository contains
+the matching additive migration file, but this corrective pass could not
+authenticate to the production migration ledger and found no linked local
+Supabase CLI state. Therefore the schema is working, but the migration-history
+row is not claimed as reconciled.
+
+Do not re-run the migration or insert a `schema_migrations` row by hand. A
+future bookkeeping repair must first read the authenticated production ledger
+and use the project's normal linked migration tooling so it cannot falsely
+record a version that differs from the SQL already applied.
+
 ## Canonical rule
 
 For new person-directed requests, Carson must call `route_people_action`.

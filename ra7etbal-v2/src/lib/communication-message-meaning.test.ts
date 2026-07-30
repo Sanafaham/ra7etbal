@@ -46,4 +46,43 @@ describe("preserveDirectCommunicationMeaning", () => {
       ),
     ).toBe("Buy olive oil tomorrow.");
   });
+
+  it.each([
+    [
+      "Ask Christopher to reply yes if he can come tomorrow, then tell Grace to order more chairs.",
+      "Christopher",
+      "yes if he can come tomorrow, then tell Grace to order more chairs",
+      "Please reply yes if he can come tomorrow.",
+    ],
+    [
+      "Tell Sana to confirm she received it, and ask Christopher to check the delivery.",
+      "Sana",
+      "she received it, and ask Christopher to check the delivery",
+      "Please confirm she received it.",
+    ],
+    [
+      "Have Sana respond with the delivery time and tell Grace the supplier called.",
+      "Sana",
+      "with the delivery time and tell Grace the supplier called",
+      "Please respond with the delivery time.",
+    ],
+    [
+      "Get Sana to say whether she approves, then have Christopher place the order.",
+      "Sana",
+      "whether she approves, then have Christopher place the order",
+      "Please say whether she approves.",
+    ],
+  ])("stops before a second named-person instruction: %s", (utterance, recipient, payload, expected) => {
+    expect(preserveDirectCommunicationMeaning(utterance, recipient, payload)).toBe(expected);
+  });
+
+  it("preserves an ordinary single-clause confirmation request", () => {
+    expect(
+      preserveDirectCommunicationMeaning(
+        "Ask Christopher to confirm he's done and let me know once it's finished.",
+        "Christopher",
+        "he's done and let me know once it's finished",
+      ),
+    ).toBe("Please confirm he's done and let me know once it's finished.");
+  });
 });

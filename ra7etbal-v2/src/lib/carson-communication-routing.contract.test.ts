@@ -79,6 +79,18 @@ describe("PROTECTED CONTRACT — plain communication stays direct", () => {
       intent: "direct_communication",
     });
   });
+
+  it("treats a one-off completion-status confirmation as communication, not new tracked work", () => {
+    const utterance = "Ask Christopher to confirm he's done and let me know once it's finished.";
+    expect(policy(utterance, "send_direct_whatsapp_message", {
+      recipient_name: "Christopher",
+      message: "confirm he's done and let me know once it's finished",
+    })).toMatchObject({ allowed: true, intent: "direct_communication" });
+    expect(policy(utterance, "send_delegation", {
+      name: "Christopher",
+      task: "confirm he's done and let me know once it's finished",
+    })).toMatchObject({ allowed: false, intent: "direct_communication" });
+  });
 });
 
 describe("PROTECTED CONTRACT — genuine assignments stay delegations", () => {
