@@ -138,6 +138,39 @@ describe("direct message boundary", () => {
     );
   });
 
+  it("eliminates owner normalization embedded in a reply-prefixed tool payload", async () => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-1", ...draft }));
+    const deliverTaskMessageFn = vi.fn(async () => ({
+      success: true,
+      channel: "whatsapp" as const,
+      deliveryId: "delivery-1",
+    }));
+
+    await createAndSendDirectMessage({
+      source: "send_direct_whatsapp_message",
+      userId: "user-1",
+      recipient: "Christopher",
+      messageText: "Please reply — Sana will be there in 10 minutes.",
+      ownerInstruction: `Ask Christopher to reply, "I'll be there in 10 minutes."`,
+      phone: "+971500000000",
+      ownerName: "Sana",
+      createMessageFn,
+      deliverTaskMessageFn,
+    });
+
+    expect(createMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: `Please reply: "I'll be there in 10 minutes."`,
+      }),
+    );
+    expect(deliverTaskMessageFn).toHaveBeenCalledTimes(1);
+    expect(deliverTaskMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageText: `Please reply: "I'll be there in 10 minutes."`,
+      }),
+    );
+  });
+
   it("preserves failure stage for message creation failures", async () => {
     await expect(
       createAndSendDirectMessage({

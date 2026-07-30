@@ -48,9 +48,10 @@ export function preserveDirectMessageReplyIntent(
   const match = source.match(pattern);
   if (!match) return message;
 
-  // If the tool already preserved the request, do not wrap it again.
-  if (/^\s*(?:please\s+)?reply\b/i.test(message)) return message;
-
+  // The owner transcript is authoritative for the requested reply. Do not
+  // trust an already reply-prefixed tool message here: the model may preserve
+  // "Please reply" while rewriting the quoted first-person text into an
+  // owner-relative factual statement.
   const requestedReply = stripMatchingQuotes(match[1] || message);
   if (!requestedReply) return message;
   return `Please reply: "${requestedReply}"`;
