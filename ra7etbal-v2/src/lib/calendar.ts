@@ -37,6 +37,34 @@ export interface CalendarResult {
   events: CalendarEvent[];
 }
 
+export interface HistoricalCalendarEvent {
+  event_id: string;
+  title: string;
+  start: string | null;
+  end: string | null;
+  timezone: string;
+  all_day: boolean;
+  location: string | null;
+  matched_attendees: Array<{ display_name?: string; email?: string }>;
+  relevant_description_excerpt: string | null;
+  match_reasons: Array<"title" | "attendee" | "location" | "description" | "date_range">;
+  search_start: string;
+  search_end: string;
+}
+
+export interface HistoricalCalendarSearchResult {
+  ok: boolean;
+  message?: string | null;
+  code?: string;
+  error?: string;
+  events: HistoricalCalendarEvent[];
+  search_start: string;
+  search_end: string;
+  result_count: number;
+  truncated: boolean;
+  retrieved_at: string;
+}
+
 /**
  * Calendar connection state for Carson's awareness — separate from the
  * events themselves. "unknown" is the state before the first fetch resolves
@@ -109,6 +137,53 @@ export async function fetchCalendarEvents(
     return { connected: true, events: body.events ?? [] };
   } catch {
     return { connected: false, events: [] };
+  }
+}
+
+/**
+ * Search a bounded historical window through the authenticated Ra7etBal
+ * calendar route. This is intentionally separate from fetchCalendarEvents so
+ * a historical request can never fall back to the future planning cache.
+ */
+export async function searchCalendarHistory(input: {
+  start_date: string;
+  end_date: string;
+  query?: string;
+  limit?: number;
+}): Promise<HistoricalCalendarSearchResult> {
+  const emptyResult: HistoricalCalendarSearchResult = {
+    ok: false,
+    events: [],
+    search_start: input.start_date,
+    search_end: input.end_date,
+    result_count: 0,
+    truncated: false,
+    retrieved_at: new Date().toISOString(),
+  };
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    const jwt = sessionData?.session?.access_token;
+    if (!jwt) return { ...emptyResult, code: "unauthenticated", error: "You are not signed in." };
+
+    const params = new URLSearchParams({
+      range: "historical",
+      start_date: input.start_date,
+      end_date: input.end_date,
+      ...(input.query?.trim() ? { query: input.query.trim() } : {}),
+      ...(input.limit !== undefined ? { limit: String(input.limit) } : {}),
+    });
+    const res = await fetch(`/api/google-calendar?${params}`, {
+      headers: { Authorization: `Bearer ${jwt}` },
+      cache: "no-store",
+    });
+    const body = await res.json().catch(() => null);
+    if (!body) return { ...emptyResult, code: "parse_error", error: "The calendar search response could not be read." };
+    if (!res.ok || !body.ok) {
+      return { ...emptyResult, code: body.code ?? "search_failed", error: body.error ?? "The calendar history search failed." };
+    }
+    return body as HistoricalCalendarSearchResult;
+  } catch {
+    return { ...emptyResult, code: "network_error", error: "The calendar history search could not be completed." };
   }
 }
 

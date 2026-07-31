@@ -10,12 +10,16 @@
  *      Exchanges code for tokens, stores refresh_token in profiles via
  *      Supabase REST API, redirects to /?calendar=connected|error.
  *
- *   3. Fetch events      GET ?range=today|tomorrow|this_week|next_week
+ *   3. Search history    GET ?range=historical&start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+ *      Optional query and bounded limit. Authenticated, server-filtered, and
+ *      privacy-shaped before any event evidence is returned to Carson.
+ *
+ *   4. Fetch events      GET ?range=today|tomorrow|this_week|next_week
  *      Requires Authorization: Bearer <supabase-jwt> header.
  *      Verifies JWT, loads refresh_token, fetches Google Calendar events.
  *      Never returns refresh_token to client.
  *
- *   4. Create event      POST (JSON body)
+ *   5. Create event      POST (JSON body)
  *      Requires Authorization: Bearer <supabase-jwt> header.
  *      Body: { title, date (YYYY-MM-DD), time (HH:MM), duration_minutes?, description? }
  *      Verifies JWT, loads refresh_token, inserts event on primary calendar.
@@ -32,6 +36,214 @@
  */
 
 const SCOPES = "https://www.googleapis.com/auth/calendar.events";
+
+const HISTORY_MAX_RANGE_DAYS = 366;
+const HISTORY_DEFAULT_LIMIT = 10;
+const HISTORY_MAX_LIMIT = 20;
+const HISTORY_PAGE_SIZE = 250;
+const HISTORY_MAX_PAGES = 4;
+const HISTORY_DESCRIPTION_EXCERPT_MAX = 240;
+const HISTORY_NO_MATCH_MESSAGE = "No matching calendar event was found in the searched period.";
+const HISTORY_INCOMPLETE_MESSAGE = "The calendar search was incomplete, so no definitive no-match conclusion can be made.";
+
+function parseIsoDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  if (
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month - 1 ||
+    parsed.getUTCDate() !== day
+  ) return null;
+  return { year, month, day, value };
+}
+
+function addUtcDays(dateParts, days) {
+  const date = new Date(Date.UTC(dateParts.year, dateParts.month - 1, dateParts.day + days));
+  return {
+    year: date.getUTCFullYear(),
+    month: date.getUTCMonth() + 1,
+    day: date.getUTCDate(),
+  };
+}
+
+function datePartsToEpochDay(dateParts) {
+  return Math.floor(Date.UTC(dateParts.year, dateParts.month - 1, dateParts.day) / 86_400_000);
+}
+
+/** Convert local midnight in an IANA timezone to an absolute ISO timestamp. */
+export function localDateBoundaryToIso(dateParts, timeZone) {
+  const desiredUtc = Date.UTC(dateParts.year, dateParts.month - 1, dateParts.day);
+  let candidate = desiredUtc;
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+
+  // Two passes handle offset changes around daylight-saving boundaries.
+  for (let pass = 0; pass < 2; pass += 1) {
+    const parts = Object.fromEntries(
+      formatter.formatToParts(new Date(candidate)).map((part) => [part.type, part.value]),
+    );
+    const representedAsUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second),
+    );
+    candidate -= representedAsUtc - desiredUtc;
+  }
+  return new Date(candidate).toISOString();
+}
+
+export function validateHistoricalSearchInput({ startDate, endDate, limit }) {
+  const start = parseIsoDate(startDate);
+  const end = parseIsoDate(endDate);
+  if (!start || !end) {
+    return { ok: false, status: 400, code: "invalid_date", error: "start_date and end_date must be valid YYYY-MM-DD dates." };
+  }
+  const rangeDays = datePartsToEpochDay(end) - datePartsToEpochDay(start);
+  if (rangeDays < 0) {
+    return { ok: false, status: 400, code: "reversed_range", error: "end_date must be on or after start_date." };
+  }
+  if (rangeDays + 1 > HISTORY_MAX_RANGE_DAYS) {
+    return { ok: false, status: 400, code: "range_too_large", error: `Historical calendar searches are limited to ${HISTORY_MAX_RANGE_DAYS} days.` };
+  }
+  const requestedLimit = limit === undefined || limit === "" ? HISTORY_DEFAULT_LIMIT : Number(limit);
+  if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > HISTORY_MAX_LIMIT) {
+    return { ok: false, status: 400, code: "invalid_limit", error: `limit must be an integer from 1 to ${HISTORY_MAX_LIMIT}.` };
+  }
+  return { ok: true, start, end, limit: requestedLimit };
+}
+
+export function normalizeHistoricalSearchText(value) {
+  return String(value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9@.+]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function historicalQueryTokens(query) {
+  return [...new Set(normalizeHistoricalSearchText(query).split(" ").filter((token) => token.length > 1))];
+}
+
+function boundedDescriptionExcerpt(description, tokens) {
+  const clean = String(description ?? "").replace(/\s+/g, " ").trim();
+  if (!clean) return null;
+  const normalized = normalizeHistoricalSearchText(clean);
+  let matchIndex = -1;
+  for (const token of tokens) {
+    const index = normalized.indexOf(token);
+    if (index >= 0 && (matchIndex < 0 || index < matchIndex)) matchIndex = index;
+  }
+  const start = Math.max(0, matchIndex < 0 ? 0 : matchIndex - 80);
+  const excerpt = clean.slice(start, start + HISTORY_DESCRIPTION_EXCERPT_MAX);
+  return `${start > 0 ? "…" : ""}${excerpt}${start + HISTORY_DESCRIPTION_EXCERPT_MAX < clean.length ? "…" : ""}`;
+}
+
+export function shapeHistoricalCalendarEvent(item, { query, profileTimezone, searchStart, searchEnd }) {
+  const tokens = historicalQueryTokens(query);
+  const title = item.summary ?? "(No title)";
+  const attendees = Array.isArray(item.attendees) ? item.attendees : [];
+  const fields = {
+    title: normalizeHistoricalSearchText(title),
+    location: normalizeHistoricalSearchText(item.location),
+    description: normalizeHistoricalSearchText(item.description),
+  };
+  const matchedAttendees = attendees
+    .filter((attendee) => {
+      if (tokens.length === 0) return false;
+      const attendeeText = normalizeHistoricalSearchText(`${attendee.displayName ?? ""} ${attendee.email ?? ""}`);
+      return tokens.some((token) => attendeeText.includes(token));
+    })
+    .map((attendee) => {
+      const normalizedEmail = normalizeHistoricalSearchText(attendee.email);
+      const emailExplicitlyMatched = tokens.some((token) => token.includes("@") && normalizedEmail.includes(token));
+      return {
+        ...(attendee.displayName ? { display_name: attendee.displayName } : {}),
+        ...(emailExplicitlyMatched && attendee.email ? { email: attendee.email } : {}),
+      };
+    });
+
+  const reasons = [];
+  const matchedTokens = new Set();
+  for (const token of tokens) {
+    if (fields.title.includes(token)) {
+      matchedTokens.add(token);
+      if (!reasons.includes("title")) reasons.push("title");
+    }
+    if (fields.location.includes(token)) {
+      matchedTokens.add(token);
+      if (!reasons.includes("location")) reasons.push("location");
+    }
+    if (fields.description.includes(token)) {
+      matchedTokens.add(token);
+      if (!reasons.includes("description")) reasons.push("description");
+    }
+    if (attendees.some((attendee) => normalizeHistoricalSearchText(`${attendee.displayName ?? ""} ${attendee.email ?? ""}`).includes(token))) {
+      matchedTokens.add(token);
+      if (!reasons.includes("attendee")) reasons.push("attendee");
+    }
+  }
+
+  if (tokens.length > 0 && matchedTokens.size === 0) return null;
+  if (tokens.length === 0) reasons.push("date_range");
+
+  const allDay = Boolean(item.start?.date && !item.start?.dateTime);
+  return {
+    event_id: item.id,
+    title,
+    start: item.start?.dateTime ?? item.start?.date ?? null,
+    end: item.end?.dateTime ?? item.end?.date ?? null,
+    timezone: item.start?.timeZone ?? item.end?.timeZone ?? profileTimezone,
+    all_day: allDay,
+    location: item.location ?? null,
+    matched_attendees: matchedAttendees,
+    relevant_description_excerpt: reasons.includes("description")
+      ? boundedDescriptionExcerpt(item.description, tokens)
+      : null,
+    match_reasons: reasons,
+    search_start: searchStart,
+    search_end: searchEnd,
+    _score: matchedTokens.size * 10 + reasons.length,
+  };
+}
+
+export function finalizeHistoricalSearch({ events, limit, truncated, searchStart, searchEnd, retrievedAt }) {
+  const ordered = [...events].sort((a, b) => {
+    const dateOrder = String(b.start ?? "").localeCompare(String(a.start ?? ""));
+    if (dateOrder !== 0) return dateOrder;
+    return b._score - a._score;
+  });
+  const limited = ordered.slice(0, limit).map(({ _score, ...event }) => event);
+  const resultTruncated = truncated || ordered.length > limit;
+  const noMatch = limited.length === 0;
+  return {
+    ok: true,
+    message: noMatch
+      ? resultTruncated
+        ? HISTORY_INCOMPLETE_MESSAGE
+        : HISTORY_NO_MATCH_MESSAGE
+      : null,
+    events: limited,
+    search_start: searchStart,
+    search_end: searchEnd,
+    result_count: limited.length,
+    truncated: resultTruncated,
+    retrieved_at: retrievedAt,
+  };
+}
 
 export default async function handler(req, res) {
   const { code, state, userId, range } = req.query;
@@ -114,7 +326,116 @@ export default async function handler(req, res) {
       return res.redirect(302, `${redirectBase}/?calendar=connected`);
     }
 
-    // ── Route 3: Fetch events (JWT-authenticated) ─────────────────────────
+    // ── Route 3: Search historical events (JWT-authenticated) ─────────────
+    if (req.method === "GET" && range === "historical" && authHeader.startsWith("Bearer ")) {
+      const validation = validateHistoricalSearchInput({
+        startDate: req.query.start_date,
+        endDate: req.query.end_date,
+        limit: req.query.limit,
+      });
+      if (!validation.ok) {
+        return res.status(validation.status).json({ ok: false, code: validation.code, error: validation.error });
+      }
+
+      const jwt = authHeader.slice(7);
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+      const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+        headers: { apikey: anonKey, Authorization: `Bearer ${jwt}` },
+      });
+      if (!userRes.ok) return res.status(401).json({ ok: false, error: "Unauthorized" });
+      const { id: uid } = await userRes.json();
+
+      const profileRes = await fetch(
+        `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}&select=google_refresh_token,morning_brief_timezone`,
+        { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+      );
+      if (!profileRes.ok) return res.status(500).json({ ok: false, error: "Failed to load profile" });
+      const profiles = await profileRes.json();
+      const refreshToken = profiles?.[0]?.google_refresh_token;
+      const profileTimezone = profiles?.[0]?.morning_brief_timezone || "Europe/Istanbul";
+      if (!refreshToken) {
+        return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar is not connected." });
+      }
+
+      let timeMin;
+      let timeMax;
+      try {
+        timeMin = localDateBoundaryToIso(validation.start, profileTimezone);
+        timeMax = localDateBoundaryToIso(addUtcDays(validation.end, 1), profileTimezone);
+      } catch {
+        return res.status(400).json({ ok: false, code: "invalid_timezone", error: "The profile calendar timezone is invalid." });
+      }
+
+      const accessRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: process.env.GOOGLE_CLIENT_ID,
+          client_secret: process.env.GOOGLE_CLIENT_SECRET,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token",
+        }),
+      });
+      if (!accessRes.ok) {
+        if (accessRes.status === 400 || accessRes.status === 401) {
+          return res.status(200).json({ ok: false, code: "reconnect_required", error: "Google Calendar token expired. Please reconnect in Settings." });
+        }
+        return res.status(502).json({ ok: false, error: "Google token refresh failed" });
+      }
+      const { access_token } = await accessRes.json();
+
+      const query = typeof req.query.query === "string" ? req.query.query.trim().slice(0, 200) : "";
+      const matched = [];
+      let pageToken = null;
+      let truncated = false;
+      for (let page = 0; page < HISTORY_MAX_PAGES; page += 1) {
+        const params = new URLSearchParams({
+          timeMin,
+          timeMax,
+          singleEvents: "true",
+          orderBy: "startTime",
+          maxResults: String(HISTORY_PAGE_SIZE),
+          ...(query ? { q: query } : {}),
+          ...(pageToken ? { pageToken } : {}),
+        });
+        const eventsRes = await fetch(
+          `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+          { headers: { Authorization: `Bearer ${access_token}` } },
+        );
+        if (!eventsRes.ok) return res.status(502).json({ ok: false, error: "Failed to search calendar history" });
+        const data = await eventsRes.json();
+        for (const item of data.items ?? []) {
+          const shaped = shapeHistoricalCalendarEvent(item, {
+            query,
+            profileTimezone,
+            searchStart: validation.start.value,
+            searchEnd: validation.end.value,
+          });
+          if (shaped) matched.push(shaped);
+        }
+        pageToken = data.nextPageToken ?? null;
+        if (!pageToken) break;
+        if (page === HISTORY_MAX_PAGES - 1) truncated = true;
+      }
+
+      const result = finalizeHistoricalSearch({
+        events: matched,
+        limit: validation.limit,
+        truncated,
+        searchStart: validation.start.value,
+        searchEnd: validation.end.value,
+        retrievedAt: new Date().toISOString(),
+      });
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+      res.setHeader("Surrogate-Control", "no-store");
+      return res.status(200).json(result);
+    }
+
+    // ── Route 4: Fetch upcoming events (JWT-authenticated) ────────────────
     if (req.method === "GET" && authHeader.startsWith("Bearer ")) {
       const jwt = authHeader.slice(7);
       const supabaseUrl = process.env.SUPABASE_URL;
@@ -289,7 +610,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ connected: true, events });
     }
 
-    // ── Route 4: Create event (POST, JWT-authenticated) ───────────────────
+    // ── Route 5: Create event (POST, JWT-authenticated) ───────────────────
     if (req.method === "POST" && authHeader.startsWith("Bearer ")) {
       console.log("[calendar-create-debug] POST branch entered");
 
@@ -473,7 +794,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // ── Route 5: Update event (PATCH, JWT-authenticated) ─────────────────
+    // ── Route 6: Update event (PATCH, JWT-authenticated) ─────────────────
     if (req.method === "PATCH" && authHeader.startsWith("Bearer ")) {
       const jwt = authHeader.slice(7);
       const supabaseUrl = process.env.SUPABASE_URL;
@@ -626,7 +947,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // ── Route 6: Delete event (DELETE, JWT-authenticated) ─────────────────
+    // ── Route 7: Delete event (DELETE, JWT-authenticated) ─────────────────
     if (req.method === "DELETE" && authHeader.startsWith("Bearer ")) {
       const jwt = authHeader.slice(7);
       const supabaseUrl = process.env.SUPABASE_URL;

@@ -436,6 +436,21 @@ describe("canonical action creation paths", () => {
 describe("canonical path source adapters", () => {
   const source = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 
+  it("keeps historical calendar lookup on the authenticated canonical route without an upcoming fallback", () => {
+    const calendar = source("src/lib/calendar.ts");
+    const widget = source("src/components/home/ElevenLabsAgentWidget.tsx");
+    const api = source("api/google-calendar.js");
+
+    expect(calendar).toContain('range: "historical"');
+    expect(calendar).toContain("/api/google-calendar?");
+    expect(calendar).toContain("Authorization: `Bearer ${jwt}`");
+    expect(calendar).not.toContain("googleapis.com/calendar/v3");
+    expect(widget).toContain("search_calendar_history:");
+    expect(widget).toContain("searchCalendarHistoryTool(params)");
+    expect(api).toContain('range === "historical"');
+    expect(api).toContain('req.method === "GET"');
+  });
+
   it("keeps voice direct tools wired to their canonical low-level helpers", () => {
     const widget = source("src/components/home/ElevenLabsAgentWidget.tsx");
 
