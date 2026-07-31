@@ -120,6 +120,26 @@ describe("Carson live information decision layer", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  it("uses the supplied location only when the weather request names none", async () => {
+    const fetchFn = vi.fn(async () =>
+      new Response(JSON.stringify({ ok: true, spoken: "Fethiye is 27°C." }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await retrieveLiveInformation(
+      { query: "What's the weather?", location: "Fethiye" },
+      fetchFn as typeof fetch,
+    );
+
+    expect(result).toContain("Location: Fethiye");
+    expect(fetchFn).toHaveBeenCalledWith(
+      "/api/weather?city=Fethiye",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it("does not retrieve timeless or stored information even if the model asks for live search", async () => {
     const fetchFn = vi.fn();
 

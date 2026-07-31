@@ -31,8 +31,10 @@ const STORED_INFORMATION_PATTERNS = [
   /\bwhat\s+do\s+you\s+(?:remember|know)\s+about\s+(?:me|my|our)\b/i,
 ];
 
+const WEATHER_INFORMATION_PATTERN = /\bweather\b|\bforecast\b|\btemperature\b/i;
+
 const LIVE_INFORMATION_PATTERNS = [
-  /\bweather\b|\bforecast\b|\btemperature\b/i,
+  WEATHER_INFORMATION_PATTERN,
   /\bnews\b|\bheadlines?\b|\bbreaking\b/i,
   /\bflight\b.*\b(?:status|delayed?|delay|arrival|departure)\b|\b(?:delayed?|delay|arrival|departure)\b.*\bflight\b|\b[A-Z]{2}\s?\d{2,4}\b.*\b(?:delayed?|on\s+time|land|arriv|depart)\w*\b|\bairport\s+delays?\b/i,
   /\btraffic\b|\btravel\s+time\b|\broad\s+closure\b/i,
@@ -106,7 +108,7 @@ export function decideInformationSource(query: string): LiveInformationDecision 
     LIVE_INFORMATION_PATTERNS.some((pattern) => pattern.test(text)) ||
     requestsDeepResearch
   ) {
-    const isWeather = /\bweather\b|\bforecast\b|\btemperature\b/i.test(text);
+    const isWeather = WEATHER_INFORMATION_PATTERN.test(text);
     const isFutureWeather =
       isWeather && FUTURE_WEATHER_PATTERNS.some((pattern) => pattern.test(text));
     const capability: LiveInformationCapability =
@@ -132,6 +134,7 @@ export function decideInformationSource(query: string): LiveInformationDecision 
 }
 
 export function extractRequestedWeatherLocation(query: string): string | null {
+  if (!WEATHER_INFORMATION_PATTERN.test(query)) return null;
   const match = query.match(
     /\b(?:weather|forecast|temperature)\s+(?:in|for|at)\s+(.+?)(?:[?.!]|$)/i,
   );

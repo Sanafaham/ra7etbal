@@ -102,6 +102,36 @@ describe("/api/anthropic live-information opt-in branch", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("rejects a weather capability at the research boundary without calling Anthropic", async () => {
+    fetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ id: "owner-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const { state, res } = responseRecorder();
+
+    await handler(
+      {
+        method: "POST",
+        body: {
+          ra7etbal_mode: "live_information",
+          query: "Weather in Hamburg",
+          capability: "current_weather",
+        },
+        headers: { authorization: "Bearer user-token" },
+      },
+      res,
+    );
+
+    expect(state).toMatchObject({
+      status: 502,
+      body: { ok: false, error: "unsupported live retrieval capability" },
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][0]).toBe("https://supabase.example/auth/v1/user");
+  });
+
   it("preserves the existing proxy behavior for every ordinary Anthropic request", async () => {
     const ordinaryBody = {
       model: "claude-haiku-4-5-20251001",
