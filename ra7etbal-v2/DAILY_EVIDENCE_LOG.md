@@ -1107,3 +1107,60 @@ Remaining risks:
   (same preview-tool limitation noted in prior entries) — recommend
   Sana manually confirm Delete works in the Done list on iPhone PWA
   and that active to-dos/tasks are unaffected.
+
+---
+
+Date: 2026-08-01
+
+Session: Historical Calendar Lookup — Port to Main + ElevenLabs Integration
+
+Goal:
+Complete Historical Calendar Lookup end-to-end: code, tests, ElevenLabs tool registration, ElevenLabs prompt update, deployment, production route verification.
+
+Root cause context:
+The feature (commit 01a09c5) had been implemented on `carson-bridge-revert-branch-id-experiment` which was merged to main via PR #45 without including the historical calendar commits that were added after the merge. Main's `api/google-calendar.js` was still at 707 lines (pre-feature). All feature code existed only on the stale branch.
+
+What was changed:
+
+• api/google-calendar.js (707 → 1028 lines) — historical route: GET /api/google-calendar?range=historical&start_date=YYYY-MM-DD&end_date=YYYY-MM-DD. Helpers: parseIsoDate, addUtcDays, historicalQueryTokens, shapeHistoricalCalendarEvent, validateHistoricalSearchInput, localDateBoundaryToIso, finalizeHistoricalSearch. Privacy-aware matching (title/attendee/location/description), description excerpts bounded at 240 chars, pagination cap: HISTORY_MAX_PAGES=4, HISTORY_PAGE_SIZE=250, HISTORY_MAX_RANGE_DAYS=366. All existing routes (GET upcoming, POST create, PATCH update, DELETE) untouched.
+
+• src/lib/calendar.ts — added HistoricalCalendarEvent + HistoricalCalendarSearchResult interfaces, searchCalendarHistory() function. Intentionally separate from fetchCalendarEvents() so historical queries can never fall back to the future planning cache.
+
+• src/components/home/ElevenLabsAgentWidget.tsx — import update, historicalSearchCacheRef (session-level deduplication), searchCalendarHistoryTool useCallback, search_calendar_history client tool registration.
+
+• src/lib/canonical-paths.test.ts — 1 new regression guard: asserts historical path stays on the authenticated Ra7etBal route and never reaches googleapis.com directly.
+
+New test files:
+• api/google-calendar.history.test.js — 19 tests: input validation, timezone handling, privacy matching, result truthfulness (definitive vs. truncated wording), authenticated route enforcement.
+• src/lib/calendar-history.test.ts — 3 tests: client boundary (authenticated route, no fallback on error, existing upcoming path unchanged).
+• src/components/home/ElevenLabsAgentWidget.calendar-history.test.ts — 6 tests: widget registration and behavior.
+
+ElevenLabs changes (applied via API, agent_3001kt3zzkcxfb3bwejd8yzzhnmy):
+• Added search_calendar_history as a Client Tool (type: client, parameters: start_date, end_date required; query and limit optional; 20s timeout).
+• Inserted search_calendar_history entry in TOOLS section (after delete_calendar_event).
+• Added CALENDAR HISTORY section (after CALENDAR section, before MORNING BRIEF): routes past-event queries to search_calendar_history, explicitly blocks get_calendar_events for historical use.
+
+Commands run:
+• npx vitest run (all historical tests) — 48/48 passed
+• npm test (full suite) — 1819 passed, 1 pre-existing failure (unrelated, confirmed on clean main before changes), 4 skipped
+• All carson-protected-behaviors CI checks — passed
+• Vercel preview build — passed
+• Vercel production deploy — completed (deployment 5699643354)
+• ElevenLabs PATCH API — returned agent_id with 20 tools (search_calendar_history confirmed present)
+• Production route smoke test — GET /api/google-calendar?range=historical returns 400 (auth-required, correct)
+
+Commits:
+• 6cde200 — "feat: port bounded historical calendar search to main"
+• 8b80cf8 — "docs: add elevenlabs prompt patch for search_calendar_history"
+• 222580f — squash-merge commit on main (PR #145)
+
+Not touched:
+• Scheduling, WhatsApp templates, Meta config, direct WhatsApp tools, delegation tools, automations, auth, RLS, Inbox Review V1, QI V1, all other voice tools.
+
+Remaining actions (Sana only):
+1. Voice session production verification: ask Carson "When was the last time I had a dentist appointment?" (or any past-event query). Carson should call search_calendar_history and return matching events or say it couldn't find one. It must NOT call get_calendar_events for this.
+2. If voice verification passes: confirm closure so Memory Governance (P1 #1) can begin.
+
+Regression risks:
+• Nil for existing routes — all are additive changes, no modification of the GET upcoming / POST / PATCH / DELETE handlers.
+• ElevenLabs prompt change could theoretically affect routing of ambiguous queries. Mitigated by explicit "Do not use get_calendar_events for historical queries" rule in CALENDAR HISTORY section.
