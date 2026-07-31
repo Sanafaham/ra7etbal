@@ -45,7 +45,7 @@ import {
   extractEventIdParam,
   extractAutomationInstructionParam,
 } from "../../lib/carson-tool-params";
-import { filterCalendarEventsByRange } from "../../lib/calendar";
+import { filterCalendarEventsByRange, searchCalendarHistory } from "../../lib/calendar";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { callCalendarApi } from "../../lib/calendar-actions";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
@@ -1356,6 +1356,7 @@ export default function ElevenLabsAgentWidget({
 
   // Tracks latest planning calendar cache for stable useCallback closure.
   const planningCalendarEventsRef = useRef<CalendarEvent[]>(planningCalendarEvents);
+  const historicalSearchCacheRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     planningCalendarEventsRef.current = planningCalendarEvents;
   }, [planningCalendarEvents]);
@@ -3191,6 +3192,55 @@ export default function ElevenLabsAgentWidget({
       } catch {
         return "I couldn't fetch calendar events right now.";
       }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
+  // Client tool: search_calendar_history
+  // Dedicated authenticated historical retrieval. It never reads or falls
+  // back to the future planning cache used by get_calendar_events.
+  // ------------------------------------------------------------------
+  const searchCalendarHistoryTool = useCallback(
+    async (params: {
+      start_date?: string;
+      end_date?: string;
+      query?: string;
+      limit?: number;
+    }): Promise<string> => {
+      const startDate = params?.start_date?.trim() ?? "";
+      const endDate = params?.end_date?.trim() ?? "";
+      const query = params?.query?.trim() ?? "";
+      if (!startDate || !endDate) {
+        return "A historical calendar search needs both a start date and an end date in YYYY-MM-DD format. For a vague 'last time' request, use the previous 12 months first.";
+      }
+
+      const cacheKey = JSON.stringify({
+        start_date: startDate,
+        end_date: endDate,
+        query,
+        limit: params?.limit ?? null,
+      });
+      const cachedResult = historicalSearchCacheRef.current.get(cacheKey);
+      if (cachedResult) return cachedResult;
+
+      const result = await searchCalendarHistory({
+        start_date: startDate,
+        end_date: endDate,
+        ...(query ? { query } : {}),
+        ...(params?.limit !== undefined ? { limit: params.limit } : {}),
+      });
+
+      let response: string;
+      if (!result.ok) {
+        response = result.code === "reconnect_required"
+          ? "Google Calendar needs to be reconnected in Settings before calendar history can be searched."
+          : `The historical calendar search was not completed. ${result.error ?? "Please try again."}`;
+      } else {
+        response = JSON.stringify(result);
+      }
+      historicalSearchCacheRef.current.set(cacheKey, response);
+      return response;
     },
     [],
   );
@@ -5577,6 +5627,13 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("get_calendar_events", params, () =>
               getCalendarEvents(params),
+            );
+          },
+          search_calendar_history: (params: Parameters<typeof searchCalendarHistoryTool>[0]) => {
+            const captureBlock = guardCurrentToolInvocation("search_calendar_history");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("search_calendar_history", params, () =>
+              searchCalendarHistoryTool(params),
             );
           },
           create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
