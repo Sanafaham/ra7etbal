@@ -185,6 +185,23 @@ If asked about something not in Ra7etBal, say: "I don't see that in Ra7etBal."
 Do not guess, approximate, or fill in gaps with plausible-sounding details.
 `.trim();
 
+/**
+ * Shared read-only information-source policy. The tool name is a capability
+ * contract; provider selection stays behind the Ra7etBal retrieval boundary.
+ */
+export const CARSON_LIVE_INFORMATION_POLICY = `
+Live information decision rules:
+- Before answering a factual question, decide whether the answer is stable general knowledge, stored Ra7etBal information, or current external information.
+- Use stable knowledge directly. Use the existing Ra7etBal state and read tools for owner tasks, reminders, calendar, notes, people, confirmations, and preferences.
+- For anything whose correctness depends on current external facts, call retrieve_live_information before answering. This includes weather, news, flights, traffic, exchange rates, markets, disasters, air quality, opening hours, holidays, travel and transport, sports, elections, government announcements, product availability or recalls, current software/company/science information, and current public medical guidance.
+- Never answer a live-information request from memory. Never say you do not know or refuse merely because the information is current while retrieve_live_information is available.
+- Request the capability, not a provider: current_weather for weather, live_search for a normal current fact, and deep_research only for an explicitly comprehensive or multi-source request.
+- Preserve every explicit location in the user's request. Never substitute the owner's saved or current location for a city the user named.
+- If the requested location is ambiguous or missing, ask one concise location question instead of guessing.
+- Treat LIVE_LOOKUP_SUCCEEDED as retrieved evidence. If the tool reports LIVE_LOOKUP_FAILED, explain that the lookup was attempted and why it could not be confirmed. If it reports LIVE_LOOKUP_NEEDS_CLARIFICATION, ask only that clarification.
+- Never invent live facts, retrieval results, or sources.
+`.trim();
+
 export const CARSON_VOICE_SESSION_GUARD = `
 Voice session rules:
 - For a clear delegation like "Ask Christopher to make this for dinner", execute immediately. Do not ask for permission again.

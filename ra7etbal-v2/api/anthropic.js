@@ -1,3 +1,5 @@
+import { performLiveInformationLookup } from '../shared/live-information-provider.js';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -14,6 +16,18 @@ export default async function handler(req, res) {
   const timeout = setTimeout(() => controller.abort(), 25000);
 
   try {
+    if (req.body?.ra7etbal_mode === 'live_information') {
+      const result = await performLiveInformationLookup({
+        fetchFn: fetch,
+        apiKey,
+        query: req.body?.query,
+        capability: req.body?.capability,
+        signal: controller.signal,
+        model: process.env.LIVE_INFORMATION_MODEL || 'claude-haiku-4-5-20251001',
+      });
+      return res.status(result.ok ? 200 : 502).json(result);
+    }
+
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
