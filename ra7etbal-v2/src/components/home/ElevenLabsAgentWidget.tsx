@@ -3151,10 +3151,12 @@ export default function ElevenLabsAgentWidget({
       capability?: LiveInformationCapability;
       location?: string;
     }): Promise<string> => {
+      const { data: liveSessionData } = await supabase.auth.getSession();
       const result = await retrieveLiveInformation({
         query: String(params?.query ?? ""),
         capability: params?.capability,
         location: params?.location,
+        authorizationToken: liveSessionData.session?.access_token ?? null,
       });
       console.info("[carson_live_information]", {
         requestedCapability: params?.capability ?? null,
@@ -5888,7 +5890,11 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "retrieve_live_information";
             try {
-              return await retrieveLiveInformationTool(params);
+              return await runDirectToolWithDiagnostic(
+                "retrieve_live_information",
+                params,
+                () => retrieveLiveInformationTool(params),
+              );
             } finally {
               toolInFlightRef.current = null;
             }

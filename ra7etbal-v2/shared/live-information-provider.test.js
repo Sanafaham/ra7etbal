@@ -36,6 +36,7 @@ describe("live information provider boundary", () => {
       answer: "The confirmed current result.",
       sources: ["https://example.com/current"],
       searches: 1,
+      continuation_cycles: 0,
     });
   });
 
@@ -91,10 +92,68 @@ describe("live information provider boundary", () => {
       ok: true,
       answer: "Confirmed after continuation.",
       searches: 2,
+      continuation_cycles: 1,
     });
     const secondBody = JSON.parse(fetchFn.mock.calls[1][1].body);
     expect(secondBody.messages).toHaveLength(2);
     expect(secondBody.tools[0]).toMatchObject({ name: "web_search", max_uses: 5 });
+  });
+
+  it("supports multiple bounded provider continuation cycles", async () => {
+    const paused = {
+      stop_reason: "pause_turn",
+      content: [{ type: "server_tool_use", name: "web_search", input: {} }],
+      usage: { server_tool_use: { web_search_requests: 1 } },
+    };
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(providerResponse(paused))
+      .mockResolvedValueOnce(providerResponse(paused))
+      .mockResolvedValueOnce(
+        providerResponse({
+          stop_reason: "end_turn",
+          content: [{ type: "text", text: "Confirmed after two continuations." }],
+          usage: { server_tool_use: { web_search_requests: 1 } },
+        }),
+      );
+
+    const result = await performLiveInformationLookup({
+      fetchFn,
+      apiKey: "test-key",
+      query: "Comprehensive current transport disruption research",
+      capability: "deep_research",
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({
+      ok: true,
+      searches: 3,
+      continuation_cycles: 2,
+    });
+    expect(JSON.parse(fetchFn.mock.calls[2][1].body).messages).toHaveLength(3);
+  });
+
+  it("fails truthfully when continuation does not complete within its bound", async () => {
+    const fetchFn = vi.fn(async () =>
+      providerResponse({
+        stop_reason: "pause_turn",
+        content: [{ type: "server_tool_use", name: "web_search", input: {} }],
+        usage: { server_tool_use: { web_search_requests: 1 } },
+      }),
+    );
+
+    const result = await performLiveInformationLookup({
+      fetchFn,
+      apiKey: "test-key",
+      query: "Latest news",
+      capability: "live_search",
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    expect(result).toEqual({
+      ok: false,
+      error: "the live search did not finish within the allowed continuation limit",
+    });
   });
 
   it("reports provider failures without fabricating content or sources", async () => {

@@ -20,27 +20,38 @@ function responseRecorder() {
 
 beforeEach(() => {
   process.env.ANTHROPIC_API_KEY = "test-key";
+  process.env.SUPABASE_URL = "https://supabase.example";
+  process.env.SUPABASE_ANON_KEY = "anon-key";
   vi.stubGlobal("fetch", vi.fn());
 });
 
 afterEach(() => {
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.LIVE_INFORMATION_MODEL;
+  delete process.env.SUPABASE_URL;
+  delete process.env.SUPABASE_ANON_KEY;
   vi.unstubAllGlobals();
 });
 
 describe("/api/anthropic live-information opt-in branch", () => {
   it("performs verified live search only for the explicit internal mode", async () => {
-    fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          stop_reason: "end_turn",
-          content: [{ type: "text", text: "Current verified answer." }],
-          usage: { server_tool_use: { web_search_requests: 1 } },
+    fetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: "owner-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "Current verified answer." }],
+            usage: { server_tool_use: { web_search_requests: 1 } },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
     const { state, res } = responseRecorder();
 
     await handler(
@@ -51,6 +62,7 @@ describe("/api/anthropic live-information opt-in branch", () => {
           query: "Latest airline status",
           capability: "live_search",
         },
+        headers: { authorization: "Bearer user-token" },
       },
       res,
     );
@@ -61,12 +73,33 @@ describe("/api/anthropic live-information opt-in branch", () => {
       answer: "Current verified answer.",
       searches: 1,
     });
-    const providerBody = JSON.parse(fetch.mock.calls[0][1].body);
+    expect(fetch.mock.calls[0][0]).toBe("https://supabase.example/auth/v1/user");
+    const providerBody = JSON.parse(fetch.mock.calls[1][1].body);
     expect(providerBody.tools[0]).toMatchObject({
       type: "web_search_20250305",
       name: "web_search",
       max_uses: 2,
     });
+  });
+
+  it("rejects unauthenticated live retrieval without spending provider capacity", async () => {
+    const { state, res } = responseRecorder();
+
+    await handler(
+      {
+        method: "POST",
+        body: {
+          ra7etbal_mode: "live_information",
+          query: "Latest airline status",
+          capability: "live_search",
+        },
+        headers: {},
+      },
+      res,
+    );
+
+    expect(state).toMatchObject({ status: 401, body: { ok: false, error: "Unauthorized" } });
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("preserves the existing proxy behavior for every ordinary Anthropic request", async () => {
@@ -92,16 +125,18 @@ describe("/api/anthropic live-information opt-in branch", () => {
   });
 
   it("returns a failed operation when no web search was completed", async () => {
-    fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          stop_reason: "end_turn",
-          content: [{ type: "text", text: "Unverified model memory." }],
-          usage: { server_tool_use: { web_search_requests: 0 } },
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
+    fetch
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "owner-1" }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            stop_reason: "end_turn",
+            content: [{ type: "text", text: "Unverified model memory." }],
+            usage: { server_tool_use: { web_search_requests: 0 } },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
     const { state, res } = responseRecorder();
 
     await handler(
@@ -112,6 +147,7 @@ describe("/api/anthropic live-information opt-in branch", () => {
           query: "Current exchange rate",
           capability: "live_search",
         },
+        headers: { authorization: "Bearer user-token" },
       },
       res,
     );

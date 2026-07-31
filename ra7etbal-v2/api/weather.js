@@ -60,6 +60,48 @@ function spokenSentence(city, tempC, code, rainMm) {
   return `In ${city} it's ${Math.round(tempC)}°C and ${desc}. ${rain}`;
 }
 
+const WEATHER_PROVIDER_TIMEOUT_MS = 20_000;
+
+async function fetchWeatherProvider(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), WEATHER_PROVIDER_TIMEOUT_MS);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function formatPlace(place) {
+  return [place.name, place.admin1, place.country].filter(Boolean).join(", ");
+}
+
+function hasLocationQualifier(query) {
+  return query.includes(",") || /\b(?:in|,)\s+[A-Z][\p{L}.' -]+$/u.test(query);
+}
+
+function resolveUnambiguousPlace(query, results) {
+  const candidates = results.filter(Boolean);
+  if (candidates.length < 2 || hasLocationQualifier(query)) {
+    return { place: candidates[0] ?? null, candidates: [] };
+  }
+
+  const normalized = query.trim().toLocaleLowerCase("en");
+  const exact = candidates.filter(
+    (place) => String(place.name ?? "").toLocaleLowerCase("en") === normalized,
+  );
+  if (exact.length < 2) {
+    return { place: candidates[0] ?? null, candidates: [] };
+  }
+
+  const firstPopulation = Number(exact[0]?.population || 0);
+  const secondPopulation = Number(exact[1]?.population || 0);
+  if (firstPopulation > 0 && firstPopulation >= secondPopulation * 5) {
+    return { place: exact[0], candidates: [] };
+  }
+  return { place: null, candidates: exact.slice(0, 3).map(formatPlace) };
+}
+
 export default async function handler(req, res) {
   // Allow GET only.
   if (req.method !== "GET") {
@@ -77,15 +119,25 @@ export default async function handler(req, res) {
     // ── 1. Geocode ───────────────────────────────────────────────────────────
     const geoUrl =
       `https://geocoding-api.open-meteo.com/v1/search` +
-      `?name=${encodeURIComponent(city)}&count=1&language=en&format=json`;
+      `?name=${encodeURIComponent(city)}&count=5&language=en&format=json`;
 
-    const geoRes = await fetch(geoUrl);
+    const geoRes = await fetchWeatherProvider(geoUrl);
     if (!geoRes.ok) {
       return res.status(200).json({ ok: false, error: "Geocoding failed", spoken: "" });
     }
 
     const geoData = await geoRes.json().catch(() => null);
-    const place = geoData?.results?.[0];
+    const resolution = resolveUnambiguousPlace(city, geoData?.results ?? []);
+    if (!resolution.place && resolution.candidates.length > 0) {
+      return res.status(200).json({
+        ok: false,
+        code: "ambiguous_location",
+        error: `Location "${city}" is ambiguous`,
+        candidates: resolution.candidates,
+        spoken: "",
+      });
+    }
+    const place = resolution.place;
     if (!place) {
       return res
         .status(200)
@@ -103,7 +155,7 @@ export default async function handler(req, res) {
       `&timezone=${encodeURIComponent(timezone ?? "auto")}` +
       `&forecast_days=1`;
 
-    const wxRes = await fetch(wxUrl);
+    const wxRes = await fetchWeatherProvider(wxUrl);
     if (!wxRes.ok) {
       return res.status(200).json({ ok: false, error: "Weather fetch failed", spoken: "" });
     }
@@ -131,7 +183,12 @@ export default async function handler(req, res) {
       spoken,
     });
   } catch (err) {
-    console.error("[weather] unexpected error:", err?.message);
-    return res.status(200).json({ ok: false, error: "Internal error", spoken: "" });
+    const timedOut = err?.name === "AbortError";
+    console.error("[weather] unexpected error:", timedOut ? "provider timeout" : err?.message);
+    return res.status(200).json({
+      ok: false,
+      error: timedOut ? "Weather provider timed out" : "Internal error",
+      spoken: "",
+    });
   }
 }

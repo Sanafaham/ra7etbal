@@ -15,6 +15,11 @@ describe("Carson live information decision layer", () => {
     ["Are there active fires near Izmir?", "live_search"],
     ["Was there an earthquake in Japan today?", "live_search"],
     ["What time does Harrods open today?", "live_search"],
+    ["When does Harrods close?", "live_search"],
+    ["How much is one euro in Turkish lira?", "live_search"],
+    ["Do I need a visa for Turkey?", "live_search"],
+    ["When is the next ferry?", "live_search"],
+    ["What version of React is available?", "live_search"],
     ["What was the Galatasaray score today?", "live_search"],
     ["Is tomorrow a public holiday in Turkey?", "live_search"],
   ])("routes %s to the smallest live capability", (query, capability) => {
@@ -40,6 +45,10 @@ describe("Carson live information decision layer", () => {
     "What reminders do I have today?",
     "What am I waiting on?",
     "Did Christopher confirm dinner?",
+    "Has Christopher confirmed dinner?",
+    "What do I need to do today?",
+    "What is on today?",
+    "Anything I need to handle this week?",
     "What do you remember about my preferences?",
   ])("keeps stored owner information in Ra7etBal: %s", (query) => {
     expect(decideInformationSource(query)).toMatchObject({
@@ -54,6 +63,15 @@ describe("Carson live information decision layer", () => {
         "Do comprehensive research across multiple sources on the latest airline disruptions.",
       ),
     ).toMatchObject({ source: "live", capability: "deep_research" });
+  });
+
+  it.each([
+    ["What's the weather in Hamburg?", "current_weather"],
+    ["What's the temperature in Hamburg tomorrow?", "live_search"],
+    ["Forecast for Tokyo tomorrow", "live_search"],
+    ["What is the forecast for Tokyo next week?", "live_search"],
+  ])("distinguishes current conditions from future forecasts: %s", (query, capability) => {
+    expect(decideInformationSource(query)).toMatchObject({ source: "live", capability });
   });
 
   it.each([
@@ -82,7 +100,10 @@ describe("Carson live information decision layer", () => {
       fetchFn as typeof fetch,
     );
 
-    expect(fetchFn).toHaveBeenCalledWith("/api/weather?city=Hamburg");
+    expect(fetchFn).toHaveBeenCalledWith(
+      "/api/weather?city=Hamburg",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(result).toContain("Location: Hamburg");
   });
 
@@ -154,5 +175,22 @@ describe("Carson live information decision layer", () => {
     expect(result).toContain("attempted live_search");
     expect(result).toContain("provider unavailable");
     expect(result).not.toContain("LIVE_LOOKUP_SUCCEEDED");
+  });
+
+  it("returns provider location ambiguity as one clarification instead of guessing", async () => {
+    const fetchFn = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          ok: false,
+          code: "ambiguous_location",
+          candidates: ["Cambridge, England, United Kingdom", "Cambridge, Massachusetts, United States"],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await expect(
+      retrieveLiveInformation({ query: "What's the weather in Cambridge?" }, fetchFn as typeof fetch),
+    ).resolves.toContain("Which Cambridge do you mean");
   });
 });

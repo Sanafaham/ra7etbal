@@ -1,5 +1,17 @@
 import { performLiveInformationLookup } from '../shared/live-information-provider.js';
 
+async function authenticateLiveInformationRequest(req) {
+  const authorization = req.headers?.authorization || req.headers?.Authorization || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : '';
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!token || !supabaseUrl || !anonKey) return false;
+  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { apikey: anonKey, Authorization: `Bearer ${token}` },
+  });
+  return response.ok;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -17,6 +29,9 @@ export default async function handler(req, res) {
 
   try {
     if (req.body?.ra7etbal_mode === 'live_information') {
+      if (!(await authenticateLiveInformationRequest(req))) {
+        return res.status(401).json({ ok: false, error: 'Unauthorized' });
+      }
       const result = await performLiveInformationLookup({
         fetchFn: fetch,
         apiKey,

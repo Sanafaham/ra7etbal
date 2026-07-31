@@ -34,11 +34,22 @@ function collectSourceUrls(value, urls = new Set()) {
 
 function buildRequest({ query, capability, model, messages }) {
   const deep = capability === "deep_research";
+  const isCurrentMedicalGuidance =
+    /\b(?:medical|health|vaccine|vaccination|treatment|medicine|medication|disease|symptom)\b/i.test(
+      query,
+    );
   return {
     model,
     max_tokens: deep ? 1200 : 600,
-    system:
-      "Retrieve the requested current information using web search. Answer only from retrieved evidence. If sources conflict or the answer cannot be confirmed, say so plainly. Be concise and include the relevant date, time, or status when available.",
+    system: [
+      "Retrieve the requested current information using web search. Answer only from retrieved evidence.",
+      "If sources conflict or the answer cannot be confirmed, say so plainly. Be concise and include the relevant date, time, or status when available.",
+      isCurrentMedicalGuidance
+        ? "For current public medical guidance, prioritize official public-health authorities, government health agencies, and primary clinical guidance. Do not diagnose."
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
     messages: messages ?? [{ role: "user", content: query }],
     tools: [{ ...WEB_SEARCH_TOOL, max_uses: deep ? 5 : 2 }],
   };
@@ -83,25 +94,39 @@ export async function performLiveInformationLookup({
   };
 
   try {
-    const first = await callProvider(
+    const responses = [];
+    let final = await callProvider(
       buildRequest({ query: String(query).trim(), capability, model }),
     );
-    let final = first;
-    let searches = searchCount(first);
-
-    if (first?.stop_reason === "pause_turn") {
+    responses.push(final);
+    let searches = searchCount(final);
+    const maxContinuationCycles = capability === "deep_research" ? 5 : 2;
+    let continuationCycles = 0;
+    while (
+      final?.stop_reason === "pause_turn" &&
+      continuationCycles < maxContinuationCycles
+    ) {
+      const messages = [{ role: "user", content: String(query).trim() }];
+      for (const response of responses) {
+        messages.push({ role: "assistant", content: response.content });
+      }
       final = await callProvider(
         buildRequest({
           query: String(query).trim(),
           capability,
           model,
-          messages: [
-            { role: "user", content: String(query).trim() },
-            { role: "assistant", content: first.content },
-          ],
+          messages,
         }),
       );
+      responses.push(final);
       searches += searchCount(final);
+      continuationCycles += 1;
+    }
+    if (final?.stop_reason === "pause_turn") {
+      return {
+        ok: false,
+        error: "the live search did not finish within the allowed continuation limit",
+      };
     }
 
     const answer = textFromResponse(final);
@@ -121,8 +146,9 @@ export async function performLiveInformationLookup({
     return {
       ok: true,
       answer,
-      sources: [...collectSourceUrls([first, final])].slice(0, 8),
+      sources: [...collectSourceUrls(responses)].slice(0, 8),
       searches,
+      continuation_cycles: continuationCycles,
     };
   } catch (error) {
     return {

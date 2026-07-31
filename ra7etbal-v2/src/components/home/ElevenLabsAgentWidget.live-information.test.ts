@@ -23,6 +23,15 @@ describe("ElevenLabs Carson live information capability", () => {
     expect(blockedTools).not.toContain("retrieve_live_information");
   });
 
+  it("runs live retrieval through Carson's standard tool diagnostics and acting state", () => {
+    const registration = source.slice(
+      source.indexOf("retrieve_live_information: async"),
+      source.indexOf("save_city:", source.indexOf("retrieve_live_information: async")),
+    );
+    expect(registration).toContain('runDirectToolWithDiagnostic(');
+    expect(registration).toContain('"retrieve_live_information"');
+  });
+
   it("injects the same live-information policy into voice and typed sessions", () => {
     const start = source.indexOf("const channelInstructions =");
     const end = source.indexOf("// The warm-up", start);
@@ -42,6 +51,7 @@ describe("ElevenLabs Carson live information capability", () => {
       "Never say you do not know or refuse merely because the information is current",
     );
     expect(CARSON_LIVE_INFORMATION_POLICY).toContain("LIVE_LOOKUP_FAILED");
+    expect(CARSON_LIVE_INFORMATION_POLICY).toContain("LIVE_LOOKUP_NOT_REQUIRED");
     expect(CARSON_LIVE_INFORMATION_POLICY).toContain(
       "Never invent live facts, retrieval results, or sources",
     );
