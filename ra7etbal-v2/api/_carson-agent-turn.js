@@ -499,7 +499,7 @@ function runOwnerTurn({ apiKey, agentId, ownerText, dynamicVars, toolPolicy, mes
     let settled = false;
     let socket;
     let deadline;
-    const diag = { lastStep: 'signed_url_requested', firstPostUserMessageEventLogged: false, conversationId: null, textChunks: [], chunkShapeLogged: false };
+    const diag = { lastStep: 'signed_url_requested', firstPostUserMessageEventLogged: false, conversationId: null, textChunks: [], chunkShapeLogged: false, proactiveResponseCount: 0 };
 
     const finish = (fn, value) => {
       if (settled) return;
@@ -598,6 +598,7 @@ function runOwnerTurn({ apiKey, agentId, ownerText, dynamicVars, toolPolicy, mes
             code,
             hasReason,
             lastStep: diag.lastStep,
+            proactiveResponseCount: diag.proactiveResponseCount,
           });
           const conversationId = diag.conversationId;
           const lookup = conversationId
@@ -640,46 +641,52 @@ function handleOwnerServerEvent(payload, { socket, ownerText, finish, resolve, m
       break;
     }
     case 'agent_chat_response_part': {
-      // Log the shape of the first chunk so we know which field carries the
-      // RAW PAYLOAD — full event logged for diagnosis; remove after root cause confirmed.
-      console.log('Owner conversational bridge: agent_chat_response_part RAW', {
-        messageId,
-        chunkIndex: diag.textChunks.length,
-        payload: JSON.stringify(payload),
-      });
-      // ElevenLabs streams chunks under text_response_part.text (not agent_response_event).
+      // ElevenLabs streams response text under text_response_part.text.
       const chunk = payload.text_response_part?.text ?? null;
       if (chunk && typeof chunk === 'string' && chunk.trim()) {
         diag.textChunks.push(chunk);
       }
-      console.log('Owner conversational bridge: chunk accumulation state', {
-        messageId,
-        chunkExtracted: chunk,
-        accumulatedSoFar: diag.textChunks.join(''),
-        totalChunks: diag.textChunks.length,
-      });
       break;
     }
     case 'agent_response': {
-      // RAW PAYLOAD — full event logged for diagnosis; remove after root cause confirmed.
-      console.log('Owner conversational bridge: agent_response RAW', {
+      const eventInfo    = payload.agent_response_event ?? {};
+      // in_response_to_ids is empty ([]) for proactive opening messages that
+      // ElevenLabs emits before the user speaks (driven by the opening_line
+      // dynamic variable). Only an agent_response with a non-empty
+      // in_response_to_ids is a genuine reply to the user's message.
+      const inResponseTo    = Array.isArray(eventInfo.in_response_to_ids) ? eventInfo.in_response_to_ids : [];
+      const isProactive     = inResponseTo.length === 0;
+      const responseEventId = eventInfo.event_id ?? null;
+
+      console.log('Owner conversational bridge: agent_response received', {
         messageId,
-        payload: JSON.stringify(payload),
+        responseEventId,
+        inResponseToIds: inResponseTo,
+        isProactive,
       });
-      let text = payload.agent_response_event?.agent_response ?? payload.agent_response ?? payload.text ?? null;
+
+      if (isProactive) {
+        diag.proactiveResponseCount++;
+        // Chunks accumulated so far came from the proactive opening stream;
+        // clear the buffer so the real response gets a clean accumulation.
+        diag.textChunks = [];
+        break;
+      }
+
+      // Response to the user's message — resolve.
+      let text = eventInfo.agent_response ?? payload.agent_response ?? payload.text ?? null;
       const finalTextBlank = !text || !text.trim();
-      // agent_response may arrive with a blank/space value when ElevenLabs
-      // streams text via agent_chat_response_part. Prefer accumulated chunks.
       if (finalTextBlank && diag.textChunks.length > 0) {
         text = diag.textChunks.join('');
       }
       console.log('Owner conversational bridge: agent_response resolved', {
         messageId,
+        responseEventId,
+        inResponseToIds: inResponseTo,
         chunksAccumulated: diag.textChunks.length,
         finalTextWasBlank: finalTextBlank,
         usedChunks: finalTextBlank && diag.textChunks.length > 0,
         resolvedLength: text ? text.length : 0,
-        resolvedText: text,
       });
       finish(resolve, text || null);
       break;
