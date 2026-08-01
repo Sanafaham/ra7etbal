@@ -655,7 +655,8 @@ function handleOwnerServerEvent(payload, { socket, ownerText, finish, resolve, m
       // ElevenLabs streams the LLM response as text chunks before the final
       // agent_response event. Accumulate here so we can use them if
       // agent_response.agent_response_event.agent_response is blank/space.
-      const chunk = payload.agent_response_event?.agent_response ?? null;
+      // ElevenLabs streams chunks under text_response_part.text (not agent_response_event).
+      const chunk = payload.text_response_part?.text ?? null;
       if (chunk && typeof chunk === 'string' && chunk.trim()) {
         diag.textChunks.push(chunk);
       }
