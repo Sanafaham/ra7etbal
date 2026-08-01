@@ -490,7 +490,7 @@ function runOwnerTurn({ apiKey, agentId, ownerText, dynamicVars, toolPolicy, mes
     let settled = false;
     let socket;
     let deadline;
-    const diag = { lastStep: 'signed_url_requested', firstPostUserMessageEventLogged: false, conversationId: null };
+    const diag = { lastStep: 'signed_url_requested', firstPostUserMessageEventLogged: false, conversationId: null, textChunks: [] };
 
     const finish = (fn, value) => {
       if (settled) return;
@@ -630,9 +630,24 @@ function handleOwnerServerEvent(payload, { socket, ownerText, finish, resolve, m
       }));
       break;
     }
+    case 'agent_chat_response_part': {
+      // ElevenLabs streams the LLM response as text chunks before the final
+      // agent_response event. Accumulate here so we can use them if
+      // agent_response.agent_response_event.agent_response is blank/space.
+      const chunk = payload.agent_response_event?.agent_response ?? null;
+      if (chunk && typeof chunk === 'string' && chunk.trim()) {
+        diag.textChunks.push(chunk);
+      }
+      break;
+    }
     case 'agent_response': {
-      const text = payload.agent_response_event?.agent_response ?? payload.agent_response ?? payload.text ?? null;
-      finish(resolve, text);
+      let text = payload.agent_response_event?.agent_response ?? payload.agent_response ?? payload.text ?? null;
+      // agent_response may arrive with a blank/space value when ElevenLabs
+      // streams text via agent_chat_response_part. Prefer accumulated chunks.
+      if ((!text || !text.trim()) && diag.textChunks.length > 0) {
+        text = diag.textChunks.join('');
+      }
+      finish(resolve, text || null);
       break;
     }
     default:
