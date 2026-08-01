@@ -5,6 +5,11 @@ import {
   RECAP_PREFIX,
   SESSION_HISTORY_HEADER,
 } from "./carson-memory-format";
+import { SESSION_STALE_THRESHOLD_DAYS } from "./carson-epistemic-gate";
+
+function daysAgoIso(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
 
 /**
  * Regression guard for the session-recap memory feature.
@@ -98,13 +103,16 @@ describe("carson-memory recap labelling", () => {
     expect(recapBlock).toContain("[Most recent session —");
   });
 
-  it("labels older recaps as Earlier session", () => {
+  it("labels older recaps within threshold as Earlier session", () => {
+    // Use dynamic dates so this test doesn't break as real time passes.
+    const newest = daysAgoIso(1);
+    const older = daysAgoIso(Math.floor(SESSION_STALE_THRESHOLD_DAYS / 2));
     const out = formatRecentMemory([
-      { created_at: "2026-06-22T02:00:00Z", summary: `${RECAP_PREFIX} newest session` },
-      { created_at: "2026-06-21T09:00:00Z", summary: `${RECAP_PREFIX} older session` },
+      { created_at: newest, summary: `${RECAP_PREFIX} newest session` },
+      { created_at: older, summary: `${RECAP_PREFIX} older session` },
     ]);
-    const older = out.split("\n\n").find((b) => b.includes("older session"));
-    expect(older).toContain("[Earlier session —");
+    const olderBlock = out.split("\n\n").find((b) => b.includes("older session"));
+    expect(olderBlock).toContain("[Earlier session —");
   });
 
   it("includes a local clock time in every label (not date-only)", () => {

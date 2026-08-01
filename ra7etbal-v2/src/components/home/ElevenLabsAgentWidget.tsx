@@ -5970,7 +5970,11 @@ export default function ElevenLabsAgentWidget({
                   try {
                     await savePersistentInstruction(category ?? "general", instruction);
                     return "Got it. I'll remember that from now on.";
-                  } catch {
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : "";
+                    if (msg && msg !== "I couldn't save that instruction right now. Please try again.") {
+                      return msg;
+                    }
                     return "I couldn't save that instruction right now. Please try again.";
                   }
                 },
