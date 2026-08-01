@@ -635,7 +635,10 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     };
   }
 
-  const normalized = normalizeOwnerDecisionReply(instructionText);
+  const normalized =
+    escalation.review_type === 'substitute_review'
+      ? normalizeSubstituteDecisionReply(instructionText)
+      : normalizeOwnerDecisionReply(instructionText);
 
   let result;
   try {
@@ -1017,6 +1020,29 @@ export function containsAdditionalOwnerCommand(text) {
   return /\b(?:and|also|then)\s+(?:(?:tell|ask)\s+[A-Za-z][A-Za-z'’-]*|remind\s+me)\b/i.test(
     String(text || ''),
   );
+}
+
+export function normalizeSubstituteDecisionReply(text) {
+  const exact = String(text || '').trim().slice(0, 1000);
+  const normalized = exact.toLowerCase().replace(/[.!?؟،,]+$/g, '').trim();
+
+  if (
+    /^(?:yes|yes buy it|buy it|get it|go ahead|go for it|that(?:'|')?s fine|thats fine|sure|ok|okay|fine|approved|approve|approve it|sounds good|do it|proceed|get that|purchase it|get that one|looks? good)$/.test(
+      normalized,
+    )
+  ) {
+    return { decision: 'approved_alternative', instructionText: exact };
+  }
+
+  if (
+    /^(?:no|don(?:'|')?t|do not|reject|rejected|reject it|skip|skip it|don(?:'|')?t buy(?: it)?|don(?:'|')?t get(?: it)?|do not buy(?: it)?|do not get(?: it)?|pass|nope|nah)$/.test(
+      normalized,
+    )
+  ) {
+    return { decision: 'rejected_alternative', instructionText: exact };
+  }
+
+  return { decision: 'custom_instruction', instructionText: exact };
 }
 
 export function normalizeOwnerDecisionReply(text) {
