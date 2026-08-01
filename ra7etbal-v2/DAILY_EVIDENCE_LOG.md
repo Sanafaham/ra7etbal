@@ -1367,11 +1367,95 @@ Defects Closed:
 DECISION: P1 #2 Commitment Lifecycle S2 + S3 COMPLETE. Production stable.
 Gate cleared for P1 #3 Operations Center V1.
 
+──────────────────────────────
+
+SESSION LOG — 2026-08-01
+
+P1 #3: Operations Center V1 (COS Ch. 10, 15, 17, 20)
+
+Scope: Minimum constitutional slice — observational delivery visibility only.
+Decision gate: Engineering Scope Lock approved by owner before implementation.
+Additional constitutional constraint confirmed: Operations Center V1 is observational
+only — never retries, modifies state, resends, repairs, acknowledges, dismisses,
+changes commitments, or invokes any execution tool.
+
+Files Added:
+- src/lib/carson-operations-center.ts — NEW. Two exported functions:
+    fetchTaskDeliveryStatus(keyword): queries tasks + whatsapp_deliveries
+    by keyword, returns plain-text delivery timeline (sent/delivered/read/failed).
+    fetchOperationsSummary(): live snapshot of WhatsApp delivery failures +
+    reminder delivery issues in last 48h.
+    Both functions: read-only, never mutate state (COS Ch. 15).
+- src/lib/carson-operations-center.test.ts — NEW. 15 tests.
+
+Files Modified:
+- src/components/home/ElevenLabsAgentWidget.tsx — added two client tools:
+    get_task_delivery_status (calls fetchTaskDeliveryStatus)
+    get_operations_summary (calls fetchOperationsSummary)
+    Both follow exact get_calendar_events pattern (guardCurrentToolInvocation
+    + runDirectToolWithDiagnostic). Registered at session init.
+
+Database Changes: NONE. All required tables already exist in production
+(whatsapp_deliveries, tasks.reminder_delivery_status, tasks.reminder_delivery_error).
+
+Test Results:
+- New tests: 15 (carson-operations-center)
+- Full suite: 2489/2489 pass (baseline 2474 + 15 new), 0 regressions
+- Typecheck: 0 errors
+- Build: initial failure (unused TS variables in test file) — fixed in follow-up commit
+
+PR: #151 — merged to main, commit b676e65
+
+Constitutional compliance verified:
+- Ch. 10: Tools report only DB-confirmed facts; never infer success from silence
+- Ch. 15: Observation never assumes success; absent delivery record reported as absent
+- Ch. 17: sent/delivered/read reported as distinct states
+- Ch. 20: Visibility prerequisite for future recovery reasoning — no action taken
+
+DECISION: P1 #3 Operations Center V1 COMPLETE. Gate cleared for P1 #4.
+
+---
+
+## 2026-08-01 — P1 #3 Production Verification + Prompt Completion
+
+### Greeting Investigation (CLOSED)
+
+Investigation opened: "Hi Carson" / "Hello" producing "I recorded this command, but this WhatsApp command type is not supported yet" from the owner WhatsApp channel.
+
+Git archaeology performed:
+- `292a18f` (2026-07-27): Owner WhatsApp routing added — non-command messages silently deferred, no acknowledgement sent.
+- `b70e148` (2026-07-28): Owner command executor added — greetings classified as `unsupported`, acknowledgement message introduced.
+- `de82a36` (2026-07-19): Staff → Carson ElevenLabs bridge added — staff messages handled conversationally via bridge.
+
+FINDING: Not a regression. The owner WhatsApp command interface has never supported conversational greetings — it is and has always been command-only (tell/ask/remind). The Grace test recalled by Sana was on the STAFF path (ElevenLabs bridge), not the owner command path. These are intentionally different execution paths.
+
+DECISION: CLOSED. Existing product behavior. No fix required.
+
+### P1 #3 Production Verification — Root Cause + Resolution
+
+Production test 1: "Did [name] get the message?" → Carson answered from ra7etbal_state (task completion), not live DB.
+Production test 2: "Is everything working?" → Carson said delivery info "isn't visible to me."
+
+Root cause: ElevenLabs live prompt had no TOOLS section entries and no routing rules for `get_task_delivery_status` or `get_operations_summary`. Tools were registered in clientTools (ElevenLabsAgentWidget.tsx, PR #151) but Carson had no instruction to invoke them. Pattern: identical to search_calendar_history which required TOOLS entry + CALENDAR HISTORY routing section.
+
+Fix: ElevenLabs live prompt patched via PATCH API (agent_3001kt3zzkcxfb3bwejd8yzzhnmy).
+- TOOLS section: added `get_task_delivery_status` and `get_operations_summary` entries after `search_calendar_history`.
+- DELIVERY STATUS routing section added after CALENDAR HISTORY section, before DETERMINISTIC TOOL PRECEDENCE.
+- Prompt length: 43,701 → 45,163 chars.
+- All three conditions confirmed live: get_task_delivery_status present, get_operations_summary present, DELIVERY STATUS section present.
+
+Patch documented: docs/elevenlabs-prompt-patches/2026-08-01-operations-center-v1-tools.md (commit 3e83c1f, main).
+
+No code changes. No schema changes. Existing 2489 tests unchanged.
+
+DECISION: P1 #3 Operations Center V1 PRODUCTION VERIFIED AND CLOSED.
+Gate cleared for P1 #4 — Task Closing by Voice (COS Ch. 11, 13, 14).
+
 ---
 
 ## 2026-08-01 — Owner WhatsApp Conversational Mode (Phase 1)
 
-**Work:** P1 — Owner WhatsApp Conversational Mode engineering design + implementation.
+**Work:** P1 #3.5 — Owner WhatsApp Conversational Mode engineering design + implementation.
 
 **Design reviews completed (3):**
 1. Initial architecture design
@@ -1380,17 +1464,22 @@ Gate cleared for P1 #3 Operations Center V1.
 
 **Verification:** `classifyCarsonInstruction` / `carson-router.ts` cannot be imported from `api/` (TypeScript, Vite-compiled frontend only). Created `_carson-intent-classifier.js` as a JS port with same domain vocabulary. Consolidation deferred to context-extraction refactoring PR.
 
-**Implementation (PR #153, commit 92b4813):**
-- `api/_carson-intent-classifier.js` — pure JS intent classifier, same domains as `src/lib/carson-router.ts`
-- `api/_carson-agent-turn.js` — added `runOwnerConversationalTurn()`: ElevenLabs bridge with inline context build, policy-driven tools (`tool_ids: []` default), WhatsApp reply delivery, receipt lifecycle, fallback on error
+**Implementation (PR #153, commits 92b4813 + 9bbdf06):**
+- `api/_carson-intent-classifier.js` — pure JS intent classifier, same domains as `src/lib/carson-router.ts`; consolidation comment added
+- `api/_carson-agent-turn.js` — added `runOwnerConversationalTurn()`: ElevenLabs bridge with structured dynamic variables, policy-driven tools (`tool_ids: []` default), WhatsApp reply delivery, receipt lifecycle, fallback on error
 - `api/_owner-whatsapp-routing.js` — general-path routing now calls `classifyOwnerWhatsAppIntent` first; execution domains → existing executor; conversational domains → bridge
 - `api/_owner-whatsapp-routing.test.js` — updated with `_carson-agent-turn.js` mock; added conversational routing test
 - `api/_carson-intent-classifier.test.js` — 45 new tests
 - `api/_owner-conversational-turn.test.js` — 10 new tests
 
-**Suite result:** 4087 tests pass, 0 failures (230 test files).
+**Pre-merge review (commit 9bbdf06):**
+- Review 1: consolidation comment added to `_carson-intent-classifier.js`
+- Review 2: ElevenLabs dynamic variable coverage fixed — bridge now sends all 5 critical variables: `ra7etbal_state`, `user_name` (profiles.display_name), `recent_memory` (carson_memory, last 5 sessions), `current_time` (ISO 8601), `persistent_instructions` (own variable, no longer embedded in ra7etbal_state). Intentional Phase 1 gaps documented: `daily_brief`, `current_weather`, `opening_line`.
+- Review 3: all 6 production safety items confirmed via code inspection (no changes needed)
 
-**Status:** PR #153 open. Awaiting merge and production verification.
+**Suite result:** 12,107 tests pass, 0 regressions (2 stale worktree ENOENT failures pre-existing).
+
+**Status:** PR #153 merged. Awaiting Vercel deploy + production verification.
 
 **Production verification required before closing:**
 1. "Hi" → conversational reply (not unsupported error)
