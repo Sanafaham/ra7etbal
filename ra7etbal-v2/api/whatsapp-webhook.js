@@ -902,13 +902,30 @@ function extractInboundMessages(body) {
       for (const raw of rawMsgs) {
         const from      = String(raw?.from || '').trim();
         const messageId = String(raw?.id   || '').trim();
-        const msgBody   = raw?.type === 'text' ? String(raw?.text?.body || '').trim() : '';
-        if (!from || !messageId || !msgBody) continue;
+        if (!from || !messageId) continue;
+
+        let msgBody  = '';
+        let mediaId  = null;
+        let mediaType = null;
+        let mimeType = null;
+
+        if (raw?.type === 'text') {
+          msgBody = String(raw?.text?.body || '').trim();
+        } else if (raw?.type === 'image') {
+          msgBody   = String(raw?.image?.caption || '').trim();
+          mediaId   = String(raw?.image?.id || '').trim() || null;
+          mediaType = 'image';
+          mimeType  = String(raw?.image?.mime_type || '').trim() || null;
+        }
+
+        // Require either body text or a media attachment; ignore empty unknown types.
+        if (!msgBody && !mediaId) continue;
 
         messages.push({
           from, messageId, body: msgBody, timestamp: raw?.timestamp,
           phoneNumberId: String(value?.metadata?.phone_number_id || '').trim(),
           contextMessageId: String(raw?.context?.id || '').trim() || null,
+          mediaId, mediaType, mimeType,
         });
       }
     }

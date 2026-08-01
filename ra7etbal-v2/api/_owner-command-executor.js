@@ -50,6 +50,7 @@ export async function persistAndExecuteOwnerCommand({
   supabaseUrl, serviceKey, identity, msg, receipt,
 }) {
   const text = String(msg.body || '').trim().slice(0, MAX_COMMAND_LENGTH);
+  const imageStoragePath = msg.imageStoragePath || null;
   const classification = classifyOwnerCommand(text);
   const recorded = await recordOwnerInbound({
     supabaseUrl, serviceKey, identity, msg, receipt, route: classification.type, text,
@@ -76,7 +77,7 @@ export async function persistAndExecuteOwnerCommand({
     const result = classification.type === 'reminder'
       ? await executeReminder({ supabaseUrl, serviceKey, userId: identity.userId, receipt, row, classification })
       : await executePersonCommand({
-          supabaseUrl, serviceKey, userId: identity.userId, receipt, row, classification, ownerName,
+          supabaseUrl, serviceKey, userId: identity.userId, receipt, row, classification, ownerName, imageStoragePath,
         });
     return {
       ...result,
@@ -160,7 +161,7 @@ function sameInstant(left, right) {
   return Number.isFinite(leftMs) && Number.isFinite(rightMs) && leftMs === rightMs;
 }
 
-async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, row, classification, ownerName }) {
+async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, row, classification, ownerName, imageStoragePath }) {
   const people = await select(supabaseUrl, serviceKey, 'people',
     `user_id=eq.${encodeURIComponent(userId)}&name=ilike.${encodeURIComponent(classification.recipient)}&select=id,name,phone,notes,whatsapp_opted_in&limit=2`);
   if (people.length !== 1) throw new Error('recipient_not_unique');
@@ -224,6 +225,7 @@ async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, 
       to: person.phone, messageText, confirmationLink, messageRecordId: messageId,
       taskId, sourceType: classification.type === 'delegation' ? 'delegation' : 'message',
       sendMode, recipientName: person.name, ownerName,
+      ...(imageStoragePath ? { imagePath: imageStoragePath } : {}),
     });
     if (!response.body?.success) throw new Error(response.body?.errorMessage || response.body?.error || 'staff_delivery_failed');
     transportMessageId = response.body.messageId || null;
