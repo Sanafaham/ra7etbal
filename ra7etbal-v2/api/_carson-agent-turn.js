@@ -1,17 +1,26 @@
 /**
- * Staff -> Carson WhatsApp bridge — READ-ONLY proof of concept.
+ * Carson WhatsApp bridge — staff PoC + owner conversational turns.
  *
  * Underscore-prefixed: Vercel does not deploy this as a Function (same
  * convention as _quality-review.js / _whatsapp-delivery.js), so it does not
  * count against the Hobby 12-function cap.
  *
- * Scope: identify a known, opted-in, non-family staff sender from an inbound
- * WhatsApp message already parsed by whatsapp-webhook.js, open one text-only
- * turn with the existing production ElevenLabs Carson agent, capture the
- * response, and log a safe summary. This slice never sends a WhatsApp reply
- * and never writes to Supabase — it exists to validate the ElevenLabs bridge
- * itself before any task-mutation logic is built on top of it.
+ * Staff bridge (attemptCarsonBridgePoc): READ-ONLY proof of concept. Captures
+ * Carson's response for diagnostic logging only — never sends a reply.
+ *
+ * Owner bridge (runOwnerConversationalTurn): sends owner WhatsApp messages to
+ * Carson, captures the response, and delivers it back to the owner. Injects
+ * owner context (pending tasks, people, memory) as dynamic variables. Tool
+ * availability is policy-driven via the toolPolicy parameter — today's default
+ * is read-only (tool_ids: []); policy changes without touching this module.
+ *
+ * Context refactoring note: the inline context builder here (buildOwnerContextText)
+ * will be extracted into a shared canonical module in a follow-on refactoring
+ * PR that also consolidates src/lib/carson-context.ts. Until then, keep the
+ * context fields in sync with that file.
  */
+
+import { sendMetaMessage } from './send-whatsapp-task.js';
 
 const SIGNED_URL_ENDPOINT = 'https://api.elevenlabs.io/v1/convai/conversation/get-signed-url';
 const CONVERSATION_DETAILS_ENDPOINT = 'https://api.elevenlabs.io/v1/convai/conversations';
@@ -319,6 +328,362 @@ function runCarsonTurn({ apiKey, agentId, staffText, messageId }) {
       .catch((err) => finish(reject, err));
   });
 }
+
+// ── Owner conversational turn ─────────────────────────────────────────────────
+
+const OWNER_CONVERSATIONAL_TOOL_POLICY = { tool_ids: [] };
+
+const OWNER_TURN_FALLBACK_TEXT =
+  "I'm having trouble right now. Please try again shortly or open the Ra7etBal app.";
+
+/**
+ * Run one conversational turn with Carson on behalf of the owner over WhatsApp.
+ *
+ * Injects owner context (pending tasks, people, memory) as ElevenLabs dynamic
+ * variables. Tool availability is controlled by toolPolicy — today's default
+ * blocks all action tools (read-only). Delivers the response to the owner via
+ * WhatsApp and completes the receipt.
+ *
+ * @param {object} params
+ * @param {string} params.supabaseUrl
+ * @param {string} params.serviceKey
+ * @param {{ userId: string, ownerPhone: string }} params.identity
+ * @param {{ body: string, messageId: string, phoneNumberId: string }} params.msg
+ * @param {object} params.receipt  — owner_whatsapp_reply_receipts row
+ * @param {object} [params.toolPolicy]  — { tool_ids: string[] }
+ * @param {Function} params.completeReceipt
+ * @param {Function} params.failReceipt
+ * @returns {Promise<{ handled: boolean, route: string, reason: string }>}
+ */
+export async function runOwnerConversationalTurn({
+  supabaseUrl,
+  serviceKey,
+  identity,
+  msg,
+  receipt,
+  toolPolicy = OWNER_CONVERSATIONAL_TOOL_POLICY,
+  completeReceipt,
+  failReceipt,
+}) {
+  const { userId, ownerPhone } = identity;
+  const { body, messageId, phoneNumberId } = msg;
+
+  const apiKey  = process.env.ELEVENLABS_API_KEY;
+  const agentId = process.env.VITE_ELEVENLABS_AGENT_ID;
+  if (!apiKey || !agentId) {
+    console.error('Owner conversational bridge: missing ElevenLabs config', { messageId });
+    await failReceipt({ supabaseUrl, serviceKey, userId, receipt, error: 'missing_elevenlabs_config' });
+    return { handled: false, route: 'owner_conversational', reason: 'missing_config' };
+  }
+
+  let contextText = '';
+  try {
+    contextText = await buildOwnerContextText(supabaseUrl, serviceKey, userId);
+  } catch (err) {
+    // Non-fatal — Carson can still respond without context; log and proceed.
+    console.warn('Owner conversational bridge: context build failed, proceeding without context', {
+      messageId,
+      error: err?.message || 'context_build_failed',
+    });
+  }
+
+  const startedAt = Date.now();
+  let agentText = null;
+  try {
+    agentText = await runOwnerTurn({
+      apiKey,
+      agentId,
+      ownerText: body,
+      contextText,
+      toolPolicy,
+      messageId,
+    });
+  } catch (err) {
+    console.error('Owner conversational bridge: turn failed', {
+      messageId,
+      elapsedMs: Date.now() - startedAt,
+      error: err?.message || 'unknown_error',
+    });
+    await failReceipt({ supabaseUrl, serviceKey, userId, receipt, error: err?.message || 'turn_failed' });
+    const fallbackSent = await sendMetaMessage(phoneNumberId, ownerPhone, OWNER_TURN_FALLBACK_TEXT);
+    return {
+      handled: false,
+      route: 'owner_conversational',
+      reason: 'turn_failed',
+      fallbackSent: Boolean(fallbackSent?.ok),
+    };
+  }
+
+  const replyText = agentText || OWNER_TURN_FALLBACK_TEXT;
+  const send = await sendMetaMessage(phoneNumberId, ownerPhone, replyText);
+  if (!send?.ok) {
+    console.error('Owner conversational bridge: reply delivery failed', {
+      messageId,
+      elapsedMs: Date.now() - startedAt,
+      hasAgentText: Boolean(agentText),
+    });
+    await failReceipt({ supabaseUrl, serviceKey, userId, receipt, error: 'reply_delivery_failed' });
+    return { handled: false, route: 'owner_conversational', reason: 'reply_delivery_failed' };
+  }
+
+  await completeReceipt({
+    supabaseUrl,
+    serviceKey,
+    userId,
+    receipt,
+    outcome: 'conversational_turn',
+    escalationId: null,
+  });
+
+  console.log('Owner conversational bridge: turn complete', {
+    messageId,
+    elapsedMs: Date.now() - startedAt,
+    hadContext: Boolean(contextText),
+    hadAgentText: Boolean(agentText),
+    usedFallback: !agentText,
+  });
+
+  return { handled: true, route: 'owner_conversational', reason: 'answered' };
+}
+
+/**
+ * Drives one text-only owner Carson turn with context injection.
+ * Resolves with the agent's response text.
+ */
+function runOwnerTurn({ apiKey, agentId, ownerText, contextText, toolPolicy, messageId }) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let socket;
+    let deadline;
+    const diag = { lastStep: 'signed_url_requested', firstPostUserMessageEventLogged: false, conversationId: null };
+
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      try { socket?.close?.(); } catch { /* ignore */ }
+      fn(value);
+    };
+
+    deadline = setTimeout(() => {
+      finish(reject, new Error('owner_turn_timeout'));
+    }, TURN_TIMEOUT_MS);
+
+    getSignedUrl({ apiKey, agentId })
+      .then((signedUrl) => {
+        if (settled) return;
+        diag.lastStep = 'signed_url_received';
+
+        try {
+          socket = new WebSocket(signedUrl);
+        } catch (err) {
+          finish(reject, err);
+          return;
+        }
+
+        socket.addEventListener('open', () => {
+          diag.lastStep = 'ws_opened';
+          const initPayload = {
+            type: 'conversation_initiation_client_data',
+            conversation_config_override: {
+              conversation: { text_only: true },
+              agent:        { prompt: { tool_ids: toolPolicy.tool_ids } },
+            },
+          };
+          if (contextText) {
+            initPayload.dynamic_variables = { ra7etbal_state: contextText };
+          }
+          socket.send(JSON.stringify(initPayload));
+          console.log('Owner conversational bridge: conversation_initiation_client_data sent', {
+            messageId,
+            hasContext: Boolean(contextText),
+            toolPolicySize: toolPolicy.tool_ids.length,
+          });
+          diag.lastStep = 'init_data_sent';
+        });
+
+        socket.addEventListener('message', (event) => {
+          let payload;
+          try {
+            payload = JSON.parse(event.data);
+          } catch {
+            return;
+          }
+
+          if (diag.lastStep === 'user_message_sent' && !diag.firstPostUserMessageEventLogged) {
+            diag.firstPostUserMessageEventLogged = true;
+            console.log('Owner conversational bridge: first event after user_message', {
+              messageId,
+              type: payload?.type || null,
+            });
+          }
+
+          handleOwnerServerEvent(payload, { socket, ownerText, finish, resolve, messageId, diag });
+        });
+
+        socket.addEventListener('error', () => {
+          finish(reject, new Error('owner_turn_socket_error'));
+        });
+
+        socket.addEventListener('close', (event) => {
+          if (settled) return;
+          const code = event?.code ?? null;
+          const hasReason = Boolean(event?.reason);
+          console.log('Owner conversational bridge: WS closed before response', {
+            messageId,
+            code,
+            hasReason,
+            lastStep: diag.lastStep,
+          });
+          const conversationId = diag.conversationId;
+          const lookup = conversationId
+            ? fetchConversationDetailsSafely({ apiKey, conversationId, messageId }).catch(() => {})
+            : Promise.resolve();
+          lookup.finally(() => {
+            finish(reject, new Error(`owner_turn_closed code=${code} hasReason=${hasReason} lastStep=${diag.lastStep}`));
+          });
+        });
+      })
+      .catch((err) => finish(reject, err));
+  });
+}
+
+function handleOwnerServerEvent(payload, { socket, ownerText, finish, resolve, messageId, diag }) {
+  const type = payload?.type;
+  switch (type) {
+    case 'ping': {
+      const eventId = payload.ping_event?.event_id ?? payload.event_id;
+      socket.send(JSON.stringify({ type: 'pong', event_id: eventId }));
+      break;
+    }
+    case 'conversation_initiation_metadata': {
+      diag.conversationId = payload.conversation_initiation_metadata_event?.conversation_id ?? null;
+      diag.lastStep = 'metadata_received';
+      socket.send(JSON.stringify({ type: 'user_message', text: ownerText }));
+      console.log('Owner conversational bridge: user_message sent', { messageId });
+      diag.lastStep = 'user_message_sent';
+      break;
+    }
+    case 'client_tool_call': {
+      const toolCallId = payload.client_tool_call?.tool_call_id ?? payload.tool_call_id;
+      socket.send(JSON.stringify({
+        type:         'client_tool_result',
+        tool_call_id: toolCallId,
+        result:       'Client tools are not available in this channel.',
+        is_error:     true,
+        error_type:   'external_client',
+      }));
+      break;
+    }
+    case 'agent_response': {
+      const text = payload.agent_response_event?.agent_response ?? payload.agent_response ?? payload.text ?? null;
+      finish(resolve, text);
+      break;
+    }
+    default:
+      if (type) {
+        console.log('Owner conversational bridge: unhandled WS event type', { type });
+      }
+      break;
+  }
+}
+
+// ── Owner context builder (inline — pending consolidation with carson-context.ts) ──
+
+const SUPABASE_HEADERS = (key) => ({
+  apikey: key,
+  Authorization: `Bearer ${key}`,
+  'Content-Type': 'application/json',
+  Prefer: 'return=representation',
+});
+
+/**
+ * Builds a minimal Carson context text from live DB data.
+ *
+ * Consolidation note: this will be replaced by a call to the shared
+ * carson-context-builder module once the context-extraction refactoring
+ * PR ships. Until then, keep field coverage in sync with carson-context.ts.
+ *
+ * @param {string} supabaseUrl
+ * @param {string} serviceKey
+ * @param {string} userId
+ * @returns {Promise<string>}
+ */
+async function buildOwnerContextText(supabaseUrl, serviceKey, userId) {
+  const headers = SUPABASE_HEADERS(serviceKey);
+  const qs = (table, query) =>
+    fetch(`${supabaseUrl}/rest/v1/${table}?${query}`, { headers })
+      .then((r) => r.json().catch(() => []))
+      .then((rows) => (Array.isArray(rows) ? rows : []));
+
+  const [tasks, people, memory] = await Promise.all([
+    qs('tasks',
+      `user_id=eq.${encodeURIComponent(userId)}&status=in.(pending,in_progress)&select=id,description,type,status,due_at,created_at&order=created_at.desc&limit=30`),
+    qs('people',
+      `user_id=eq.${encodeURIComponent(userId)}&select=id,name,role,phone,whatsapp_opted_in&order=name.asc&limit=50`),
+    qs('carson_persistent_memory',
+      `user_id=eq.${encodeURIComponent(userId)}&select=instruction,source,confirmed_at&order=created_at.desc&limit=10`),
+  ]);
+
+  const lines = [`Current date/time: ${new Date().toISOString()}`];
+
+  if (people.length > 0) {
+    lines.push('\nHousehold people:');
+    for (const p of people) {
+      const details = [p.role, p.whatsapp_opted_in ? 'WhatsApp enabled' : null].filter(Boolean).join(', ');
+      lines.push(`  - ${p.name}${details ? ` (${details})` : ''}`);
+    }
+  }
+
+  const delegations = tasks.filter((t) => t.type === 'delegation');
+  const reminders   = tasks.filter((t) => t.type === 'reminder');
+  const others      = tasks.filter((t) => t.type !== 'delegation' && t.type !== 'reminder');
+
+  if (delegations.length > 0) {
+    lines.push('\nPending delegations:');
+    for (const t of delegations) {
+      const age = formatAge(t.created_at);
+      lines.push(`  - ${t.description} [${t.status}${age ? ', ' + age : ''}]`);
+    }
+  }
+
+  if (reminders.length > 0) {
+    lines.push('\nPending reminders:');
+    for (const t of reminders) {
+      const when = t.due_at ? `due ${new Date(t.due_at).toISOString()}` : 'no due time';
+      lines.push(`  - ${t.description} [${when}]`);
+    }
+  }
+
+  if (others.length > 0) {
+    lines.push('\nOther pending items:');
+    for (const t of others) {
+      lines.push(`  - ${t.description} [${t.type}, ${t.status}]`);
+    }
+  }
+
+  if (memory.length > 0) {
+    lines.push('\nSaved instructions:');
+    for (const m of memory) {
+      lines.push(`  - ${m.instruction}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function formatAge(isoString) {
+  if (!isoString) return null;
+  const diffMs = Date.now() - new Date(isoString).getTime();
+  const diffDays = Math.floor(diffMs / 86_400_000);
+  if (diffDays === 0) return 'today';
+  if (diffDays === 1) return '1 day ago';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weeks ago`;
+  return `${Math.floor(diffDays / 30)} months ago`;
+}
+
+// ── Staff bridge (original PoC — unchanged below this line) ──────────────────
 
 function handleServerEvent(payload, { socket, staffText, finish, resolve, messageId, diag }) {
   const type = payload?.type;

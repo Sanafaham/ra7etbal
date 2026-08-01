@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   executeCommand: vi.fn(),
   recordInbound: vi.fn(),
   updateCommand: vi.fn(),
+  ownerConversationalTurn: vi.fn(),
 }));
 
 vi.mock('./task-confirm.js', () => ({
@@ -23,6 +24,10 @@ vi.mock('./_owner-command-executor.js', () => ({
   persistAndExecuteOwnerCommand: mocks.executeCommand,
   recordOwnerInbound: mocks.recordInbound,
   updateCommand: mocks.updateCommand,
+}));
+vi.mock('./_carson-agent-turn.js', () => ({
+  attemptCarsonBridgePoc: vi.fn(),
+  runOwnerConversationalTurn: mocks.ownerConversationalTurn,
 }));
 
 import {
@@ -95,15 +100,19 @@ beforeEach(() => {
     error: null,
   });
   mocks.updateCommand.mockResolvedValue({});
+  mocks.ownerConversationalTurn.mockResolvedValue({
+    handled: true,
+    route: 'owner_conversational',
+    reason: 'answered',
+  });
 });
 
 describe('general owner command safety', () => {
   for (const [label, body] of [
     ['one escalation exists', 'Remind me to pay the electricity bill tomorrow.'],
     ['multiple escalations exist', 'Tell Christopher to make pizza.'],
-    ['zero escalations exist', 'What still needs my attention?'],
   ]) {
-    it(`${label}: enters the general path without reading or resolving escalations`, async () => {
+    it(`${label}: execution domain routes to command executor without reading escalations`, async () => {
       const fetchMock = vi.fn();
       stubIdentity(fetchMock);
       vi.stubGlobal('fetch', fetchMock);
@@ -121,6 +130,7 @@ describe('general owner command safety', () => {
       });
       expect(mocks.resolve).not.toHaveBeenCalled();
       expect(mocks.executeCommand).toHaveBeenCalledTimes(1);
+      expect(mocks.ownerConversationalTurn).not.toHaveBeenCalled();
       expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
       expect(fetchMock.mock.calls.some(([url]) =>
         String(url).includes('staff_escalation_owner_decisions'))).toBe(false);
@@ -130,6 +140,29 @@ describe('general owner command safety', () => {
       );
     });
   }
+
+  it('conversational domain routes to Carson bridge without calling command executor', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'What still needs my attention?' }),
+    });
+
+    expect(result).toMatchObject({
+      isOwner: true,
+      handled: true,
+      route: 'owner_conversational',
+    });
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
+    expect(mocks.ownerConversationalTurn).toHaveBeenCalledTimes(1);
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).includes('staff_escalation_owner_decisions'))).toBe(false);
+  });
+
 
   it('queries recent open decisions only behind the explicit decision-shape guard', async () => {
     const source = await import('node:fs/promises').then((fs) =>

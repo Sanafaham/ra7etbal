@@ -5,6 +5,8 @@ import {
 } from './task-confirm.js';
 import { sendMetaMessage } from './send-whatsapp-task.js';
 import { persistAndExecuteOwnerCommand, recordOwnerInbound, updateCommand } from './_owner-command-executor.js';
+import { classifyOwnerWhatsAppIntent, isExecutionDomain } from './_carson-intent-classifier.js';
+import { runOwnerConversationalTurn } from './_carson-agent-turn.js';
 
 const RECEIPT_LEASE_SECONDS = 120;
 const UNMATCHED_QUOTE_TEXT =
@@ -100,69 +102,95 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   }
 
   if (match.kind === 'general') {
-    const result = await persistAndExecuteOwnerCommand({
-      supabaseUrl, serviceKey, identity, msg, receipt: receipt.row,
+    // Classify intent to route between the command executor and Carson's
+    // conversational bridge. classifyOwnerCommand (inside the executor) stays
+    // as the internal execution validator — this router only decides the path.
+    const intent = classifyOwnerWhatsAppIntent(msg.body);
+    console.log('[owner_whatsapp_routing] intent classified', {
+      primary_domain: intent.primary_domain,
+      isExecutionDomain: intent.isExecutionDomain,
+      confidence: intent.confidence,
+      messageId: msg.messageId,
     });
-    if (!result.acknowledgement) {
-      await failReceipt({
-        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
-        error: result.error || 'command_record_failed',
+
+    if (isExecutionDomain(intent)) {
+      // Structured command — hand off to the existing executor unchanged.
+      const result = await persistAndExecuteOwnerCommand({
+        supabaseUrl, serviceKey, identity, msg, receipt: receipt.row,
       });
-      return { isOwner: true, handled: false, route: 'general_command', reason: result.kind };
-    }
-    const ack = result.acknowledgementAlreadyAccepted
-      ? { ok: true, alreadyAccepted: true }
-      : await sendOwnerAcknowledgement({
-          phoneNumberId: msg.phoneNumberId, to: identity.ownerPhone, text: result.acknowledgement,
+      if (!result.acknowledgement) {
+        await failReceipt({
+          supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+          error: result.error || 'command_record_failed',
         });
-    if (!ack.ok) {
-      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
-        acknowledgement_status: 'failed',
-        acknowledgement_error: ack.reason || 'owner_ack_failed',
-        next_retry_at: new Date(Date.now() + 60_000).toISOString(),
-      }).catch(() => {});
-      await failReceipt({
+        return { isOwner: true, handled: false, route: 'general_command', reason: result.kind };
+      }
+      const ack = result.acknowledgementAlreadyAccepted
+        ? { ok: true, alreadyAccepted: true }
+        : await sendOwnerAcknowledgement({
+            phoneNumberId: msg.phoneNumberId, to: identity.ownerPhone, text: result.acknowledgement,
+          });
+      if (!ack.ok) {
+        await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+          acknowledgement_status: 'failed',
+          acknowledgement_error: ack.reason || 'owner_ack_failed',
+          next_retry_at: new Date(Date.now() + 60_000).toISOString(),
+        }).catch(() => {});
+        await failReceipt({
+          supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+          error: ack.reason || 'owner_ack_failed',
+        });
+        return { isOwner: true, handled: false, route: 'general_command', reason: 'owner_ack_failed' };
+      }
+      if (!ack.alreadyAccepted) {
+        await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
+          acknowledgement_status: 'accepted',
+          acknowledgement_text: result.acknowledgement,
+          acknowledgement_transport_message_id: ack.messageId,
+        });
+      }
+      if (result.kind === 'execution_failed') {
+        await failReceipt({
+          supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
+          error: result.error || 'command_execution_failed',
+        });
+        return {
+          isOwner: true,
+          handled: false,
+          route: 'general_command',
+          execution: result.kind,
+          reason: 'command_execution_failed',
+        };
+      }
+      const completed = await completeReceipt({
         supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
-        error: ack.reason || 'owner_ack_failed',
-      });
-      return { isOwner: true, handled: false, route: 'general_command', reason: 'owner_ack_failed' };
-    }
-    if (!ack.alreadyAccepted) {
-      await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
-        acknowledgement_status: 'accepted',
-        acknowledgement_text: result.acknowledgement,
-        acknowledgement_transport_message_id: ack.messageId,
-      });
-    }
-    if (result.kind === 'execution_failed') {
-      await failReceipt({
-        supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
-        error: result.error || 'command_execution_failed',
+        outcome: result.kind === 'unsupported'
+          ? 'unsupported_command'
+          : result.kind === 'terminal_failed'
+            ? 'terminal_failure'
+            : 'general_command_executed',
+        escalationId: null,
       });
       return {
         isOwner: true,
-        handled: false,
+        handled: completed,
         route: 'general_command',
         execution: result.kind,
-        reason: 'command_execution_failed',
+        reason: completed ? result.kind : 'receipt_complete_failed',
       };
     }
-    const completed = await completeReceipt({
-      supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row,
-      outcome: result.kind === 'unsupported'
-        ? 'unsupported_command'
-        : result.kind === 'terminal_failed'
-          ? 'terminal_failure'
-          : 'general_command_executed',
-      escalationId: null,
+
+    // Conversational message — route to the Carson bridge.
+    const conversationalResult = await runOwnerConversationalTurn({
+      supabaseUrl,
+      serviceKey,
+      identity,
+      msg,
+      receipt: receipt.row,
+      completeReceipt,
+      failReceipt,
     });
-    return {
-      isOwner: true,
-      handled: completed,
-      route: 'general_command',
-      execution: result.kind,
-      reason: completed ? result.kind : 'receipt_complete_failed',
-    };
+    return { isOwner: true, ...conversationalResult };
   }
 
   if ([
