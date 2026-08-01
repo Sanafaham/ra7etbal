@@ -633,6 +633,21 @@ async function handlePost(req, res) {
         );
       }
 
+      // S2: Register Indeterminate commitments with Open Loop Governance.
+      // Schedules a +4h QStash follow-up so unresolved uncertain/fraud_suspected
+      // tasks get an OLG escalation push if the owner hasn't acted.
+      // COS Ch. 13.5 Amendment S2 — non-fatal.
+      if (savedReviewStatus === 'uncertain' || savedReviewStatus === 'fraud_suspected') {
+        await scheduleUncertainOLG({
+          supabaseUrl,
+          serviceKey,
+          taskId,
+          appBaseUrl: CANONICAL_APP_BASE_URL,
+        }).catch((err) =>
+          console.error('[task-confirm] scheduleUncertainOLG failed (non-fatal):', err?.message || err),
+        );
+      }
+
       return res.status(200).json({
         success: true,
         outcome: savedReviewStatus,
@@ -2054,4 +2069,81 @@ async function replaceProofAttachments({ supabaseUrl, serviceKey, taskId, userId
   if (!insertRes.ok) {
     throw new Error(`Could not save proof photos (status ${insertRes.status})`);
   }
+}
+
+// ─── S2: Indeterminate OLG registration ─────────────────────────────────────
+
+const QSTASH_BASE_URL = 'https://qstash.upstash.io/v2';
+const UNCERTAIN_OLG_FOLLOW_UP_SECONDS = 4 * 60 * 60; // 4 hours
+
+/**
+ * Stamps uncertain_olg_registered_at on the task and schedules a QStash
+ * follow-up at +4h to process-delegation-escalations with
+ * { taskId, trigger: 'uncertain_olg' }.
+ *
+ * Non-fatal: a failure here does not block the task-confirm response. The
+ * cron-based escalation path remains active as a fallback.
+ *
+ * COS Ch. 13.5 Amendment S2.
+ */
+export async function scheduleUncertainOLG({ supabaseUrl, serviceKey, taskId, appBaseUrl }) {
+  const qstashToken = process.env.QSTASH_TOKEN;
+  const cronSecret = process.env.CRON_SECRET;
+
+  const headers = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  // Stamp the OLG registration timestamp on the task (best-effort).
+  const patchRes = await fetch(
+    `${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}&status=eq.pending`,
+    {
+      method: 'PATCH',
+      headers: { ...headers, Prefer: 'return=minimal' },
+      body: JSON.stringify({ uncertain_olg_registered_at: new Date().toISOString() }),
+    },
+  );
+  if (!patchRes.ok) {
+    console.warn('[task-confirm] uncertain_olg_registered_at stamp failed (non-fatal):', {
+      taskId,
+      status: patchRes.status,
+    });
+  }
+
+  if (!qstashToken) {
+    console.warn('[task-confirm] QSTASH_TOKEN not set — uncertain OLG follow-up not scheduled (non-fatal)');
+    return;
+  }
+
+  const resolvedBaseUrl = appBaseUrl || CANONICAL_APP_BASE_URL;
+  const targetUrl = `${resolvedBaseUrl}/api/process-delegation-escalations`;
+  const notBefore = Math.ceil(Date.now() / 1000) + UNCERTAIN_OLG_FOLLOW_UP_SECONDS;
+  const dedupId = `uncertain-olg-${taskId}`;
+
+  const qstashRes = await fetch(`${QSTASH_BASE_URL}/publish/${targetUrl}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${qstashToken}`,
+      'Content-Type': 'application/json',
+      'Upstash-Not-Before': String(notBefore),
+      'Upstash-Deduplication-Id': dedupId,
+      'Upstash-Retries': '3',
+      ...(cronSecret ? { 'Upstash-Forward-Authorization': `Bearer ${cronSecret}` } : {}),
+    },
+    body: JSON.stringify({ taskId, trigger: 'uncertain_olg' }),
+  });
+
+  if (!qstashRes.ok) {
+    const data = await qstashRes.json().catch(() => null);
+    console.warn('[task-confirm] uncertain OLG QStash publish failed (non-fatal):', {
+      taskId,
+      status: qstashRes.status,
+      error: data?.error,
+    });
+    return;
+  }
+
+  console.log('[task-confirm] uncertain OLG registered', { taskId, dedupId, notBefore });
 }
