@@ -1213,3 +1213,45 @@ Gotchas:
   production routing.
 • Schema rollback must be coordinated with code rollback and deliberately
   refuses to discard new audit truth.
+
+---
+
+Date: 2026-08-01
+
+Session: Historical Calendar Lookup — Port to Main + ElevenLabs Integration
+
+Goal:
+Complete Historical Calendar Lookup end-to-end: code, tests, ElevenLabs tool registration, ElevenLabs prompt update, deployment, production route verification.
+
+Root cause context:
+The feature (commit 01a09c5) had been implemented on carson-bridge-revert-branch-id-experiment which was merged to main via PR #45 without including the historical calendar commits added after the merge. Main's api/google-calendar.js was still at 707 lines (pre-feature).
+
+What was changed:
+
+• api/google-calendar.js (707 → 1028 lines) — historical route: GET /api/google-calendar?range=historical. Helpers: parseIsoDate, addUtcDays, historicalQueryTokens, shapeHistoricalCalendarEvent, validateHistoricalSearchInput, localDateBoundaryToIso, finalizeHistoricalSearch. Privacy-aware matching (title/attendee/location/description), description excerpts bounded at 240 chars, pagination cap: HISTORY_MAX_PAGES=4, HISTORY_PAGE_SIZE=250, HISTORY_MAX_RANGE_DAYS=366.
+
+• src/lib/calendar.ts — HistoricalCalendarEvent + HistoricalCalendarSearchResult interfaces, searchCalendarHistory() function. Separate from fetchCalendarEvents() — historical queries can never fall back to the future planning cache.
+
+• src/components/home/ElevenLabsAgentWidget.tsx — historicalSearchCacheRef (session deduplication), searchCalendarHistoryTool callback, search_calendar_history client tool registration.
+
+• src/lib/canonical-paths.test.ts — regression guard: historical path stays on the authenticated Ra7etBal route.
+
+New test files: api/google-calendar.history.test.js (19 tests), src/lib/calendar-history.test.ts (3 tests), src/components/home/ElevenLabsAgentWidget.calendar-history.test.ts (6 tests).
+
+ElevenLabs changes (via PATCH API, agent_3001kt3zzkcxfb3bwejd8yzzhnmy):
+• search_calendar_history registered as Client Tool (start_date, end_date required; query, limit optional; 20s timeout).
+• TOOLS section: search_calendar_history entry added after delete_calendar_event.
+• New CALENDAR HISTORY section: routes past-event queries to search_calendar_history, blocks get_calendar_events for historical queries.
+
+Commands run:
+• npx vitest run (all historical tests) — 48/48 passed
+• npm test (full suite) — 1819 passed, 1 pre-existing failure (confirmed pre-existing on clean main)
+• All carson-protected-behaviors CI checks — passed
+• Vercel production deploy — completed (deployment 5699643354, state: success)
+• ElevenLabs PATCH API — 20 tools returned, search_calendar_history confirmed present
+• Production route smoke test — 400 (auth-required, correct)
+
+Commits on main: 222580f (PR #145 squash-merge)
+
+Remaining action (Sana only):
+Voice verification — ask Carson "When was the last time I had a dentist appointment?" Carson should call search_calendar_history silently and return the event or say it couldn't find one. Must NOT call get_calendar_events.
