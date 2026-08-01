@@ -1041,7 +1041,7 @@ async function handleOwnerDecision(req, res) {
 
 // ── PATCH (deepLinkToken): Phase D — owner answers a staff escalation ───────
 
-const ESCALATION_DECISIONS = ['approved', 'rejected', 'custom_instruction'];
+const ESCALATION_DECISIONS = ['approved', 'rejected', 'custom_instruction', 'approved_alternative', 'rejected_alternative'];
 
 /**
  * Approve/Reject build a generic, escalation-specific reply from data
@@ -1246,6 +1246,13 @@ export async function resolveAndDeliverEscalationAnswer({
     'Content-Type': 'application/json',
   };
 
+  // Capture these before `escalation` may be replaced by the RPC response,
+  // which returns only a status/reply subset and does not include task_id or
+  // review_type. Using `existing` (the original row) is safe: these fields
+  // are immutable on a decision row.
+  const reviewType = existing.review_type || null;
+  const escalationTaskId = existing.task_id || null;
+
   // 3. Save the answer, exactly once. Only a genuinely open escalation
   // gets a new answer; anything else already has one stored, and the
   // caller's freshly submitted decision/text is deliberately ignored in
@@ -1343,10 +1350,14 @@ export async function resolveAndDeliverEscalationAnswer({
     return { kind: 'config_error', message: 'WhatsApp is not configured.' };
   }
 
-  const messageText = normalizeOwnerReplyForRecipient(
-    claimResult.reply_text,
-    staffMessage.staff_name,
-  );
+  const isSubstituteReview = reviewType === 'substitute_review';
+  const confirmationUrl =
+    isSubstituteReview && escalationTaskId && decision !== 'rejected_alternative'
+      ? buildFreshWorkerConfirmationUrl(escalationTaskId)
+      : null;
+  const messageText = isSubstituteReview
+    ? buildSubstituteDecisionMessageForStaff({ decision, instructionText: claimResult.reply_text, confirmationUrl })
+    : normalizeOwnerReplyForRecipient(claimResult.reply_text, staffMessage.staff_name);
   if (!messageText) {
     await failEscalationDeliveryLease(
       supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'empty_reply_text',
@@ -1405,6 +1416,29 @@ export async function resolveAndDeliverEscalationAnswer({
       ownerReplyText: claimResult.reply_text,
       transportMessageId: sendResult.messageId,
     };
+  }
+
+  // 8. For task-based substitute reviews, update the task's quality_review_status
+  // to match what the app approval path does via complete_custom_instruction /
+  // complete_rejected_alternative. Non-fatal: the message is already delivered.
+  if (isSubstituteReview && escalationTaskId) {
+    if (decision === 'approved_alternative' || decision === 'custom_instruction') {
+      await markApprovedAlternativeConfirmationOnly({
+        supabaseUrl, serviceKey, taskId: escalationTaskId,
+      }).catch((err) =>
+        console.error('[task-confirm] resolveAndDeliver: substitute approved marker failed (non-fatal)', {
+          taskId: escalationTaskId, error: err?.message || String(err),
+        }),
+      );
+    } else if (decision === 'rejected_alternative') {
+      await markSubstituteRejectionCorrectionRequired({
+        supabaseUrl, serviceKey, taskId: escalationTaskId,
+      }).catch((err) =>
+        console.error('[task-confirm] resolveAndDeliver: substitute rejection marker failed (non-fatal)', {
+          taskId: escalationTaskId, error: err?.message || String(err),
+        }),
+      );
+    }
   }
 
   return {
@@ -1492,6 +1526,42 @@ async function markApprovedAlternativeConfirmationOnly({ supabaseUrl, serviceKey
     status: response.status,
     body: response.ok ? '' : await response.text().catch(() => ''),
   };
+}
+
+async function markSubstituteRejectionCorrectionRequired({ supabaseUrl, serviceKey, taskId }) {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}&status=eq.pending`,
+    {
+      method: 'PATCH',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({
+        quality_review_status: 'correction_required',
+        quality_review_note: 'Owner rejected the alternative.',
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+  return {
+    ok: response.ok,
+    status: response.status,
+    body: response.ok ? '' : await response.text().catch(() => ''),
+  };
+}
+
+export function buildSubstituteDecisionMessageForStaff({ decision, instructionText, confirmationUrl }) {
+  if (decision === 'rejected_alternative') {
+    return 'Do not continue with this task. Please wait for further instructions.';
+  }
+  const base =
+    decision === 'approved_alternative'
+      ? 'Approved. You can go ahead with this task.'
+      : `From the owner: ${String(instructionText || '').trim() || 'please see instructions.'}`;
+  return confirmationUrl ? `${base}\n\n${confirmationUrl}` : base;
 }
 
 /** Verifies the Bearer JWT, returns { uid } or { error }. Same auth/v1/user pattern as api/automations.js's requireUser(). */
