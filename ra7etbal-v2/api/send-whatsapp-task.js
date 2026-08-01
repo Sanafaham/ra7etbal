@@ -1411,6 +1411,38 @@ async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath })
   }
 }
 
+/**
+ * Generates a signed URL for a proof image, uploads it to Meta, and sends it
+ * as a WhatsApp image message. Non-fatal: returns { sent: false } on any failure
+ * so callers can proceed without blocking the primary notification.
+ *
+ * @param {{ to: string, accessToken: string, phoneNumberId: string, supabaseUrl: string, serviceKey: string, imagePath: string }} params
+ * @returns {Promise<{ sent: boolean, reason?: string }>}
+ */
+export async function sendProofImageMessage({ to, accessToken, phoneNumberId, supabaseUrl, serviceKey, imagePath }) {
+  const signedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
+  if (!signedUrl) return { sent: false, reason: 'no_signed_url' };
+
+  const mediaId = await uploadImageToMeta({ accessToken, phoneNumberId, imageUrl: signedUrl });
+  if (!mediaId) return { sent: false, reason: 'meta_upload_failed' };
+
+  const result = await sendMetaMessage({
+    url: `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+    accessToken,
+    payload: {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'image',
+      image: { id: mediaId },
+    },
+  });
+
+  return result.ok
+    ? { sent: true }
+    : { sent: false, reason: result.metaError?.message || 'send_failed' };
+}
+
 export function buildSmsBody({ ownerName, messageText, confirmationLink }) {
   const parts = [];
   if (ownerName) parts.push(`From ${ownerName}:`);
