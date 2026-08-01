@@ -1255,3 +1255,25 @@ Commits on main: 222580f (PR #145 squash-merge)
 
 Remaining action (Sana only):
 Voice verification — ask Carson "When was the last time I had a dentist appointment?" Carson should call search_calendar_history silently and return the event or say it couldn't find one. Must NOT call get_calendar_events.
+
+──────────────────────────────
+Date: 2026-08-01
+Session: Memory Governance Phase 1A
+Status: COMPLETE — merged to main as b015409 (PR #147)
+──────────────────────────────
+
+Capability: Memory Governance — Epistemic Gate + Freshness Injection
+Constitutional basis: COS Ch. 19.3 (provenance/age preservation) + Ch. 19.4 (Epistemic Governance write gate)
+
+Deliverables shipped:
+- carson-epistemic-gate.ts (new): validateMemoryWrite() gate with ephemeral task detection, source/confidence/confirmed_at provenance attachment
+- carson-persistent-memory.ts (modified): savePersistentInstruction() routes through gate before any DB insert; loadPersistentMemory() injects stale suffix for instructions >90 days
+- carson-memory-format.ts (modified): formatRecentMemory() labels sessions >30 days old as [Older context — treat as background only]
+- ElevenLabsAgentWidget.tsx (modified): gate rejection messages surfaced to user on save_instruction block
+- supabase/migrations/20260801_memory_governance_phase_1a.sql: adds source + confirmed_at columns; backfills existing rows with confirmed_at = created_at
+- 3 new test files, 51 new tests; 1 pre-existing test updated for dynamic date safety
+
+Test results: 2445/2445 pass | Typecheck: clean | CI: all checks pass
+DB migration: applied to production (ggarvhgqzpooloacjgcj) via Supabase MCP
+
+No ElevenLabs prompt change required (Phase 1A is backend/injection only).
