@@ -336,6 +336,28 @@ const OWNER_CONVERSATIONAL_TOOL_POLICY = { tool_ids: [] };
 const OWNER_TURN_FALLBACK_TEXT =
   "I'm having trouble right now. Please try again shortly or open the Ra7etBal app.";
 
+// sendMetaMessage({ url, accessToken, payload }) — object signature from send-whatsapp-task.js.
+// sendOwnerReply wraps it with the correct token and URL so callers pass (phoneNumberId, to, text).
+async function sendOwnerReply(phoneNumberId, to, text) {
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!accessToken || !phoneNumberId) return { ok: false, reason: 'whatsapp_not_configured' };
+  try {
+    return await sendMetaMessage({
+      url: `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+      accessToken,
+      payload: {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to,
+        type: 'text',
+        text: { body: text },
+      },
+    });
+  } catch (err) {
+    return { ok: false, reason: err?.message || 'network_error' };
+  }
+}
+
 /**
  * Run one conversational turn with Carson on behalf of the owner over WhatsApp.
  *
@@ -405,7 +427,7 @@ export async function runOwnerConversationalTurn({
       error: err?.message || 'unknown_error',
     });
     await failReceipt({ supabaseUrl, serviceKey, userId, receipt, error: err?.message || 'turn_failed' });
-    const fallbackSent = await sendMetaMessage(phoneNumberId, ownerPhone, OWNER_TURN_FALLBACK_TEXT);
+    const fallbackSent = await sendOwnerReply(phoneNumberId, ownerPhone, OWNER_TURN_FALLBACK_TEXT);
     return {
       handled: false,
       route: 'owner_conversational',
@@ -415,7 +437,7 @@ export async function runOwnerConversationalTurn({
   }
 
   const replyText = agentText || OWNER_TURN_FALLBACK_TEXT;
-  const send = await sendMetaMessage(phoneNumberId, ownerPhone, replyText);
+  const send = await sendOwnerReply(phoneNumberId, ownerPhone, replyText);
   if (!send?.ok) {
     console.error('Owner conversational bridge: reply delivery failed', {
       messageId,
@@ -503,6 +525,11 @@ function runOwnerTurn({ apiKey, agentId, ownerText, dynamicVars, toolPolicy, mes
               agent:        { prompt: { tool_ids: toolPolicy.tool_ids } },
             },
           };
+          // All variables referenced in the ElevenLabs prompt must be supplied.
+          // ElevenLabs closes with code 1008 if any required variable is absent.
+          // opening_line is sent as '' (N/A for WhatsApp; prompt uses it for voice only).
+          // daily_brief and current_weather are Phase 1 gaps — supply '' until
+          // the context-builder consolidation PR provides server-side generation.
           initPayload.dynamic_variables = dynamicVars
             ? {
                 ra7etbal_state:           dynamicVars.ra7etbal_state,
@@ -510,8 +537,15 @@ function runOwnerTurn({ apiKey, agentId, ownerText, dynamicVars, toolPolicy, mes
                 recent_memory:            dynamicVars.recent_memory,
                 current_time:             dynamicVars.current_time,
                 persistent_instructions:  dynamicVars.persistent_instructions,
+                opening_line:             '',
+                daily_brief:              '',
+                current_weather:          '',
               }
-            : { ra7etbal_state: '', user_name: '', recent_memory: '', current_time: new Date().toISOString(), persistent_instructions: '' };
+            : {
+                ra7etbal_state: '', user_name: '', recent_memory: '',
+                current_time: new Date().toISOString(), persistent_instructions: '',
+                opening_line: '', daily_brief: '', current_weather: '',
+              };
           socket.send(JSON.stringify(initPayload));
           console.log('Owner conversational bridge: conversation_initiation_client_data sent', {
             messageId,

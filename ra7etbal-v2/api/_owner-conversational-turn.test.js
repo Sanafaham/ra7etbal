@@ -88,8 +88,15 @@ function stubFetch(supabase = false) {
 }
 
 function stubElevenLabsEnv() {
-  process.env.ELEVENLABS_API_KEY     = 'xi-key';
+  process.env.ELEVENLABS_API_KEY       = 'xi-key';
   process.env.VITE_ELEVENLABS_AGENT_ID = 'agent_test123';
+  process.env.WHATSAPP_ACCESS_TOKEN    = 'wa-test-token';
+}
+
+// sendMetaMessage is now called with an object { url, accessToken, payload }.
+// Extract the WhatsApp message body from a sendMetaMessage call.
+function getSentBody(callIndex = 0) {
+  return mocks.sendMetaMessage.mock.calls[callIndex]?.[0]?.payload?.text?.body ?? null;
 }
 
 function baseParams(overrides = {}) {
@@ -113,6 +120,7 @@ beforeEach(() => {
   capturedSockets = [];
   delete process.env.ELEVENLABS_API_KEY;
   delete process.env.VITE_ELEVENLABS_AGENT_ID;
+  delete process.env.WHATSAPP_ACCESS_TOKEN;
   mocks.sendMetaMessage.mockReset();
   mocks.completeReceipt.mockReset();
   mocks.failReceipt.mockReset();
@@ -163,9 +171,8 @@ describe('runOwnerConversationalTurn — successful turn', () => {
     expect(result.reason).toBe('answered');
 
     expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
-    expect(mocks.sendMetaMessage).toHaveBeenCalledWith(
-      'meta-phone-1', '+971501234567', 'You have 3 pending delegations.',
-    );
+    expect(getSentBody()).toBe('You have 3 pending delegations.');
+    expect(mocks.sendMetaMessage.mock.calls[0][0].payload.to).toBe('+971501234567');
     expect(mocks.completeReceipt).toHaveBeenCalledTimes(1);
     expect(mocks.completeReceipt).toHaveBeenCalledWith(expect.objectContaining({
       outcome: 'conversational_turn',
@@ -251,8 +258,7 @@ describe('runOwnerConversationalTurn — null agent response uses fallback', () 
     const result = await resultPromise;
 
     expect(result.handled).toBe(true);
-    const [, , text] = mocks.sendMetaMessage.mock.calls[0];
-    expect(text).toContain('try again');
+    expect(getSentBody()).toContain('try again');
     expect(mocks.completeReceipt).toHaveBeenCalledTimes(1);
   });
 });
@@ -301,8 +307,7 @@ describe('runOwnerConversationalTurn — ElevenLabs bridge error', () => {
     expect(result.reason).toBe('turn_failed');
     expect(mocks.failReceipt).toHaveBeenCalledTimes(1);
     expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
-    const [, , fallback] = mocks.sendMetaMessage.mock.calls[0];
-    expect(fallback).toContain('try again');
+    expect(getSentBody()).toContain('try again');
   });
 });
 
