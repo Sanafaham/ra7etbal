@@ -437,11 +437,8 @@ export async function runOwnerConversationalTurn({
   }
 
   const replyText = agentText || OWNER_TURN_FALLBACK_TEXT;
-  // RAW — log exact string passed to sendOwnerReply before delivery.
-  console.log('Owner conversational bridge: sendOwnerReply input', {
+  console.log('Owner conversational bridge: sending reply', {
     messageId,
-    agentText,
-    replyText,
     agentTextLength: agentText ? agentText.length : null,
     replyTextLength: replyText ? replyText.length : null,
     usedFallback: !agentText,
