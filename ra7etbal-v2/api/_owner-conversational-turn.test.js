@@ -252,11 +252,11 @@ describe('runOwnerConversationalTurn — streaming chunks used when agent_respon
     });
     socket.emit('message', {
       type: 'agent_chat_response_part',
-      agent_response_event: { agent_response: 'Hello, ' },
+      text_response_part: { text: 'Hello, ', type: 'text', event_id: 1 },
     });
     socket.emit('message', {
       type: 'agent_chat_response_part',
-      agent_response_event: { agent_response: 'what can I help you with?' },
+      text_response_part: { text: 'what can I help you with?', type: 'text', event_id: 2 },
     });
     socket.emit('message', {
       type: 'agent_response',
