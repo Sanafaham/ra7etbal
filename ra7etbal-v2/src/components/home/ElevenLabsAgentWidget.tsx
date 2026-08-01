@@ -46,6 +46,7 @@ import {
   extractAutomationInstructionParam,
 } from "../../lib/carson-tool-params";
 import { filterCalendarEventsByRange, searchCalendarHistory } from "../../lib/calendar";
+import { fetchTaskDeliveryStatus, fetchOperationsSummary } from "../../lib/carson-operations-center";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { callCalendarApi } from "../../lib/calendar-actions";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
@@ -5930,6 +5931,20 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("search_calendar_history", params, () =>
               searchCalendarHistoryTool(params),
+            );
+          },
+          get_task_delivery_status: (params: { keyword?: string }) => {
+            const captureBlock = guardCurrentToolInvocation("get_task_delivery_status");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("get_task_delivery_status", params, () =>
+              fetchTaskDeliveryStatus(params?.keyword ?? ""),
+            );
+          },
+          get_operations_summary: (params: Record<string, unknown>) => {
+            const captureBlock = guardCurrentToolInvocation("get_operations_summary");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("get_operations_summary", params, () =>
+              fetchOperationsSummary(),
             );
           },
           create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
