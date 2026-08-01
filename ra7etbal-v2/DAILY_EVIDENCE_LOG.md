@@ -1413,3 +1413,40 @@ Constitutional compliance verified:
 - Ch. 20: Visibility prerequisite for future recovery reasoning — no action taken
 
 DECISION: P1 #3 Operations Center V1 COMPLETE. Gate cleared for P1 #4.
+
+---
+
+## 2026-08-01 — P1 #3 Production Verification + Prompt Completion
+
+### Greeting Investigation (CLOSED)
+
+Investigation opened: "Hi Carson" / "Hello" producing "I recorded this command, but this WhatsApp command type is not supported yet" from the owner WhatsApp channel.
+
+Git archaeology performed:
+- `292a18f` (2026-07-27): Owner WhatsApp routing added — non-command messages silently deferred, no acknowledgement sent.
+- `b70e148` (2026-07-28): Owner command executor added — greetings classified as `unsupported`, acknowledgement message introduced.
+- `de82a36` (2026-07-19): Staff → Carson ElevenLabs bridge added — staff messages handled conversationally via bridge.
+
+FINDING: Not a regression. The owner WhatsApp command interface has never supported conversational greetings — it is and has always been command-only (tell/ask/remind). The Grace test recalled by Sana was on the STAFF path (ElevenLabs bridge), not the owner command path. These are intentionally different execution paths.
+
+DECISION: CLOSED. Existing product behavior. No fix required.
+
+### P1 #3 Production Verification — Root Cause + Resolution
+
+Production test 1: "Did [name] get the message?" → Carson answered from ra7etbal_state (task completion), not live DB.
+Production test 2: "Is everything working?" → Carson said delivery info "isn't visible to me."
+
+Root cause: ElevenLabs live prompt had no TOOLS section entries and no routing rules for `get_task_delivery_status` or `get_operations_summary`. Tools were registered in clientTools (ElevenLabsAgentWidget.tsx, PR #151) but Carson had no instruction to invoke them. Pattern: identical to search_calendar_history which required TOOLS entry + CALENDAR HISTORY routing section.
+
+Fix: ElevenLabs live prompt patched via PATCH API (agent_3001kt3zzkcxfb3bwejd8yzzhnmy).
+- TOOLS section: added `get_task_delivery_status` and `get_operations_summary` entries after `search_calendar_history`.
+- DELIVERY STATUS routing section added after CALENDAR HISTORY section, before DETERMINISTIC TOOL PRECEDENCE.
+- Prompt length: 43,701 → 45,163 chars.
+- All three conditions confirmed live: get_task_delivery_status present, get_operations_summary present, DELIVERY STATUS section present.
+
+Patch documented: docs/elevenlabs-prompt-patches/2026-08-01-operations-center-v1-tools.md (commit 3e83c1f, main).
+
+No code changes. No schema changes. Existing 2489 tests unchanged.
+
+DECISION: P1 #3 Operations Center V1 PRODUCTION VERIFIED AND CLOSED.
+Gate cleared for P1 #4 — Task Closing by Voice (COS Ch. 11, 13, 14).
