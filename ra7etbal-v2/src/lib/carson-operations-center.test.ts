@@ -62,7 +62,6 @@ describe("fetchTaskDeliveryStatus", () => {
 
   it("reports 'read' delivery status with age", async () => {
     const readAt = new Date(Date.now() - 10 * 60_000).toISOString(); // 10 min ago
-    let callIndex = 0;
     mocks.supabaseFrom.mockImplementation((table: string) => {
       if (table === "tasks") {
         return makeChain({
@@ -178,10 +177,7 @@ describe("fetchOperationsSummary", () => {
   });
 
   it("reports 'no failures' when all deliveries are ok", async () => {
-    mocks.supabaseFrom.mockImplementation((table: string) => {
-      // Both whatsapp_deliveries and tasks return empty
-      return makeChain({ data: [], error: null });
-    });
+    mocks.supabaseFrom.mockImplementation(() => makeChain({ data: [], error: null }));
     const result = await fetchOperationsSummary();
     expect(result).toContain("OPERATIONS SUMMARY");
     expect(result).toMatch(/no whatsapp delivery failures/i);
