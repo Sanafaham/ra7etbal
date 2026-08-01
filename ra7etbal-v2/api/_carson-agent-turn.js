@@ -437,6 +437,15 @@ export async function runOwnerConversationalTurn({
   }
 
   const replyText = agentText || OWNER_TURN_FALLBACK_TEXT;
+  // RAW — log exact string passed to sendOwnerReply before delivery.
+  console.log('Owner conversational bridge: sendOwnerReply input', {
+    messageId,
+    agentText,
+    replyText,
+    agentTextLength: agentText ? agentText.length : null,
+    replyTextLength: replyText ? replyText.length : null,
+    usedFallback: !agentText,
+  });
   const send = await sendOwnerReply(phoneNumberId, ownerPhone, replyText);
   if (!send?.ok) {
     console.error('Owner conversational bridge: reply delivery failed', {
@@ -632,37 +641,31 @@ function handleOwnerServerEvent(payload, { socket, ownerText, finish, resolve, m
     }
     case 'agent_chat_response_part': {
       // Log the shape of the first chunk so we know which field carries the
-      // response (text vs audio). Logs key names and value types only — never
-      // actual content, audio data, or message text.
-      if (!diag.chunkShapeLogged) {
-        diag.chunkShapeLogged = true;
-        const shape = {};
-        for (const [k, v] of Object.entries(payload ?? {})) {
-          if (k === 'type') { shape[k] = v; continue; }
-          if (v && typeof v === 'object') {
-            shape[k] = Object.fromEntries(
-              Object.entries(v).map(([ik, iv]) => [ik, typeof iv])
-            );
-          } else {
-            shape[k] = typeof v;
-          }
-        }
-        console.log('Owner conversational bridge: agent_chat_response_part shape', {
-          messageId,
-          shape,
-        });
-      }
-      // ElevenLabs streams the LLM response as text chunks before the final
-      // agent_response event. Accumulate here so we can use them if
-      // agent_response.agent_response_event.agent_response is blank/space.
+      // RAW PAYLOAD — full event logged for diagnosis; remove after root cause confirmed.
+      console.log('Owner conversational bridge: agent_chat_response_part RAW', {
+        messageId,
+        chunkIndex: diag.textChunks.length,
+        payload: JSON.stringify(payload),
+      });
       // ElevenLabs streams chunks under text_response_part.text (not agent_response_event).
       const chunk = payload.text_response_part?.text ?? null;
       if (chunk && typeof chunk === 'string' && chunk.trim()) {
         diag.textChunks.push(chunk);
       }
+      console.log('Owner conversational bridge: chunk accumulation state', {
+        messageId,
+        chunkExtracted: chunk,
+        accumulatedSoFar: diag.textChunks.join(''),
+        totalChunks: diag.textChunks.length,
+      });
       break;
     }
     case 'agent_response': {
+      // RAW PAYLOAD — full event logged for diagnosis; remove after root cause confirmed.
+      console.log('Owner conversational bridge: agent_response RAW', {
+        messageId,
+        payload: JSON.stringify(payload),
+      });
       let text = payload.agent_response_event?.agent_response ?? payload.agent_response ?? payload.text ?? null;
       const finalTextBlank = !text || !text.trim();
       // agent_response may arrive with a blank/space value when ElevenLabs
@@ -676,6 +679,7 @@ function handleOwnerServerEvent(payload, { socket, ownerText, finish, resolve, m
         finalTextWasBlank: finalTextBlank,
         usedChunks: finalTextBlank && diag.textChunks.length > 0,
         resolvedLength: text ? text.length : 0,
+        resolvedText: text,
       });
       finish(resolve, text || null);
       break;
