@@ -56,6 +56,7 @@ import webpush from 'web-push';
 import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
+import { notifyOwnerOfTaskReview } from './_escalation-notify.js';
 
 // Quality Intelligence vision review can legitimately take longer than the
 // default Vercel function window, especially with several proof photos.
@@ -617,6 +618,16 @@ async function handlePost(req, res) {
         }).catch((err) =>
           console.error(`[task-confirm] ${review.status}-review owner push failed (non-fatal):`, err?.message || err),
         );
+        await notifyOwnerOfTaskReview({
+          taskId,
+          userId: task.user_id,
+          reviewType: 'uncertain_proof',
+          taskDescription: task.description,
+          assignedTo: task.assigned_to,
+          reviewNote: review.note || null,
+        }, { supabaseUrl, serviceKey }).catch((err) =>
+          console.error('[task-confirm] uncertain-review owner WhatsApp notification failed (non-fatal):', err?.message || err),
+        );
       } else if (isSubstituteReview) {
         // Narrow additive branch: hand a single judgment call to the owner.
         // No WhatsApp to the assignee — the owner decides via Approve
@@ -630,6 +641,16 @@ async function handlePost(req, res) {
           variant: 'substitute_review',
         }).catch((err) =>
           console.error('[task-confirm] substitute_review owner push failed (non-fatal):', err?.message || err),
+        );
+        await notifyOwnerOfTaskReview({
+          taskId,
+          userId: task.user_id,
+          reviewType: 'substitute_review',
+          taskDescription: task.description,
+          assignedTo: task.assigned_to,
+          reviewNote: task.quality_review_note || review.note || null,
+        }, { supabaseUrl, serviceKey }).catch((err) =>
+          console.error('[task-confirm] substitute_review owner WhatsApp notification failed (non-fatal):', err?.message || err),
         );
       }
 
