@@ -234,6 +234,67 @@ describe('runOwnerConversationalTurn — successful turn', () => {
   });
 });
 
+// ── Streaming via agent_chat_response_part ───────────────────────────────────
+
+describe('runOwnerConversationalTurn — streaming chunks used when agent_response is blank', () => {
+  it('accumulates agent_chat_response_part chunks when agent_response text is space', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', stubFetch(true));
+
+    const resultPromise = runOwnerConversationalTurn(baseParams());
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      type: 'conversation_initiation_metadata',
+      conversation_initiation_metadata_event: { conversation_id: 'conv-stream-1' },
+    });
+    socket.emit('message', {
+      type: 'agent_chat_response_part',
+      agent_response_event: { agent_response: 'Hello, ' },
+    });
+    socket.emit('message', {
+      type: 'agent_chat_response_part',
+      agent_response_event: { agent_response: 'what can I help you with?' },
+    });
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: ' ' },
+    });
+
+    const result = await resultPromise;
+
+    expect(result.handled).toBe(true);
+    expect(getSentBody()).toBe('Hello, what can I help you with?');
+    expect(mocks.completeReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses agent_response text directly when chunks are empty', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', stubFetch(true));
+
+    const resultPromise = runOwnerConversationalTurn(baseParams());
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      type: 'conversation_initiation_metadata',
+      conversation_initiation_metadata_event: { conversation_id: 'conv-stream-2' },
+    });
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: 'Direct text response.' },
+    });
+
+    const result = await resultPromise;
+
+    expect(result.handled).toBe(true);
+    expect(getSentBody()).toBe('Direct text response.');
+  });
+});
+
 // ── Null agent response — fallback ────────────────────────────────────────────
 
 describe('runOwnerConversationalTurn — null agent response uses fallback', () => {
