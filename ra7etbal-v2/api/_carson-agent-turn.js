@@ -376,9 +376,9 @@ export async function runOwnerConversationalTurn({
     return { handled: false, route: 'owner_conversational', reason: 'missing_config' };
   }
 
-  let contextText = '';
+  let dynamicVars = null;
   try {
-    contextText = await buildOwnerContextText(supabaseUrl, serviceKey, userId);
+    dynamicVars = await buildOwnerContextText(supabaseUrl, serviceKey, userId);
   } catch (err) {
     // Non-fatal — Carson can still respond without context; log and proceed.
     console.warn('Owner conversational bridge: context build failed, proceeding without context', {
@@ -394,7 +394,7 @@ export async function runOwnerConversationalTurn({
       apiKey,
       agentId,
       ownerText: body,
-      contextText,
+      dynamicVars,
       toolPolicy,
       messageId,
     });
@@ -438,7 +438,7 @@ export async function runOwnerConversationalTurn({
   console.log('Owner conversational bridge: turn complete', {
     messageId,
     elapsedMs: Date.now() - startedAt,
-    hadContext: Boolean(contextText),
+    hadContext: Boolean(dynamicVars),
     hadAgentText: Boolean(agentText),
     usedFallback: !agentText,
   });
@@ -449,8 +449,21 @@ export async function runOwnerConversationalTurn({
 /**
  * Drives one text-only owner Carson turn with context injection.
  * Resolves with the agent's response text.
+ *
+ * @param {object} params
+ * @param {string} params.apiKey
+ * @param {string} params.agentId
+ * @param {string} params.ownerText
+ * @param {object|null} params.dynamicVars — structured context from buildOwnerContextText.
+ *   Sends all ElevenLabs dynamic variables the prompt expects:
+ *     ra7etbal_state, user_name, recent_memory, current_time, persistent_instructions.
+ *   Intentional Phase 1 gaps (not sent): daily_brief, current_weather, opening_line.
+ *   These require server-side brief generation or live weather; deferred to the
+ *   context-builder consolidation PR.
+ * @param {object} params.toolPolicy
+ * @param {string} params.messageId
  */
-function runOwnerTurn({ apiKey, agentId, ownerText, contextText, toolPolicy, messageId }) {
+function runOwnerTurn({ apiKey, agentId, ownerText, dynamicVars, toolPolicy, messageId }) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let socket;
@@ -490,13 +503,21 @@ function runOwnerTurn({ apiKey, agentId, ownerText, contextText, toolPolicy, mes
               agent:        { prompt: { tool_ids: toolPolicy.tool_ids } },
             },
           };
-          if (contextText) {
-            initPayload.dynamic_variables = { ra7etbal_state: contextText };
-          }
+          initPayload.dynamic_variables = dynamicVars
+            ? {
+                ra7etbal_state:           dynamicVars.ra7etbal_state,
+                user_name:                dynamicVars.user_name,
+                recent_memory:            dynamicVars.recent_memory,
+                current_time:             dynamicVars.current_time,
+                persistent_instructions:  dynamicVars.persistent_instructions,
+              }
+            : { ra7etbal_state: '', user_name: '', recent_memory: '', current_time: new Date().toISOString(), persistent_instructions: '' };
           socket.send(JSON.stringify(initPayload));
           console.log('Owner conversational bridge: conversation_initiation_client_data sent', {
             messageId,
-            hasContext: Boolean(contextText),
+            hasContext: Boolean(dynamicVars),
+            hasUserName: Boolean(dynamicVars?.user_name),
+            hasRecentMemory: Boolean(dynamicVars?.recent_memory),
             toolPolicySize: toolPolicy.tool_ids.length,
           });
           diag.lastStep = 'init_data_sent';
@@ -598,16 +619,27 @@ const SUPABASE_HEADERS = (key) => ({
 });
 
 /**
- * Builds a minimal Carson context text from live DB data.
+ * Builds structured Carson context for the ElevenLabs dynamic_variables block.
  *
- * Consolidation note: this will be replaced by a call to the shared
- * carson-context-builder module once the context-extraction refactoring
- * PR ships. Until then, keep field coverage in sync with carson-context.ts.
+ * Returns five variables matching what the live ElevenLabs prompt expects:
+ *   ra7etbal_state          — pending tasks + household people
+ *   user_name               — owner's display_name from profiles
+ *   recent_memory           — last 5 session summaries from carson_memory
+ *   current_time            — ISO 8601 timestamp (source of truth per prompt)
+ *   persistent_instructions — saved instructions from carson_persistent_memory
+ *
+ * Intentional Phase 1 gaps (not sent, documented for consolidation PR):
+ *   daily_brief     — requires server-side spoken brief generation (deferred)
+ *   current_weather — requires live weather fetch (deferred)
+ *   opening_line    — N/A for WhatsApp channel (intentionally omitted)
+ *
+ * Consolidation note: will be replaced by a shared carson-context-builder call
+ * once the context-extraction refactoring PR ships.
  *
  * @param {string} supabaseUrl
  * @param {string} serviceKey
  * @param {string} userId
- * @returns {Promise<string>}
+ * @returns {Promise<{ ra7etbal_state: string, user_name: string, recent_memory: string, current_time: string, persistent_instructions: string }>}
  */
 async function buildOwnerContextText(supabaseUrl, serviceKey, userId) {
   const headers = SUPABASE_HEADERS(serviceKey);
@@ -615,23 +647,32 @@ async function buildOwnerContextText(supabaseUrl, serviceKey, userId) {
     fetch(`${supabaseUrl}/rest/v1/${table}?${query}`, { headers })
       .then((r) => r.json().catch(() => []))
       .then((rows) => (Array.isArray(rows) ? rows : []));
+  const qsOne = (table, query) =>
+    fetch(`${supabaseUrl}/rest/v1/${table}?${query}`, { headers })
+      .then((r) => r.json().catch(() => null))
+      .then((data) => (Array.isArray(data) ? data[0] ?? null : data ?? null));
 
-  const [tasks, people, memory] = await Promise.all([
+  const [tasks, people, persistentMemory, profile, sessionMemory] = await Promise.all([
     qs('tasks',
       `user_id=eq.${encodeURIComponent(userId)}&status=in.(pending,in_progress)&select=id,description,type,status,due_at,created_at&order=created_at.desc&limit=30`),
     qs('people',
       `user_id=eq.${encodeURIComponent(userId)}&select=id,name,role,phone,whatsapp_opted_in&order=name.asc&limit=50`),
     qs('carson_persistent_memory',
       `user_id=eq.${encodeURIComponent(userId)}&select=instruction,source,confirmed_at&order=created_at.desc&limit=10`),
+    qsOne('profiles',
+      `id=eq.${encodeURIComponent(userId)}&select=display_name`),
+    qs('carson_memory',
+      `user_id=eq.${encodeURIComponent(userId)}&select=session_recap,session_date&order=session_date.desc&limit=5`),
   ]);
 
-  const lines = [`Current date/time: ${new Date().toISOString()}`];
+  // ── ra7etbal_state: pending tasks + household people ──
+  const stateLines = [];
 
   if (people.length > 0) {
-    lines.push('\nHousehold people:');
+    stateLines.push('Household people:');
     for (const p of people) {
       const details = [p.role, p.whatsapp_opted_in ? 'WhatsApp enabled' : null].filter(Boolean).join(', ');
-      lines.push(`  - ${p.name}${details ? ` (${details})` : ''}`);
+      stateLines.push(`  - ${p.name}${details ? ` (${details})` : ''}`);
     }
   }
 
@@ -640,36 +681,45 @@ async function buildOwnerContextText(supabaseUrl, serviceKey, userId) {
   const others      = tasks.filter((t) => t.type !== 'delegation' && t.type !== 'reminder');
 
   if (delegations.length > 0) {
-    lines.push('\nPending delegations:');
+    stateLines.push('\nPending delegations:');
     for (const t of delegations) {
       const age = formatAge(t.created_at);
-      lines.push(`  - ${t.description} [${t.status}${age ? ', ' + age : ''}]`);
+      stateLines.push(`  - ${t.description} [${t.status}${age ? ', ' + age : ''}]`);
     }
   }
 
   if (reminders.length > 0) {
-    lines.push('\nPending reminders:');
+    stateLines.push('\nPending reminders:');
     for (const t of reminders) {
       const when = t.due_at ? `due ${new Date(t.due_at).toISOString()}` : 'no due time';
-      lines.push(`  - ${t.description} [${when}]`);
+      stateLines.push(`  - ${t.description} [${when}]`);
     }
   }
 
   if (others.length > 0) {
-    lines.push('\nOther pending items:');
+    stateLines.push('\nOther pending items:');
     for (const t of others) {
-      lines.push(`  - ${t.description} [${t.type}, ${t.status}]`);
+      stateLines.push(`  - ${t.description} [${t.type}, ${t.status}]`);
     }
   }
 
-  if (memory.length > 0) {
-    lines.push('\nSaved instructions:');
-    for (const m of memory) {
-      lines.push(`  - ${m.instruction}`);
-    }
-  }
+  // ── recent_memory: last 5 session summaries ──
+  const recentMemoryLines = sessionMemory
+    .filter((m) => m.session_recap)
+    .map((m) => `[${m.session_date ?? 'unknown date'}] ${m.session_recap}`);
 
-  return lines.join('\n');
+  // ── persistent_instructions ──
+  const persistentLines = persistentMemory
+    .filter((m) => m.instruction)
+    .map((m) => m.instruction);
+
+  return {
+    ra7etbal_state:          stateLines.join('\n'),
+    user_name:               profile?.display_name ?? '',
+    recent_memory:           recentMemoryLines.join('\n'),
+    current_time:            new Date().toISOString(),
+    persistent_instructions: persistentLines.join('\n'),
+  };
 }
 
 function formatAge(isoString) {

@@ -1,15 +1,22 @@
 /**
  * Owner WhatsApp intent classifier.
  *
- * JS port of the classification logic in src/lib/carson-router.ts, applied
- * specifically to owner inbound WhatsApp messages. Returns a primary_domain
- * and full domains list using the same domain vocabulary so the routing table
- * in _owner-whatsapp-routing.js can be maintained once rather than twice.
+ * This module mirrors src/lib/carson-router.ts for API compatibility.
+ * When the routing layer can share a common implementation, these two
+ * classifiers must be consolidated into one canonical implementation.
  *
- * Consolidation note: once the shared context-builder refactoring PR runs,
- * this file should be collapsed into a shared isomorphic module imported by
- * both this API layer and src/lib/carson-router.ts. Until then, keep the
- * pattern logic in sync with src/lib/carson-router.ts.
+ * Why a separate file: src/lib/carson-router.ts is TypeScript compiled only
+ * by Vite for the frontend bundle. API functions (api/*.js) are plain Node.js
+ * ES modules deployed by Vercel as-is and cannot import the TS source
+ * directly. Until the context-builder refactoring PR extracts a shared
+ * isomorphic JS module, this file is the API-layer equivalent and must be
+ * kept in sync with src/lib/carson-router.ts manually.
+ *
+ * Sync checklist (update both files together):
+ *   - Domain names and domain set
+ *   - Pattern matchers for reminder / calendar / memory / whatsapp / delegation
+ *   - Social acknowledgement and greeting patterns
+ *   - Question detection patterns
  *
  * Execution domains (→ persistAndExecuteOwnerCommand):
  *   reminder   — "remind me ...", "set a reminder", etc.
