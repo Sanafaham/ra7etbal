@@ -642,11 +642,19 @@ function handleOwnerServerEvent(payload, { socket, ownerText, finish, resolve, m
     }
     case 'agent_response': {
       let text = payload.agent_response_event?.agent_response ?? payload.agent_response ?? payload.text ?? null;
+      const finalTextBlank = !text || !text.trim();
       // agent_response may arrive with a blank/space value when ElevenLabs
       // streams text via agent_chat_response_part. Prefer accumulated chunks.
-      if ((!text || !text.trim()) && diag.textChunks.length > 0) {
+      if (finalTextBlank && diag.textChunks.length > 0) {
         text = diag.textChunks.join('');
       }
+      console.log('Owner conversational bridge: agent_response resolved', {
+        messageId,
+        chunksAccumulated: diag.textChunks.length,
+        finalTextWasBlank: finalTextBlank,
+        usedChunks: finalTextBlank && diag.textChunks.length > 0,
+        resolvedLength: text ? text.length : 0,
+      });
       finish(resolve, text || null);
       break;
     }
