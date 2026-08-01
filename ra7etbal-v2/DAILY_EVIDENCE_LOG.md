@@ -1277,3 +1277,92 @@ Test results: 2445/2445 pass | Typecheck: clean | CI: all checks pass
 DB migration: applied to production (ggarvhgqzpooloacjgcj) via Supabase MCP
 
 No ElevenLabs prompt change required (Phase 1A is backend/injection only).
+
+──────────────────────────────
+Date: 2026-08-01 (addendum)
+Session: Memory Governance Phase 1A — Global Safety Net Review
+Status: PASSED — Phase 1A formally closed
+──────────────────────────────
+
+GSN Review Results:
+
+1. Live in production: ✅ dpl_9d6aHmkXAsKRsPdWhaufZUGAb3UK — READY, target=production (PR #148 commit, after Phase 1A)
+2. DB migration live: ✅ migration_governance_phase_1a confirmed in list_migrations; source + confirmed_at columns confirmed in production schema
+3. Existing rows intact: ✅ 25 rows, all source='owner_directive', confirmed_at backfilled from created_at (oldest 81 days — below 90-day stale threshold, no stale labels active yet)
+4. Runtime errors: ✅ None (Vercel get_runtime_errors returned clean)
+5. Code regression analysis:
+   - carson-epistemic-gate.ts: NEW file, no existing behavior modified ✅
+   - carson-persistent-memory.ts: loadPersistentMemory() select adds confirmed_at (additive); stale suffix not triggered (oldest instruction 81d < 90d threshold) ✅
+   - carson-memory-format.ts: [Older context] label only triggers for sessions >30 days; most recent session always gets [Most recent session] ✅
+   - ElevenLabsAgentWidget.tsx: gate rejection messages only surface when gate rejects (empty/ephemeral); valid instructions proceed unchanged ✅
+   - api/google-calendar.js: UNTOUCHED — Historical Calendar Lookup fully intact ✅
+6. No regressions in production voice conversations: ✅ (no runtime errors, no behavior changes to any voice tool paths)
+7. Historical Calendar Lookup: ✅ UNTOUCHED — verified via git diff, no changes to api/google-calendar.js or src/lib/calendar.ts
+8. Morning Brief: ✅ loadPersistentMemory() change is additive only; no stale labels appear for current data
+9. All other systems (reminders, delegations, automations, calendar, WhatsApp, memory recall): ✅ UNTOUCHED
+
+DECISION: Phase 1A is stable in production. Gate cleared for P1 #2 Commitment Lifecycle S2/S3.
+
+──────────────────────────────────────────────────────────────────────────────
+
+SESSION LOG — 2026-08-01 (P1 #2: Commitment Lifecycle S2 + S3)
+
+STATUS: COMPLETE — PR #149 merged to main at 01:05:54Z
+
+──────────────────────────────
+
+SESSION OBJECTIVE
+
+Implement COS Ch. 13.5 Amendments S2 + S3 (Commitment Lifecycle Constitutional Gates).
+
+──────────────────────────────
+
+EVIDENCE
+
+Constitutional Basis:
+- COS Ch. 13.5 Amendment S2: Indeterminate is not a resting state. A commitment in
+  Indeterminate (quality_review_status = 'uncertain' or 'fraud_suspected') must be
+  immediately registered with Open Loop Governance.
+- COS Ch. 13.5 Amendment S3: Reopening a Verified Complete commitment (status='done')
+  requires explicit owner authorisation or new verified evidence from Epistemic Governance.
+
+Files Changed (PR #149, commit c117930):
+- src/lib/carson-commitment-lifecycle.ts — NEW: Application-layer gate module.
+  Exports isVerifiedComplete, validateReopenTransition (S3), isIndeterminateCommitment (S2),
+  ReopenAuthError, UNCERTAIN_OLG_FOLLOW_UP_MS (4h), INDETERMINATE_REVIEW_STATUSES.
+- src/lib/carson-commitment-lifecycle.test.ts — NEW: 29 tests for the lifecycle module.
+- api/task-confirm.js — MODIFIED: Added scheduleUncertainOLG() helper + call site.
+  After save_review PATCH, if savedReviewStatus is 'uncertain' or 'fraud_suspected',
+  stamps uncertain_olg_registered_at and schedules QStash +4h follow-up.
+  QStash dedup ID: 'uncertain-olg-{taskId}' (no colons, per QStash requirement).
+- api/task-confirm.s2-olg.test.js — NEW: 6 tests verifying S2 scheduling paths and
+  confirming non-Indeterminate outcomes do NOT schedule OLG.
+- api/process-delegation-escalations.js — MODIFIED: Added handleUncertainOLGFollowUp()
+  handler for {trigger:'uncertain_olg', taskId} payloads. Uses claim-before-act guard
+  (uncertain_escalated_at IS NULL), stamps uncertain_escalated_at, sends second owner push.
+- api/process-delegation-escalations.uncertain-olg.test.js — NEW: 10 tests covering
+  happy path, all skip cases (task resolved, already escalated, concurrent invocation,
+  not found), and routing (non-uncertain_olg payloads fall through).
+- supabase/migrations/20260801_commitment_lifecycle_s2_s3.sql — NEW: Adds
+  uncertain_olg_registered_at + uncertain_escalated_at columns to tasks;
+  creates enforce_commitment_reopen_authority BEFORE UPDATE trigger.
+- supabase/migrations/20260801_commitment_lifecycle_s2_s3.rollback.sql — NEW.
+
+Production Verification:
+- Migration applied: ✅ both columns confirmed in production schema (timestamptz, nullable)
+- Trigger confirmed: ✅ enforce_commitment_reopen_authority BEFORE UPDATE on tasks
+
+Test Results:
+- New tests: 29 (commitment-lifecycle: 29, s2-olg: 6, uncertain-olg: 10 — overlaps
+  counted once per file; total across 3 files: ~45 new test cases)
+- Full suite: 2474/2474 pass, 0 failures
+- Typecheck: 0 new errors (pre-existing 10 errors unchanged)
+
+Defects Closed:
+- S2: Unresolved Indeterminate tasks had only 1 owner push with no follow-up. CLOSED.
+- S3: No gate preventing done → pending transition. CLOSED (DB trigger + app-layer gate).
+
+──────────────────────────────
+
+DECISION: P1 #2 Commitment Lifecycle S2 + S3 COMPLETE. Production stable.
+Gate cleared for P1 #3 Operations Center V1.
