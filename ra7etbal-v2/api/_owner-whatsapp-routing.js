@@ -9,6 +9,199 @@ import { classifyOwnerWhatsAppIntent, isExecutionDomain } from './_carson-intent
 import { runOwnerConversationalTurn } from './_carson-agent-turn.js';
 
 const RECEIPT_LEASE_SECONDS = 120;
+
+// ---------------------------------------------------------------------------
+// Image understanding pipeline
+// ---------------------------------------------------------------------------
+
+/**
+ * Downloads a WhatsApp media item, uploads it to Supabase Storage, and runs a
+ * single Anthropic vision call.  Returns a structured `imageUnderstanding`
+ * object that downstream routing and execution code can use without re-fetching
+ * or re-running the model.
+ *
+ * Failure is non-fatal: callers should fall back to caption-only processing
+ * when this returns null.
+ */
+export async function analyzeOwnerWhatsAppImage({
+  mediaId,
+  mimeType,
+  userId,
+  messageId,
+  accessToken,
+  anthropicApiKey,
+  supabaseUrl,
+  serviceKey,
+}) {
+  // ── 1. Resolve download URL from WhatsApp Media API ────────────────────
+  const mediaMetaRes = await fetch(
+    `https://graph.facebook.com/v20.0/${mediaId}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!mediaMetaRes.ok) {
+    console.warn('[owner_image] WhatsApp media metadata fetch failed', {
+      messageId, mediaId, status: mediaMetaRes.status,
+    });
+    return null;
+  }
+  const mediaMeta = await mediaMetaRes.json().catch(() => null);
+  const downloadUrl = mediaMeta?.url;
+  if (!downloadUrl) {
+    console.warn('[owner_image] WhatsApp media URL missing', { messageId, mediaId });
+    return null;
+  }
+
+  // ── 2. Download image bytes ─────────────────────────────────────────────
+  const downloadRes = await fetch(downloadUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!downloadRes.ok) {
+    console.warn('[owner_image] WhatsApp image download failed', {
+      messageId, status: downloadRes.status,
+    });
+    return null;
+  }
+  const imageBuffer = await downloadRes.arrayBuffer();
+  const imageBytes  = Buffer.from(imageBuffer);
+
+  // ── 3. Upload to Supabase Storage so the image survives for delegation ──
+  const ext         = resolveImageExtension(mimeType);
+  const storagePath = `${userId}/whatsapp-inbound/${messageId}${ext}`;
+  const uploadRes   = await fetch(
+    `${supabaseUrl}/storage/v1/object/task-images/${storagePath}`,
+    {
+      method:  'POST',
+      headers: {
+        apikey:          serviceKey,
+        Authorization:   `Bearer ${serviceKey}`,
+        'Content-Type':  mimeType || 'image/jpeg',
+        'Cache-Control': '3600',
+        'x-upsert':      'true',
+      },
+      body: imageBytes,
+    },
+  );
+  if (!uploadRes.ok) {
+    const details = await uploadRes.text().catch(() => '');
+    console.warn('[owner_image] Supabase Storage upload failed', {
+      messageId, storagePath, status: uploadRes.status, details,
+    });
+    // Non-fatal — vision can still run; delegation without image is the fallback.
+  }
+  const storageFullPath = uploadRes.ok ? `task-images/${storagePath}` : null;
+
+  // ── 4. Run Anthropic vision analysis ────────────────────────────────────
+  const base64 = imageBytes.toString('base64');
+  const safeMediaType = resolveAnthropicMediaType(mimeType);
+
+  const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type':    'application/json',
+      'x-api-key':       anthropicApiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model:      'claude-sonnet-5',
+      max_tokens: 512,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type:   'image',
+            source: { type: 'base64', media_type: safeMediaType, data: base64 },
+          },
+          {
+            type: 'text',
+            text: [
+              'Analyze this image for a household assistant app.',
+              'Return only valid JSON with these fields:',
+              '- substitution: a brief, concrete noun phrase to replace "this/it" in a command (e.g. "one pack of TEREA Turquoise for IQOS ILUMA", "the grilled salmon dish", "a carton of full-fat milk")',
+              '- description: a one-sentence description of the main subject',
+              '- ocr: any text visible in the image (empty string if none)',
+              '- confidence: your confidence that the main subject is correctly identified (0–1)',
+            ].join(' '),
+          },
+        ],
+      }],
+    }),
+  });
+
+  if (!anthropicRes.ok) {
+    console.warn('[owner_image] Anthropic vision call failed', {
+      messageId, status: anthropicRes.status,
+    });
+    return null;
+  }
+
+  let understanding = null;
+  try {
+    const anthropicBody = await anthropicRes.json();
+    const raw = anthropicBody?.content?.[0]?.text || '';
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      understanding = JSON.parse(jsonMatch[0]);
+    }
+  } catch {
+    console.warn('[owner_image] Anthropic vision response parse failed', { messageId });
+    return null;
+  }
+
+  const result = {
+    description:  String(understanding?.description  || '').trim(),
+    substitution: String(understanding?.substitution || '').trim(),
+    ocr:          String(understanding?.ocr          || '').trim(),
+    confidence:   Number(understanding?.confidence   ?? 0),
+    storagePath:  storageFullPath,
+  };
+
+  console.log('[owner_image] vision analysis complete', {
+    messageId,
+    hasDescription:  Boolean(result.description),
+    hasSubstitution: Boolean(result.substitution),
+    hasOcr:          Boolean(result.ocr),
+    confidence:      result.confidence,
+    hasStoragePath:  Boolean(result.storagePath),
+  });
+
+  return result;
+}
+
+/**
+ * Merges the original caption with image understanding to produce a concrete
+ * instruction for routing and execution.  The original `msg.body` is never
+ * mutated; callers use this only as the reasoning text.
+ */
+export function buildEnrichedCommand(originalBody, imageUnderstanding) {
+  const sub = imageUnderstanding?.substitution || imageUnderstanding?.description || '';
+  if (!sub) return originalBody || '';
+  if (!originalBody) return sub;
+
+  // Replace the first proximal reference ("this", "it", "these", "that", "those")
+  // with the concrete substitution phrase from vision analysis.
+  const proximalRe = /\b(this|it|these|that|those)\b/i;
+  if (proximalRe.test(originalBody)) {
+    return originalBody.replace(proximalRe, sub);
+  }
+
+  // Caption is self-sufficient (no proximal reference) — append image context
+  // for reasoning but keep the caption as the primary instruction.
+  return `${originalBody} (Image: ${sub})`;
+}
+
+function resolveImageExtension(mimeType) {
+  if (!mimeType) return '.jpg';
+  if (mimeType.includes('png'))  return '.png';
+  if (mimeType.includes('webp')) return '.webp';
+  if (mimeType.includes('gif'))  return '.gif';
+  return '.jpg';
+}
+
+function resolveAnthropicMediaType(mimeType) {
+  if (!mimeType) return 'image/jpeg';
+  const supported = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+  return supported.includes(mimeType) ? mimeType : 'image/jpeg';
+}
 const UNMATCHED_QUOTE_TEXT =
   "I couldn't identify the staff question you replied to. Please reply directly to the latest message about that request.";
 const DELIVERY_FAILED_TEXT =
@@ -68,18 +261,51 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     };
   }
 
+  // ── Vision enrichment (Step 2 & 3) ────────────────────────────────────────
+  // When the owner sends an image, analyze it once here and produce an enriched
+  // command for routing/execution. The original msg is never mutated; imageUnderstanding
+  // and effectiveMsg carry the enriched context downstream.
+  let imageUnderstanding = null;
+  if (msg.mediaId) {
+    imageUnderstanding = await analyzeOwnerWhatsAppImage({
+      mediaId:       msg.mediaId,
+      mimeType:      msg.mimeType,
+      userId:        identity.userId,
+      messageId:     msg.messageId,
+      accessToken:   process.env.WHATSAPP_ACCESS_TOKEN,
+      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+      supabaseUrl,
+      serviceKey,
+    }).catch((err) => {
+      console.warn('[owner_image] vision analysis threw (non-fatal, proceeding with caption)', {
+        messageId: msg.messageId, error: err?.message || String(err),
+      });
+      return null;
+    });
+  }
+
+  const effectiveBody = imageUnderstanding
+    ? buildEnrichedCommand(msg.body, imageUnderstanding)
+    : msg.body;
+
+  // effectiveMsg is used everywhere downstream for reasoning.
+  // msg.body (the original caption) is preserved in msg.
+  const effectiveMsg = imageUnderstanding
+    ? { ...msg, body: effectiveBody, imageUnderstanding, imageStoragePath: imageUnderstanding.storagePath }
+    : msg;
+
   let match;
   try {
-    match = msg.contextMessageId || !isDisambiguationSelectorMessage(msg.body)
-      ? await matchOwnerDecision({ supabaseUrl, serviceKey, userId: identity.userId, msg })
+    match = effectiveMsg.contextMessageId || !isDisambiguationSelectorMessage(effectiveMsg.body)
+      ? await matchOwnerDecision({ supabaseUrl, serviceKey, userId: identity.userId, msg: effectiveMsg })
       : await matchPendingDisambiguation({
           supabaseUrl,
           serviceKey,
           userId: identity.userId,
-          selectorText: msg.body,
+          selectorText: effectiveMsg.body,
           selectorReceiptId: receipt.row.receipt_id,
         }) || await matchOwnerDecision({
-          supabaseUrl, serviceKey, userId: identity.userId, msg,
+          supabaseUrl, serviceKey, userId: identity.userId, msg: effectiveMsg,
         });
   } catch (error) {
     await failReceipt({ supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row, error });
@@ -89,7 +315,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   let durableInbound = null;
   if (match.kind !== 'general') {
     const recorded = await recordOwnerInbound({
-      supabaseUrl, serviceKey, identity, msg, receipt: receipt.row, route: 'quoted_escalation',
+      supabaseUrl, serviceKey, identity, msg: effectiveMsg, receipt: receipt.row, route: 'quoted_escalation',
     });
     if (recorded.error) {
       await failReceipt({
@@ -105,18 +331,18 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     // Classify intent to route between the command executor and Carson's
     // conversational bridge. classifyOwnerCommand (inside the executor) stays
     // as the internal execution validator — this router only decides the path.
-    const intent = classifyOwnerWhatsAppIntent(msg.body);
+    const intent = classifyOwnerWhatsAppIntent(effectiveMsg.body);
     console.log('[owner_whatsapp_routing] intent classified', {
       primary_domain: intent.primary_domain,
       isExecutionDomain: intent.isExecutionDomain,
       confidence: intent.confidence,
-      messageId: msg.messageId,
+      messageId: effectiveMsg.messageId,
     });
 
     if (isExecutionDomain(intent)) {
       // Structured command — hand off to the existing executor unchanged.
       const result = await persistAndExecuteOwnerCommand({
-        supabaseUrl, serviceKey, identity, msg, receipt: receipt.row,
+        supabaseUrl, serviceKey, identity, msg: effectiveMsg, receipt: receipt.row,
       });
       if (!result.acknowledgement) {
         await failReceipt({
@@ -128,7 +354,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
       const ack = result.acknowledgementAlreadyAccepted
         ? { ok: true, alreadyAccepted: true }
         : await sendOwnerAcknowledgement({
-            phoneNumberId: msg.phoneNumberId, to: identity.ownerPhone, text: result.acknowledgement,
+            phoneNumberId: effectiveMsg.phoneNumberId, to: identity.ownerPhone, text: result.acknowledgement,
           });
       if (!ack.ok) {
         await updateCommand(supabaseUrl, serviceKey, receipt.row, identity.userId, {
@@ -185,7 +411,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
       supabaseUrl,
       serviceKey,
       identity,
-      msg,
+      msg: effectiveMsg,
       receipt: receipt.row,
       completeReceipt,
       failReceipt,
@@ -211,7 +437,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
       durableInbound?.acknowledgement_text === clarification
       ? { ok: true, alreadyAccepted: true }
       : await sendOwnerAcknowledgement({
-          phoneNumberId: msg.phoneNumberId,
+          phoneNumberId: effectiveMsg.phoneNumberId,
           to: identity.ownerPhone,
           text: clarification,
         });
@@ -255,7 +481,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
       durableInbound?.acknowledgement_text === clarification
       ? { ok: true, alreadyAccepted: true }
       : await sendOwnerAcknowledgement({
-          phoneNumberId: msg.phoneNumberId,
+          phoneNumberId: effectiveMsg.phoneNumberId,
           to: identity.ownerPhone,
           text: clarification,
         });
@@ -292,7 +518,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
       durableInbound?.acknowledgement_text === clarification
       ? { ok: true, alreadyAccepted: true }
       : await sendOwnerAcknowledgement({
-          phoneNumberId: msg.phoneNumberId, to: identity.ownerPhone, text: clarification,
+          phoneNumberId: effectiveMsg.phoneNumberId, to: identity.ownerPhone, text: clarification,
         });
     if (!ack.ok) {
       await failReceipt({
@@ -352,7 +578,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
       durableInbound?.acknowledgement_text === QUOTED_COMPOUND_TEXT
       ? { ok: true, alreadyAccepted: true }
       : await sendOwnerAcknowledgement({
-          phoneNumberId: msg.phoneNumberId,
+          phoneNumberId: effectiveMsg.phoneNumberId,
           to: identity.ownerPhone,
           text: QUOTED_COMPOUND_TEXT,
         });
@@ -461,7 +687,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
       durableInbound?.acknowledgement_text === failureAcknowledgement
       ? { ok: true, alreadyAccepted: true }
       : await sendOwnerAcknowledgement({
-          phoneNumberId: msg.phoneNumberId,
+          phoneNumberId: effectiveMsg.phoneNumberId,
           to: identity.ownerPhone,
           text: failureAcknowledgement,
         });
@@ -516,7 +742,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
     durableInbound?.acknowledgement_text === acknowledgement
     ? { ok: true, alreadyAccepted: true }
     : await sendOwnerAcknowledgement({
-        phoneNumberId: msg.phoneNumberId,
+        phoneNumberId: effectiveMsg.phoneNumberId,
         to: identity.ownerPhone,
         text: acknowledgement,
       });
