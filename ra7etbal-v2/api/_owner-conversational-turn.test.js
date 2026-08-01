@@ -117,6 +117,7 @@ function baseParams(overrides = {}) {
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   capturedSockets = [];
   delete process.env.ELEVENLABS_API_KEY;
   delete process.env.VITE_ELEVENLABS_AGENT_ID;
@@ -161,7 +162,7 @@ describe('runOwnerConversationalTurn — successful turn', () => {
     });
     socket.emit('message', {
       type: 'agent_response',
-      agent_response_event: { agent_response: 'You have 3 pending delegations.' },
+      agent_response_event: { agent_response: 'You have 3 pending delegations.', in_response_to_ids: [1] },
     });
 
     const result = await resultPromise;
@@ -196,7 +197,7 @@ describe('runOwnerConversationalTurn — successful turn', () => {
     });
     socket.emit('message', {
       type: 'agent_response',
-      agent_response_event: { agent_response: "Ahmed hasn't replied yet." },
+      agent_response_event: { agent_response: "Ahmed hasn't replied yet.", in_response_to_ids: [1] },
     });
 
     await resultPromise;
@@ -222,7 +223,7 @@ describe('runOwnerConversationalTurn — successful turn', () => {
     });
     socket.emit('message', {
       type: 'agent_response',
-      agent_response_event: { agent_response: 'Hello!' },
+      agent_response_event: { agent_response: 'Hello!', in_response_to_ids: [1] },
     });
 
     await resultPromise;
@@ -260,7 +261,7 @@ describe('runOwnerConversationalTurn — streaming chunks used when agent_respon
     });
     socket.emit('message', {
       type: 'agent_response',
-      agent_response_event: { agent_response: ' ' },
+      agent_response_event: { agent_response: ' ', in_response_to_ids: [1] },
     });
 
     const result = await resultPromise;
@@ -285,7 +286,7 @@ describe('runOwnerConversationalTurn — streaming chunks used when agent_respon
     });
     socket.emit('message', {
       type: 'agent_response',
-      agent_response_event: { agent_response: 'Direct text response.' },
+      agent_response_event: { agent_response: 'Direct text response.', in_response_to_ids: [1] },
     });
 
     const result = await resultPromise;
@@ -313,7 +314,7 @@ describe('runOwnerConversationalTurn — null agent response uses fallback', () 
     });
     socket.emit('message', {
       type: 'agent_response',
-      agent_response_event: { agent_response: null },
+      agent_response_event: { agent_response: null, in_response_to_ids: [1] },
     });
 
     const result = await resultPromise;
@@ -343,7 +344,7 @@ describe('runOwnerConversationalTurn — reply delivery failure', () => {
     });
     socket.emit('message', {
       type: 'agent_response',
-      agent_response_event: { agent_response: 'Some reply' },
+      agent_response_event: { agent_response: 'Some reply', in_response_to_ids: [1] },
     });
 
     const result = await resultPromise;
@@ -405,7 +406,7 @@ describe('runOwnerConversationalTurn — context build failure is non-fatal', ()
     });
     socket.emit('message', {
       type: 'agent_response',
-      agent_response_event: { agent_response: 'Hello!' },
+      agent_response_event: { agent_response: 'Hello!', in_response_to_ids: [1] },
     });
 
     const result = await resultPromise;
@@ -435,7 +436,7 @@ describe('runOwnerConversationalTurn — default tool policy blocks action tools
     });
     socket.emit('message', {
       type: 'agent_response',
-      agent_response_event: { agent_response: 'Reply text.' },
+      agent_response_event: { agent_response: 'Reply text.', in_response_to_ids: [1] },
     });
 
     await resultPromise;
@@ -461,9 +462,191 @@ describe('runOwnerConversationalTurn — default tool policy blocks action tools
     });
     socket.emit('message', {
       type: 'agent_response',
-      agent_response_event: { agent_response: 'Done.' },
+      agent_response_event: { agent_response: 'Done.', in_response_to_ids: [1] },
     });
 
     await resultPromise;
+  });
+});
+
+// ── Proactive opening handling ────────────────────────────────────────────────
+
+describe('runOwnerConversationalTurn — proactive opening (in_response_to_ids: [])', () => {
+  it('ignores proactive agent_response and resolves on the real reply', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', stubFetch(true));
+
+    const resultPromise = runOwnerConversationalTurn(baseParams({ msg: makeMsg({ body: 'Hi' }) }));
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      type: 'conversation_initiation_metadata',
+      conversation_initiation_metadata_event: { conversation_id: 'conv-proactive-1' },
+    });
+    // Proactive opening — ElevenLabs speaks first before user reply arrives
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: ' ', event_id: 1, in_response_to_ids: [] },
+    });
+    // Real reply — in response to the user's message (event_id 2)
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: 'Hello, how can I help?', event_id: 3, in_response_to_ids: [2] },
+    });
+
+    const result = await resultPromise;
+
+    expect(result.handled).toBe(true);
+    expect(getSentBody()).toBe('Hello, how can I help?');
+    expect(mocks.completeReceipt).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves immediately when no proactive opening occurs (in_response_to_ids non-empty)', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', stubFetch(true));
+
+    const resultPromise = runOwnerConversationalTurn(baseParams());
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      type: 'conversation_initiation_metadata',
+      conversation_initiation_metadata_event: { conversation_id: 'conv-no-proactive' },
+    });
+    // No proactive opening — first response is directly to the user
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: 'Direct reply.', event_id: 2, in_response_to_ids: [1] },
+    });
+
+    const result = await resultPromise;
+
+    expect(result.handled).toBe(true);
+    expect(getSentBody()).toBe('Direct reply.');
+  });
+
+  it('ignores multiple proactive responses before resolving on the real reply', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', stubFetch(true));
+
+    const resultPromise = runOwnerConversationalTurn(baseParams());
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      type: 'conversation_initiation_metadata',
+      conversation_initiation_metadata_event: { conversation_id: 'conv-multi-proactive' },
+    });
+    // Multiple proactive responses (e.g. multi-step opening)
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: ' ', event_id: 1, in_response_to_ids: [] },
+    });
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: ' ', event_id: 2, in_response_to_ids: [] },
+    });
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: ' ', event_id: 3, in_response_to_ids: [] },
+    });
+    // Real reply
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: 'Got it!', event_id: 5, in_response_to_ids: [4] },
+    });
+
+    const result = await resultPromise;
+
+    expect(result.handled).toBe(true);
+    expect(getSentBody()).toBe('Got it!');
+    expect(mocks.completeReceipt).toHaveBeenCalledTimes(1);
+    // Only one WhatsApp message sent — the real reply, not the proactive ones
+    expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails gracefully when socket closes after proactive response with no real reply', async () => {
+    // Simulates what happens when a timeout or transport error occurs after the
+    // proactive opening arrives but before the real response does.
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', stubFetch(true));
+
+    const resultPromise = runOwnerConversationalTurn(baseParams());
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      type: 'conversation_initiation_metadata',
+      conversation_initiation_metadata_event: { conversation_id: 'conv-timeout-proactive' },
+    });
+    // Proactive opening arrives — bridge must not resolve here
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: ' ', event_id: 1, in_response_to_ids: [] },
+    });
+    // Socket closes unexpectedly (transport error / timeout) before real reply arrives
+    socket.dispatchEvent(Object.assign(new Event('close'), { code: 1006, reason: '' }));
+
+    const result = await resultPromise;
+
+    expect(result.handled).toBe(false);
+    expect(result.reason).toBe('turn_failed');
+    expect(mocks.failReceipt).toHaveBeenCalledTimes(1);
+    // Fallback WhatsApp message sent even on failure
+    expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
+    expect(getSentBody()).toContain('try again');
+  });
+
+  it('proactive chunks do not pollute the real response text', async () => {
+    stubElevenLabsEnv();
+    vi.stubGlobal('WebSocket', FakeWebSocket);
+    vi.stubGlobal('fetch', stubFetch(true));
+
+    const resultPromise = runOwnerConversationalTurn(baseParams());
+
+    const socket = await waitForSocket();
+    socket.emit('open');
+    socket.emit('message', {
+      type: 'conversation_initiation_metadata',
+      conversation_initiation_metadata_event: { conversation_id: 'conv-chunk-isolation' },
+    });
+    // Proactive streaming chunks
+    socket.emit('message', {
+      type: 'agent_chat_response_part',
+      text_response_part: { text: 'PROACTIVE ', type: 'delta', event_id: 1 },
+    });
+    socket.emit('message', {
+      type: 'agent_chat_response_part',
+      text_response_part: { text: 'TEXT', type: 'delta', event_id: 1 },
+    });
+    // Proactive agent_response — bridge must reset chunk buffer
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: 'PROACTIVE TEXT', event_id: 1, in_response_to_ids: [] },
+    });
+    // Real streaming chunks (after proactive flush)
+    socket.emit('message', {
+      type: 'agent_chat_response_part',
+      text_response_part: { text: 'Real ', type: 'delta', event_id: 3 },
+    });
+    socket.emit('message', {
+      type: 'agent_chat_response_part',
+      text_response_part: { text: 'answer.', type: 'delta', event_id: 3 },
+    });
+    // Real agent_response is blank — bridge must use the real chunks, not proactive ones
+    socket.emit('message', {
+      type: 'agent_response',
+      agent_response_event: { agent_response: ' ', event_id: 3, in_response_to_ids: [2] },
+    });
+
+    const result = await resultPromise;
+
+    expect(result.handled).toBe(true);
+    expect(getSentBody()).toBe('Real answer.');
   });
 });
