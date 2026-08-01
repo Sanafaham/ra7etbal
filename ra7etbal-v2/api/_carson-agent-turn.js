@@ -490,7 +490,7 @@ function runOwnerTurn({ apiKey, agentId, ownerText, dynamicVars, toolPolicy, mes
     let settled = false;
     let socket;
     let deadline;
-    const diag = { lastStep: 'signed_url_requested', firstPostUserMessageEventLogged: false, conversationId: null, textChunks: [] };
+    const diag = { lastStep: 'signed_url_requested', firstPostUserMessageEventLogged: false, conversationId: null, textChunks: [], chunkShapeLogged: false };
 
     const finish = (fn, value) => {
       if (settled) return;
@@ -631,6 +631,27 @@ function handleOwnerServerEvent(payload, { socket, ownerText, finish, resolve, m
       break;
     }
     case 'agent_chat_response_part': {
+      // Log the shape of the first chunk so we know which field carries the
+      // response (text vs audio). Logs key names and value types only — never
+      // actual content, audio data, or message text.
+      if (!diag.chunkShapeLogged) {
+        diag.chunkShapeLogged = true;
+        const shape = {};
+        for (const [k, v] of Object.entries(payload ?? {})) {
+          if (k === 'type') { shape[k] = v; continue; }
+          if (v && typeof v === 'object') {
+            shape[k] = Object.fromEntries(
+              Object.entries(v).map(([ik, iv]) => [ik, typeof iv])
+            );
+          } else {
+            shape[k] = typeof v;
+          }
+        }
+        console.log('Owner conversational bridge: agent_chat_response_part shape', {
+          messageId,
+          shape,
+        });
+      }
       // ElevenLabs streams the LLM response as text chunks before the final
       // agent_response event. Accumulate here so we can use them if
       // agent_response.agent_response_event.agent_response is blank/space.
