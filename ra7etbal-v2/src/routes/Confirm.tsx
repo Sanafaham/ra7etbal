@@ -298,24 +298,57 @@ export default function Confirm() {
         setConfirming(false);
         return;
       }
+      // [DIAG] Log that the browser received upload slots.
+      console.info("[proof-upload] slots received", {
+        taskId,
+        slotCount: activeProofUploadSlots.length,
+        photoCount: proofPhotos.length,
+      });
       setProofUploading(true);
       for (let i = 0; i < proofPhotos.length; i++) {
         const slot = activeProofUploadSlots[i];
+        // [DIAG] Confirm slot index and storage path (no token logged).
+        console.info("[proof-upload] slot", {
+          taskId,
+          index: slot.index,
+          storagePath: slot.storagePath,
+        });
         try {
+          // [DIAG] resizeImage start.
+          console.info("[proof-upload] resizeImage start", { taskId, index: i, fileName: proofPhotos[i].file.name, fileSize: proofPhotos[i].file.size, fileType: proofPhotos[i].file.type });
+          const resizeStart = performance.now();
           const blob = await resizeImage(proofPhotos[i].file);
+          const resizeMs = Math.round(performance.now() - resizeStart);
+          // [DIAG] resizeImage complete — blob size and type.
+          console.info("[proof-upload] resizeImage done", { taskId, index: i, blobSize: blob.size, blobType: blob.type, resizeMs });
+          // [DIAG] fetch start.
+          const fetchStart = performance.now();
+          console.info("[proof-upload] fetch start", { taskId, index: i });
           const uploadRes = await fetchWithTimeout(slot.uploadUrl, {
             method: "PUT",
             headers: { "Content-Type": "image/jpeg" },
             body: blob,
           }, PROOF_UPLOAD_TIMEOUT_MS);
+          const fetchMs = Math.round(performance.now() - fetchStart);
+          // [DIAG] fetch complete.
+          console.info("[proof-upload] fetch done", { taskId, index: i, status: uploadRes.status, ok: uploadRes.ok, fetchMs });
           if (!uploadRes.ok) {
             throw new Error(`Upload failed (${uploadRes.status})`);
           }
           savedProofPaths.push(slot.storagePath);
         } catch (err) {
+          const isAbort = isAbortError(err);
+          // [DIAG] fetch threw.
+          console.error("[proof-upload] fetch error", {
+            taskId,
+            index: i,
+            isAbort,
+            errorName: err instanceof Error ? err.name : typeof err,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          });
           setProofUploading(false);
           setProofError(
-            isAbortError(err)
+            isAbort
               ? `Photo ${i + 1} of ${proofPhotos.length}: Upload timed out. Please try again.`
               : err instanceof Error
               ? `Photo ${i + 1} of ${proofPhotos.length}: ${err.message}`
