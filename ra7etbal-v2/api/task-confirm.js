@@ -625,6 +625,7 @@ async function handlePost(req, res) {
           taskDescription: task.description,
           assignedTo: task.assigned_to,
           reviewNote: review.note || null,
+          proofImagePath: proofImagePaths[0] ?? null,
         }, { supabaseUrl, serviceKey }).catch((err) =>
           console.error('[task-confirm] uncertain-review owner WhatsApp notification failed (non-fatal):', err?.message || err),
         );
@@ -649,6 +650,7 @@ async function handlePost(req, res) {
           taskDescription: task.description,
           assignedTo: task.assigned_to,
           reviewNote: task.quality_review_note || review.note || null,
+          proofImagePath: proofImagePaths[0] ?? null,
         }, { supabaseUrl, serviceKey }).catch((err) =>
           console.error('[task-confirm] substitute_review owner WhatsApp notification failed (non-fatal):', err?.message || err),
         );
