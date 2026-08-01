@@ -1366,3 +1366,36 @@ Defects Closed:
 
 DECISION: P1 #2 Commitment Lifecycle S2 + S3 COMPLETE. Production stable.
 Gate cleared for P1 #3 Operations Center V1.
+
+---
+
+## 2026-08-01 — Owner WhatsApp Conversational Mode (Phase 1)
+
+**Work:** P1 — Owner WhatsApp Conversational Mode engineering design + implementation.
+
+**Design reviews completed (3):**
+1. Initial architecture design
+2. Architectural corrections: explicit intents over unsupported fallback; shared context builder; policy-driven tools; executor preservation; mixed-intent production verification
+3. Final corrections: one Carson brain (no separate WhatsApp intent model); no context builder extraction in this PR; `classifyOwnerCommand` kept for compatibility
+
+**Verification:** `classifyCarsonInstruction` / `carson-router.ts` cannot be imported from `api/` (TypeScript, Vite-compiled frontend only). Created `_carson-intent-classifier.js` as a JS port with same domain vocabulary. Consolidation deferred to context-extraction refactoring PR.
+
+**Implementation (PR #153, commit 92b4813):**
+- `api/_carson-intent-classifier.js` — pure JS intent classifier, same domains as `src/lib/carson-router.ts`
+- `api/_carson-agent-turn.js` — added `runOwnerConversationalTurn()`: ElevenLabs bridge with inline context build, policy-driven tools (`tool_ids: []` default), WhatsApp reply delivery, receipt lifecycle, fallback on error
+- `api/_owner-whatsapp-routing.js` — general-path routing now calls `classifyOwnerWhatsAppIntent` first; execution domains → existing executor; conversational domains → bridge
+- `api/_owner-whatsapp-routing.test.js` — updated with `_carson-agent-turn.js` mock; added conversational routing test
+- `api/_carson-intent-classifier.test.js` — 45 new tests
+- `api/_owner-conversational-turn.test.js` — 10 new tests
+
+**Suite result:** 4087 tests pass, 0 failures (230 test files).
+
+**Status:** PR #153 open. Awaiting merge and production verification.
+
+**Production verification required before closing:**
+1. "Hi" → conversational reply (not unsupported error)
+2. "What's pending?" → Carson answers from live context
+3. "Remind me tomorrow at 9am..." → reminder created, bridge NOT invoked
+4. "Tell Christopher to..." → delegation created, bridge NOT invoked
+5. Quoted staff escalation → decision delivered, bridge NOT invoked
+6. "Hi Carson. Did Christopher reply? If not, remind me tomorrow." → mixed-intent handled correctly
