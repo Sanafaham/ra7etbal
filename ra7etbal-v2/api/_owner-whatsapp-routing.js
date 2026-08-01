@@ -559,9 +559,15 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   }
 
   const escalation = match.escalation;
-  const staffMessage = match.staffMessage || await fetchStaffMessage({
-    supabaseUrl, serviceKey, userId: identity.userId, staffMessageId: escalation.staff_message_id,
-  });
+  const staffMessage = match.staffMessage || (
+    escalation.staff_message_id
+      ? await fetchStaffMessage({
+          supabaseUrl, serviceKey, userId: identity.userId, staffMessageId: escalation.staff_message_id,
+        })
+      : await fetchTaskDecisionContext({
+          supabaseUrl, serviceKey, userId: identity.userId, taskId: escalation.task_id,
+        })
+  );
   const staffContextText =
     typeof staffMessage?.inbound_text === 'string' ? staffMessage.inbound_text.trim() : '';
   const effectiveReplyText = match.originalAnswer || msg.body;
@@ -1048,7 +1054,7 @@ async function matchOwnerDecision({ supabaseUrl, serviceKey, userId, msg }) {
       'staff_escalation_owner_decisions',
       `user_id=eq.${encodeURIComponent(userId)}` +
         `&or=(id.eq.${encodeURIComponent(explicitId)},deep_link_token.eq.${encodeURIComponent(explicitId)})` +
-        '&select=id,user_id,staff_message_id,status,owner_reply_text,deep_link_token&limit=2',
+        '&select=id,user_id,staff_message_id,task_id,review_type,status,owner_reply_text,deep_link_token,owner_notified_at&limit=2',
     );
     return rows.length === 1
       ? { kind: 'matched', method: 'explicit_identifier', escalation: rows[0] }
@@ -1062,16 +1068,25 @@ async function matchOwnerDecision({ supabaseUrl, serviceKey, userId, msg }) {
     serviceKey,
     'staff_escalation_owner_decisions',
     `user_id=eq.${encodeURIComponent(userId)}&status=eq.open&created_at=gte.${encodeURIComponent(since)}` +
-      '&select=id,user_id,staff_message_id,status,owner_reply_text,deep_link_token,created_at' +
-      '&order=created_at.desc&limit=3',
+      '&select=id,user_id,staff_message_id,task_id,review_type,status,owner_reply_text,deep_link_token,created_at,owner_notified_at' +
+      '&order=created_at.desc&limit=5',
   );
   const matches = [];
   for (const escalation of decisions) {
-    const staffMessage = await fetchStaffMessage({
-      supabaseUrl, serviceKey, userId, staffMessageId: escalation.staff_message_id,
-      requireOwnerNotification: true,
-    });
-    if (staffMessage) matches.push({ escalation, staffMessage });
+    if (escalation.staff_message_id) {
+      // WhatsApp-originated escalation: require owner_notification_status = 'sent'
+      const staffMessage = await fetchStaffMessage({
+        supabaseUrl, serviceKey, userId, staffMessageId: escalation.staff_message_id,
+        requireOwnerNotification: true,
+      });
+      if (staffMessage) matches.push({ escalation, staffMessage });
+    } else if (escalation.task_id && escalation.owner_notified_at) {
+      // Task-confirm-originated review: build context from the task row
+      const taskContext = await fetchTaskDecisionContext({
+        supabaseUrl, serviceKey, userId, taskId: escalation.task_id,
+      });
+      if (taskContext) matches.push({ escalation, staffMessage: taskContext });
+    }
   }
   if (matches.length === 1) {
     return { kind: 'matched', method: 'single_recent_unresolved', ...matches[0] };
@@ -1213,7 +1228,7 @@ async function findQuotedEscalation({ supabaseUrl, serviceKey, userId, contextMe
     serviceKey,
     'staff_escalation_owner_decisions',
     `id=eq.${encodeURIComponent(escalationId)}&user_id=eq.${encodeURIComponent(userId)}` +
-      '&select=id,user_id,staff_message_id,status,owner_reply_text,deep_link_token&limit=2',
+      '&select=id,user_id,staff_message_id,task_id,review_type,status,owner_reply_text,deep_link_token,owner_notified_at&limit=2',
   );
   return escalations.length === 1 ? escalations[0] : null;
 }
@@ -1231,6 +1246,45 @@ async function fetchStaffMessage({
   if (rows.length !== 1) return null;
   if (requireOwnerNotification && rows[0].owner_notification_status !== 'sent') return null;
   return rows[0];
+}
+
+async function fetchTaskDecisionContext({ supabaseUrl, serviceKey, userId, taskId }) {
+  const tasks = await restSelect(
+    supabaseUrl,
+    serviceKey,
+    'tasks',
+    `id=eq.${encodeURIComponent(taskId)}&user_id=eq.${encodeURIComponent(userId)}` +
+      '&select=id,user_id,description,assigned_to,quality_review_status,quality_review_note&limit=2',
+  );
+  if (tasks.length !== 1) return null;
+  const task = tasks[0];
+  if (!task.assigned_to) return null;
+
+  // Look up the assignee person to get phone and person_id
+  const people = await restSelect(
+    supabaseUrl,
+    serviceKey,
+    'people',
+    `user_id=eq.${encodeURIComponent(userId)}&name=eq.${encodeURIComponent(task.assigned_to)}` +
+      '&select=id,name,phone,whatsapp_opted_in&limit=2',
+  );
+  const person = people.length === 1 ? people[0] : null;
+
+  const reviewNote = task.quality_review_note
+    ? `proposed substitute: ${task.quality_review_note}`
+    : task.quality_review_status === 'uncertain'
+      ? 'uploaded proof that needs manual review'
+      : 'submitted proof for review';
+
+  return {
+    id: null,
+    user_id: userId,
+    person_id: person?.id || null,
+    staff_name: task.assigned_to,
+    staff_phone: person?.phone || null,
+    inbound_text: reviewNote,
+    owner_notification_status: 'sent',
+  };
 }
 
 async function claimReceipt({ supabaseUrl, serviceKey, userId, externalMessageId }) {

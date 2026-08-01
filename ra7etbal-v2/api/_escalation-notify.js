@@ -274,3 +274,152 @@ async function rpc(supabaseUrl, serviceKey, fetchImpl, name, args) {
 }
 
 export { buildEscalationMessage, OWNER_DECISION_REPLY_TEMPLATE_NAME };
+
+/**
+ * Notify the owner via WhatsApp when a task-confirm event (uncertain proof,
+ * substitute_review) requires their decision. Unlike notifyOwnerOfEscalation,
+ * this path has no WhatsApp staff message — the trigger is a proof upload.
+ *
+ * Idempotency: uses owner_notified_at on the staff_escalation_owner_decisions
+ * row. If already set, the send is skipped and the existing row is returned.
+ * This is acceptable here because task-confirm is not called concurrently for
+ * the same task — the blast radius of a duplicate notification is at most one
+ * extra WhatsApp message.
+ *
+ * @param {object} input
+ * @param {string} input.taskId
+ * @param {string} input.userId
+ * @param {string} input.reviewType  'uncertain_proof'|'substitute_review'|'correction_limit'
+ * @param {string|null} [input.taskDescription]
+ * @param {string|null} [input.assignedTo]
+ * @param {string|null} [input.reviewNote]  quality_review_note from the task
+ * @param {object} deps
+ * @param {string} deps.supabaseUrl
+ * @param {string} deps.serviceKey
+ * @returns {Promise<{attempted: boolean, status: 'sent'|'skipped_already_sent'|'skipped_no_phone'|'failed', escalationId?: string, deepLinkToken?: string}>}
+ */
+export async function notifyOwnerOfTaskReview(input, deps) {
+  const { supabaseUrl, serviceKey } = deps;
+  const { taskId, userId, reviewType, taskDescription, assignedTo, reviewNote } = input;
+  const fetchImpl = deps.fetchImpl || fetch;
+
+  let decision;
+  try {
+    decision = await rpc(supabaseUrl, serviceKey, fetchImpl, 'claim_task_escalation_owner_decision', {
+      p_task_id: taskId,
+      p_user_id: userId,
+      p_review_type: reviewType,
+    });
+  } catch (err) {
+    console.error('[escalation-notify] claim_task_escalation_owner_decision failed', {
+      taskId, reviewType, error: err?.message || String(err),
+    });
+    return { attempted: false, status: 'failed', reason: 'claim_rpc_failed' };
+  }
+
+  if (!decision?.id) {
+    return { attempted: false, status: 'failed', reason: 'no_decision_row' };
+  }
+
+  if (decision.owner_notified_at) {
+    return {
+      attempted: false,
+      status: 'skipped_already_sent',
+      escalationId: decision.id,
+      deepLinkToken: decision.deep_link_token,
+    };
+  }
+
+  const ownerPhone = await findOwnerPhone({ supabaseUrl, serviceKey, userId });
+  if (!ownerPhone) {
+    return { attempted: true, status: 'skipped_no_phone', escalationId: decision.id, deepLinkToken: decision.deep_link_token };
+  }
+
+  const normalizedPhone = normalizeWhatsAppPhone(ownerPhone);
+  if (!normalizedPhone) {
+    return { attempted: true, status: 'skipped_no_phone', escalationId: decision.id, deepLinkToken: decision.deep_link_token, reason: 'invalid_phone' };
+  }
+
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!accessToken || !phoneNumberId) {
+    return { attempted: true, status: 'failed', reason: 'not_configured', escalationId: decision.id, deepLinkToken: decision.deep_link_token };
+  }
+
+  const templateName = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || OWNER_DECISION_REPLY_TEMPLATE_NAME).trim();
+  const templateLanguage = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || 'en').trim();
+  const message = buildTaskReviewMessage({ reviewType, taskDescription, assignedTo, reviewNote });
+  const payload = buildDirectMessagePayload({
+    to: normalizedPhone,
+    ownerName: 'Carson',
+    message,
+    templateName,
+    templateLanguage,
+  });
+
+  let sendResult;
+  try {
+    sendResult = await sendMetaMessage({
+      url: `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+      accessToken,
+      payload,
+    });
+  } catch (err) {
+    console.error('[escalation-notify] notifyOwnerOfTaskReview: Meta send threw', {
+      taskId, reviewType, error: err?.message || String(err),
+    });
+    return { attempted: true, status: 'failed', reason: 'network_error', escalationId: decision.id, deepLinkToken: decision.deep_link_token };
+  }
+
+  if (!sendResult.ok) {
+    return { attempted: true, status: 'failed', reason: 'meta_rejected', escalationId: decision.id, deepLinkToken: decision.deep_link_token };
+  }
+
+  // Mark owner_notified_at so retries skip the send
+  try {
+    await fetchImpl(`${supabaseUrl}/rest/v1/staff_escalation_owner_decisions?id=eq.${encodeURIComponent(decision.id)}&user_id=eq.${encodeURIComponent(userId)}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({ owner_notified_at: new Date().toISOString() }),
+    });
+  } catch (err) {
+    console.warn('[escalation-notify] notifyOwnerOfTaskReview: owner_notified_at patch failed (non-fatal)', {
+      taskId, error: err?.message || String(err),
+    });
+  }
+
+  console.log('[escalation-notify] notifyOwnerOfTaskReview: sent', {
+    taskId, reviewType, escalationId: decision.id,
+  });
+
+  return {
+    attempted: true,
+    status: 'sent',
+    escalationId: decision.id,
+    deepLinkToken: decision.deep_link_token,
+  };
+}
+
+function buildTaskReviewMessage({ reviewType, taskDescription, assignedTo, reviewNote }) {
+  const task = String(taskDescription || 'a task').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 80);
+  const who = String(assignedTo || 'the staff member').replace(/[\r\n\t]+/g, ' ').trim();
+  const note = reviewNote ? String(reviewNote).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 120) : null;
+
+  if (reviewType === 'substitute_review') {
+    return note
+      ? `${who} is proposing a substitute for "${task}": ${note} Reply to approve or reject.`
+      : `${who} is proposing an alternative for "${task}". Reply to approve or reject.`;
+  }
+  if (reviewType === 'uncertain_proof') {
+    return `The proof for "${task}" needs your review. Reply Yes to mark it done, or No to request a correction from ${who}.`;
+  }
+  if (reviewType === 'correction_limit') {
+    return `"${task}" has reached the correction limit. Please review and decide how to proceed. Reply with your instruction for ${who}.`;
+  }
+  return `"${task}" needs your decision. Reply to this message.`;
+}
