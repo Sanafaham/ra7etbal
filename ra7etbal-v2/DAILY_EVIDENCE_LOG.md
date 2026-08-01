@@ -1366,3 +1366,50 @@ Defects Closed:
 
 DECISION: P1 #2 Commitment Lifecycle S2 + S3 COMPLETE. Production stable.
 Gate cleared for P1 #3 Operations Center V1.
+
+──────────────────────────────
+
+SESSION LOG — 2026-08-01
+
+P1 #3: Operations Center V1 (COS Ch. 10, 15, 17, 20)
+
+Scope: Minimum constitutional slice — observational delivery visibility only.
+Decision gate: Engineering Scope Lock approved by owner before implementation.
+Additional constitutional constraint confirmed: Operations Center V1 is observational
+only — never retries, modifies state, resends, repairs, acknowledges, dismisses,
+changes commitments, or invokes any execution tool.
+
+Files Added:
+- src/lib/carson-operations-center.ts — NEW. Two exported functions:
+    fetchTaskDeliveryStatus(keyword): queries tasks + whatsapp_deliveries
+    by keyword, returns plain-text delivery timeline (sent/delivered/read/failed).
+    fetchOperationsSummary(): live snapshot of WhatsApp delivery failures +
+    reminder delivery issues in last 48h.
+    Both functions: read-only, never mutate state (COS Ch. 15).
+- src/lib/carson-operations-center.test.ts — NEW. 15 tests.
+
+Files Modified:
+- src/components/home/ElevenLabsAgentWidget.tsx — added two client tools:
+    get_task_delivery_status (calls fetchTaskDeliveryStatus)
+    get_operations_summary (calls fetchOperationsSummary)
+    Both follow exact get_calendar_events pattern (guardCurrentToolInvocation
+    + runDirectToolWithDiagnostic). Registered at session init.
+
+Database Changes: NONE. All required tables already exist in production
+(whatsapp_deliveries, tasks.reminder_delivery_status, tasks.reminder_delivery_error).
+
+Test Results:
+- New tests: 15 (carson-operations-center)
+- Full suite: 2489/2489 pass (baseline 2474 + 15 new), 0 regressions
+- Typecheck: 0 errors
+- Build: initial failure (unused TS variables in test file) — fixed in follow-up commit
+
+PR: #151 — merged to main, commit b676e65
+
+Constitutional compliance verified:
+- Ch. 10: Tools report only DB-confirmed facts; never infer success from silence
+- Ch. 15: Observation never assumes success; absent delivery record reported as absent
+- Ch. 17: sent/delivered/read reported as distinct states
+- Ch. 20: Visibility prerequisite for future recovery reasoning — no action taken
+
+DECISION: P1 #3 Operations Center V1 COMPLETE. Gate cleared for P1 #4.
