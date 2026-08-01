@@ -45,7 +45,7 @@
  */
 
 import { findOwnerPhone } from './task-confirm.js';
-import { sendMetaMessage, buildDirectMessagePayload, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
+import { sendMetaMessage, buildDirectMessagePayload, normalizeWhatsAppPhone, sendProofImageMessage } from './send-whatsapp-task.js';
 import { beginWhatsappDelivery, markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 
 const OWNER_DECISION_REPLY_TEMPLATE_NAME = 'ra7etbal_direct_operational_message';
@@ -293,6 +293,10 @@ export { buildEscalationMessage, OWNER_DECISION_REPLY_TEMPLATE_NAME };
  * @param {string|null} [input.taskDescription]
  * @param {string|null} [input.assignedTo]
  * @param {string|null} [input.reviewNote]  quality_review_note from the task
+ * @param {string|null} [input.proofImagePath]  storage path of the uploaded proof photo; when
+ *   present a second WhatsApp image message is sent immediately after the text so the owner
+ *   can make the decision entirely from WhatsApp without opening the app. Non-fatal: failure
+ *   to send the photo never blocks owner_notified_at being stamped.
  * @param {object} deps
  * @param {string} deps.supabaseUrl
  * @param {string} deps.serviceKey
@@ -300,7 +304,7 @@ export { buildEscalationMessage, OWNER_DECISION_REPLY_TEMPLATE_NAME };
  */
 export async function notifyOwnerOfTaskReview(input, deps) {
   const { supabaseUrl, serviceKey } = deps;
-  const { taskId, userId, reviewType, taskDescription, assignedTo, reviewNote } = input;
+  const { taskId, userId, reviewType, taskDescription, assignedTo, reviewNote, proofImagePath } = input;
   const fetchImpl = deps.fetchImpl || fetch;
 
   let decision;
@@ -373,6 +377,32 @@ export async function notifyOwnerOfTaskReview(input, deps) {
 
   if (!sendResult.ok) {
     return { attempted: true, status: 'failed', reason: 'meta_rejected', escalationId: decision.id, deepLinkToken: decision.deep_link_token };
+  }
+
+  // Send proof photo immediately after the text so the owner can decide from WhatsApp alone.
+  // Non-fatal: a photo send failure must never block owner_notified_at from being stamped.
+  if (proofImagePath) {
+    try {
+      const photoResult = await sendProofImageMessage({
+        to: normalizedPhone,
+        accessToken,
+        phoneNumberId,
+        supabaseUrl,
+        serviceKey,
+        imagePath: proofImagePath,
+      });
+      if (!photoResult.sent) {
+        console.warn('[escalation-notify] notifyOwnerOfTaskReview: proof photo not sent (non-fatal)', {
+          taskId, reviewType, reason: photoResult.reason,
+        });
+      } else {
+        console.log('[escalation-notify] notifyOwnerOfTaskReview: proof photo sent', { taskId, reviewType });
+      }
+    } catch (err) {
+      console.warn('[escalation-notify] notifyOwnerOfTaskReview: proof photo threw (non-fatal)', {
+        taskId, reviewType, error: err?.message || String(err),
+      });
+    }
   }
 
   // Mark owner_notified_at so retries skip the send
