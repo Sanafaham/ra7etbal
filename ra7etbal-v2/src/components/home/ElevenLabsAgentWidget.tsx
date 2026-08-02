@@ -47,6 +47,7 @@ import {
 } from "../../lib/carson-tool-params";
 import { filterCalendarEventsByRange, searchCalendarHistory } from "../../lib/calendar";
 import { fetchTaskDeliveryStatus, fetchOperationsSummary } from "../../lib/carson-operations-center";
+import { lookupCommitmentHistory } from "../../lib/carson-commitment-history";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { callCalendarApi } from "../../lib/calendar-actions";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
@@ -5945,6 +5946,17 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("get_operations_summary", params, () =>
               fetchOperationsSummary(),
+            );
+          },
+          // Historical Lookup — Phase 1, Q4 Commitment History. Read-only:
+          // resolves one commitment by keyword and answers with its full,
+          // evidence-based lifecycle (not just delivery status — see
+          // get_task_delivery_status above for that narrower question).
+          get_commitment_history: (params: { keyword?: string }) => {
+            const captureBlock = guardCurrentToolInvocation("get_commitment_history");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("get_commitment_history", params, () =>
+              lookupCommitmentHistory(params?.keyword ?? ""),
             );
           },
           create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {

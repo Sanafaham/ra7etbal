@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-07-28
+Last updated: 2026-08-03
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -518,6 +518,26 @@ After approval, live-test:
 Protect normal delegations, proof upload, worker replies, routine templates, and Quality Intelligence.
 
 ## Known current issues and near-term priorities
+
+### Historical Lookup — Phase 1, Q4 Commitment History
+
+Status: implemented. Not yet merged, PR open against `main`.
+
+What it is: the first capability slice of the frozen Historical Lookup Architecture (Carson's Memory Retrieval Engine) — a read-only voice/typed Carson tool answering "did this commitment ever happen / what's its full story," distinct from the existing Operations Center V1's delivery-status-only question ("did it deliver"). Given a keyword (task description or assigned person's name), resolves the one matching commitment across every task status and archived state (never restricted to active work), then reconstructs its evidence-based lifecycle by merging rows from `tasks`, `confirmations`, `whatsapp_deliveries`, `quality_substitute_decisions`, `reminder_delivery_events` (reminder-type tasks only), and `staff_escalation_owner_decisions` into one chronological timeline.
+
+Ambiguity handling mirrors the existing `act_on_note` convention exactly: zero matches asks the user to clarify, more than one match reads back up to 4 short snippets and asks which one, exactly one match proceeds straight to the answer. Never guesses between plausible candidates.
+
+Conflict resolution: `tasks.status`/`confirmed_at` is the terminal, authoritative record of "is it done" and is never overridden by a downstream event — but a contradicting event is never silently dropped either. Two concrete conflict checks ship in this phase: a task marked done whose most recent WhatsApp delivery attempt failed, and a task marked done with an unanswered owner escalation still open (`staff_escalation_owner_decisions.answered_at IS NULL`). Both surface as an explicit "worth noting" caveat alongside the outcome, never resolved one way or the other by Carson.
+
+Files: `src/lib/carson-commitment-history.ts` (new — resolution, timeline merge, conflict detection, pure answer formatting), `src/lib/carson-commitment-history.test.ts` (new, 17 tests), `src/components/home/ElevenLabsAgentWidget.tsx` (new `get_commitment_history` client tool, wired with the same `guardCurrentToolInvocation`/`runDirectToolWithDiagnostic` pattern as the existing `search_calendar_history`/`get_task_delivery_status`/`get_operations_summary` tools), `src/components/home/ElevenLabsAgentWidget.commitment-history.test.ts` (new, 3 source-text wiring tests matching the existing `.calendar-history.test.ts` convention), `docs/elevenlabs-prompt-patches/2026-08-03-commitment-history.md` (new prompt patch — not yet pasted into the live ElevenLabs dashboard).
+
+Tests: 20 new tests, all passing. Full `npm run test:carson-protected` suite (46 files) re-run clean: 821 passed, 4 skipped, 3 todo — no regressions. Typecheck and production build both pass.
+
+Protect: keep this tool distinct from `get_task_delivery_status` — they answer different question shapes (full lifecycle with outcome/conflict resolution vs. delivery status only) and the prompt patch explicitly routes between them; do not merge them into one tool or let their routing rules blur.
+
+Not done in this phase (deliberately out of scope — see the frozen Historical Lookup Architecture for Q1–Q3, Q5–Q7): person history, topic/keyword recall across free text, time-anchored recall, communication recall, calendar-past recall (already separately shipped as `search_calendar_history`), and aggregate/pattern recall. Each is its own future phase.
+
+Remaining before this can move to Stable and protected: prompt patch pasted into the live ElevenLabs dashboard, PR opened and merged, and Sana's live production verification of the validation phrase in the patch doc.
 
 ### Transport-independent staff communication engine (Issue #46)
 
