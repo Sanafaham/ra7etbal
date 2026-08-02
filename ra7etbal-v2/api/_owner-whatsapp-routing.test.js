@@ -294,6 +294,108 @@ describe('owner command reconciliation safety', () => {
     expect(mocks.executeCommand).not.toHaveBeenCalled();
     expect(mocks.sendMetaMessage).not.toHaveBeenCalled();
   });
+
+  // regression (2026-08-02): quoted_escalation receipt with null context_message_id
+  // was retried by the reconciler on every cron tick, falling through to the
+  // conversational bridge and sending repeated spurious WhatsApp messages.
+  it('regression (2026-08-02): quoted_escalation with null context is never retried', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{
+        id: 'receipt-orphan',
+        user_id: 'user-1',
+        external_message_id: 'wamid.orphan',
+        inbound_text: 'Yes buy it',
+        sender_phone: '905010589614',
+        phone_number_id: 'phone-1',
+        context_message_id: null,
+        route: 'quoted_escalation',
+      }]))
+      // second call = the terminal_failed PATCH
+      .mockResolvedValueOnce(response([{ id: 'receipt-orphan' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const results = await reconcileOwnerWhatsappMessages({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+    });
+
+    expect(results).toEqual([]);
+    expect(mocks.ownerConversationalTurn).not.toHaveBeenCalled();
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
+    expect(mocks.sendMetaMessage).not.toHaveBeenCalled();
+
+    const patchCall = fetchMock.mock.calls[1];
+    expect(patchCall[1].method).toBe('PATCH');
+    expect(String(patchCall[0])).toContain('receipt-orphan');
+    const patchBody = JSON.parse(patchCall[1].body);
+    expect(patchBody.execution_status).toBe('terminal_failed');
+    expect(patchBody.execution_error).toBe('quoted_escalation_missing_context');
+  });
+
+  it('regression (2026-08-02): quoted_escalation WITH valid context is still retried normally', async () => {
+    stubClaim();
+    mocks.resolve.mockResolvedValue({ kind: 'success', status: 'delivered', ownerReplyText: 'Yes' });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{
+        id: 'receipt-valid',
+        user_id: 'user-1',
+        external_message_id: 'wamid.valid',
+        inbound_text: 'Yes buy it',
+        sender_phone: '905010589614',
+        phone_number_id: 'phone-1',
+        context_message_id: 'wamid.escalation-notification',
+        route: 'quoted_escalation',
+      }]))
+      // identity + people
+      .mockResolvedValueOnce(response([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(response([owner]))
+      // whatsapp_deliveries lookup for findQuotedEscalation
+      .mockResolvedValueOnce(response([{ metadata: { escalation_id: 'esc-1' } }]))
+      .mockResolvedValueOnce(response([{
+        id: 'esc-1', user_id: 'user-1', staff_message_id: 'staff-1',
+        status: 'open', owner_reply_text: null, deep_link_token: 'tok-1',
+      }]))
+      .mockResolvedValueOnce(response([{
+        id: 'staff-1', user_id: 'user-1', person_id: 'p-1',
+        staff_name: 'Christopher', staff_phone: '+12025691377', inbound_text: 'Found a substitute.',
+      }]))
+      // recordOwnerInbound + resolve
+      .mockResolvedValue(response([{ id: 'receipt-valid' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    mocks.recordInbound.mockResolvedValue({ data: { acknowledgement_status: null }, error: null });
+
+    const results = await reconcileOwnerWhatsappMessages({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+    });
+
+    expect(results.length).toBe(1);
+    expect(mocks.ownerConversationalTurn).not.toHaveBeenCalled();
+    // no terminal_failed PATCH was issued — the second fetch call is identity, not PATCH
+    const patchCalls = fetchMock.mock.calls.filter((c) => c[1]?.method === 'PATCH');
+    expect(patchCalls.every((c) => !String(c[0]).includes('receipt-orphan'))).toBe(true);
+  });
+
+  it('regression (2026-08-02): conversational bridge is never invoked for orphan receipt', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response([{
+        id: 'receipt-orphan-2',
+        user_id: 'user-1',
+        external_message_id: 'wamid.orphan-2',
+        inbound_text: 'Yes go ahead',
+        sender_phone: '905010589614',
+        phone_number_id: 'phone-1',
+        context_message_id: null,
+        route: 'quoted_escalation',
+      }]))
+      .mockResolvedValueOnce(response([{ id: 'receipt-orphan-2' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await reconcileOwnerWhatsappMessages({ supabaseUrl: SUPABASE, serviceKey: KEY });
+
+    expect(mocks.ownerConversationalTurn).not.toHaveBeenCalled();
+    expect(mocks.sendMetaMessage).not.toHaveBeenCalled();
+  });
 });
 
 describe('authoritative quoted escalation routing', () => {

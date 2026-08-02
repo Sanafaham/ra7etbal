@@ -1204,7 +1204,7 @@ export async function reconcileOwnerWhatsappMessages({ supabaseUrl, serviceKey, 
       'owner_whatsapp_reply_receipts',
       `status=eq.failed&next_retry_at=lte.${encodeURIComponent(new Date().toISOString())}` +
         '&execution_status=neq.terminal_failed' +
-        `&retry_count=lt.5&select=user_id,external_message_id,inbound_text,sender_phone,phone_number_id,context_message_id&limit=${limit}`,
+        `&retry_count=lt.5&select=id,user_id,external_message_id,inbound_text,sender_phone,phone_number_id,context_message_id,route&limit=${limit}`,
     );
   } catch {
     // Migration may deliberately be absent while the default-off code is
@@ -1214,6 +1214,21 @@ export async function reconcileOwnerWhatsappMessages({ supabaseUrl, serviceKey, 
   const results = [];
   for (const row of rows) {
     if (!isOwnerRoutingEnabledForUser(row.user_id) || !row.inbound_text) continue;
+    // A quoted_escalation receipt with no context_message_id is structurally
+    // unrecoverable: findQuotedEscalation requires a WhatsApp quoted-message
+    // context to locate the escalation. Without it, every retry falls through
+    // to the conversational bridge and generates a spurious reply. Mark it
+    // terminal_failed immediately so it is never replayed.
+    if (row.route === 'quoted_escalation' && !row.context_message_id) {
+      await restPatch(
+        supabaseUrl,
+        serviceKey,
+        'owner_whatsapp_reply_receipts',
+        `id=eq.${encodeURIComponent(row.id)}&user_id=eq.${encodeURIComponent(row.user_id)}`,
+        { execution_status: 'terminal_failed', execution_error: 'quoted_escalation_missing_context' },
+      ).catch(() => {});
+      continue;
+    }
     const result = await handleInboundOwnerMessage({
       supabaseUrl,
       serviceKey,
