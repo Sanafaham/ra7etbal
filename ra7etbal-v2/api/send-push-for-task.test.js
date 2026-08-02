@@ -28,6 +28,7 @@ beforeEach(() => {
   vi.stubEnv('VAPID_PUBLIC_KEY', 'public-key');
   vi.stubEnv('VAPID_PRIVATE_KEY', 'private-key');
   vi.stubEnv('VAPID_SUBJECT', 'mailto:test@example.com');
+  vi.stubEnv('CRON_SECRET', 'receipt-secret');
   mocks.verify.mockResolvedValue(true);
   mocks.sendNotification.mockResolvedValue({});
 });
@@ -53,10 +54,12 @@ describe('send-push-for-task reminder delivery', () => {
     ]);
   });
 
-  it('claims the reminder before sending and sends once per unique endpoint', async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse([
+  it('records provider acceptance without falsely completing the reminder', async () => {
+    const patches = [];
+    const events = [];
+    const fetchMock = vi.fn(async (url, options = {}) => {
+      const value = String(url);
+      if (value.includes('/rest/v1/tasks?select=')) return jsonResponse([
         {
           id: 'task-1',
           user_id: 'user-1',
@@ -66,15 +69,27 @@ describe('send-push-for-task reminder delivery', () => {
           due_at: '2026-06-26T18:49:00.000Z',
           last_push_sent_at: null,
           archived_at: null,
+          reminder_delivery_status: 'scheduled',
         },
-      ]))
-      .mockResolvedValueOnce(jsonResponse([
+      ]);
+      if (value.includes('/rest/v1/push_subscriptions')) return jsonResponse([
         subscription('sub-1', 'https://push.example/a'),
         subscription('sub-2', 'https://push.example/a'),
         subscription('sub-3', 'https://push.example/b'),
-      ]))
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1' }]))
-      .mockResolvedValueOnce(emptyResponse());
+      ]);
+      if (value.includes('/rest/v1/reminder_delivery_events')) {
+        events.push(JSON.parse(options.body));
+        return emptyResponse();
+      }
+      if (value.includes('/rest/v1/tasks') && options.method === 'PATCH') {
+        const body = JSON.parse(options.body);
+        patches.push(body);
+        return options.headers.Prefer === 'return=representation'
+          ? jsonResponse([{ id: 'task-1' }])
+          : emptyResponse();
+      }
+      throw new Error(`Unexpected fetch: ${value}`);
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -91,13 +106,25 @@ describe('send-push-for-task reminder delivery', () => {
     );
     expect(mocks.sendNotification).toHaveBeenCalledTimes(2);
 
-    const claimCall = fetchMock.mock.calls[2];
-    expect(String(claimCall[0])).toContain('/rest/v1/tasks');
-    expect(String(claimCall[0])).toContain('last_push_sent_at=is.null');
-    expect(claimCall[1].method).toBe('PATCH');
-    expect(JSON.parse(claimCall[1].body)).toEqual({
-      last_push_sent_at: expect.any(String),
+    expect(patches[0]).toEqual({
+      reminder_delivery_status: 'dispatch_attempted',
+      reminder_dispatch_attempted_at: expect.any(String),
     });
+    expect(patches[1]).toEqual(expect.objectContaining({
+      last_push_sent_at: expect.any(String),
+      reminder_delivery_status: 'delivery_unconfirmed',
+      reminder_provider_accepted_at: expect.any(String),
+    }));
+    expect(patches.flatMap(Object.keys)).not.toContain('status');
+    expect(patches.flatMap(Object.keys)).not.toContain('confirmed_at');
+    expect(events.filter((event) => event.stage === 'provider_accepted')).toHaveLength(2);
+    const payload = JSON.parse(mocks.sendNotification.mock.calls[0][1]);
+    expect(payload.receipt).toEqual(expect.objectContaining({
+      taskId: 'task-1',
+      subscriptionId: 'sub-1',
+      dueAt: '2026-06-26T18:49:00.000Z',
+      token: expect.any(String),
+    }));
   });
 });
 

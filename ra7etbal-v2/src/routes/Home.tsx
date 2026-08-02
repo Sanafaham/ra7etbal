@@ -3,6 +3,8 @@ import { useNavigate } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import { useCarsonStore } from "../stores/carson";
 import { useAuth } from "../hooks/useAuth";
+import { useOpenStaffEscalations } from "../hooks/useOpenStaffEscalations";
+import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";
 import { buildDailyBrief } from "../lib/daily-brief";
 import { usePeopleStore } from "../stores/people";
 import { useProfileStore } from "../stores/profile";
@@ -51,6 +53,18 @@ export default function Home() {
   }, []);
 
   const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
+
+  // Phase C — open staff escalations (Phase B) counted alongside real
+  // needsAttention tasks. Deliberately not folded into buildDailyBrief()
+  // itself — see the matching comment in Updates.tsx.
+  const { escalations: staffEscalations } = useOpenStaffEscalations();
+  const visibleStaffEscalations = useMemo(
+    () => filterVisibleStaffEscalations(staffEscalations, brief.needsAttention.map((t) => t.id)),
+    [staffEscalations, brief.needsAttention],
+  );
+  const staffEscalationCount = visibleStaffEscalations.length;
+  const totalNeedsAttention = brief.needsAttention.length + staffEscalationCount;
+
   const urgentCount = useMemo(
     () =>
       brief.needsAttention.filter(
@@ -63,9 +77,9 @@ export default function Home() {
   );
   const statusTone = useMemo(() => {
     if (urgentCount > 0) return "urgent";
-    if (brief.needsAttention.length > 0) return "attention";
+    if (totalNeedsAttention > 0) return "attention";
     return "clear";
-  }, [brief.needsAttention.length, urgentCount]);
+  }, [totalNeedsAttention, urgentCount]);
 
   const greeting = useMemo(() => buildGreeting(now, displayName), [now, displayName]);
   const premiumStatus = buildPremiumStatus(statusTone);
@@ -108,12 +122,12 @@ export default function Home() {
       {/* ── Needs You — concise preview, always visible with a calm empty state ── */}
       <div data-testid="home-needs-you" className="mt-9 border-t border-border pt-6">
         <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.1em] text-gold">
-          Needs You{brief.needsAttention.length > 0 ? ` · ${brief.needsAttention.length}` : ""}
+          Needs You{totalNeedsAttention > 0 ? ` · ${totalNeedsAttention}` : ""}
         </p>
-        {brief.needsAttention.length > 0 ? (
+        {totalNeedsAttention > 0 ? (
           <button type="button" onClick={() => navigate("/updates?tab=needs-you")} className="w-full text-left">
             <span className="block text-[16.5px] font-bold leading-snug text-ink">
-              {brief.needsAttention[0].description}
+              {brief.needsAttention[0]?.description ?? buildStaffEscalationPreview(staffEscalationCount)}
             </span>
           </button>
         ) : (
@@ -193,6 +207,13 @@ function buildGreeting(now: Date, displayName: string | null): string {
   if (hour < 12) return `Good morning${name}`;
   if (hour < 18) return `Good afternoon${name}`;
   return `Good evening${name}`;
+}
+
+/** Only shown when the sole Needs You item(s) are staff escalations (no real task preview text available). */
+function buildStaffEscalationPreview(count: number): string {
+  return count === 1
+    ? "A staff request needs your decision."
+    : `${count} staff requests need your decision.`;
 }
 
 function buildWaitingSummary(count: number): string {

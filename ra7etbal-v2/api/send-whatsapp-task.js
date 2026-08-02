@@ -759,6 +759,44 @@ export default async function handler(req, res) {
       },
     });
 
+    // ── Multi-photo real media delivery ───────────────────────────────────
+    // The template message above cannot carry more than one media header
+    // (Meta constraint), so once it's accepted, send every attached photo as
+    // its own freeform image message — the same upload-then-reference-by-
+    // media_id path already proven for the single-image template (never the
+    // URL-based `{ image: { link } }` shape removed earlier for being
+    // rejected by Meta). Best-effort: the primary text/link message has
+    // already been delivered, so a photo send failure here (e.g. the
+    // recipient's 24-hour customer-service window has closed) is reported
+    // truthfully in mediaDeliveryResults, never silently and never as if it
+    // succeeded.
+    let mediaDeliveryResults = null;
+    if (isMultiAttachment && taskId) {
+      try {
+        mediaDeliveryResults = await sendAdditionalPhotoMessages({
+          supabaseUrl,
+          serviceKey,
+          accessToken,
+          phoneNumberId,
+          to: normalizedTo,
+          taskId,
+          url,
+        });
+        console.log('[send-whatsapp-task] additional photo messages', {
+          taskId,
+          attempted: mediaDeliveryResults.length,
+          sent: mediaDeliveryResults.filter((r) => r.sent).length,
+          results: mediaDeliveryResults,
+        });
+      } catch (err) {
+        console.error('[send-whatsapp-task] sendAdditionalPhotoMessages threw', {
+          taskId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        mediaDeliveryResults = [];
+      }
+    }
+
     return res.status(200).json({
       success: true,
       delivery_id: deliveryId,
@@ -771,6 +809,7 @@ export default async function handler(req, res) {
       phoneNumberIdLast4,
       templateName: usedTemplateName,
       templateLanguage,
+      mediaDeliveryResults,
       attempt: usedAttempt?.label ?? null,
       linkPlacement: usedAttempt?.linkPlacement ?? null,
       buttonValueMode: usedAttempt?.buttonValueMode ?? null,
@@ -1249,6 +1288,99 @@ async function uploadImageToMeta({ accessToken, phoneNumberId, imageUrl }) {
   }
 }
 
+/**
+ * Reads every task_attachments row for a task (all photos the owner
+ * attached — including the one duplicated into tasks.image_path, since the
+ * multi-attachment template never sends a header image and so never uses
+ * that copy). Returns storage paths in sort_order so photos arrive in the
+ * order they were attached. Never throws — an empty array degrades to
+ * "no additional photos sent", the same as before this fix existed.
+ *
+ * file_name=is.null is required: task_attachments is shared with Proof
+ * Photo V2 (api/task-confirm.js), which stores the assignee's own submitted
+ * proof photos in the same table with file_name set to the literal string
+ * 'proof' (reference-photo rows never set file_name — see task-confirm.js's
+ * own file_name=is.null / file_name=eq.proof split). Without this filter, a
+ * task with proof already submitted would send the assignee's own proof
+ * photos back to them mixed in with the owner's original reference photos.
+ */
+async function fetchTaskAttachmentPaths({ supabaseUrl, serviceKey, taskId }) {
+  if (!taskId || !supabaseUrl || !serviceKey) return [];
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/task_attachments?task_id=eq.${encodeURIComponent(taskId)}&file_name=is.null&select=storage_path&order=sort_order.asc`,
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+        },
+      },
+    );
+    if (!response.ok) return [];
+    const rows = await response.json().catch(() => []);
+    return Array.isArray(rows) ? rows.map((r) => r.storage_path).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Sends every attached photo as its own freeform WhatsApp image message,
+ * once the primary template message has already been accepted. Reuses
+ * uploadImageToMeta (server-to-server binary upload → media_id) — never the
+ * URL-based `{ image: { link } }` shape, which Meta rejects for signed URLs
+ * with a token query parameter (see the removed-legacy-path comment above).
+ *
+ * Best-effort per photo: one failure (e.g. the recipient's 24-hour
+ * customer-service window has closed, since these are freeform, not
+ * template, messages) does not block the rest. Every outcome is reported —
+ * never silently dropped and never reported as sent when it was not.
+ */
+async function sendAdditionalPhotoMessages({ supabaseUrl, serviceKey, accessToken, phoneNumberId, to, taskId, url }) {
+  const paths = await fetchTaskAttachmentPaths({ supabaseUrl, serviceKey, taskId });
+  const results = [];
+
+  for (const storagePath of paths) {
+    const signedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath: storagePath });
+    if (!signedUrl) {
+      results.push({ storagePath, sent: false, reason: 'no_signed_url' });
+      continue;
+    }
+
+    let mediaId = null;
+    try {
+      mediaId = await uploadImageToMeta({ accessToken, phoneNumberId, imageUrl: signedUrl });
+    } catch (err) {
+      results.push({ storagePath, sent: false, reason: err instanceof Error ? err.message : 'meta_upload_threw' });
+      continue;
+    }
+    if (!mediaId) {
+      results.push({ storagePath, sent: false, reason: 'meta_upload_failed' });
+      continue;
+    }
+
+    const sendResult = await sendMetaMessage({
+      url,
+      accessToken,
+      payload: {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to,
+        type: 'image',
+        image: { id: mediaId },
+      },
+    });
+    results.push({
+      storagePath,
+      sent: Boolean(sendResult.ok),
+      messageId: sendResult.ok ? sendResult.messageId : null,
+      reason: sendResult.ok ? null : (sendResult.metaError?.message || 'send_failed'),
+    });
+  }
+
+  return results;
+}
+
 async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath }) {
   if (!imagePath || !supabaseUrl || !serviceKey) return null;
 
@@ -1277,6 +1409,38 @@ async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath })
   } catch {
     return null;
   }
+}
+
+/**
+ * Generates a signed URL for a proof image, uploads it to Meta, and sends it
+ * as a WhatsApp image message. Non-fatal: returns { sent: false } on any failure
+ * so callers can proceed without blocking the primary notification.
+ *
+ * @param {{ to: string, accessToken: string, phoneNumberId: string, supabaseUrl: string, serviceKey: string, imagePath: string }} params
+ * @returns {Promise<{ sent: boolean, reason?: string }>}
+ */
+export async function sendProofImageMessage({ to, accessToken, phoneNumberId, supabaseUrl, serviceKey, imagePath }) {
+  const signedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
+  if (!signedUrl) return { sent: false, reason: 'no_signed_url' };
+
+  const mediaId = await uploadImageToMeta({ accessToken, phoneNumberId, imageUrl: signedUrl });
+  if (!mediaId) return { sent: false, reason: 'meta_upload_failed' };
+
+  const result = await sendMetaMessage({
+    url: `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+    accessToken,
+    payload: {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'image',
+      image: { id: mediaId },
+    },
+  });
+
+  return result.ok
+    ? { sent: true }
+    : { sent: false, reason: result.metaError?.message || 'send_failed' };
 }
 
 export function buildSmsBody({ ownerName, messageText, confirmationLink }) {

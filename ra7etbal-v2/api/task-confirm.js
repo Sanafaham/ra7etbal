@@ -55,7 +55,8 @@
 import webpush from 'web-push';
 import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
-import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
+import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
+import { notifyOwnerOfTaskReview } from './_escalation-notify.js';
 
 // Quality Intelligence vision review can legitimately take longer than the
 // default Vercel function window, especially with several proof photos.
@@ -178,7 +179,17 @@ async function responseSnippet(response) {
 export default async function handler(req, res) {
   if (req.method === 'GET') return handleGet(req, res);
   if (req.method === 'POST') return handlePost(req, res);
-  if (req.method === 'PATCH') return handleOwnerDecision(req, res);
+  if (req.method === 'PATCH') {
+    // Phase D — a deepLinkToken body field identifies the owner-escalation
+    // answer flow (staff_escalation_owner_decisions), never sent by the
+    // Alternative Review UI. Everything else (taskId-based) keeps routing
+    // to the existing, unchanged handleOwnerDecision.
+    const body = req.body || {};
+    if (typeof body.deepLinkToken === 'string' && body.deepLinkToken) {
+      return handleEscalationAnswer(req, res);
+    }
+    return handleOwnerDecision(req, res);
+  }
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
@@ -454,13 +465,22 @@ async function handlePost(req, res) {
       const reviewDelegationMessage = activeCustomInstruction || null;
 
       step = 'load_review_images';
-      const [delegationMessage, referenceImageBase64, proofImagesBase64] = await Promise.all([
+      // Same attachment_count > 0 gate the GET handler already uses (see
+      // attachmentUrls above) — only the multi-reference-photo case needs
+      // the extra task_attachments query; a single-reference task goes
+      // straight to task.image_path with no additional round trip.
+      const referenceImagePaths = activeCustomInstruction
+        ? []
+        : task.attachment_count > 0
+          ? await loadReferenceImagePaths({ supabaseUrl, headers, taskId, fallbackImagePath: task.image_path })
+          : (task.image_path ? [task.image_path] : []);
+      const [delegationMessage, referenceImagesBase64, proofImagesBase64] = await Promise.all([
         reviewDelegationMessage
           ? Promise.resolve(reviewDelegationMessage)
           : fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }),
-        activeCustomInstruction
-          ? Promise.resolve(null)
-          : downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath: task.image_path }),
+        Promise.all(
+          referenceImagePaths.map((imagePath) => downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath })),
+        ),
         Promise.all(
           proofImagePaths.map((imagePath) => downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath })),
         ),
@@ -471,7 +491,7 @@ async function handlePost(req, res) {
         apiKey,
         taskDescription: reviewTaskDescription,
         delegationMessage,
-        referenceImageBase64,
+        referenceImagesBase64,
         proofImagesBase64,
         workerReply,
       });
@@ -598,6 +618,17 @@ async function handlePost(req, res) {
         }).catch((err) =>
           console.error(`[task-confirm] ${review.status}-review owner push failed (non-fatal):`, err?.message || err),
         );
+        await notifyOwnerOfTaskReview({
+          taskId,
+          userId: task.user_id,
+          reviewType: 'uncertain_proof',
+          taskDescription: task.description,
+          assignedTo: task.assigned_to,
+          reviewNote: review.note || null,
+          proofImagePath: proofImagePaths[0] ?? null,
+        }, { supabaseUrl, serviceKey }).catch((err) =>
+          console.error('[task-confirm] uncertain-review owner WhatsApp notification failed (non-fatal):', err?.message || err),
+        );
       } else if (isSubstituteReview) {
         // Narrow additive branch: hand a single judgment call to the owner.
         // No WhatsApp to the assignee — the owner decides via Approve
@@ -611,6 +642,32 @@ async function handlePost(req, res) {
           variant: 'substitute_review',
         }).catch((err) =>
           console.error('[task-confirm] substitute_review owner push failed (non-fatal):', err?.message || err),
+        );
+        await notifyOwnerOfTaskReview({
+          taskId,
+          userId: task.user_id,
+          reviewType: 'substitute_review',
+          taskDescription: task.description,
+          assignedTo: task.assigned_to,
+          reviewNote: task.quality_review_note || review.note || null,
+          proofImagePath: proofImagePaths[0] ?? null,
+        }, { supabaseUrl, serviceKey }).catch((err) =>
+          console.error('[task-confirm] substitute_review owner WhatsApp notification failed (non-fatal):', err?.message || err),
+        );
+      }
+
+      // S2: Register Indeterminate commitments with Open Loop Governance.
+      // Schedules a +4h QStash follow-up so unresolved uncertain/fraud_suspected
+      // tasks get an OLG escalation push if the owner hasn't acted.
+      // COS Ch. 13.5 Amendment S2 — non-fatal.
+      if (savedReviewStatus === 'uncertain' || savedReviewStatus === 'fraud_suspected') {
+        await scheduleUncertainOLG({
+          supabaseUrl,
+          serviceKey,
+          taskId,
+          appBaseUrl: CANONICAL_APP_BASE_URL,
+        }).catch((err) =>
+          console.error('[task-confirm] scheduleUncertainOLG failed (non-fatal):', err?.message || err),
         );
       }
 
@@ -982,6 +1039,472 @@ async function handleOwnerDecision(req, res) {
   }
 }
 
+// ── PATCH (deepLinkToken): Phase D — owner answers a staff escalation ───────
+
+const ESCALATION_DECISIONS = ['approved', 'rejected', 'custom_instruction', 'approved_alternative', 'rejected_alternative'];
+
+/**
+ * Approve/Reject build a generic, escalation-specific reply from data
+ * already on the staff_messages row — never a fixed, scenario-specific
+ * string. A fixed string (e.g. "Yes, buy the red wine vinegar instead.")
+ * would be actively wrong for every escalation except the one it was
+ * written for; this codebase already has exactly this problem solved
+ * once, for a structurally identical owner-decision flow — see
+ * buildApprovalMessageText/buildRejectionMessageText above, which
+ * interpolate {recipientName, taskDescription} (real stored fields, never
+ * invented) rather than hardcoding wording. This mirrors that pattern:
+ * {staffName, inboundText} are both real, stored, already-verified fields
+ * (staff_messages.staff_name/inbound_text), quoted verbatim — the exact
+ * same "quote it back" technique the owner-decision page itself already
+ * uses to show the request to the owner (OwnerEscalationDecision.tsx's
+ * read-only card). Quoting the staff member's own words is not inventing
+ * an owner response — it identifies *which* request this reply answers,
+ * which matters because a staff member can have more than one pending
+ * question open with Carson over time. No other field is used, and
+ * nothing beyond "approved"/"not approved" + a quote of their own
+ * question is asserted — the actual decision content for Approve/Reject
+ * is exactly what the owner selected by tapping the button, nothing more.
+ */
+function buildEscalationApprovalReplyText(staffName, inboundText) {
+  return `${staffName}, this was approved: "${inboundText}" — please go ahead.`;
+}
+function buildEscalationRejectionReplyText(staffName, inboundText) {
+  return `${staffName}, this was not approved: "${inboundText}" — please hold off for now.`;
+}
+
+/**
+ * Phase D — owner answers an open staff escalation
+ * (staff_escalation_owner_decisions, reached via deep_link_token) and
+ * Ra7etBal delivers that answer to the staff member who asked, exactly
+ * once, as a plain-text WhatsApp message (never a template — the staff
+ * member messaged first, so this send is inside Meta's customer-service
+ * window, same as Carson's own auto-reply to staff in
+ * api/whatsapp-webhook.js's handleInboundStaffMessage).
+ *
+ * Reuses the Phase A state machine and RPCs unchanged
+ * (answer_escalation_owner_decision, claim/complete/fail_escalation_
+ * answer_delivery — supabase/migrations/20260726_staff_escalation_owner_
+ * decisions.sql, plus the Phase D delivery_transport_message_id widening
+ * in 20260727_phase_d_escalation_answer_delivery_message_id.sql). No
+ * parallel state machine, no new lease pattern.
+ *
+ * answer_escalation_owner_decision itself authorizes by token possession
+ * only (it has no p_user_id parameter — see its own doc comment in the
+ * migration) because the Phase C read-only page has no session to check
+ * against. This PATCH route DOES have a real signed-in session, so it adds
+ * its own explicit ownership check here, before any write: the escalation
+ * row is looked up by token first, and a mismatched or nonexistent
+ * user_id gets the exact same generic "invalid link" response — never a
+ * different one that would disclose whether the token exists at all for
+ * another household.
+ */
+async function handleEscalationAnswer(req, res) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !serviceKey || !anonKey) {
+    return res.status(500).json({ error: 'Server configuration error.' });
+  }
+
+  const auth = await requireOwnerUser(req, { supabaseUrl, anonKey });
+  if (auth.error) {
+    return res.status(401).json({ error: auth.error });
+  }
+  const userId = auth.uid;
+
+  const { deepLinkToken, decision, instructionText: rawInstructionText } = req.body || {};
+  if (typeof deepLinkToken !== 'string' || !deepLinkToken) {
+    return res.status(400).json({ error: 'deepLinkToken is required.' });
+  }
+  // decision/instructionText are only required (and only used) when this
+  // request will actually record a new answer — i.e. the escalation is
+  // still 'open' below. A retry on a 'failed' delivery reuses the answer
+  // already stored and never needs a decision resubmitted.
+  const instructionText =
+    typeof rawInstructionText === 'string' && rawInstructionText.trim()
+      ? rawInstructionText.trim().slice(0, 1000)
+      : null;
+
+  const headers = {
+    apikey: serviceKey,
+    Authorization: 'Bearer ' + serviceKey,
+    'Content-Type': 'application/json',
+  };
+  const invalidLinkResponse = () =>
+    res.status(404).json({ error: 'This link is invalid, expired, or not associated with your account.' });
+
+  try {
+    // 1. Look up by token, verify ownership — see the function doc comment
+    // above for why this can't be left to the RPC alone.
+    const lookupRes = await fetch(
+      supabaseUrl + '/rest/v1/staff_escalation_owner_decisions?deep_link_token=eq.' +
+        encodeURIComponent(deepLinkToken) +
+        '&select=id,user_id,staff_message_id,status,owner_reply_text',
+      { headers },
+    );
+    const lookupRows = await lookupRes.json().catch(() => []);
+    if (!lookupRes.ok || !Array.isArray(lookupRows) || lookupRows.length === 0) {
+      return invalidLinkResponse();
+    }
+    const existing = lookupRows[0];
+    if (existing.user_id !== userId) {
+      return invalidLinkResponse();
+    }
+
+    // 2. Fetch the linked staff_messages row once, up front — needed both
+    // to build a safe, escalation-specific Approve/Reject reply text
+    // below, and later to resolve the recipient/opt-in state. If this
+    // can't be resolved, or lacks the one field an approval/rejection
+    // reply structurally needs (inbound_text — NOT NULL at the schema
+    // level, but re-checked here rather than assumed), stop entirely:
+    // nothing is written, nothing is sent, no guess is substituted.
+    const staffMsgRes = await fetch(
+      supabaseUrl + '/rest/v1/staff_messages?id=eq.' + encodeURIComponent(existing.staff_message_id) +
+        '&select=id,person_id,staff_name,staff_phone,inbound_text',
+      { headers },
+    );
+    const staffMsgRows = await staffMsgRes.json().catch(() => []);
+    const staffMessage = Array.isArray(staffMsgRows) ? staffMsgRows[0] : null;
+    const staffContextText = typeof staffMessage?.inbound_text === 'string' ? staffMessage.inbound_text.trim() : '';
+    if (!staffMessage || !staffContextText) {
+      console.error('[task-confirm] escalation answer blocked — could not resolve safe reply context', {
+        escalationId: existing.id, staffMessageId: existing.staff_message_id,
+      });
+      return res.status(500).json({ error: 'Could not determine the staff request. Please try again.' });
+    }
+
+    // 3-6. Save the answer (if needed), claim the delivery lease, resolve
+    // the recipient, and send — the reusable Phase D core, shared with the
+    // authoritative owner WhatsApp quoted-reply path
+    // (api/_owner-whatsapp-routing.js).
+    const result = await resolveAndDeliverEscalationAnswer({
+      supabaseUrl, serviceKey, userId, deepLinkToken,
+      escalation: existing, staffMessage, staffContextText, decision, instructionText,
+      replyChannel: 'app',
+    });
+    if (result.kind === 'rpc_error') return respondRpcError(res, result.error);
+    if (result.kind === 'validation_error') return res.status(400).json({ error: result.message });
+    if (result.kind === 'config_error') return res.status(500).json({ error: result.message });
+    if (result.kind === 'send_error') return res.status(502).json({ error: 'Could not send the message. Please retry.' });
+    return res.status(200).json({
+      success: true,
+      status: result.status,
+      ownerReplyText: result.ownerReplyText,
+    });
+  } catch (err) {
+    console.error('[task-confirm] escalation answer failed', {
+      deepLinkToken, decision, message: err?.message || String(err),
+    });
+    return res.status(500).json({ error: 'Could not process this decision. Please try again.' });
+  }
+}
+
+async function failEscalationDeliveryLease(supabaseUrl, serviceKey, escalationId, userId, claimToken, reason) {
+  try {
+    await callRpcSingle(supabaseUrl, serviceKey, 'fail_escalation_answer_delivery', {
+      p_id: escalationId, p_user_id: userId, p_claim_token: claimToken, p_error: reason,
+    });
+  } catch (err) {
+    console.error('[task-confirm] fail_escalation_answer_delivery threw (non-fatal)', {
+      escalationId, error: err?.message || String(err),
+    });
+  }
+}
+
+/**
+ * The reusable Phase D core: save the owner's answer (idempotently, if the
+ * escalation is still 'open'), claim the delivery lease, resolve the staff
+ * recipient, and send the plain-text WhatsApp reply. Extracted from
+ * handleEscalationAnswer's PATCH-route body so the exact same logic can be
+ * reused by the authoritative owner WhatsApp quoted-reply path
+ * (api/_owner-whatsapp-routing.js) without a second, independently
+ * maintained Phase D implementation.
+ *
+ * Returns a plain result object instead of writing to an HTTP response —
+ * callers translate `kind` into whatever response shape (HTTP JSON, plain
+ * return value, etc.) fits their own context:
+ *   { kind: 'validation_error', message }         — bad decision/instructionText (open-escalation path only)
+ *   { kind: 'rpc_error', error }                  — answer/claim RPC failed; caller should use respondRpcError-equivalent handling
+ *   { kind: 'config_error', message }              — WhatsApp not configured, or the stored reply text is empty
+ *   { kind: 'send_error' }                         — Meta rejected the send or the network call failed
+ *   { kind: 'success', status, ownerReplyText }    — status is one of
+ *       'delivered' | 'in_progress' | 'saved_unreachable' | 'sent_unconfirmed'
+ *
+ * `escalation` must already be ownership-verified by the caller (token
+ * lookup + user_id match, or an equivalent check) — this function does not
+ * re-verify ownership. `staffMessage`/`staffContextText` must already be
+ * resolved and non-blank (staffContextText is staffMessage.inbound_text,
+ * trimmed) — this function does not re-fetch or re-validate them.
+ */
+export async function resolveAndDeliverEscalationAnswer({
+  supabaseUrl, serviceKey, userId, deepLinkToken, escalation: existing, staffMessage, staffContextText,
+  decision, instructionText, replyChannel = 'app',
+}) {
+  const headers = {
+    apikey: serviceKey,
+    Authorization: 'Bearer ' + serviceKey,
+    'Content-Type': 'application/json',
+  };
+
+  // Capture these before `escalation` may be replaced by the RPC response,
+  // which returns only a status/reply subset and does not include task_id or
+  // review_type. Using `existing` (the original row) is safe: these fields
+  // are immutable on a decision row.
+  const reviewType = existing.review_type || null;
+  const escalationTaskId = existing.task_id || null;
+
+  // 3. Save the answer, exactly once. Only a genuinely open escalation
+  // gets a new answer; anything else already has one stored, and the
+  // caller's freshly submitted decision/text is deliberately ignored in
+  // favor of what's already persisted — this is what makes a duplicate
+  // submit, a second browser tab, or a resubmit-after-refresh all safe.
+  let escalation = existing;
+  if (existing.status === 'open') {
+    if (!['app', 'whatsapp'].includes(replyChannel)) {
+      return { kind: 'validation_error', message: 'A valid reply channel is required.' };
+    }
+    if (!ESCALATION_DECISIONS.includes(decision)) {
+      return { kind: 'validation_error', message: 'A valid decision is required.' };
+    }
+    if (decision === 'custom_instruction' && !instructionText) {
+      return { kind: 'validation_error', message: 'Custom instruction text is required.' };
+    }
+    const submittedReplyText =
+      decision === 'rejected'
+        ? buildEscalationRejectionReplyText(staffMessage.staff_name, staffContextText)
+        : decision === 'approved'
+        ? buildEscalationApprovalReplyText(staffMessage.staff_name, staffContextText)
+        : instructionText;
+
+    const answer = await callRpcSingle(supabaseUrl, serviceKey, 'answer_escalation_owner_decision', {
+      p_deep_link_token: deepLinkToken,
+      p_owner_reply_text: submittedReplyText,
+      p_owner_reply_channel: replyChannel,
+    });
+    if (answer.error) return { kind: 'rpc_error', error: answer.error };
+    escalation = answer.data;
+  }
+
+  if (escalation.status === 'delivered_to_staff') {
+    return { kind: 'success', status: 'delivered', ownerReplyText: escalation.owner_reply_text };
+  }
+
+  // 4. Claim the delivery lease. Idempotent/atomic — see
+  // claim_escalation_answer_delivery's own doc comment in the migration.
+  const claim = await callRpcRows(supabaseUrl, serviceKey, 'claim_escalation_answer_delivery', {
+    p_id: escalation.id,
+    p_user_id: userId,
+    p_lease_seconds: 120,
+  });
+  if (claim.error) return { kind: 'rpc_error', error: claim.error };
+  const claimResult = claim.data[0];
+
+  if (!claimResult.claimed) {
+    // Either this escalation just won a race and is already fully
+    // delivered, or a live lease is held elsewhere (this or a
+    // concurrent request already sending) — report truthfully, never
+    // guess, never send a second message.
+    if (claimResult.delivery_status === 'delivered_to_staff') {
+      return { kind: 'success', status: 'delivered', ownerReplyText: claimResult.reply_text };
+    }
+    return { kind: 'success', status: 'in_progress', ownerReplyText: claimResult.reply_text };
+  }
+
+  // 5. Resolve the staff recipient and current WhatsApp eligibility,
+  // reusing the staffMessage row already fetched by the caller — no second
+  // staff_messages lookup needed. Never trust staff_phone alone for
+  // opt-in, though — re-check the live people row.
+  let recipientPhone = staffMessage.staff_phone || null;
+  let optedIn = false;
+  if (staffMessage?.person_id) {
+    const personRes = await fetch(
+      supabaseUrl + '/rest/v1/people?id=eq.' + encodeURIComponent(staffMessage.person_id) +
+        '&select=id,phone,whatsapp_opted_in',
+      { headers },
+    );
+    const personRows = await personRes.json().catch(() => []);
+    const person = Array.isArray(personRows) ? personRows[0] : null;
+    if (person) {
+      recipientPhone = person.phone || recipientPhone;
+      optedIn = Boolean(person.whatsapp_opted_in);
+    }
+  }
+  const normalizedPhone = recipientPhone ? normalizeWhatsAppPhone(recipientPhone) : null;
+
+  if (!staffMessage || !normalizedPhone || !optedIn) {
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'staff_unreachable',
+    );
+    return { kind: 'success', status: 'saved_unreachable', ownerReplyText: claimResult.reply_text };
+  }
+
+  // 6. Send — preserve the owner's exact stored reply as the audit source,
+  // while making only recipient-certain third-person references natural for
+  // the staff member who is receiving the message directly.
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  if (!accessToken || !phoneNumberId) {
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'whatsapp_not_configured',
+    );
+    return { kind: 'config_error', message: 'WhatsApp is not configured.' };
+  }
+
+  const isSubstituteReview = reviewType === 'substitute_review';
+  const confirmationUrl =
+    isSubstituteReview && escalationTaskId && decision !== 'rejected_alternative'
+      ? buildFreshWorkerConfirmationUrl(escalationTaskId)
+      : null;
+  const messageText = isSubstituteReview
+    ? buildSubstituteDecisionMessageForStaff({ decision, instructionText: claimResult.reply_text, confirmationUrl })
+    : normalizeOwnerReplyForRecipient(claimResult.reply_text, staffMessage.staff_name);
+  if (!messageText) {
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'empty_reply_text',
+    );
+    return { kind: 'config_error', message: 'Could not send an empty message. Please try again.' };
+  }
+
+  const staffTemplateName = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || 'ra7etbal_direct_operational_message').trim();
+  const staffTemplateLanguage = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || 'en').trim();
+  let sendResult;
+  try {
+    sendResult = await sendMetaMessage({
+      url: `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
+      accessToken,
+      payload: buildDirectMessagePayload({
+        to: normalizedPhone,
+        ownerName: 'Carson',
+        message: messageText.replace(/[\n\t]/g, ' ').replace(/ {5,}/g, '    '),
+        templateName: staffTemplateName,
+        templateLanguage: staffTemplateLanguage,
+      }),
+    });
+  } catch (err) {
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token,
+      err instanceof Error ? err.message : String(err),
+    );
+    return { kind: 'send_error' };
+  }
+
+  if (!sendResult.ok) {
+    const failure = getMetaFailure(sendResult);
+    await failEscalationDeliveryLease(
+      supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, failure.reason,
+    );
+    return { kind: 'send_error' };
+  }
+
+  // 7. Complete — atomic, gated on the exact live claim token; a
+  // superseded/stale token can never resolve this call.
+  const complete = await callRpcSingle(supabaseUrl, serviceKey, 'complete_escalation_answer_delivery', {
+    p_id: escalation.id,
+    p_user_id: userId,
+    p_claim_token: claimResult.claim_token,
+    p_transport_message_id: sendResult.messageId,
+  });
+  if (complete.error) {
+    // Meta already accepted the send — this is a bookkeeping failure
+    // afterward, not a delivery failure. Truthful partial-success result:
+    // the message really did go out, so this must never read as a plain
+    // error implying nothing happened.
+    console.error('[task-confirm] escalation delivery sent but completion bookkeeping failed', {
+      escalationId: escalation.id, error: complete.error,
+    });
+    return {
+      kind: 'success',
+      status: 'sent_unconfirmed',
+      ownerReplyText: claimResult.reply_text,
+      transportMessageId: sendResult.messageId,
+    };
+  }
+
+  // 8. For task-based substitute reviews, update the task's quality_review_status
+  // to match what the app approval path does via complete_custom_instruction /
+  // complete_rejected_alternative. Non-fatal: the message is already delivered.
+  if (isSubstituteReview && escalationTaskId) {
+    if (decision === 'approved_alternative' || decision === 'custom_instruction') {
+      await markApprovedAlternativeConfirmationOnly({
+        supabaseUrl, serviceKey, taskId: escalationTaskId,
+      }).catch((err) =>
+        console.error('[task-confirm] resolveAndDeliver: substitute approved marker failed (non-fatal)', {
+          taskId: escalationTaskId, error: err?.message || String(err),
+        }),
+      );
+    } else if (decision === 'rejected_alternative') {
+      await markSubstituteRejectionCorrectionRequired({
+        supabaseUrl, serviceKey, taskId: escalationTaskId,
+      }).catch((err) =>
+        console.error('[task-confirm] resolveAndDeliver: substitute rejection marker failed (non-fatal)', {
+          taskId: escalationTaskId, error: err?.message || String(err),
+        }),
+      );
+    }
+  }
+
+  return {
+    kind: 'success',
+    status: 'delivered',
+    ownerReplyText: complete.data.owner_reply_text,
+    transportMessageId: sendResult.messageId,
+  };
+}
+
+export function normalizeOwnerReplyForRecipient(replyText, staffName) {
+  const exact = String(replyText || '').replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  if (!exact) return '';
+
+  // Quoted wording may be legally or operationally significant. Transform
+  // only unquoted spans and leave every quoted span byte-for-byte intact.
+  const spans = exact.split(/((?:["“]).*?(?:["”]))/g);
+  return spans.map((span, index) => {
+    if (index % 2 === 1) return span;
+
+    let text = span;
+    const escapedName = String(staffName || '').trim()
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (escapedName) {
+      text = text.replace(
+        new RegExp(
+          `\\b${escapedName}\\s+(can|cannot|can't|should|shouldn't|must|mustn't|may|will|won't|needs to|has to)\\b`,
+          'gi',
+        ),
+        (_match, modal) => {
+          const normalizedModal = /^needs to$/i.test(modal)
+            ? 'need to'
+            : /^has to$/i.test(modal)
+              ? 'have to'
+              : modal.toLowerCase();
+          return `you ${normalizedModal}`;
+        },
+      );
+    }
+
+    // A mixed-pronoun or reported-speech sentence does not identify the
+    // recipient safely enough for a rewrite.
+    const hasHe = /\bhe\b/i.test(text);
+    const hasShe = /\bshe\b/i.test(text);
+    const hasReportedSpeech = /\b(?:said|says|told|asked|reported)\b/i.test(text);
+    if ((hasHe && hasShe) || hasReportedSpeech) return text;
+
+    text = text.replace(/\btell\s+(?:him|her)\s+to\s+/gi, '');
+    text = text.replace(
+      /\b(?:he|she)\s+(can|cannot|can't|should|shouldn't|must|mustn't|may|will|won't|needs to|has to)\b/gi,
+      (_match, modal) => {
+        const normalizedModal = /^needs to$/i.test(modal)
+          ? 'need to'
+          : /^has to$/i.test(modal)
+            ? 'have to'
+            : modal.toLowerCase();
+        return `you ${normalizedModal}`;
+      },
+    );
+    text = text.replace(/\b(Yes|No)\s+(?=you\b)/g, '$1, ');
+    return text;
+  }).join('');
+}
+
 async function markApprovedAlternativeConfirmationOnly({ supabaseUrl, serviceKey, taskId }) {
   const response = await fetch(
     `${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}&status=eq.pending`,
@@ -1005,6 +1528,42 @@ async function markApprovedAlternativeConfirmationOnly({ supabaseUrl, serviceKey
     status: response.status,
     body: response.ok ? '' : await response.text().catch(() => ''),
   };
+}
+
+async function markSubstituteRejectionCorrectionRequired({ supabaseUrl, serviceKey, taskId }) {
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}&status=eq.pending`,
+    {
+      method: 'PATCH',
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({
+        quality_review_status: 'correction_required',
+        quality_review_note: 'Owner rejected the alternative.',
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+  return {
+    ok: response.ok,
+    status: response.status,
+    body: response.ok ? '' : await response.text().catch(() => ''),
+  };
+}
+
+export function buildSubstituteDecisionMessageForStaff({ decision, instructionText, confirmationUrl }) {
+  if (decision === 'rejected_alternative') {
+    return 'Do not continue with this task. Please wait for further instructions.';
+  }
+  const base =
+    decision === 'approved_alternative'
+      ? 'Approved. You can go ahead with this task.'
+      : `From the owner: ${String(instructionText || '').trim() || 'please see instructions.'}`;
+  return confirmationUrl ? `${base}\n\n${confirmationUrl}` : base;
 }
 
 /** Verifies the Bearer JWT, returns { uid } or { error }. Same auth/v1/user pattern as api/automations.js's requireUser(). */
@@ -1042,14 +1601,14 @@ async function callRpcRaw(supabaseUrl, serviceKey, fnName, args) {
 }
 
 /** For functions returning a single composite row (PostgREST returns a JSON object). */
-async function callRpcSingle(supabaseUrl, serviceKey, fnName, args) {
+export async function callRpcSingle(supabaseUrl, serviceKey, fnName, args) {
   const result = await callRpcRaw(supabaseUrl, serviceKey, fnName, args);
   if (result.error) return result;
   return { data: result.data };
 }
 
 /** For functions returning TABLE(...) (PostgREST returns a JSON array). */
-async function callRpcRows(supabaseUrl, serviceKey, fnName, args) {
+export async function callRpcRows(supabaseUrl, serviceKey, fnName, args) {
   const result = await callRpcRaw(supabaseUrl, serviceKey, fnName, args);
   if (result.error) return result;
   return { data: Array.isArray(result.data) ? result.data : [result.data] };
@@ -1076,6 +1635,11 @@ function respondRpcError(res, error) {
     delivery_not_accepted: 409,
     invalid_decision: 400,
     wrong_outcome_path: 400,
+    // Phase D — staff_escalation_owner_decisions RPCs
+    empty_reply: 400,
+    invalid_transition: 409,
+    invalid_lease: 400,
+    stale_delivery_claim: 409,
   };
   const friendlyMap = {
     not_authorized: 'Not authorized for this task.',
@@ -1089,6 +1653,11 @@ function respondRpcError(res, error) {
     delivery_not_accepted: 'The message was not confirmed sent — please try again.',
     invalid_decision: 'This decision is not valid for this task.',
     wrong_outcome_path: 'This decision was already resolved differently — please reload.',
+    // Phase D
+    empty_reply: 'A decision is required.',
+    invalid_transition: 'This request has already been answered — please reload to see the current status.',
+    invalid_lease: 'Could not process this decision right now — please try again.',
+    stale_delivery_claim: 'This send was superseded by another attempt — please reload and try again.',
   };
   return res
     .status(statusMap[message] || 500)
@@ -1142,6 +1711,39 @@ async function clearPreviousQualityReviewForFreshProof({ supabaseUrl, headers, t
       }),
     },
   );
+}
+
+/**
+ * Confirmed production bug: a task with 2 owner-attached reference photos
+ * had only the first (tasks.image_path) sent into Quality Intelligence — the
+ * second reference photo (task_attachments, file_name IS NULL, sort_order 1)
+ * was never loaded, so the model judged all submitted proof photos against
+ * one incomplete reference and produced a false CORRECTION_REQUIRED.
+ *
+ * Returns every reference-photo storage path for the task, ordered by
+ * sort_order — the same file_name=is.null query the GET handler already uses
+ * to build attachmentUrls for display. Falls back to [fallbackImagePath]
+ * only when no task_attachments reference rows exist (single-photo tasks,
+ * and tasks created before Multi-Attachment Task V1).
+ */
+async function loadReferenceImagePaths({ supabaseUrl, headers, taskId, fallbackImagePath }) {
+  try {
+    const response = await fetch(
+      supabaseUrl + '/rest/v1/task_attachments?task_id=eq.' + encodeURIComponent(taskId) +
+        '&file_name=is.null&order=sort_order.asc&select=storage_path',
+      { headers },
+    );
+    if (response.ok) {
+      const rows = await response.json().catch(() => []);
+      const paths = (Array.isArray(rows) ? rows : [])
+        .map((row) => row.storage_path)
+        .filter(Boolean);
+      if (paths.length > 0) return paths;
+    }
+  } catch {
+    // Falls through to the single-image fallback below.
+  }
+  return fallbackImagePath ? [fallbackImagePath] : [];
 }
 
 export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant }) {
@@ -1395,7 +1997,7 @@ async function findAssigneePerson({ supabaseUrl, serviceKey, userId, assignedTo 
 
 // ── Storage helpers (from get-confirm-task.js) ────────────────────────────────
 
-async function findOwnerPhone({ supabaseUrl, serviceKey, userId }) {
+export async function findOwnerPhone({ supabaseUrl, serviceKey, userId }) {
   if (!userId) return null;
 
   const response = await fetch(
@@ -1562,4 +2164,81 @@ async function replaceProofAttachments({ supabaseUrl, serviceKey, taskId, userId
   if (!insertRes.ok) {
     throw new Error(`Could not save proof photos (status ${insertRes.status})`);
   }
+}
+
+// ─── S2: Indeterminate OLG registration ─────────────────────────────────────
+
+const QSTASH_BASE_URL = 'https://qstash.upstash.io/v2';
+const UNCERTAIN_OLG_FOLLOW_UP_SECONDS = 4 * 60 * 60; // 4 hours
+
+/**
+ * Stamps uncertain_olg_registered_at on the task and schedules a QStash
+ * follow-up at +4h to process-delegation-escalations with
+ * { taskId, trigger: 'uncertain_olg' }.
+ *
+ * Non-fatal: a failure here does not block the task-confirm response. The
+ * cron-based escalation path remains active as a fallback.
+ *
+ * COS Ch. 13.5 Amendment S2.
+ */
+export async function scheduleUncertainOLG({ supabaseUrl, serviceKey, taskId, appBaseUrl }) {
+  const qstashToken = process.env.QSTASH_TOKEN;
+  const cronSecret = process.env.CRON_SECRET;
+
+  const headers = {
+    apikey: serviceKey,
+    Authorization: `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json',
+  };
+
+  // Stamp the OLG registration timestamp on the task (best-effort).
+  const patchRes = await fetch(
+    `${supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}&status=eq.pending`,
+    {
+      method: 'PATCH',
+      headers: { ...headers, Prefer: 'return=minimal' },
+      body: JSON.stringify({ uncertain_olg_registered_at: new Date().toISOString() }),
+    },
+  );
+  if (!patchRes.ok) {
+    console.warn('[task-confirm] uncertain_olg_registered_at stamp failed (non-fatal):', {
+      taskId,
+      status: patchRes.status,
+    });
+  }
+
+  if (!qstashToken) {
+    console.warn('[task-confirm] QSTASH_TOKEN not set — uncertain OLG follow-up not scheduled (non-fatal)');
+    return;
+  }
+
+  const resolvedBaseUrl = appBaseUrl || CANONICAL_APP_BASE_URL;
+  const targetUrl = `${resolvedBaseUrl}/api/process-delegation-escalations`;
+  const notBefore = Math.ceil(Date.now() / 1000) + UNCERTAIN_OLG_FOLLOW_UP_SECONDS;
+  const dedupId = `uncertain-olg-${taskId}`;
+
+  const qstashRes = await fetch(`${QSTASH_BASE_URL}/publish/${targetUrl}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${qstashToken}`,
+      'Content-Type': 'application/json',
+      'Upstash-Not-Before': String(notBefore),
+      'Upstash-Deduplication-Id': dedupId,
+      'Upstash-Retries': '3',
+      ...(cronSecret ? { 'Upstash-Forward-Authorization': `Bearer ${cronSecret}` } : {}),
+    },
+    body: JSON.stringify({ taskId, trigger: 'uncertain_olg' }),
+  });
+
+  if (!qstashRes.ok) {
+    const data = await qstashRes.json().catch(() => null);
+    console.warn('[task-confirm] uncertain OLG QStash publish failed (non-fatal):', {
+      taskId,
+      status: qstashRes.status,
+      error: data?.error,
+    });
+    return;
+  }
+
+  console.log('[task-confirm] uncertain OLG registered', { taskId, dedupId, notBefore });
 }

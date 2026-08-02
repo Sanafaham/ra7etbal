@@ -28,6 +28,12 @@
  * rule and docs/SAFETY-duplicate-follow-up-prevention.md.
  */
 
+import {
+  CLIENT_RECEIPT_STAGES,
+  recordDeliveryEvent,
+  verifyReminderReceipt,
+} from './_reminder-delivery.js';
+
 const QSTASH_BASE = 'https://qstash.upstash.io/v2';
 // Exported so a test can assert these stay in lockstep with
 // PROD_FOLLOWUP_MS / PROD_ESCALATE_MS in process-delegation-escalations.js —
@@ -59,13 +65,19 @@ export default async function handler(req, res) {
   const missingVars = [];
   if (!supabaseUrl) missingVars.push('SUPABASE_URL');
   if (!serviceRoleKey) missingVars.push('SUPABASE_SERVICE_ROLE_KEY');
-  if (!qstashToken) missingVars.push('QSTASH_TOKEN');
+  if (req.body?.action !== 'notification-receipt' && !qstashToken) missingVars.push('QSTASH_TOKEN');
 
   if (missingVars.length > 0) {
     console.error(`[qstash-reminder][${requestId}] MISSING ENV VARS: ${missingVars.join(', ')}`);
     return res.status(500).json({
       success: false,
       error: `Server configuration error: missing ${missingVars.join(', ')}`,
+    });
+  }
+
+  if (req.body?.action === 'notification-receipt') {
+    return handleNotificationReceipt(req.body, res, {
+      supabaseUrl, serviceRoleKey, secret: cronSecret, requestId,
     });
   }
 
@@ -193,6 +205,64 @@ export default async function handler(req, res) {
     console.error(`[qstash-reminder][${requestId}] ERROR action=${action} taskId=${taskId}: ${msg}`);
     return res.status(500).json({ success: false, error: msg });
   }
+}
+
+async function handleNotificationReceipt(body, res, config) {
+  const { taskId, subscriptionId, dueAt, token, stage } = body;
+  if (!taskId || !subscriptionId || !dueAt || !CLIENT_RECEIPT_STAGES.has(stage)) {
+    return res.status(400).json({ success: false, error: 'Invalid notification receipt.' });
+  }
+  const taskResponse = await fetch(
+    `${config.supabaseUrl}/rest/v1/tasks?select=id,user_id,type,due_at&id=eq.${encodeURIComponent(taskId)}&limit=1`,
+    { headers: supabaseHeaders(config.serviceRoleKey) },
+  );
+  const rows = await taskResponse.json().catch(() => []);
+  const task = Array.isArray(rows) ? rows[0] : null;
+  if (!task || task.type !== 'reminder' || task.due_at !== dueAt) {
+    return res.status(404).json({ success: false, error: 'Reminder not found.' });
+  }
+  const fields = { taskId, userId: task.user_id, subscriptionId, dueAt };
+  if (!verifyReminderReceipt(fields, token, config.secret)) {
+    return res.status(401).json({ success: false, error: 'Invalid notification receipt token.' });
+  }
+  const subscriptionResponse = await fetch(
+    `${config.supabaseUrl}/rest/v1/push_subscriptions?select=id&` +
+      `id=eq.${encodeURIComponent(subscriptionId)}&user_id=eq.${encodeURIComponent(task.user_id)}&limit=1`,
+    { headers: supabaseHeaders(config.serviceRoleKey) },
+  );
+  const subscriptions = await subscriptionResponse.json().catch(() => []);
+  if (!Array.isArray(subscriptions) || subscriptions.length !== 1) {
+    return res.status(403).json({ success: false, error: 'Subscription does not belong to reminder owner.' });
+  }
+  const eventAt = new Date().toISOString();
+  const eventKey = `${stage}:${subscriptionId}`;
+  await recordDeliveryEvent({
+    supabaseUrl: config.supabaseUrl,
+    serviceRoleKey: config.serviceRoleKey,
+    taskId,
+    userId: task.user_id,
+    subscriptionId,
+    eventKey,
+    stage,
+    metadata: {
+      swVersion: typeof body.swVersion === 'string' ? body.swVersion.slice(0, 80) : null,
+      detail: typeof body.detail === 'string' ? body.detail.slice(0, 80) : null,
+    },
+  });
+  if (stage === 'notification_clicked') {
+    await fetch(`${config.supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}&status=eq.pending`, {
+      method: 'PATCH',
+      headers: { ...supabaseHeaders(config.serviceRoleKey), Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        status: 'done',
+        confirmed_at: eventAt,
+        confirmed_by: 'notification_click',
+        reminder_delivery_status: 'interacted',
+        reminder_interacted_at: eventAt,
+      }),
+    });
+  }
+  return res.status(200).json({ success: true });
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -349,7 +419,10 @@ async function saveMessageId(supabaseUrl, serviceRoleKey, taskId, messageId, req
     {
       method: 'PATCH',
       headers: { ...supabaseHeaders(serviceRoleKey), Prefer: 'return=minimal' },
-      body: JSON.stringify({ qstash_message_id: messageId }),
+      body: JSON.stringify({
+        qstash_message_id: messageId,
+        ...(messageId ? { reminder_delivery_status: 'scheduled', reminder_delivery_error: null } : {}),
+      }),
     },
   );
   if (!response.ok) {

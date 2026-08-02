@@ -53,6 +53,7 @@ const CLAIM_REJECTION_REASONS = new Set([
 ]);
 
 const DEFAULT_MODEL = 'claude-sonnet-4-6';
+const MAX_ESCALATION_REASON_LENGTH = 500;
 
 // ── Supabase REST helpers (service role — bypasses RLS by design) ──────────
 
@@ -167,7 +168,7 @@ function buildContextBlock({ person, task, householdRules, recentMemory }) {
 
 // ── Claude classification + response ────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are Carson, the household's Chief of Staff, replying directly to a household staff member on behalf of the owner. This is not a chat with the owner — never address the staff member as if they were the owner, and never disclose private owner information (private notes, unrelated calendar events, financial details, another staff member's private messages) beyond what their role requires.
+export const SYSTEM_PROMPT = `You are Carson, the household's Chief of Staff, replying directly to a household staff member on behalf of the owner. This is not a chat with the owner — never address the staff member as if they were the owner, and never disclose private owner information (private notes, unrelated calendar events, financial details, another staff member's private messages) beyond what their role requires.
 
 Classify the staff member's message into exactly one of: routine_question, task_update, clarification_request, completion_confirmation, blocker, substitution_request, owner_decision_required, unclear.
 
@@ -175,9 +176,17 @@ Answer the staff member directly, using only the STAFF MEMBER / RELATED TASK / H
 
 Escalate to the owner only when: the answer is not known from the context, the request would materially change an approved plan (time, guest count, scope), money is involved beyond an already-approved limit, safety/privacy/access is involved, two instructions conflict, the staff member reports a serious problem, or the owner must choose between real alternatives. When escalating, still send the staff member a brief, honest holding reply (e.g. "I'm checking that with the owner, I'll get back to you.") — never leave them without a reply.
 
+HARD RULE — permission requests: when the staff member explicitly asks for permission, approval, or authorization to change, replace, buy, omit, delay, or otherwise deviate from what was requested (phrasing like "should I", "can I", "is it okay if", "do you approve", "may I"), you must escalate — owner_attention_required true, next_action_owner "owner", user_facing_state "Needs You" — unless the exact action being asked about is explicitly pre-approved in the RELATED TASK, HOUSEHOLD RULES, or other supplied context. The classification should still be the correct domain category (e.g. substitution_request, blocker), not forced to owner_decision_required. You are never authorized to approve, authorize, or wave through a staff member's deviation yourself — that authority belongs only to the owner, and only an explicit pre-approval already present in the supplied context can substitute for asking. Never write "go ahead", "approved", "that's fine", "standard swap", "standard practice", "proceed", or any other authorization wording unless the supplied context explicitly already approves that exact action — your own sense that a deviation is normal, harmless, or obvious is not a substitute for a real stored approval and must never be invented or implied.
+
 For completion_confirmation: only mark this interaction Completed when the report is plausible and does not require photo proof or an owner decision you cannot make — you are acknowledging that THIS MESSAGE has been fully handled, not marking the underlying task done in the system (that happens through a separate proof/confirmation flow you have no access to). If the task context indicates proof or owner sign-off is required, or you are not confident, use Waiting instead of Completed and say so plainly.
 
 For unclear messages, ask exactly one short clarification question rather than guessing or inventing context — do not classify anything other than unclear, do not escalate, and do not fabricate a response as if the message were understood.
+
+OWNER-FACING DECISION SUMMARY — when escalate is true, escalation_reason is not internal reasoning. It is the complete, concise sentence that will be shown directly to the owner. Start with the staff member's name and summarize the smallest unresolved decision in the STAFF MESSAGE, normally in this form: "[Name] is asking for permission to [specific action]." For a substitution, use "[Name] is asking whether to [substitution and any associated purchase genuinely requested]." Preserve material item, quantity, timing, spending limit, substitution, and stated conditions. Produce one sentence by default. Never introduce a person, item, task, responsibility, rule, or choice absent from the source evidence, and never turn one request into hypothetical extra decisions. Do not copy internal classification reasoning, repeat the request, recommend an option, or add the direct-reply instruction.
+
+A supplied rule may influence classification silently. Mention it in escalation_reason only when it creates a real blocking conflict whose omission could let the owner approve an action that still cannot safely execute. In that case, add at most one short sentence identifying only that conflict and asking whether the staff member should proceed. Optional responsibilities, background memory, and unrelated household rules must never appear. If the requested action cannot be identified safely from the STAFF MESSAGE, classify it as unclear, ask the staff member one focused clarification question, and do not escalate to the owner.
+
+The escalation_reason must be a single line with no newline or tab characters and no more than 500 characters. It must not contain a URL, Visit Task, View Task, an app-routing instruction, or the instruction to reply; the notification layer adds the direct WhatsApp reply instruction exactly once.
 
 Reply style to staff: brief, practical, respectful, states the answer or action first, no internal process disclosure, no mention of tools/databases/AI.
 
@@ -186,7 +195,7 @@ Respond with ONLY a single JSON object, no other text, in exactly this shape:
   "classification": "one of the eight categories above",
   "reply_to_staff": "the brief message to send back to the staff member",
   "escalate": true or false,
-  "escalation_reason": "the exact decision the owner needs to make, or null when escalate is false",
+  "escalation_reason": "the concise, source-faithful owner-facing decision sentence defined above, or null when escalate is false",
   "recommended_option": "your recommendation for the owner, or null",
   "next_action_owner": "carson" | "staff" | "owner" | "nobody",
   "user_facing_state": "Waiting" | "Needs You" | "Completed" | "In Progress",
@@ -251,12 +260,45 @@ function parseClassificationResponse(rawText) {
     classification,
     replyToStaff,
     escalate: Boolean(parsed.escalate),
-    escalationReason: typeof parsed.escalation_reason === 'string' ? parsed.escalation_reason.trim() || null : null,
+    escalationReason: normalizeEscalationReason(parsed.escalation_reason),
     recommendedOption: typeof parsed.recommended_option === 'string' ? parsed.recommended_option.trim() || null : null,
     nextActionOwner,
     userFacingState,
     ownerAttentionRequired: Boolean(parsed.owner_attention_required),
   };
+}
+
+function normalizeEscalationReason(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  if (!normalized) return null;
+  // Never cut off a price, time, quantity, or condition while leaving an
+  // apparently actionable sentence. The prompt owns concise generation;
+  // over-limit output is invalid and must be rejected as a whole.
+  if (normalized.length > MAX_ESCALATION_REASON_LENGTH) return null;
+  return normalized;
+}
+
+/**
+ * Enforce source fidelity for explicit, single-action purchase questions at
+ * the persistence boundary. The classifier still decides whether escalation
+ * is required, but household context is never allowed to rewrite this
+ * unambiguous request into additional people, rules, or decisions.
+ */
+function sourceFaithfulEscalationReason({ inboundText, staffName, outcome }) {
+  if (!outcome.escalate || !outcome.ownerAttentionRequired) return outcome.escalationReason;
+  if (typeof inboundText !== 'string' || typeof staffName !== 'string') return outcome.escalationReason;
+
+  const source = inboundText.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim();
+  const match = source.match(/^can i buy\s+([^?]+)\?$/i);
+  if (!match) return outcome.escalationReason;
+
+  const requestedPurchase = match[1].trim().replace(/[.!]+$/, '');
+  if (!requestedPurchase) return outcome.escalationReason;
+
+  return normalizeEscalationReason(
+    `${staffName.trim()} is asking for permission to buy ${requestedPurchase}.`,
+  );
 }
 
 function safeFallback(reason) {
@@ -371,6 +413,11 @@ export async function processStaffMessage(input, deps) {
       anthropicApiKey, fetchImpl, model, inboundText: input.text, contextBlock,
     });
     const outcome = parseClassificationResponse(rawResponse);
+    outcome.escalationReason = sourceFaithfulEscalationReason({
+      inboundText: input.text,
+      staffName: context.person?.name,
+      outcome,
+    });
 
     const completedResult = await supabaseRpc({
       supabaseUrl, serviceKey, fetchImpl, fn: 'complete_staff_message',
@@ -441,4 +488,7 @@ export {
   CLASSIFICATIONS,
   NEXT_ACTION_OWNERS,
   USER_FACING_STATES,
+  MAX_ESCALATION_REASON_LENGTH,
+  normalizeEscalationReason,
+  sourceFaithfulEscalationReason,
 };

@@ -9,6 +9,7 @@ import {
   createTask as apiCreate,
   deleteTask as apiDelete,
   deleteTasks as apiDeleteMany,
+  dismissConfirmationNotices as apiDismissConfirmationNotices,
   listTasks as apiList,
   updateTask as apiUpdate,
 } from "../lib/tasks";
@@ -35,14 +36,13 @@ export interface TasksState {
   markDone: (id: string) => Promise<Task>;
   markPending: (id: string) => Promise<Task>;
   archiveDone: (ids: string[]) => Promise<Task[]>;
+  /** Dismiss one completed confirmation banner and persist it on the task row. */
+  dismissConfirmationNotice: (id: string) => Promise<void>;
   /** Replace a single row in place (used by realtime updates). */
   upsert: (row: Task) => void;
 }
 
 export const useTasksStore = create<TasksState>((set, get) => {
-  // Tracks the in-flight loadFor fetch, if any. Not part of the public
-  // state — purely a concurrency guard local to this store instance (same
-  // pattern as the inFlight guard in tasks-live-refresh.ts).
   let loadingPromise: Promise<void> | null = null;
 
   async function fetchAndApply(userId: string) {
@@ -54,10 +54,7 @@ export const useTasksStore = create<TasksState>((set, get) => {
     } catch (err) {
       set({
         status: "error",
-        error:
-          err instanceof Error
-            ? err.message
-            : "Could not load tasks.",
+        error: err instanceof Error ? err.message : "Could not load tasks.",
       });
     }
   }
@@ -68,8 +65,7 @@ export const useTasksStore = create<TasksState>((set, get) => {
     error: null,
     loadedForUserId: null,
 
-    reset: () =>
-      set({ status: "idle", items: [], error: null, loadedForUserId: null }),
+    reset: () => set({ status: "idle", items: [], error: null, loadedForUserId: null }),
 
     async loadFor(userId, opts) {
       const { status, loadedForUserId } = get();
@@ -77,12 +73,6 @@ export const useTasksStore = create<TasksState>((set, get) => {
       if (sameUser && status === "ready" && !opts?.force) return;
       if (sameUser && status === "loading") {
         if (!opts?.force) return;
-        // A forced refresh (e.g. right after the owner completes a Needs You
-        // decision) must never be silently dropped just because a background
-        // poll's fetch happens to already be in flight — that previously let
-        // the poll's (possibly pre-decision) snapshot win with no guarantee
-        // the caller's own request was ever honored. Wait for the in-flight
-        // fetch, then issue a fresh one so the caller can rely on the result.
         if (loadingPromise) await loadingPromise;
       }
       const promise = fetchAndApply(userId);
@@ -96,53 +86,46 @@ export const useTasksStore = create<TasksState>((set, get) => {
 
     async add(draft) {
       const row = await apiCreate(draft);
-      set((s) => ({ items: [row, ...s.items] }));
+      set((state) => ({ items: [row, ...state.items] }));
       return row;
     },
 
     push(rows) {
       if (rows.length === 0) return;
-      set((s) => ({ items: [...rows, ...s.items] }));
+      set((state) => ({ items: [...rows, ...state.items] }));
     },
 
     async update(id, patch) {
-      const prev = get().items.find((t) => t.id === id);
+      const prev = get().items.find((task) => task.id === id);
       if (!prev) throw new Error("Task not found");
       const optimistic = { ...prev, ...patch } as Task;
-      set((s) => ({ items: s.items.map((t) => (t.id === id ? optimistic : t)) }));
+      set((state) => ({ items: state.items.map((task) => (task.id === id ? optimistic : task)) }));
       try {
         const updated = await apiUpdate(id, patch);
-        set((s) => ({ items: s.items.map((t) => (t.id === id ? updated : t)) }));
-        // If due_at changed on a reminder, reschedule the QStash job.
+        set((state) => ({ items: state.items.map((task) => (task.id === id ? updated : task)) }));
         if (
           updated.type === "reminder" &&
           "due_at" in patch &&
           patch.due_at !== prev.due_at &&
           updated.status === "pending"
         ) {
-          if (updated.due_at) {
-            void rescheduleReminderPush(id, updated.due_at);
-          } else {
-            void cancelReminderPush(id);
-          }
+          if (updated.due_at) void rescheduleReminderPush(id, updated.due_at);
+          else void cancelReminderPush(id);
         }
         return updated;
       } catch (err) {
-        set((s) => ({ items: s.items.map((t) => (t.id === id ? prev : t)) }));
+        set((state) => ({ items: state.items.map((task) => (task.id === id ? prev : task)) }));
         throw err;
       }
     },
 
     async remove(id) {
-      const task = get().items.find((t) => t.id === id);
+      const task = get().items.find((item) => item.id === id);
       const prev = get().items;
-      set({ items: prev.filter((t) => t.id !== id) });
+      set({ items: prev.filter((item) => item.id !== id) });
       try {
         await apiDelete(id);
-        // Cancel the QStash job so the push doesn't fire after deletion.
-        if (task?.type === "reminder" && task.due_at) {
-          void cancelReminderPush(id);
-        }
+        if (task?.type === "reminder" && task.due_at) void cancelReminderPush(id);
       } catch (err) {
         set({ items: prev });
         throw err;
@@ -152,18 +135,12 @@ export const useTasksStore = create<TasksState>((set, get) => {
     async removeMany(ids) {
       const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
       if (uniqueIds.length === 0) return;
-
       const uniqueIdSet = new Set(uniqueIds);
       const prev = get().items;
       const removedReminderIds = prev
-        .filter((t) => uniqueIdSet.has(t.id) && t.type === "reminder" && t.due_at)
-        .map((t) => t.id);
-      set({
-        items: prev.filter(
-          (task) => !(uniqueIdSet.has(task.id) && task.status === "done"),
-        ),
-      });
-
+        .filter((task) => uniqueIdSet.has(task.id) && task.type === "reminder" && task.due_at)
+        .map((task) => task.id);
+      set({ items: prev.filter((task) => !(uniqueIdSet.has(task.id) && task.status === "done")) });
       try {
         await apiDeleteMany(uniqueIds);
         for (const id of removedReminderIds) void cancelReminderPush(id);
@@ -174,24 +151,17 @@ export const useTasksStore = create<TasksState>((set, get) => {
     },
 
     async markDone(id) {
-      const task = get().items.find((t) => t.id === id);
+      const task = get().items.find((item) => item.id === id);
       const result = await get().update(id, {
         status: "done",
         confirmed_at: new Date().toISOString(),
       });
-      // Cancel the QStash job so no push fires for a completed reminder.
-      if (task?.type === "reminder" && task.due_at) {
-        void cancelReminderPush(id);
-      }
+      if (task?.type === "reminder" && task.due_at) void cancelReminderPush(id);
       return result;
     },
 
     async markPending(id) {
-      const result = await get().update(id, {
-        status: "pending",
-        confirmed_at: null,
-      });
-      // Re-arm the QStash job if the reminder's due_at is still in the future.
+      const result = await get().update(id, { status: "pending", confirmed_at: null });
       if (result.type === "reminder" && result.due_at) {
         void scheduleReminderPush(result.id, result.due_at);
       }
@@ -201,15 +171,9 @@ export const useTasksStore = create<TasksState>((set, get) => {
     async archiveDone(ids) {
       const uniqueIds = Array.from(new Set(ids)).filter(Boolean);
       if (uniqueIds.length === 0) return [];
-
       const uniqueIdSet = new Set(uniqueIds);
       const prev = get().items;
-      set({
-        items: prev.filter(
-          (task) => !(uniqueIdSet.has(task.id) && task.status === "done"),
-        ),
-      });
-
+      set({ items: prev.filter((task) => !(uniqueIdSet.has(task.id) && task.status === "done")) });
       try {
         return await apiArchiveDone(uniqueIds);
       } catch (err) {
@@ -218,12 +182,48 @@ export const useTasksStore = create<TasksState>((set, get) => {
       }
     },
 
+    async dismissConfirmationNotice(id) {
+      const prev = get().items.find((task) => task.id === id);
+      if (
+        !prev ||
+        prev.dismissed_at ||
+        prev.type !== "delegation" ||
+        prev.status !== "done" ||
+        !prev.confirmed_at
+      ) {
+        return;
+      }
+
+      const optimistic = { ...prev, dismissed_at: new Date().toISOString() };
+      set((state) => ({
+        items: state.items.map((task) => (task.id === id ? optimistic : task)),
+      }));
+
+      try {
+        const [updated] = await apiDismissConfirmationNotices([id]);
+        if (!updated) {
+          set((state) => ({
+            items: state.items.map((task) => (task.id === id ? prev : task)),
+          }));
+          return;
+        }
+        set((state) => ({
+          items: state.items.map((task) => (task.id === id ? updated : task)),
+        }));
+      } catch (err) {
+        set((state) => ({
+          items: state.items.map((task) => (task.id === id ? prev : task)),
+        }));
+        throw err;
+      }
+    },
+
     upsert(row) {
-      set((s) => {
-        const idx = s.items.findIndex((t) => t.id === row.id);
-        if (idx === -1) return { items: [row, ...s.items] };
-        const next = s.items.slice();
-        next[idx] = row;
+      set((state) => {
+        const index = state.items.findIndex((task) => task.id === row.id);
+        if (index === -1) return { items: [row, ...state.items] };
+        const next = state.items.slice();
+        next[index] = row;
         return { items: next };
       });
     },

@@ -1,4 +1,5 @@
 import { deliverTaskMessage, type DeliveryResult } from "./delivery";
+import { preserveDirectMessageReplyIntent } from "./direct-message-reply-intent";
 import { normalizeFirstPersonForOwner } from "./direct-message-owner-normalization";
 import type { Message } from "../types/message";
 import type { MessageDraft } from "../types/message";
@@ -27,6 +28,12 @@ export interface CreateDirectMessageInput {
    * is created — see direct-message-owner-normalization.ts.
    */
   ownerName?: string | null;
+  /**
+   * The owner's verbatim instruction, when available. This lets the shared
+   * delivery boundary preserve reply-request semantics even if the model
+   * supplied only the quoted reply text as messageText.
+   */
+  ownerInstruction?: string | null;
   createMessageFn?: CreateMessageFn;
 }
 
@@ -52,6 +59,7 @@ export async function createDirectMessageRecord({
   recipient,
   messageText,
   ownerName,
+  ownerInstruction,
   createMessageFn,
 }: CreateDirectMessageInput): Promise<Message> {
   void source;
@@ -62,7 +70,16 @@ export async function createDirectMessageRecord({
   // reroute; Type's executeDirectMessageFastPath and the same sendDelegation
   // reroute) converges on before a message row is ever created — see
   // direct-message-owner-normalization.ts.
-  const cleanMessage = normalizeFirstPersonForOwner(messageText, ownerName).trim();
+  // Ordering invariant: reconstruct explicit reply requests AFTER ordinary
+  // owner normalization. The verbatim owner instruction is authoritative, so
+  // this repairs either a raw first-person tool payload or one the model has
+  // already rewritten, while ordinary direct messages retain normalization.
+  const ownerNormalizedMessage = normalizeFirstPersonForOwner(messageText, ownerName).trim();
+  const cleanMessage = preserveDirectMessageReplyIntent(
+    ownerInstruction,
+    cleanRecipient,
+    ownerNormalizedMessage,
+  ).trim();
   if (!userId) throw new Error("Not signed in.");
   if (!cleanRecipient) throw new Error("Direct message recipient is required.");
   if (!cleanMessage) throw new Error("Direct message text is required.");
@@ -105,6 +122,7 @@ export async function createAndSendDirectMessage({
   messageText,
   phone,
   ownerName = null,
+  ownerInstruction = null,
   createMessageFn,
   deliverTaskMessageFn = deliverTaskMessage,
 }: CreateAndSendDirectMessageInput): Promise<{ message: Message; delivery: DeliveryResult }> {
@@ -116,6 +134,7 @@ export async function createAndSendDirectMessage({
       recipient,
       messageText,
       ownerName,
+      ownerInstruction,
       createMessageFn,
     });
   } catch (err) {

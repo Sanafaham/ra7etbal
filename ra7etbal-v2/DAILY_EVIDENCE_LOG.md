@@ -1107,3 +1107,384 @@ Remaining risks:
   (same preview-tool limitation noted in prior entries) — recommend
   Sana manually confirm Delete works in the Done list on iPhone PWA
   and that active to-dos/tasks are unaffected.
+
+OWNER WHATSAPP SAFE ROUTING — SLICE 1
+
+Date:
+2026-07-27
+
+Status:
+Implemented on `feat/owner-whatsapp-safe-routing-slice-1`; not deployed.
+
+What now works:
+
+• Owner identity is resolved before consent/staff handling.
+• Only a quoted Meta context ID mapped to one owner escalation notification
+  can resolve an escalation.
+• Ordinary owner commands enter a separate, explicitly deferred path and
+  never query or infer from open-escalation count.
+• Duplicate webhook claims are fenced by the existing production receipt
+  lease.
+• App and WhatsApp escalation answers carry explicit reply channels.
+• Owner acknowledgement-bearing routes complete only after Meta acceptance.
+
+What was tested:
+
+• Focused routing + Phase B/D + webhook: 191 passed, 4 skipped.
+• Protected Carson gate: 566 passed, 4 skipped, 3 todo.
+• Full suite: 2196 passed, 4 skipped, 3 todo across 137 files.
+• Typecheck passed.
+• Production build passed with pre-existing CSS and bundle-size warnings.
+
+What failed and was fixed:
+
+• Initial full suite: one base test searched the widget for hosting copy that
+  lives in `ops-intelligence.ts`. The test source target was corrected without
+  changing Carson behavior; the full rerun exited zero.
+
+Current next task:
+
+• Independent review, then Slice 2: implement the real server-side general
+  owner command executor. Do not add unquoted short-answer inference yet.
+
+Do not touch:
+
+• Production migrations, live escalation rows, templates, confirmation links,
+  auth/RLS, Quality Intelligence, PWA/push, or deployment during review.
+
+Migration gotcha:
+
+• `20260728_owner_whatsapp_safe_routing_slice_1.sql` is prepared but was not
+  applied. The branch must not deploy until that forward migration is reviewed
+  and deliberately applied in the correct order.
+
+OWNER WHATSAPP SAFE ROUTING — REQUIRED FIXES + SLICE 2
+
+Date:
+2026-07-28
+
+Status:
+Implemented on `feat/owner-whatsapp-safe-routing-slice-1`; flag remains off,
+not deployed, migrations not applied.
+
+What now works:
+
+• `OWNER_WHATSAPP_ROUTING_USER_IDS` is a default-off, exact user-id allowlist.
+• Possible-owner identity ambiguity fails closed before consent/staff routing.
+• Unquoted direct messages, delegations, and reminders execute through a
+  server-only boundary; unsupported commands are durably recorded and answered
+  truthfully.
+• Receipt rows retain original text, sender/account context, classification,
+  execution/ack state, action IDs, transport IDs, errors, and bounded retries.
+• Deterministic receipt-derived task/message IDs and delivery-state checks fence
+  duplicate command side effects.
+• The authenticated 10-minute QStash job reconciles retryable rows only when
+  the account allowlist is non-empty.
+• Accepted acknowledgements are not resent after receipt completion failure.
+• Accepted-but-unconfirmed staff escalation sends retain the Meta transport ID
+  and reconcile without a second staff send.
+• Quoted Meta context remains the only authority for escalation resolution.
+
+What was tested:
+
+• Focused owner routing/webhook/Phase D: 170 passed, 4 skipped.
+• Protected Carson gate: 567 passed, 4 skipped, 3 todo.
+• Full suite: 2211 passed, 4 skipped, 3 todo across 138 files.
+• Typecheck passed.
+• Production build passed with the pre-existing CSS and bundle-size warnings.
+• PostgreSQL 16: forward migration executed; clean rollback restored the old
+  two-argument function; rollback with WhatsApp/new-command audit rows failed
+  at the deliberate preflight before schema mutation.
+
+Current next task:
+
+• Independent review of the new exact commit. Keep the flag off and do not
+  apply the migration until that review approves sequencing.
+
+Do not touch:
+
+• Production migrations/data, live escalations, Meta templates, auth/RLS,
+  Quality Intelligence, PWA/push, or deployment during review.
+
+Gotchas:
+
+• Controlled activation requires the exact production owner `user_id` in
+  `OWNER_WHATSAPP_ROUTING_USER_IDS`; an empty/missing value preserves current
+  production routing.
+• Schema rollback must be coordinated with code rollback and deliberately
+  refuses to discard new audit truth.
+
+---
+
+Date: 2026-08-01
+
+Session: Historical Calendar Lookup — Port to Main + ElevenLabs Integration
+
+Goal:
+Complete Historical Calendar Lookup end-to-end: code, tests, ElevenLabs tool registration, ElevenLabs prompt update, deployment, production route verification.
+
+Root cause context:
+The feature (commit 01a09c5) had been implemented on carson-bridge-revert-branch-id-experiment which was merged to main via PR #45 without including the historical calendar commits added after the merge. Main's api/google-calendar.js was still at 707 lines (pre-feature).
+
+What was changed:
+
+• api/google-calendar.js (707 → 1028 lines) — historical route: GET /api/google-calendar?range=historical. Helpers: parseIsoDate, addUtcDays, historicalQueryTokens, shapeHistoricalCalendarEvent, validateHistoricalSearchInput, localDateBoundaryToIso, finalizeHistoricalSearch. Privacy-aware matching (title/attendee/location/description), description excerpts bounded at 240 chars, pagination cap: HISTORY_MAX_PAGES=4, HISTORY_PAGE_SIZE=250, HISTORY_MAX_RANGE_DAYS=366.
+
+• src/lib/calendar.ts — HistoricalCalendarEvent + HistoricalCalendarSearchResult interfaces, searchCalendarHistory() function. Separate from fetchCalendarEvents() — historical queries can never fall back to the future planning cache.
+
+• src/components/home/ElevenLabsAgentWidget.tsx — historicalSearchCacheRef (session deduplication), searchCalendarHistoryTool callback, search_calendar_history client tool registration.
+
+• src/lib/canonical-paths.test.ts — regression guard: historical path stays on the authenticated Ra7etBal route.
+
+New test files: api/google-calendar.history.test.js (19 tests), src/lib/calendar-history.test.ts (3 tests), src/components/home/ElevenLabsAgentWidget.calendar-history.test.ts (6 tests).
+
+ElevenLabs changes (via PATCH API, agent_3001kt3zzkcxfb3bwejd8yzzhnmy):
+• search_calendar_history registered as Client Tool (start_date, end_date required; query, limit optional; 20s timeout).
+• TOOLS section: search_calendar_history entry added after delete_calendar_event.
+• New CALENDAR HISTORY section: routes past-event queries to search_calendar_history, blocks get_calendar_events for historical queries.
+
+Commands run:
+• npx vitest run (all historical tests) — 48/48 passed
+• npm test (full suite) — 1819 passed, 1 pre-existing failure (confirmed pre-existing on clean main)
+• All carson-protected-behaviors CI checks — passed
+• Vercel production deploy — completed (deployment 5699643354, state: success)
+• ElevenLabs PATCH API — 20 tools returned, search_calendar_history confirmed present
+• Production route smoke test — 400 (auth-required, correct)
+
+Commits on main: 222580f (PR #145 squash-merge)
+
+Remaining action (Sana only):
+Voice verification — ask Carson "When was the last time I had a dentist appointment?" Carson should call search_calendar_history silently and return the event or say it couldn't find one. Must NOT call get_calendar_events.
+
+──────────────────────────────
+Date: 2026-08-01
+Session: Memory Governance Phase 1A
+Status: COMPLETE — merged to main as b015409 (PR #147)
+──────────────────────────────
+
+Capability: Memory Governance — Epistemic Gate + Freshness Injection
+Constitutional basis: COS Ch. 19.3 (provenance/age preservation) + Ch. 19.4 (Epistemic Governance write gate)
+
+Deliverables shipped:
+- carson-epistemic-gate.ts (new): validateMemoryWrite() gate with ephemeral task detection, source/confidence/confirmed_at provenance attachment
+- carson-persistent-memory.ts (modified): savePersistentInstruction() routes through gate before any DB insert; loadPersistentMemory() injects stale suffix for instructions >90 days
+- carson-memory-format.ts (modified): formatRecentMemory() labels sessions >30 days old as [Older context — treat as background only]
+- ElevenLabsAgentWidget.tsx (modified): gate rejection messages surfaced to user on save_instruction block
+- supabase/migrations/20260801_memory_governance_phase_1a.sql: adds source + confirmed_at columns; backfills existing rows with confirmed_at = created_at
+- 3 new test files, 51 new tests; 1 pre-existing test updated for dynamic date safety
+
+Test results: 2445/2445 pass | Typecheck: clean | CI: all checks pass
+DB migration: applied to production (ggarvhgqzpooloacjgcj) via Supabase MCP
+
+No ElevenLabs prompt change required (Phase 1A is backend/injection only).
+
+──────────────────────────────
+Date: 2026-08-01 (addendum)
+Session: Memory Governance Phase 1A — Global Safety Net Review
+Status: PASSED — Phase 1A formally closed
+──────────────────────────────
+
+GSN Review Results:
+
+1. Live in production: ✅ dpl_9d6aHmkXAsKRsPdWhaufZUGAb3UK — READY, target=production (PR #148 commit, after Phase 1A)
+2. DB migration live: ✅ migration_governance_phase_1a confirmed in list_migrations; source + confirmed_at columns confirmed in production schema
+3. Existing rows intact: ✅ 25 rows, all source='owner_directive', confirmed_at backfilled from created_at (oldest 81 days — below 90-day stale threshold, no stale labels active yet)
+4. Runtime errors: ✅ None (Vercel get_runtime_errors returned clean)
+5. Code regression analysis:
+   - carson-epistemic-gate.ts: NEW file, no existing behavior modified ✅
+   - carson-persistent-memory.ts: loadPersistentMemory() select adds confirmed_at (additive); stale suffix not triggered (oldest instruction 81d < 90d threshold) ✅
+   - carson-memory-format.ts: [Older context] label only triggers for sessions >30 days; most recent session always gets [Most recent session] ✅
+   - ElevenLabsAgentWidget.tsx: gate rejection messages only surface when gate rejects (empty/ephemeral); valid instructions proceed unchanged ✅
+   - api/google-calendar.js: UNTOUCHED — Historical Calendar Lookup fully intact ✅
+6. No regressions in production voice conversations: ✅ (no runtime errors, no behavior changes to any voice tool paths)
+7. Historical Calendar Lookup: ✅ UNTOUCHED — verified via git diff, no changes to api/google-calendar.js or src/lib/calendar.ts
+8. Morning Brief: ✅ loadPersistentMemory() change is additive only; no stale labels appear for current data
+9. All other systems (reminders, delegations, automations, calendar, WhatsApp, memory recall): ✅ UNTOUCHED
+
+DECISION: Phase 1A is stable in production. Gate cleared for P1 #2 Commitment Lifecycle S2/S3.
+
+──────────────────────────────────────────────────────────────────────────────
+
+SESSION LOG — 2026-08-01 (P1 #2: Commitment Lifecycle S2 + S3)
+
+STATUS: COMPLETE — PR #149 merged to main at 01:05:54Z
+
+──────────────────────────────
+
+SESSION OBJECTIVE
+
+Implement COS Ch. 13.5 Amendments S2 + S3 (Commitment Lifecycle Constitutional Gates).
+
+──────────────────────────────
+
+EVIDENCE
+
+Constitutional Basis:
+- COS Ch. 13.5 Amendment S2: Indeterminate is not a resting state. A commitment in
+  Indeterminate (quality_review_status = 'uncertain' or 'fraud_suspected') must be
+  immediately registered with Open Loop Governance.
+- COS Ch. 13.5 Amendment S3: Reopening a Verified Complete commitment (status='done')
+  requires explicit owner authorisation or new verified evidence from Epistemic Governance.
+
+Files Changed (PR #149, commit c117930):
+- src/lib/carson-commitment-lifecycle.ts — NEW: Application-layer gate module.
+  Exports isVerifiedComplete, validateReopenTransition (S3), isIndeterminateCommitment (S2),
+  ReopenAuthError, UNCERTAIN_OLG_FOLLOW_UP_MS (4h), INDETERMINATE_REVIEW_STATUSES.
+- src/lib/carson-commitment-lifecycle.test.ts — NEW: 29 tests for the lifecycle module.
+- api/task-confirm.js — MODIFIED: Added scheduleUncertainOLG() helper + call site.
+  After save_review PATCH, if savedReviewStatus is 'uncertain' or 'fraud_suspected',
+  stamps uncertain_olg_registered_at and schedules QStash +4h follow-up.
+  QStash dedup ID: 'uncertain-olg-{taskId}' (no colons, per QStash requirement).
+- api/task-confirm.s2-olg.test.js — NEW: 6 tests verifying S2 scheduling paths and
+  confirming non-Indeterminate outcomes do NOT schedule OLG.
+- api/process-delegation-escalations.js — MODIFIED: Added handleUncertainOLGFollowUp()
+  handler for {trigger:'uncertain_olg', taskId} payloads. Uses claim-before-act guard
+  (uncertain_escalated_at IS NULL), stamps uncertain_escalated_at, sends second owner push.
+- api/process-delegation-escalations.uncertain-olg.test.js — NEW: 10 tests covering
+  happy path, all skip cases (task resolved, already escalated, concurrent invocation,
+  not found), and routing (non-uncertain_olg payloads fall through).
+- supabase/migrations/20260801_commitment_lifecycle_s2_s3.sql — NEW: Adds
+  uncertain_olg_registered_at + uncertain_escalated_at columns to tasks;
+  creates enforce_commitment_reopen_authority BEFORE UPDATE trigger.
+- supabase/migrations/20260801_commitment_lifecycle_s2_s3.rollback.sql — NEW.
+
+Production Verification:
+- Migration applied: ✅ both columns confirmed in production schema (timestamptz, nullable)
+- Trigger confirmed: ✅ enforce_commitment_reopen_authority BEFORE UPDATE on tasks
+
+Test Results:
+- New tests: 29 (commitment-lifecycle: 29, s2-olg: 6, uncertain-olg: 10 — overlaps
+  counted once per file; total across 3 files: ~45 new test cases)
+- Full suite: 2474/2474 pass, 0 failures
+- Typecheck: 0 new errors (pre-existing 10 errors unchanged)
+
+Defects Closed:
+- S2: Unresolved Indeterminate tasks had only 1 owner push with no follow-up. CLOSED.
+- S3: No gate preventing done → pending transition. CLOSED (DB trigger + app-layer gate).
+
+──────────────────────────────
+
+DECISION: P1 #2 Commitment Lifecycle S2 + S3 COMPLETE. Production stable.
+Gate cleared for P1 #3 Operations Center V1.
+
+──────────────────────────────
+
+SESSION LOG — 2026-08-01
+
+P1 #3: Operations Center V1 (COS Ch. 10, 15, 17, 20)
+
+Scope: Minimum constitutional slice — observational delivery visibility only.
+Decision gate: Engineering Scope Lock approved by owner before implementation.
+Additional constitutional constraint confirmed: Operations Center V1 is observational
+only — never retries, modifies state, resends, repairs, acknowledges, dismisses,
+changes commitments, or invokes any execution tool.
+
+Files Added:
+- src/lib/carson-operations-center.ts — NEW. Two exported functions:
+    fetchTaskDeliveryStatus(keyword): queries tasks + whatsapp_deliveries
+    by keyword, returns plain-text delivery timeline (sent/delivered/read/failed).
+    fetchOperationsSummary(): live snapshot of WhatsApp delivery failures +
+    reminder delivery issues in last 48h.
+    Both functions: read-only, never mutate state (COS Ch. 15).
+- src/lib/carson-operations-center.test.ts — NEW. 15 tests.
+
+Files Modified:
+- src/components/home/ElevenLabsAgentWidget.tsx — added two client tools:
+    get_task_delivery_status (calls fetchTaskDeliveryStatus)
+    get_operations_summary (calls fetchOperationsSummary)
+    Both follow exact get_calendar_events pattern (guardCurrentToolInvocation
+    + runDirectToolWithDiagnostic). Registered at session init.
+
+Database Changes: NONE. All required tables already exist in production
+(whatsapp_deliveries, tasks.reminder_delivery_status, tasks.reminder_delivery_error).
+
+Test Results:
+- New tests: 15 (carson-operations-center)
+- Full suite: 2489/2489 pass (baseline 2474 + 15 new), 0 regressions
+- Typecheck: 0 errors
+- Build: initial failure (unused TS variables in test file) — fixed in follow-up commit
+
+PR: #151 — merged to main, commit b676e65
+
+Constitutional compliance verified:
+- Ch. 10: Tools report only DB-confirmed facts; never infer success from silence
+- Ch. 15: Observation never assumes success; absent delivery record reported as absent
+- Ch. 17: sent/delivered/read reported as distinct states
+- Ch. 20: Visibility prerequisite for future recovery reasoning — no action taken
+
+DECISION: P1 #3 Operations Center V1 COMPLETE. Gate cleared for P1 #4.
+
+---
+
+## 2026-08-01 — P1 #3 Production Verification + Prompt Completion
+
+### Greeting Investigation (CLOSED)
+
+Investigation opened: "Hi Carson" / "Hello" producing "I recorded this command, but this WhatsApp command type is not supported yet" from the owner WhatsApp channel.
+
+Git archaeology performed:
+- `292a18f` (2026-07-27): Owner WhatsApp routing added — non-command messages silently deferred, no acknowledgement sent.
+- `b70e148` (2026-07-28): Owner command executor added — greetings classified as `unsupported`, acknowledgement message introduced.
+- `de82a36` (2026-07-19): Staff → Carson ElevenLabs bridge added — staff messages handled conversationally via bridge.
+
+FINDING: Not a regression. The owner WhatsApp command interface has never supported conversational greetings — it is and has always been command-only (tell/ask/remind). The Grace test recalled by Sana was on the STAFF path (ElevenLabs bridge), not the owner command path. These are intentionally different execution paths.
+
+DECISION: CLOSED. Existing product behavior. No fix required.
+
+### P1 #3 Production Verification — Root Cause + Resolution
+
+Production test 1: "Did [name] get the message?" → Carson answered from ra7etbal_state (task completion), not live DB.
+Production test 2: "Is everything working?" → Carson said delivery info "isn't visible to me."
+
+Root cause: ElevenLabs live prompt had no TOOLS section entries and no routing rules for `get_task_delivery_status` or `get_operations_summary`. Tools were registered in clientTools (ElevenLabsAgentWidget.tsx, PR #151) but Carson had no instruction to invoke them. Pattern: identical to search_calendar_history which required TOOLS entry + CALENDAR HISTORY routing section.
+
+Fix: ElevenLabs live prompt patched via PATCH API (agent_3001kt3zzkcxfb3bwejd8yzzhnmy).
+- TOOLS section: added `get_task_delivery_status` and `get_operations_summary` entries after `search_calendar_history`.
+- DELIVERY STATUS routing section added after CALENDAR HISTORY section, before DETERMINISTIC TOOL PRECEDENCE.
+- Prompt length: 43,701 → 45,163 chars.
+- All three conditions confirmed live: get_task_delivery_status present, get_operations_summary present, DELIVERY STATUS section present.
+
+Patch documented: docs/elevenlabs-prompt-patches/2026-08-01-operations-center-v1-tools.md (commit 3e83c1f, main).
+
+No code changes. No schema changes. Existing 2489 tests unchanged.
+
+DECISION: P1 #3 Operations Center V1 PRODUCTION VERIFIED AND CLOSED.
+Gate cleared for P1 #4 — Task Closing by Voice (COS Ch. 11, 13, 14).
+
+---
+
+## 2026-08-01 — Owner WhatsApp Conversational Mode (Phase 1)
+
+**Work:** P1 #3.5 — Owner WhatsApp Conversational Mode engineering design + implementation.
+
+**Design reviews completed (3):**
+1. Initial architecture design
+2. Architectural corrections: explicit intents over unsupported fallback; shared context builder; policy-driven tools; executor preservation; mixed-intent production verification
+3. Final corrections: one Carson brain (no separate WhatsApp intent model); no context builder extraction in this PR; `classifyOwnerCommand` kept for compatibility
+
+**Verification:** `classifyCarsonInstruction` / `carson-router.ts` cannot be imported from `api/` (TypeScript, Vite-compiled frontend only). Created `_carson-intent-classifier.js` as a JS port with same domain vocabulary. Consolidation deferred to context-extraction refactoring PR.
+
+**Implementation (PR #153, commits 92b4813 + 9bbdf06):**
+- `api/_carson-intent-classifier.js` — pure JS intent classifier, same domains as `src/lib/carson-router.ts`; consolidation comment added
+- `api/_carson-agent-turn.js` — added `runOwnerConversationalTurn()`: ElevenLabs bridge with structured dynamic variables, policy-driven tools (`tool_ids: []` default), WhatsApp reply delivery, receipt lifecycle, fallback on error
+- `api/_owner-whatsapp-routing.js` — general-path routing now calls `classifyOwnerWhatsAppIntent` first; execution domains → existing executor; conversational domains → bridge
+- `api/_owner-whatsapp-routing.test.js` — updated with `_carson-agent-turn.js` mock; added conversational routing test
+- `api/_carson-intent-classifier.test.js` — 45 new tests
+- `api/_owner-conversational-turn.test.js` — 10 new tests
+
+**Pre-merge review (commit 9bbdf06):**
+- Review 1: consolidation comment added to `_carson-intent-classifier.js`
+- Review 2: ElevenLabs dynamic variable coverage fixed — bridge now sends all 5 critical variables: `ra7etbal_state`, `user_name` (profiles.display_name), `recent_memory` (carson_memory, last 5 sessions), `current_time` (ISO 8601), `persistent_instructions` (own variable, no longer embedded in ra7etbal_state). Intentional Phase 1 gaps documented: `daily_brief`, `current_weather`, `opening_line`.
+- Review 3: all 6 production safety items confirmed via code inspection (no changes needed)
+
+**Suite result:** 12,107 tests pass, 0 regressions (2 stale worktree ENOENT failures pre-existing).
+
+**Status:** PR #153 merged. Awaiting Vercel deploy + production verification.
+
+**Production verification required before closing:**
+1. "Hi" → conversational reply (not unsupported error)
+2. "What's pending?" → Carson answers from live context
+3. "Remind me tomorrow at 9am..." → reminder created, bridge NOT invoked
+4. "Tell Christopher to..." → delegation created, bridge NOT invoked
+5. Quoted staff escalation → decision delivered, bridge NOT invoked
+6. "Hi Carson. Did Christopher reply? If not, remind me tomorrow." → mixed-intent handled correctly

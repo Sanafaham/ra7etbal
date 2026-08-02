@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { processStaffMessage, parseClassificationResponse, buildContextBlock } from './_staff-comms-engine.js';
+import { processStaffMessage, parseClassificationResponse, buildContextBlock, SYSTEM_PROMPT } from './_staff-comms-engine.js';
 
 const SUPABASE_URL = 'https://example.supabase.co';
 const SERVICE_KEY = 'service-key';
@@ -377,6 +377,276 @@ describe('processStaffMessage', () => {
     const failCalls = fetchImpl.calls.filter((c) => c.url.includes('fail_staff_message'));
     expect(completeCalls).toHaveLength(0);
     expect(failCalls).toHaveLength(1);
+  });
+});
+
+// ── Staff permission escalation (Carson Reliability Engineering) ───────────
+//
+// Confirmed live production failure (2026-07-26): Christopher asked "Should
+// I buy the alternative instead?" about an out-of-stock ingredient. Carson
+// answered "Go ahead and use extra virgin olive oil... that's a standard
+// kitchen swap" — authorizing a substitution on the owner's behalf with no
+// pre-approval anywhere in stored context. classification was
+// 'substitution_request' but owner_attention_required was false,
+// next_action_owner was 'staff', and no escalation ever reached Sana.
+//
+// The forbidden-wording regex below is the literal wording Carson used in
+// the live failure. Two corrections vs. the version merged in PR #87:
+// "approved" is now guarded by a negative lookbehind (not preceded by a
+// letter or hyphen) so it never false-matches a legitimate, truthful
+// compound like "pre-approved", "preapproved", "unapproved", or
+// "disapproved" (CodeRabbit-confirmed weakness on PR #87); and "standard
+// swap" now tolerates one intervening word so it actually catches the
+// exact live-failure phrase "standard kitchen swap", which the original
+// fixed two-word phrase silently missed.
+const FORBIDDEN_SELF_AUTHORIZATION_WORDING = /go ahead|(?<![a-z-])approved\b|that's fine|standard (?:\w+ )?swap|standard practice|\bproceed\b/i;
+
+describe('FORBIDDEN_SELF_AUTHORIZATION_WORDING regex', () => {
+  it('does not false-match legitimate truthful compounds', () => {
+    expect("I don't have this pre-approved, so I'm checking with the owner.").not.toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    expect('This substitution is currently unapproved.').not.toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    expect('The owner has disapproved similar swaps before.').not.toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+  });
+
+  it('still catches the real self-authorization wording from the live failure', () => {
+    expect('Go ahead and use extra virgin olive oil.').toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    expect("That's approved.").toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    expect("That's a standard swap.").toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    // The exact live-failure sentence — verbatim from production.
+    expect("Go ahead and use extra virgin olive oil as the substitute — that's a standard kitchen swap.").toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+    expect('Please proceed with the substitution.').toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+  });
+});
+
+describe('SYSTEM_PROMPT — staff permission escalation hard rule', () => {
+  it('locks in the mandatory-escalation clause for staff permission requests (deliberate-failure guard)', () => {
+    const prompt = SYSTEM_PROMPT.toLowerCase();
+
+    // The specific permission-seeking phrasings the product rule requires
+    // Carson to recognize.
+    expect(prompt).toContain('should i');
+    expect(prompt).toContain('can i');
+    expect(prompt).toContain('is it okay if');
+    expect(prompt).toContain('do you approve');
+    expect(prompt).toContain('may i');
+
+    // The mandatory outcome when no pre-approval exists.
+    expect(prompt).toMatch(/hard rule.*permission/);
+    expect(prompt).toContain('owner_attention_required true');
+    expect(prompt).toContain('next_action_owner "owner"');
+    expect(prompt).toContain('user_facing_state "needs you"');
+
+    // The pre-approval exception must be scoped to real supplied context,
+    // and Carson must never invent authorization wording.
+    expect(prompt).toContain('explicitly pre-approved');
+    expect(prompt).toContain('never authorized to approve');
+    expect(prompt).toMatch(/never write "go ahead"/);
+  });
+});
+
+describe('processStaffMessage — staff permission escalation (Carson Reliability Engineering)', () => {
+  it('A. explicit permission request, no pre-approval, must escalate with no self-authorization wording', async () => {
+    const fetchImpl = mockFetch({
+      'POST /rest/v1/rpc/claim_staff_message': jsonResponse([
+        { message_id: 'msg-perm-a', is_new: true, processing_status: 'claimed' },
+      ]),
+      'GET /rest/v1/people': jsonResponse([{ id: PERSON_ID, name: 'Christopher', role: 'Cook' }]),
+      'GET /rest/v1/tasks': jsonResponse([]),
+      'GET /rest/v1/household_rules': jsonResponse([]),
+      'GET /rest/v1/carson_memory': jsonResponse([]),
+      'POST /v1/messages': anthropicJsonResponse({
+        classification: 'substitution_request',
+        reply_to_staff: "I'm checking that with the owner, I'll come back to you.",
+        escalate: true,
+        escalation_reason: 'Christopher wants to buy extra virgin olive oil since regular olive oil is unavailable. Decision needed: approve the substitute purchase.',
+        recommended_option: 'Approve extra virgin olive oil as the substitute.',
+        next_action_owner: 'owner',
+        user_facing_state: 'Needs You',
+        owner_attention_required: true,
+      }),
+      'POST /rest/v1/rpc/complete_staff_message': jsonResponse([
+        {
+          id: 'msg-perm-a', classification: 'substitution_request',
+          carson_response: "I'm checking that with the owner, I'll come back to you.",
+          next_action_owner: 'owner', user_facing_state: 'Needs You', owner_attention_required: true,
+          escalation_reason: 'Christopher wants to buy extra virgin olive oil since regular olive oil is unavailable. Decision needed: approve the substitute purchase.',
+          task_id: null,
+        },
+      ]),
+    });
+
+    const result = await processStaffMessage(
+      baseInput({ text: 'The regular olive oil is unavailable. Can I buy extra virgin olive oil instead?' }),
+      deps(fetchImpl),
+    );
+
+    expect(result.classification).toBe('substitution_request');
+    expect(result.ownerAttentionRequired).toBe(true);
+    expect(result.nextActionOwner).toBe('owner');
+    expect(result.userFacingState).toBe('Needs You');
+    expect(result.escalationReason).toBeTruthy();
+    expect(result.response).not.toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+  });
+
+  it('B. "Is it okay if I replace..." must escalate', async () => {
+    const fetchImpl = mockFetch({
+      'POST /rest/v1/rpc/claim_staff_message': jsonResponse([
+        { message_id: 'msg-perm-b', is_new: true, processing_status: 'claimed' },
+      ]),
+      'GET /rest/v1/people': jsonResponse([{ id: PERSON_ID, name: 'Christopher', role: 'Cook' }]),
+      'GET /rest/v1/tasks': jsonResponse([]),
+      'GET /rest/v1/household_rules': jsonResponse([]),
+      'GET /rest/v1/carson_memory': jsonResponse([]),
+      'POST /v1/messages': anthropicJsonResponse({
+        classification: 'substitution_request',
+        reply_to_staff: "I'm checking that with the owner, I'll come back to you.",
+        escalate: true,
+        escalation_reason: 'Christopher is asking to replace the requested brand. Decision needed: approve the brand substitution.',
+        recommended_option: null,
+        next_action_owner: 'owner',
+        user_facing_state: 'Needs You',
+        owner_attention_required: true,
+      }),
+      'POST /rest/v1/rpc/complete_staff_message': jsonResponse([
+        {
+          id: 'msg-perm-b', classification: 'substitution_request',
+          carson_response: "I'm checking that with the owner, I'll come back to you.",
+          next_action_owner: 'owner', user_facing_state: 'Needs You', owner_attention_required: true,
+          escalation_reason: 'Christopher is asking to replace the requested brand. Decision needed: approve the brand substitution.',
+          task_id: null,
+        },
+      ]),
+    });
+
+    const result = await processStaffMessage(
+      baseInput({ text: 'Is it okay if I replace the requested brand?' }),
+      deps(fetchImpl),
+    );
+
+    expect(result.ownerAttentionRequired).toBe(true);
+    expect(result.nextActionOwner).toBe('owner');
+    expect(result.userFacingState).toBe('Needs You');
+  });
+
+  it('C. "Should I buy the alternative instead?" (the exact live-failure phrasing) must escalate', async () => {
+    const fetchImpl = mockFetch({
+      'POST /rest/v1/rpc/claim_staff_message': jsonResponse([
+        { message_id: 'msg-perm-c', is_new: true, processing_status: 'claimed' },
+      ]),
+      'GET /rest/v1/people': jsonResponse([{ id: PERSON_ID, name: 'Christopher', role: 'Cook' }]),
+      'GET /rest/v1/tasks': jsonResponse([]),
+      'GET /rest/v1/household_rules': jsonResponse([]),
+      'GET /rest/v1/carson_memory': jsonResponse([]),
+      'POST /v1/messages': anthropicJsonResponse({
+        classification: 'substitution_request',
+        reply_to_staff: "I'm checking that with the owner, I'll come back to you.",
+        escalate: true,
+        escalation_reason: 'Christopher wants to buy the alternative he mentioned instead of the requested item. Decision needed: approve the purchase.',
+        recommended_option: null,
+        next_action_owner: 'owner',
+        user_facing_state: 'Needs You',
+        owner_attention_required: true,
+      }),
+      'POST /rest/v1/rpc/complete_staff_message': jsonResponse([
+        {
+          id: 'msg-perm-c', classification: 'substitution_request',
+          carson_response: "I'm checking that with the owner, I'll come back to you.",
+          next_action_owner: 'owner', user_facing_state: 'Needs You', owner_attention_required: true,
+          escalation_reason: 'Christopher wants to buy the alternative he mentioned instead of the requested item. Decision needed: approve the purchase.',
+          task_id: null,
+        },
+      ]),
+    });
+
+    const result = await processStaffMessage(
+      baseInput({ text: 'Should I buy the alternative instead?' }),
+      deps(fetchImpl),
+    );
+
+    expect(result.ownerAttentionRequired).toBe(true);
+    expect(result.nextActionOwner).toBe('owner');
+    expect(result.userFacingState).toBe('Needs You');
+    expect(result.response).not.toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
+  });
+
+  it('D. explicit exact pre-approval in HOUSEHOLD RULES must not over-escalate', async () => {
+    const fetchImpl = mockFetch({
+      'POST /rest/v1/rpc/claim_staff_message': jsonResponse([
+        { message_id: 'msg-perm-d', is_new: true, processing_status: 'claimed' },
+      ]),
+      'GET /rest/v1/people': jsonResponse([{ id: PERSON_ID, name: 'Christopher', role: 'Cook' }]),
+      'GET /rest/v1/tasks': jsonResponse([]),
+      'GET /rest/v1/household_rules': jsonResponse([
+        { rules: 'If regular olive oil is unavailable, use extra virgin olive oil.' },
+      ]),
+      'GET /rest/v1/carson_memory': jsonResponse([]),
+      'POST /v1/messages': anthropicJsonResponse({
+        classification: 'substitution_request',
+        reply_to_staff: 'Yes — extra virgin olive oil is already approved for this. No need to check with the owner.',
+        escalate: false,
+        escalation_reason: null,
+        recommended_option: null,
+        next_action_owner: 'nobody',
+        user_facing_state: 'Completed',
+        owner_attention_required: false,
+      }),
+      'POST /rest/v1/rpc/complete_staff_message': jsonResponse([
+        {
+          id: 'msg-perm-d', classification: 'substitution_request',
+          carson_response: 'Yes — extra virgin olive oil is already approved for this. No need to check with the owner.',
+          next_action_owner: 'nobody', user_facing_state: 'Completed', owner_attention_required: false,
+          escalation_reason: null, task_id: null,
+        },
+      ]),
+    });
+
+    const result = await processStaffMessage(
+      baseInput({ text: 'The regular olive oil is unavailable. Can I buy extra virgin olive oil instead?' }),
+      deps(fetchImpl),
+    );
+
+    expect(result.ownerAttentionRequired).toBe(false);
+    expect(result.nextActionOwner).not.toBe('owner');
+    expect(result.userFacingState).not.toBe('Needs You');
+  });
+
+  it('E. no invented approval: an escalating reply must never contain self-authorization wording', async () => {
+    const fetchImpl = mockFetch({
+      'POST /rest/v1/rpc/claim_staff_message': jsonResponse([
+        { message_id: 'msg-perm-e', is_new: true, processing_status: 'claimed' },
+      ]),
+      'GET /rest/v1/people': jsonResponse([{ id: PERSON_ID, name: 'Christopher', role: 'Cook' }]),
+      'GET /rest/v1/tasks': jsonResponse([]),
+      'GET /rest/v1/household_rules': jsonResponse([]),
+      'GET /rest/v1/carson_memory': jsonResponse([]),
+      'POST /v1/messages': anthropicJsonResponse({
+        classification: 'blocker',
+        reply_to_staff: "I don't have approval on file for that swap, so I'm checking with the owner. I'll come back to you.",
+        escalate: true,
+        escalation_reason: 'Christopher wants to skip a requested step with no stored approval. Decision needed: approve or deny skipping it.',
+        recommended_option: null,
+        next_action_owner: 'owner',
+        user_facing_state: 'Needs You',
+        owner_attention_required: true,
+      }),
+      'POST /rest/v1/rpc/complete_staff_message': jsonResponse([
+        {
+          id: 'msg-perm-e', classification: 'blocker',
+          carson_response: "I don't have approval on file for that swap, so I'm checking with the owner. I'll come back to you.",
+          next_action_owner: 'owner', user_facing_state: 'Needs You', owner_attention_required: true,
+          escalation_reason: 'Christopher wants to skip a requested step with no stored approval. Decision needed: approve or deny skipping it.',
+          task_id: null,
+        },
+      ]),
+    });
+
+    const result = await processStaffMessage(
+      baseInput({ text: 'Can I skip this part?' }),
+      deps(fetchImpl),
+    );
+
+    expect(result.ownerAttentionRequired).toBe(true);
+    expect(result.response).not.toMatch(FORBIDDEN_SELF_AUTHORIZATION_WORDING);
   });
 });
 

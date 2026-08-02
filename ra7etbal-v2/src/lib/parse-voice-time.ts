@@ -49,6 +49,14 @@ export interface VoiceTimeResult {
   parsedAs: string;
   /** Non-null when parsing failed. */
   error?: string;
+  /**
+   * True only when the phrase named a day (a weekday, or bare "tomorrow")
+   * but no clock time, and dueAt's time-of-day is therefore an invented
+   * default (09:00) rather than something the user actually said. Callers
+   * that require a real clock time (e.g. one-time reminders) should treat
+   * this as "still need the time", not as a resolved due time.
+   */
+  dayOnly?: boolean;
 }
 
 export interface RecurringFirstRunTextResult {
@@ -307,7 +315,12 @@ export function parseVoiceTime(
     return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
   }
 
-  // ── 5. "next <weekday>" ──────────────────────────────────────────────────
+  // ── 5. "<weekday>" / "next <weekday>" ─────────────────────────────────────
+  // "next" is optional — confirmed production regression: "Monday at 5:00 PM"
+  // (no "next") matched no weekday pattern here at all, silently dropped the
+  // day entirely, and fell through to the generic clock-time "auto" branch
+  // below (today/tomorrow relative to `now`) — turning a Monday reminder
+  // requested on a Saturday evening (past 5 PM) into Sunday.
   const WEEKDAYS: Record<string, number> = {
     sunday: 0, sun: 0,
     monday: 1, mon: 1,
@@ -317,16 +330,44 @@ export function parseVoiceTime(
     friday: 5, fri: 5,
     saturday: 6, sat: 6,
   };
-  const nextDayMatch = normalised.match(/\bnext\s+(sunday|sun|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat)\b/);
-  if (nextDayMatch) {
-    const targetDay = WEEKDAYS[nextDayMatch[1]];
+  const weekdayMatch = normalised.match(/\b(?:next\s+)?(sunday|sun|monday|mon|tuesday|tue|wednesday|wed|thursday|thu|friday|fri|saturday|sat)\b/);
+  if (weekdayMatch) {
+    const targetDay = WEEKDAYS[weekdayMatch[1]];
     const todayDay = now.getDay();
-    // Always go to the NEXT occurrence (at least 1 day ahead, up to 7).
+    // Always go to the NEXT occurrence (at least 1 day ahead, up to 7) —
+    // "Monday" said on a Monday means next week's Monday, never today.
     const daysUntil = ((targetDay - todayDay + 7) % 7) || 7;
+
+    // An explicit clock time elsewhere in the phrase ("next Monday at
+    // 4:30 PM", "Monday at 5:00 PM", "Monday at 17:00", "Monday at 5") must
+    // win over the 09:00 default — otherwise a fully specified date+time
+    // reminder would silently lose its time. CodeRabbit finding: an earlier
+    // version of this only accepted a 12-hour am/pm clock and silently fell
+    // back to 09:00 for "17:00" (24-hour) or a bare "5" (no colon, no
+    // am/pm) — inconsistent with the generic absolute-time branch below,
+    // which already handles both. Reuses that exact same grammar and PM
+    // heuristic instead of a separate, narrower one.
+    const weekdayTimeWithAmPm = normalised.match(/\b(1[0-2]|0?[1-9])(?::([0-5]\d))?\s*(am|pm)\b/);
+    const weekdayTimeWithout = normalised.match(/\b([01]?\d|2[0-3])(?::([0-5]\d))?\b/);
+    const weekdayTimeMatch = weekdayTimeWithAmPm ?? weekdayTimeWithout;
+    if (weekdayTimeMatch) {
+      let hours = parseInt(weekdayTimeMatch[1], 10);
+      const minutes = parseInt(weekdayTimeMatch[2] ?? "0", 10);
+      const ampm = weekdayTimeMatch[3] as "am" | "pm" | undefined;
+      if (ampm === "pm" && hours !== 12) hours += 12;
+      if (ampm === "am" && hours === 12) hours = 0;
+      // Same heuristic as the generic branch: no AM/PM and hour 1-7 means PM.
+      if (!ampm && hours >= 1 && hours <= 7) hours += 12;
+      const dueAt = addDays(now, daysUntil, hours, minutes).toISOString();
+      const parsedAs = `named: ${weekdayMatch[0]} → +${daysUntil} days at ${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}`;
+      console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
+      return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
+    }
+
     const dueAt = addDays(now, daysUntil, 9, 0).toISOString();
-    const parsedAs = `named: next ${nextDayMatch[1]} → +${daysUntil} days at 09:00`;
+    const parsedAs = `named: ${weekdayMatch[0]} → +${daysUntil} days at 09:00`;
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
-    return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
+    return { dueAt, timezone, localNow, rawText: timeText, parsedAs, dayOnly: true };
   }
 
   // ── 5b. Standalone "tomorrow" (no clock time) → tomorrow at 09:00 ─────────
@@ -334,7 +375,7 @@ export function parseVoiceTime(
     const dueAt = addDays(now, 1, 9, 0).toISOString();
     const parsedAs = "named: tomorrow → tomorrow 09:00";
     console.log(`[parse-voice-time] ${parsedAs} → ${dueAt}`);
-    return { dueAt, timezone, localNow, rawText: timeText, parsedAs };
+    return { dueAt, timezone, localNow, rawText: timeText, parsedAs, dayOnly: true };
   }
 
   // ── 6. Absolute: extract day word + clock time ────────────────────────────

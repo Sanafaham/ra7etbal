@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-07-22
+Last updated: 2026-07-28
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -8,11 +8,247 @@ This file is the operational source of truth for agents working in this reposito
 
 Ra7etBal is a personal Chief of Staff that reduces mental load. Carson is the AI Chief of Staff.
 
-Typed Carson and voice Carson are the same person. They must use the same rules, tools, state transitions, memory, and operational logic.
+Typed Carson and voice Carson are the same person, sharing the same memory, identity, and reasoning. Product decision (2026-07-25): Type to Carson is advisory-only — thinking, planning, drafting, research, and review only. Talk to Carson (voice) remains the sole execution channel for reminders, recurring reminders, push notifications, calendar events, staff messages, hosting plans, delegations, and any other state-changing action. See "Type to Carson is advisory-only" below.
+
+## Current next task
+
+PR #93 (`agent/server-backed-banner-dismissal`) persists completed-confirmation banner dismissal on `tasks.dismissed_at`. Independent verification on 2026-07-28 added client/server eligibility guards and optimistic rollback coverage; focused tests, typecheck, the protected suite, and production build pass. The additive, nullable, idempotent migration was applied directly and verified on the confirmed Ra7etBal production Supabase project `ggarvhgqzpooloacjgcj`. After current `main` introduced the canonical `20260727 owner_whatsapp_reply_receipts` migration, this PR's migration was renumbered to `20260729_add_dismissed_at_to_tasks.sql` so migration tooling will not skip it because of the occupied version. Production UI verification across refresh, logout/login, Safari, and the installed app still requires deployment of the PR code; do not merge PR #93 until that verification can be completed.
+
+### Owner WhatsApp decision message quality
+
+Status: focused implementation complete and protected locally; production
+verification pending. The confirmed defect was that the classifier's broadly
+reasoned `escalation_reason` was copied into the owner notification, allowing
+irrelevant household context and hypothetical decisions into a simple staff
+permission request.
+
+The existing stored field is now contracted as a concise, source-faithful,
+owner-ready decision sentence. New values are single-line and length-bounded;
+the buttonless notifier passes owner-ready sentences through and retains the
+legacy wrapper for historical stored wording and retries. Transport, Meta
+templates, owner reply matching, app resolution, leases, acknowledgements,
+retry behavior, and duplicate suppression are unchanged.
+
+Permanent focused contract:
+`ra7etbal-v2/api/owner-whatsapp-decision-message-quality.test.js`. It covers
+simple purchases, the bouquet regression, connected substitutions, material
+and non-material ownership context, ambiguity, genuine multi-part decisions,
+irrelevant rules, purchase limits, invention prevention, Meta-safe
+normalization, direct-reply wording, legacy retry wording, and task-link/button
+exclusion. It runs automatically before the existing curated suite whenever
+`npm run test:carson-protected` executes.
+
+## Owner WhatsApp safe routing Slice 1
+
+Status: deployed at `cdededee7006c2af4c614006863487d08f258cf0`; production migration applied; routing enabled only for Sana. A controlled reminder test exposed two contained defects: equivalent PostgreSQL/ISO `timestamptz` strings were compared literally after the deterministic task insert, and retry processing resent an already accepted failure acknowledgement. Production receipt `2be3086c-910e-4f7f-9dc9-c22588223c45` was contained with `execution_status=terminal_failed`, `next_retry_at=NULL`, and its orphan task deleted; the receipt `status` remains `failed` because the production status constraint does not allow `terminal_failed`.
+
+The owner command boundary now fails closed for ambiguous and compound commands; quoted Meta context remains the only escalation-answer authority. Direct messages and tracked delegations are classified separately, owner references use the shared canonical normalizer, reminders resolve in `profiles.morning_brief_timezone` and schedule QStash only after a non-null `due_at` is persisted, delegations preserve deterministic task/message/confirmation IDs and schedule escalation, and retry exhaustion records a durable terminal failure without promising more retries. Migration deployment order and the 20260727 history mismatch are documented in `ra7etbal-v2/docs/OWNER_WHATSAPP_SAFE_ROUTING_DEPLOYMENT.md`.
+
+Protect: receipt lease/claim tokens, deterministic idempotency, accepted-send/acknowledgement fences, exact quoted-context correlation, default-off `OWNER_WHATSAPP_ROUTING_USER_IDS`, and the prohibition on open-escalation-count inference. Before any activation: reconcile migration history, apply and verify migrations separately, deploy with the flag disabled, then enable one account only after command tests pass.
+
+Resolved and superseded (verified 2026-07-28): PR #96 fixed canonical-instant
+comparison, accepted-acknowledgement preservation, terminal retry exclusion, and
+truthful reminder delivery observability. Merge
+`fdd9b78495926e283d83824b725db01e3c6634c6` deployed as
+`dpl_4v33EpiicEDs5pKUtbznoyRW58EB`; migration
+`20260730_reminder_delivery_observability.sql` is present on production
+Supabase project `ggarvhgqzpooloacjgcj`.
+
+### Owner WhatsApp one-time reminder — production verified and protected
+
+Status: production verified and permanently protected. Rollout remains Sana-only
+(`645ddb96-6e09-4d91-b650-cbc75bac9a5d`); staff WhatsApp routing is unchanged.
+
+Controlled production evidence (sent exactly once):
+
+- Command: `Remind me at 7:03 PM today to check the owner WhatsApp acknowledgement.`
+- Local acknowledgement: `Done — I created one reminder for Tuesday, 7:03 PM.`
+- Canonical UTC `due_at`: `2026-07-28T16:03:00.000Z`
+- Result: one correctly worded Ra7etBal notification was visible on Sana's
+  iPhone at 7:03 PM Europe/Istanbul, with no duplicate acknowledgement and no
+  duplicate iPhone notification.
+
+The production ledger contains one inbound receipt, one reminder task, one
+QStash message ID, one callback, and one send attempt per each of five distinct
+active push endpoints. One service worker recorded
+`service_worker_received`, `show_notification_attempted`, and
+`show_notification_resolved`. Provider acceptance and service-worker display
+attempts do **not** prove visible delivery. Without a supported
+`notification_clicked` receipt, the task truthfully remains `pending` with
+`reminder_delivery_status=delivery_unconfirmed`; it is never marked done merely
+because a provider accepted the push.
+
+Permanent contract:
+`ra7etbal-v2/api/owner-whatsapp-reminder-golden-contract.test.js`, together with
+its focused execution, routing, QStash, push, receipt, and service-worker tests,
+runs in `npm run test:carson-protected` under deterministic `TZ=UTC`. The
+always-on Carson pull-request workflow deliberately has no path filter, so
+changes to the critical owner-classification, acknowledgement, task, QStash,
+callback, push, service-worker, completion, reconciliation, and migration files
+cannot bypass the protected gate. Phase D, staff routing, reminder correction
+replacement, and banner dismissal remain unchanged and retain their existing
+protected tests.
+
+Stable baseline tag:
+`ra7etbal-stable-owner-whatsapp-reminder-2026-07-28`. Its target is the final
+merged protection commit for this contract (the exact remote target is verified
+and reported after merge).
+
+### Owner decision replies through WhatsApp — production verified and protected
+
+Status: production verified and permanently protected on 2026-07-28. Rollout
+remains Sana-only; Phase B staff escalation, Phase C Needs You visibility, the
+Phase D app controls, staff routing, and the owner reminder contract are
+unchanged.
+
+Controlled production evidence (one owner reply, with no additional test
+decision created):
+
+- Christopher decision: `87b539e7-c0a3-4f1a-aa99-bbc20253a975`
+- Original request: `I need Sana’s permission to test a new dessert plate today. This is only a harmless test and nothing will be served to guests. Please ask Sana yes or no.`
+- Exact Sana reply: `Decision 87b539e7-c0a3-4f1a-aa99-bbc20253a975: Yes, but do not serve it to guests`
+- Exact Sana acknowledgement: `Got it — I sent your answer to Christopher.`
+- Receipt: `4ce34678-7177-4bf2-b925-52529672b7af`, completed once with
+  `match_method=explicit_identifier`, `normalized_decision=custom_instruction`,
+  no error, and no eligible retry
+- Final decision state: `delivered_to_staff`; the exact owner reply is stored
+  with `owner_reply_channel=whatsapp`
+- Christopher transport ID:
+  `wamid.HBgLMTIwMjU2OTEzNzcVAgARGBI3OTA5NEE0MkI2RDNFQjAxQ0MA`
+- Sana acknowledgement transport ID:
+  `wamid.HBgMOTA1MDEwNTg5NjE0FQIAERgSOTE1RDA0NzFGQTQ1RjAzREYwAA==`
+- Answered at `2026-07-28T17:35:31.729086Z`; delivered to Christopher at
+  `2026-07-28T17:35:33.434857Z`
+- The production Needs You count changed from three to two. The resolved card
+  cannot be resolved or delivered again through either the app or WhatsApp.
+
+The permanent contract is
+`ra7etbal-v2/api/owner-whatsapp-decision-golden-contract.test.js`. It protects
+quoted-message matching, explicit identifiers, the single-recent-decision
+fallback, ambiguity clarification, supported natural replies, exact-reply
+audit storage, the shared Phase D resolution state machine, staff-delivery and
+owner-acknowledgement fences, transport IDs, retry behavior, cross-household
+isolation, and duplicate app/WhatsApp attempts. It and its direct routing and
+Phase D dependencies run in `npm run test:carson-protected`; the contract also
+locks the existing protected-file boundary.
+
+Release PR: #98. Implementation commit:
+`f01f47a02fd3eeca9e1e9f806e9f7134ff2a59ce`. The controlled test ran on READY
+production deployment `dpl_7hYkwXyCzPAoAC2nqYx3riFpvMWK` against Supabase
+project `ggarvhgqzpooloacjgcj`. The immutable final baseline tag is
+`ra7etbal-stable-owner-whatsapp-decision-replies-2026-07-28`; release records
+and the remote tag resolve the final merge commit without requiring a
+self-referential documentation commit.
 
 ## Stable and protected
 
 Do not modify these areas without a reproduced regression or explicit product decision.
+
+### Reminder correction replaces (not duplicates) the reminder — Talk to Carson only
+
+Status: implemented. Merged to `main`.
+
+Confirmed production regression: Talk to Carson created a 9:00 AM reminder; the owner said it should be 5:00 PM instead; Carson said "changed to 5:00 PM"; production showed BOTH reminders active — the original 9:00 AM task and its QStash push job were never cancelled. Root cause: `create_reminder` is the only reminder tool exposed to the voice model, so a correction necessarily arrives as another `create_reminder` call with the same description, not a distinct "update" call — nothing recognized this as a correction of the reminder just created.
+
+Fix, in `createReminder` (`src/components/home/ElevenLabsAgentWidget.tsx`): a new session-scoped ref (`lastCreatedReminderRef`) tracks the last created one-time reminder's id, normalized description, and creation timestamp. A new `create_reminder` call is treated as a correction only when BOTH the normalized description exactly matches AND the prior creation happened within `REMINDER_CORRECTION_WINDOW_MS` (2 minutes) — description match alone was flagged in independent review as able to silently delete an active reminder the owner intentionally repeated later for something unrelated; the time window is what distinguishes a live correction from that case. On a match: the corrected reminder is created FIRST (via the existing, unmodified `createReminderTask` — same QStash scheduling), and only after that succeeds is the original cancelled via the existing, unmodified `useTasksStore.getState().remove()` (the same function `control_task`'s delete action already uses, which deletes the task and cancels its QStash push). Carson only says "I've changed that reminder..." after both steps verifiably succeed; if creating the new one fails, the original is left untouched (never zero active reminders); if creating succeeds but cancelling the old one fails, the reply reports both are active and does not claim success.
+
+This is a voice-only behavior change (the only confirmed regression, and typed's `create_reminder` is already fully blocked by the advisory-only boundary below) — Talk to Carson's tool registration and every other reminder/calendar/delegation behavior is unmodified.
+
+Tests: `src/components/home/ElevenLabsAgentWidget.reminder-replacement.test.ts` (13 tests) — mutation-spot-checked. Independent review (`review:bug-hunter`): confirmed no stale-QStash-job path, confirmed the ref is correctly reassigned on every creation (so a second correction targets the second reminder, not the first), confirmed voice-only, confirmed the description-only false-positive risk (now closed by the time window above).
+
+Protect: the create-then-cancel ordering, the time-window gate, and the truthful mixed-state failure reporting. Do not weaken the time window or the description match without a new reproduced regression.
+
+### Type to Carson redirects execution requests immediately, never fabricates a completion promise
+
+Status: implemented. Merged to `main`. Tightens "Type to Carson is advisory-only" below — see that entry for the underlying tool-blocking boundary, which is unchanged by this fix.
+
+Two further confirmed production regressions on top of the advisory-only boundary: (1) typed "I have a dinner for 4 people at home tomorrow. Handle it." asked for the time, asked about dietary restrictions, built a full hosting proposal, asked for approval, and only THEN mentioned Talk to Carson — instead of redirecting immediately with no clarification, no proposal, no approval flow; (2) typed "I need to make the UI of Ra7etBal better and pay the electricity bill." got the reply "For the electricity bill, I'll have Grace handle it." — no `send_delegation` tool was ever called; the free-form typed model fabricated the claim entirely in its own reply text, which no tool-call block can catch.
+
+Fix, in two parts:
+- **Immediate redirect** (`src/components/home/ElevenLabsAgentWidget.tsx`, `sendTypedMessage`): the hosting-clarification and fresh-hosting-request branches now redirect immediately instead of calling `handleOperationalHostingTurn` (gated behind `TYPED_MODE_IS_ADVISORY_ONLY`, with the prior "planning allowed" code preserved as a dormant, fully reversible path). A new pure classifier, `classifyTypedExecutionRequest` (`src/lib/typed-advisory-redirect.ts`), runs as a final gate immediately before the free-form model would otherwise run, catching reminder/calendar requests (no dedicated detector existed for these at all) plus edge cases the existing staff-message/delegation detectors correctly return null for — a bodyless staff address ("Tell Grace.") and bare imperative actions ("Take care of it.", "Pay the electricity bill."). The staff-address check validates the addressed word against the real People list (not a capitalization heuristic — independent review confirmed a naive `[A-Z]` check is silently defeated by the case-insensitive `/i` flag the rest of the module needs).
+- **Truthfulness guard** (`src/lib/carson-direct-tool-override.ts`, `sanitizeTypedAdvisoryReply`): applied only when `requestedChannel === "text"`, immediately after the existing, byte-for-byte unchanged `resolveSanitizedCarsonDisplayMessage` call. Replaces the entire reply with a generic truthful fallback when it matches one of the 7 exact banned phrasings from the bug report ("I'll have Grace handle it", "I'll take care of it", "I'll remind you", "I'll send it", "I'll assign it", "I'll add it", "it's done") — unless the reply already mentions Talk to Carson, since the confirmed bug reply never did.
+
+Independent review (`review:bug-hunter`, run twice): first pass found the `[A-Z]`/`/i` case-insensitivity bug above (fixed) and two bare-verb false positives ("Book club is...", "Pay attention to..." — fixed by narrowing those two patterns); confirmed no path reaches `handleOperationalHostingTurn`/`executeProposedPlan`/`executeDirectMessageFastPath`/`executeDelegationFastPath` for typed while advisory-only; confirmed voice is structurally unaffected (`resolveSanitizedCarsonDisplayMessage`'s call site/arguments unchanged); confirmed full reversibility via `TYPED_MODE_IS_ADVISORY_ONLY`.
+
+Tests: `src/lib/typed-advisory-redirect.test.ts` (23), `src/lib/carson-direct-tool-override.test.ts` (new `sanitizeTypedAdvisoryReply` cases), and a new describe block in `src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts` — mutation-spot-checked.
+
+Protect: the immediate-redirect ordering (before any clarification/proposal/dispatch), the truthfulness guard's typed-only gating, and the People-list validation for staff-address detection. Do not reintroduce a capitalization-only name heuristic.
+
+### Type to Carson is advisory-only — Talk to Carson remains the execution channel
+
+Status: implemented. Merged to `main`. Deployment status and exact production evidence recorded at completion of this task below (see delivery notes at the end of this task's work, or the final task report).
+
+Product decision (2026-07-25): Type to Carson may answer questions, help plan, accept brain dumps, draft content and messages, research information, and review existing information — it may help prepare an action before the user performs it through Talk to Carson. It must never create or claim a reminder, recurring reminder, push notification, calendar event/update/delete, staff WhatsApp message, hosting plan execution/approval, delegation/assignment, or any other task/operation state change. Talk to Carson (voice) is completely unchanged and remains the only execution channel for all of the above.
+
+**Enforcement is code-level, not prompt-level** (`src/components/home/ElevenLabsAgentWidget.tsx`):
+- A single constant, `TYPED_MODE_IS_ADVISORY_ONLY` (currently `true`), gates every new branch below. Flipping it to `false` fully restores prior typed execution behavior — every gated branch is additive (`if (...) {...} else { <original code, untouched> }` or an early return before the original code), so this is a one-line, fully reversible rollback if the product decision changes.
+- `guardCurrentToolInvocation` — the single function every one of the 17 registered ElevenLabs clientTools calls first, for both channels — now returns a truthful advisory string for 16 of the 17 typed tool calls (`execute_instruction`, `send_followup`, `send_delegation`, `send_direct_whatsapp_message`, `create_reminder`, `create_automation`, `create_calendar_event`, `update_calendar_event`, `delete_calendar_event`, `create_todo`, `complete_todo`, `control_task`, `act_on_note`, `save_note`, `save_city`, `save_instruction`) before the real executor is ever called. `get_calendar_events` (read-only) is the sole, deliberate exclusion — typed research/planning can still check the calendar. Voice returns via the pre-existing, untouched `guardCurrentVoiceCapture(toolName)` on the very first line, structurally before this new check — voice cannot reach it.
+- `sendTypedMessage` (the typed-only dispatch handler, entirely separate from the ElevenLabs model/tool path) has three new gated branches, each leaving the real executor unreachable rather than intercepting its result: a pending hosting plan's "confirm" decision is answered advisorily instead of calling `handlePendingPlanTurn` (the plan itself is left pending/untouched so Talk to Carson can still execute it — `executeProposedPlan`'s existing idempotency key prevents any theoretical double-execution regardless); a message matching `parseSimpleDirectMessage` is answered advisorily instead of calling `executeDirectMessageFastPath`; a message matching the pure parser `parseDelegationFastPath` (the same parser `executeDelegationFastPath` uses internally, so there is no separately-maintained matcher to drift out of sync) is answered advisorily instead of calling `executeDelegationFastPath`. Hosting **planning** (`handleOperationalHostingTurn` — building/persisting a draft or proposal, no send) is deliberately left unconditional in both its call sites, since planning must still work for typed.
+- `channelInstructions` for the text channel gains one additive prompt string, `CARSON_TYPED_ADVISORY_POLICY` ("...never say or imply that an action was completed"), reinforcing but never substituting for the code-level block. Voice's instruction array is untouched.
+- `src/components/home/CarsonTypedChat.tsx` empty-state copy updated from text that named now-false capabilities ("create a reminder, delegate, or manage a To-do") to "Type for questions and planning."
+
+**Independent review** (separate agent, `review:bug-hunter`): no critical/high/medium findings. Confirmed: all 17 clientTools cross-checked against the blocked-tool map (16 blocked, 1 deliberate read-only exclusion); no other Supabase-write or WhatsApp-send path exists inside `sendTypedMessage`; voice's guard, tool executors, and instruction array are structurally unreachable by the new typed-only code and byte-for-byte unchanged; every gated branch is additive/reversible; the hosting-plan idempotency key (pre-existing, shared by both channels) prevents duplicate execution even in a hypothetical bypass. One low-priority product note, not a bug: blocking `save_instruction` (a lower-stakes preference-memory write, e.g. "remember I prefer tea not coffee") may be more conservative than necessary — kept blocked here as the correct literal reading of "any other state-changing tool"; revisit only on explicit product decision.
+
+**Tests** (`src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts`, part of `npm run test:carson-protected`): new `describe("Type to Carson — advisory-only, Talk to Carson unchanged")` — proves the shared tool guard blocks every required tool unconditionally before voice's own guard could ever apply; proves reminder/recurring-reminder/calendar/staff-message requests cannot reach their real executors (including that `createReminder` — which owns all push/automation scheduling — is never invoked); proves hosting planning stays unconditional while approval/execution is blocked with the plan left untouched; proves no advisory string claims a completed action; proves ordinary typed questions/planning/drafting still reach the free-form model unchanged; proves typed-history reconciliation is untouched by this change; proves Talk to Carson's guard ordering and executor wiring are unaffected; proves the updated entry copy. Mutation-spot-checked (temporarily disabled the new guard, confirmed the relevant tests fail, restored).
+
+Protect: the code-level boundary above. Do not let it degrade into a prompt-only restriction. Do not remove the reversibility (the `TYPED_MODE_IS_ADVISORY_ONLY`-gated `if/else` structure). Reopen only on a reproduced production regression or an explicit product decision to restore typed execution.
+
+### Verified hosting loop + typed-history reconciliation — LOCKED, PRODUCTION VERIFIED
+
+Status: COMPLETED. PRODUCTION VERIFIED at commit `6c764873edbd26d5490b6a1408a207a50eacd8ae` (asset `assets/index-3DokSTsX.js`) on `https://www.ra7etbal.com`. Regression protection locked 2026-07-25 (test-only change, no runtime behavior touched).
+
+Verified end-to-end flow (`src/lib/ops-intelligence.ts`, the canonical hosting engine): "I have afternoon tea at home tomorrow. Handle it." routes to the hosting engine (never ordinary staff delegation); Carson asks one combined clarification for time, guest count, and dietary restrictions; a single natural reply ("4:00pm for 6 people, no garlic", "4pm, 6 guests and no garlic", "4pm. 6 guests and no shellfish", "16:00, 8 people, allergic to peanuts") parses into clean independent fields — the dietary value never absorbs guest count, "guests"/"people", time, or connector fragments; Carson presents one complete proposal with correct worker responsibilities (Christopher: food/drinks; Nasira: setup/table/presentation; Grace/Bahan: coordination) and exactly one approval question; one "Yes" executes the one canonical stored operation exactly once (idempotent — a duplicate "Yes" sends nothing more); delivery results are truthful per recipient (a missing phone number is reported as NOT messaged, never implied as sent to everyone); "What did you ask Christopher?" is answered from the stored operation with no new WhatsApp send and no new operation created.
+
+Typed-history reconciliation (`reconcileTypedHistory` in `src/components/home/ElevenLabsAgentWidget.tsx`): one shared in-flight promise (concurrent callers await the same promise, never issue duplicate loads); one monotonic request-generation guard so a stale response can never overwrite newer history; optimistic rows are matched and replaced by persisted rows on both server id and `client_message_id`; the merged transcript sorts deterministically by `created_at` with a stable `id` tie-breaker; reconciliation runs on auth restoration (with `markUnansweredTypedMessagesInterrupted`), on Carson-sheet open, and on window focus/`visibilitychange` — never on a bare re-render. Closing and reopening Carson preserves the newest conversation with no greeting when persisted history exists and no browser refresh required.
+
+Regression protection added (test-only, no runtime file changed):
+- `src/lib/ops-intelligence.test.ts` — new `describe("production baseline — verified afternoon-tea hosting loop")`: exact-phrase routing, the exact combined-clarification wording from the verified flow, one-proposal/worker-responsibility shape, truthful missing-phone delivery reporting, and two new `resolveHostingOperationRecall` behavioral tests (with a minimal chainable Supabase query stub) proving recall reads the stored operation and never calls `savePending`/`deliverTaskMessage`/`sendDirectMessageRecord`, and never issues an `insert`/`update`/`delete` against `carson_pending_operations` or `tasks`.
+- `src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts` — new source-shape assertions locking the shared in-flight promise, the stale-request guard, the persisted-replaces-optimistic id/client-id matching, the stable sort tie-breaker, the auth-restoration reset+reconcile, and the sheet-open reconciliation trigger.
+
+Full pre-existing coverage (already extensive, confirmed still green, not modified): `src/lib/ops-intelligence.test.ts` (196 tests before this task, hosting recognition/clarification/proposal/approval/idempotency/worker-message/delivery-truthfulness/recall) and `src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts` (typed dispatch, hosting gate wiring, typed-history restore-before-greeting). `npm run test:carson-protected` (13 files, protected-neighbor behavior) passes unchanged.
+
+Known pre-existing gap (discovered, not caused by this task, not fixed — out of scope per this task's instructions): `src/components/home/ElevenLabsAgentWidget.todo-tools.test.ts` → `"uses the same shared planner and execution path as typed Carson"` fails on `main`/this branch's HEAD before this task's changes (confirmed via `git stash`) — it asserts the literal strings `"how many guests are coming"` and `"anything I should avoid serving"` exist directly in `ElevenLabsAgentWidget.tsx`, but those strings are generated inside `ops-intelligence.ts`'s `evaluateHostingPlanningGate` and are not hardcoded in the widget after the shared-engine refactor. Not part of `test:carson-protected`. Needs its own scoped fix — do not fold into future hosting work without a separate task.
+
+Protect: everything above. Do not reintroduce a per-channel hosting parser, a second typed-history loader, or a second reconciliation path. Reopen only on a reproduced production regression against the verified behavior above.
+
+### Hosting plan integrity guards (Guard C, Guard D) + verified multi-person dinner loop — LOCKED, PRODUCTION VERIFIED
+
+Status: implemented and merged to `main` across three PRs, then locked with regression tests (this task, test-only, no runtime file changed).
+
+Confirmed production incident (voice): Carson spoke a two-recipient hosting proposal (dinner, Christopher + Grace) without ever calling `execute_instruction` to persist it. The owner's approval reply ("Yes, and please coordinate the table setup...", later reproduced again as "Yes, send both.") didn't match the exact-match confirmation regex (`CONFIRMATION_RE` — "both" isn't covered by its own "send" alternative), so with no active plan the whole reply fell through to `handleOperationalHostingTurn` in `executeInstruction` and was misread as a brand-new hosting request — producing an orphaned clarification for one recipient while the other's clause got picked up by the ordinary single-recipient delegation path. Carson then claimed both recipients received instructions — false. Separately, even when a real persisted plan DID execute or get cancelled, `lastDirectToolSuccessRef` was never populated for that branch, so Carson's own spoken reply for that turn was never checked against the real tool outcome.
+
+Three merged fixes, all in `src/lib/ops-intelligence.ts` / `src/components/home/ElevenLabsAgentWidget.tsx`:
+- **Guard C** (PR #68, commit `4f4b4c8`): `hasLeadingConfirmationLanguage()` detects a reply that opens with confirmation language but keeps talking ("Yes, and...", "Okay, also..."). When there is no active plan (`!activePlan && !activeWeekPlan`), `executeInstruction` returns "I don't have a saved plan to confirm. Please tell me the hosting plan again." instead of routing the reply into `handleOperationalHostingTurn` as a fresh request. Placed after the pre-existing exact-match confirmation/rejection guard, before the fresh-request hosting turn call.
+- **Guard D** (PR #69, commit `3f11f28`): the `activePlan` `"executed"`/`"cancelled"` branches in `executeInstruction` now populate `lastDirectToolSuccessRef.current` with the real `turn.summary` before returning it, mirroring the adjacent, already-correct Weekly Planning confirm branch — so a fabricated spoken claim can no longer diverge from what `execute_instruction` actually did.
+- **Guard C regex widening** (PR #70, commit `0b104f6`): reproduced live again with "Yes, send both." — "send" wasn't in Guard C's continuation-word list (`and|also|please|then`), so this exact phrasing slipped past the guard. Added `send` to the continuation-word list.
+
+Subsequent verified production retest (dinner for four, tomorrow, at home, 8:00 PM, no shellfish): Christopher received the food instruction; Grace received the coordination instruction; Nasira was assigned but not reached because her phone number was missing on file — Carson reported this truthfully and never claimed she was contacted; no duplicate execution occurred on repeated approval.
+
+Regression protection added (test-only, no runtime file changed):
+- `src/lib/ops-intelligence.test.ts` — new `describe("production baseline — verified dinner hosting loop (Christopher, Grace; missing Nasira number)")`: exact-phrase routing for the dinner trigger, the exact time+dietary-only combined clarification (guest count already known), clean field parsing, correct per-recipient role assignment (Christopher food, Nasira setup, Grace coordination) with one approval question, truthful missing-phone delivery (Christopher and Grace each delivered exactly once, Nasira's attempt made and truthfully reported as not messaged, never implied as contacted), idempotent no-duplicate-send on a repeated approval, and the exact reproduced "Yes, send both." phrasing protected via `hasLeadingConfirmationLanguage`.
+- `src/components/home/ElevenLabsAgentWidget.hosting-plan-integrity.test.ts` (pre-existing from PRs #68/#69, confirmed still green, not modified): Guard C placement/scope (9 tests) and Guard D ref-population (4 of those 9 tests).
+
+Full pre-existing coverage confirmed still green, not modified: `src/lib/ops-intelligence.test.ts` (216 tests total after this task), `src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts` (54 tests — hosting recognition, clarification parsing, one approval, recall, reopen, typed synchronization), `src/components/home/ElevenLabsAgentWidget.weekly-planning.test.ts` (13 tests). `npm run test:carson-protected` (13 files) passes unchanged.
+
+Protect: Guard C's placement (after the exact-match confirmation guard, before the fresh-request `handleOperationalHostingTurn` call) and its `!activePlan && !activeWeekPlan` condition; Guard D's ref-population in both the `"executed"` and `"cancelled"` branches; the deterministic missing-phone truthful-delivery behavior in `executeProposedPlan`/`buildDeterministicGuestPreparationTasks`. Do not weaken Guard C's continuation-word list without a reproduced regression showing a specific new phrasing. Reopen only on a reproduced production regression against the verified behavior above.
+
+### Reminder day-only clarification, weekday parsing, and creation-time display (PRs #72, #73, #74) — LOCKED
+
+Status: implemented and merged across PRs #72–#74, locked with regression tests (this task, test-only, no runtime file changed).
+
+Verified behavior: "I must pay the electricity bill Monday." asks for the missing time (`parsed.dayOnly`) and creates nothing; a time-only follow-up ("5:00 PM") is combined with the previously named Monday, never `now` (`pendingReminderTimeClarificationRef`); an explicit single-turn phrase ("Monday at 5:00 PM", "next Monday at 5:00 PM", "Monday at 17:00", "Monday at 5") resolves and creates immediately with no clarification (`src/lib/parse-voice-time.ts`'s weekday branch, `"next"` optional, generic-branch clock grammar reused). Reminder cards show both the due date and a `created_at`-derived "Created today at ..." / "Created \<date\> at ..." line (`formatReminderCreatedTime`, `src/lib/reminder-time.ts`), pure display over an already-stored value with no import of Supabase, the tasks store, or `parseVoiceTime`.
+
+Regression protection added (test-only, no runtime file changed): a new widget-level test proving the explicit-phrase path skips both the dayOnly-ask branch and the pending-clarification merge, creating exactly one reminder (`ElevenLabsAgentWidget.reminder-replacement.test.ts`); a new `reminder-time.test.ts` test proving `reminder-time.ts` has no imports at all, so display formatting cannot read or write scheduling data. All four supported weekday+time formats were already covered by `parse-voice-time.test.ts` (PR #73).
+
+Protect: `parsed.dayOnly` gating create_reminder's ask-vs-create decision; `pendingReminderTimeClarificationRef`'s day-preserving merge; the weekday regex's optional `"next"` and shared clock grammar; `reminder-time.ts` staying import-free. Reopen only on a reproduced production regression.
+
+### Reminder Lock — protected-gate promotion (branch `test/reminder-lock-protected-gate`) — LOCKED
+
+Status: test-only stabilization, no runtime file changed. Maps 10 protected one-off-reminder behaviors (clear-creation, day-only ask + day preservation, follow-up completes the same request, correction replaces without duplicating, bare-weekday parsing, stored-vs-displayed due time agreement, creation timestamp integrity, scheduling-failure truthfulness, and structural separation from the recurring-automation runner) to existing or newly added tests. Existing coverage (unchanged): `ElevenLabsAgentWidget.reminder-replacement.test.ts`, `parse-voice-time.test.ts`, `reminder-time.test.ts`, `reminders.test.ts`, `canonical-paths.test.ts`.
+
+Gap-fill added this task: `reminder-time.test.ts` — `formatReminderDue` round-tripped against `parseVoiceTime` output, proving no stored-vs-displayed drift. `reminders.test.ts` — proves `createReminderTask` never sets `created_at` on the outgoing draft and returns it unaltered. `api/qstash-reminder.test.js` — new `describe("qstash-reminder default handler — 'schedule' action")`: a QStash publish failure returns `success:false` and never persists a `qstash_message_id` (mutation-spot-checked: inverted the `!response.ok` check, confirmed the success-path test fails with 500 instead of 200, reverted, confirmed green again). `src/lib/qstash-reminder.test.ts` (new file) — proves the browser-side `scheduleReminderPush`/`cancelReminderPush`/`rescheduleReminderPush` fire-and-log contract never throws on API or network failure. `canonical-paths.test.ts` — new test proving the recurring-automation runner (`api/process-delegation-escalations.js`'s `runAutomationsCore`/`processAutomation`) never imports or calls `createReminderTask`, using its own local `createTask()` REST helper instead.
+
+Protect: `formatReminderDue`'s direct `new Date(value)` read with no re-derivation; `createReminderTask` never touching `created_at`; the qstash-reminder handler's `schedule` action never persisting a message ID on a failed/incomplete QStash publish; the recurring runner staying structurally separate from `createReminderTask`. Files to add to `package.json`'s `test:carson-protected` script (not edited here — applied once during integration): `src/lib/reminder-time.test.ts`, `src/lib/reminders.test.ts`, `src/lib/qstash-reminder.test.ts`, `src/lib/canonical-paths.test.ts`, `api/qstash-reminder.test.js`, `src/components/home/ElevenLabsAgentWidget.reminder-replacement.test.ts`, `src/lib/parse-voice-time.test.ts`. Reopen only on a reproduced production regression.
 
 ### Inbox Review V1
 
@@ -48,6 +284,40 @@ Protect:
 
 Routine invalid proof should return to the worker for correction. The owner should only be interrupted for repeated invalid proof, uncertainty, or a real decision.
 
+### Alternative review (substitute_review) — golden regression contract (LOCKED, branch `test/alternative-review-golden-contract`)
+
+Status: test-only stabilization, no runtime file changed. Protects the Approve Alternative / Reject Alternative / Custom Instruction decision lifecycle: `quality_review_status: "substitute_review"` as the correct trigger state; the Needs You decision surface (`isQualitySubstituteReviewStatus`/`resolveQualityLifecycle` → `needs_owner_decision`); Approve using `reserve_rejected_alternative`/`complete_custom_instruction`-style approval RPCs distinct from Reject's own `reserve_rejected_alternative`/`complete_rejected_alternative` pair; Custom Instruction text reaching the outbound WhatsApp payload verbatim; no cross-task bleed between simultaneous `substitute_review` tasks; exactly-once execution via the claim RPC's `status: 'completed'` short-circuit; no duplicate WhatsApp send on retry; failure paths (missing auth, wrong owner, Meta rejection, network error) never reporting success; and the correct final task state per decision (`completed` / `waiting_for_confirmation` / `proof_submitted`).
+
+New files: `src/lib/alternative-review-golden-contract.test.ts` (client, 11 tests) and `api/alternative-review-golden-contract.test.js` (server, 11 tests) — real calls into `api/task-confirm.js`'s `handlePost`/`handleOwnerDecision`, `src/lib/quality-lifecycle.ts`, and `src/lib/quality-substitute-decision.ts`, with only Supabase REST, the Meta Graph API, and the Anthropic API mocked. Deliberate-failure proof: inverted the Reject/Approve RPC branch mapping in `task-confirm.js`, confirmed the Reject-path test failed precisely, reverted, confirmed green again. Part of `npm run test:carson-protected`.
+
+Protect: the RPC-pair separation between Approve/Reject/Custom Instruction; the exactly-once claim short-circuit; the failure-never-claims-success contract on both the client helper and the server handler. Reopen only on a reproduced production regression.
+
+### Protected photo workflow — golden regression contract (LOCKED, baseline 447a685)
+
+Status: complete and stable. Production baseline commit: `447a685`.
+
+Why this exists: the same class of production incident recurred repeatedly in one day — a private handwritten note's photo leaked to staff (PR #78), then a legitimate visual-reference photo was silently dropped (PR #79), then real WhatsApp media never sent for 2+ photos and proof photos nearly leaked back to the assignee (PRs #80/#81), then a second reference photo was silently dropped from Quality Intelligence review (PR #82). Each fix was correct in isolation; the whole photo journey had no single permanent test contract tying it together.
+
+**Protected photo journey**:
+1. Owner attaches a photo (1 or many) to a delegation. A private note or screenshot is read by Carson but never forwarded to staff unless explicitly authorized or genuinely visually required (`src/lib/image-forwarding-guard.ts`).
+2. An authorized image is persisted (`tasks.image_path` for the first photo; `task_attachments` with `file_name IS NULL` for every reference photo) and reaches the real WhatsApp send — single photo via the `ra7etbal_task_image` header template, 2+ photos via the primary text template plus one real freeform image message per photo (`api/send-whatsapp-task.js`).
+3. The assignee submits proof photos, stored in the same `task_attachments` table but discriminated by `file_name = 'proof'` — never mixed with, and never re-sent as, reference photos.
+4. Quality Intelligence loads **every** reference photo (not just the first) and **every** proof photo, and judges the two sets together with no assumed positional pairing (`api/task-confirm.js`, `api/_quality-review.js`). A fresh proof submission always clears prior review state before the new review runs.
+5. A photo authorized for one delegation recipient never leaks to a different recipient in the same turn.
+
+**Golden test command** (also the mandatory CI gate — `.github/workflows/carson-protected-behaviors.yml` runs `npm run test:carson-protected` on every PR to `main`, unconditionally, no path filter):
+```
+npm run test:carson-protected
+```
+or to run just the golden contract in isolation:
+```
+npx vitest run src/lib/photo-workflow-golden-contract.test.ts api/photo-workflow-golden-contract.test.js
+```
+
+**Critical files covered**: `src/lib/image-forwarding-guard.ts`, `src/lib/text-carson.ts`, `src/components/home/ElevenLabsAgentWidget.tsx` (image/delegation paths), `api/send-whatsapp-task.js`, `api/task-confirm.js`, `api/_quality-review.js`, plus their existing detailed test files (`image-forwarding-guard.test.ts`, `text-carson-image.test.ts`, `send-whatsapp-task.test.js`, `task-confirm.test.js`, `_quality-review.test.js`) which the golden contract complements rather than replaces.
+
+**Rule**: this workflow must not be changed without running the golden contract (`npm run test:carson-protected`) before and after the change, and the change must not weaken, skip, or remove any golden scenario. Do not reopen without a reproduced regression.
+
 ### Recurring owner reminders
 
 Status: completed and production verified.
@@ -58,7 +328,7 @@ Personal recurring reminders must not be converted into staff WhatsApp delegatio
 
 ### Type to Carson V1
 
-Status: implemented and tested.
+Status: implemented and tested. **Superseded in part by "Type to Carson is advisory-only" above (2026-07-25)** — see that entry for the current, authoritative rule. "To-do creation" and "Tool authority and deterministic operational actions" below are historical: typed chat can no longer create a to-do or reach any state-changing tool/deterministic send path. Everything else in this list (same production agent, persistence/history restore, Clear Chat, image attachment/understanding, preview allowlisting) is unaffected and still protected.
 
 Protect:
 
@@ -66,9 +336,7 @@ Protect:
 - Persistence and history restore
 - Clear Chat
 - Image attachment and image understanding
-- To-do creation
 - Preview allowlisting
-- Tool authority and deterministic operational actions
 
 ### Typed-image delegation race fix
 
@@ -156,6 +424,51 @@ Visual verification: Sana confirmed on production — Home shows "Nothing needs 
 
 Protect: this classifier gate (`task.type === "decision"` on the self-owned fallback) — do not reintroduce a broader self-assignment check or any title/description keyword matching. Reopen only on a reproduced production regression.
 
+### Phase B — staff-to-owner escalation loop
+
+Status: FULLY VERIFIED AND CLOSED. PRODUCTION VERIFIED. PROTECTED.
+
+Production baseline: commit `4d71fc4f409acf973898f33a49e0b586bdc54695`, deployment `dpl_7eqkMzJ4va9S794QbcnrtAXA9hP4`, verified 2026-07-27.
+
+What it is: when a non-family, WhatsApp-opted-in staff member sends Carson an explicit permission/approval/authorization request (e.g. "Can I buy X instead?"), Carson must escalate to the owner rather than deciding itself, unless the exact action is already pre-approved in supplied task/household-rule context. The chain: `api/_staff-comms-engine.js` classifies and, for a genuine escalation, sets `owner_attention_required=true`/`next_action_owner=owner`/`user_facing_state=Needs You` → `api/whatsapp-webhook.js`'s `handleInboundStaffMessage` calls `api/_escalation-notify.js`'s `notifyOwnerOfEscalation` → an atomic lease (`claim/complete/fail_owner_escalation_notification`, migration `20260727_staff_escalation_owner_notification_lease.sql`) guarantees at most one real Meta send per escalation → one `staff_escalation_owner_decisions` row is created (Phase A, `20260726_staff_escalation_owner_decisions.sql`) → one `ra7etbal_owner_decision` WhatsApp template message is sent to the owner → one `whatsapp_deliveries` audit row is created and linked via `metadata.staff_message_id` (never via `message_id`, whose FK targets `public.messages`, a different table) → the staff member receives exactly one truthful holding reply, the literal string `"I'm checking with the owner. I'll come back to you."`, sent only after Meta genuinely accepted the owner send.
+
+Delivered across 4 PRs, each independently reviewed and production-verified before the next started:
+- PR #85/#86 (merge `c87d167`/`c7b32b0`) — Phase A schema + Phase B wiring into the real inbound path.
+- PR #87 (merge `1200f4e581be8fbc6b665daec3cf714aa2520ea1`) — closed a confirmed live failure where Carson self-authorized a staff substitution request ("go ahead... that's a standard kitchen swap") with no stored approval. Added a `HARD RULE` to `_staff-comms-engine.js`'s `SYSTEM_PROMPT`: explicit staff permission requests must escalate unless the exact action is pre-approved in context; Carson must never invent approval wording.
+- PR #88 (merge `4d71fc4f409acf973898f33a49e0b586bdc54695`) — closed a confirmed live gap where the real Meta send succeeded but no `whatsapp_deliveries` audit row was ever created, because `beginWhatsappDelivery` had no trusted-context lookup for a staff-message-originated, often taskless send. Added a `staffMessageId` → `public.staff_messages` lookup to `api/_whatsapp-delivery.js`, mirroring the existing `messages`/`tasks`/`routines`/`automation_runs` pattern.
+
+Both fixes were proven against real production traffic, not just tests: a controlled live test (Christopher, non-family opted-in staff; Sana, the household's only Boss/owner) sent an explicit permission request and the full chain was independently confirmed end-to-end from real Supabase rows and Sana's own WhatsApp inbox.
+
+**Two test escalations exist in production as of the verification date below — they are test data, not real owner decisions, and must never be treated as answered or resolved:**
+- `staff_messages.id 8a90931f-cd03-4638-824d-1493a9a2d61a` / `staff_escalation_owner_decisions.id 8740ed2f-a81d-47ff-bb3e-8f2610b5aacd` ("regular olive oil... extra virgin olive oil", 2026-07-26) — predates PR #88, so it has no `whatsapp_deliveries` audit row; this is expected and not a regression.
+- `staff_messages.id e02938bb-5a04-401b-8b60-79967b5a89fa` / `staff_escalation_owner_decisions.id dedcff26-dad5-4f87-afa8-4cf9f00aa0d8` / `whatsapp_deliveries.id 55ddae6a-644c-4e51-a0f9-0f2456dc12d0` ("regular balsamic vinegar... red wine vinegar", 2026-07-27) — the first live proof the audit row now exists and is correctly linked.
+
+Both remain `status: open`, `owner_reply_text: null`, `answered_at: null` by design — this is correct Phase B behavior, not an incomplete task.
+
+**Exact Phase B/C/D boundary:** Phase B's job ends the moment the owner has been notified and the staff member has a truthful holding reply. It never resolves the escalation, never writes an owner decision, and never routes anything back to staff. **Phase C** (the owner answering, e.g. via the WhatsApp template's "Visit Task" link) and **Phase D** (relaying that answer back to the staff member) are both not implemented — do not build them into this task's scope without a separate, explicitly-scoped task.
+
+**Separate, explicitly out-of-scope backlog item:** `_staff-comms-engine.js`'s `loadStaffContext` still loads zero prior `staff_messages` conversation turns — each inbound message (including a direct follow-up to Carson's own prior question) is classified with no awareness of what was said moments before. Tracked as a Carson Reliability Engineering item, not fixed by PR #87 or #88.
+
+Protect: the four-PR contract above in full — classification/escalation fields, the atomic notification lease as the sole idempotency/resend guard, the `staff_messages`-linked delivery audit row (never via `message_id`), the exact deterministic staff holding reply and its Meta-acceptance gating, and the unresolved-by-design escalation state. The full regression suite for this contract (`api/_staff-comms-engine.test.js`, `api/staff-escalation-phase-b-golden-contract.test.js`, `api/_whatsapp-delivery.test.js`) runs under `TZ=UTC npm run test:carson-protected`. Reopen only on a reproduced production regression — do not redesign this flow to add Phase C/D behavior without a separate task. Phase B remains protected by its existing stable state above; a separate stable tag (`ra7etbal-stable-owner-escalation-phase-b-2026-07-27`) marks this exact baseline.
+
+### Phase C — Needs You visibility + read-only owner-decision page
+
+Status: IMPLEMENTED. PRODUCTION-VERIFIED (owner-page load, read-only). PR #91 open, independent review in progress — **not yet merged, not yet closed.**
+
+What it is: the open staff escalations Phase B already creates are now surfaced two ways, both read-only: (1) inside the *existing* Needs You list/counts on Home, Updates → Needs You, and the bottom-nav badge — no Staff tab restored, no new navigation surface; (2) via a dedicated, authenticated, read-only owner-decision page (`OwnerEscalationDecision.tsx`) reached through the same `/confirm?task={{1}}` WhatsApp template URL already approved for worker task-confirmation links, discriminated from a real task link purely by probing the existing, unmodified `/api/task-confirm` endpoint (`ConfirmRouter.tsx`'s `resolveConfirmLinkKind`) — a genuine 404 routes to the owner page, anything else routes to the unmodified `Confirm.tsx`.
+
+`filterVisibleStaffEscalations` (`src/lib/needs-you-staff-escalations.ts`) performs no deduplication: a staff escalation is never hidden because its `task_id` happens to match a task shown in Needs You for an unrelated reason (quality review, cancellation, a self-owned decision task) — there is no reliable shared-decision identifier in the current schema, so visibility always wins over cosmetic duplicate suppression.
+
+Production verification (2026-07-27): both open test escalations (balsamic-vinegar `staff_messages.id e02938bb-5a04-401b-8b60-79967b5a89fa` and the olive-oil escalation `8a90931f-cd03-4638-824d-1493a9a2d61a`) appeared in Needs You; the What's Happening badge showed a count of 2 for them; the balsamic-vinegar "Review decision" WhatsApp link routed to the correct owner page, displaying the correct Christopher request; opening the page caused zero database mutation (`staff_escalation_owner_decisions.status` remained `open`, `owner_reply_text`/`answered_at` remained `null`, `staff_messages.escalation_resolved_at` remained `null`, before and after, confirmed by direct query). Neither escalation was clicked through or answered.
+
+Read-only by design: no form, button, write, insert, update, or RPC exists anywhere in this slice. Opening the owner page, or any Needs You surface showing an escalation card, can never itself resolve or answer an escalation — that is exclusively Phase D's job, not yet built. The owner-page copy reflects this truthfully: open escalations show "Decision controls are coming next. This request will remain in Needs You until you respond through Carson."; an already-answered decision (not yet reachable in production, since Phase D doesn't exist) shows only "You already responded to this request." — the open-state copy is suppressed, never both at once. No copy anywhere on this page instructs the owner to bypass Carson (reply/message/text/contact/call/WhatsApp the staff member directly, or "outside Carson"/"manually") — enforced by a dedicated regression test in `OwnerEscalationDecision.test.tsx` that also positively proves it cannot false-positive on a staff member's own quoted request text.
+
+**Exact Phase B/C/D boundary (unchanged from the Phase B entry above):** Phase C never persists an owner answer, never calls `answer_escalation_owner_decision` or any other RPC, never sends a staff message, and never resolves an escalation. Phase D (relaying the owner's answer back to staff) remains not implemented — do not build it into a task scoped to Phase C.
+
+**Separate, deferred, out-of-scope item:** dismissed Home notifications reappearing is a known, separate regression, unrelated to and not fixed by Phase C — do not conflate the two or attempt to fix it inside Phase C's scope.
+
+Protect: `filterVisibleStaffEscalations`'s no-deduplication behavior — do not reintroduce `task_id`-based suppression or any text/category/timing heuristic. `ConfirmRouter`'s discriminator — do not change the Meta template URL shape or make `Confirm.tsx`/`api/task-confirm.js` aware of owner escalations. The owner page's read-only contract — no write/RPC/message-send may be added without a separate, explicitly-scoped Phase D task. The full regression suite for this contract (`src/lib/staff-messages.test.ts`, `src/lib/needs-you-staff-escalations.test.ts`, `src/routes/Home.test.ts`, `src/routes/Updates.test.ts`, `src/components/nav/BottomNav.staff-escalation-badge.test.ts`, `src/routes/ConfirmRouter.test.tsx`, `src/routes/OwnerEscalationDecision.test.tsx`) runs under `TZ=UTC npm run test:carson-protected`. Do not claim this section "CLOSED" until PR #91 is merged, deployed, and the live copy fix is production-verified — at that point, tag the merge commit `ra7etbal-stable-owner-escalation-phase-c-2026-07-27`.
+
 ## Current product rules
 
 ### Carson communication
@@ -220,7 +533,7 @@ Test interface: `api/_staff-comms-engine.test.js`, 12 focused Vitest tests (all 
 
 Independent review (separate agent, `review:bug-hunter`): 0 critical/high/medium findings across second-Carson risk, cross-household leakage, idempotency, false completion, accidental ElevenLabs/WhatsApp changes, and test-meaningfulness (2 findings mutation-tested to confirm the tests actually fail without the implementation). One Low/nit, not a blocker: if `fail_staff_message` itself throws inside the outer catch block's nested try/catch, the row is left silently stuck in `claimed` with no distinguishing signal — logged at the same level as normal errors. Left as a documented follow-up, not fixed in this task (narrow, pre-existing-shape gap, not a regression risk to protected behavior).
 
-Remaining for issue #46, deferred until ElevenLabs is unblocked (explicit non-goal of this task): wiring an actual transport (WhatsApp inbound or ElevenLabs) to call `processStaffMessage`; owner-facing UI surfacing of escalations (currently persisted on `staff_messages.escalation_reason`/`user_facing_state`/`next_action_owner` only, not yet shown in any UI — "do not redesign the UI" was an explicit non-goal here).
+Remaining for issue #46 at the time this section was written: wiring an actual transport to call `processStaffMessage`, and owner-facing UI surfacing of escalations. **Update:** the WhatsApp inbound transport is now wired — see "Phase B — staff-to-owner escalation loop" below, PROTECTED and CLOSED. Owner-facing UI surfacing of escalations (Phase C: the owner answering) and routing that answer back to staff (Phase D) remain not implemented — see that section for the exact boundary.
 
 Protect: this table/module design must not be duplicated by a future transport integration — reuse `processStaffMessage`, do not build a second reasoning path.
 

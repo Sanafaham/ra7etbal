@@ -6,7 +6,7 @@ import Actions from "./routes/Actions";
 import Active from "./routes/Active";
 import Updates from "./routes/Updates";
 import Auth from "./routes/Auth";
-import Confirm from "./routes/Confirm";
+import ConfirmRouter from "./routes/ConfirmRouter";
 import Debug from "./routes/Debug";
 import CarsonDebugOverlay from "./routes/CarsonDebug";
 import FollowUps from "./routes/FollowUps";
@@ -199,6 +199,8 @@ function PersistentCarsonWidget({
   onRequestClose,
   onCalendarRevokedChange,
   calendarDisconnectCount,
+  pendingTypedDraft,
+  onPendingTypedDraftConsumed,
 }: {
   isOpen: boolean;
   onCallStatusChange: (status: "idle" | "connecting" | "connected" | "error") => void;
@@ -208,6 +210,12 @@ function PersistentCarsonWidget({
   /** Incremented by App each time the user disconnects Google Calendar.
    *  Widget watches this to clear stale calendar events. */
   calendarDisconnectCount: number;
+  /** Text queued (e.g. by "Send to Carson" on a Note card) to appear in the
+   *  typed input once a text session is connected. */
+  pendingTypedDraft?: string | null;
+  /** Called once the widget has inserted pendingTypedDraft, so App clears it
+   *  and it never re-applies to a later, unrelated typed session. */
+  onPendingTypedDraftConsumed?: () => void;
 }) {
   const { status, user } = useAuth();
   const userId = user?.id ?? null;
@@ -403,6 +411,8 @@ function PersistentCarsonWidget({
       onChannelChange={onChannelChange}
       onRequestClose={onRequestClose}
       isOpen={isOpen}
+      pendingTypedDraft={pendingTypedDraft}
+      onPendingTypedDraftConsumed={onPendingTypedDraftConsumed}
     />
   );
 }
@@ -422,6 +432,8 @@ export default function App() {
     setCallStatus: setCarsonCallStatus,
     channel: carsonChannel,
     setChannel: setCarsonChannel,
+    pendingTypedDraft,
+    setPendingTypedDraft,
   } = useCarsonStore();
 
   const showNav = useShowNavInner();
@@ -480,7 +492,7 @@ export default function App() {
           <Route path="/people" element={<ProtectedRoute><People /></ProtectedRoute>} />
           <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
           <Route path="/routines" element={<Navigate to="/updates?tab=routines" replace />} />
-          <Route path="/confirm" element={<Confirm />} />
+          <Route path="/confirm" element={<ConfirmRouter />} />
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/terms" element={<Terms />} />
           <Route path="/debug" element={<Debug />} />
@@ -564,6 +576,8 @@ export default function App() {
             onRequestClose={() => setCarsonOpen(false)}
             onCalendarRevokedChange={setCalendarRevoked}
             calendarDisconnectCount={calendarDisconnectCount}
+            pendingTypedDraft={pendingTypedDraft}
+            onPendingTypedDraftConsumed={() => setPendingTypedDraft(null)}
           />
         </div>
       </div>

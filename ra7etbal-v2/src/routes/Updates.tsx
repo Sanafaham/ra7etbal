@@ -9,8 +9,11 @@ import { useShallow } from "zustand/react/shallow";
 import AuthNotice from "../components/auth/AuthNotice";
 import Spinner from "../components/Spinner";
 import TaskCard from "../components/tasks/TaskCard";
+import StaffEscalationCard from "../components/tasks/StaffEscalationCard";
 import Modal from "../components/ui/Modal";
 import { useTaskList } from "../hooks/useTaskList";
+import { useOpenStaffEscalations } from "../hooks/useOpenStaffEscalations";
+import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";
 import { buildDailyBrief } from "../lib/daily-brief";
 import { getUpcomingReminderTasks } from "../lib/updates-reminders";
 import { usePeopleStore } from "../stores/people";
@@ -19,10 +22,9 @@ import type { Task } from "../types/task";
 import Inbox from "./Inbox";
 import Todos from "./Todos";
 import Routines from "./Routines";
-import StaffUpdates from "./StaffUpdates";
 import { advanceChipScrollLeft, shouldAdvanceChipAutoScroll } from "../lib/chip-auto-scroll";
 
-type Tab = "needs-you" | "waiting" | "todo" | "inbox" | "routines" | "staff" | "history";
+type Tab = "needs-you" | "waiting" | "todo" | "inbox" | "routines" | "history";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "needs-you",     label: "Needs You" },
@@ -30,7 +32,6 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "todo",          label: "To-do"     },
   { id: "inbox",         label: "Notes"     },
   { id: "routines",      label: "Automations"  },
-  { id: "staff",         label: "Staff"     },
   { id: "history",       label: "History"   },
 ];
 
@@ -205,6 +206,23 @@ export default function Updates() {
   }, [people]);
 
   const brief = useMemo(() => buildDailyBrief(tasks, now), [tasks, now]);
+
+  // Phase C — open staff escalations (Phase B) merged into the same Needs
+  // You list. Deliberately not folded into buildDailyBrief()/needsAttention
+  // itself: staff escalations are not `Task` rows, and isNeedsYouTask() is
+  // a protected, locked classifier — see RA7ETBAL_STATE.md.
+  //
+  // filterVisibleStaffEscalations no longer deduplicates by task_id — a
+  // task_id match does not mean "the same decision" (a task can appear in
+  // Needs You for a reason unrelated to Phase B while a staff escalation
+  // on it is a genuinely separate decision), so nothing is ever dropped
+  // here. See that function's own doc comment for the full explanation.
+  const { escalations: staffEscalations } = useOpenStaffEscalations();
+  const visibleStaffEscalations = useMemo(
+    () => filterVisibleStaffEscalations(staffEscalations, brief.needsAttention.map((t) => t.id)),
+    [staffEscalations, brief.needsAttention],
+  );
+
   const doneTasks = useMemo(() => tasks.filter((t) => t.status === "done"), [tasks]);
   const initialLoading = tasksStatus === "loading" && tasks.length === 0;
   // Background refreshes (15s/30s/60s polls, focus, visibilitychange, and the
@@ -326,7 +344,7 @@ export default function Updates() {
       </div>
 
       {/* ── Error ── */}
-      {tasksError && tasksStatus !== "loading" && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && activeTab !== "staff" && (
+      {tasksError && tasksStatus !== "loading" && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && (
         <AuthNotice kind="error">
           {tasksError}{" "}
           <button type="button" onClick={reload} className="ml-1 underline">
@@ -336,7 +354,7 @@ export default function Updates() {
       )}
 
       {/* ── Initial loading (task-based tabs only) ── */}
-      {initialLoading && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && activeTab !== "staff" && (
+      {initialLoading && activeTab !== "inbox" && activeTab !== "routines" && activeTab !== "todo" && (
         <div className="flex items-center justify-center py-12 text-ink/60">
           <Spinner size={20} label="Loading" />
         </div>
@@ -347,12 +365,17 @@ export default function Updates() {
       ══════════════════════════════════════════════════════════════ */}
       {activeTab === "needs-you" && !initialLoading && listReady && (
         <div className="space-y-3">
-          {brief.needsAttention.length === 0 ? (
+          {brief.needsAttention.length === 0 && visibleStaffEscalations.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border bg-white/40 px-4 py-6 text-sm text-ink/45">
               Nothing needs your attention right now.
             </div>
           ) : (
             <ul className="space-y-3">
+              {visibleStaffEscalations.map((escalation) => (
+                <li key={`staff-escalation-${escalation.id}`}>
+                  <StaffEscalationCard escalation={escalation} now={now} />
+                </li>
+              ))}
               {brief.needsAttention.map((task) => (
                 <li key={task.id}>
                   <TaskCard
@@ -458,15 +481,6 @@ export default function Updates() {
           ROUTINES
       ══════════════════════════════════════════════════════════════ */}
       {activeTab === "routines" && <Routines headerless />}
-
-      {/* ══════════════════════════════════════════════════════════════
-          STAFF — read-only owner visibility into staff communications
-          processed by processStaffMessage(). No live transport is wired
-          to it yet, so this list may be empty; StaffUpdates manages its
-          own loading/error/empty state independently, same as Inbox,
-          Routines, and Todos above.
-      ══════════════════════════════════════════════════════════════ */}
-      {activeTab === "staff" && <StaffUpdates headerless />}
 
       {/* ══════════════════════════════════════════════════════════════
           HISTORY

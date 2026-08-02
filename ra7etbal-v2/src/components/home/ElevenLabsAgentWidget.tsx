@@ -45,7 +45,8 @@ import {
   extractEventIdParam,
   extractAutomationInstructionParam,
 } from "../../lib/carson-tool-params";
-import { filterCalendarEventsByRange } from "../../lib/calendar";
+import { filterCalendarEventsByRange, searchCalendarHistory } from "../../lib/calendar";
+import { fetchTaskDeliveryStatus, fetchOperationsSummary } from "../../lib/carson-operations-center";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { callCalendarApi } from "../../lib/calendar-actions";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
@@ -69,10 +70,11 @@ import {
   createDelegationTaskAndMessage,
 } from "../../lib/delegations";
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
+import { preserveDirectMessageReplyIntent } from "../../lib/direct-message-reply-intent";
 import { isCommunicationStyleTaskText } from "../../lib/communication-vs-delegation";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
-import { executeDelegationFastPath } from "../../lib/delegation-fast-path";
+import { executeDelegationFastPath, parseDelegationFastPath } from "../../lib/delegation-fast-path";
 import {
   getSocialAcknowledgementReply,
   isSocialAcknowledgement,
@@ -93,6 +95,7 @@ import {
   handleOperationalHostingTurn,
   resolveGuestOutcomeAction,
   executeProposedPlan,
+  hasLeadingConfirmationLanguage,
   isConfirmation,
   isRejection,
   isStatusQuestion,
@@ -109,7 +112,9 @@ import { createMessage } from "../../lib/messages";
 import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
-import { resolveSanitizedCarsonDisplayMessage, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
+import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
+import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
+import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
 import {
   executeVoiceTaskControl,
   resolveVoiceTaskControl,
@@ -158,6 +163,14 @@ type CallStatus = "idle" | "connecting" | "connected" | "error";
 type AgentMode = "listening" | "speaking";
 type CarsonChannel = "voice" | "text";
 const TYPED_SESSION_STORAGE_KEY = "ra7etbal:typed-carson-session-id";
+// How recently the prior same-wording reminder must have been created for a
+// new create_reminder call to be treated as a correction of it, rather than
+// an unrelated later reminder that happens to reuse the same wording. A real
+// correction ("actually make it 5 PM") is the very next turn in the same
+// back-and-forth; this window is generous enough to cover normal
+// conversational pacing without being long enough to plausibly span an
+// unrelated later request.
+const REMINDER_CORRECTION_WINDOW_MS = 2 * 60 * 1000;
 
 function getOrCreateTypedSessionId(): string {
   if (typeof window === "undefined") return crypto.randomUUID();
@@ -171,6 +184,57 @@ function getOrCreateTypedSessionId(): string {
     return crypto.randomUUID();
   }
 }
+
+// ── Type to Carson — advisory-only (product decision 2026-07-25) ──────────────
+// Talk to Carson (voice) remains the only execution channel. Type to Carson may
+// think, plan, draft, research, and review, but must never perform or claim a
+// state-changing action. This is enforced in code (guardCurrentToolInvocation
+// below, plus the deterministic typed hosting/delegation/direct-message fast
+// paths in sendTypedMessage) — never by prompt wording alone. Flip this single
+// constant back to false to fully restore typed execution if the product
+// decision changes; every call site below is additive and reversible.
+const TYPED_MODE_IS_ADVISORY_ONLY = true;
+const TYPED_ADVISORY_REMINDER = "I can help you prepare that. Use Talk to Carson to create the reminder.";
+const TYPED_ADVISORY_RECURRING_REMINDER = "I can help you plan that. Use Talk to Carson to set up the recurring reminder.";
+const TYPED_ADVISORY_CALENDAR = "I can help you plan the event. Use Talk to Carson to add it to your calendar.";
+const TYPED_ADVISORY_STAFF_MESSAGE = "I can help you draft the message. Use Talk to Carson to send it.";
+const TYPED_ADVISORY_HOSTING_EXECUTION = "I can help you plan the hosting details. Use Talk to Carson when you are ready to execute the plan.";
+// Brief, immediate redirect for a fresh hosting execution request ("Handle
+// dinner tomorrow.") — deliberately terser than TYPED_ADVISORY_HOSTING_EXECUTION
+// above (which follows an already-built proposal): no clarification question,
+// no proposal, no advisory preamble first.
+const TYPED_ADVISORY_HOSTING_REQUEST = "Use Talk to Carson to plan and arrange it.";
+const TYPED_ADVISORY_TASK_STATE = "I can help you think that through. Use Talk to Carson to update it.";
+const TYPED_ADVISORY_GENERIC = "I can help you prepare that, but I can't complete it from typed chat. Use Talk to Carson to do it.";
+
+/** Client tool → advisory response when a typed request reaches a state-changing tool. */
+const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {
+  execute_instruction: TYPED_ADVISORY_GENERIC,
+  send_followup: TYPED_ADVISORY_STAFF_MESSAGE,
+  send_delegation: TYPED_ADVISORY_STAFF_MESSAGE,
+  send_direct_whatsapp_message: TYPED_ADVISORY_STAFF_MESSAGE,
+  create_reminder: TYPED_ADVISORY_REMINDER,
+  create_automation: TYPED_ADVISORY_RECURRING_REMINDER,
+  create_calendar_event: TYPED_ADVISORY_CALENDAR,
+  update_calendar_event: TYPED_ADVISORY_CALENDAR,
+  delete_calendar_event: TYPED_ADVISORY_CALENDAR,
+  create_todo: TYPED_ADVISORY_TASK_STATE,
+  complete_todo: TYPED_ADVISORY_TASK_STATE,
+  control_task: TYPED_ADVISORY_TASK_STATE,
+  act_on_note: TYPED_ADVISORY_TASK_STATE,
+  save_city: TYPED_ADVISORY_GENERIC,
+  save_instruction: TYPED_ADVISORY_GENERIC,
+  // get_calendar_events is intentionally absent — read-only lookups remain
+  // available for typed research/planning ("what's on my calendar Friday?").
+  // save_note is intentionally absent — it only persists a note (no worker
+  // notification, no task/calendar/reminder state change), and "accept brain
+  // dumps" is an explicitly required typed capability. act_on_note (turning a
+  // saved note into a task/delegation/reminder) stays blocked above — that is
+  // the state-changing step.
+};
+
+const CARSON_TYPED_ADVISORY_POLICY =
+  "Type to Carson is advisory-only. You may answer questions, help plan, accept brain dumps, draft content and messages, research information, and review existing information. You must never claim to create a reminder or recurring reminder, schedule a push notification, create or change a calendar event, send a staff message, execute or approve a hosting plan, create an assignment or delegation, or change any task or operation state. Every tool that performs one of those actions is blocked in typed mode and returns a short message telling the owner to use Talk to Carson — relay that message plainly and briefly. Never say or imply that an action was completed.";
 
 // Truthful processing indicator, layered on top of the SDK-driven `mode`
 // (which only reports listening/speaking, with no signal for the gap in
@@ -823,6 +887,8 @@ export default function ElevenLabsAgentWidget({
   onChannelChange,
   onRequestClose,
   isOpen = false,
+  pendingTypedDraft = null,
+  onPendingTypedDraftConsumed,
 }: {
   briefStateText: string;
   /** Pre-built spoken daily brief paragraph injected as `daily_brief` dynamic variable. */
@@ -860,6 +926,18 @@ export default function ElevenLabsAgentWidget({
   onRequestClose?: () => void;
   /** True while the persistent Carson sheet is visible. */
   isOpen?: boolean;
+  /**
+   * Text queued to appear in the typed input once a text session is
+   * connected — e.g. "Send to Carson" on a Note card. Inserted, never
+   * auto-submitted: the owner still reviews and taps Send themselves, so
+   * this carries no execution authority of its own — it goes through the
+   * exact same sendTypedMessage() path (and the same advisory-only
+   * boundary) as anything the owner types directly.
+   */
+  pendingTypedDraft?: string | null;
+  /** Called once pendingTypedDraft has been inserted into the typed input,
+   *  so the caller can clear it and it never re-applies later. */
+  onPendingTypedDraftConsumed?: () => void;
 }) {
   const agentId = import.meta.env.VITE_ELEVENLABS_AGENT_ID?.trim();
   const audioEnvironmentRef = useRef<CarsonAudioEnvironment>(getCarsonAudioEnvironment());
@@ -979,6 +1057,19 @@ export default function ElevenLabsAgentWidget({
     previousTypedOpenRef.current = isOpen;
     if (opened) void reconcileTypedHistory();
   }, [isOpen, reconcileTypedHistory]);
+
+  // "Send to Carson" (Note cards) queues note text here; insert it into the
+  // typed input the moment a text session is connected and ready, then tell
+  // the caller to clear the queued value so it never re-applies to a later,
+  // unrelated typed session. Never overwrites text the owner already typed,
+  // and never submits — the owner still reviews and taps Send themselves.
+  useEffect(() => {
+    if (!pendingTypedDraft) return;
+    if (status !== "connected" || channel !== "text") return;
+    if (typedInput.trim()) return;
+    setTypedInput(pendingTypedDraft);
+    onPendingTypedDraftConsumed?.();
+  }, [pendingTypedDraft, status, channel, typedInput, onPendingTypedDraftConsumed]);
 
   const ensureTypedHistoryLoaded = useCallback(async (): Promise<CarsonTypedMessage[]> => {
     return reconcileTypedHistory(false);
@@ -1244,6 +1335,31 @@ export default function ElevenLabsAgentWidget({
    *  Flushed to carson_memory on disconnect. */
   const sessionActionsRef = useRef<string[]>([]);
   const createdReminderKeysRef = useRef<Map<string, string>>(new Map());
+  /** The most recently created one-time reminder task in this session, if still
+   *  active. create_reminder is the only reminder tool exposed to the model —
+   *  a time/date correction necessarily arrives as another create_reminder
+   *  call, not a distinct "update" call — so this lets a same-description
+   *  follow-up replace the prior reminder instead of creating a duplicate.
+   *  createdAt gates the replacement to a short window (see
+   *  REMINDER_CORRECTION_WINDOW_MS) so a genuinely new, later reminder that
+   *  happens to reuse the same wording is never silently deleted — only an
+   *  immediate correction in the same back-and-forth is treated as one. */
+  const lastCreatedReminderRef = useRef<{ id: string; normalizedDescription: string; createdAt: number } | null>(null);
+
+  /** Holds a day named without a clock time ("pay the electricity bill on
+   *  Monday") while Carson asks the follow-up "what time on Monday?" —
+   *  nothing is created until a real time is known. dayOnlyDueAt is
+   *  parseVoiceTime's resolved date with its invented 09:00 default; when
+   *  the next create_reminder call for the same description supplies only a
+   *  clock time (no day word), that time replaces the 09:00 default instead
+   *  of being resolved against "now" (which would silently turn "Monday"
+   *  into "today"/"tomorrow"). Same correction-window gate as
+   *  lastCreatedReminderRef, for the same reason. */
+  const pendingReminderTimeClarificationRef = useRef<{
+    normalizedDescription: string;
+    dayOnlyDueAt: string;
+    at: number;
+  } | null>(null);
 
   /** Holds an unconfirmed operational plan proposed by Operations Intelligence.
    *  Cleared on execution or when a new instruction doesn't confirm it. */
@@ -1356,6 +1472,7 @@ export default function ElevenLabsAgentWidget({
 
   // Tracks latest planning calendar cache for stable useCallback closure.
   const planningCalendarEventsRef = useRef<CalendarEvent[]>(planningCalendarEvents);
+  const historicalSearchCacheRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     planningCalendarEventsRef.current = planningCalendarEvents;
   }, [planningCalendarEvents]);
@@ -2037,7 +2154,7 @@ export default function ElevenLabsAgentWidget({
           // one ("has it" implies tracked work). See CARSON_VOICE_SESSION_GUARD
           // in carson-status-policy.ts, which mirrors this same distinction
           // for Talk to Carson's own generated reply.
-          const successText = `I let ${person.name} know. I'll watch for the reply.`;
+          const successText = `I sent ${person.name} the message.`;
           lastDirectToolSuccessRef.current = {
             toolName: "send_delegation",
             resultText: successText,
@@ -2072,8 +2189,21 @@ export default function ElevenLabsAgentWidget({
         pendingPhotosRef.current.length > 0
           ? pendingPhotosRef.current
           : sessionPhotosRef.current;
-      const delegationImageFile = delegationPhotos[0]?.file ?? null;
-      const delegationImageFiles = delegationPhotos.map((p) => p.file);
+      // Privacy guard: a pending photo is private source material by default
+      // (confirmed production bug — a private note's full image reached
+      // staff alongside the correctly-extracted task text). Only forward the
+      // original image when THIS delegation's own text authorizes it — see
+      // image-forwarding-guard.ts. Deliberately scoped to taskText/message/
+      // note (all specific to this one call) rather than the raw session
+      // transcript: an unrelated earlier remark like "show me this photo"
+      // (addressed to Carson, not this recipient) must not authorize
+      // forwarding to whoever this delegation happens to be for.
+      const imageGuardSource = [taskText, message, note]
+        .filter((value): value is string => !!value?.trim())
+        .join(" ");
+      const forwardImage = shouldForwardAttachedImage(imageGuardSource);
+      const delegationImageFile = forwardImage ? delegationPhotos[0]?.file ?? null : null;
+      const delegationImageFiles = forwardImage ? delegationPhotos.map((p) => p.file) : [];
 
       let result: DelegationSendResult;
       try {
@@ -2160,6 +2290,18 @@ export default function ElevenLabsAgentWidget({
       outcome: "failure",
       inputSummary: { description },
     };
+  }
+
+  /** "today" / "tomorrow" / "Monday, Jan 5" — shared by the confirmation
+   *  reply and the day-only clarification question below. */
+  function formatReminderDayLabel(date: Date): string {
+    const isToday = date.toDateString() === new Date().toDateString();
+    const isTomorrow = date.toDateString() === new Date(Date.now() + 86_400_000).toDateString();
+    return isToday
+      ? "today"
+      : isTomorrow
+      ? "tomorrow"
+      : date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
   }
 
   // ------------------------------------------------------------------
@@ -2338,6 +2480,11 @@ export default function ElevenLabsAgentWidget({
         return recurringFailureText;
       }
 
+      // Hoisted above time resolution: needed both by the day-only
+      // clarification check below (to key pendingReminderTimeClarificationRef)
+      // and by the existing reminder-replacement check further down.
+      const normalizedDescription = text.toLowerCase().replace(/\s+/g, " ").trim();
+
       // ── Resolve due time (one-time reminder path) ───────────────────────────
       // Prefer parsing the raw phrase; fall back to agent-supplied ISO only when
       // time_text is absent. This ensures "tomorrow at 5 PM" always resolves
@@ -2357,7 +2504,52 @@ export default function ElevenLabsAgentWidget({
         console.log(
           `[create_reminder] time resolved: raw="${time_text}" parsedAs="${parsed.parsedAs}" dueAt=${parsed.dueAt} tz=${parsed.timezone}`,
         );
-        resolvedDueAt = parsed.dueAt;
+
+        // A day was named but no clock time ("on Monday", bare "tomorrow") —
+        // parsed.dueAt's 09:00 is an invented default, not something the user
+        // said. Confirmed production bug: create_reminder created the
+        // reminder immediately on this alone, then a follow-up answering
+        // Carson's own "what time?" question re-resolved against `now` and
+        // silently turned Monday into tomorrow. Ask for the time instead of
+        // creating anything, and remember the named day so the next call
+        // (time-only) can be combined with it correctly.
+        if (parsed.dayOnly) {
+          pendingReminderTimeClarificationRef.current = {
+            normalizedDescription,
+            dayOnlyDueAt: parsed.dueAt,
+            at: Date.now(),
+          };
+          const dayLabel = formatReminderDayLabel(new Date(parsed.dueAt));
+          const clarifyText = `What time on ${dayLabel} works for you?`;
+          recordCreateReminderFailure(clarifyText, text);
+          return clarifyText;
+        }
+
+        // A pure clock time with no day word ("4:30 PM") resolves against
+        // `now` (today/tomorrow) by default — correct for a fresh request,
+        // but wrong when this is the answer to "what time on Monday?": the
+        // day named in that still-pending clarification must win instead.
+        const pendingClarification = pendingReminderTimeClarificationRef.current;
+        const answersOpenDayClarification =
+          pendingClarification?.normalizedDescription === normalizedDescription &&
+          Date.now() - pendingClarification.at <= REMINDER_CORRECTION_WINDOW_MS &&
+          /day="auto"/.test(parsed.parsedAs);
+        if (answersOpenDayClarification && pendingClarification) {
+          const namedDay = new Date(pendingClarification.dayOnlyDueAt);
+          const resolvedTime = new Date(parsed.dueAt);
+          resolvedDueAt = new Date(
+            namedDay.getFullYear(),
+            namedDay.getMonth(),
+            namedDay.getDate(),
+            resolvedTime.getHours(),
+            resolvedTime.getMinutes(),
+            0,
+            0,
+          ).toISOString();
+        } else {
+          resolvedDueAt = parsed.dueAt;
+        }
+        pendingReminderTimeClarificationRef.current = null;
       } else if (due_at) {
         const dueMs = new Date(due_at).getTime();
         if (Number.isNaN(dueMs)) {
@@ -2400,8 +2592,34 @@ export default function ElevenLabsAgentWidget({
         return existingReminderReply;
       }
 
+      // ── Reminder replacement (time/date/wording correction) ──────────────
+      // create_reminder is the only reminder tool exposed to the model, so an
+      // immediate correction ("actually make that 5 PM") necessarily arrives
+      // as another create_reminder call with the same description, not a
+      // distinct "update" call. When the normalized description exactly
+      // matches the last reminder created THIS session (still active — not
+      // already superseded/deleted) AND that creation happened within
+      // REMINDER_CORRECTION_WINDOW_MS, this is a replacement, not a second
+      // reminder. The time window matters as much as the description match:
+      // without it, an owner intentionally creating two reminders with
+      // identical wording later in the same session (e.g. the same reminder
+      // repeated on purpose) would have the first one silently deleted —
+      // description equality alone can't tell a live correction apart from
+      // an unrelated later request that happens to reuse the same wording.
+      // New-first-then-cancel-old ordering: if creating the corrected
+      // reminder fails, the original stays untouched and active (never zero
+      // active reminders); "changed" is only spoken once the old one is
+      // confirmed cancelled below.
+      const candidatePriorReminder = lastCreatedReminderRef.current;
+      const priorReminder =
+        candidatePriorReminder?.normalizedDescription === normalizedDescription &&
+        Date.now() - candidatePriorReminder.createdAt <= REMINDER_CORRECTION_WINDOW_MS
+          ? candidatePriorReminder
+          : null;
+
+      let task: Awaited<ReturnType<typeof createReminderTask>>;
       try {
-        const task = await createReminderTask({
+        task = await createReminderTask({
           userId,
           text,
           dueAt: resolvedDueAt,
@@ -2419,31 +2637,43 @@ export default function ElevenLabsAgentWidget({
         recordCreateReminderFailure(failureText, text);
         return failureText;
       }
+      lastCreatedReminderRef.current = { id: task.id, normalizedDescription, createdAt: Date.now() };
 
       // Human-readable confirmation for the agent to speak back.
       const dueDate = new Date(resolvedDueAt);
       const timeStr = dueDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-      const isToday =
-        dueDate.toDateString() === new Date().toDateString();
-      const isTomorrow =
-        dueDate.toDateString() ===
-        new Date(Date.now() + 86_400_000).toDateString();
-      const dateLabel = isToday
-        ? "today"
-        : isTomorrow
-        ? "tomorrow"
-        : dueDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+      const dateLabel = formatReminderDayLabel(dueDate);
 
-      // Prefix with CREATED: so the agent system prompt can pattern-match
-      // success vs error without ambiguity.
-      const reply = `I'll remind you ${dateLabel} at ${timeStr}.`;
+      if (priorReminder) {
+        try {
+          await useTasksStore.getState().remove(priorReminder.id);
+        } catch (err) {
+          // The corrected reminder is persisted and scheduled, but the old
+          // one could not be confirmed cancelled — both are now active.
+          // Never say "changed"/"moved"/"updated" here; report truthfully.
+          const mixedStateText =
+            `I created the new reminder for ${dateLabel} at ${timeStr}, but could not cancel the earlier one. ` +
+            `${sanitizeCarsonErrorDetail(err)} Please check your reminders.`;
+          recordCreateReminderFailure(mixedStateText, text);
+          return mixedStateText;
+        }
+      }
+
+      const reply = priorReminder
+        ? `I've changed that reminder to ${dateLabel} at ${timeStr}.`
+        : `I'll remind you ${dateLabel} at ${timeStr}.`;
       createdReminderKeysRef.current.set(reminderKey, reply);
-      sessionActionsRef.current.push(`Created reminder: ${text} (${dateLabel} at ${timeStr})`);
+      sessionActionsRef.current.push(
+        priorReminder
+          ? `Replaced reminder: ${text} (${dateLabel} at ${timeStr})`
+          : `Created reminder: ${text} (${dateLabel} at ${timeStr})`,
+      );
       lastDirectToolSuccessRef.current = {
         toolName: "create_reminder",
         resultText: reply,
         at: new Date().toISOString(),
-        inputSummary: { description: text, dueAt: resolvedDueAt },
+        outcome: "success",
+        inputSummary: { description: text, dueAt: resolvedDueAt, replaced: Boolean(priorReminder) },
       };
       return reply;
     },
@@ -2771,7 +3001,15 @@ export default function ElevenLabsAgentWidget({
       message: string;
     }): Promise<string> => {
       const name = extractPersonNameParam(params, "recipient_name").trim();
-      const text = extractMessageParam(params).trim();
+      const toolMessage = extractMessageParam(params).trim();
+      const latestUserMessage = [...sessionTranscriptRef.current]
+        .reverse()
+        .find((entry) => entry.role === "user")?.message ?? null;
+      const text = preserveDirectMessageReplyIntent(
+        latestUserMessage,
+        name,
+        toolMessage,
+      );
 
       console.log("[direct_whatsapp_tool_called]", {
         recipient_name: name,
@@ -2849,6 +3087,7 @@ export default function ElevenLabsAgentWidget({
           messageText: text,
           phone: person.phone,
           ownerName,
+          ownerInstruction: latestUserMessage,
           createMessageFn: createMessage,
         });
         console.log("[direct_whatsapp_tool_saved]", {
@@ -2861,7 +3100,7 @@ export default function ElevenLabsAgentWidget({
           deliveryId: delivery.deliveryId,
         });
         recordDirectWhatsappSent(recentDirectWhatsappMessagesRef.current, person.name, text);
-        return `It's with ${person.name}. I'll watch for the reply.`;
+        return `I sent ${person.name} the message.`;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         console.error("[direct_whatsapp_tool_failed]", {
@@ -3103,6 +3342,13 @@ export default function ElevenLabsAgentWidget({
 
         if (result.action === "delete" && result.task) {
           currentTaskContextRef.current = null;
+          // CodeRabbit finding: without this, a same-wording create_reminder
+          // within REMINDER_CORRECTION_WINDOW_MS of a task deleted here would
+          // still be treated as a "correction" of an already-gone reminder —
+          // Carson would say "changed" for what is really a fresh creation.
+          if (lastCreatedReminderRef.current?.id === result.task.id) {
+            lastCreatedReminderRef.current = null;
+          }
           sessionActionsRef.current.push(`Deleted ${result.task.type === "reminder" ? "reminder" : "task"}: ${result.task.description}`);
           lastDirectToolSuccessRef.current = {
             toolName: "control_task",
@@ -3115,6 +3361,9 @@ export default function ElevenLabsAgentWidget({
 
         if (result.action === "mark_done" && result.task) {
           currentTaskContextRef.current = null;
+          if (lastCreatedReminderRef.current?.id === result.task.id) {
+            lastCreatedReminderRef.current = null;
+          }
           sessionActionsRef.current.push(`Marked ${result.task.type === "reminder" ? "reminder" : "task"} done: ${result.task.description}`);
           lastDirectToolSuccessRef.current = {
             toolName: "control_task",
@@ -3191,6 +3440,55 @@ export default function ElevenLabsAgentWidget({
       } catch {
         return "I couldn't fetch calendar events right now.";
       }
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
+  // Client tool: search_calendar_history
+  // Dedicated authenticated historical retrieval. It never reads or falls
+  // back to the future planning cache used by get_calendar_events.
+  // ------------------------------------------------------------------
+  const searchCalendarHistoryTool = useCallback(
+    async (params: {
+      start_date?: string;
+      end_date?: string;
+      query?: string;
+      limit?: number;
+    }): Promise<string> => {
+      const startDate = params?.start_date?.trim() ?? "";
+      const endDate = params?.end_date?.trim() ?? "";
+      const query = params?.query?.trim() ?? "";
+      if (!startDate || !endDate) {
+        return "A historical calendar search needs both a start date and an end date in YYYY-MM-DD format. For a vague 'last time' request, use the previous 12 months first.";
+      }
+
+      const cacheKey = JSON.stringify({
+        start_date: startDate,
+        end_date: endDate,
+        query,
+        limit: params?.limit ?? null,
+      });
+      const cachedResult = historicalSearchCacheRef.current.get(cacheKey);
+      if (cachedResult) return cachedResult;
+
+      const result = await searchCalendarHistory({
+        start_date: startDate,
+        end_date: endDate,
+        ...(query ? { query } : {}),
+        ...(params?.limit !== undefined ? { limit: params.limit } : {}),
+      });
+
+      let response: string;
+      if (!result.ok) {
+        response = result.code === "reconnect_required"
+          ? "Google Calendar needs to be reconnected in Settings before calendar history can be searched."
+          : `The historical calendar search was not completed. ${result.error ?? "Please try again."}`;
+      } else {
+        response = JSON.stringify(result);
+      }
+      historicalSearchCacheRef.current.set(cacheKey, response);
+      return response;
     },
     [],
   );
@@ -4055,9 +4353,26 @@ export default function ElevenLabsAgentWidget({
           if (turn.action === "executed") {
             sessionActionsRef.current.push(`Ops plan executed: ${activePlan.sourceText}`);
             useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+            // Truthfulness wiring (mirrors the Weekly Planning confirm branch
+            // below): without this, EL's own separately-generated spoken
+            // reply for this turn is never checked against the real
+            // execution result, so it can contradict it — the confirmed
+            // production incident this guards against.
+            lastDirectToolSuccessRef.current = {
+              toolName: "execute_instruction",
+              resultText: turn.summary ?? "",
+              at: new Date().toISOString(),
+              inputSummary: { kind: "guest_plan_execute", instruction: activePlan.sourceText.slice(0, 80) },
+            };
             return turn.summary ?? "";
           }
           if (turn.action === "cancelled") {
+            lastDirectToolSuccessRef.current = {
+              toolName: "execute_instruction",
+              resultText: turn.summary ?? "",
+              at: new Date().toISOString(),
+              inputSummary: { kind: "guest_plan_cancelled", instruction: activePlan.sourceText.slice(0, 80) },
+            };
             return turn.summary ?? "";
           }
           // held: plan preserved for a later turn (or discarded on expiry).
@@ -4203,6 +4518,21 @@ export default function ElevenLabsAgentWidget({
           return pendingDecision === "reject"
             ? "Understood. Let me know if there's anything else."
             : "You're all set.";
+        }
+
+        // Guard: a compound reply that OPENS with confirmation language
+        // ("Yes, and please coordinate the table setup...") does not match
+        // the exact-match confirmation regex above, so pendingDecision is
+        // "hold" and — with no active plan — this would otherwise fall
+        // through to handleOperationalHostingTurn below and be misread as a
+        // brand new hosting request. Confirmed production incident: Carson
+        // spoke a two-person hosting proposal without ever persisting a
+        // plan; the owner's "Yes, and..." reply then got misrouted this way,
+        // producing an orphaned clarification instead of a truthful "no plan
+        // to confirm" response.
+        if (!activePlan && !activeWeekPlan && hasLeadingConfirmationLanguage(rawInstruction)) {
+          console.log("[execute_instruction] leading confirmation language with no active plan — asking to restate");
+          return "I don't have a saved plan to confirm. Please tell me the hosting plan again.";
         }
 
         // ── Operations Intelligence — outcome leg ──────────────────────────
@@ -4821,6 +5151,7 @@ export default function ElevenLabsAgentWidget({
         sentDelegationsRef.current = [];
         currentTaskContextRef.current = null;
         createdReminderKeysRef.current.clear();
+        lastCreatedReminderRef.current = null;
 
         let conversationSummary: string | null = null;
         try {
@@ -5029,6 +5360,7 @@ export default function ElevenLabsAgentWidget({
         sentDelegationsRef.current = [];
         currentTaskContextRef.current = null;
         createdReminderKeysRef.current.clear();
+        lastCreatedReminderRef.current = null;
       }
     },
     [
@@ -5172,6 +5504,7 @@ export default function ElevenLabsAgentWidget({
     sentDelegationsRef.current = [];
     currentTaskContextRef.current = null;
     createdReminderKeysRef.current.clear();
+    lastCreatedReminderRef.current = null;
     recurringRawRef.current = null;
     invalidCaptureRef.current = null;
     sessionConnectedAtRef.current = null;
@@ -5306,7 +5639,11 @@ export default function ElevenLabsAgentWidget({
     const hostingToolPolicy = `For every new hosting request or hosting clarification, call execute_instruction with the user's full verbatim utterance. Never answer hosting from conversation history or ra7etbal_state alone. Never claim a worker confirmed unless execute_instruction returns verified confirmation evidence.${activeHostingDraft ? " An active hosting clarification is in progress. Do not greet or start a new topic; wait for the owner's clarification answer and pass it to execute_instruction." : ""}`;
     const channelInstructions = requestedChannel === "voice"
       ? [CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, hostingToolPolicy, persistentInstructions]
-      : [CARSON_STATUS_POLICY, persistentInstructions];
+      : [
+          CARSON_STATUS_POLICY,
+          ...(TYPED_MODE_IS_ADVISORY_ONLY ? [CARSON_TYPED_ADVISORY_POLICY] : []),
+          persistentInstructions,
+        ];
 
     // The warm-up has been settling since the tap (through all the loads
     // above). Await it so startSession never begins mid-route-flip; log the
@@ -5366,6 +5703,16 @@ export default function ElevenLabsAgentWidget({
     const guardCurrentToolInvocation = (toolName: string): string | null => {
       if (requestedChannel === "voice") {
         return guardCurrentVoiceCapture(toolName);
+      }
+      // Type to Carson is advisory-only — a typed request must never reach a
+      // state-changing tool, even if the model attempts the call. Checked
+      // before the owner-turn guard below so it applies unconditionally.
+      if (TYPED_MODE_IS_ADVISORY_ONLY && TYPED_BLOCKED_TOOL_MESSAGES[toolName]) {
+        console.warn("[carson-typed] blocked state-changing tool — typed mode is advisory-only", {
+          toolName,
+          at: new Date().toISOString(),
+        });
+        return TYPED_BLOCKED_TOOL_MESSAGES[toolName];
       }
       if (pendingTypedClientMessageIdRef.current) return null;
 
@@ -5579,6 +5926,27 @@ export default function ElevenLabsAgentWidget({
               getCalendarEvents(params),
             );
           },
+          search_calendar_history: (params: Parameters<typeof searchCalendarHistoryTool>[0]) => {
+            const captureBlock = guardCurrentToolInvocation("search_calendar_history");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("search_calendar_history", params, () =>
+              searchCalendarHistoryTool(params),
+            );
+          },
+          get_task_delivery_status: (params: { keyword?: string }) => {
+            const captureBlock = guardCurrentToolInvocation("get_task_delivery_status");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("get_task_delivery_status", params, () =>
+              fetchTaskDeliveryStatus(params?.keyword ?? ""),
+            );
+          },
+          get_operations_summary: (params: Record<string, unknown>) => {
+            const captureBlock = guardCurrentToolInvocation("get_operations_summary");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("get_operations_summary", params, () =>
+              fetchOperationsSummary(),
+            );
+          },
           create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
             const captureBlock = guardCurrentToolInvocation("create_calendar_event");
             if (captureBlock) return captureBlock;
@@ -5617,7 +5985,11 @@ export default function ElevenLabsAgentWidget({
                   try {
                     await savePersistentInstruction(category ?? "general", instruction);
                     return "Got it. I'll remember that from now on.";
-                  } catch {
+                  } catch (err) {
+                    const msg = err instanceof Error ? err.message : "";
+                    if (msg && msg !== "I couldn't save that instruction right now. Please try again.") {
+                      return msg;
+                    }
                     return "I couldn't save that instruction right now. Please try again.";
                   }
                 },
@@ -5858,24 +6230,33 @@ export default function ElevenLabsAgentWidget({
               lastSuccess: lastDirectToolSuccessRef.current,
               noteSaveOutcome: noteSaveOutcomeRef.current,
             });
-            if (!displayMessage || shouldSuppressCarsonIdlePrompt(message)) {
+            // Typed-only truthfulness guard: no state-changing tool call can
+            // ever succeed for typed (every one is blocked before it runs —
+            // see TYPED_BLOCKED_TOOL_MESSAGES), but the free-form typed model
+            // still composes this reply independently and can fabricate a
+            // false execution promise no tool was ever invoked for. Voice is
+            // untouched — the identical wording is truthful there.
+            const finalDisplayMessage = requestedChannel === "text"
+              ? sanitizeTypedAdvisoryReply(displayMessage)
+              : displayMessage;
+            if (!finalDisplayMessage || shouldSuppressCarsonIdlePrompt(message)) {
               sessionTranscriptRef.current.pop();
               console.log("[carson-idle] suppressed idle prompt", {
                 eventId: event_id ?? null,
               });
               return;
             }
-            if (displayMessage !== message) {
+            if (finalDisplayMessage !== message) {
               sessionTranscriptRef.current[sessionTranscriptRef.current.length - 1] = {
                 role,
-                message: displayMessage,
+                message: finalDisplayMessage,
               };
               console.log("[carson-text] sanitized Carson reply text", {
                 eventId: event_id ?? null,
               });
             }
-            console.log("[transcript] agent role confirmed, message len=%d", displayMessage.length);
-            setLastCarsonMessage(displayMessage);
+            console.log("[transcript] agent role confirmed, message len=%d", finalDisplayMessage.length);
+            setLastCarsonMessage(finalDisplayMessage);
 
             if (requestedChannel === "text") {
               if (typedResponseTimeoutRef.current) {
@@ -5898,7 +6279,7 @@ export default function ElevenLabsAgentWidget({
                 clearPendingImages();
               }
               const eventKey = event_id == null
-                ? `${pendingClientMessageId ?? "opening"}:${displayMessage}`
+                ? `${pendingClientMessageId ?? "opening"}:${finalDisplayMessage}`
                 : String(event_id);
               if (!persistedTypedAgentEventsRef.current.has(eventKey)) {
                 persistedTypedAgentEventsRef.current.add(eventKey);
@@ -5910,7 +6291,7 @@ export default function ElevenLabsAgentWidget({
                   client_message_id: null,
                   reply_to_client_message_id: pendingClientMessageId,
                   role: "agent",
-                  content: displayMessage,
+                  content: finalDisplayMessage,
                   delivery_status: "responded",
                   elevenlabs_conversation_id: typedConversationIdRef.current,
                   elevenlabs_event_id: event_id ?? null,
@@ -5921,7 +6302,7 @@ export default function ElevenLabsAgentWidget({
                 void createTypedAgentMessage({
                   sessionId: typedSessionIdRef.current,
                   replyToClientMessageId: pendingClientMessageId,
-                  content: displayMessage,
+                  content: finalDisplayMessage,
                   elevenlabsConversationId: typedConversationIdRef.current,
                   elevenlabsEventId: event_id ?? null,
                 })
@@ -6356,6 +6737,21 @@ export default function ElevenLabsAgentWidget({
           return;
         }
 
+        // Type to Carson is advisory-only: it may build and present a hosting
+        // proposal, but approving/executing it is a state-changing action
+        // reserved for Talk to Carson. The plan itself is left untouched
+        // (still pending in pendingPlanRef and the DB) so Talk to Carson can
+        // execute this exact stored plan when the owner is ready.
+        if (TYPED_MODE_IS_ADVISORY_ONLY && typedPendingDecision === "confirm") {
+          sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+          await persistLocalTypedAgentReply({
+            replyToClientMessageId: clientMessageId,
+            content: TYPED_ADVISORY_HOSTING_EXECUTION,
+            clearPendingPhotos: true,
+          });
+          return;
+        }
+
         const peopleState = usePeopleStore.getState();
         if (peopleState.status === "idle" || peopleState.items.length === 0) {
           await usePeopleStore.getState().loadFor(authUserId);
@@ -6406,7 +6802,29 @@ export default function ElevenLabsAgentWidget({
       if (typedGuestAction === "none" && !pendingHostingClarificationRef.current) {
         pendingHostingClarificationRef.current = await loadActiveHostingDraft().catch(() => null);
       }
+      // Type to Carson is advisory-only: a hosting execution request must
+      // redirect immediately, before any clarification question or proposal
+      // is generated — whether it's a brand-new hosting request
+      // (typedGuestAction !== "none") or a continuation of a clarification
+      // already pending (from this session or a prior one, possibly started
+      // via Talk to Carson). handleOperationalHostingTurn — the only call
+      // site that can build/persist a proposal — is never reached from typed
+      // for either case while advisory-only. The underlying pending
+      // operation, if any, is left completely untouched so Talk to Carson
+      // can still pick it up. Flip TYPED_MODE_IS_ADVISORY_ONLY to false to
+      // fully and reversibly restore the prior "planning allowed, only
+      // approval/execution blocked" behavior in the else branch below.
       const pendingHostingClarification = pendingHostingClarificationRef.current;
+      if (TYPED_MODE_IS_ADVISORY_ONLY && (pendingHostingClarification || typedGuestAction !== "none")) {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: TYPED_ADVISORY_HOSTING_REQUEST,
+          clearPendingPhotos: true,
+        });
+        return;
+      }
+
       if (pendingHostingClarification) {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
 
@@ -6571,6 +6989,21 @@ export default function ElevenLabsAgentWidget({
         // Excluded for the same reasons as the delegation fast path below: a
         // pending photo (this path can't carry one) or recurring language.
         if (typedDirectMessageParsed && !typedHasPendingPhoto && !typedIsRecurring) {
+          // Type to Carson is advisory-only: a typed message shaped as a staff
+          // communication must never actually send. Respond truthfully and stop
+          // here — executeDirectMessageFastPath (the real WhatsApp send) is
+          // never called for typed, so there is no code path left for a typed
+          // request to reach delivery even if this check were bypassed above.
+          if (TYPED_MODE_IS_ADVISORY_ONLY) {
+            sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+            await persistLocalTypedAgentReply({
+              replyToClientMessageId: clientMessageId,
+              content: TYPED_ADVISORY_STAFF_MESSAGE,
+              clearPendingPhotos: true,
+            });
+            return;
+          }
+
           // Duplicate guard (CodeRabbit finding on PR #53): executeDirectMessageFastPath
           // itself has no recent-send protection — a pre-existing gap shared
           // with executeInstruction's own call site (out of scope here, left
@@ -6639,29 +7072,73 @@ export default function ElevenLabsAgentWidget({
             people = usePeopleStore.getState().items;
           }
 
-          const typedDelegationFastPath = await executeDelegationFastPath(
-            savedMessage.content,
-            { people, userId: authUserId, displayName },
-            { sendDelegationFn: sendDelegation },
-          );
+          // Type to Carson is advisory-only: use the same pure parser
+          // executeDelegationFastPath relies on to detect delegation-shaped
+          // wording ("ask/tell/get/have [person] to [task]") without ever
+          // calling the real executor, so a typed delegation request cannot
+          // create a task or send WhatsApp even if this check were bypassed.
+          // A non-match falls through unchanged to the general typed flow, so
+          // ordinary questions never get the "Use Talk to Carson" wording.
+          if (TYPED_MODE_IS_ADVISORY_ONLY) {
+            if (parseDelegationFastPath(savedMessage.content, people)) {
+              sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+              await persistLocalTypedAgentReply({
+                replyToClientMessageId: clientMessageId,
+                content: TYPED_ADVISORY_STAFF_MESSAGE,
+                clearPendingPhotos: true,
+              });
+              return;
+            }
+          } else {
+            const typedDelegationFastPath = await executeDelegationFastPath(
+              savedMessage.content,
+              { people, userId: authUserId, displayName },
+              { sendDelegationFn: sendDelegation },
+            );
 
-          if (typedDelegationFastPath.handled) {
-            // Success bookkeeping (session action log, Tasks/Waiting refresh)
-            // is owned by sendDelegation after createAndSendDelegation
-            // succeeds — duplicating it here on status === "sent" would
-            // double-count it, and executeDelegationFastPath currently
-            // treats any normally-resolved sendDelegation response string as
-            // "sent", including a failure-shaped one, so a caller-side check
-            // here could misrecord a failed delegation as successful.
-            sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
-            await persistLocalTypedAgentReply({
-              replyToClientMessageId: clientMessageId,
-              content: typedDelegationFastPath.response,
-              clearPendingPhotos: true,
-            });
-            return;
+            if (typedDelegationFastPath.handled) {
+              // Success bookkeeping (session action log, Tasks/Waiting refresh)
+              // is owned by sendDelegation after createAndSendDelegation
+              // succeeds — duplicating it here on status === "sent" would
+              // double-count it, and executeDelegationFastPath currently
+              // treats any normally-resolved sendDelegation response string as
+              // "sent", including a failure-shaped one, so a caller-side check
+              // here could misrecord a failed delegation as successful.
+              sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+              await persistLocalTypedAgentReply({
+                replyToClientMessageId: clientMessageId,
+                content: typedDelegationFastPath.response,
+                clearPendingPhotos: true,
+              });
+              return;
+            }
           }
         }
+      }
+
+      // Final deterministic gate before the free-form typed model ever runs.
+      // Hosting, staff direct-message, and delegation execution requests are
+      // already caught above by dedicated detectors; this catches everything
+      // else with no detector of its own today (reminders, calendar) plus the
+      // edge cases those detectors correctly return null for — a bodyless
+      // staff address ("Tell Grace.") and bare imperative actions ("Take
+      // care of it.", "Pay the electricity bill.") — before the model can
+      // improvise a reply (including a false execution promise) for a
+      // request no tool was ever invoked for.
+      if (TYPED_MODE_IS_ADVISORY_ONLY && (usePeopleStore.getState().status === "idle" || usePeopleStore.getState().items.length === 0) && authUserId) {
+        await usePeopleStore.getState().loadFor(authUserId);
+      }
+      const typedExecutionRedirect = TYPED_MODE_IS_ADVISORY_ONLY
+        ? classifyTypedExecutionRequest(savedMessage.content, usePeopleStore.getState().items)
+        : null;
+      if (typedExecutionRedirect) {
+        sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
+        await persistLocalTypedAgentReply({
+          replyToClientMessageId: clientMessageId,
+          content: typedExecutionRedirect.message,
+          clearPendingPhotos: true,
+        });
+        return;
       }
 
       const typedPhotos = [

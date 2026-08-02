@@ -3,14 +3,45 @@ import type { ExtractedItem } from "../types/extraction";
 import type { Message } from "../types/message";
 import type { Person } from "../types/person";
 
-// ops-intelligence.ts imports ./supabase at module top level (for plan persistence),
-// which throws without VITE_SUPABASE_* env vars. Stub it — the pure detection
-// functions under test (isConfirmation, isRejection, isStatusQuestion) never call Supabase.
-vi.mock("./supabase", () => ({ supabase: {} }));
+// ops-intelligence.ts imports ./supabase at module top level (for plan persistence).
+// Stub it with a minimal chainable query builder — the pure detection functions
+// under test (isConfirmation, isRejection, isStatusQuestion) never call Supabase,
+// and read-path tests (resolveHostingOperationRecall) configure per-table results
+// via mocks.supabaseTables.
 const mocks = vi.hoisted(() => ({
   savePending: vi.fn(),
   deliverTaskMessage: vi.fn(),
   sendDirectMessageRecord: vi.fn(),
+  supabaseGetUser: vi.fn(async (): Promise<{ data: { user: { id: string } | null } }> => ({
+    data: { user: null },
+  })),
+  supabaseFrom: vi.fn(),
+}));
+
+function queryStub(result: { data: unknown; error: unknown } = { data: null, error: null }) {
+  const builder: Record<string, unknown> = {
+    select: () => builder,
+    update: () => builder,
+    insert: () => builder,
+    delete: () => builder,
+    eq: () => builder,
+    gt: () => builder,
+    order: () => builder,
+    limit: () => builder,
+    in: () => builder,
+    maybeSingle: async () => result,
+    single: async () => result,
+    then: (resolve: (value: typeof result) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve(result).then(resolve, reject),
+  };
+  return builder;
+}
+
+vi.mock("./supabase", () => ({
+  supabase: {
+    auth: { getUser: mocks.supabaseGetUser },
+    from: mocks.supabaseFrom,
+  },
 }));
 
 vi.mock("./save", () => ({ savePending: mocks.savePending }));
@@ -28,6 +59,7 @@ const {
   evaluateHostingPlanningGate,
   executeProposedPlan,
   handlePendingPlanTurn,
+  hasLeadingConfirmationLanguage,
   hasOperatingAuthority,
   isConfirmation,
   isRejection,
@@ -39,6 +71,7 @@ const {
   prepareOperationalPlanTurn,
   resetExecutedPlanRegistryForTest,
   resolveGuestOutcomeAction,
+  resolveHostingOperationRecall,
   resolvePendingPlanDecision,
 } = await import("./ops-intelligence");
 
@@ -46,6 +79,8 @@ beforeEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   resetExecutedPlanRegistryForTest();
+  mocks.supabaseGetUser.mockResolvedValue({ data: { user: null } });
+  mocks.supabaseFrom.mockImplementation(() => queryStub());
 });
 
 describe("isConfirmation", () => {
@@ -70,6 +105,34 @@ describe("isRejection", () => {
     "returns false for '%s'",
     (text) => { expect(isRejection(text)).toBe(false); },
   );
+});
+
+describe("hasLeadingConfirmationLanguage", () => {
+  it.each([
+    "Yes, and please coordinate the table setup for dinner tomorrow at 8:00 PM. Four guests, no shellfish.",
+    "Okay, also send Grace the details for the dinner.",
+    "Go ahead, and confirm with Grace too.",
+    "Yes, also let Christopher know about the shellfish allergy.",
+    // Reproduced in production: "both" isn't covered by CONFIRMATION_RE's own
+    // "send" alternative (only it/them/those/the messages), so this never
+    // resolves as a bare confirmation either — it must be caught here.
+    "Yes, send both.\nPlease coordinate table setup for dinner tomorrow at 8:00 PM for 4 guests. No shellfish. Ensure everything is ready before guests arrive.",
+    "Yes, send both.",
+  ])("returns true for compound reply '%s'", (text) => {
+    expect(hasLeadingConfirmationLanguage(text)).toBe(true);
+  });
+
+  it.each([
+    "yes",
+    "Yes.",
+    "yeah",
+    "go ahead",
+    "no",
+    "Prepare dinner for four tomorrow",
+    "Please coordinate the table setup for dinner tomorrow at 8:00 PM.",
+  ])("returns false for '%s'", (text) => {
+    expect(hasLeadingConfirmationLanguage(text)).toBe(false);
+  });
 });
 
 describe("isStatusQuestion", () => {
@@ -1446,6 +1509,397 @@ describe("guest plan confirm-before-send", () => {
     expect(mocks.savePending).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── Production baseline lock-in (RA7ETBAL_STATE.md verified hosting loop) ─────
+// Exact verified phrases from the production-confirmed afternoon-tea flow.
+describe("production baseline — verified afternoon-tea hosting loop", () => {
+  const TRIGGER = "I have afternoon tea at home tomorrow. Handle it.";
+
+  it("routes the exact verified trigger phrase to the hosting engine, not ordinary delegation", () => {
+    expect(detectHouseholdOutcome(TRIGGER)).toBe("guest_arrival");
+    expect(mustRouteGuestEventToPlanner(TRIGGER)).toBe(true);
+    expect(resolveGuestOutcomeAction(TRIGGER)).not.toBe("none");
+  });
+
+  it("asks one combined clarification and does not create an operation before it is answered", async () => {
+    const gate = evaluateHostingPlanningGate(TRIGGER);
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.question).toMatch(/what time/i);
+    expect(gate.question).toMatch(/how many guests/i);
+    expect(gate.question).toMatch(/dietary restrictions/i);
+
+    const turn = await prepareOperationalPlanTurn({ message: TRIGGER, people: [] });
+    expect(turn.status).toBe("needs_clarification");
+    expect(turn.plan).toBeNull();
+    expect(mocks.savePending).not.toHaveBeenCalled();
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+    expect(mocks.sendDirectMessageRecord).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["4:00pm for 6 people, no garlic", "4:00 PM", "six guests", /no garlic/i],
+    ["4pm, 6 guests and no garlic", "4:00 PM", "six guests", /no garlic/i],
+  ])(
+    "parses the exact combined clarification '%s' into clean independent fields",
+    (answer, expectedTime, expectedGuests, dietaryPattern) => {
+      const normalized = normalizeHostingClarificationAnswer(answer, TRIGGER);
+      const gate = evaluateHostingPlanningGate(`${TRIGGER}\n\nClarification details: ${normalized}`);
+
+      expect(gate.status).toBe("ready");
+      expect(gate.brief.startTime).toContain(expectedTime);
+      expect(gate.brief.guestCount).toBe(expectedGuests);
+      expect(gate.brief.dietaryRequirements).toMatch(dietaryPattern);
+      // The dietary value must never absorb guest count, time, or connector fragments.
+      expect(gate.brief.dietaryRequirements).not.toMatch(/\bguests?\b|\bpeople\b|\b4(:00)?\s*(pm)?\b|\bsix\b/i);
+    },
+  );
+
+  it("presents one complete proposal with correct worker responsibilities after the combined answer", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        content: [{
+          text: JSON.stringify({
+            tasks: [
+              { person_name: "Christopher", message: "Please handle the food." },
+              { person_name: "Nasira", message: "Please handle the table." },
+              { person_name: "Grace", message: "Please coordinate readiness." },
+            ],
+            proposal_speech: "Draft.",
+          }),
+        }],
+      }),
+    })));
+
+    const firstTurn = await prepareOperationalPlanTurn({ message: TRIGGER, people: [] });
+    const turn = await prepareOperationalPlanTurn({
+      message: "4:00pm for 6 people, no garlic",
+      people: guestTeam(),
+      pendingDraft: firstTurn.draft,
+    });
+
+    expect(turn.status).toBe("ready");
+    expect(turn.plan?.brief?.occasion).toBe("afternoon tea");
+    expect(turn.plan?.brief?.startTime).toBe("4:00 PM");
+    expect(turn.plan?.brief?.guestCount).toBe("six guests");
+    expect(turn.plan?.brief?.dietaryRequirements).toMatch(/no garlic/i);
+    expect(turn.plan?.tasks.map((task) => task.personName)).toEqual(["Christopher", "Nasira", "Grace"]);
+    expect(turn.plan?.tasks[0].message).toMatch(/no garlic/i);
+    expect(turn.plan?.tasks[1].message).toMatch(/table and guest area/i);
+    expect(turn.plan?.tasks[2].message).toMatch(/coordinate with Christopher and Nasira/i);
+    // Exactly one approval question in the proposal.
+    expect((turn.plan?.proposalSpeech.match(/\?/g) ?? []).length).toBe(1);
+  });
+
+  it("reports truthful per-recipient delivery when one worker has no phone number on file", async () => {
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item, i) => ({
+        id: `task-${i + 1}`,
+        type: "delegation",
+        assigned_to: item.assignedTo,
+        description: item.description,
+      })),
+      messages: items.map((item, i) => ({
+        id: `message-${i + 1}`,
+        task_id: `task-${i + 1}`,
+        recipient: item.assignedTo,
+        content: item.suggestedMessage ?? item.description,
+        confirmation_url: `https://ra7etbal.test/confirm?task=task-${i + 1}`,
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+    mocks.deliverTaskMessage.mockImplementation(async (payload: { to: string | null }) => (
+      payload.to
+        ? { success: true, channel: "whatsapp" }
+        : { success: false, channel: "failed", error: "recipient phone number is missing" }
+    ));
+
+    const teamWithMissingPhone = guestTeam().map((p) =>
+      p.name === "Nasira" ? { ...p, phone: null, whatsapp_opted_in: false } : p,
+    );
+
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: `${TRIGGER}\n\nClarification details: 4:00pm for 6 people, no garlic`,
+      createdAt: Date.now(),
+      proposalSpeech: "Plan.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Handle it." }],
+    }, teamWithMissingPhone);
+
+    const summary = await executeProposedPlan(plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: teamWithMissingPhone,
+    });
+
+    expect(summary).toContain("Christopher, Grace have the plan");
+    expect(summary).toMatch(/Nasira was NOT messaged/i);
+    expect(summary).not.toMatch(/everyone|all workers|all staff/i);
+  });
+
+  it("answers 'What did you ask Christopher?' from the stored operation with no new send and no new operation", async () => {
+    mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    const operationRow = {
+      id: "op-1",
+      type: "guest_arrival",
+      tasks: [
+        { personId: "c", personName: "Christopher", taskId: "task-c", deliveryStatus: "sent", message: "Prepare finger sandwiches, scones, and tea with no garlic. Have everything ready by 3:45 PM." },
+        { personId: "n", personName: "Nasira", taskId: null, deliveryStatus: "not_created", message: "Prepare the table and guest area." },
+        { personId: "g", personName: "Grace", taskId: "task-g", deliveryStatus: "sent", message: "Coordinate with Christopher and Nasira." },
+      ],
+      summary: "Christopher, Grace have the plan. Nasira was NOT messaged — approved assignment was not created in Ra7etBal.",
+      source_text: `${TRIGGER}\n\nClarification details: 4:00pm for 6 people, no garlic`,
+      created_at: "2026-07-24T10:00:00.000Z",
+    };
+    const writeLog: string[] = [];
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "carson_pending_operations") {
+        return queryStubWithWriteTracking(table, { data: operationRow, error: null }, writeLog);
+      }
+      return queryStubWithWriteTracking(table, { data: null, error: null }, writeLog);
+    });
+
+    const answer = await resolveHostingOperationRecall("What did you ask Christopher?");
+
+    expect(answer).toContain("Christopher was told: Prepare finger sandwiches, scones, and tea with no garlic");
+    expect(writeLog).toEqual([]); // no insert/update/delete during recall — no duplicate operation
+    expect(mocks.savePending).not.toHaveBeenCalled();
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+    expect(mocks.sendDirectMessageRecord).not.toHaveBeenCalled();
+  });
+
+  it("answers a worker-confirmation recall from verified task rows only, with no new send", async () => {
+    mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    const operationRow = {
+      id: "op-1",
+      type: "guest_arrival",
+      tasks: [
+        { personId: "c", personName: "Christopher", taskId: "task-c", deliveryStatus: "sent", message: "Prepare food." },
+        { personId: "g", personName: "Grace", taskId: "task-g", deliveryStatus: "sent", message: "Coordinate readiness." },
+      ],
+      summary: "Christopher, Grace have the plan.",
+      source_text: TRIGGER,
+      created_at: "2026-07-24T10:00:00.000Z",
+    };
+    const taskRows = [
+      { id: "task-c", assigned_to: "Christopher", status: "done", confirmed_at: "2026-07-24T12:00:00Z" },
+      { id: "task-g", assigned_to: "Grace", status: "pending", confirmed_at: null },
+    ];
+    const writeLog: string[] = [];
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "carson_pending_operations") {
+        return queryStubWithWriteTracking(table, { data: operationRow, error: null }, writeLog);
+      }
+      if (table === "tasks") {
+        return queryStubWithWriteTracking(table, { data: taskRows, error: null }, writeLog);
+      }
+      return queryStubWithWriteTracking(table, { data: null, error: null }, writeLog);
+    });
+
+    const answer = await resolveHostingOperationRecall("Has Christopher confirmed?");
+
+    expect(answer).toBe("Christopher has confirmed.");
+    expect(writeLog).toEqual([]);
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+    expect(mocks.sendDirectMessageRecord).not.toHaveBeenCalled();
+  });
+
+  it("returns null (no fabricated answer) when there is no completed hosting operation to recall", async () => {
+    mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    mocks.supabaseFrom.mockImplementation(() => queryStub({ data: null, error: null }));
+
+    await expect(resolveHostingOperationRecall("What did you ask Christopher?")).resolves.toBeNull();
+  });
+});
+
+// ── Production baseline lock-in (RA7ETBAL_STATE.md verified dinner loop) ──────
+// Exact verified phrases from the production-confirmed dinner flow: Christopher
+// (food) and Grace (coordination) delivered; Nasira was assigned but not
+// reached because her phone number was missing; Carson reported each
+// recipient's real outcome truthfully; no duplicate send occurred on repeated
+// approval. See RA7ETBAL_STATE.md for the full verified transcript.
+describe("production baseline — verified dinner hosting loop (Christopher, Grace; missing Nasira number)", () => {
+  const TRIGGER = "I have a dinner at home tomorrow for 4 people. Handle it.";
+
+  it("routes the exact verified trigger phrase to the hosting engine, not ordinary delegation", () => {
+    expect(detectHouseholdOutcome(TRIGGER)).toBe("guest_arrival");
+    expect(mustRouteGuestEventToPlanner(TRIGGER)).toBe(true);
+    expect(resolveGuestOutcomeAction(TRIGGER)).not.toBe("none");
+  });
+
+  it("asks only for time and dietary restrictions — guest count is already known from the trigger", () => {
+    const gate = evaluateHostingPlanningGate(TRIGGER);
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.question).toMatch(/what time/i);
+    expect(gate.question).toMatch(/dietary restrictions/i);
+    expect(gate.question).not.toMatch(/how many guests/i);
+  });
+
+  it("parses the combined clarification into clean independent fields", () => {
+    const normalized = normalizeHostingClarificationAnswer("8:00pm, no shellfish", TRIGGER);
+    const gate = evaluateHostingPlanningGate(`${TRIGGER}\n\nClarification details: ${normalized}`);
+
+    expect(gate.status).toBe("ready");
+    expect(gate.brief.startTime).toContain("8:00 PM");
+    expect(gate.brief.guestCount).toBe("four people");
+    expect(gate.brief.dietaryRequirements).toMatch(/no shellfish/i);
+    expect(gate.brief.dietaryRequirements).not.toMatch(/\bpeople\b|\b8(:00)?\s*(pm)?\b|\bfour\b/i);
+  });
+
+  it("assigns Christopher the food instruction, Grace the coordination instruction, and Nasira the setup instruction", () => {
+    const sourceText = `${TRIGGER}\n\nClarification details: 8:00 PM and no shellfish`;
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText,
+      createdAt: Date.now(),
+      proposalSpeech: "Draft.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Handle it." }],
+    }, guestTeam());
+
+    expect(plan.tasks.map((task) => task.personName)).toEqual(["Christopher", "Nasira", "Grace"]);
+    expect(plan.tasks[0].message).toMatch(/prepare the agreed food/i);
+    expect(plan.tasks[0].message).toMatch(/no shellfish/i);
+    expect(plan.tasks[1].message).toMatch(/table and guest area/i);
+    expect(plan.tasks[2].message).toMatch(/coordinate with Christopher and Nasira/i);
+    // Exactly one approval question in the proposal.
+    expect((plan.proposalSpeech.match(/\?/g) ?? []).length).toBe(1);
+  });
+
+  it("delivers to Christopher and Grace once each; a missing Nasira phone number does not block either of them, and Carson reports each recipient truthfully", async () => {
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item, i) => ({
+        id: `task-${i + 1}`,
+        type: "delegation",
+        assigned_to: item.assignedTo,
+        description: item.description,
+      })),
+      messages: items.map((item, i) => ({
+        id: `message-${i + 1}`,
+        task_id: `task-${i + 1}`,
+        recipient: item.assignedTo,
+        content: item.suggestedMessage ?? item.description,
+        confirmation_url: `https://ra7etbal.test/confirm?task=task-${i + 1}`,
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+    mocks.deliverTaskMessage.mockImplementation(async (payload: { to: string | null }) => (
+      payload.to
+        ? { success: true, channel: "whatsapp" }
+        : { success: false, channel: "failed", error: "recipient phone number is missing" }
+    ));
+
+    const teamWithMissingPhone = guestTeam().map((p) =>
+      p.name === "Nasira" ? { ...p, phone: null, whatsapp_opted_in: false } : p,
+    );
+
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: `${TRIGGER}\n\nClarification details: 8:00 PM and no shellfish`,
+      createdAt: Date.now(),
+      proposalSpeech: "Plan.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Handle it." }],
+    }, teamWithMissingPhone);
+
+    const summary = await executeProposedPlan(plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: teamWithMissingPhone,
+    });
+
+    // Christopher and Grace each get exactly one delivery attempt, and it succeeds.
+    const deliveredTo = mocks.deliverTaskMessage.mock.calls.map(([payload]) => payload.recipientName);
+    expect(deliveredTo.filter((name: string) => name === "Christopher")).toHaveLength(1);
+    expect(deliveredTo.filter((name: string) => name === "Grace")).toHaveLength(1);
+    expect(deliveredTo.filter((name: string) => name === "Nasira")).toHaveLength(1); // attempted, not skipped
+
+    expect(summary).toContain("Christopher, Grace have the plan");
+    expect(summary).toMatch(/Nasira was NOT messaged/i);
+    // Never claims the unreachable recipient was actually contacted.
+    expect(summary).not.toMatch(/Nasira (?:has|have) the plan/i);
+    expect(summary).not.toMatch(/everyone|all workers|all staff/i);
+  });
+
+  it("is idempotent: a duplicate approval for the same plan sends nothing more", async () => {
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item, i) => ({
+        id: `task-${i + 1}`,
+        type: "delegation",
+        assigned_to: item.assignedTo,
+        description: item.description,
+      })),
+      messages: items.map((item, i) => ({
+        id: `message-${i + 1}`,
+        task_id: `task-${i + 1}`,
+        recipient: item.assignedTo,
+        content: item.suggestedMessage ?? item.description,
+        confirmation_url: `https://ra7etbal.test/confirm?task=task-${i + 1}`,
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const plan = normalizeGuestPreparationPlan({
+      outcomeType: "guest_arrival",
+      sourceText: `${TRIGGER}\n\nClarification details: 8:00 PM and no shellfish`,
+      createdAt: Date.now(),
+      proposalSpeech: "Draft.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Handle it." }],
+    }, guestTeam());
+    plan.dbId = "plan-db-dinner-1";
+
+    const first = await handlePendingPlanTurn(["Yes."], plan, { displayName: "Sana", userId: "user-1", people: guestTeam() });
+    expect(first.action).toBe("executed");
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
+
+    const again = await handlePendingPlanTurn(["Yes."], plan, { displayName: "Sana", userId: "user-1", people: guestTeam() });
+    expect(again.summary).toMatch(/already sent/i);
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3); // no additional attempts
+    expect(mocks.savePending).toHaveBeenCalledTimes(1); // no duplicate operation created
+  });
+
+  it("protects the exact reproduced 'Yes, send both' phrasing as a leading-confirmation-with-no-plan case", () => {
+    // The exact production reply that exposed the Guard C gap (fixed in a
+    // prior pass): when no plan is persisted yet, this must not be misread
+    // as a fresh hosting request.
+    expect(hasLeadingConfirmationLanguage("Yes, send both.")).toBe(true);
+    expect(hasLeadingConfirmationLanguage(
+      "Yes, send both.\nPlease coordinate table setup for dinner tomorrow at 8:00 PM for 4 guests. No shellfish. Ensure everything is ready before guests arrive.",
+    )).toBe(true);
+  });
+});
+
+/** Query-builder stub that records insert/update/delete calls for a given table. */
+function queryStubWithWriteTracking(
+  table: string,
+  result: { data: unknown; error: unknown },
+  writeLog: string[],
+) {
+  const builder: Record<string, unknown> = {
+    select: () => builder,
+    update: () => { writeLog.push(`update:${table}`); return builder; },
+    insert: () => { writeLog.push(`insert:${table}`); return builder; },
+    delete: () => { writeLog.push(`delete:${table}`); return builder; },
+    eq: () => builder,
+    gt: () => builder,
+    order: () => builder,
+    limit: () => builder,
+    in: () => builder,
+    maybeSingle: async () => result,
+    single: async () => result,
+    then: (resolve: (value: typeof result) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve(result).then(resolve, reject),
+  };
+  return builder;
+}
 
 function guestTeam(): Person[] {
   return [
