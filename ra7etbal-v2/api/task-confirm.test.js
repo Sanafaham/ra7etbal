@@ -2768,8 +2768,8 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     expect(JSON.parse(answerCall[1].body).p_owner_reply_text).toBe(APPROVE_TEXT);
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
     const metaBody = JSON.parse(metaCall[1].body);
-    expect(metaBody.type).toBe('text');
-    expect(metaBody.text.body).toBe(APPROVE_TEXT);
+    expect(metaBody.type).toBe('template');
+    expect(metaBody.template.components[0].parameters[1].text).toBe(APPROVE_TEXT);
     expect(metaBody.to).toBe('15551234567');
   });
 
@@ -2790,7 +2790,7 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'rejected' }), res);
 
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
-    expect(JSON.parse(metaCall[1].body).text.body).toBe(REJECT_TEXT);
+    expect(JSON.parse(metaCall[1].body).template.components[0].parameters[1].text).toBe(REJECT_TEXT);
     expect(REJECT_TEXT).not.toBe(APPROVE_TEXT);
   });
 
@@ -2816,7 +2816,7 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     await handler(patchReq({ deepLinkToken: 'tok-2', decision: 'approved' }), res);
 
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
-    const sentText = JSON.parse(metaCall[1].body).text.body;
+    const sentText = JSON.parse(metaCall[1].body).template.components[0].parameters[1].text;
     expect(sentText).toBe(expectedText);
     expect(sentText).not.toMatch(/vinegar/i);
     expect(sentText).not.toContain('Christopher');
@@ -2847,7 +2847,7 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     expect(JSON.parse(answerCall[1].body).p_owner_reply_text)
       .toBe('Yes, he can buy two bottles tomorrow.');
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
-    expect(JSON.parse(metaCall[1].body).text.body).toBe('Yes, you can buy two bottles tomorrow.');
+    expect(JSON.parse(metaCall[1].body).template.components[0].parameters[1].text).toBe('Yes, you can buy two bottles tomorrow.');
   });
 
   it('rejects custom_instruction with no instruction text before touching the answer RPC', async () => {
@@ -2883,7 +2883,7 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
     // The staff message sent is the ORIGINAL stored answer, never a text
     // built from the newly submitted (and ignored) "rejected" decision.
-    expect(JSON.parse(metaCall[1].body).text.body).toBe(APPROVE_TEXT);
+    expect(JSON.parse(metaCall[1].body).template.components[0].parameters[1].text).toBe(APPROVE_TEXT);
   });
 
   it('a fully delivered escalation returns success immediately, with no claim RPC and no second Meta send', async () => {

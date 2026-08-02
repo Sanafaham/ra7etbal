@@ -55,7 +55,7 @@
 import webpush from 'web-push';
 import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
-import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
+import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 import { notifyOwnerOfTaskReview } from './_escalation-notify.js';
 
 // Quality Intelligence vision review can legitimately take longer than the
@@ -1365,18 +1365,20 @@ export async function resolveAndDeliverEscalationAnswer({
     return { kind: 'config_error', message: 'Could not send an empty message. Please try again.' };
   }
 
+  const staffTemplateName = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE || 'ra7etbal_direct_operational_message').trim();
+  const staffTemplateLanguage = (process.env.WHATSAPP_DIRECT_MESSAGE_TEMPLATE_LANGUAGE || 'en').trim();
   let sendResult;
   try {
     sendResult = await sendMetaMessage({
       url: `https://graph.facebook.com/v20.0/${phoneNumberId}/messages`,
       accessToken,
-      payload: {
-        messaging_product: 'whatsapp',
-        recipient_type: 'individual',
+      payload: buildDirectMessagePayload({
         to: normalizedPhone,
-        type: 'text',
-        text: { body: messageText },
-      },
+        ownerName: 'Carson',
+        message: messageText,
+        templateName: staffTemplateName,
+        templateLanguage: staffTemplateLanguage,
+      }),
     });
   } catch (err) {
     await failEscalationDeliveryLease(

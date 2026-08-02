@@ -34,6 +34,12 @@ const {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+// Staff messages now use buildDirectMessagePayload (template), not plain text.
+// The message body is the second body parameter ({{2}} = message text).
+function getStaffMessageBody(payload) {
+  return payload?.template?.components?.[0]?.parameters?.[1]?.text;
+}
+
 const SUPABASE_URL = 'https://example.supabase.co';
 const SERVICE_KEY = 'service-key';
 const TASK_ID = 'aaaaaaaa-1111-4111-8111-111111111111';
@@ -270,8 +276,8 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
     });
 
     const sentPayload = sendMetaMessageMock.mock.calls[0]?.[0]?.payload;
-    expect(sentPayload?.text?.body).toContain('Approved. You can go ahead with this task.');
-    expect(sentPayload?.text?.body).not.toBe('Yes buy it');
+    expect(getStaffMessageBody(sentPayload)).toContain('Approved. You can go ahead with this task.');
+    expect(getStaffMessageBody(sentPayload)).not.toBe('Yes buy it');
   });
 
   it('[approved_alternative] Christopher\'s message includes the confirmation link', async () => {
@@ -284,7 +290,7 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
       instructionText: 'Yes',
     });
 
-    const body = sendMetaMessageMock.mock.calls[0]?.[0]?.payload?.text?.body;
+    const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
     expect(body).toContain(`/confirm?task=${TASK_ID}`);
   });
 
@@ -311,7 +317,7 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
     expect(JSON.parse(taskPatch[1].body).quality_review_status).toBe('correction_required');
 
     // Christopher's message
-    const body = sendMetaMessageMock.mock.calls[0]?.[0]?.payload?.text?.body;
+    const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
     expect(body).toContain('Do not continue with this task');
     expect(body).not.toContain('/confirm?task=');
   });
@@ -331,7 +337,7 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
       instructionText: 'No',
     });
 
-    const body = sendMetaMessageMock.mock.calls[0]?.[0]?.payload?.text?.body;
+    const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
     expect(body).not.toContain('/confirm?task=');
   });
 
@@ -371,7 +377,7 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
       instructionText: 'Buy the Turquoise instead',
     });
 
-    const body = sendMetaMessageMock.mock.calls[0]?.[0]?.payload?.text?.body;
+    const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
     expect(body).toContain('From the owner: Buy the Turquoise instead');
     expect(body).toContain(`/confirm?task=${TASK_ID}`);
   });
@@ -434,7 +440,7 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
       instructionText: null,
     });
 
-    const body = sendMetaMessageMock.mock.calls[0]?.[0]?.payload?.text?.body;
+    const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
     // Standard path: normalizeOwnerReplyForRecipient applied, not the substitute builder
     expect(body).toBeTruthy();
     expect(body).not.toContain('Approved. You can go ahead with this task.');
