@@ -1375,7 +1375,7 @@ export async function resolveAndDeliverEscalationAnswer({
       payload: buildDirectMessagePayload({
         to: normalizedPhone,
         ownerName: 'Carson',
-        message: messageText,
+        message: messageText.replace(/[\n\t]/g, ' ').replace(/ {5,}/g, '    '),
         templateName: staffTemplateName,
         templateLanguage: staffTemplateLanguage,
       }),
