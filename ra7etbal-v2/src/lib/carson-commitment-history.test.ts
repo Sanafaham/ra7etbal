@@ -204,6 +204,45 @@ describe("buildCommitmentHistory — timeline merge and ordering", () => {
     expect(confirmedEvents[0].source).toBe("tasks");
   });
 
+  it("surfaces the automated quality review even when no quality_substitute_decisions row exists — found via production verification against a real approved errand with no substitute row", async () => {
+    const task = makeTask({
+      status: "done",
+      confirmed_at: "2026-08-02T15:12:38Z",
+      quality_review_status: "approved",
+      quality_reviewed_at: "2026-08-02T15:10:25Z",
+    });
+    mocks.supabaseFrom.mockReturnValue(makeChain({ data: [], error: null }));
+
+    const result = await buildCommitmentHistory(task);
+    const reviewEvents = result.timeline.filter((e) =>
+      e.label.startsWith("Automated quality review"),
+    );
+    expect(reviewEvents).toHaveLength(1);
+    expect(reviewEvents[0].label).toBe("Automated quality review: approved");
+    expect(reviewEvents[0].source).toBe("tasks");
+  });
+
+  it("labels the owner's later substitute decision distinctly from the automated task-level review", async () => {
+    const task = makeTask({
+      status: "done",
+      quality_review_status: "substitute_review",
+      quality_reviewed_at: "2026-08-01T15:03:00Z",
+    });
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "quality_substitute_decisions") {
+        return makeChain({
+          data: [{ decision: "approved_alternative", outcome: "success", reviewed_at: "2026-08-01T23:12:00Z", completed_at: "2026-08-01T23:12:00Z" }],
+          error: null,
+        });
+      }
+      return makeChain({ data: [], error: null });
+    });
+
+    const result = await buildCommitmentHistory(task);
+    expect(result.timeline.map((e) => e.label)).toContain("Automated quality review: substitute_review");
+    expect(result.timeline.map((e) => e.label)).toContain("Owner quality decision: approved_alternative");
+  });
+
   it("only queries reminder_delivery_events for reminder-type tasks", async () => {
     const task = makeTask({ type: "delegation" });
     mocks.supabaseFrom.mockReturnValue(makeChain({ data: [], error: null }));
@@ -317,5 +356,26 @@ describe("formatCommitmentHistoryAnswer — evidence-based, no raw dump", () => 
     const task = makeTask({ status: "cancelled" });
     const answer = formatCommitmentHistoryAnswer({ task, timeline: [], caveats: [] });
     expect(answer).toMatch(/cancelled/i);
+  });
+
+  it("prioritizes outcome-relevant events (Confirmed) over administrative ones, even when Confirmed happens last — reproduces the real 'Buy a blue pen' production shape (quality review + escalation both precede Confirmed)", async () => {
+    const task = makeTask({ status: "done", confirmed_at: "2026-08-02T15:12:38Z" });
+    const result = {
+      task,
+      timeline: [
+        { at: "2026-08-02T15:06:17Z", label: "Created", source: "tasks" as const },
+        { at: "2026-08-02T15:10:25Z", label: "Automated quality review: approved", source: "tasks" as const },
+        { at: "2026-08-02T15:10:31Z", label: "Owner decision requested", source: "staff_escalation_owner_decisions" as const },
+        { at: "2026-08-02T15:11:54Z", label: "Owner decided", source: "staff_escalation_owner_decisions" as const },
+        { at: "2026-08-02T15:12:38Z", label: "Confirmed", source: "confirmations" as const },
+      ],
+      caveats: [],
+    };
+    const answer = formatCommitmentHistoryAnswer(result);
+    // Without the fix, slice(0,2) on chronological order would pick the two
+    // earliest non-Created events ("Automated quality review", "Owner
+    // decision requested") and silently drop "Confirmed" entirely.
+    expect(answer).toContain("Confirmed");
+    expect(answer).not.toContain("Automated quality review");
   });
 });

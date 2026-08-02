@@ -163,6 +163,20 @@ export async function buildCommitmentHistory(
   if (task.escalated_at) {
     timeline.push({ at: task.escalated_at, label: "Escalated to owner", source: "tasks" });
   }
+  // The automated Quality Intelligence proof review is stamped directly on
+  // the task row (quality_reviewed_at/quality_review_status) and is not
+  // guaranteed to have a matching quality_substitute_decisions row — that
+  // table only exists for the substitute-review sub-flow's later owner
+  // decision. Without this, a real reviewed-and-approved proof cycle went
+  // missing from the reconstructed lifecycle entirely (found via production
+  // verification against a real done+approved task with no substitute row).
+  if (task.quality_reviewed_at) {
+    timeline.push({
+      at: task.quality_reviewed_at,
+      label: `Automated quality review: ${task.quality_review_status ?? "reviewed"}`,
+      source: "tasks",
+    });
+  }
 
   for (const d of deliveries) {
     if (d.accepted_at) timeline.push({ at: d.accepted_at, label: "Accepted by WhatsApp", source: "whatsapp_deliveries" });
@@ -191,9 +205,12 @@ export async function buildCommitmentHistory(
 
   for (const q of qualityDecisions) {
     if (q.reviewed_at) {
+      // Distinct label from the automated task-level review above — this is
+      // the owner's own later decision on a proposed substitute, a separate
+      // real event, not a duplicate of the automated pass.
       timeline.push({
         at: q.reviewed_at,
-        label: `Quality review: ${q.decision ?? "reviewed"}`,
+        label: `Owner quality decision: ${q.decision ?? "reviewed"}`,
         source: "quality_substitute_decisions",
       });
     }
@@ -265,7 +282,24 @@ export function formatCommitmentHistoryAnswer(result: CommitmentHistoryResult): 
   const lines = [`"${task.description}"${who}. ${describeOutcome(task)}.`];
 
   // One or two pivotal events, not the full raw log — evidence without noise.
-  const pivotal = timeline.filter((e) => e.label !== "Created").slice(0, 2);
+  // The architecture's own examples are "sent on X, confirmed on Y": outcome-
+  // relevant events (delivery/confirmation/decision) take priority over
+  // administrative ones (escalation opened, automated review) so a real
+  // Confirmed event never gets crowded out just because it happened last.
+  const nonCreated = timeline.filter((e) => e.label !== "Created");
+  const isOutcomeRelevant = (label: string) =>
+    label === "Sent" ||
+    label === "Delivered" ||
+    label === "Read" ||
+    label.startsWith("Delivery failed") ||
+    label === "Owner decided" ||
+    label === "Confirmed" ||
+    label.startsWith("Confirmed by");
+  const prioritized = nonCreated.filter((e) => isOutcomeRelevant(e.label));
+  const filler = nonCreated.filter((e) => !isOutcomeRelevant(e.label));
+  const pivotal = [...prioritized, ...filler]
+    .slice(0, 2)
+    .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
   if (pivotal.length > 0) {
     const parts = pivotal.map((e) => {
       const d = new Date(e.at).toLocaleDateString([], { month: "short", day: "numeric" });
