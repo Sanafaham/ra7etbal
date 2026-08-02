@@ -25,6 +25,7 @@ This directory stores **patches only**: the specific, minimal additions needed w
 
 | Date | File | Summary |
 |---|---|---|
+| 2026-08-03 | [2026-08-03-commitment-history.md](2026-08-03-commitment-history.md) | `get_commitment_history` — full evidence-based history of one commitment (Historical Lookup Phase 1, Q4) |
 
 ## Historical patches
 
