@@ -294,6 +294,25 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
     expect(body).toContain(`/confirm?task=${TASK_ID}`);
   });
 
+  it('regression (2026-08-02): template param sent to Meta has no newline or tab characters', async () => {
+    // Meta rejects template parameters containing \n or \t with:
+    // "Param text cannot have new-line/tab characters or more than 4 consecutive spaces"
+    const fetchMock = makeFetchMock();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await resolveAndDeliverEscalationAnswer({
+      ...BASE_CALL_ARGS,
+      decision: 'approved_alternative',
+      instructionText: 'Yes buy it',
+    });
+
+    const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
+    expect(body).not.toMatch(/[\n\t]/);
+    expect(body).not.toMatch(/ {5,}/);
+    expect(body).toContain('Approved. You can go ahead with this task.');
+    expect(body).toContain(`/confirm?task=${TASK_ID}`);
+  });
+
   it('[rejected_alternative] updates task to correction_required and sends rejection message', async () => {
     const rejectFetch = vi.fn()
       .mockResolvedValueOnce(jsonOk({ id: DECISION_ID, status: 'answered', owner_reply_text: 'No', owner_reply_channel: 'whatsapp' }))
