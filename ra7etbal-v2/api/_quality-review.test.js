@@ -580,7 +580,7 @@ describe('runQualityReview', () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
-    expect(promptText).toMatch(/entirely different\/mismatched item/i);
+    expect(promptText).toMatch(/entirely different\/mismatched item from a completely different product category/i);
     expect(promptText).toMatch(/is CORRECTION_REQUIRED, not UNCERTAIN/i);
     expect(promptText).toMatch(/never UNCERTAIN/i);
   });
@@ -747,26 +747,31 @@ describe('runQualityReview', () => {
       expect(result.note).toContain('different, unrelated object');
     });
 
-    it('wrong color/variant is still rejected when the exact variant matters, even if the proof looks polished', async () => {
+    it('correction_required from the model passes through unchanged — normalization does not reclassify it', async () => {
+      // Note: the prompt now guides the model to return SUBSTITUTE_REVIEW for
+      // same-category different-color/variant items (e.g. white pen for blue pen).
+      // This test verifies only that if the model returns CORRECTION_REQUIRED,
+      // normalizeReviewResult leaves it unchanged. The model's classification
+      // behavior is covered by the substitute_review regression tests below.
       vi.stubGlobal(
         'fetch',
         vi.fn().mockResolvedValue(
           anthropicResponse(
-            '{"result":"CORRECTION_REQUIRED","correction_message":"This is the wrong color — a white blouse instead of the requested black blouse. Please send the black one.","reasoning":"Wrong color variant."}',
+            '{"result":"CORRECTION_REQUIRED","correction_message":"Christopher, this is a completely different item — IQOS sticks instead of the pen that was requested. Please go to the stationery store and buy a pen.","reasoning":"Unrelated product category."}',
           ),
         ),
       );
 
       const result = await runQualityReview({
         apiKey: 'test-key',
-        taskDescription: 'Find the black blouse shown and send a photo.',
-        delegationMessage: 'Please find the black blouse and send a photo.',
-        referenceImagesBase64: ['black-blouse-reference-base64'],
-        proofImagesBase64: ['white-blouse-proof-base64'],
+        taskDescription: 'Buy a blue pen from the stationery store.',
+        delegationMessage: 'Please buy a blue pen and send a photo.',
+        referenceImagesBase64: [],
+        proofImagesBase64: ['iqos-sticks-proof-base64'],
       });
 
       expect(result.status).toBe('correction_required');
-      expect(result.note).toContain('wrong color');
+      expect(result.note).toContain('completely different item');
     });
   });
 
@@ -967,6 +972,99 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
     expect(result.status).not.toBe('substitute_review');
   });
 
+  it('regression (2026-08-02): white pen for blue pen task is substitute_review, not correction_required', async () => {
+    // Production bug: QI classified a white pen as CORRECTION_REQUIRED for a
+    // "Buy a blue pen" task because the old prompt listed "wrong color/variant
+    // when the exact variant matters" as a CORRECTION_REQUIRED trigger. A white
+    // pen is a plausible substitute (same product category, different attribute)
+    // and must go to the owner for a decision.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"A white pen was sent instead of the requested blue pen — same product category, different color."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Buy a blue pen from the stationery store.',
+      delegationMessage: 'Please buy a blue pen and send a photo.',
+      referenceImagesBase64: [],
+      proofImagesBase64: ['white-pen-proof-base64'],
+    });
+
+    expect(result.status).toBe('substitute_review');
+    expect(result.note).toContain('white pen');
+  });
+
+  it('regression (2026-08-02): IQOS sticks for blue pen task is correction_required (unrelated product category)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"CORRECTION_REQUIRED","correction_message":"Christopher, this photo shows IQOS sticks, not the blue pen that was requested. Please go to the stationery store and buy a blue pen.","reasoning":"Completely different product category."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Buy a blue pen from the stationery store.',
+      delegationMessage: 'Please buy a blue pen and send a photo.',
+      referenceImagesBase64: [],
+      proofImagesBase64: ['iqos-sticks-proof-base64'],
+    });
+
+    expect(result.status).toBe('correction_required');
+    expect(result.note).toContain('IQOS');
+  });
+
+  it('regression (2026-08-02): Pepsi for Coke task is substitute_review', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"Pepsi was sent instead of the requested Coke — same product category (cola), different brand."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Buy a can of Coke.',
+      delegationMessage: 'Please buy a Coke and send a photo.',
+      referenceImagesBase64: [],
+      proofImagesBase64: ['pepsi-proof-base64'],
+    });
+
+    expect(result.status).toBe('substitute_review');
+  });
+
+  it('prompt explicitly states same-category different-color/variant must go to SUBSTITUTE_REVIEW not CORRECTION_REQUIRED', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'task',
+      delegationMessage: 'message',
+      referenceImagesBase64: [],
+      proofImagesBase64: ['proof-base64'],
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
+    // New rule: same-category different-attribute → SUBSTITUTE_REVIEW
+    expect(promptText).toMatch(/a white pen when a blue pen was requested/i);
+    expect(promptText).toMatch(/Pepsi when Coke was requested/i);
+    // CORRECTION_REQUIRED must explicitly say same-category color/variant is NOT correction
+    expect(promptText).toMatch(/IMPORTANT: a different color, brand, size, or variant of the correct product category is SUBSTITUTE_REVIEW/i);
+  });
+
   it('prompt instructs the model on the exact 3-step decision order and narrow substitute_review boundary', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
@@ -985,7 +1083,7 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
     const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
     expect(promptText).toMatch(/check APPROVED first, then SUBSTITUTE_REVIEW, then CORRECTION_REQUIRED/i);
     expect(promptText).toMatch(/Do NOT use SUBSTITUTE_REVIEW for normal variation/i);
-    expect(promptText).toMatch(/Do NOT use SUBSTITUTE_REVIEW for a wrong or unrelated item/i);
+    expect(promptText).toMatch(/Do NOT use SUBSTITUTE_REVIEW for a completely wrong\/unrelated item/i);
     expect(promptText).toMatch(/"SUBSTITUTE_REVIEW"/);
     // Frozen: the existing four-outcome definitions are untouched substrings.
     expect(promptText).toContain(
