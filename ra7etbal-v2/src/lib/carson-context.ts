@@ -274,7 +274,9 @@ export function buildCarsonContext(input: CarsonContextInput): string {
     .slice(0, 5);
 
   if (done.length > 0) {
-    lines.push("COMPLETED (recent, treat as history only):");
+    lines.push(
+      "COMPLETED (recent, treat as history only — if the user asks what happened to any of these, or wants the full story, this list is NOT the answer; always call get_commitment_history instead):",
+    );
     for (const t of done) {
       const by = t.assigned_to ? `, completed by ${t.assigned_to}` : "";
       const when = t.confirmed_at

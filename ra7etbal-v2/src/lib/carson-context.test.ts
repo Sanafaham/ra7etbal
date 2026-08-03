@@ -184,4 +184,26 @@ describe("buildCarsonContext — truthful worker confirmations", () => {
     expect(out).toContain("Prepare afternoon tea");
     expect(out).toContain("completed by Grace");
   });
+
+  // Regression guard for the "blue pen" Commitment History routing bug: an
+  // ElevenLabs conversation-log trace (Stage 1 of
+  // docs/commitment-history-routing-investigation-runbook.md) proved Carson
+  // answered "What happened with the blue pen?" straight from this COMPLETED
+  // block — no get_commitment_history tool_calls entry existed anywhere in
+  // the transcript — even though the COMMITMENT HISTORY prompt section
+  // (strengthened across four separate rounds) explicitly forbade it. The
+  // instruction lived far away from the tempting data; this asserts the
+  // warning is now co-located directly on the COMPLETED header itself, at
+  // the exact point the model encounters the data that tempted it.
+  it("warns against answering commitment-history questions from the COMPLETED block, co-located with the data itself", () => {
+    const out = buildCarsonContext({
+      tasks: [makeTask({ confirmed_at: "2026-08-02T18:12:00Z" })],
+      people: [],
+    });
+    const completedHeaderLine = out
+      .split("\n")
+      .find((line) => line.startsWith("COMPLETED"));
+    expect(completedHeaderLine).toBeDefined();
+    expect(completedHeaderLine).toContain("always call get_commitment_history instead");
+  });
 });

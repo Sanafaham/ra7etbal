@@ -521,7 +521,51 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ### Historical Lookup — Phase 1, Q4 Commitment History
 
-Status: implemented. Not yet merged, PR open against `main`.
+Status: **FIX IMPLEMENTED, PR OPEN — NOT YET MERGED OR DEPLOYED** (2026-08-03).
+Backend implemented, tested, and merged (PRs #163, #164, #165, #166). Widget
+registration and ElevenLabs Tool registration were verified correct; four
+rounds of prompt strengthening did not change the observed behavior.
+
+Root cause was proven directly, not inferred: with a read-only
+(`convai_read`-scoped) ElevenLabs API key, `scripts/carson-diagnose.mjs`
+pulled the actual ElevenLabs conversation record for two independent
+"What happened with the blue pen?" test conversations. Both showed **zero
+`tool_calls` entries** for the turn in question — the LLM (confirmed
+configured model: `claude-sonnet-4-6`, a capable model, ruling out "weak
+model" as the explanation) never attempted to call `get_commitment_history`
+at all. This is Stage 1 of `docs/commitment-history-routing-investigation-runbook.md`.
+
+Fix (PR #167, branch `fix/carson-context-colocated-commitment-history-warning`):
+the `COMPLETED (recent, treat as history only)` header built by
+`buildCarsonContext()` in `src/lib/carson-context.ts` now carries the
+"never answer from this list, always call get_commitment_history" warning
+co-located directly on the data itself — the exact point the model encounters
+the tempting match — instead of relying on the separate `COMMITMENT HISTORY`
+prompt section (elsewhere in a 500+ line system prompt) to be recalled.
+Regression test added in `src/lib/carson-context.test.ts` (line-scoped
+assertion that the warning appears on the same line as the COMPLETED header).
+Targeted test, full `test:carson-protected` suite (46 files, 821 passed, no
+regressions), typecheck, and production build all pass.
+
+**Standing engineering direction (approved 2026-08-03): Carson Reliability
+Engineering — permanent ElevenLabs diagnostic access.** This investigation
+exposed a permanent gap: backend/Supabase evidence alone cannot always
+explain Carson's behavior, because the decision of whether to call a client
+tool happens entirely inside ElevenLabs. Going forward, any production
+investigation into unexpected Carson behavior should compare all of: what the
+owner said, what ElevenLabs heard, what Carson interpreted, what tool was
+called, what reached the backend, what was returned, and what Carson finally
+said — not reason from backend data alone when ElevenLabs conversation
+evidence exists. `scripts/carson-diagnose.mjs` (run via
+`npm run carson:diagnose -- list ...` / `... inspect ...`) implements this,
+and has now been used successfully with a real `convai_read` key to find this
+exact root cause. The key used was provided ad hoc in chat, not stored
+anywhere in the repo or as a project secret — a future investigation will
+need a new one provisioned the same way.
+
+Remaining: merge PR #167, deploy, then re-pull the ElevenLabs conversation
+record for a fresh live "blue pen" test via `carson-diagnose.mjs` to confirm
+`tool_calls` is now populated (Stage 1 passes) before closing this out.
 
 What it is: the first capability slice of the frozen Historical Lookup Architecture (Carson's Memory Retrieval Engine) — a read-only voice/typed Carson tool answering "did this commitment ever happen / what's its full story," distinct from the existing Operations Center V1's delivery-status-only question ("did it deliver"). Given a keyword (task description or assigned person's name), resolves the one matching commitment across every task status and archived state (never restricted to active work), then reconstructs its evidence-based lifecycle by merging rows from `tasks`, `confirmations`, `whatsapp_deliveries`, `quality_substitute_decisions`, `reminder_delivery_events` (reminder-type tasks only), and `staff_escalation_owner_decisions` into one chronological timeline.
 
