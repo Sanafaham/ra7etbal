@@ -376,6 +376,21 @@ describe("buildCommitmentHistory — substitute-review reconstruction (real prod
     });
   }
 
+  // Production verification round 2 (2026-08-03) confirmed the backend was NOT
+  // the source of the remaining "completion only" answer: Carson's live reply
+  // included an exact clock time ("6:12 PM") that this module structurally
+  // cannot produce (it never calls toLocaleTimeString/toLocaleString, only
+  // toLocaleDateString with month/day). That time matches the "COMPLETED
+  // (recent, treat as history only)" block in src/lib/carson-context.ts's
+  // buildCarsonContext() — the static {{ra7etbal_state}} snapshot injected once
+  // at session start. The real root cause was Carson never invoking this tool
+  // at all, answering from that stale snapshot instead — a prompt/routing gap
+  // (COMMITMENT HISTORY lacked the same "never answer from ra7etbal_state,
+  // always call the live tool" guardrail DELIVERY STATUS already has), not a
+  // backend defect. This test (and the not.toMatch clock-time assertion below)
+  // proves the backend's own correctness; it cannot prove Carson actually
+  // calls the tool for a given question — that routing behavior lives in the
+  // ElevenLabs prompt and can only be verified with a live conversational test.
   it("surfaces the substitution/review story instead of only the final completion", async () => {
     const task = makeTask({
       description: "Buy a blue pen.",
@@ -398,6 +413,11 @@ describe("buildCommitmentHistory — substitute-review reconstruction (real prod
     const answer = formatCommitmentHistoryAnswer(result);
     expect(answer).toMatch(/Yes buy it/);
     expect(answer).toMatch(/approved the alternative/i);
+    // Locks in the exact evidence that proved this was a routing failure, not
+    // a backend one: get_commitment_history must never emit a clock time —
+    // if it ever starts to, it would become indistinguishable from the
+    // ra7etbal_state "COMPLETED" snapshot text that caused the production bug.
+    expect(answer).not.toMatch(/\d{1,2}:\d{2}\s*(AM|PM)/i);
   });
 
   it("skips the generic 'Automated quality review: <current status>' event when a substitute-review escalation exists, since the current status would mislabel the earlier moment", async () => {
