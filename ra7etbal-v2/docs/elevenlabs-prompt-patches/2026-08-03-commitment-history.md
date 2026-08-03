@@ -1,7 +1,15 @@
 # ElevenLabs Prompt Patch — get_commitment_history
 **Date:** 2026-08-03
 **Feature:** Historical Lookup — Phase 1, Q4 Commitment History
-**PR:** (fill in on open)
+**PR:** #163 (initial backend/widget), tool registration and prompt insertion completed directly via the ElevenLabs API during the Blue Pen incident investigation (see `RA7ETBAL_STATE.md`).
+
+**STATUS: APPLIED.** Both insertions below (and the tool registration itself,
+which was found to be separately missing — see the Blue Pen incident record
+in `RA7ETBAL_STATE.md`) are live on the production agent and confirmed
+working by direct production evidence on 2026-08-04
+(conversation `conv_2401kz4qx1s4errtchfz1afns3gh`). This file is kept as the
+historical record of what was inserted and why — the insertions below no
+longer need to be pasted; they are already on the live agent.
 
 ---
 
