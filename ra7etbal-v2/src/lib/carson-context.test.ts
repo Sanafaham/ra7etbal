@@ -172,7 +172,7 @@ describe("buildCarsonContext — truthful worker confirmations", () => {
       tasks: [makeTask({ status: "done", confirmed_at: null })],
       people: [],
     });
-    expect(out).not.toContain("Prepare afternoon tea");
+    expect(out).not.toContain("COMPLETED");
     expect(out).not.toContain("completed by Grace");
   });
 
@@ -181,8 +181,60 @@ describe("buildCarsonContext — truthful worker confirmations", () => {
       tasks: [makeTask({ confirmed_at: "2026-07-24T10:15:00Z" })],
       people: [],
     });
-    expect(out).toContain("Prepare afternoon tea");
-    expect(out).toContain("completed by Grace");
+    expect(out).toContain("1 completed by Grace");
+  });
+
+  // Option B (architecture fix, not another prompt tweak): live ElevenLabs
+  // conversation evidence proved the model answers "what happened with X"
+  // directly from this block's task descriptions no matter how the
+  // adjacent warning is worded — five rounds of wording, all delivered
+  // verbatim to the model, none changed the outcome. The only lever that
+  // worked is removing the data a specific-item question could be answered
+  // from. This block must never again include a task description or an
+  // exact timestamp — only aggregate counts and assignee names, which are
+  // enough for Morning Brief but not enough to answer a Commitment History
+  // question.
+  it("never includes a task description in the COMPLETED block", () => {
+    const out = buildCarsonContext({
+      tasks: [
+        makeTask({
+          description: "Buy the blue pen from the stationery store",
+          assigned_to: "Christopher",
+          confirmed_at: "2026-08-02T18:12:00Z",
+        }),
+      ],
+      people: [],
+    });
+    expect(out).not.toContain("Buy the blue pen");
+    expect(out).toContain("1 completed by Christopher");
+  });
+
+  it("never includes an exact completion timestamp in the COMPLETED block", () => {
+    const out = buildCarsonContext({
+      tasks: [makeTask({ confirmed_at: "2026-08-02T18:12:00Z" })],
+      people: [],
+    });
+    // No clock time, no date — this is the exact signature that proved the
+    // "blue pen" answer came from this block rather than from
+    // get_commitment_history (which never formats a time of day).
+    expect(out).not.toMatch(/\d{1,2}:\d{2}\s*(AM|PM)/i);
+    expect(out).not.toContain("8/2/2026");
+    expect(out).not.toContain("2026");
+  });
+
+  it("aggregates multiple completions by assignee into counts, not a per-task list", () => {
+    const out = buildCarsonContext({
+      tasks: [
+        makeTask({ id: "t1", assigned_to: "Christopher", confirmed_at: "2026-08-02T10:00:00Z" }),
+        makeTask({ id: "t2", assigned_to: "Christopher", confirmed_at: "2026-08-02T11:00:00Z" }),
+        makeTask({ id: "t3", assigned_to: "Grace", confirmed_at: "2026-08-02T12:00:00Z" }),
+        makeTask({ id: "t4", assigned_to: null, confirmed_at: "2026-08-02T13:00:00Z" }),
+      ],
+      people: [],
+    });
+    expect(out).toContain("2 completed by Christopher");
+    expect(out).toContain("1 completed by Grace");
+    expect(out).toContain("1 completed by you");
   });
 
   // Regression guard for the "blue pen" Commitment History routing bug: an
