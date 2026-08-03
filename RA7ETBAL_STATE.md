@@ -521,7 +521,21 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ### Historical Lookup — Phase 1, Q4 Commitment History
 
-Status: **CLOSED — PRODUCTION VERIFIED (2026-08-04).** Three independent root
+Status: **PERMANENTLY CLOSED (2026-08-04) — reference implementation for
+future Carson tool investigations.** Final closure package (architecture
+diagram, full safeguard/test/file inventory, Definition of Done checklist)
+delivered in chat and archived in Claude memory,
+`carson_master_plan.md` → "Appendix: Blue Pen Incident." One item flagged as
+explicitly NOT done: no safeguard was mirrored into an ElevenLabs Knowledge
+Base — this investigation never touched one; the live agent's system prompt
+and `tool_ids` are the only ElevenLabs-side artifacts changed, and both are
+recorded above. Also fixed as part of closure: PR #171 corrected
+`docs/elevenlabs-prompt-patches/2026-08-03-commitment-history.md` and its
+README entry, which still read as an unapplied "paste this" instruction
+after the patch had already gone live — a stale-documentation finding, not a
+functional defect.
+
+Prior status: **CLOSED — PRODUCTION VERIFIED (2026-08-04).** Three independent root
 causes were found and fixed in sequence (see full detail below and the
 permanent regression record in Claude memory,
 `carson_master_plan.md` → "Appendix: Blue Pen Incident"): (1) `ra7etbal_state`
