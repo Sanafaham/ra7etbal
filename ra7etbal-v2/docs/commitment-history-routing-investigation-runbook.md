@@ -64,14 +64,14 @@ ElevenLabs conversation-level evidence.**
 
 ## Call 1 — Locate the conversation
 
-```
+```http
 GET /v1/convai/conversations?agent_id=agent_3001kt3zzkcxfb3bwejd8yzzhnmy&call_start_after_unix=<window_start>&call_start_before_unix=<window_end>
 ```
 Match by `start_time_unix_secs` to find the exact `conversation_id`.
 
 ## Call 2 — Confirm the configured LLM
 
-```
+```http
 GET /v1/convai/agents/agent_3001kt3zzkcxfb3bwejd8yzzhnmy
 ```
 Read the agent's configured model (`conversation_config.agent.prompt.llm` or
@@ -83,14 +83,17 @@ system prompt over directly-relevant injected context.
 
 ## Call 3 — Pull the full transcript (the decisive call)
 
-```
+```http
 GET /v1/convai/conversations/{conversation_id}
 ```
-In `transcript[]`, find the user turn asking about the blue pen, then the
-following `role: "agent"` turn. Inspect, in order:
-1. `tool_calls[]` on that turn — `tool_name`, `type`, `params_as_json`, `request_id`, `tool_has_been_called`.
+In `transcript[]`, find the user turn asking about the blue pen, then take
+every subsequent entry up to (not including) the next `role: "user"` turn —
+this is the agent's complete response to that question, including any
+tool_calls/tool_results attached anywhere within it, not just on the single
+immediately-following turn. Inspect, across that whole slice, in order:
+1. `tool_calls[]` — `tool_name`, `type`, `params_as_json`, `request_id`, `tool_has_been_called`.
 2. `tool_results[]` — matching `request_id`, `result_value`, `is_error`, `tool_latency_secs`.
-3. The agent's spoken `message` text, compared against `result_value`.
+3. The agent's spoken `message` text (joined across the slice), compared against `result_value`.
 
 ## Stage definitions (success vs. failure evidence)
 
@@ -105,7 +108,7 @@ following `role: "agent"` turn. Inspect, in order:
 
 ## Decision tree
 
-```
+```text
 tool_calls[] empty/absent?
   YES → STAGE 1 FAILURE. Root cause: LLM never selected the tool. Stop here.
   NO  → continue

@@ -63,14 +63,22 @@ async function elevenlabsGet(path) {
 }
 
 async function listConversations(args) {
-  const params = new URLSearchParams({ agent_id: agentId(args) });
   const after = toUnix(args.after);
   const before = toUnix(args.before);
-  if (after) params.set("call_start_after_unix", String(after));
-  if (before) params.set("call_start_before_unix", String(before));
 
-  const data = await elevenlabsGet(`/conversations?${params.toString()}`);
-  const conversations = data.conversations ?? data.items ?? [];
+  const conversations = [];
+  let cursor;
+  do {
+    const params = new URLSearchParams({ agent_id: agentId(args), page_size: "100" });
+    if (after) params.set("call_start_after_unix", String(after));
+    if (before) params.set("call_start_before_unix", String(before));
+    if (cursor) params.set("cursor", cursor);
+
+    const data = await elevenlabsGet(`/conversations?${params.toString()}`);
+    conversations.push(...(data.conversations ?? data.items ?? []));
+    cursor = data.has_more ? data.next_cursor : undefined;
+  } while (cursor);
+
   if (conversations.length === 0) {
     console.log("No conversations found in that window. Widen --after/--before.");
     return;
@@ -126,6 +134,14 @@ function classifyStage(turns, toolName) {
       call,
     };
   }
+  if (call.type !== "client") {
+    return {
+      stage: 2,
+      verdict: "FAIL",
+      detail: `tool_calls[].type is "${call.type}", not "client" — this is a distinct anomaly; this tool should never be dispatched as anything but a client tool.`,
+      call,
+    };
+  }
 
   const result = allToolResults.find((r) => r.request_id === call.request_id);
   if (!result) {
@@ -144,6 +160,27 @@ function classifyStage(turns, toolName) {
       detail:
         `is_error=${result.is_error}, result_value=${JSON.stringify(result.result_value)}. ` +
         "Cross-check Supabase pg_stat_statements before trusting this — see runbook.",
+      call,
+      result,
+    };
+  }
+
+  // A real Supabase round trip (auth check + ILIKE query, at minimum) takes
+  // measurable time. Missing or implausibly low latency doesn't fail the
+  // stage outright — result_value is present and not an error — but it's
+  // not a clean pass either, so it's flagged for manual verification rather
+  // than silently treated as a confirmed Stage 4 success.
+  const latency = result.tool_latency_secs;
+  const latencyIsPlausible = typeof latency === "number" && latency >= 0.05;
+  if (!latencyIsPlausible) {
+    return {
+      stage: 4,
+      verdict: "INDETERMINATE — manual verification required",
+      detail:
+        `tool_latency_secs=${JSON.stringify(latency)} is missing or implausibly low for a real ` +
+        "Supabase round trip. result_value is present and not an error, but this latency value " +
+        "does not on its own confirm the handler actually executed — verify manually before " +
+        "treating this as a Stage 4/5 pass.",
       call,
       result,
     };

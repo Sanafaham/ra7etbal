@@ -200,7 +200,10 @@ describe("buildCarsonContext — truthful worker confirmations", () => {
       tasks: [makeTask({ confirmed_at: "2026-08-02T18:12:00Z" })],
       people: [],
     });
-    expect(out).toContain("COMPLETED");
-    expect(out).toContain("always call get_commitment_history instead");
+    const completedHeaderLine = out
+      .split("\n")
+      .find((line) => line.startsWith("COMPLETED"));
+    expect(completedHeaderLine).toBeDefined();
+    expect(completedHeaderLine).toContain("always call get_commitment_history instead");
   });
 });
