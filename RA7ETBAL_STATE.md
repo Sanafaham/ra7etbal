@@ -521,7 +521,46 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ### Historical Lookup — Phase 1, Q4 Commitment History
 
-Status: implemented. Not yet merged, PR open against `main`.
+Status: **BLOCKED** (2026-08-03). Backend implemented, tested, and merged
+(PRs #163, #164, #165, #166). Widget registration, ElevenLabs Tool
+registration, and four rounds of prompt strengthening are all verified
+correct. Production behavior has not changed: on a genuinely fresh
+conversation, on the live site, Carson still answers "What happened with the
+blue pen?" from the static `ra7etbal_state` context instead of calling
+`get_commitment_history` — proven by a clock-time answer the tool cannot
+structurally produce, no pause despite "Wait for response" being enabled on
+the ElevenLabs tool, and zero matching database traffic ever (Supabase
+`pg_stat_statements`, tracked since project creation).
+
+Root cause is narrowed to the ElevenLabs side only — whether the LLM ever
+decides to call the tool, and where its own dispatch chain stops if it does.
+This cannot be resolved further from source code, Supabase, or the deployed
+bundle alone. **Do not restart this investigation.** The complete diagnostic
+procedure — API calls, exact fields, expected values per stage, and a
+decision tree — is frozen in
+`docs/commitment-history-routing-investigation-runbook.md`. Resume from that
+file only, once a read-only ElevenLabs API key (or equivalent
+conversation-level evidence) is available. Do not make further prompt,
+frontend, or backend changes, and do not run another production test as a
+substitute for that evidence — it only reproduces the same ambiguity.
+
+**Standing engineering direction (approved 2026-08-03): Carson Reliability
+Engineering — permanent ElevenLabs diagnostic access.** This investigation
+exposed a permanent gap: backend/Supabase evidence alone cannot always
+explain Carson's behavior, because the decision of whether to call a client
+tool happens entirely inside ElevenLabs. Going forward, any production
+investigation into unexpected Carson behavior should compare all of: what the
+owner said, what ElevenLabs heard, what Carson interpreted, what tool was
+called, what reached the backend, what was returned, and what Carson finally
+said — not reason from backend data alone when ElevenLabs conversation
+evidence exists. `scripts/carson-diagnose.mjs` (new, run via
+`npm run carson:diagnose -- list ...` / `... inspect ...`) implements this:
+given a read-only `ELEVENLABS_API_KEY` (scope `convai_read` only — no write,
+voice, model, or workspace permissions), it locates a conversation, pulls its
+transcript plus the agent's configured LLM, and applies the runbook's
+stage-by-stage decision tree automatically. No API key has been provisioned
+yet — the script is ready, unused, and requires no code changes to start
+using once one exists.
 
 What it is: the first capability slice of the frozen Historical Lookup Architecture (Carson's Memory Retrieval Engine) — a read-only voice/typed Carson tool answering "did this commitment ever happen / what's its full story," distinct from the existing Operations Center V1's delivery-status-only question ("did it deliver"). Given a keyword (task description or assigned person's name), resolves the one matching commitment across every task status and archived state (never restricted to active work), then reconstructs its evidence-based lifecycle by merging rows from `tasks`, `confirmations`, `whatsapp_deliveries`, `quality_substitute_decisions`, `reminder_delivery_events` (reminder-type tasks only), and `staff_escalation_owner_decisions` into one chronological timeline.
 
