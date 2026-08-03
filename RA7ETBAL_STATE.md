@@ -525,15 +525,28 @@ Status: **PERMANENTLY CLOSED (2026-08-04) — reference implementation for
 future Carson tool investigations.** Final closure package (architecture
 diagram, full safeguard/test/file inventory, Definition of Done checklist)
 delivered in chat and archived in Claude memory,
-`carson_master_plan.md` → "Appendix: Blue Pen Incident." One item flagged as
-explicitly NOT done: no safeguard was mirrored into an ElevenLabs Knowledge
-Base — this investigation never touched one; the live agent's system prompt
-and `tool_ids` are the only ElevenLabs-side artifacts changed, and both are
-recorded above. Also fixed as part of closure: PR #171 corrected
+`carson_master_plan.md` → "Appendix: Blue Pen Incident." Also fixed as part
+of closure: PR #171 corrected
 `docs/elevenlabs-prompt-patches/2026-08-03-commitment-history.md` and its
 README entry, which still read as an unapplied "paste this" instruction
 after the patch had already gone live — a stale-documentation finding, not a
 functional defect.
+
+**ElevenLabs Knowledge Base — per Sana's direct confirmation (2026-08-04, not
+independently verified via API by this agent — no ElevenLabs key was present
+in that session to pull the Knowledge Base contents):** a "Carson
+Constitution" document set (COS 06–22: Reliability Engineering & Protected
+Behaviors, Tool Selection Rules, Evidence Before Answer, Production Safety
+Rules, Regression Prevention, Historical Lookup Standards, Memory Governance,
+Tool Registration Integrity, Production Verification Standards, Engineering
+Learning Loop, Open Loop Management, Owner Experience, Autonomy and Decision
+Authority, Continuous Improvement, Architectural Integrity, System Evolution,
+Truth and Epistemic Governance) has been added to the live ElevenLabs
+Knowledge Base. This agent has not seen the Carson Constitution document
+itself (no prior record of it in this repo or in Claude memory) and cannot
+independently confirm its contents match the safeguards recorded here — this
+status reflects Sana's report, not this agent's verification. See
+[[carson_constitution]] in Claude memory for the pointer record.
 
 Prior status: **CLOSED — PRODUCTION VERIFIED (2026-08-04).** Three independent root
 causes were found and fixed in sequence (see full detail below and the
