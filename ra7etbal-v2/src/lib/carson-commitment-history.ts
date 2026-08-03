@@ -32,7 +32,13 @@ import { supabase } from "./supabase";
 import type { Task } from "../types/task";
 
 const TASK_COLUMNS =
-  "id, user_id, description, type, assigned_to, status, due_at, confirmed_at, created_at, escalated_at, followup_sent_at, dismissed_at, archived_at, quality_review_status, quality_reviewed_at, worker_reply";
+  "id, user_id, description, type, assigned_to, status, due_at, confirmed_at, created_at, escalated_at, followup_sent_at, dismissed_at, archived_at, quality_review_status, quality_reviewed_at, quality_review_note, worker_reply";
+
+/** Bounds free-text owner/system evidence before it goes into a spoken answer. */
+function bound(text: string, max: number): string {
+  const trimmed = text.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+}
 
 export interface CommitmentTimelineEvent {
   at: string;
@@ -146,10 +152,16 @@ export async function buildCommitmentHistory(
             "event_at",
           )
         : Promise.resolve([]),
-      fetchRelated<{ status: string | null; answered_at: string | null; created_at: string }>(
+      fetchRelated<{
+        status: string | null;
+        answered_at: string | null;
+        created_at: string;
+        review_type: string | null;
+        owner_reply_text: string | null;
+      }>(
         "staff_escalation_owner_decisions",
         task.id,
-        "status, answered_at, created_at",
+        "status, answered_at, created_at, review_type, owner_reply_text",
         "created_at",
       ),
     ]);
@@ -163,6 +175,15 @@ export async function buildCommitmentHistory(
   if (task.escalated_at) {
     timeline.push({ at: task.escalated_at, label: "Escalated to owner", source: "tasks" });
   }
+  // A substitute-review escalation is the append-only record of "this task
+  // needed an owner decision on a proposed substitute" — found via production
+  // verification that task.quality_review_status is mutable and gets
+  // overwritten once the owner decides (substitute_review -> approved), so
+  // labeling an earlier timestamp with the CURRENT status misrepresents what
+  // was actually true at that moment. When such an escalation exists, its own
+  // two events below carry the real (correctly-timed) story instead.
+  const substituteEscalation = escalations.find((e) => e.review_type === "substitute_review");
+
   // The automated Quality Intelligence proof review is stamped directly on
   // the task row (quality_reviewed_at/quality_review_status) and is not
   // guaranteed to have a matching quality_substitute_decisions row — that
@@ -170,7 +191,10 @@ export async function buildCommitmentHistory(
   // decision. Without this, a real reviewed-and-approved proof cycle went
   // missing from the reconstructed lifecycle entirely (found via production
   // verification against a real done+approved task with no substitute row).
-  if (task.quality_reviewed_at) {
+  // Skipped when a substitute-review escalation exists (see above) — the
+  // escalation's own events replace this one rather than duplicating it with
+  // a mislabeled current-state snapshot.
+  if (task.quality_reviewed_at && !substituteEscalation) {
     timeline.push({
       at: task.quality_reviewed_at,
       label: `Automated quality review: ${task.quality_review_status ?? "reviewed"}`,
@@ -197,9 +221,28 @@ export async function buildCommitmentHistory(
   }
 
   for (const esc of escalations) {
-    timeline.push({ at: esc.created_at, label: "Owner decision requested", source: "staff_escalation_owner_decisions" });
+    const isSubstitute = esc.review_type === "substitute_review";
+    timeline.push({
+      at: esc.created_at,
+      label: isSubstitute ? "Substitute proposed — needed your review" : "Owner decision requested",
+      source: "staff_escalation_owner_decisions",
+    });
     if (esc.answered_at) {
-      timeline.push({ at: esc.answered_at, label: "Owner decided", source: "staff_escalation_owner_decisions" });
+      // Real evidence, not a generic label: the owner's own reply (append-only
+      // on this row) plus, for a substitute review specifically, the app's own
+      // outcome note on the task — both confirmed present for the real
+      // production case this fix was written against ("Yes buy it" /
+      // "Owner approved the alternative.").
+      const reply = esc.owner_reply_text?.trim() || null;
+      const note = isSubstitute ? task.quality_review_note?.trim() || null : null;
+      const parts = [reply ? `"${bound(reply, 60)}"` : null, note ? bound(note, 80) : null].filter(
+        (p): p is string => Boolean(p),
+      );
+      timeline.push({
+        at: esc.answered_at,
+        label: parts.length > 0 ? `Owner decided: ${parts.join(" — ")}` : "Owner decided",
+        source: "staff_escalation_owner_decisions",
+      });
     }
   }
 
@@ -292,13 +335,19 @@ export function formatCommitmentHistoryAnswer(result: CommitmentHistoryResult): 
     label === "Delivered" ||
     label === "Read" ||
     label.startsWith("Delivery failed") ||
-    label === "Owner decided" ||
+    label.startsWith("Owner decided") ||
     label === "Confirmed" ||
     label.startsWith("Confirmed by");
   const prioritized = nonCreated.filter((e) => isOutcomeRelevant(e.label));
   const filler = nonCreated.filter((e) => !isOutcomeRelevant(e.label));
-  const pivotal = [...prioritized, ...filler]
-    .slice(0, 2)
+  // CodeRabbit finding on PR #165: taking the first two outcome-relevant
+  // events (chronologically) could crowd out a later one — e.g. an earlier
+  // Sent/Delivered pair suppressing a later Owner-decided/Confirmed pair,
+  // the exact class of bug this file was created to fix. Take the LATEST
+  // two outcome-relevant events instead; only fall back to backfilling with
+  // administrative (filler) events when fewer than two outcome-relevant
+  // events exist at all.
+  const pivotal = (prioritized.length >= 2 ? prioritized.slice(-2) : [...prioritized, ...filler].slice(0, 2))
     .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
   if (pivotal.length > 0) {
     const parts = pivotal.map((e) => {

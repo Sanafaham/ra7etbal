@@ -108,6 +108,19 @@ describe("lookupCommitmentHistory — resolution and disambiguation", () => {
     expect(result).toContain("passport");
   });
 
+  // Permanent regression guard for the confirmed production issue: "What
+  // happened with the passport?" must answer ONLY the requested commitment —
+  // never an unrelated overdue reminder, Needs You item, or daily-brief
+  // content, even though the tool itself was proven (by exhaustive code
+  // review — no reminders/daily_brief/ra7etbal_state read anywhere in this
+  // module) not to be the source of that leak. Asserting exact equality here
+  // means a future change that starts pulling in other state will fail loudly.
+  it("returns exactly the no-match string for a zero-match keyword — nothing else, ever", async () => {
+    mocks.supabaseFrom.mockReturnValue(makeChain({ data: [], error: null }));
+    const result = await lookupCommitmentHistory("passport");
+    expect(result).toBe('I don\'t have a record of anything matching "passport".');
+  });
+
   it("asks which one when multiple candidates match — never guesses", async () => {
     const rows = [
       makeTask({ id: "task-1", description: "prepare the guest room for arrival" }),
@@ -329,6 +342,146 @@ describe("buildCommitmentHistory — conflict resolution", () => {
   });
 });
 
+describe("buildCommitmentHistory — substitute-review reconstruction (real production shape)", () => {
+  // Reproduces the exact real "Buy a blue pen." production task: an escalation
+  // row with review_type "substitute_review", owner_reply_text "Yes buy it",
+  // and a task-level quality_review_note "Owner approved the alternative." —
+  // with zero quality_substitute_decisions rows (that table has been
+  // superseded by staff_escalation_owner_decisions for this flow) and a
+  // task.quality_review_status that only reflects the FINAL state ("approved"),
+  // not what was true at quality_reviewed_at.
+  function mockRealBluePenShape() {
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "staff_escalation_owner_decisions") {
+        return makeChain({
+          data: [
+            {
+              status: "delivered_to_staff",
+              answered_at: "2026-08-02T15:11:54Z",
+              created_at: "2026-08-02T15:10:31Z",
+              review_type: "substitute_review",
+              owner_reply_text: "Yes buy it",
+            },
+          ],
+          error: null,
+        });
+      }
+      if (table === "confirmations") {
+        return makeChain({
+          data: [{ confirmed_at: "2026-08-02T15:12:38Z", confirmed_by: null, source: "confirmation_link" }],
+          error: null,
+        });
+      }
+      return makeChain({ data: [], error: null });
+    });
+  }
+
+  it("surfaces the substitution/review story instead of only the final completion", async () => {
+    const task = makeTask({
+      description: "Buy a blue pen.",
+      assigned_to: "Christopher",
+      type: "errand",
+      status: "done",
+      confirmed_at: "2026-08-02T15:12:38Z",
+      quality_review_status: "approved",
+      quality_review_note: "Owner approved the alternative.",
+      quality_reviewed_at: "2026-08-02T15:10:25Z",
+    });
+    mockRealBluePenShape();
+
+    const result = await buildCommitmentHistory(task);
+    const labels = result.timeline.map((e) => e.label);
+    expect(labels).toContain("Substitute proposed — needed your review");
+    expect(labels.some((l) => l.includes('Owner decided: "Yes buy it"'))).toBe(true);
+    expect(labels.some((l) => l.includes("Owner approved the alternative."))).toBe(true);
+
+    const answer = formatCommitmentHistoryAnswer(result);
+    expect(answer).toMatch(/Yes buy it/);
+    expect(answer).toMatch(/approved the alternative/i);
+  });
+
+  it("skips the generic 'Automated quality review: <current status>' event when a substitute-review escalation exists, since the current status would mislabel the earlier moment", async () => {
+    const task = makeTask({
+      status: "done",
+      quality_review_status: "approved", // final state — NOT what was true at quality_reviewed_at
+      quality_review_note: "Owner approved the alternative.",
+      quality_reviewed_at: "2026-08-02T15:10:25Z",
+    });
+    mockRealBluePenShape();
+
+    const result = await buildCommitmentHistory(task);
+    expect(result.timeline.map((e) => e.label)).not.toContain("Automated quality review: approved");
+  });
+
+  it("still uses the generic 'Automated quality review: <status>' event for a routine review with no owner escalation", async () => {
+    const task = makeTask({
+      status: "done",
+      quality_review_status: "approved",
+      quality_reviewed_at: "2026-07-20T09:00:00Z",
+    });
+    mocks.supabaseFrom.mockReturnValue(makeChain({ data: [], error: null }));
+
+    const result = await buildCommitmentHistory(task);
+    expect(result.timeline.map((e) => e.label)).toContain("Automated quality review: approved");
+  });
+
+  it("still labels a plain (non-substitute) escalation generically — no substitute-only wording leaks into unrelated escalation types", async () => {
+    const task = makeTask({ status: "done" });
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "staff_escalation_owner_decisions") {
+        return makeChain({
+          data: [
+            {
+              status: "answered",
+              answered_at: "2026-07-21T10:00:00Z",
+              created_at: "2026-07-21T09:00:00Z",
+              review_type: null,
+              owner_reply_text: null,
+            },
+          ],
+          error: null,
+        });
+      }
+      return makeChain({ data: [], error: null });
+    });
+
+    const result = await buildCommitmentHistory(task);
+    const labels = result.timeline.map((e) => e.label);
+    expect(labels).toContain("Owner decision requested");
+    expect(labels).toContain("Owner decided");
+    expect(labels.some((l) => l.startsWith("Substitute proposed"))).toBe(false);
+  });
+
+  it("truncates a long owner_reply_text and quality_review_note before including them in the timeline", async () => {
+    const longReply = "A".repeat(200);
+    const longNote = "B".repeat(200);
+    const task = makeTask({ status: "done", quality_review_note: longNote });
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "staff_escalation_owner_decisions") {
+        return makeChain({
+          data: [
+            {
+              status: "delivered_to_staff",
+              answered_at: "2026-07-21T10:00:00Z",
+              created_at: "2026-07-21T09:00:00Z",
+              review_type: "substitute_review",
+              owner_reply_text: longReply,
+            },
+          ],
+          error: null,
+        });
+      }
+      return makeChain({ data: [], error: null });
+    });
+
+    const result = await buildCommitmentHistory(task);
+    const decidedEvent = result.timeline.find((e) => e.label.startsWith("Owner decided"));
+    expect(decidedEvent).toBeDefined();
+    expect(decidedEvent!.label.length).toBeLessThan(200);
+    expect(decidedEvent!.label).toContain("…");
+  });
+});
+
 describe("formatCommitmentHistoryAnswer — evidence-based, no raw dump", () => {
   it("names the outcome and at most two pivotal events, not the full log", async () => {
     const task = makeTask({ status: "pending" });
@@ -377,5 +530,28 @@ describe("formatCommitmentHistoryAnswer — evidence-based, no raw dump", () => 
     // decision requested") and silently drop "Confirmed" entirely.
     expect(answer).toContain("Confirmed");
     expect(answer).not.toContain("Automated quality review");
+  });
+
+  it("prioritizes the LATEST outcome-relevant events, not the earliest — CodeRabbit finding on PR #165: an earlier Sent/Delivered pair must not crowd out a later Owner-decided/Confirmed pair", async () => {
+    const task = makeTask({ status: "done", confirmed_at: "2026-08-02T15:12:38Z" });
+    const result = {
+      task,
+      timeline: [
+        { at: "2026-08-02T15:00:00Z", label: "Created", source: "tasks" as const },
+        { at: "2026-08-02T15:01:00Z", label: "Sent", source: "whatsapp_deliveries" as const },
+        { at: "2026-08-02T15:02:00Z", label: "Delivered", source: "whatsapp_deliveries" as const },
+        { at: "2026-08-02T15:11:54Z", label: 'Owner decided: "Yes buy it"', source: "staff_escalation_owner_decisions" as const },
+        { at: "2026-08-02T15:12:38Z", label: "Confirmed", source: "confirmations" as const },
+      ],
+      caveats: [],
+    };
+    const answer = formatCommitmentHistoryAnswer(result);
+    // All four (Sent, Delivered, Owner decided, Confirmed) are outcome-relevant
+    // — the fix must pick the latest two (Owner decided, Confirmed), not the
+    // first two (Sent, Delivered), which would silently drop the decision.
+    expect(answer).toContain("Owner decided");
+    expect(answer).toContain("Confirmed");
+    expect(answer).not.toContain("Sent on");
+    expect(answer).not.toContain("Delivered on");
   });
 });
