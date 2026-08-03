@@ -147,3 +147,41 @@ export function daysSince(isoTimestamp: string): number {
     (Date.now() - new Date(isoTimestamp).getTime()) / (24 * 60 * 60 * 1000),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Session recap gate (COS Ch. 19.6: reject writes that would store
+// unverified assertions as facts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Detects a session-recap sentence that asserts a specific operational
+ * outcome — a completion, purchase, confirmation, delivery, or similar claim
+ * — rather than describing what the conversation was about.
+ *
+ * Root cause this closes: a "blue pen" investigation traced a production
+ * failure to exactly this shape of write. `summarizeSessionRecap()` has no
+ * access to verified tool output — it only summarizes a transcript — so it
+ * cannot distinguish a real completion from Carson merely having *said* one
+ * happened. A recap like "Carson explained that Christopher purchased a
+ * blue pen on August 2nd at 6:12 PM" was saved as a session recap, recalled
+ * as `recent_memory` in a later session, and answered a Commitment History
+ * question directly — even though the live prompt explicitly named
+ * `recent_memory` as a forbidden source for that exact question. Prompt
+ * wording could not fix this (proven with live conversation evidence: the
+ * same warning was delivered verbatim and ignored). The only reliable fix is
+ * to never let an unverified operational claim enter memory in this shape in
+ * the first place — get_commitment_history remains the only source that can
+ * assert what actually happened to a specific commitment.
+ *
+ * This is deterministic and synchronous, matching the gate's existing
+ * design (`validateMemoryWrite` above) — not a second LLM call asked to
+ * police the first one.
+ */
+export function looksLikeUnverifiedOperationalNarrative(text: string): boolean {
+  const hasOutcomeVerb =
+    /\b(purchased|bought|completed|confirmed|delivered|delegated|sent|resolved|approved|rejected|escalated|finished|done)\b/i.test(
+      text,
+    );
+  const hasClockTime = /\d{1,2}:\d{2}\s*(am|pm)\b/i.test(text);
+  return hasOutcomeVerb || hasClockTime;
+}

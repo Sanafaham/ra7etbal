@@ -17,6 +17,7 @@ import {
   isPersistentMemoryStale,
   isSessionRecapOld,
   daysSince,
+  looksLikeUnverifiedOperationalNarrative,
   MEMORY_STALE_THRESHOLD_DAYS,
   SESSION_STALE_THRESHOLD_DAYS,
 } from "./carson-epistemic-gate";
@@ -218,5 +219,49 @@ describe("daysSince", () => {
   it("returns the correct number of whole days", () => {
     const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
     expect(daysSince(threeDaysAgo)).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// looksLikeUnverifiedOperationalNarrative — the "blue pen" production fix
+// ---------------------------------------------------------------------------
+
+describe("looksLikeUnverifiedOperationalNarrative", () => {
+  it("flags the exact production recap that caused the blue pen leak", () => {
+    expect(
+      looksLikeUnverifiedOperationalNarrative(
+        "Carson explained that Christopher purchased a blue pen on August 2nd at 6:12 PM.",
+      ),
+    ).toBe(true);
+  });
+
+  it("flags a completion claim without a clock time", () => {
+    expect(
+      looksLikeUnverifiedOperationalNarrative(
+        "Christopher confirmed the guest room was ready.",
+      ),
+    ).toBe(true);
+  });
+
+  it("flags a clock time even without an outcome verb", () => {
+    expect(
+      looksLikeUnverifiedOperationalNarrative("Something happened at 6:12 PM."),
+    ).toBe(true);
+  });
+
+  it("does not flag a plain topic-only recap", () => {
+    expect(
+      looksLikeUnverifiedOperationalNarrative(
+        "Discussed weekend plans and reviewed the household budget.",
+      ),
+    ).toBe(false);
+  });
+
+  it("does not flag a durable preference recap", () => {
+    expect(
+      looksLikeUnverifiedOperationalNarrative(
+        "User prefers short, direct answers without extra explanation.",
+      ),
+    ).toBe(false);
   });
 });
