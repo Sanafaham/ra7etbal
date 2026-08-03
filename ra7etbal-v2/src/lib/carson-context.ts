@@ -274,15 +274,27 @@ export function buildCarsonContext(input: CarsonContextInput): string {
     .slice(0, 5);
 
   if (done.length > 0) {
+    // Counts and assignee names only — never a task description or exact
+    // timestamp. This block previously included both, and the model reliably
+    // answered "what happened with X" directly from it instead of calling
+    // get_commitment_history, no matter how the warning below was worded
+    // (proven with live ElevenLabs conversation evidence: the warning was
+    // delivered verbatim in this exact block and still didn't change the
+    // outcome). Removing the descriptive detail removes the ability to
+    // answer from here at all, rather than relying on the model to decline
+    // data already in front of it. Morning Brief's own per-item naming is
+    // unaffected — it comes from the separate {{daily_brief}} pipeline
+    // (buildCarsonSpokenBrief in daily-brief.ts), not from this block.
     lines.push(
       "COMPLETED (recent, treat as history only — if the user asks what happened to any of these, or wants the full story, this list is NOT the answer; always call get_commitment_history instead):",
     );
+    const countsByAssignee = new Map<string, number>();
     for (const t of done) {
-      const by = t.assigned_to ? `, completed by ${t.assigned_to}` : "";
-      const when = t.confirmed_at
-        ? `, at ${new Date(t.confirmed_at).toLocaleString()}`
-        : "";
-      lines.push(`- ${t.description.trim()}${by}${when}`);
+      const who = t.assigned_to?.trim() || "you";
+      countsByAssignee.set(who, (countsByAssignee.get(who) ?? 0) + 1);
+    }
+    for (const [who, count] of countsByAssignee) {
+      lines.push(`- ${count} completed by ${who}`);
     }
   }
 
