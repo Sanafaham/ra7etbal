@@ -548,6 +548,41 @@ for task `d20a48db-1101-4d78-8203-a9d303ba5924` — every event genuinely
 belongs to that one task, nothing merged from another candidate. Carson's
 spoken answer matched the tool's evidence exactly.
 
+**Final Hardening and Safeguard pass (2026-08-04) — this incident is now the
+reference implementation for future Carson tool investigations.** A
+regression-coverage audit against the 17 failure scenarios exposed across
+this investigation found 14 already covered by existing suites
+(`carson-commitment-history.test.ts`: no match, single match, multiple/
+ambiguous match, completed task, open/pending task, substitute approval,
+proof-photo evidence via the automated quality-review timeline event, owner
+decision, delivery-failure and open-escalation caveats; `carson-context.test.ts`:
+prompt/`ra7etbal_state` contamination; `carson-epistemic-gate.test.ts` /
+`carson-summarize.test.ts`: memory contamination). The remaining 3 — tool
+registration missing, tool schema/prompt mismatch, runtime tool
+unavailability — had no coverage at all, because they can only be observed
+against the live ElevenLabs agent, which is exactly the blind spot that let
+root cause #3 reach production undetected. Closed that gap with a new,
+additive `audit` subcommand on the existing diagnostic script:
+`scripts/carson-diagnose.mjs audit` compares the widget's actual
+`clientTools` (parsed from source, not a hand-maintained list), the live
+agent's registered `tool_ids`, and the live prompt text, and fails loudly on
+any missing, orphaned, or prompt-blind tool. The new
+`scripts/carson-diagnose.test.mjs` (4 tests) unit-covers only the
+source-extraction half of this (`expectedClientTools()` — deterministic, no
+network) since `audit()`'s own comparison/exit-code logic requires a live
+ElevenLabs API key and is exercised by running it for real, not mocked. Run by hand — `npm run
+carson:diagnose -- audit` with `ELEVENLABS_API_KEY` set — whenever a client
+tool changes or Carson's behavior is under investigation again; it is not
+wired into CI because no ElevenLabs key is stored anywhere as a project
+secret (unchanged from the standing direction below). Full
+`npm run test:carson-protected` (46 files) plus the 6 targeted Commitment
+History/reliability files re-run clean: 821 passed, 4 skipped, 3 todo,
+0 regressions; typecheck passed. No product behavior, prompt, or unrelated
+code changed in this pass — regression tests and diagnostic tooling only.
+Procedure and decision tree preserved as-is in
+`docs/commitment-history-routing-investigation-runbook.md`, now with a
+"Permanent reliability monitoring" section documenting the audit command.
+
 **Original investigation detail below, preserved for the record:**
 
 Prior status: **FIX IMPLEMENTED, PR OPEN — NOT YET MERGED OR DEPLOYED** (2026-08-03).
