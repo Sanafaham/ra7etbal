@@ -150,10 +150,13 @@ ElevenLabs agent, so the model had no function to call in the first place.
 Nothing in source code or Supabase could reveal this; it required comparing
 the widget's source against the live agent's actual registered tools.
 
-`scripts/carson-diagnose.mjs audit` (unit-covered in
-`scripts/carson-diagnose.test.mjs`) is the permanent check for exactly this
+`scripts/carson-diagnose.mjs audit` is the permanent check for exactly this
 failure mode. It compares three independent sources of truth and fails loudly
-on any mismatch:
+on any mismatch. `scripts/carson-diagnose.test.mjs` (4 tests) unit-covers only
+the deterministic, network-free source-extraction half
+(`expectedClientTools()`) — `audit()`'s own live-agent comparison and
+exit-code logic needs a real ElevenLabs API key and is verified by running it
+for real, not mocked:
 
 - **Expected** — every `clientTools` key in `ElevenLabsAgentWidget.tsx`,
   extracted directly from source (not a hand-maintained list that could

@@ -563,11 +563,14 @@ unavailability — had no coverage at all, because they can only be observed
 against the live ElevenLabs agent, which is exactly the blind spot that let
 root cause #3 reach production undetected. Closed that gap with a new,
 additive `audit` subcommand on the existing diagnostic script:
-`scripts/carson-diagnose.mjs audit` (unit-covered in the new
-`scripts/carson-diagnose.test.mjs`, 4 tests) compares the widget's actual
+`scripts/carson-diagnose.mjs audit` compares the widget's actual
 `clientTools` (parsed from source, not a hand-maintained list), the live
 agent's registered `tool_ids`, and the live prompt text, and fails loudly on
-any missing, orphaned, or prompt-blind tool. Run by hand — `npm run
+any missing, orphaned, or prompt-blind tool. The new
+`scripts/carson-diagnose.test.mjs` (4 tests) unit-covers only the
+source-extraction half of this (`expectedClientTools()` — deterministic, no
+network) since `audit()`'s own comparison/exit-code logic requires a live
+ElevenLabs API key and is exercised by running it for real, not mocked. Run by hand — `npm run
 carson:diagnose -- audit` with `ELEVENLABS_API_KEY` set — whenever a client
 tool changes or Carson's behavior is under investigation again; it is not
 wired into CI because no ElevenLabs key is stored anywhere as a project

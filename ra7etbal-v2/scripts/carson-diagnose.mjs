@@ -311,7 +311,8 @@ async function fetchLiveAgentToolNames(args) {
   const resolved = [];
   for (const t of inlineTools) {
     const name = t?.tool_config?.name ?? t?.name;
-    if (name) resolved.push({ id: t.id ?? t.tool_id ?? null, name });
+    const type = t?.tool_config?.type ?? t?.type ?? null;
+    if (name) resolved.push({ id: t.id ?? t.tool_id ?? null, name, type });
   }
 
   const unresolvedIds = toolIds.filter((id) => !resolved.some((r) => r.id === id));
@@ -319,9 +320,10 @@ async function fetchLiveAgentToolNames(args) {
     try {
       const tool = await elevenlabsGet(`/tools/${id}`);
       const name = tool?.tool_config?.name ?? tool?.name ?? `(unnamed tool ${id})`;
-      resolved.push({ id, name });
+      const type = tool?.tool_config?.type ?? tool?.type ?? null;
+      resolved.push({ id, name, type });
     } catch (err) {
-      resolved.push({ id, name: `(could not resolve — ${err.message})` });
+      resolved.push({ id, name: `(could not resolve — ${err.message})`, type: null });
     }
   }
 
@@ -340,7 +342,19 @@ async function fetchLiveAgentToolNames(args) {
 async function audit(args) {
   const expected = expectedClientTools();
   const { promptText, registeredTools } = await fetchLiveAgentToolNames(args);
-  const registeredNames = registeredTools.map((t) => t.name);
+  // A tool whose type could not be resolved at all (the /tools/{id} lookup
+  // itself failed) is a distinct failure from "not a client tool" — surface
+  // it explicitly rather than silently dropping it out of every comparison
+  // below by treating it as non-client.
+  const unresolved = registeredTools.filter((t) => t.name.startsWith("(could not resolve"));
+  // Only "client" tools are candidates for widget parity — the agent may
+  // legitimately also have webhook/system tools the widget never offers, and
+  // those must not be reported as orphaned client tools.
+  const registeredClientTools = registeredTools.filter((t) => t.type === "client");
+  const registeredNonClientTools = registeredTools.filter(
+    (t) => t.type !== "client" && !unresolved.includes(t),
+  );
+  const registeredNames = registeredClientTools.map((t) => t.name);
 
   const missing = expected.filter((name) => !registeredNames.includes(name));
   const orphaned = registeredNames.filter((name) => !expected.includes(name));
@@ -349,14 +363,27 @@ async function audit(args) {
   );
 
   console.log(`Expected client tools (from widget source): ${expected.length}`);
-  console.log(`Registered tools on live agent: ${registeredNames.length}`);
+  console.log(`Registered client tools on live agent: ${registeredNames.length}`);
+  if (registeredNonClientTools.length > 0) {
+    console.log(
+      `Registered non-client tools on live agent (informational, not compared against the widget): ` +
+        `${registeredNonClientTools.map((t) => `${t.name} (${t.type})`).join(", ")}`,
+    );
+  }
   console.log();
 
   let failed = false;
 
+  if (unresolved.length > 0) {
+    failed = true;
+    console.log("FAIL — could not resolve one or more registered tool_ids to a name/type at all:");
+    for (const t of unresolved) console.log(`  - id ${t.id}: ${t.name}`);
+    console.log();
+  }
+
   if (missing.length > 0) {
     failed = true;
-    console.log("FAIL — registered on the agent but MISSING (widget offers these, agent cannot dispatch them):");
+    console.log("FAIL — MISSING on the agent (widget offers these, agent cannot dispatch them):");
     for (const name of missing) console.log(`  - ${name}`);
   } else {
     console.log("PASS — every widget clientTool is registered on the live agent.");
@@ -365,10 +392,10 @@ async function audit(args) {
 
   if (orphaned.length > 0) {
     failed = true;
-    console.log("FAIL — ORPHANED on the agent (registered but not offered by the widget — dead or stale):");
+    console.log("FAIL — ORPHANED on the agent (registered as a client tool but not offered by the widget — dead or stale):");
     for (const name of orphaned) console.log(`  - ${name}`);
   } else {
-    console.log("PASS — no orphaned tools registered on the agent.");
+    console.log("PASS — no orphaned client tools registered on the agent.");
   }
   console.log();
 
