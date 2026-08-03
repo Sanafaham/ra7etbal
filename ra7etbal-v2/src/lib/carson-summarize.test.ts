@@ -58,6 +58,29 @@ describe("session recap threshold (the bug that bit us)", () => {
     expect(SESSION_RECAP_PREFIX).toBe("• Session recap:");
   });
 
+  // Regression guard for the "blue pen" production incident: this LLM call
+  // has no access to verified tool output, so it must never save a recap
+  // that asserts a specific operational outcome — that shape of memory was
+  // recalled in a later session and answered a Commitment History question
+  // directly, even though the live prompt explicitly forbade using
+  // recent_memory for that. Falls back to the safe, topic-only heuristic
+  // instead of saving the LLM's unverified narrative verbatim.
+  it("falls back instead of saving a recap that asserts a specific operational outcome", async () => {
+    mockAnthropic(
+      "Carson explained that Christopher purchased a blue pen on August 2nd at 6:12 PM.",
+    );
+    const recap = await summarizeSessionRecap(oneTurn);
+    expect(recap).toBe("test memory recall");
+    expect(recap).not.toContain("blue pen");
+    expect(recap).not.toContain("6:12");
+  });
+
+  it("still saves a genuine topic-only recap that contains no operational claim", async () => {
+    mockAnthropic("Discussed weekend plans and reviewed the household budget.");
+    const recap = await summarizeSessionRecap(oneTurn);
+    expect(recap).toBe("Discussed weekend plans and reviewed the household budget.");
+  });
+
   it("session action recap includes delegated person names and task text", () => {
     const actions = formatSessionActionsForRecap([
       "Delegated to Ghulam: have the cars clean and ready by 8 AM",
