@@ -521,7 +521,36 @@ Protect normal delegations, proof upload, worker replies, routine templates, and
 
 ### Historical Lookup — Phase 1, Q4 Commitment History
 
-Status: **FIX IMPLEMENTED, PR OPEN — NOT YET MERGED OR DEPLOYED** (2026-08-03).
+Status: **CLOSED — PRODUCTION VERIFIED (2026-08-04).** Three independent root
+causes were found and fixed in sequence (see full detail below and the
+permanent regression record in Claude memory,
+`carson_master_plan.md` → "Appendix: Blue Pen Incident"): (1) `ra7etbal_state`
+leaking answerable task descriptions/timestamps, fixed by data minimization
+in `carson-context.ts` (Option B); (2) `recent_memory` independently leaking
+the same class of unverified operational narrative via saved session recaps,
+fixed by a new gate in `carson-epistemic-gate.ts`/`carson-summarize.ts`, plus
+13 poisoned `carson_memory` rows identified and deleted; (3) the true final
+root cause — `get_commitment_history` was never actually registered as a
+callable tool on the live ElevenLabs agent, despite extensive prompt work in
+this project's saved backup — fixed by registering the tool via the
+ElevenLabs API (`POST /v1/convai/tools`) and patching the live agent's
+`tool_ids` and prompt text directly, diffed against the agent's actual live
+prompt (not the stale local backup) to avoid disturbing unrelated
+independent prompt changes already live there.
+
+**Closing production evidence** (conversation `conv_2401kz4qx1s4errtchfz1afns3gh`,
+2026-08-04): `tool_calls` shows `get_commitment_history` invoked twice —
+first with `keyword: "blue pen"` (3 candidates, correct disambiguation ask),
+then `keyword: "Buy a blue pen"` (correctly resolved to the one real task).
+The tool's returned evidence was independently verified against a full
+chronological audit of `tasks`/`confirmations`/`staff_escalation_owner_decisions`
+for task `d20a48db-1101-4d78-8203-a9d303ba5924` — every event genuinely
+belongs to that one task, nothing merged from another candidate. Carson's
+spoken answer matched the tool's evidence exactly.
+
+**Original investigation detail below, preserved for the record:**
+
+Prior status: **FIX IMPLEMENTED, PR OPEN — NOT YET MERGED OR DEPLOYED** (2026-08-03).
 Backend implemented, tested, and merged (PRs #163, #164, #165, #166). Widget
 registration and ElevenLabs Tool registration were verified correct; four
 rounds of prompt strengthening did not change the observed behavior.
