@@ -7,16 +7,38 @@
  * Carson tool-routing investigation starts from recorded facts, not
  * reconstruction.
  *
- * Requires ELEVENLABS_API_KEY scoped to convai_read only (read-only, no
- * write/voice/model/workspace permissions needed or used).
+ * Requires ELEVENLABS_API_KEY. `list`/`inspect` only need convai_read scope.
+ * `audit` also only reads (GET /agents/{id}) — no write scope is required for
+ * any command in this script.
  *
  * Usage:
  *   node scripts/carson-diagnose.mjs list --after=<unix|iso> --before=<unix|iso>
  *   node scripts/carson-diagnose.mjs inspect --conversation-id=<id> [--keyword="blue pen"] [--tool=get_commitment_history]
+ *   node scripts/carson-diagnose.mjs audit
+ *
+ * `audit` is the permanent tool-registration-drift check born from the Blue
+ * Pen incident's true root cause: get_commitment_history existed in the
+ * widget's clientTools and in the prompt text, but was never actually
+ * registered on the live ElevenLabs agent, so the model could never call it.
+ * Nothing in this repo alone could have caught that — it compares the
+ * widget's source (what the app thinks it offers), the live agent's
+ * registered tool_ids (what ElevenLabs will actually dispatch), and the live
+ * prompt text (what the model is told about), and fails loudly on the first
+ * mismatch in any direction. Run it by hand whenever a client tool is added,
+ * renamed, or removed, or whenever Carson's behavior is under investigation
+ * again — there is no stored credential to run it in CI (see
+ * RA7ETBAL_STATE.md, Historical Lookup section).
  *
  * Optional: ELEVENLABS_AGENT_ID env var or --agent-id=<id> overrides the
  * default Carson agent ID below.
  */
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const WIDGET_PATH = resolve(__dirname, "../src/components/home/ElevenLabsAgentWidget.tsx");
 
 const API_BASE = "https://api.elevenlabs.io/v1/convai";
 const DEFAULT_AGENT_ID = "agent_3001kt3zzkcxfb3bwejd8yzzhnmy";
@@ -243,22 +265,164 @@ async function inspect(args) {
   }
 }
 
+/**
+ * Extracts the client tool names the widget itself offers, straight from
+ * source — not a hand-maintained duplicate list that can silently drift out
+ * of sync with the code, which is the exact failure mode this check exists
+ * to catch. Scans the `clientTools: { ... }` object literal in
+ * ElevenLabsAgentWidget.tsx and collects every top-level key.
+ */
+export function expectedClientTools() {
+  const source = readFileSync(WIDGET_PATH, "utf8");
+  const lines = source.split("\n");
+  const startIdx = lines.findIndex((l) => /clientTools:\s*\{/.test(l));
+  if (startIdx === -1) {
+    throw new Error(`Could not find "clientTools: {" in ${WIDGET_PATH}`);
+  }
+  const indent = lines[startIdx].match(/^(\s*)/)[1];
+  const closeLine = new RegExp(`^${indent}\\},?\\s*$`);
+  const keyLine = /^\s{2}([a-zA-Z_][a-zA-Z0-9_]*):\s*(async\s+)?\(/;
+
+  const names = [];
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    if (closeLine.test(lines[i])) break;
+    const m = lines[i].match(new RegExp(`^${indent}  ([a-zA-Z_][a-zA-Z0-9_]*):\\s*(async\\s+)?\\(`));
+    if (m) names.push(m[1]);
+  }
+  if (names.length === 0) {
+    throw new Error(
+      `Found "clientTools: {" but extracted zero tool names — the widget's shape may have ` +
+        "changed in a way this regex-based scan no longer handles. Do not trust an empty result.",
+    );
+  }
+  return names;
+}
+
+/** Resolves the live agent's registered tool_ids to their names, and returns
+ * the raw prompt text, defensively across the couple of response shapes
+ * ElevenLabs has used for this field. */
+async function fetchLiveAgentToolNames(args) {
+  const agent = await elevenlabsGet(`/agents/${agentId(args)}`);
+  const promptConfig = agent?.conversation_config?.agent?.prompt ?? {};
+  const promptText = promptConfig.prompt ?? agent?.prompt?.prompt ?? "";
+  const toolIds = promptConfig.tool_ids ?? agent?.tool_ids ?? [];
+  const inlineTools = promptConfig.tools ?? agent?.tools ?? [];
+
+  const resolved = [];
+  for (const t of inlineTools) {
+    const name = t?.tool_config?.name ?? t?.name;
+    if (name) resolved.push({ id: t.id ?? t.tool_id ?? null, name });
+  }
+
+  const unresolvedIds = toolIds.filter((id) => !resolved.some((r) => r.id === id));
+  for (const id of unresolvedIds) {
+    try {
+      const tool = await elevenlabsGet(`/tools/${id}`);
+      const name = tool?.tool_config?.name ?? tool?.name ?? `(unnamed tool ${id})`;
+      resolved.push({ id, name });
+    } catch (err) {
+      resolved.push({ id, name: `(could not resolve — ${err.message})` });
+    }
+  }
+
+  return { agent, promptText, registeredTools: resolved };
+}
+
+/**
+ * Permanent tool-registration-drift check. Compares three independent
+ * sources of truth — the widget's actual clientTools, the live agent's
+ * actual registered tool_ids, and the live prompt text — and fails loudly on
+ * any mismatch. This is what would have caught the Blue Pen incident's true
+ * root cause before it reached production: get_commitment_history was
+ * correct in the widget and in the (locally saved) prompt, but simply never
+ * registered on the live agent.
+ */
+async function audit(args) {
+  const expected = expectedClientTools();
+  const { promptText, registeredTools } = await fetchLiveAgentToolNames(args);
+  const registeredNames = registeredTools.map((t) => t.name);
+
+  const missing = expected.filter((name) => !registeredNames.includes(name));
+  const orphaned = registeredNames.filter((name) => !expected.includes(name));
+  const promptBlind = expected.filter(
+    (name) => registeredNames.includes(name) && !promptText.includes(name),
+  );
+
+  console.log(`Expected client tools (from widget source): ${expected.length}`);
+  console.log(`Registered tools on live agent: ${registeredNames.length}`);
+  console.log();
+
+  let failed = false;
+
+  if (missing.length > 0) {
+    failed = true;
+    console.log("FAIL — registered on the agent but MISSING (widget offers these, agent cannot dispatch them):");
+    for (const name of missing) console.log(`  - ${name}`);
+  } else {
+    console.log("PASS — every widget clientTool is registered on the live agent.");
+  }
+  console.log();
+
+  if (orphaned.length > 0) {
+    failed = true;
+    console.log("FAIL — ORPHANED on the agent (registered but not offered by the widget — dead or stale):");
+    for (const name of orphaned) console.log(`  - ${name}`);
+  } else {
+    console.log("PASS — no orphaned tools registered on the agent.");
+  }
+  console.log();
+
+  if (promptBlind.length > 0) {
+    failed = true;
+    console.log(
+      "FAIL — PROMPT-BLIND (registered and offered, but the tool's name never appears in the live prompt " +
+        "text, so the model has no instruction for when to call it):",
+    );
+    for (const name of promptBlind) console.log(`  - ${name}`);
+  } else {
+    console.log("PASS — every expected tool name appears somewhere in the live prompt text.");
+  }
+  console.log();
+
+  console.log(
+    "NOTE: this checks tool presence and prompt mention only, not full JSON-schema parameter " +
+      "diffing — that would require a second, hand-maintained schema definition that could itself " +
+      "drift out of sync. Verify parameter shape manually (agent.conversation_config.agent.prompt.tools) " +
+      "if a specific tool's behavior is under investigation.",
+  );
+
+  if (failed) {
+    console.log("\nAUDIT RESULT: FAIL");
+    process.exitCode = 1;
+  } else {
+    console.log("\nAUDIT RESULT: PASS");
+  }
+}
+
 async function main() {
   const [, , command, ...rest] = process.argv;
   const args = parseArgs(rest);
 
   if (command === "list") return listConversations(args);
   if (command === "inspect") return inspect(args);
+  if (command === "audit") return audit(args);
 
   console.log(
     "Usage:\n" +
       "  node scripts/carson-diagnose.mjs list --after=<unix|iso> --before=<unix|iso>\n" +
-      '  node scripts/carson-diagnose.mjs inspect --conversation-id=<id> [--keyword="blue pen"] [--tool=get_commitment_history]\n',
+      '  node scripts/carson-diagnose.mjs inspect --conversation-id=<id> [--keyword="blue pen"] [--tool=get_commitment_history]\n' +
+      "  node scripts/carson-diagnose.mjs audit\n",
   );
   process.exit(1);
 }
 
-main().catch((err) => {
-  console.error(err?.message ?? err);
-  process.exit(1);
-});
+// Only auto-run the CLI when this file is executed directly (`node
+// scripts/carson-diagnose.mjs ...`), not when imported as a module — e.g. by
+// scripts/carson-diagnose.test.mjs, which exercises expectedClientTools()
+// without invoking the CLI's network calls.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main().catch((err) => {
+    console.error(err?.message ?? err);
+    process.exit(1);
+  });
+}

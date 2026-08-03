@@ -1,7 +1,12 @@
 # Commitment History Tool-Routing Investigation — Forensic Runbook
 
-Status: **BLOCKED** pending ElevenLabs conversation-level evidence.
-Date frozen: 2026-08-03.
+Status: **CLOSED — PRODUCTION VERIFIED (2026-08-04).** See
+`RA7ETBAL_STATE.md` → "Historical Lookup — Phase 1, Q4 Commitment History"
+for the closing production evidence and the three root causes found and
+fixed. The stage-by-stage procedure below remains the canonical diagnostic
+reference for any future Carson tool-routing investigation — reuse it rather
+than re-deriving it from scratch.
+Date frozen: 2026-08-03. Reference-implementation status confirmed 2026-08-04.
 
 This file is the canonical diagnostic procedure for this investigation. Do not
 restart the investigation from scratch in a future session — resume from the
@@ -134,3 +139,36 @@ spoken message matches result_value?
   NO  → STAGE 6 FAILURE. Tool succeeded; the LLM's response generation
         ignored or overrode the returned evidence.
 ```
+
+## Permanent reliability monitoring (added 2026-08-04, Final Hardening pass)
+
+The true root cause of this incident (see `RA7ETBAL_STATE.md`) was not any of
+Stages 1–6 above — it was a Stage 0 failure this runbook did not originally
+name: `get_commitment_history` was correct in the widget's `clientTools` and
+in the saved prompt text, but was never actually registered on the live
+ElevenLabs agent, so the model had no function to call in the first place.
+Nothing in source code or Supabase could reveal this; it required comparing
+the widget's source against the live agent's actual registered tools.
+
+`scripts/carson-diagnose.mjs audit` (unit-covered in
+`scripts/carson-diagnose.test.mjs`) is the permanent check for exactly this
+failure mode. It compares three independent sources of truth and fails loudly
+on any mismatch:
+
+- **Expected** — every `clientTools` key in `ElevenLabsAgentWidget.tsx`,
+  extracted directly from source (not a hand-maintained list that could
+  itself drift).
+- **Registered** — the live agent's actual `tool_ids`, resolved to names via
+  the ElevenLabs API.
+- **Referenced** — whether each expected tool's name appears anywhere in the
+  live prompt text.
+
+Run it by hand — `npm run carson:diagnose -- audit` — with
+`ELEVENLABS_API_KEY` set, whenever a client tool is added, renamed, or
+removed, or whenever Carson's behavior is under investigation again. It is
+not wired into CI: no ElevenLabs API key is stored anywhere in this repo or
+as a project secret (by design — see `RA7ETBAL_STATE.md`), so there is
+nothing for a CI job to authenticate with. It does not diff tool parameter
+JSON-schemas (that would need a second, hand-maintained schema definition
+that could itself drift out of sync) — verify a specific tool's parameter
+shape manually via `GET /v1/convai/agents/{agent_id}` if needed.
