@@ -531,4 +531,27 @@ describe("formatCommitmentHistoryAnswer — evidence-based, no raw dump", () => 
     expect(answer).toContain("Confirmed");
     expect(answer).not.toContain("Automated quality review");
   });
+
+  it("prioritizes the LATEST outcome-relevant events, not the earliest — CodeRabbit finding on PR #165: an earlier Sent/Delivered pair must not crowd out a later Owner-decided/Confirmed pair", async () => {
+    const task = makeTask({ status: "done", confirmed_at: "2026-08-02T15:12:38Z" });
+    const result = {
+      task,
+      timeline: [
+        { at: "2026-08-02T15:00:00Z", label: "Created", source: "tasks" as const },
+        { at: "2026-08-02T15:01:00Z", label: "Sent", source: "whatsapp_deliveries" as const },
+        { at: "2026-08-02T15:02:00Z", label: "Delivered", source: "whatsapp_deliveries" as const },
+        { at: "2026-08-02T15:11:54Z", label: 'Owner decided: "Yes buy it"', source: "staff_escalation_owner_decisions" as const },
+        { at: "2026-08-02T15:12:38Z", label: "Confirmed", source: "confirmations" as const },
+      ],
+      caveats: [],
+    };
+    const answer = formatCommitmentHistoryAnswer(result);
+    // All four (Sent, Delivered, Owner decided, Confirmed) are outcome-relevant
+    // — the fix must pick the latest two (Owner decided, Confirmed), not the
+    // first two (Sent, Delivered), which would silently drop the decision.
+    expect(answer).toContain("Owner decided");
+    expect(answer).toContain("Confirmed");
+    expect(answer).not.toContain("Sent on");
+    expect(answer).not.toContain("Delivered on");
+  });
 });

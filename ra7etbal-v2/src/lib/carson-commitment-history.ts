@@ -340,8 +340,14 @@ export function formatCommitmentHistoryAnswer(result: CommitmentHistoryResult): 
     label.startsWith("Confirmed by");
   const prioritized = nonCreated.filter((e) => isOutcomeRelevant(e.label));
   const filler = nonCreated.filter((e) => !isOutcomeRelevant(e.label));
-  const pivotal = [...prioritized, ...filler]
-    .slice(0, 2)
+  // CodeRabbit finding on PR #165: taking the first two outcome-relevant
+  // events (chronologically) could crowd out a later one — e.g. an earlier
+  // Sent/Delivered pair suppressing a later Owner-decided/Confirmed pair,
+  // the exact class of bug this file was created to fix. Take the LATEST
+  // two outcome-relevant events instead; only fall back to backfilling with
+  // administrative (filler) events when fewer than two outcome-relevant
+  // events exist at all.
+  const pivotal = (prioritized.length >= 2 ? prioritized.slice(-2) : [...prioritized, ...filler].slice(0, 2))
     .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
   if (pivotal.length > 0) {
     const parts = pivotal.map((e) => {
