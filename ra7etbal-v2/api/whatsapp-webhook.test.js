@@ -1051,6 +1051,41 @@ describe('verified inbound staff transport', () => {
     expect(taskConfirmMocks.handleTaskConfirmationPost).toHaveBeenCalledOnce();
   });
 
+  it('a reclaimed unbound ambiguous photo cannot adopt a newly unique pending task', async () => {
+    stubBaseEnv();
+    const failedAt = '2026-08-04T12:00:00.000Z';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false, whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed' }]))
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'newly-unique-task' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'newly-unique-task', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Place the drinking glass on the counter', quality_review_status: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo', task_id: null, thread_id: null, inbound_text: '[Photo evidence]', processing_status: 'failed', updated_at: failedAt }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-photo', acquired: true, processing_status: 'claimed' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo' }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-photo', claimed: true, claim_token: 'claim-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const persistInboundStaffImageImpl = vi.fn();
+
+    await expect(handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.reclaimed-unbound', body: '', phoneNumberId: 'meta-phone-id',
+        contextMessageId: null, timestamp: '1700000000', mediaId: 'media-1', mediaType: 'image', mimeType: 'image/jpeg',
+      },
+    }, { persistInboundStaffImageImpl })).resolves.toEqual({ handled: true, reason: 'delivered' });
+
+    expect(smsMocks.sendMetaMessage).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ text: { body: 'Which task is this photo for?' } }),
+    }));
+    expect(persistInboundStaffImageImpl).not.toHaveBeenCalled();
+    expect(taskConfirmMocks.handleTaskConfirmationPost).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url, options = {}]) =>
+      (String(url).includes('/rest/v1/tasks') && options.method && options.method !== 'GET') ||
+      String(url).includes('/storage/v1/object/') ||
+      String(url).includes('/rest/v1/task_attachments'))).toBe(false);
+  });
+
   it('a concurrent reclaim loser performs no media, QI, task, or notification work', async () => {
     stubBaseEnv();
     const fetchMock = vi.fn()

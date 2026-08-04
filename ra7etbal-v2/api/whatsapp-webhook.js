@@ -192,11 +192,24 @@ export async function handleInboundStaffMessage(
   const taskId = taskMatch.task?.id || null;
   const existing = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
     `user_id=eq.${encodeURIComponent(userId)}&source=eq.whatsapp&external_message_id=eq.${encodeURIComponent(msg.messageId)}&select=*`);
-  if (msg.mediaId && existing[0]?.task_id && !taskMatch.task) {
-    const recoveryTask = await loadValidatedStaffTask({
-      supabaseUrl, serviceKey, userId, person, taskId: existing[0].task_id,
-    });
-    if (recoveryTask) taskMatch = { task: recoveryTask, reason: 'claimed_evidence_task' };
+  if (msg.mediaId && existing[0]) {
+    if (existing[0].task_id) {
+      const recoveryTask = taskMatch.task?.id === existing[0].task_id
+        ? taskMatch.task
+        : await loadValidatedStaffTask({
+            supabaseUrl, serviceKey, userId, person, taskId: existing[0].task_id,
+          });
+      taskMatch = recoveryTask
+        ? { task: recoveryTask, reason: 'claimed_evidence_task' }
+        : { task: null, reason: 'claimed_evidence_task_invalid', candidates: [] };
+    } else {
+      const candidates = taskMatch.reason === 'task_ambiguous' ? taskMatch.candidates || [] : [];
+      taskMatch = {
+        task: null,
+        reason: candidates.length > 1 ? 'task_ambiguous' : 'task_not_found',
+        candidates,
+      };
+    }
   }
   let reclaimedEvidenceMessageId = null;
   if (
