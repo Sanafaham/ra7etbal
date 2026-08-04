@@ -674,6 +674,60 @@ Not done in this phase (deliberately out of scope — see the frozen Historical 
 
 Remaining before this can move to Stable and protected: prompt patch pasted into the live ElevenLabs dashboard, PR opened and merged, and Sana's live production verification of the validation phrase in the patch doc.
 
+### Reliability Engineering Incident — Tool Registration Drift (2026-08-04)
+
+Status: **FIX APPLIED, AUDIT-CLEAN FOR IN-SCOPE TOOLS — LIVE PRODUCTION
+VERIFICATION PENDING.** Treated as its own incident, separate from Blue Pen,
+surfaced by the same `carson:diagnose -- audit` tool while registering
+Historical Lookup Phase 2. Not yet COMPLETE/PRODUCTION VERIFIED/PROTECTED —
+that requires a live conversation, same blocker as Phase 2 below.
+
+**What was found:** `get_task_delivery_status` and `get_operations_summary`
+(Operations Center V1, PR #151, prompt-patched 2026-08-01) were **not
+attached** to the live agent's `tool_ids` — both existed as real,
+correctly-schemed tool resources with **zero calls, ever**, meaning they
+were never actually reachable in production despite the prompt referencing
+them and despite `RA7ETBAL_STATE.md` having previously recorded (2026-08-03)
+that Sana confirmed them "registered" via the dashboard's Tools tab. That
+tab lists every tool resource ever created in the workspace, not what's
+attached to this specific agent — the same distinction whose absence caused
+the Blue Pen incident. Also found: `list_inbox_items`, `act_on_inbox_item`,
+`act_on_update` were attached but orphaned (leftovers from the removed
+Clear My Head Inbox feature — confirmed via `ElevenLabsAgentWidget.no-internal-inbox.test.ts`,
+which explicitly asserts these must not appear in the widget source). A
+fourth widget tool, `control_task`, is also unregistered, but its logic is
+reachable through the already-working `execute_instruction` → `resolveVoiceTaskControl()`
+path — determined **superseded, not broken**, and left untouched per
+explicit decision (separate architectural cleanup, not part of this
+incident).
+
+**Fix applied (2026-08-04, via `PATCH /v1/convai/agents/{id}` on `tool_ids`
+only — no prompt text touched, since the prompt already correctly
+referenced both restored tools):** re-attached the two existing tool
+resources (`tool_3501kz43z9q6e2ja2ezygk1v0xg0` for `get_task_delivery_status`,
+`tool_4801kz444rpkfpra2wcz1ahb86t6` for `get_operations_summary`) — reused,
+not recreated — and detached (not deleted) the three orphaned Inbox tool
+IDs. Verified: prompt text byte-for-byte unchanged; all three orphaned tool
+resources confirmed to still exist (detached only, not deleted).
+
+**Audit result:** `npm run carson:diagnose -- audit` now reports zero
+missing/orphaned tools other than `control_task`, which is expected and
+intentional (left unchanged per decision above) — clean for everything in
+this incident's actual scope. Full `test:carson-protected` suite re-run
+clean: 821 passed, 4 skipped, 3 todo, no regressions (no code changed — this
+was an ElevenLabs-side registration fix only).
+
+**Blocked on live production verification — same permission boundary as
+Historical Lookup Phase 2 below:** no conversation exists yet that tests
+either restored tool (most recent conversation checked immediately after
+the fix still predates it). This agent cannot originate one — needs Sana to
+ask something like "Did Christopher get the message?" or "Is everything
+working?" on the live app, after which this agent pulls and verifies the
+evidence via `carson-diagnose.mjs inspect`.
+
+**Do not mark this incident COMPLETE / PRODUCTION VERIFIED / PROTECTED until
+that verification succeeds.**
+
 ### Historical Lookup — Phase 2, Person History
 
 Status: **CODE COMPLETE, REGISTERED, AUDIT-CLEAN — LIVE CONVERSATION
@@ -727,16 +781,18 @@ Completion" directive) — done with a fresh `ELEVENLABS_API_KEY` supplied
 
 **Step 5's exact blocker, with evidence:** `GET /v1/convai/conversations?agent_id=...` (fetched fresh immediately after registering) shows the most recent conversation is `conv_2401kz4qx1s4errtchfz1afns3gh` at `2026-08-03T21:19:02Z` — the same conversation already used as Blue Pen's closing evidence, hours before this registration. No conversation exists yet that could test `get_person_history`. This agent has no way to originate one: doing so would require an authenticated `www.ra7etbal.com` session (entering login credentials is unconditionally prohibited for this agent, regardless of authorization), and even a bare ElevenLabs-only test call would lack the real `dynamic_variables` (actual tasks/people data) that only `ElevenLabsAgentWidget.tsx`'s `startSession()` injects from a real logged-in session — so it wouldn't be a genuine production test even if it were possible. **What unblocks this:** Sana has one real conversation asking a person-history question; this agent then pulls and independently verifies it via `carson-diagnose.mjs inspect`, exactly like Blue Pen's closing evidence was gathered.
 
-**Unrelated finding surfaced by this same audit run (out of scope for this
-phase, flagged separately — see the spawned follow-up task):** `control_task`,
-`get_task_delivery_status`, and `get_operations_summary` are present in the
-widget's `clientTools` but **not registered on the live agent** — the exact
-same failure class as the Blue Pen incident's true root cause, on different
-tools. Also found: `list_inbox_items`, `act_on_inbox_item`, `act_on_update`
-are registered on the live agent but no longer in the widget's code
-(orphaned, likely leftovers from the removed Inbox feature). Neither
-finding was touched in this session — they are unrelated to Person History
-and need their own investigation before any fix.
+**Unrelated finding surfaced by this same audit run — SUPERSEDED, now
+resolved as its own separate incident.** This originally reported
+`control_task`, `get_task_delivery_status`, and `get_operations_summary` as
+all unregistered, plus 3 orphaned Inbox tools, all left untouched pending
+investigation. That investigation is now complete and the fix applied — see
+"Reliability Engineering Incident — Tool Registration Drift (2026-08-04)"
+above. Current state: `get_task_delivery_status` and `get_operations_summary`
+are re-attached (reusing their existing tool resources) and the 3 orphaned
+Inbox tools are detached. `control_task` remains intentionally unregistered
+— determined superseded by the working `execute_instruction` path, not
+broken, and left as its own separate future cleanup item. None of this
+touched Person History's own code or registration.
 
 **Also fixed as part of this work:** `scripts/carson-diagnose.mjs`'s own
 `audit` command had a real bug — it tried to match the live agent's inline
