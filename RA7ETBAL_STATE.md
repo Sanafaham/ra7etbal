@@ -781,16 +781,18 @@ Completion" directive) — done with a fresh `ELEVENLABS_API_KEY` supplied
 
 **Step 5's exact blocker, with evidence:** `GET /v1/convai/conversations?agent_id=...` (fetched fresh immediately after registering) shows the most recent conversation is `conv_2401kz4qx1s4errtchfz1afns3gh` at `2026-08-03T21:19:02Z` — the same conversation already used as Blue Pen's closing evidence, hours before this registration. No conversation exists yet that could test `get_person_history`. This agent has no way to originate one: doing so would require an authenticated `www.ra7etbal.com` session (entering login credentials is unconditionally prohibited for this agent, regardless of authorization), and even a bare ElevenLabs-only test call would lack the real `dynamic_variables` (actual tasks/people data) that only `ElevenLabsAgentWidget.tsx`'s `startSession()` injects from a real logged-in session — so it wouldn't be a genuine production test even if it were possible. **What unblocks this:** Sana has one real conversation asking a person-history question; this agent then pulls and independently verifies it via `carson-diagnose.mjs inspect`, exactly like Blue Pen's closing evidence was gathered.
 
-**Unrelated finding surfaced by this same audit run (out of scope for this
-phase, flagged separately — see the spawned follow-up task):** `control_task`,
-`get_task_delivery_status`, and `get_operations_summary` are present in the
-widget's `clientTools` but **not registered on the live agent** — the exact
-same failure class as the Blue Pen incident's true root cause, on different
-tools. Also found: `list_inbox_items`, `act_on_inbox_item`, `act_on_update`
-are registered on the live agent but no longer in the widget's code
-(orphaned, likely leftovers from the removed Inbox feature). Neither
-finding was touched in this session — they are unrelated to Person History
-and need their own investigation before any fix.
+**Unrelated finding surfaced by this same audit run — SUPERSEDED, now
+resolved as its own separate incident.** This originally reported
+`control_task`, `get_task_delivery_status`, and `get_operations_summary` as
+all unregistered, plus 3 orphaned Inbox tools, all left untouched pending
+investigation. That investigation is now complete and the fix applied — see
+"Reliability Engineering Incident — Tool Registration Drift (2026-08-04)"
+above. Current state: `get_task_delivery_status` and `get_operations_summary`
+are re-attached (reusing their existing tool resources) and the 3 orphaned
+Inbox tools are detached. `control_task` remains intentionally unregistered
+— determined superseded by the working `execute_instruction` path, not
+broken, and left as its own separate future cleanup item. None of this
+touched Person History's own code or registration.
 
 **Also fixed as part of this work:** `scripts/carson-diagnose.mjs`'s own
 `audit` command had a real bug — it tried to match the live agent's inline
