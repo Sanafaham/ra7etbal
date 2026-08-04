@@ -676,11 +676,13 @@ Remaining before this can move to Stable and protected: prompt patch pasted into
 
 ### Historical Lookup — Phase 2, Person History
 
-Status: **CODE COMPLETE — AWAITING PRODUCTION VERIFICATION.** Not closed,
-not stable, not in Protected Completed Work — per the Blue Pen investigation
-lesson, a capability is not COMPLETE until it is registered on the live
-agent, prompt-updated, audit-clean, and verified in one real production
-conversation. None of those four have happened yet for this tool. Approved
+Status: **CODE COMPLETE, REGISTERED, AUDIT-CLEAN — LIVE CONVERSATION
+VERIFICATION STILL PENDING.** Not closed, not stable, not in Protected
+Completed Work. Steps 1–4 of the completion checklist below are done: the
+tool is registered on the live ElevenLabs agent, the prompt is patched, and
+`carson:diagnose -- audit` reports zero missing/orphaned/prompt-blind result
+for `get_person_history` specifically. Step 5 (one real production
+conversation) has not happened yet — see the exact blocker below. Approved
 as the next Master Plan roadmap item after a rigorous
 9-criteria review confirmed it (not Reliability Engineering, which has no
 predefined implementation phase in the Master Plan) is the correct next
@@ -712,33 +714,38 @@ gate, or any other protected behavior. Typecheck and production build both
 pass. Deployed to production via PR #174 (squash commit
 `22507ad6d02ade83692c1bc068b2719422605c5c`).
 
-**Blocked on production verification — exact remaining checklist (per Sana's
-2026-08-04 "Production Completion" directive, do not skip any item):**
+**Completion checklist status (per Sana's 2026-08-04 "Production
+Completion" directive) — done with a fresh `ELEVENLABS_API_KEY` supplied
+2026-08-04:**
 
-1. Register `get_person_history` on the live ElevenLabs agent.
-2. Apply the prompt patch (`docs/elevenlabs-prompt-patches/2026-08-04-person-history.md`).
-3. Run `npm run carson:diagnose -- audit`.
-4. Confirm: tool registered, prompt references the tool, schema matches, audit passes.
-5. Run one real production conversation (e.g. "What has Christopher been working on?") and confirm: tool invocation, correct backend lookup, correct summary, correct spoken response.
-6. Only after 1–5 succeed: mark this COMPLETE, add regression protection for whatever the live test reveals, and move it into Protected Completed Work.
+1. ✅ Registered `get_person_history` (`tool_6301kz4qec0hexd84n2bvejdk3t7`-style client tool, id `tool_0901kz53faawfhw9y6hc15zqjm3w`) via `POST /v1/convai/tools`, matching `get_commitment_history`'s exact schema pattern.
+2. ✅ Applied the prompt patch (`docs/elevenlabs-prompt-patches/2026-08-04-person-history.md`) via `PATCH /v1/convai/agents/{id}` — diffed byte-for-byte against the actual live prompt (not the saved doc) before and after; confirmed exactly the two intended insertions landed, nothing else touched.
+3. ✅ Ran `npm run carson:diagnose -- audit`.
+4. ✅ Confirmed for `get_person_history` specifically: registered (no longer in the MISSING list), prompt references it, schema matches the documented pattern. **Overall audit result is still FAIL**, but only because of an unrelated, pre-existing finding — see below.
+5. ⏳ **Not done.** One real production conversation (e.g. "What has Christopher been working on?") has not happened — see the exact evidence below. This is the one remaining step before this phase can close.
+6. Not reached yet — depends on 5.
 
-**Why this is blocked, concretely:** steps 1–3 need an ElevenLabs API key —
-none is stored anywhere in this repo or as a project secret, by design (same
-situation Phase 1 was in before the Blue Pen investigation supplied one ad
-hoc). Step 5 needs an actual live conversation with the deployed voice/typed
-Carson app — this agent has no way to originate that conversation itself;
-per this repo's established live-testing boundary, Sana performs the live
-production test and this agent verifies the resulting evidence afterward
-(via `carson-diagnose.mjs inspect`), the same division of labor used
-throughout Blue Pen's closing verification.
+**Step 5's exact blocker, with evidence:** `GET /v1/convai/conversations?agent_id=...` (fetched fresh immediately after registering) shows the most recent conversation is `conv_2401kz4qx1s4errtchfz1afns3gh` at `2026-08-03T21:19:02Z` — the same conversation already used as Blue Pen's closing evidence, hours before this registration. No conversation exists yet that could test `get_person_history`. This agent has no way to originate one: doing so would require an authenticated `www.ra7etbal.com` session (entering login credentials is unconditionally prohibited for this agent, regardless of authorization), and even a bare ElevenLabs-only test call would lack the real `dynamic_variables` (actual tasks/people data) that only `ElevenLabsAgentWidget.tsx`'s `startSession()` injects from a real logged-in session — so it wouldn't be a genuine production test even if it were possible. **What unblocks this:** Sana has one real conversation asking a person-history question; this agent then pulls and independently verifies it via `carson-diagnose.mjs inspect`, exactly like Blue Pen's closing evidence was gathered.
 
-**What unblocks this:** either (a) a fresh `ELEVENLABS_API_KEY`, so this
-agent can do steps 1–4 the same way it did for Phase 1's registration fix,
-or (b) Sana applies the prompt patch and registers the tool herself via the
-ElevenLabs dashboard (the patch doc has the exact text and schema), then
-runs the live conversation test — after which this agent can independently
-verify the conversation evidence with a key, or Sana can share the
-transcript/`tool_calls` directly.
+**Unrelated finding surfaced by this same audit run (out of scope for this
+phase, flagged separately — see the spawned follow-up task):** `control_task`,
+`get_task_delivery_status`, and `get_operations_summary` are present in the
+widget's `clientTools` but **not registered on the live agent** — the exact
+same failure class as the Blue Pen incident's true root cause, on different
+tools. Also found: `list_inbox_items`, `act_on_inbox_item`, `act_on_update`
+are registered on the live agent but no longer in the widget's code
+(orphaned, likely leftovers from the removed Inbox feature). Neither
+finding was touched in this session — they are unrelated to Person History
+and need their own investigation before any fix.
+
+**Also fixed as part of this work:** `scripts/carson-diagnose.mjs`'s own
+`audit` command had a real bug — it tried to match the live agent's inline
+`prompt.tools` array back to `tool_ids` by an `.id`/`.tool_id` field that
+doesn't exist on inline entries, silently failed to match anything, and
+resolved every tool twice (a live run reported 42 registered tools instead
+of the actual 21/22, with every orphan listed twice). Fixed by zipping the
+two parallel arrays by index instead (PR #177); 4 new regression tests
+added.
 
 Protect: keep `get_person_history` distinct from `get_commitment_history` —
 same convention as `get_commitment_history` vs. `get_task_delivery_status` —
