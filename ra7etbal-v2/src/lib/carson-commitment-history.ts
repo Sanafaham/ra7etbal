@@ -406,3 +406,69 @@ export async function lookupCommitmentHistory(keyword: string): Promise<string> 
   const history = await buildCommitmentHistory(candidates[0]);
   return formatCommitmentHistoryAnswer(history);
 }
+
+// ── Historical Lookup — Phase 2, Person History ────────────────────────────
+//
+// Reuses findCommitmentCandidates() as-is — it already matches on
+// assigned_to, so a bare person-name query already returns their tasks
+// today. The one real gap Commitment History doesn't handle: a person-name
+// match is *expected* to return many tasks, unlike a task-keyword match, so
+// asking "which one do you mean" (lookupCommitmentHistory's multi-match
+// behavior) is the wrong shape here. This summarizes instead of
+// disambiguating. A single match still gets the identical full
+// evidence-based lifecycle answer as lookupCommitmentHistory — reused, not
+// reimplemented.
+
+/**
+ * Aggregate outcome counts only, never a raw per-task list — the same
+ * data-minimization principle Option B established for ra7etbal_state's
+ * COMPLETED block (see carson-context.ts): a count is safe to state as
+ * fact; a full per-task dump is not, and isn't useful when there are many.
+ */
+function summarizePersonOutcomes(tasks: Task[]): string {
+  const counts = new Map<string, number>();
+  for (const t of tasks) {
+    const outcome =
+      t.status === "cancelled" ? "cancelled" : t.status === "done" ? "done" : t.dismissed_at ? "dismissed" : "pending";
+    counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([k, v]) => `${v} ${k}`).join(", ");
+}
+
+/**
+ * Historical Lookup Phase 2 entry point. Given a person's name, summarizes
+ * their overall commitment history. Never guesses which specific task the
+ * owner means the way lookupCommitmentHistory does for an ambiguous task
+ * keyword — a person naturally has multiple commitments, so the answer is
+ * an evidence-based overview (outcome counts plus the most recent items),
+ * not a forced single-task pick.
+ */
+export async function lookupPersonHistory(personName: string): Promise<string> {
+  const name = personName?.trim();
+  if (!name) {
+    return "I need a person's name to look up. Ask the user whose history they mean.";
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return "I couldn't look that up right now — not signed in.";
+
+  const candidates = await findCommitmentCandidates(name, user.id);
+
+  if (candidates.length === 0) {
+    return `I don't have a record of anything for "${name}".`;
+  }
+
+  if (candidates.length === 1) {
+    const history = await buildCommitmentHistory(candidates[0]);
+    return formatCommitmentHistoryAnswer(history);
+  }
+
+  const outcomeSummary = summarizePersonOutcomes(candidates);
+  const recent = candidates
+    .slice(0, 3)
+    .map((t) => `${formatCandidateSnippet(t)} — ${describeOutcome(t)}`)
+    .join("; ");
+  return `${candidates.length} commitments for ${name}: ${outcomeSummary}. Most recent: ${recent}.`;
+}

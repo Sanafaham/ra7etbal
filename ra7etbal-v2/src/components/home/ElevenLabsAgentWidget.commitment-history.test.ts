@@ -14,7 +14,7 @@ describe("ElevenLabsAgentWidget — Historical Lookup Phase 1 (Q4 Commitment His
 
   it("imports the implementation from the dedicated commitment-history module, not inline logic", () => {
     expect(SOURCE).toContain(
-      'import { lookupCommitmentHistory } from "../../lib/carson-commitment-history";',
+      'import { lookupCommitmentHistory, lookupPersonHistory } from "../../lib/carson-commitment-history";',
     );
   });
 

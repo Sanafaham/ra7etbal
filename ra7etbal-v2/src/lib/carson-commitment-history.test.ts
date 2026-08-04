@@ -31,6 +31,7 @@ const {
   buildCommitmentHistory,
   formatCommitmentHistoryAnswer,
   lookupCommitmentHistory,
+  lookupPersonHistory,
 } = await import("./carson-commitment-history");
 
 function makeTask(overrides: Partial<Task> = {}): Task {
@@ -573,5 +574,72 @@ describe("formatCommitmentHistoryAnswer — evidence-based, no raw dump", () => 
     expect(answer).toContain("Confirmed");
     expect(answer).not.toContain("Sent on");
     expect(answer).not.toContain("Delivered on");
+  });
+});
+
+describe("lookupPersonHistory — Historical Lookup Phase 2 (person overview, not task disambiguation)", () => {
+  it("asks for a person's name when none is given", async () => {
+    const result = await lookupPersonHistory("");
+    expect(result).toMatch(/person's name/i);
+  });
+
+  it("reports not signed in when there is no authenticated user", async () => {
+    mocks.supabaseGetUser.mockResolvedValueOnce({ data: { user: null } });
+    const result = await lookupPersonHistory("Grace");
+    expect(result).toMatch(/not signed in/i);
+  });
+
+  it("says plainly when nothing matches — never guesses", async () => {
+    mocks.supabaseFrom.mockReturnValue(makeChain({ data: [], error: null }));
+    const result = await lookupPersonHistory("Grace");
+    expect(result).toMatch(/don't have a record/i);
+    expect(result).toContain("Grace");
+  });
+
+  it("gives the full evidence-based lifecycle answer when the person has exactly one commitment — reuses lookupCommitmentHistory's own path, not a reimplementation", async () => {
+    const task = makeTask({ assigned_to: "Grace", status: "done", confirmed_at: "2026-07-21T09:00:00Z" });
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "tasks") return makeChain({ data: [task], error: null });
+      return makeChain({ data: [], error: null });
+    });
+    const result = await lookupPersonHistory("Grace");
+    expect(result).toContain("prepare the guest room");
+    expect(result).toMatch(/confirmed done/i);
+    // Must NOT take the multi-match "ask which one" shape for a single result.
+    expect(result).not.toMatch(/ask the user which one/i);
+  });
+
+  it("summarizes outcome counts and recent items instead of asking which one — the key behavior difference from lookupCommitmentHistory's task-keyword ambiguity", async () => {
+    const rows = [
+      makeTask({ id: "task-1", assigned_to: "Grace", description: "send the flower inventory", status: "done", confirmed_at: "2026-07-22T10:00:00Z" }),
+      makeTask({ id: "task-2", assigned_to: "Grace", description: "restock the pantry", status: "pending" }),
+      makeTask({ id: "task-3", assigned_to: "Grace", description: "cancelled catering order", status: "cancelled" }),
+    ];
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "tasks") return makeChain({ data: rows, error: null });
+      return makeChain({ data: [], error: null });
+    });
+    const result = await lookupPersonHistory("Grace");
+    expect(result).toContain("3 commitments for Grace");
+    expect(result).toMatch(/1 done/);
+    expect(result).toMatch(/1 pending/);
+    expect(result).toMatch(/1 cancelled/);
+    // Never the task-keyword disambiguation phrasing — a person naturally
+    // has multiple commitments; this must not ask which one they mean.
+    expect(result).not.toMatch(/ask the user which one/i);
+    expect(result).not.toMatch(/found \d+ matching/i);
+  });
+
+  it("caps the recent-items list even when more candidates exist", async () => {
+    const rows = Array.from({ length: 5 }, (_, i) =>
+      makeTask({ id: `task-${i}`, assigned_to: "Grace", description: `task number ${i}`, status: "pending" }),
+    );
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "tasks") return makeChain({ data: rows, error: null });
+      return makeChain({ data: [], error: null });
+    });
+    const result = await lookupPersonHistory("Grace");
+    const mentioned = rows.filter((t) => result.includes(t.description)).length;
+    expect(mentioned).toBeLessThanOrEqual(3);
   });
 });
