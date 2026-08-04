@@ -1,9 +1,10 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { buildSmsBody, sendTwilioSms, sendMetaMessage } from './send-whatsapp-task.js';
-import { sendOwnerPush } from './task-confirm.js';
+import { handleTaskConfirmationPost, sendOwnerPush } from './task-confirm.js';
 import { processStaffMessage } from './_staff-comms-engine.js';
 import { notifyOwnerOfEscalation } from './_escalation-notify.js';
 import { handleInboundOwnerMessage } from './_owner-whatsapp-routing.js';
+import { persistInboundStaffImage } from './_inbound-staff-evidence.js';
 
 // One text-only Carson turn (WebSocket round trip to ElevenLabs) can run
 // longer than the platform default. Matches the maxDuration already used by
@@ -24,6 +25,10 @@ const DELIVERY_STATUS_RANK = {
 // Normalised bodies that mean opt-in or opt-out.
 const OPT_IN_REPLIES  = new Set(['yes', 'y', 'ok', 'okay', 'sure', 'start']);
 const OPT_OUT_REPLIES = new Set(['stop', 'unsubscribe', 'cancel', 'quit', 'end']);
+const PHOTO_EVIDENCE_PREFIX = '[Photo evidence]';
+const RECENT_EVIDENCE_CONTEXT_MS = 10 * 60 * 1000;
+const RECENT_TASK_DELIVERY_MS = 24 * 60 * 60 * 1000;
+const STALE_EVIDENCE_CLAIM_MS = 2 * 60 * 1000;
 
 export default async function handler(req, res) {
   if (req.method === 'GET') {
@@ -120,7 +125,7 @@ export default async function handler(req, res) {
     consentResults.push(result);
 
     if (!result.handled && result.reason === 'not_consent_reply') {
-      staffResults.push(await handleInboundStaffMessage({ supabaseUrl, serviceKey, msg }));
+      staffResults.push(await handleInboundStaffMessage({ supabaseUrl, serviceKey, msg, req }));
     }
   }
 
@@ -154,11 +159,13 @@ async function readRawBody(req) {
 }
 
 export async function handleInboundStaffMessage(
-  { supabaseUrl, serviceKey, msg },
+  { supabaseUrl, serviceKey, msg, req = { headers: {} } },
   {
     processStaffMessageImpl = processStaffMessage,
     notifyOwnerOfEscalationImpl = notifyOwnerOfEscalation,
     sendMetaMessageImpl = sendMetaMessage,
+    persistInboundStaffImageImpl = persistInboundStaffImage,
+    handleTaskConfirmationPostImpl = handleTaskConfirmationPost,
   } = {},
 ) {
   const phoneNumberId = msg.phoneNumberId;
@@ -177,19 +184,52 @@ export async function handleInboundStaffMessage(
   if (!person.whatsapp_opted_in || !person.whatsapp_consent_at || !person.whatsapp_consent_method) {
     return { handled: false, reason: 'not_opted_in' };
   }
-  let taskId = null;
-  if (msg.contextMessageId) {
-    const contextualMessages = await restSelect(supabaseUrl, serviceKey, 'messages',
-      `user_id=eq.${encodeURIComponent(userId)}&whatsapp_message_id=eq.${encodeURIComponent(msg.contextMessageId)}&select=task_id`);
-    if (contextualMessages.length === 1) taskId = contextualMessages[0].task_id || null;
-  }
+  let taskMatch = await resolveInboundStaffTask({
+    supabaseUrl, serviceKey, userId, person, msg,
+    allowRecentDeliveryFallback: Boolean(msg.mediaId),
+    allowRecentEvidenceContext: !msg.mediaId,
+  });
+  const taskId = taskMatch.task?.id || null;
   const existing = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
     `user_id=eq.${encodeURIComponent(userId)}&source=eq.whatsapp&external_message_id=eq.${encodeURIComponent(msg.messageId)}&select=*`);
+  if (msg.mediaId && existing[0]?.task_id && !taskMatch.task) {
+    const recoveryTask = await loadValidatedStaffTask({
+      supabaseUrl, serviceKey, userId, person, taskId: existing[0].task_id,
+    });
+    if (recoveryTask) taskMatch = { task: recoveryTask, reason: 'claimed_evidence_task' };
+  }
+  let reclaimedEvidenceMessageId = null;
+  if (
+    msg.mediaId &&
+    existing[0] &&
+    (
+      existing[0].processing_status === 'failed' ||
+      (
+        existing[0].processing_status === 'claimed' &&
+        isOlderThan(existing[0].updated_at || existing[0].created_at, STALE_EVIDENCE_CLAIM_MS)
+      )
+    )
+  ) {
+    const [reclaim] = await rpc(supabaseUrl, serviceKey, 'reclaim_staff_evidence_message', {
+      p_id: existing[0].id,
+      p_user_id: userId,
+      p_expected_updated_at: existing[0].updated_at,
+    });
+    if (reclaim?.acquired) reclaimedEvidenceMessageId = reclaim.message_id;
+  }
+  if (
+    msg.mediaId &&
+    existing[0] &&
+    existing[0].processing_status !== 'completed' &&
+    !reclaimedEvidenceMessageId
+  ) {
+    return { handled: true, reason: 'evidence_already_claimed' };
+  }
   // Widened on retry: a redelivery after a crash between complete_staff_message
   // and the Phase B escalation claim must still see the escalation-relevant
   // fields, not just ok/messageId/response — otherwise a crash-recovery retry
   // would silently skip owner notification for an already-classified escalation.
-  const outcome = existing[0]?.processing_status === 'completed'
+  let outcome = existing[0]?.processing_status === 'completed'
     ? {
         ok: true,
         messageId: existing[0].id,
@@ -199,13 +239,40 @@ export async function handleInboundStaffMessage(
         ownerAttentionRequired: existing[0].owner_attention_required,
         escalationReason: existing[0].escalation_reason,
         nextActionOwner: existing[0].next_action_owner,
+        canonicalEvidence: Boolean(
+          msg.mediaId && String(existing[0].inbound_text || '').startsWith(PHOTO_EVIDENCE_PREFIX),
+        ),
       }
-    : await processStaffMessageImpl({
+    : null;
+
+  if (!outcome && msg.mediaId) {
+    outcome = await processInboundStaffEvidence({
+      supabaseUrl,
+      serviceKey,
+      userId,
+      person,
+      task: taskMatch.task,
+      taskMatchReason: taskMatch.reason,
+      msg,
+      req,
+      reclaimedEvidenceMessageId,
+      persistInboundStaffImageImpl,
+      handleTaskConfirmationPostImpl,
+    });
+  }
+
+  if (!outcome) {
+    outcome = await processStaffMessageImpl({
         userId, personId: person.id, text: msg.body, taskId,
         threadId: msg.contextMessageId || null, receivedAt: timestampToIso(msg.timestamp),
         source:'whatsapp', externalMessageId:msg.messageId,
       }, { supabaseUrl, serviceKey, anthropicApiKey:process.env.ANTHROPIC_API_KEY });
-  if (!outcome.ok || !outcome.response) return { handled:false, reason:'processing_failed' };
+  }
+  if (!outcome.ok) return { handled:false, reason: outcome.reason || 'processing_failed' };
+  if (!outcome.response && outcome.canonicalEvidence) {
+    return { handled:true, reason: outcome.reason || 'canonical_evidence_processed' };
+  }
+  if (!outcome.response) return { handled:false, reason:'processing_failed' };
 
   // Phase B: a staff-reported blocker/substitution/owner-decision escalation
   // gets exactly one owner-decision record and exactly one owner WhatsApp
@@ -215,7 +282,7 @@ export async function handleInboundStaffMessage(
   // carson_response (whatever the classification step generated) is never
   // sent as-is for an escalating message.
   let staffResponseText = outcome.response;
-  if (outcome.userFacingState === 'Needs You') {
+  if (outcome.userFacingState === 'Needs You' && !outcome.canonicalEvidence) {
     const notifyResult = await notifyOwnerOfEscalationImpl({
       staffMessageId: outcome.messageId,
       userId,
@@ -251,7 +318,257 @@ export async function handleInboundStaffMessage(
   return {handled:false,reason:'delivery_failed'};
 }
 
+async function resolveInboundStaffTask({
+  supabaseUrl, serviceKey, userId, person, msg,
+  allowRecentDeliveryFallback = false,
+  allowRecentEvidenceContext = false,
+}) {
+  let candidateTaskId = null;
+  if (msg.contextMessageId) {
+    const contextualMessages = await restSelect(supabaseUrl, serviceKey, 'messages',
+      `user_id=eq.${encodeURIComponent(userId)}&whatsapp_message_id=eq.${encodeURIComponent(msg.contextMessageId)}&select=task_id`);
+    const contextualTaskIds = [...new Set(contextualMessages.map((row) => row.task_id).filter(Boolean))];
+    if (contextualTaskIds.length === 1) candidateTaskId = contextualTaskIds[0];
+
+    if (!candidateTaskId) {
+      const contextualStaffMessages = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
+        `user_id=eq.${encodeURIComponent(userId)}&person_id=eq.${encodeURIComponent(person.id)}&thread_id=eq.${encodeURIComponent(msg.contextMessageId)}&task_id=not.is.null&select=task_id&order=received_at.desc&limit=2`);
+      const staffTaskIds = [...new Set(contextualStaffMessages.map((row) => row.task_id).filter(Boolean))];
+      if (staffTaskIds.length === 1) candidateTaskId = staffTaskIds[0];
+    }
+
+    if (!candidateTaskId) return { task: null, reason: 'context_task_not_found' };
+  }
+
+  if (candidateTaskId) {
+    const task = await loadValidatedStaffTask({ supabaseUrl, serviceKey, userId, person, taskId: candidateTaskId });
+    return task ? { task, reason: 'context' } : { task: null, reason: 'context_task_invalid' };
+  }
+
+  if (allowRecentEvidenceContext) {
+    const since = new Date(Date.now() - RECENT_EVIDENCE_CONTEXT_MS).toISOString();
+    const recentEvidence = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
+      `user_id=eq.${encodeURIComponent(userId)}&person_id=eq.${encodeURIComponent(person.id)}&source=eq.whatsapp&processing_status=eq.completed&task_id=not.is.null&inbound_text=like.${encodeURIComponent(`${PHOTO_EVIDENCE_PREFIX}*`)}&received_at=gte.${encodeURIComponent(since)}&select=task_id&order=received_at.desc&limit=2`);
+    const evidenceTaskIds = [...new Set(recentEvidence.map((row) => row.task_id).filter(Boolean))];
+    if (evidenceTaskIds.length === 1) {
+      const task = await loadValidatedStaffTask({
+        supabaseUrl, serviceKey, userId, person, taskId: evidenceTaskIds[0],
+      });
+      if (task) return { task, reason: 'recent_photo_evidence' };
+    }
+  }
+
+  if (!allowRecentDeliveryFallback) return { task: null, reason: 'task_not_found' };
+
+  const since = new Date(Date.now() - RECENT_TASK_DELIVERY_MS).toISOString();
+  const recentDeliveries = await restSelect(supabaseUrl, serviceKey, 'messages',
+    `user_id=eq.${encodeURIComponent(userId)}&recipient=eq.${encodeURIComponent(person.name)}&task_id=not.is.null&whatsapp_message_id=not.is.null&created_at=gte.${encodeURIComponent(since)}&select=task_id&order=created_at.desc&limit=50`);
+  const deliveredTaskIds = [...new Set(recentDeliveries.map((row) => row.task_id).filter(Boolean))];
+  const deliveredTasks = await Promise.all(deliveredTaskIds.map((taskId) =>
+    loadValidatedStaffTask({ supabaseUrl, serviceKey, userId, person, taskId })));
+  const pendingMatches = deliveredTasks.filter((task) => task?.status === 'pending');
+  return pendingMatches.length === 1
+    ? { task: pendingMatches[0], reason: 'unique_recent_task_delivery' }
+    : { task: null, reason: pendingMatches.length > 1 ? 'task_ambiguous' : 'task_not_found' };
+}
+
+async function loadValidatedStaffTask({ supabaseUrl, serviceKey, userId, person, taskId }) {
+  const rows = await restSelect(supabaseUrl, serviceKey, 'tasks',
+    `id=eq.${encodeURIComponent(taskId)}&user_id=eq.${encodeURIComponent(userId)}&select=id,user_id,status,assigned_to,description,image_path,attachment_count,quality_review_status,created_at`);
+  if (rows.length !== 1) return null;
+  const task = rows[0];
+  return String(task.assigned_to || '').trim().toLowerCase() === String(person.name || '').trim().toLowerCase()
+    ? task
+    : null;
+}
+
+async function processInboundStaffEvidence({
+  supabaseUrl,
+  serviceKey,
+  userId,
+  person,
+  task,
+  taskMatchReason,
+  msg,
+  req,
+  reclaimedEvidenceMessageId,
+  persistInboundStaffImageImpl,
+  handleTaskConfirmationPostImpl,
+}) {
+  if (msg.mediaType !== 'image') {
+    return { ok: false, canonicalEvidence: true, response: null, reason: 'unsupported_media_type' };
+  }
+  const caption = String(msg.body || '').trim();
+  const inboundText = caption ? `${PHOTO_EVIDENCE_PREFIX} ${caption}` : PHOTO_EVIDENCE_PREFIX;
+  const claim = reclaimedEvidenceMessageId
+    ? { message_id: reclaimedEvidenceMessageId, is_new: true, processing_status: 'claimed' }
+    : (await rpc(supabaseUrl, serviceKey, 'claim_staff_message', {
+        p_user_id: userId,
+        p_person_id: person.id,
+        p_task_id: task?.id || null,
+        p_thread_id: msg.contextMessageId || null,
+        p_source: 'whatsapp',
+        p_external_message_id: msg.messageId,
+        p_inbound_text: inboundText,
+        p_received_at: timestampToIso(msg.timestamp),
+      }))[0];
+  if (!claim?.is_new) {
+    return { ok: true, canonicalEvidence: true, response: null, reason: 'evidence_already_claimed' };
+  }
+
+  if (reclaimedEvidenceMessageId && task?.quality_review_status) {
+    const recoveredOutcome = mapTaskConfirmationToStaffOutcome({
+      outcome: task.status === 'done' ? 'approved' : task.quality_review_status,
+      already_done: task.status === 'done',
+    }, person.name);
+    const completed = await completeInboundEvidenceMessage({
+      supabaseUrl, serviceKey, messageId: claim.message_id, userId,
+      classification: recoveredOutcome.classification,
+      response: recoveredOutcome.response,
+      nextActionOwner: recoveredOutcome.nextActionOwner,
+      userFacingState: recoveredOutcome.userFacingState,
+      ownerAttentionRequired: recoveredOutcome.ownerAttentionRequired,
+    });
+    return {
+      ok: true,
+      canonicalEvidence: true,
+      messageId: completed?.id || claim.message_id,
+      response: recoveredOutcome.response,
+      userFacingState: recoveredOutcome.userFacingState,
+      ownerAttentionRequired: recoveredOutcome.ownerAttentionRequired,
+      reason: 'canonical_evidence_recovered',
+    };
+  }
+
+  if (!task || task.status !== 'pending') {
+    const response = taskMatchReason === 'task_ambiguous'
+      ? 'Which task is this photo for? I have more than one open task for you.'
+      : 'Which task is this photo for?';
+    const completed = await completeInboundEvidenceMessage({
+      supabaseUrl, serviceKey, messageId: claim.message_id, userId,
+      classification: 'clarification_request', response,
+      nextActionOwner: 'staff', userFacingState: 'Waiting',
+    });
+    return { ok: true, canonicalEvidence: true, messageId: completed?.id || claim.message_id, response, userFacingState: 'Waiting' };
+  }
+
+  try {
+    const media = await persistInboundStaffImageImpl({
+      mediaId: msg.mediaId,
+      mimeType: msg.mimeType,
+      userId,
+      taskId: task.id,
+      messageId: msg.messageId,
+      accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
+      supabaseUrl,
+      serviceKey,
+    });
+    if (!media.ok) throw new Error(media.reason || 'media_persistence_failed');
+
+    const confirmation = await invokeTaskConfirmation({
+      handler: handleTaskConfirmationPostImpl,
+      req,
+      body: {
+        taskId: task.id,
+        confirmedBy: person.name,
+        proofImagePaths: [media.storagePath],
+        ...(String(msg.body || '').trim() ? { workerReply: String(msg.body).trim() } : {}),
+      },
+    });
+    if (
+      confirmation.statusCode >= 400 ||
+      (!confirmation.body?.success && !confirmation.body?.already_done)
+    ) {
+      throw new Error(confirmation.body?.error || `task_confirmation_failed_${confirmation.statusCode}`);
+    }
+
+    const evidenceOutcome = mapTaskConfirmationToStaffOutcome(confirmation.body, person.name);
+    const completed = await completeInboundEvidenceMessage({
+      supabaseUrl, serviceKey, messageId: claim.message_id, userId,
+      classification: evidenceOutcome.classification,
+      response: evidenceOutcome.response,
+      nextActionOwner: evidenceOutcome.nextActionOwner,
+      userFacingState: evidenceOutcome.userFacingState,
+      ownerAttentionRequired: evidenceOutcome.ownerAttentionRequired,
+    });
+    return {
+      ok: true,
+      canonicalEvidence: true,
+      messageId: completed?.id || claim.message_id,
+      response: evidenceOutcome.response,
+      userFacingState: evidenceOutcome.userFacingState,
+      ownerAttentionRequired: evidenceOutcome.ownerAttentionRequired,
+      reason: 'canonical_evidence_processed',
+    };
+  } catch (error) {
+    await rpc(supabaseUrl, serviceKey, 'fail_staff_message', {
+      p_id: claim.message_id,
+      p_user_id: userId,
+      p_processing_error: String(error?.message || 'evidence_processing_failed').slice(0, 500),
+    }).catch(() => {});
+    console.error('[whatsapp-webhook] inbound staff evidence failed', {
+      messageId: msg.messageId,
+      taskId: task.id,
+      reason: error?.message || String(error),
+    });
+    return { ok: false, canonicalEvidence: true, response: null, reason: 'evidence_processing_failed' };
+  }
+}
+
+async function completeInboundEvidenceMessage({
+  supabaseUrl, serviceKey, messageId, userId, classification, response,
+  nextActionOwner, userFacingState, ownerAttentionRequired = false,
+}) {
+  const [completed] = await rpc(supabaseUrl, serviceKey, 'complete_staff_message', {
+    p_id: messageId,
+    p_user_id: userId,
+    p_classification: classification,
+    p_carson_response: response || null,
+    p_next_action_owner: nextActionOwner,
+    p_user_facing_state: userFacingState,
+    p_owner_attention_required: ownerAttentionRequired,
+    p_escalation_reason: null,
+    p_responded_at: new Date().toISOString(),
+  });
+  return completed || null;
+}
+
+async function invokeTaskConfirmation({ handler, req, body }) {
+  const result = { statusCode: 200, body: null };
+  const response = {
+    status(code) { result.statusCode = code; return this; },
+    json(payload) { result.body = payload; return this; },
+  };
+  await handler({ ...req, method: 'POST', body }, response, { confirmationSource: 'whatsapp_staff' });
+  return result;
+}
+
+function mapTaskConfirmationToStaffOutcome(result, staffName) {
+  if (result.already_done || result.outcome === 'approved') {
+    return {
+      classification: 'completion_confirmation',
+      response: `Thanks${staffName ? `, ${staffName}` : ''} — I recorded this as completed.`,
+      nextActionOwner: 'nobody', userFacingState: 'Completed', ownerAttentionRequired: false,
+    };
+  }
+  if (result.outcome === 'substitute_review' || result.outcome === 'uncertain') {
+    return {
+      classification: 'task_update',
+      response: "Thanks — I've recorded the photo and asked the owner to review it.",
+      nextActionOwner: 'owner', userFacingState: 'Needs You', ownerAttentionRequired: true,
+    };
+  }
+  return {
+    classification: 'task_update', response: null,
+    nextActionOwner: 'staff', userFacingState: 'Waiting', ownerAttentionRequired: false,
+  };
+}
+
 function normalizePhone(value) { return String(value || '').replace(/\D/g, ''); }
+function isOlderThan(value, maxAgeMs) {
+  const timestamp = Date.parse(String(value || ''));
+  return Number.isFinite(timestamp) && Date.now() - timestamp >= maxAgeMs;
+}
 async function restSelect(url,key,table,query) {
   const r=await fetch(`${url}/rest/v1/${table}?${query}`,{headers:serviceHeaders(key)});
   if(!r.ok) throw new Error(`${table}_lookup_failed`);
@@ -890,7 +1207,7 @@ async function upsertHealthState({
 // Payload extractors
 // ---------------------------------------------------------------------------
 
-function extractInboundMessages(body) {
+export function extractInboundMessages(body) {
   const entries  = Array.isArray(body?.entry) ? body.entry : [];
   const messages = [];
 
