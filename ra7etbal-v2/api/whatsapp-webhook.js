@@ -192,11 +192,24 @@ export async function handleInboundStaffMessage(
   const taskId = taskMatch.task?.id || null;
   const existing = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
     `user_id=eq.${encodeURIComponent(userId)}&source=eq.whatsapp&external_message_id=eq.${encodeURIComponent(msg.messageId)}&select=*`);
-  if (msg.mediaId && existing[0]?.task_id && !taskMatch.task) {
-    const recoveryTask = await loadValidatedStaffTask({
-      supabaseUrl, serviceKey, userId, person, taskId: existing[0].task_id,
-    });
-    if (recoveryTask) taskMatch = { task: recoveryTask, reason: 'claimed_evidence_task' };
+  if (msg.mediaId && existing[0]) {
+    if (existing[0].task_id) {
+      const recoveryTask = taskMatch.task?.id === existing[0].task_id
+        ? taskMatch.task
+        : await loadValidatedStaffTask({
+            supabaseUrl, serviceKey, userId, person, taskId: existing[0].task_id,
+          });
+      taskMatch = recoveryTask
+        ? { task: recoveryTask, reason: 'claimed_evidence_task' }
+        : { task: null, reason: 'claimed_evidence_task_invalid', candidates: [] };
+    } else {
+      const candidates = taskMatch.reason === 'task_ambiguous' ? taskMatch.candidates || [] : [];
+      taskMatch = {
+        task: null,
+        reason: candidates.length > 1 ? 'task_ambiguous' : 'task_not_found',
+        candidates,
+      };
+    }
   }
   let reclaimedEvidenceMessageId = null;
   if (
@@ -253,6 +266,7 @@ export async function handleInboundStaffMessage(
       person,
       task: taskMatch.task,
       taskMatchReason: taskMatch.reason,
+      taskMatchCandidates: taskMatch.candidates || [],
       msg,
       req,
       reclaimedEvidenceMessageId,
@@ -369,7 +383,27 @@ async function resolveInboundStaffTask({
   const pendingMatches = deliveredTasks.filter((task) => task?.status === 'pending');
   return pendingMatches.length === 1
     ? { task: pendingMatches[0], reason: 'unique_recent_task_delivery' }
-    : { task: null, reason: pendingMatches.length > 1 ? 'task_ambiguous' : 'task_not_found' };
+    : {
+        task: null,
+        reason: pendingMatches.length > 1 ? 'task_ambiguous' : 'task_not_found',
+        candidates: pendingMatches.length > 1 ? pendingMatches : [],
+      };
+}
+
+function buildAmbiguousTaskClarification(tasks) {
+  const descriptions = tasks
+    .map((task) => String(task?.description || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  if (descriptions.length < 2) {
+    return 'Which task is this photo for? I have more than one open task for you.';
+  }
+  return [
+    `I have ${descriptions.length === 2 ? 'two' : descriptions.length} open tasks for you:`,
+    '',
+    ...descriptions.map((description, index) => `${index + 1}. ${description}`),
+    '',
+    'Please use WhatsApp Reply on the correct task message and resend the photo.',
+  ].join('\n');
 }
 
 async function loadValidatedStaffTask({ supabaseUrl, serviceKey, userId, person, taskId }) {
@@ -389,6 +423,7 @@ async function processInboundStaffEvidence({
   person,
   task,
   taskMatchReason,
+  taskMatchCandidates = [],
   msg,
   req,
   reclaimedEvidenceMessageId,
@@ -442,7 +477,7 @@ async function processInboundStaffEvidence({
 
   if (!task || task.status !== 'pending') {
     const response = taskMatchReason === 'task_ambiguous'
-      ? 'Which task is this photo for? I have more than one open task for you.'
+      ? buildAmbiguousTaskClarification(taskMatchCandidates)
       : 'Which task is this photo for?';
     const completed = await completeInboundEvidenceMessage({
       supabaseUrl, serviceKey, messageId: claim.message_id, userId,

@@ -868,6 +868,131 @@ describe('verified inbound staff transport', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/messages?') && String(url).includes('recipient=eq.'))).toBe(false);
   });
 
+  it('fails closed with numbered task descriptions and sends one clarification across concurrent and retried ambiguous photo webhooks', async () => {
+    stubBaseEnv();
+    let existingReads = 0;
+    let evidenceClaims = 0;
+    let responseClaims = 0;
+    const fetchMock = vi.fn(async (url, options = {}) => {
+      const requestUrl = String(url);
+      const body = options.body ? JSON.parse(options.body) : {};
+      if (requestUrl.includes('/rest/v1/whatsapp_health_state?')) return jsonResponse([{ user_id: 'user-1' }]);
+      if (requestUrl.includes('/rest/v1/people?')) return jsonResponse([{
+        id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+        whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+      }]);
+      if (requestUrl.includes('/rest/v1/messages?') && requestUrl.includes('recipient=eq.Christopher')) {
+        return jsonResponse([{ task_id: 'task-glass' }, { task_id: 'task-terea' }]);
+      }
+      if (requestUrl.includes('/rest/v1/tasks?') && requestUrl.includes('id=eq.task-glass')) {
+        return jsonResponse([{ id: 'task-glass', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: '  Place the drinking glass\n\non the counter  ' }]);
+      }
+      if (requestUrl.includes('/rest/v1/tasks?') && requestUrl.includes('id=eq.task-terea')) {
+        return jsonResponse([{ id: 'task-terea', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy TEREA Silver' }]);
+      }
+      if (requestUrl.includes('/rest/v1/staff_messages?')) {
+        existingReads += 1;
+        return existingReads <= 2
+          ? jsonResponse([])
+          : jsonResponse([{
+              id: 'staff-message-ambiguous', task_id: null, thread_id: null,
+              inbound_text: '[Photo evidence]', processing_status: 'completed',
+              classification: 'clarification_request', user_facing_state: 'Waiting',
+              next_action_owner: 'staff', owner_attention_required: false,
+              carson_response: 'stored numbered clarification',
+            }]);
+      }
+      if (requestUrl.includes('/rpc/claim_staff_message')) {
+        expect(body).toMatchObject({ p_task_id: null, p_thread_id: null });
+        evidenceClaims += 1;
+        return jsonResponse([{
+          message_id: 'staff-message-ambiguous',
+          is_new: evidenceClaims === 1,
+          processing_status: 'claimed',
+        }]);
+      }
+      if (requestUrl.includes('/rpc/complete_staff_message')) return jsonResponse([{ id: 'staff-message-ambiguous' }]);
+      if (requestUrl.includes('/rpc/claim_staff_response_delivery')) {
+        responseClaims += 1;
+        return jsonResponse(responseClaims === 1
+          ? [{ message_id: 'staff-message-ambiguous', claimed: true, claim_token: 'claim-1' }]
+          : [{ message_id: 'staff-message-ambiguous', claimed: false }]);
+      }
+      if (requestUrl.includes('/rpc/complete_staff_response_delivery')) return jsonResponse([{ id: 'staff-message-ambiguous' }]);
+      throw new Error(`Unexpected fetch: ${requestUrl}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const persistInboundStaffImageImpl = vi.fn();
+    const input = {
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.ambiguous-photo', body: '', phoneNumberId: 'meta-phone-id',
+        contextMessageId: null, timestamp: '1700000000', mediaId: 'media-1', mediaType: 'image', mimeType: 'image/jpeg',
+      },
+    };
+
+    const concurrentResults = await Promise.all([
+      handleInboundStaffMessage(input, { persistInboundStaffImageImpl }),
+      handleInboundStaffMessage(input, { persistInboundStaffImageImpl }),
+    ]);
+    expect(concurrentResults).toEqual(expect.arrayContaining([
+      { handled: true, reason: 'delivered' },
+      { handled: true, reason: 'evidence_already_claimed' },
+    ]));
+    const clarification = smsMocks.sendMetaMessage.mock.calls[0][0].payload.text.body;
+    expect(clarification).toBe([
+      'I have two open tasks for you:',
+      '',
+      '1. Place the drinking glass on the counter',
+      '2. Buy TEREA Silver',
+      '',
+      'Please use WhatsApp Reply on the correct task message and resend the photo.',
+    ].join('\n'));
+    expect(persistInboundStaffImageImpl).not.toHaveBeenCalled();
+    expect(taskConfirmMocks.handleTaskConfirmationPost).not.toHaveBeenCalled();
+    expect(evidenceClaims).toBe(2);
+
+    await expect(handleInboundStaffMessage(input, { persistInboundStaffImageImpl }))
+      .resolves.toEqual({ handled: true, reason: 'already_claimed' });
+    expect(smsMocks.sendMetaMessage).toHaveBeenCalledTimes(1);
+    expect(persistInboundStaffImageImpl).not.toHaveBeenCalled();
+    expect(taskConfirmMocks.handleTaskConfirmationPost).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url, options = {}]) =>
+      (String(url).includes('/rest/v1/tasks') && options.method && options.method !== 'GET') ||
+      String(url).includes('/storage/v1/object/') ||
+      String(url).includes('/rest/v1/task_attachments'))).toBe(false);
+  });
+
+  it('keeps the existing single recent pending task fallback for an unquoted photo', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false, whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed' }]))
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy TEREA Silver' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-photo', is_new: true, processing_status: 'claimed' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo' }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-photo', claimed: true, claim_token: 'claim-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const persistInboundStaffImageImpl = vi.fn(async () => ({
+      ok: true, storagePath: 'task-images/user-1/task-1/proof/unquoted.jpg', mimeType: 'image/jpeg', size: 3,
+    }));
+
+    await expect(handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.unquoted-photo', body: '', phoneNumberId: 'meta-phone-id',
+        contextMessageId: null, timestamp: '1700000000', mediaId: 'media-1', mediaType: 'image', mimeType: 'image/jpeg',
+      },
+    }, { persistInboundStaffImageImpl })).resolves.toEqual({ handled: true, reason: 'delivered' });
+
+    expect(persistInboundStaffImageImpl).toHaveBeenCalledOnce();
+    expect(taskConfirmMocks.handleTaskConfirmationPost).toHaveBeenCalledOnce();
+    expect(taskConfirmMocks.handleTaskConfirmationPost.mock.calls[0][0].body.taskId).toBe('task-1');
+  });
+
   it('keeps a separate unquoted completion text attached to the just-completed photo task', async () => {
     stubBaseEnv();
     const fetchMock = vi.fn()
@@ -924,6 +1049,41 @@ describe('verified inbound staff transport', () => {
     });
     expect(persistInboundStaffImageImpl).toHaveBeenCalledOnce();
     expect(taskConfirmMocks.handleTaskConfirmationPost).toHaveBeenCalledOnce();
+  });
+
+  it('a reclaimed unbound ambiguous photo cannot adopt a newly unique pending task', async () => {
+    stubBaseEnv();
+    const failedAt = '2026-08-04T12:00:00.000Z';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false, whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed' }]))
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'newly-unique-task' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'newly-unique-task', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Place the drinking glass on the counter', quality_review_status: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo', task_id: null, thread_id: null, inbound_text: '[Photo evidence]', processing_status: 'failed', updated_at: failedAt }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-photo', acquired: true, processing_status: 'claimed' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo' }]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-photo', claimed: true, claim_token: 'claim-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const persistInboundStaffImageImpl = vi.fn();
+
+    await expect(handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.reclaimed-unbound', body: '', phoneNumberId: 'meta-phone-id',
+        contextMessageId: null, timestamp: '1700000000', mediaId: 'media-1', mediaType: 'image', mimeType: 'image/jpeg',
+      },
+    }, { persistInboundStaffImageImpl })).resolves.toEqual({ handled: true, reason: 'delivered' });
+
+    expect(smsMocks.sendMetaMessage).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ text: { body: 'Which task is this photo for?' } }),
+    }));
+    expect(persistInboundStaffImageImpl).not.toHaveBeenCalled();
+    expect(taskConfirmMocks.handleTaskConfirmationPost).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url, options = {}]) =>
+      (String(url).includes('/rest/v1/tasks') && options.method && options.method !== 'GET') ||
+      String(url).includes('/storage/v1/object/') ||
+      String(url).includes('/rest/v1/task_attachments'))).toBe(false);
   });
 
   it('a concurrent reclaim loser performs no media, QI, task, or notification work', async () => {
