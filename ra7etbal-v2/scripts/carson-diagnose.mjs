@@ -298,6 +298,38 @@ export function expectedClientTools() {
   return names;
 }
 
+/**
+ * `conversation_config.agent.prompt.tools` (when present) is a PARALLEL
+ * array to `tool_ids` — same length, same order, one inline tool_config per
+ * ID — not a list of independently-keyed objects with their own `id`/
+ * `tool_id` field. Zipping by index is the correct match; an earlier version
+ * of this function tried to match inline entries back to `tool_ids` by an
+ * `.id`/`.tool_id` field that doesn't exist on them, which silently failed
+ * to match anything and caused every tool to be resolved twice (once
+ * bogus-ID from the inline array, once correctly by a redundant /tools/{id}
+ * call) — found via a real run against the live agent while registering
+ * get_person_history (2026-08-04): reported 42 registered tools instead of
+ * the actual 21, with every orphan listed twice.
+ *
+ * Pure and network-free so it can be unit-tested directly: returns the
+ * tools resolvable from the inline array (`resolved`) and the remaining IDs
+ * that still need an individual /tools/{id} lookup (`unresolvedIds`) — only
+ * non-empty when the inline array is absent or its length doesn't match
+ * tool_ids, a shape this function can't safely assume alignment for.
+ */
+export function zipInlineToolsWithIds(toolIds, inlineTools) {
+  const resolved = [];
+  const zipCount = inlineTools.length === toolIds.length ? toolIds.length : 0;
+  for (let i = 0; i < zipCount; i++) {
+    const t = inlineTools[i];
+    const name = t?.tool_config?.name ?? t?.name;
+    const type = t?.tool_config?.type ?? t?.type ?? null;
+    if (name) resolved.push({ id: toolIds[i], name, type });
+  }
+  const unresolvedIds = zipCount > 0 ? [] : toolIds;
+  return { resolved, unresolvedIds };
+}
+
 /** Resolves the live agent's registered tool_ids to their names, and returns
  * the raw prompt text, defensively across the couple of response shapes
  * ElevenLabs has used for this field. */
@@ -308,14 +340,7 @@ async function fetchLiveAgentToolNames(args) {
   const toolIds = promptConfig.tool_ids ?? agent?.tool_ids ?? [];
   const inlineTools = promptConfig.tools ?? agent?.tools ?? [];
 
-  const resolved = [];
-  for (const t of inlineTools) {
-    const name = t?.tool_config?.name ?? t?.name;
-    const type = t?.tool_config?.type ?? t?.type ?? null;
-    if (name) resolved.push({ id: t.id ?? t.tool_id ?? null, name, type });
-  }
-
-  const unresolvedIds = toolIds.filter((id) => !resolved.some((r) => r.id === id));
+  const { resolved, unresolvedIds } = zipInlineToolsWithIds(toolIds, inlineTools);
   for (const id of unresolvedIds) {
     try {
       const tool = await elevenlabsGet(`/tools/${id}`);
