@@ -674,6 +674,56 @@ Not done in this phase (deliberately out of scope — see the frozen Historical 
 
 Remaining before this can move to Stable and protected: prompt patch pasted into the live ElevenLabs dashboard, PR opened and merged, and Sana's live production verification of the validation phrase in the patch doc.
 
+### Historical Lookup — Phase 2, Person History
+
+Status: **CODE MERGED AND DEPLOYED (PR #174) — ElevenLabs registration
+PENDING.** Approved as the next Master Plan roadmap item after a rigorous
+9-criteria review confirmed it (not Reliability Engineering, which has no
+predefined implementation phase in the Master Plan) is the correct next
+step. Second capability slice of the frozen Historical Lookup Architecture,
+directly extending Phase 1 (Commitment History) rather than redesigning it.
+
+What it is: given a person's name, summarizes their overall commitment
+history — outcome counts plus the most recent items — instead of resolving
+one specific commitment. `findCommitmentCandidates()` (Phase 1) already
+matches on `assigned_to`, so a bare person-name query already returned their
+tasks before this phase; the actual gap was that Phase 1's multi-match
+behavior ("which one do you mean") is the wrong shape for a person query,
+which naturally returns many results. A single match still gets Phase 1's
+identical full evidence-based answer — reused, not reimplemented.
+
+Files: `src/lib/carson-commitment-history.ts` (new `lookupPersonHistory()` +
+`summarizePersonOutcomes()`, appended — zero modification to any existing
+Phase 1 function), `src/lib/carson-commitment-history.test.ts` (6 new
+tests), `src/components/home/ElevenLabsAgentWidget.tsx` (new
+`get_person_history` client tool, wired identically to
+`get_commitment_history`), `src/components/home/ElevenLabsAgentWidget.person-history.test.ts`
+(new, 3 wiring tests), `docs/elevenlabs-prompt-patches/2026-08-04-person-history.md`
+(new prompt patch — **PENDING**, not yet applied).
+
+Tests: 9 new tests, all passing. Full `npm run test:carson-protected` suite
+(46 files) re-run clean: 821 passed, 4 skipped, 3 todo — no regression to
+Commitment History, tool registration, memory governance, the epistemic
+gate, or any other protected behavior. Typecheck and production build both
+pass. Deployed to production via PR #174 (squash commit
+`22507ad6d02ade83692c1bc068b2719422605c5c`).
+
+**Blocked on live production verification:** no ElevenLabs API key was
+available in the session that implemented this slice, so `get_person_history`
+has **not** been registered on the live agent's `tool_ids`, and the prompt
+patch has **not** been pasted. Per the exact Blue Pen lesson, this tool must
+not be assumed to work in production until both are confirmed — the code
+being correct proved nothing last time either. Next session with a fresh key
+(or Sana pasting the patch manually): register the tool, paste the prompt
+insertion, run `npm run carson:diagnose -- audit` to confirm no
+missing/orphaned/prompt-blind result, then do one live conversation test
+("What's been going on with Grace?") before marking this Stable and
+protected.
+
+Protect: keep `get_person_history` distinct from `get_commitment_history` —
+same convention as `get_commitment_history` vs. `get_task_delivery_status` —
+do not merge them or let their routing rules blur.
+
 ### Transport-independent staff communication engine (Issue #46)
 
 Status: implemented, merged (PR #47, merge commit `e7a8e56c59b27f6f3857d68c0a2ec3b825ac5353`), deployed to production (`www.ra7etbal.com`). No live production UI testing performed (per task scope — this was a backend engine with a focused test harness, not a UI change).
