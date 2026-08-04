@@ -47,7 +47,7 @@ import {
 } from "../../lib/carson-tool-params";
 import { filterCalendarEventsByRange, searchCalendarHistory } from "../../lib/calendar";
 import { fetchTaskDeliveryStatus, fetchOperationsSummary } from "../../lib/carson-operations-center";
-import { lookupCommitmentHistory } from "../../lib/carson-commitment-history";
+import { lookupCommitmentHistory, lookupPersonHistory } from "../../lib/carson-commitment-history";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { callCalendarApi } from "../../lib/calendar-actions";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
@@ -5957,6 +5957,18 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("get_commitment_history", params, () =>
               lookupCommitmentHistory(params?.keyword ?? ""),
+            );
+          },
+          // Historical Lookup — Phase 2, Person History. Read-only:
+          // summarizes a person's overall commitment history rather than
+          // resolving one specific commitment — see get_commitment_history
+          // above for the single-task question shape this is deliberately
+          // distinct from.
+          get_person_history: (params: { person_name?: string }) => {
+            const captureBlock = guardCurrentToolInvocation("get_person_history");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("get_person_history", params, () =>
+              lookupPersonHistory(params?.person_name ?? ""),
             );
           },
           create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
