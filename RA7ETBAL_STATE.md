@@ -676,8 +676,12 @@ Remaining before this can move to Stable and protected: prompt patch pasted into
 
 ### Historical Lookup — Phase 2, Person History
 
-Status: **CODE MERGED AND DEPLOYED (PR #174) — ElevenLabs registration
-PENDING.** Approved as the next Master Plan roadmap item after a rigorous
+Status: **CODE COMPLETE — AWAITING PRODUCTION VERIFICATION.** Not closed,
+not stable, not in Protected Completed Work — per the Blue Pen investigation
+lesson, a capability is not COMPLETE until it is registered on the live
+agent, prompt-updated, audit-clean, and verified in one real production
+conversation. None of those four have happened yet for this tool. Approved
+as the next Master Plan roadmap item after a rigorous
 9-criteria review confirmed it (not Reliability Engineering, which has no
 predefined implementation phase in the Master Plan) is the correct next
 step. Second capability slice of the frozen Historical Lookup Architecture,
@@ -708,17 +712,33 @@ gate, or any other protected behavior. Typecheck and production build both
 pass. Deployed to production via PR #174 (squash commit
 `22507ad6d02ade83692c1bc068b2719422605c5c`).
 
-**Blocked on live production verification:** no ElevenLabs API key was
-available in the session that implemented this slice, so `get_person_history`
-has **not** been registered on the live agent's `tool_ids`, and the prompt
-patch has **not** been pasted. Per the exact Blue Pen lesson, this tool must
-not be assumed to work in production until both are confirmed — the code
-being correct proved nothing last time either. Next session with a fresh key
-(or Sana pasting the patch manually): register the tool, paste the prompt
-insertion, run `npm run carson:diagnose -- audit` to confirm no
-missing/orphaned/prompt-blind result, then do one live conversation test
-("What's been going on with Grace?") before marking this Stable and
-protected.
+**Blocked on production verification — exact remaining checklist (per Sana's
+2026-08-04 "Production Completion" directive, do not skip any item):**
+
+1. Register `get_person_history` on the live ElevenLabs agent.
+2. Apply the prompt patch (`docs/elevenlabs-prompt-patches/2026-08-04-person-history.md`).
+3. Run `npm run carson:diagnose -- audit`.
+4. Confirm: tool registered, prompt references the tool, schema matches, audit passes.
+5. Run one real production conversation (e.g. "What has Christopher been working on?") and confirm: tool invocation, correct backend lookup, correct summary, correct spoken response.
+6. Only after 1–5 succeed: mark this COMPLETE, add regression protection for whatever the live test reveals, and move it into Protected Completed Work.
+
+**Why this is blocked, concretely:** steps 1–3 need an ElevenLabs API key —
+none is stored anywhere in this repo or as a project secret, by design (same
+situation Phase 1 was in before the Blue Pen investigation supplied one ad
+hoc). Step 5 needs an actual live conversation with the deployed voice/typed
+Carson app — this agent has no way to originate that conversation itself;
+per this repo's established live-testing boundary, Sana performs the live
+production test and this agent verifies the resulting evidence afterward
+(via `carson-diagnose.mjs inspect`), the same division of labor used
+throughout Blue Pen's closing verification.
+
+**What unblocks this:** either (a) a fresh `ELEVENLABS_API_KEY`, so this
+agent can do steps 1–4 the same way it did for Phase 1's registration fix,
+or (b) Sana applies the prompt patch and registers the tool herself via the
+ElevenLabs dashboard (the patch doc has the exact text and schema), then
+runs the live conversation test — after which this agent can independently
+verify the conversation evidence with a key, or Sana can share the
+transcript/`tool_calls` directly.
 
 Protect: keep `get_person_history` distinct from `get_commitment_history` —
 same convention as `get_commitment_history` vs. `get_task_delivery_status` —
