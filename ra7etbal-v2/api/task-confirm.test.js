@@ -19,12 +19,18 @@ vi.mock('web-push', () => ({
 }));
 
 let handler;
+let handleTaskConfirmationPost;
 let buildOwnerPushBody;
 let normalizeOwnerReplyForRecipient;
 
 beforeEach(async () => {
   vi.resetModules();
-  ({ default: handler, buildOwnerPushBody, normalizeOwnerReplyForRecipient } = await import('./task-confirm.js'));
+  ({
+    default: handler,
+    handleTaskConfirmationPost,
+    buildOwnerPushBody,
+    normalizeOwnerReplyForRecipient,
+  } = await import('./task-confirm.js'));
   vi.stubEnv('SUPABASE_URL', 'https://example.supabase.co');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
   vi.stubEnv('ANTHROPIC_API_KEY', 'test-anthropic-key');
@@ -93,6 +99,27 @@ afterEach(() => {
 });
 
 describe('Quality Intelligence V1 — task-confirm POST routing', () => {
+  it('records the internal WhatsApp staff evidence source without changing the public POST default', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'd', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    await handleTaskConfirmationPost(
+      createReq({ taskId: 'task-1' }),
+      createRes(),
+      { confirmationSource: 'whatsapp_staff' },
+    );
+
+    const confirmationCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/confirmations'));
+    expect(JSON.parse(confirmationCall[1].body)).toMatchObject({
+      task_id: 'task-1',
+      source: 'whatsapp_staff',
+    });
+  });
+
   it('skips review entirely when no proof photo is submitted (unchanged behavior)', async () => {
     const fetchMock = vi
       .fn()

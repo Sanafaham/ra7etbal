@@ -178,7 +178,7 @@ async function responseSnippet(response) {
 
 export default async function handler(req, res) {
   if (req.method === 'GET') return handleGet(req, res);
-  if (req.method === 'POST') return handlePost(req, res);
+  if (req.method === 'POST') return handleTaskConfirmationPost(req, res);
   if (req.method === 'PATCH') {
     // Phase D — a deepLinkToken body field identifies the owner-escalation
     // answer flow (staff_escalation_owner_decisions), never sent by the
@@ -346,7 +346,11 @@ async function handleGet(req, res) {
 
 // ── POST: confirm the task ────────────────────────────────────────────────────
 
-async function handlePost(req, res) {
+export async function handleTaskConfirmationPost(
+  req,
+  res,
+  { confirmationSource = 'confirmation_link' } = {},
+) {
   const { taskId: rawTaskId, confirmedBy, proofImagePaths: rawProofImagePaths, workerReply: rawWorkerReply } = req.body;
   const taskId = normalizeConfirmationTaskId(rawTaskId);
   const proofImagePaths = (Array.isArray(rawProofImagePaths) ? rawProofImagePaths : [])
@@ -744,7 +748,7 @@ async function handlePost(req, res) {
         task_id: taskId,
         confirmed_at: now,
         confirmed_by: confirmedBy || null,
-        source: 'confirmation_link',
+        source: confirmationSource,
       }),
     }).catch(() => {});
 

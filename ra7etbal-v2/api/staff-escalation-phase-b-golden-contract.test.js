@@ -525,6 +525,7 @@ describe('handleInboundStaffMessage — Phase B hook wiring', () => {
     return vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ user_id: 'owner-a' }])) // whatsapp_health_state
       .mockResolvedValueOnce(jsonResponse([{ id: 'person-a', user_id: 'owner-a', name: 'Christopher', phone: '+15551112222', role: 'staff', is_family: false, whatsapp_opted_in: true, whatsapp_consent_at: '2026-01-01T00:00:00Z', whatsapp_consent_method: 'reply' }])) // people
+      .mockResolvedValueOnce(jsonResponse([])) // recent canonical photo evidence context
       .mockResolvedValueOnce(jsonResponse(existingRows)) // dedup SELECT on staff_messages
       .mockResolvedValueOnce(jsonResponse([responseDeliveryClaim])) // claim_staff_response_delivery
       .mockResolvedValue(jsonResponse({})); // complete/fail_staff_response_delivery and any further calls
