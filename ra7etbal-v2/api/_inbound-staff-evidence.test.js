@@ -62,6 +62,31 @@ describe('inbound staff evidence transport adapter', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('accepts a valid JPEG with transport padding after its EOI marker', async () => {
+    const paddedJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9, 0x00, 0x00]);
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ url: 'https://lookaside.example/media', mime_type: 'image/jpeg', file_size: paddedJpeg.length }))
+      .mockResolvedValueOnce({ ...jsonResponse({}), arrayBuffer: vi.fn().mockResolvedValue(paddedJpeg.buffer) })
+      .mockResolvedValueOnce(jsonResponse({}));
+
+    await expect(persistInboundStaffImage(INPUT, { fetchImpl })).resolves.toMatchObject({
+      ok: true,
+      size: paddedJpeg.length,
+    });
+  });
+
+  it('rejects bytes without a complete JPEG signature', async () => {
+    const invalidJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0x00]);
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ url: 'https://lookaside.example/media', mime_type: 'image/jpeg', file_size: invalidJpeg.length }))
+      .mockResolvedValueOnce({ ...jsonResponse({}), arrayBuffer: vi.fn().mockResolvedValue(invalidJpeg.buffer) });
+
+    await expect(persistInboundStaffImage(INPUT, { fetchImpl })).resolves.toEqual({
+      ok: false,
+      reason: 'media_signature_invalid',
+    });
+  });
+
   it('does not return a proof path when storage rejects the upload', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ url: 'https://lookaside.example/media', mime_type: 'image/jpeg', file_size: 3 }))

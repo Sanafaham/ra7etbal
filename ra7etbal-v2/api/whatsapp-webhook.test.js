@@ -865,7 +865,7 @@ describe('verified inbound staff transport', () => {
     expect(smsMocks.sendMetaMessage).toHaveBeenCalledWith(expect.objectContaining({
       payload: expect.objectContaining({ text: { body: 'Which task is this photo for?' } }),
     }));
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/tasks?') && String(url).includes('status=eq.pending'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/messages?') && String(url).includes('recipient=eq.'))).toBe(false);
   });
 
   it('keeps a separate unquoted completion text attached to the just-completed photo task', async () => {

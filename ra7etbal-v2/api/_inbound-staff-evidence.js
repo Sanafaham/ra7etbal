@@ -11,9 +11,11 @@ function safeMessageKey(value) {
 }
 
 function isJpeg(bytes) {
-  return bytes.length >= 4 &&
-    bytes[0] === 0xff && bytes[1] === 0xd8 &&
-    bytes[bytes.length - 2] === 0xff && bytes[bytes.length - 1] === 0xd9;
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return false;
+  for (let index = 2; index < bytes.length - 1; index += 1) {
+    if (bytes[index] === 0xff && bytes[index + 1] === 0xd9) return true;
+  }
+  return false;
 }
 
 /**
@@ -58,7 +60,7 @@ export async function persistInboundStaffImage(
   }
   if (!isJpeg(bytes)) return { ok: false, reason: 'media_signature_invalid' };
 
-  const objectPath = `${userId}/${taskId}/proof/whatsapp-${safeMessageKey(messageId)}${imageExtension(actualMimeType)}`;
+  const objectPath = `${userId}/${taskId}/proof/whatsapp-${safeMessageKey(messageId)}${imageExtension()}`;
   const storagePath = `task-images/${objectPath}`;
   const uploadResponse = await fetchImpl(
     `${supabaseUrl}/storage/v1/object/task-images/${objectPath}`,
