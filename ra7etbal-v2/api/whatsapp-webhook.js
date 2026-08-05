@@ -5,6 +5,7 @@ import { processStaffMessage } from './_staff-comms-engine.js';
 import { notifyOwnerOfEscalation } from './_escalation-notify.js';
 import { handleInboundOwnerMessage } from './_owner-whatsapp-routing.js';
 import { persistInboundStaffImage } from './_inbound-staff-evidence.js';
+import { persistWhatsappInboundEvidence } from './_whatsapp-inbound-observability.js';
 
 // One text-only Carson turn (WebSocket round trip to ElevenLabs) can run
 // longer than the platform default. Matches the maxDuration already used by
@@ -49,10 +50,10 @@ export default async function handler(req, res) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const serviceKey  = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  const statuses        = extractStatuses(webhookBody);
-  const inboundMessages = extractInboundMessages(webhookBody);
-  const phoneNumberIds  = extractPhoneNumberIds(webhookBody);
   const webhookReceivedAt = new Date().toISOString();
+  const statuses        = extractStatuses(webhookBody);
+  const inboundMessages = extractInboundMessages(webhookBody, webhookReceivedAt);
+  const phoneNumberIds  = extractPhoneNumberIds(webhookBody);
 
   console.log('WhatsApp webhook POST received', {
     entries:         Array.isArray(webhookBody?.entry) ? webhookBody.entry.length : 0,
@@ -115,6 +116,19 @@ export default async function handler(req, res) {
   const ownerResults = [];
   const staffResults = [];
   for (const msg of inboundMessages) {
+    const evidenceResult = await persistWhatsappInboundEvidence({
+      supabaseUrl,
+      serviceKey,
+      evidence: msg.inboundEvidence,
+      normalizedMessage: msg,
+    });
+    if (!evidenceResult.ok) {
+      console.warn('[whatsapp-webhook] inbound correlation evidence persistence failed', {
+        messageId: msg.messageId,
+        reason: evidenceResult.reason,
+      });
+    }
+
     const ownerResult = await handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg });
     if (ownerResult.isOwner) {
       ownerResults.push(ownerResult);
@@ -1242,7 +1256,7 @@ async function upsertHealthState({
 // Payload extractors
 // ---------------------------------------------------------------------------
 
-export function extractInboundMessages(body) {
+export function extractInboundMessages(body, webhookReceivedAt = new Date().toISOString()) {
   const entries  = Array.isArray(body?.entry) ? body.entry : [];
   const messages = [];
 
@@ -1273,11 +1287,31 @@ export function extractInboundMessages(body) {
         // Require either body text or a media attachment; ignore empty unknown types.
         if (!msgBody && !mediaId) continue;
 
+        const contextPresent = Object.prototype.hasOwnProperty.call(raw || {}, 'context');
+        const rawContext = contextPresent && raw?.context && typeof raw.context === 'object'
+          ? raw.context
+          : null;
+        const normalizedContextMessageId = String(raw?.context?.id || '').trim() || null;
+
         messages.push({
           from, messageId, body: msgBody, timestamp: raw?.timestamp,
           phoneNumberId: String(value?.metadata?.phone_number_id || '').trim(),
-          contextMessageId: String(raw?.context?.id || '').trim() || null,
+          contextMessageId: normalizedContextMessageId,
           mediaId, mediaType, mimeType,
+          inboundEvidence: {
+            inboundMetaMessageId: messageId,
+            contextPresent,
+            rawContextId: rawContext && Object.prototype.hasOwnProperty.call(rawContext, 'id')
+              ? rawContext.id
+              : null,
+            rawContextFrom: rawContext && Object.prototype.hasOwnProperty.call(rawContext, 'from')
+              ? rawContext.from
+              : null,
+            messageType: String(raw?.type || '').trim() || 'unknown',
+            senderPhone: from,
+            businessNumberId: String(value?.metadata?.phone_number_id || '').trim(),
+            webhookReceivedAt,
+          },
         });
       }
     }
