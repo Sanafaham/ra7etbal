@@ -1256,6 +1256,13 @@ async function markRetryable({ supabaseUrl, serviceKey, userId, receipt, error }
   }).catch(() => {});
 }
 
+const SUCCESSFUL_OWNER_DELIVERY_STATUSES = new Set([
+  'accepted',
+  'sent',
+  'delivered',
+  'read',
+]);
+
 async function findQuotedEscalation({
   supabaseUrl, serviceKey, userId, contextMessageId, ownerPhone, phoneNumberId,
 }) {
@@ -1268,7 +1275,7 @@ async function findQuotedEscalation({
   );
   if (deliveries.length !== 1) return null;
   const delivery = deliveries[0];
-  if (delivery.delivery_status !== 'accepted') return null;
+  if (!SUCCESSFUL_OWNER_DELIVERY_STATUSES.has(delivery.delivery_status)) return null;
   if (ownerPhone && normalizePhone(delivery.recipient_phone) !== normalizePhone(ownerPhone)) return null;
   const boundPhoneNumberId = delivery?.metadata?.owner_phone_number_id;
   if (boundPhoneNumberId && boundPhoneNumberId !== phoneNumberId) return null;
