@@ -29,6 +29,10 @@ const ownerRoutingMocks = vi.hoisted(() => ({
   handleInboundOwnerMessage: vi.fn(async () => ({ isOwner: false, reason: 'not_owner' })),
 }));
 
+const inboundObservabilityMocks = vi.hoisted(() => ({
+  persistWhatsappInboundEvidence: vi.fn(async () => ({ ok: true })),
+}));
+
 vi.mock('./send-whatsapp-task.js', () => ({
   buildSmsBody: smsMocks.buildSmsBody,
   sendTwilioSms: smsMocks.sendTwilioSms,
@@ -46,6 +50,10 @@ vi.mock('./_staff-comms-engine.js', () => ({
 
 vi.mock('./_owner-whatsapp-routing.js', () => ({
   handleInboundOwnerMessage: ownerRoutingMocks.handleInboundOwnerMessage,
+}));
+
+vi.mock('./_whatsapp-inbound-observability.js', () => ({
+  persistWhatsappInboundEvidence: inboundObservabilityMocks.persistWhatsappInboundEvidence,
 }));
 
 import handler, {
@@ -70,6 +78,8 @@ afterEach(() => {
   staffEngineMocks.processStaffMessage.mockClear();
   ownerRoutingMocks.handleInboundOwnerMessage.mockClear();
   ownerRoutingMocks.handleInboundOwnerMessage.mockResolvedValue({ isOwner: false, reason: 'not_owner' });
+  inboundObservabilityMocks.persistWhatsappInboundEvidence.mockClear();
+  inboundObservabilityMocks.persistWhatsappInboundEvidence.mockResolvedValue({ ok: true });
 });
 
 function makeReqRes(body) {
@@ -752,6 +762,68 @@ function jsonResponse(body, status = 200) {
 }
 
 describe('verified inbound staff transport', () => {
+  it('preserves raw quoted context separately from normalized routing context', () => {
+    const payload = inboundMessagePayload({
+      messageId: 'wamid.inbound-quoted', text: 'Approve it',
+      contextMessageId: 'wamid.owner-review',
+    });
+    payload.entry[0].changes[0].value.messages[0].context.from = '1196495893537506';
+    const [message] = extractInboundMessages(payload, '2026-08-05T19:53:21.700Z');
+    expect(message.contextMessageId).toBe('wamid.owner-review');
+    expect(message.inboundEvidence).toEqual({
+      inboundMetaMessageId: 'wamid.inbound-quoted',
+      contextPresent: true,
+      rawContextId: 'wamid.owner-review',
+      rawContextFrom: '1196495893537506',
+      messageType: 'text',
+      senderPhone: '971501234567',
+      businessNumberId: 'meta-phone-id',
+      webhookReceivedAt: '2026-08-05T19:53:21.700Z',
+    });
+  });
+
+  it.each([
+    ['missing', undefined, false, null],
+    ['explicit null', null, true, null],
+    ['malformed scalar', 'malformed', true, null],
+    ['malformed id', { id: { unexpected: true }, from: 42 }, true, { unexpected: true }],
+  ])('preserves %s raw context evidence without changing normalized routing', (_label, context, present, rawId) => {
+    const payload = inboundMessagePayload({ messageId: `wamid.${_label}`, text: 'Approve it' });
+    if (context !== undefined) payload.entry[0].changes[0].value.messages[0].context = context;
+    const [message] = extractInboundMessages(payload, '2026-08-05T19:53:21.700Z');
+    expect(message.inboundEvidence.contextPresent).toBe(present);
+    expect(message.inboundEvidence.rawContextId).toEqual(rawId);
+    expect(message.contextMessageId).toBe(
+      _label === 'malformed id' ? '[object Object]' : null,
+    );
+  });
+
+  it('persists inbound evidence before invoking owner routing', async () => {
+    stubBaseEnv();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse([])));
+    const order = [];
+    inboundObservabilityMocks.persistWhatsappInboundEvidence.mockImplementationOnce(async () => {
+      order.push('evidence');
+      return { ok: true };
+    });
+    ownerRoutingMocks.handleInboundOwnerMessage.mockImplementationOnce(async () => {
+      order.push('routing');
+      return { isOwner: true, handled: true };
+    });
+    const { req, res } = makeReqRes(inboundMessagePayload({
+      messageId: 'wamid.audit-order', text: 'Approve it', contextMessageId: 'wamid.owner-review',
+    }));
+    await handler(req, res);
+    expect(res.statusCode).toBe(200);
+    expect(order).toEqual(['evidence', 'routing']);
+    expect(inboundObservabilityMocks.persistWhatsappInboundEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        evidence: expect.objectContaining({ rawContextId: 'wamid.owner-review' }),
+        normalizedMessage: expect.objectContaining({ contextMessageId: 'wamid.owner-review' }),
+      }),
+    );
+  });
+
   it('extracts a captionless WhatsApp image as valid inbound evidence', () => {
     expect(extractInboundMessages({
       entry: [{ changes: [{ value: {
