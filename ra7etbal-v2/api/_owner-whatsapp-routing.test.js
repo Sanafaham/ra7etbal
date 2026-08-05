@@ -403,13 +403,13 @@ describe('owner command reconciliation safety', () => {
 });
 
 describe('authoritative quoted escalation routing', () => {
-  function stubQuoted(fetchMock, escalationStatus = 'open') {
+  function stubQuoted(fetchMock, escalationStatus = 'open', deliveryStatus = 'accepted') {
     stubIdentity(fetchMock);
     fetchMock
       .mockResolvedValueOnce(response([{
         metadata: { escalation_id: 'esc-2', owner_phone_number_id: 'meta-phone-1' },
         recipient_phone: owner.phone,
-        delivery_status: 'accepted',
+        delivery_status: deliveryStatus,
       }]))
       .mockResolvedValueOnce(response([{
         id: 'esc-2',
@@ -429,12 +429,54 @@ describe('authoritative quoted escalation routing', () => {
       }]));
   }
 
-  it('valid quote with multiple unrelated open escalations resolves only the referenced escalation', async () => {
+  it.each(['accepted', 'sent', 'delivered', 'read'])(
+    'valid quote with %s delivery status resolves only the referenced escalation',
+    async (deliveryStatus) => {
+      const fetchMock = vi.fn();
+      stubQuoted(fetchMock, 'open', deliveryStatus);
+      vi.stubGlobal('fetch', fetchMock);
+      stubClaim();
+      mocks.resolve.mockResolvedValue({ kind: 'success', status: 'delivered', ownerReplyText: 'Yes' });
+
+      const result = await handleInboundOwnerMessage({
+        supabaseUrl: SUPABASE,
+        serviceKey: KEY,
+        msg: msg({ contextMessageId: 'wamid.owner-notification-2' }),
+      });
+
+      expect(result).toMatchObject({
+        handled: true, route: 'quoted_escalation', reason: 'resolved_escalation',
+      });
+      expect(mocks.resolve).toHaveBeenCalledTimes(1);
+      expect(mocks.resolve).toHaveBeenCalledWith(expect.objectContaining({
+        userId: 'user-1',
+        escalation: expect.objectContaining({ id: 'esc-2' }),
+        replyChannel: 'whatsapp',
+      }));
+      expect(fetchMock.mock.calls.some(([url]) =>
+        String(url).includes('status=eq.open'))).toBe(false);
+    },
+  );
+
+  it.each([
+    'pending',
+    'failed',
+    'undelivered',
+    'expired',
+    'deleted',
+    'invalid',
+    null,
+    'unknown',
+  ])('quoted context with unsuccessful delivery status %s fails closed', async (deliveryStatus) => {
     const fetchMock = vi.fn();
-    stubQuoted(fetchMock);
+    stubIdentity(fetchMock);
+    fetchMock.mockResolvedValueOnce(response([{
+      metadata: { escalation_id: 'esc-2', owner_phone_number_id: 'meta-phone-1' },
+      recipient_phone: owner.phone,
+      delivery_status: deliveryStatus,
+    }]));
     vi.stubGlobal('fetch', fetchMock);
     stubClaim();
-    mocks.resolve.mockResolvedValue({ kind: 'success', status: 'delivered', ownerReplyText: 'Yes' });
 
     const result = await handleInboundOwnerMessage({
       supabaseUrl: SUPABASE,
@@ -442,16 +484,11 @@ describe('authoritative quoted escalation routing', () => {
       msg: msg({ contextMessageId: 'wamid.owner-notification-2' }),
     });
 
-    expect(result).toMatchObject({
-      handled: true, route: 'quoted_escalation', reason: 'resolved_escalation',
-    });
-    expect(mocks.resolve).toHaveBeenCalledTimes(1);
-    expect(mocks.resolve).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 'user-1',
-      escalation: expect.objectContaining({ id: 'esc-2' }),
-      replyChannel: 'whatsapp',
-    }));
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('status=eq.open'))).toBe(false);
+    expect(result).toMatchObject({ handled: true, route: 'unmatched_quote' });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).includes('staff_escalation_owner_decisions'))).toBe(false);
   });
 
   it('unmatched quoted context resolves nothing and sends only a truthful clarification', async () => {
