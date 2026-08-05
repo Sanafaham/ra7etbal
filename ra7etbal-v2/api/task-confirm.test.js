@@ -2962,6 +2962,49 @@ describe('Phase D — PATCH owner escalation answer (deepLinkToken)', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('graph.facebook.com'))).toBe(false);
   });
 
+  it('9b. [concurrency] first-write-wins at the answer RPC itself: a losing caller whose local read still said "open" gets the already-persisted winning decision back and never sends its own submitted text', async () => {
+    // This caller's own read of the escalation says "open" (unlike the
+    // already-answered-lookup tests above), so it takes the same code path
+    // as any normal single request and submits its own decision — 'rejected'
+    // — to answer_escalation_owner_decision. Simulate the DB-level race: a
+    // concurrent request already won the atomic write with 'approved' a
+    // moment earlier, so the RPC's own first-write-wins semantics return the
+    // already-persisted APPROVE_TEXT/'answered' row instead of accepting
+    // this caller's rejection. Nothing downstream may use the caller's own
+    // decision — only the RPC's returned (winning) row is authoritative.
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: 'user-1' })) // auth
+      .mockResolvedValueOnce(jsonResponse([openEscalationLookupRow()])) // token lookup: status 'open'
+      .mockResolvedValueOnce(jsonResponse([staffMessageRow()]))
+      // answer RPC: the caller asked to reject, but the DB already has the
+      // other caller's approval persisted — first-write-wins returns that.
+      .mockResolvedValueOnce(jsonResponse({
+        id: 'decision-1', user_id: 'user-1', staff_message_id: 'staff-msg-1',
+        status: 'answered', owner_reply_text: APPROVE_TEXT,
+      }))
+      .mockResolvedValueOnce(jsonResponse([{ row_id: 'decision-1', claimed: true, claim_token: 'claim-1', reply_text: APPROVE_TEXT, delivery_status: 'delivering' }]))
+      .mockResolvedValueOnce(jsonResponse([personRow()]))
+      .mockResolvedValueOnce(metaAcceptedResponse('wamid.222'))
+      .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', status: 'delivered_to_staff', owner_reply_text: APPROVE_TEXT }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    // This caller submitted 'rejected' — the race loser's own decision.
+    await handler(patchReq({ deepLinkToken: 'tok-1', decision: 'rejected' }), res);
+
+    // The response reflects the persisted WINNER (approval), never this
+    // caller's own losing 'rejected' submission.
+    expect(res.json).toHaveBeenCalledWith({ success: true, status: 'delivered', ownerReplyText: APPROVE_TEXT });
+    const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
+    const metaBody = JSON.parse(metaCall[1].body);
+    // Only one Meta send happens, and it carries the winner's approval text
+    // — never the loser's rejection text, and never a second, duplicate send.
+    expect(metaBody.template.components[0].parameters[1].text).toBe(APPROVE_TEXT);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('graph.facebook.com'))).toHaveLength(1);
+    expect(JSON.stringify(metaBody)).not.toContain(REJECT_TEXT);
+  });
+
   it('7. staff no longer opted in: answer is saved, delivery fails truthfully (saved_unreachable), no Meta call, lease marked failed', async () => {
     const fetchMock = vi
       .fn()
