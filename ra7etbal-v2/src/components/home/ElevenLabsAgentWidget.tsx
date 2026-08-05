@@ -72,6 +72,10 @@ import {
 } from "../../lib/delegations";
 import { createAndSendDirectMessage, DirectMessageBoundaryError } from "../../lib/direct-messages";
 import { preserveDirectMessageReplyIntent } from "../../lib/direct-message-reply-intent";
+import {
+  retrieveLiveInformation,
+  type LiveInformationCapability,
+} from "../../lib/live-information";
 import { isCommunicationStyleTaskText } from "../../lib/communication-vs-delegation";
 import { executeDelegationFromText } from "../../lib/text-carson";
 import { executeDirectMessageFastPath, parseSimpleDirectMessage } from "../../lib/direct-message-fast-path";
@@ -130,7 +134,11 @@ import {
   checkDelegationCoverage,
   type ExecutedDelegationRecord,
 } from "../../lib/carson-action-coverage";
-import { CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD } from "../../lib/carson-status-policy";
+import {
+  CARSON_LIVE_INFORMATION_POLICY,
+  CARSON_STATUS_POLICY,
+  CARSON_VOICE_SESSION_GUARD,
+} from "../../lib/carson-status-policy";
 import {
   CARSON_REPEAT_PROMPT,
   evaluateCarsonTranscriptCapture,
@@ -3135,6 +3143,40 @@ export default function ElevenLabsAgentWidget({
   );
 
   // ------------------------------------------------------------------
+  // Client tool: retrieve_live_information
+  // Read-only capability boundary for current external facts. The handler
+  // chooses the smallest sufficient capability deterministically; provider
+  // selection remains server-side and is invisible to Carson.
+  // ------------------------------------------------------------------
+  const retrieveLiveInformationTool = useCallback(
+    async (params: {
+      query: string;
+      capability?: LiveInformationCapability;
+      location?: string;
+    }): Promise<string> => {
+      const { data: liveSessionData } = await supabase.auth.getSession();
+      const result = await retrieveLiveInformation({
+        query: String(params?.query ?? ""),
+        capability: params?.capability,
+        location: params?.location,
+        authorizationToken: liveSessionData.session?.access_token ?? null,
+      });
+      console.info("[carson_live_information]", {
+        requestedCapability: params?.capability ?? null,
+        outcome: result.startsWith("LIVE_LOOKUP_SUCCEEDED")
+          ? "success"
+          : result.startsWith("LIVE_LOOKUP_NEEDS_CLARIFICATION")
+            ? "clarification"
+            : result.startsWith("LIVE_LOOKUP_NOT_REQUIRED")
+              ? "not_required"
+              : "failed",
+      });
+      return result;
+    },
+    [],
+  );
+
+  // ------------------------------------------------------------------
   // Client tool: save_note
   // Explicit user notes and ideas. Not reminders, tasks, delegations, or
   // durable behavior rules.
@@ -5639,9 +5681,10 @@ export default function ElevenLabsAgentWidget({
       : baseStateText;
     const hostingToolPolicy = `For every new hosting request or hosting clarification, call execute_instruction with the user's full verbatim utterance. Never answer hosting from conversation history or ra7etbal_state alone. Never claim a worker confirmed unless execute_instruction returns verified confirmation evidence.${activeHostingDraft ? " An active hosting clarification is in progress. Do not greet or start a new topic; wait for the owner's clarification answer and pass it to execute_instruction." : ""}`;
     const channelInstructions = requestedChannel === "voice"
-      ? [CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, hostingToolPolicy, persistentInstructions]
+      ? [CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, hostingToolPolicy, persistentInstructions].concat(CARSON_LIVE_INFORMATION_POLICY)
       : [
           CARSON_STATUS_POLICY,
+          CARSON_LIVE_INFORMATION_POLICY,
           ...(TYPED_MODE_IS_ADVISORY_ONLY ? [CARSON_TYPED_ADVISORY_POLICY] : []),
           persistentInstructions,
         ];
@@ -5885,6 +5928,24 @@ export default function ElevenLabsAgentWidget({
             try {
               return await runDirectToolWithDiagnostic("send_direct_whatsapp_message", params, () =>
                 sendDirectWhatsAppMessage(params),
+              );
+            } finally {
+              toolInFlightRef.current = null;
+            }
+          },
+          retrieve_live_information: async (params: {
+            query: string;
+            capability?: LiveInformationCapability;
+            location?: string;
+          }) => {
+            const captureBlock = guardCurrentToolInvocation("retrieve_live_information");
+            if (captureBlock) return captureBlock;
+            toolInFlightRef.current = "retrieve_live_information";
+            try {
+              return await runDirectToolWithDiagnostic(
+                "retrieve_live_information",
+                params,
+                () => retrieveLiveInformationTool(params),
               );
             } finally {
               toolInFlightRef.current = null;
