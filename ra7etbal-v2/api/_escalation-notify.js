@@ -280,11 +280,9 @@ export { buildEscalationMessage, OWNER_DECISION_REPLY_TEMPLATE_NAME };
  * substitute_review) requires their decision. Unlike notifyOwnerOfEscalation,
  * this path has no WhatsApp staff message — the trigger is a proof upload.
  *
- * Idempotency: uses owner_notified_at on the staff_escalation_owner_decisions
- * row. If already set, the send is skipped and the existing row is returned.
- * This is acceptable here because task-confirm is not called concurrently for
- * the same task — the blast radius of a duplicate notification is at most one
- * extra WhatsApp message.
+ * Idempotency: an atomic lease on the staff_escalation_owner_decisions row
+ * guards the Meta send. A live lease is never claimable by a concurrent
+ * caller; failed and expired attempts remain retryable; sent is terminal.
  *
  * @param {object} input
  * @param {string} input.taskId
@@ -300,7 +298,7 @@ export { buildEscalationMessage, OWNER_DECISION_REPLY_TEMPLATE_NAME };
  * @param {object} deps
  * @param {string} deps.supabaseUrl
  * @param {string} deps.serviceKey
- * @returns {Promise<{attempted: boolean, status: 'sent'|'skipped_already_sent'|'skipped_no_phone'|'failed', escalationId?: string, deepLinkToken?: string}>}
+ * @returns {Promise<{attempted: boolean, status: 'sent'|'skipped_already_sent'|'skipped_no_phone'|'failed'|'in_progress', escalationId?: string, deepLinkToken?: string}>}
  */
 export async function notifyOwnerOfTaskReview(input, deps) {
   const { supabaseUrl, serviceKey } = deps;
@@ -325,28 +323,59 @@ export async function notifyOwnerOfTaskReview(input, deps) {
     return { attempted: false, status: 'failed', reason: 'no_decision_row' };
   }
 
-  if (decision.owner_notified_at) {
+  let notificationClaim;
+  try {
+    notificationClaim = await rpc(
+      supabaseUrl,
+      serviceKey,
+      fetchImpl,
+      'claim_task_review_owner_notification',
+      { p_id: decision.id, p_user_id: userId, p_lease_seconds: LEASE_SECONDS },
+    );
+  } catch (err) {
+    console.error('[escalation-notify] claim_task_review_owner_notification failed', {
+      taskId, reviewType, error: err?.message || String(err),
+    });
+    return {
+      attempted: false, status: 'failed', reason: 'notification_claim_failed',
+      escalationId: decision.id, deepLinkToken: decision.deep_link_token,
+    };
+  }
+
+  if (!notificationClaim?.claimed) {
+    const alreadySent = notificationClaim?.notification_status === 'sent';
     return {
       attempted: false,
-      status: 'skipped_already_sent',
+      status: alreadySent ? 'skipped_already_sent' : 'in_progress',
+      reason: alreadySent ? 'already_sent' : 'lease_held_elsewhere',
       escalationId: decision.id,
       deepLinkToken: decision.deep_link_token,
     };
   }
+  const notificationClaimToken = notificationClaim.claim_token;
 
   const ownerPhone = await findOwnerPhone({ supabaseUrl, serviceKey, userId });
   if (!ownerPhone) {
+    await failTaskReviewNotificationLease(
+      supabaseUrl, serviceKey, fetchImpl, decision.id, userId, notificationClaimToken, 'no_owner_phone_on_file',
+    );
     return { attempted: true, status: 'skipped_no_phone', escalationId: decision.id, deepLinkToken: decision.deep_link_token };
   }
 
   const normalizedPhone = normalizeWhatsAppPhone(ownerPhone);
   if (!normalizedPhone) {
+    await failTaskReviewNotificationLease(
+      supabaseUrl, serviceKey, fetchImpl, decision.id, userId, notificationClaimToken, 'invalid_owner_phone',
+    );
     return { attempted: true, status: 'skipped_no_phone', escalationId: decision.id, deepLinkToken: decision.deep_link_token, reason: 'invalid_phone' };
   }
 
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!accessToken || !phoneNumberId) {
+    await failTaskReviewNotificationLease(
+      supabaseUrl, serviceKey, fetchImpl, decision.id, userId, notificationClaimToken, 'whatsapp_not_configured',
+    );
     return { attempted: true, status: 'failed', reason: 'not_configured', escalationId: decision.id, deepLinkToken: decision.deep_link_token };
   }
 
@@ -361,6 +390,36 @@ export async function notifyOwnerOfTaskReview(input, deps) {
     templateLanguage,
   });
 
+  // Task-review notifications participate in the same canonical outbound
+  // delivery graph as staff-origin escalations. The accepted Meta WAMID is
+  // the deterministic key used when the owner replies to this exact message.
+  const deliveryMetadata = {
+    escalation_id: decision.id,
+    task_id: taskId,
+    review_type: reviewType,
+    owner_phone_number_id: phoneNumberId,
+  };
+  const deliveryId = await beginWhatsappDelivery({
+    supabaseUrl,
+    serviceKey,
+    taskId,
+    sourceType: 'message',
+    recipientPhone: normalizedPhone,
+    recipientName: 'Owner',
+    templateName,
+    metadata: deliveryMetadata,
+  });
+  if (!deliveryId) {
+    await failTaskReviewNotificationLease(
+      supabaseUrl, serviceKey, fetchImpl, decision.id, userId,
+      notificationClaimToken, 'delivery_record_unavailable',
+    );
+    return {
+      attempted: true, status: 'failed', reason: 'delivery_record_unavailable',
+      escalationId: decision.id, deepLinkToken: decision.deep_link_token,
+    };
+  }
+
   let sendResult;
   try {
     sendResult = await sendMetaMessage({
@@ -369,19 +428,81 @@ export async function notifyOwnerOfTaskReview(input, deps) {
       payload,
     });
   } catch (err) {
+    await markWhatsappDeliveryFailed({
+      supabaseUrl, serviceKey, deliveryId, failureStage: 'network',
+      reason: err instanceof Error ? err.message : String(err), templateName,
+    }).catch(() => {});
     console.error('[escalation-notify] notifyOwnerOfTaskReview: Meta send threw', {
       taskId, reviewType, error: err?.message || String(err),
     });
+    await failTaskReviewNotificationLease(
+      supabaseUrl, serviceKey, fetchImpl, decision.id, userId, notificationClaimToken, 'network_error',
+    );
     return { attempted: true, status: 'failed', reason: 'network_error', escalationId: decision.id, deepLinkToken: decision.deep_link_token };
   }
 
   if (!sendResult.ok) {
+    const failure = getMetaFailure(sendResult);
+    await markWhatsappDeliveryFailed({
+      supabaseUrl, serviceKey, deliveryId, failureStage: 'meta_api', ...failure, templateName,
+    }).catch(() => {});
+    await failTaskReviewNotificationLease(
+      supabaseUrl, serviceKey, fetchImpl, decision.id, userId, notificationClaimToken, 'meta_rejected',
+    );
     return { attempted: true, status: 'failed', reason: 'meta_rejected', escalationId: decision.id, deepLinkToken: decision.deep_link_token };
   }
+
+  // Persist the terminal guard immediately after Meta accepts the primary
+  // text. Canonical delivery/image bookkeeping is secondary and must never
+  // reopen a successfully contacted owner to duplicate sends on retry.
+  try {
+    await rpc(supabaseUrl, serviceKey, fetchImpl, 'complete_task_review_owner_notification', {
+      p_id: decision.id,
+      p_user_id: userId,
+      p_claim_token: notificationClaimToken,
+      p_meta_message_id: sendResult.messageId,
+    });
+  } catch (err) {
+    console.error('[escalation-notify] complete_task_review_owner_notification failed after Meta acceptance', {
+      taskId, decisionId: decision.id, error: err?.message || String(err),
+    });
+    await markTaskReviewNotificationForReconciliation(
+      supabaseUrl, serviceKey, fetchImpl, decision.id, userId,
+      notificationClaimToken, sendResult.messageId,
+    );
+    return {
+      attempted: true, status: 'sent', reason: 'sent_but_not_recorded',
+      escalationId: decision.id, deepLinkToken: decision.deep_link_token,
+    };
+  }
+
+  await markWhatsappDeliveryAccepted({
+    supabaseUrl,
+    serviceKey,
+    deliveryId,
+    metaMessageId: sendResult.messageId,
+    templateName,
+    metadata: deliveryMetadata,
+  }).catch((err) => {
+    console.warn('[escalation-notify] task-review delivery acceptance bookkeeping failed', {
+      taskId, deliveryId, error: err?.message || String(err),
+    });
+  });
 
   // Send proof photo immediately after the text so the owner can decide from WhatsApp alone.
   // Non-fatal: a photo send failure must never block owner_notified_at from being stamped.
   if (proofImagePath) {
+    const imageDeliveryId = await beginWhatsappDelivery({
+      supabaseUrl,
+      serviceKey,
+      taskId,
+      parentDeliveryId: deliveryId,
+      sourceType: 'image',
+      messageKind: 'image',
+      recipientPhone: normalizedPhone,
+      recipientName: 'Owner',
+      metadata: deliveryMetadata,
+    });
     try {
       const photoResult = await sendProofImageMessage({
         to: normalizedPhone,
@@ -392,35 +513,34 @@ export async function notifyOwnerOfTaskReview(input, deps) {
         imagePath: proofImagePath,
       });
       if (!photoResult.sent) {
+        await markWhatsappDeliveryFailed({
+          supabaseUrl, serviceKey, deliveryId: imageDeliveryId,
+          failureStage: 'meta_api', reason: photoResult.reason,
+          metadata: deliveryMetadata,
+        }).catch(() => {});
         console.warn('[escalation-notify] notifyOwnerOfTaskReview: proof photo not sent (non-fatal)', {
           taskId, reviewType, reason: photoResult.reason,
         });
       } else {
+        await markWhatsappDeliveryAccepted({
+          supabaseUrl,
+          serviceKey,
+          deliveryId: imageDeliveryId,
+          metaMessageId: photoResult.messageId,
+          metadata: deliveryMetadata,
+        }).catch(() => {});
         console.log('[escalation-notify] notifyOwnerOfTaskReview: proof photo sent', { taskId, reviewType });
       }
     } catch (err) {
+      await markWhatsappDeliveryFailed({
+        supabaseUrl, serviceKey, deliveryId: imageDeliveryId,
+        failureStage: 'network', reason: err instanceof Error ? err.message : String(err),
+        metadata: deliveryMetadata,
+      }).catch(() => {});
       console.warn('[escalation-notify] notifyOwnerOfTaskReview: proof photo threw (non-fatal)', {
         taskId, reviewType, error: err?.message || String(err),
       });
     }
-  }
-
-  // Mark owner_notified_at so retries skip the send
-  try {
-    await fetchImpl(`${supabaseUrl}/rest/v1/staff_escalation_owner_decisions?id=eq.${encodeURIComponent(decision.id)}&user_id=eq.${encodeURIComponent(userId)}`, {
-      method: 'PATCH',
-      headers: {
-        apikey: serviceKey,
-        Authorization: `Bearer ${serviceKey}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=minimal',
-      },
-      body: JSON.stringify({ owner_notified_at: new Date().toISOString() }),
-    });
-  } catch (err) {
-    console.warn('[escalation-notify] notifyOwnerOfTaskReview: owner_notified_at patch failed (non-fatal)', {
-      taskId, error: err?.message || String(err),
-    });
   }
 
   console.log('[escalation-notify] notifyOwnerOfTaskReview: sent', {
@@ -433,6 +553,43 @@ export async function notifyOwnerOfTaskReview(input, deps) {
     escalationId: decision.id,
     deepLinkToken: decision.deep_link_token,
   };
+}
+
+async function markTaskReviewNotificationForReconciliation(
+  supabaseUrl, serviceKey, fetchImpl, decisionId, userId, claimToken, metaMessageId,
+) {
+  try {
+    await rpc(supabaseUrl, serviceKey, fetchImpl, 'reconcile_task_review_owner_notification', {
+      p_id: decisionId,
+      p_user_id: userId,
+      p_claim_token: claimToken,
+      p_meta_message_id: metaMessageId,
+    });
+  } catch (err) {
+    // If completion committed but its response was lost, this token is stale
+    // and the row is already terminal. Otherwise an expired sending lease is
+    // converted to reconciliation_required by the next claim attempt.
+    console.warn('[escalation-notify] task-review notification reconciliation marker failed', {
+      decisionId, error: err?.message || String(err),
+    });
+  }
+}
+
+async function failTaskReviewNotificationLease(
+  supabaseUrl, serviceKey, fetchImpl, decisionId, userId, claimToken, reason,
+) {
+  try {
+    await rpc(supabaseUrl, serviceKey, fetchImpl, 'fail_task_review_owner_notification', {
+      p_id: decisionId,
+      p_user_id: userId,
+      p_claim_token: claimToken,
+      p_error: reason,
+    });
+  } catch (err) {
+    console.warn('[escalation-notify] fail_task_review_owner_notification failed (non-fatal)', {
+      decisionId, reason, error: err?.message || String(err),
+    });
+  }
 }
 
 function buildTaskReviewMessage({ reviewType, taskDescription, assignedTo, reviewNote }) {

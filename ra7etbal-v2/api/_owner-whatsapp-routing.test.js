@@ -350,7 +350,11 @@ describe('owner command reconciliation safety', () => {
       .mockResolvedValueOnce(response([{ user_id: 'user-1' }]))
       .mockResolvedValueOnce(response([owner]))
       // whatsapp_deliveries lookup for findQuotedEscalation
-      .mockResolvedValueOnce(response([{ metadata: { escalation_id: 'esc-1' } }]))
+      .mockResolvedValueOnce(response([{
+        metadata: { escalation_id: 'esc-1' },
+        recipient_phone: owner.phone,
+        delivery_status: 'accepted',
+      }]))
       .mockResolvedValueOnce(response([{
         id: 'esc-1', user_id: 'user-1', staff_message_id: 'staff-1',
         status: 'open', owner_reply_text: null, deep_link_token: 'tok-1',
@@ -402,7 +406,11 @@ describe('authoritative quoted escalation routing', () => {
   function stubQuoted(fetchMock, escalationStatus = 'open') {
     stubIdentity(fetchMock);
     fetchMock
-      .mockResolvedValueOnce(response([{ metadata: { escalation_id: 'esc-2' } }]))
+      .mockResolvedValueOnce(response([{
+        metadata: { escalation_id: 'esc-2', owner_phone_number_id: 'meta-phone-1' },
+        recipient_phone: owner.phone,
+        delivery_status: 'accepted',
+      }]))
       .mockResolvedValueOnce(response([{
         id: 'esc-2',
         user_id: 'user-1',
@@ -464,6 +472,48 @@ describe('authoritative quoted escalation routing', () => {
     expect(mocks.sendMetaMessage).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls.some(([url]) =>
       String(url).includes('staff_escalation_owner_decisions'))).toBe(false);
+  });
+
+  it('quoted context sent to a different owner phone fails closed', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock.mockResolvedValueOnce(response([{
+      metadata: { escalation_id: 'esc-other' },
+      recipient_phone: '+971500000099',
+      delivery_status: 'accepted',
+    }]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY,
+      msg: msg({ contextMessageId: 'wamid.wrong-recipient' }),
+    });
+
+    expect(result).toMatchObject({ handled: true, route: 'unmatched_quote' });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).includes('staff_escalation_owner_decisions'))).toBe(false);
+  });
+
+  it('quoted context created for a different business number fails closed', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock.mockResolvedValueOnce(response([{
+      metadata: { escalation_id: 'esc-other', owner_phone_number_id: 'meta-phone-other' },
+      recipient_phone: owner.phone,
+      delivery_status: 'accepted',
+    }]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY,
+      msg: msg({ contextMessageId: 'wamid.wrong-business' }),
+    });
+
+    expect(result).toMatchObject({ handled: true, route: 'unmatched_quote' });
+    expect(mocks.resolve).not.toHaveBeenCalled();
   });
 
   it('already-resolved quoted escalation is recorded and silently ignored without another staff send or owner acknowledgement', async () => {
@@ -630,6 +680,34 @@ describe('natural owner decision matching and normalization', () => {
       instructionText: null,
       replyChannel: 'whatsapp',
     }));
+  });
+
+  it('binds a pronoun custom instruction to the one validated pending recipient', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock
+      .mockResolvedValueOnce(response([openDecision]))
+      .mockResolvedValueOnce(response([{
+        ...christopherMessage,
+        inbound_text: 'What should I prepare for lunch?',
+      }]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.resolve.mockResolvedValue({ kind: 'success', status: 'delivered' });
+
+    await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+      msg: msg({ body: 'Tell him to prepare steaks and French fries.' }),
+    });
+
+    expect(mocks.resolve).toHaveBeenCalledWith(expect.objectContaining({
+      escalation: expect.objectContaining({ id: openDecision.id }),
+      staffMessage: expect.objectContaining({ staff_name: 'Christopher' }),
+      decision: 'custom_instruction',
+      instructionText: 'Tell him to prepare steaks and French fries.',
+    }));
+    expect(mocks.executeCommand).not.toHaveBeenCalled();
   });
 
   it('matches an explicit decision UUID before recent-open inference', async () => {

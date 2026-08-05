@@ -102,6 +102,7 @@ const BASE_CALL_ARGS = {
   staffMessage: STAFF_MESSAGE,
   staffContextText: 'proposed substitute: TEREA Turquoise for TEREA Silver',
   replyChannel: 'whatsapp',
+  verifiedPhoneNumberId: 'phone-id-1',
 };
 
 beforeEach(() => {
@@ -399,6 +400,27 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
     const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
     expect(body).toContain('From the owner: Buy the Turquoise instead');
     expect(body).toContain(`/confirm?task=${TASK_ID}`);
+  });
+
+  it('[custom_instruction] renders "tell them" as an instruction to the validated staff recipient', async () => {
+    const persistedReply = 'Tell them to prepare steaks and French fries.';
+    const customFetch = vi.fn()
+      .mockResolvedValueOnce(jsonOk({ id: DECISION_ID, status: 'answered', owner_reply_text: persistedReply, owner_reply_channel: 'whatsapp' }))
+      .mockResolvedValueOnce(jsonOk([{ claimed: true, claim_token: 'tok-them', reply_text: persistedReply, delivery_status: null }]))
+      .mockResolvedValueOnce(jsonOk([{ id: 'person-christopher-1', phone: '+15559990001', whatsapp_opted_in: true }]))
+      .mockResolvedValueOnce(jsonOk({ id: DECISION_ID, status: 'delivered_to_staff', owner_reply_text: persistedReply }))
+      .mockResolvedValueOnce({ ok: true, status: 204, json: async () => ({}), text: async () => '' });
+    vi.stubGlobal('fetch', customFetch);
+
+    await resolveAndDeliverEscalationAnswer({
+      ...BASE_CALL_ARGS,
+      decision: 'custom_instruction',
+      instructionText: persistedReply,
+    });
+
+    const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
+    expect(body).toContain('From the owner: prepare steaks and French fries.');
+    expect(body).not.toMatch(/tell them/i);
   });
 
   it('already delivered: skips task state update and sends nothing', async () => {
