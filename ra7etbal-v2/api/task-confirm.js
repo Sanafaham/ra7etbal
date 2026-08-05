@@ -1375,9 +1375,13 @@ export async function resolveAndDeliverEscalationAnswer({
     isSubstituteReview && escalationTaskId && decision !== 'rejected_alternative'
       ? buildFreshWorkerConfirmationUrl(escalationTaskId)
       : null;
+  const recipientBoundReply = normalizeOwnerReplyForRecipient(
+    claimResult.reply_text,
+    staffMessage.staff_name,
+  );
   const messageText = isSubstituteReview
-    ? buildSubstituteDecisionMessageForStaff({ decision, instructionText: claimResult.reply_text, confirmationUrl })
-    : normalizeOwnerReplyForRecipient(claimResult.reply_text, staffMessage.staff_name);
+    ? buildSubstituteDecisionMessageForStaff({ decision, instructionText: recipientBoundReply, confirmationUrl })
+    : recipientBoundReply;
   if (!messageText) {
     await failEscalationDeliveryLease(
       supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'empty_reply_text',
@@ -1526,7 +1530,7 @@ export function normalizeOwnerReplyForRecipient(replyText, staffName) {
     const hasReportedSpeech = /\b(?:said|says|told|asked|reported)\b/i.test(text);
     if ((hasHe && hasShe) || hasReportedSpeech) return text;
 
-    text = text.replace(/\btell\s+(?:him|her)\s+to\s+/gi, '');
+    text = text.replace(/\btell\s+(?:him|her|them)\s+to\s+/gi, '');
     text = text.replace(
       /\b(?:he|she)\s+(can|cannot|can't|should|shouldn't|must|mustn't|may|will|won't|needs to|has to)\b/gi,
       (_match, modal) => {

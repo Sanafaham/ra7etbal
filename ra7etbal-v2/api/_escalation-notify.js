@@ -409,6 +409,16 @@ export async function notifyOwnerOfTaskReview(input, deps) {
     templateName,
     metadata: deliveryMetadata,
   });
+  if (!deliveryId) {
+    await failTaskReviewNotificationLease(
+      supabaseUrl, serviceKey, fetchImpl, decision.id, userId,
+      notificationClaimToken, 'delivery_record_unavailable',
+    );
+    return {
+      attempted: true, status: 'failed', reason: 'delivery_record_unavailable',
+      escalationId: decision.id, deepLinkToken: decision.deep_link_token,
+    };
+  }
 
   let sendResult;
   try {
@@ -450,11 +460,16 @@ export async function notifyOwnerOfTaskReview(input, deps) {
       p_id: decision.id,
       p_user_id: userId,
       p_claim_token: notificationClaimToken,
+      p_meta_message_id: sendResult.messageId,
     });
   } catch (err) {
     console.error('[escalation-notify] complete_task_review_owner_notification failed after Meta acceptance', {
       taskId, decisionId: decision.id, error: err?.message || String(err),
     });
+    await markTaskReviewNotificationForReconciliation(
+      supabaseUrl, serviceKey, fetchImpl, decision.id, userId,
+      notificationClaimToken, sendResult.messageId,
+    );
     return {
       attempted: true, status: 'sent', reason: 'sent_but_not_recorded',
       escalationId: decision.id, deepLinkToken: decision.deep_link_token,
@@ -538,6 +553,26 @@ export async function notifyOwnerOfTaskReview(input, deps) {
     escalationId: decision.id,
     deepLinkToken: decision.deep_link_token,
   };
+}
+
+async function markTaskReviewNotificationForReconciliation(
+  supabaseUrl, serviceKey, fetchImpl, decisionId, userId, claimToken, metaMessageId,
+) {
+  try {
+    await rpc(supabaseUrl, serviceKey, fetchImpl, 'reconcile_task_review_owner_notification', {
+      p_id: decisionId,
+      p_user_id: userId,
+      p_claim_token: claimToken,
+      p_meta_message_id: metaMessageId,
+    });
+  } catch (err) {
+    // If completion committed but its response was lost, this token is stale
+    // and the row is already terminal. Otherwise an expired sending lease is
+    // converted to reconciliation_required by the next claim attempt.
+    console.warn('[escalation-notify] task-review notification reconciliation marker failed', {
+      decisionId, error: err?.message || String(err),
+    });
+  }
 }
 
 async function failTaskReviewNotificationLease(

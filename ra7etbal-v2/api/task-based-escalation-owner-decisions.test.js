@@ -171,6 +171,27 @@ describe('notifyOwnerOfTaskReview', () => {
     expect(whatsappDeliveryMocks.beginWhatsappDelivery).not.toHaveBeenCalled();
   });
 
+  it('[canonical binding] fails the lease and does not send when the delivery row is unavailable', async () => {
+    whatsappDeliveryMocks.beginWhatsappDelivery.mockResolvedValueOnce(null);
+    const decision = makeDecision();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(decision))
+      .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]))
+      .mockResolvedValueOnce(jsonResponse(decision));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await notifyOwnerOfTaskReview(
+      { taskId: TASK_ID, userId: USER_ID, reviewType: 'substitute_review', taskDescription: 'Buy milk' },
+      { ...DEPS, fetchImpl: fetchMock },
+    );
+
+    expect(result).toMatchObject({ status: 'failed', reason: 'delivery_record_unavailable' });
+    expect(sendMetaMessageMock).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).includes('/rpc/fail_task_review_owner_notification'))).toBe(true);
+  });
+
   it('[rpc-failure] returns failed when claim RPC throws a network error', async () => {
     const fetchMock = vi.fn().mockRejectedValueOnce(new Error('network_down'));
     vi.stubGlobal('fetch', fetchMock);
@@ -274,7 +295,8 @@ describe('notifyOwnerOfTaskReview', () => {
       .mockResolvedValueOnce(jsonResponse(decision))
       .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
       .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]))
-      .mockRejectedValueOnce(new Error('completion_network_error'));
+      .mockRejectedValueOnce(new Error('completion_network_error'))
+      .mockResolvedValueOnce(jsonResponse(decision)); // reconciliation_required marker
 
     vi.stubGlobal('fetch', fetchMock);
 
@@ -288,6 +310,13 @@ describe('notifyOwnerOfTaskReview', () => {
     expect(result.status).toBe('sent');
     expect(result.reason).toBe('sent_but_not_recorded');
     expect(sendMetaMessageMock).toHaveBeenCalledTimes(1);
+    const reconcileCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes('/rpc/reconcile_task_review_owner_notification'));
+    expect(reconcileCall).toBeTruthy();
+    expect(JSON.parse(reconcileCall[1].body)).toMatchObject({
+      p_claim_token: 'notification-claim-1',
+      p_meta_message_id: 'wamid.xxx',
+    });
   });
 });
 
@@ -361,6 +390,7 @@ describe('20260806 migration — task-review owner notification lease', () => {
     expect(SQL).toContain('claim_task_review_owner_notification');
     expect(SQL).toContain('complete_task_review_owner_notification');
     expect(SQL).toContain('fail_task_review_owner_notification');
+    expect(SQL).toContain('reconcile_task_review_owner_notification');
     expect(SQL).toContain('staff_message_id IS NULL');
   });
 
@@ -368,6 +398,12 @@ describe('20260806 migration — task-review owner notification lease', () => {
     expect(SQL).toContain("v.owner_notified_at IS NOT NULL OR v.owner_notification_status = 'sent'");
     expect(SQL).toContain('owner_notification_token = p_claim_token');
     expect(SQL).toContain("ERRCODE = '40001'");
+  });
+
+  it('never automatically reclaims an expired send with an unknown provider outcome', () => {
+    expect(SQL).toContain("owner_notification_status = 'reconciliation_required'");
+    expect(SQL).toContain("owner_notification_error = 'expired_send_outcome_unknown'");
+    expect(SQL).not.toMatch(/OR \(v\.owner_notification_status = 'sending'.*lease_until <= now\(\)\) THEN/s);
   });
 });
 

@@ -2670,6 +2670,7 @@ describe('owner decision staff-facing recipient normalization', () => {
     ['Yes, but he must not serve it to guests.', 'Christopher', 'Yes, but you must not serve it to guests.'],
     ['No, she has to buy exactly three bottles at 6 PM.', 'Grace', 'No, you have to buy exactly three bottles at 6 PM.'],
     ['Please tell him to wait until tomorrow.', 'Christopher', 'Please wait until tomorrow.'],
+    ['Tell them to prepare steaks and French fries.', 'Christopher', 'prepare steaks and French fries.'],
   ])('normalizes only the certain recipient in %s', (ownerReply, staffName, expected) => {
     expect(normalizeOwnerReplyForRecipient(ownerReply, staffName)).toBe(expected);
   });
