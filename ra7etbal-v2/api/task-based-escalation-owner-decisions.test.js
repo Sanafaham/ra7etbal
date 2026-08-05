@@ -68,6 +68,12 @@ function makeDecision(overrides = {}) {
 }
 
 const DEPS = { supabaseUrl: SUPABASE_URL, serviceKey: SERVICE_KEY };
+const NOTIFICATION_CLAIM = {
+  decision_id: DECISION_ID,
+  claimed: true,
+  claim_token: 'notification-claim-1',
+  notification_status: 'sending',
+};
 
 beforeEach(() => {
   vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'test-access-token');
@@ -89,8 +95,9 @@ describe('notifyOwnerOfTaskReview', () => {
     const decision = makeDecision();
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(decision))              // claim_task_escalation_owner_decision
+      .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))    // claim notification lease
       .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }])) // findOwnerPhone
-      .mockResolvedValueOnce(jsonResponse({}));                   // PATCH owner_notified_at
+      .mockResolvedValueOnce(jsonResponse(decision));             // complete notification lease
 
     vi.stubGlobal('fetch', fetchMock);
 
@@ -105,12 +112,31 @@ describe('notifyOwnerOfTaskReview', () => {
     expect(result.deepLinkToken).toBe(TOKEN);
     // Meta send must have been called exactly once
     expect(sendMetaMessageMock).toHaveBeenCalledTimes(1);
+    expect(whatsappDeliveryMocks.beginWhatsappDelivery).toHaveBeenCalledWith(expect.objectContaining({
+      taskId: TASK_ID,
+      recipientPhone: '971501234567',
+      recipientName: 'Owner',
+      metadata: expect.objectContaining({
+        escalation_id: DECISION_ID,
+        task_id: TASK_ID,
+        review_type: 'uncertain_proof',
+        owner_phone_number_id: 'phone-number-id-1',
+      }),
+    }));
+    expect(whatsappDeliveryMocks.markWhatsappDeliveryAccepted).toHaveBeenCalledWith(expect.objectContaining({
+      deliveryId: 'delivery-1',
+      metaMessageId: 'wamid.xxx',
+      metadata: expect.objectContaining({ escalation_id: DECISION_ID }),
+    }));
   });
 
   it('[idempotency] returns skipped_already_sent when owner_notified_at is already set', async () => {
     const decision = makeDecision({ owner_notified_at: '2026-08-01T10:00:00Z' });
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse(decision)); // claim_task_escalation_owner_decision
+      .mockResolvedValueOnce(jsonResponse(decision))
+      .mockResolvedValueOnce(jsonResponse({
+        decision_id: DECISION_ID, claimed: false, claim_token: null, notification_status: 'sent',
+      }));
 
     vi.stubGlobal('fetch', fetchMock);
 
@@ -124,6 +150,25 @@ describe('notifyOwnerOfTaskReview', () => {
     expect(result.escalationId).toBe(DECISION_ID);
     // Must NOT attempt Meta send
     expect(sendMetaMessageMock).not.toHaveBeenCalled();
+  });
+
+  it('[concurrency] a live notification lease loser sends no Meta message or delivery row', async () => {
+    const decision = makeDecision();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(decision))
+      .mockResolvedValueOnce(jsonResponse({
+        decision_id: DECISION_ID, claimed: false, claim_token: null, notification_status: 'sending',
+      }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await notifyOwnerOfTaskReview(
+      { taskId: TASK_ID, userId: USER_ID, reviewType: 'substitute_review', taskDescription: 'Buy milk' },
+      { ...DEPS, fetchImpl: fetchMock },
+    );
+
+    expect(result).toMatchObject({ attempted: false, status: 'in_progress', reason: 'lease_held_elsewhere' });
+    expect(sendMetaMessageMock).not.toHaveBeenCalled();
+    expect(whatsappDeliveryMocks.beginWhatsappDelivery).not.toHaveBeenCalled();
   });
 
   it('[rpc-failure] returns failed when claim RPC throws a network error', async () => {
@@ -160,7 +205,9 @@ describe('notifyOwnerOfTaskReview', () => {
     const decision = makeDecision();
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(decision))       // claim
-      .mockResolvedValueOnce(jsonResponse([]));            // findOwnerPhone: no boss row
+      .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
+      .mockResolvedValueOnce(jsonResponse([]))             // findOwnerPhone: no boss row
+      .mockResolvedValueOnce(jsonResponse(decision));       // fail notification lease
 
     vi.stubGlobal('fetch', fetchMock);
 
@@ -179,7 +226,9 @@ describe('notifyOwnerOfTaskReview', () => {
     const decision = makeDecision();
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(decision))
-      .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]));
+      .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]))
+      .mockResolvedValueOnce(jsonResponse(decision));
 
     vi.stubGlobal('fetch', fetchMock);
 
@@ -199,7 +248,9 @@ describe('notifyOwnerOfTaskReview', () => {
     const decision = makeDecision();
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(decision))
-      .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]));
+      .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]))
+      .mockResolvedValueOnce(jsonResponse(decision));
 
     vi.stubGlobal('fetch', fetchMock);
 
@@ -211,14 +262,19 @@ describe('notifyOwnerOfTaskReview', () => {
     expect(result.attempted).toBe(true);
     expect(result.status).toBe('failed');
     expect(result.reason).toBe('meta_rejected');
+    expect(whatsappDeliveryMocks.markWhatsappDeliveryFailed).toHaveBeenCalledWith(expect.objectContaining({
+      deliveryId: 'delivery-1',
+      failureStage: 'meta_api',
+    }));
   });
 
-  it('[owner_notified_at-patch-failure] is non-fatal — still returns sent', async () => {
+  it('[completion-failure-after-Meta-acceptance] reports sent without continuing secondary sends', async () => {
     const decision = makeDecision();
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(decision))
+      .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
       .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]))
-      .mockRejectedValueOnce(new Error('patch_network_error')); // PATCH fails
+      .mockRejectedValueOnce(new Error('completion_network_error'));
 
     vi.stubGlobal('fetch', fetchMock);
 
@@ -230,6 +286,7 @@ describe('notifyOwnerOfTaskReview', () => {
     // Non-fatal — the send succeeded before the patch
     expect(result.attempted).toBe(true);
     expect(result.status).toBe('sent');
+    expect(result.reason).toBe('sent_but_not_recorded');
     expect(sendMetaMessageMock).toHaveBeenCalledTimes(1);
   });
 });
@@ -248,8 +305,9 @@ describe('buildTaskReviewMessage — message text', () => {
 
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(decision))
+      .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
       .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]))
-      .mockResolvedValueOnce(jsonResponse({})); // PATCH
+      .mockResolvedValueOnce(jsonResponse(decision));
 
     vi.stubGlobal('fetch', fetchMock);
 
@@ -290,6 +348,26 @@ describe('buildTaskReviewMessage — message text', () => {
     const text = await getMessageText('uncertain_proof', longDesc, 'Christopher');
     expect(text).toContain('A'.repeat(80));
     expect(text).not.toContain('A'.repeat(81));
+  });
+});
+
+describe('20260806 migration — task-review owner notification lease', () => {
+  const SQL = readFileSync(
+    join(__dirname, '..', 'supabase', 'migrations', '20260806_task_review_owner_notification_lease.sql'),
+    'utf-8',
+  );
+
+  it('provides claim, complete, and fail RPCs restricted to task-review rows', () => {
+    expect(SQL).toContain('claim_task_review_owner_notification');
+    expect(SQL).toContain('complete_task_review_owner_notification');
+    expect(SQL).toContain('fail_task_review_owner_notification');
+    expect(SQL).toContain('staff_message_id IS NULL');
+  });
+
+  it('preserves legacy owner_notified_at rows as terminal and token-gates writes', () => {
+    expect(SQL).toContain("v.owner_notified_at IS NOT NULL OR v.owner_notification_status = 'sent'");
+    expect(SQL).toContain('owner_notification_token = p_claim_token');
+    expect(SQL).toContain("ERRCODE = '40001'");
   });
 });
 

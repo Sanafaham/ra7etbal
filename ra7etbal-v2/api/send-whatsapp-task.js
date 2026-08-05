@@ -1417,7 +1417,7 @@ async function generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath })
  * so callers can proceed without blocking the primary notification.
  *
  * @param {{ to: string, accessToken: string, phoneNumberId: string, supabaseUrl: string, serviceKey: string, imagePath: string }} params
- * @returns {Promise<{ sent: boolean, reason?: string }>}
+ * @returns {Promise<{ sent: boolean, messageId?: string|null, reason?: string }>}
  */
 export async function sendProofImageMessage({ to, accessToken, phoneNumberId, supabaseUrl, serviceKey, imagePath }) {
   const signedUrl = await generateReferenceImageUrl({ supabaseUrl, serviceKey, imagePath });
@@ -1439,7 +1439,7 @@ export async function sendProofImageMessage({ to, accessToken, phoneNumberId, su
   });
 
   return result.ok
-    ? { sent: true }
+    ? { sent: true, messageId: result.messageId || null }
     : { sent: false, reason: result.metaError?.message || 'send_failed' };
 }
 

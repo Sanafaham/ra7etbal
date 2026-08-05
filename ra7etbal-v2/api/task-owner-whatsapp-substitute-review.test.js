@@ -102,6 +102,7 @@ const BASE_CALL_ARGS = {
   staffMessage: STAFF_MESSAGE,
   staffContextText: 'proposed substitute: TEREA Turquoise for TEREA Silver',
   replyChannel: 'whatsapp',
+  verifiedPhoneNumberId: 'phone-id-1',
 };
 
 beforeEach(() => {

@@ -297,7 +297,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
   let match;
   try {
     match = effectiveMsg.contextMessageId || !isDisambiguationSelectorMessage(effectiveMsg.body)
-      ? await matchOwnerDecision({ supabaseUrl, serviceKey, userId: identity.userId, msg: effectiveMsg })
+      ? await matchOwnerDecision({ supabaseUrl, serviceKey, identity, userId: identity.userId, msg: effectiveMsg })
       : await matchPendingDisambiguation({
           supabaseUrl,
           serviceKey,
@@ -305,7 +305,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
           selectorText: effectiveMsg.body,
           selectorReceiptId: receipt.row.receipt_id,
         }) || await matchOwnerDecision({
-          supabaseUrl, serviceKey, userId: identity.userId, msg: effectiveMsg,
+          supabaseUrl, serviceKey, identity, userId: identity.userId, msg: effectiveMsg,
         });
   } catch (error) {
     await failReceipt({ supabaseUrl, serviceKey, userId: identity.userId, receipt: receipt.row, error });
@@ -674,6 +674,7 @@ export async function handleInboundOwnerMessage({ supabaseUrl, serviceKey, msg }
         decision: normalized.decision,
         instructionText: normalized.instructionText,
         replyChannel: 'whatsapp',
+        verifiedPhoneNumberId: effectiveMsg.phoneNumberId,
       });
     }
   } catch (error) {
@@ -1059,13 +1060,15 @@ export function normalizeOwnerDecisionReply(text) {
 
 export function isDecisionShapedMessage(text) {
   const value = String(text || '').trim();
-  return /^(?:yes\b|no\b|approve\b|approved\b|do not approve\b|don't approve\b|dont approve\b|buy\b|use\b|do not\b|don't\b|ask\s+christopher\b)/i.test(value);
+  return /^(?:yes\b|no\b|approve\b|approved\b|do not approve\b|don't approve\b|dont approve\b|buy\b|use\b|do not\b|don't\b|ask\s+christopher\b|tell\s+(?:him|her|them)\b)/i.test(value);
 }
 
-async function matchOwnerDecision({ supabaseUrl, serviceKey, userId, msg }) {
+async function matchOwnerDecision({ supabaseUrl, serviceKey, identity, userId, msg }) {
   if (msg.contextMessageId) {
     const escalation = await findQuotedEscalation({
       supabaseUrl, serviceKey, userId, contextMessageId: msg.contextMessageId,
+      ownerPhone: identity?.ownerPhone,
+      phoneNumberId: msg.phoneNumberId,
     });
     return escalation
       ? { kind: 'matched', method: 'quoted_message', escalation }
@@ -1253,16 +1256,23 @@ async function markRetryable({ supabaseUrl, serviceKey, userId, receipt, error }
   }).catch(() => {});
 }
 
-async function findQuotedEscalation({ supabaseUrl, serviceKey, userId, contextMessageId }) {
+async function findQuotedEscalation({
+  supabaseUrl, serviceKey, userId, contextMessageId, ownerPhone, phoneNumberId,
+}) {
   const deliveries = await restSelect(
     supabaseUrl,
     serviceKey,
     'whatsapp_deliveries',
     `user_id=eq.${encodeURIComponent(userId)}&meta_message_id=eq.${encodeURIComponent(contextMessageId)}` +
-      '&recipient_name=eq.Owner&select=metadata&limit=2',
+      '&recipient_name=eq.Owner&select=metadata,recipient_phone,delivery_status&limit=2',
   );
   if (deliveries.length !== 1) return null;
-  const escalationId = deliveries[0]?.metadata?.escalation_id;
+  const delivery = deliveries[0];
+  if (delivery.delivery_status !== 'accepted') return null;
+  if (ownerPhone && normalizePhone(delivery.recipient_phone) !== normalizePhone(ownerPhone)) return null;
+  const boundPhoneNumberId = delivery?.metadata?.owner_phone_number_id;
+  if (boundPhoneNumberId && boundPhoneNumberId !== phoneNumberId) return null;
+  const escalationId = delivery?.metadata?.escalation_id;
   if (!escalationId) return null;
   const escalations = await restSelect(
     supabaseUrl,

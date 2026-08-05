@@ -1242,7 +1242,7 @@ async function failEscalationDeliveryLease(supabaseUrl, serviceKey, escalationId
  */
 export async function resolveAndDeliverEscalationAnswer({
   supabaseUrl, serviceKey, userId, deepLinkToken, escalation: existing, staffMessage, staffContextText,
-  decision, instructionText, replyChannel = 'app',
+  decision, instructionText, replyChannel = 'app', verifiedPhoneNumberId = null,
 }) {
   const headers = {
     apikey: serviceKey,
@@ -1314,6 +1314,17 @@ export async function resolveAndDeliverEscalationAnswer({
     return { kind: 'success', status: 'in_progress', ownerReplyText: claimResult.reply_text };
   }
 
+  // The answer RPC is first-write-wins. Two distinct owner webhooks can both
+  // arrive while their in-memory row still says "open"; only the persisted
+  // reply returned by the claim is authoritative. Never let the losing
+  // caller's local decision drive staff wording or a task transition.
+  decision = derivePersistedEscalationDecision({
+    reviewType,
+    replyText: claimResult.reply_text,
+    staffName: staffMessage.staff_name,
+    staffContextText,
+  });
+
   // 5. Resolve the staff recipient and current WhatsApp eligibility,
   // reusing the staffMessage row already fetched by the caller — no second
   // staff_messages lookup needed. Never trust staff_phone alone for
@@ -1346,7 +1357,12 @@ export async function resolveAndDeliverEscalationAnswer({
   // while making only recipient-certain third-person references natural for
   // the staff member who is receiving the message directly.
   const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  // WhatsApp owner replies must deliver through the same business number
+  // that was identity-verified at ingress. App-origin decisions retain the
+  // existing configured-number behavior.
+  const phoneNumberId = replyChannel === 'whatsapp'
+    ? verifiedPhoneNumberId
+    : process.env.WHATSAPP_PHONE_NUMBER_ID;
   if (!accessToken || !phoneNumberId) {
     await failEscalationDeliveryLease(
       supabaseUrl, serviceKey, escalation.id, userId, claimResult.claim_token, 'whatsapp_not_configured',
@@ -1453,6 +1469,24 @@ export async function resolveAndDeliverEscalationAnswer({
     ownerReplyText: complete.data.owner_reply_text,
     transportMessageId: sendResult.messageId,
   };
+}
+
+export function derivePersistedEscalationDecision({
+  reviewType, replyText, staffName, staffContextText,
+}) {
+  const persisted = String(replyText || '').trim();
+  if (persisted === buildEscalationApprovalReplyText(staffName, staffContextText)) return 'approved';
+  if (persisted === buildEscalationRejectionReplyText(staffName, staffContextText)) return 'rejected';
+  if (reviewType !== 'substitute_review') return 'custom_instruction';
+
+  const normalized = persisted.toLowerCase().replace(/[.!?]+$/g, '').trim();
+  if (/^(?:yes|yes buy it|buy it|get it|go ahead|go for it|that's fine|thats fine|sure|ok|okay|fine|approved|approve|approve it|sounds good|do it|proceed|get that|purchase it|get that one|looks? good)$/.test(normalized)) {
+    return 'approved_alternative';
+  }
+  if (/^(?:no|don't|dont|do not|reject|rejected|reject it|skip|skip it|don't buy(?: it)?|dont buy(?: it)?|do not buy(?: it)?|don't get(?: it)?|dont get(?: it)?|do not get(?: it)?|pass|nope|nah)$/.test(normalized)) {
+    return 'rejected_alternative';
+  }
+  return 'custom_instruction';
 }
 
 export function normalizeOwnerReplyForRecipient(replyText, staffName) {

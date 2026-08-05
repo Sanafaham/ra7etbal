@@ -12,6 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sendProofImageMessageMock = vi.hoisted(() => vi.fn(async () => ({ sent: true })));
 const sendMetaMessageMock = vi.hoisted(() => vi.fn(async () => ({ ok: true, messageId: 'wamid.text-1', metaError: null })));
+const whatsappDeliveryMocks = vi.hoisted(() => ({
+  beginWhatsappDelivery: vi.fn(async ({ messageKind }) => messageKind === 'image' ? 'delivery-image-1' : 'delivery-text-1'),
+  markWhatsappDeliveryAccepted: vi.fn(async () => {}),
+  markWhatsappDeliveryFailed: vi.fn(async () => {}),
+  getMetaFailure: vi.fn((result) => ({ reason: result?.metaError?.message || 'send_failed' })),
+}));
+
+vi.mock('./_whatsapp-delivery.js', () => whatsappDeliveryMocks);
 
 vi.mock('./send-whatsapp-task.js', async (importOriginal) => {
   const actual = await importOriginal();
@@ -38,12 +46,19 @@ const DECISION_ROW = {
   owner_notified_at: null,
 };
 const OWNER_PHONE = [{ name: 'Sana', role: 'boss', phone: '+15550000099' }];
+const NOTIFICATION_CLAIM = {
+  decision_id: 'decision-1', claimed: true,
+  claim_token: 'notification-claim-1', notification_status: 'sending',
+};
 
-function makeFetchMock({ decisionRow = DECISION_ROW } = {}) {
+function makeFetchMock({ decisionRow = DECISION_ROW, alreadySent = false } = {}) {
   return vi.fn()
     .mockResolvedValueOnce(jsonResponse(decisionRow))              // claim_task_escalation_owner_decision
+    .mockResolvedValueOnce(jsonResponse(alreadySent ? {
+      decision_id: decisionRow.id, claimed: false, claim_token: null, notification_status: 'sent',
+    } : NOTIFICATION_CLAIM))                                      // claim notification lease
     .mockResolvedValueOnce(jsonResponse(OWNER_PHONE))              // findOwnerPhone
-    .mockResolvedValueOnce(jsonResponse({}, true));                // owner_notified_at PATCH
+    .mockResolvedValueOnce(jsonResponse(decisionRow, true));       // complete notification lease
 }
 
 const BASE_INPUT = {
@@ -65,6 +80,9 @@ afterEach(() => {
   vi.unstubAllEnvs();
   sendMetaMessageMock.mockClear();
   sendProofImageMessageMock.mockClear();
+  whatsappDeliveryMocks.beginWhatsappDelivery.mockClear();
+  whatsappDeliveryMocks.markWhatsappDeliveryAccepted.mockClear();
+  whatsappDeliveryMocks.markWhatsappDeliveryFailed.mockClear();
 });
 
 describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
@@ -117,7 +135,7 @@ describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
     expect(sendProofImageMessageMock).not.toHaveBeenCalled();
   });
 
-  it('[4] proof photo failure is non-fatal — owner_notified_at is still stamped and status is sent', async () => {
+  it('[4] proof photo failure is non-fatal after the notification lease is completed', async () => {
     sendProofImageMessageMock.mockResolvedValueOnce({ sent: false, reason: 'meta_upload_failed' });
     const fetchMock = makeFetchMock();
     vi.stubGlobal('fetch', fetchMock);
@@ -128,10 +146,8 @@ describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
     );
 
     expect(result.status).toBe('sent');
-    // The PATCH to stamp owner_notified_at is the third fetch call — must have happened
-    const patchCall = fetchMock.mock.calls[2];
-    expect(patchCall[0]).toContain('staff_escalation_owner_decisions');
-    expect(patchCall[1].method).toBe('PATCH');
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).includes('/rpc/complete_task_review_owner_notification'))).toBe(true);
   });
 
   it('[5] proof photo send error (throws) is non-fatal — status is still sent', async () => {
@@ -165,6 +181,7 @@ describe('notifyOwnerOfTaskReview — proof photo delivery', () => {
   it('[7] skips everything when already notified (owner_notified_at set)', async () => {
     const fetchMock = makeFetchMock({
       decisionRow: { ...DECISION_ROW, owner_notified_at: '2026-08-02T10:00:00Z' },
+      alreadySent: true,
     });
     vi.stubGlobal('fetch', fetchMock);
 
