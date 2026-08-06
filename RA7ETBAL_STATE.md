@@ -276,6 +276,36 @@ Protect: the delivery-state allowlist and its fail-closed negative cases; exact-
 
 **Workstream 2 Frozen Baseline: PERMANENT as of 2026-08-06.** Everything verified above is locked. Workstream 3 begins next, design/planning only.
 
+### Workstream 3 — canonical staff-facing communication — FORMALLY CLOSED, PRODUCTION VERIFIED
+
+Status: FORMALLY CLOSED. Final production deployment SHA `5d10be85b17250c3a6bb6ac2ac1dbc5c3ccc57c5` (PR #187, `feat/ws3-staff-communication`, merged 2026-08-06).
+
+Root cause closed: `uncertain_proof`/`correction_limit` owner decisions fell through to a "quote genuine staff words" builder whose safety assumption was silently violated by `_owner-whatsapp-routing.js`'s `fetchTaskDecisionContext`, which synthesizes that "quoted" text from `task.quality_review_note` for task-based escalations. `substitute_review` already had its own sanitizing builder; the other two review types didn't.
+
+Fix: `ra7etbal-v2/api/_staff-decision-message.js`'s `buildCanonicalStaffDecisionMessage({decision, instructionText, confirmationUrl})` — a pure function with no parameter capable of carrying Quality Intelligence reasoning, a review note, or any synthesized context. Wired into both delivery pipelines (`handleOwnerDecision` / Alternative Review UI, and `resolveAndDeliverEscalationAnswer` / WhatsApp quoted-reply) for every task-based decision — one canonical pipeline, not two. Canonical copy: approved → `"Approved. You can go ahead."`; rejected → `"Please wait. The owner did not approve this. You will receive further instructions shortly."`; custom → `"From the owner: {exact owner text}"`. Confirmation link included unconditionally for task-based decisions — no per-decision suppression.
+
+Deliberately not touched, confirmed by diff review: Workstream 2 routing, correlation, observability, persistence, RPCs, leases, first-write-winner, business-number validation.
+
+Production verification (fixture 1, task `f0a594dc-5964-47c6-9ce3-d0e26b5991a6`, "buy Coca-Cola Zero" with no fallback clause, forcing a genuine `substitute_review`): owner approved via the Alternative Review UI on the PR #187 preview deployment (`dpl_6DnxcFg4NVrmNZLakyKXMy4SnyPn`). Confirmed via production runtime logs and `whatsapp_deliveries` metadata fingerprint (`{decision:'approved_alternative', send_mode:'direct_message'}`, unique to `handleOwnerDecision`) that: the canonical builder executed; the correct code path executed; the generated message was exactly `"Approved. You can go ahead."`; no Quality Intelligence reasoning, review note, or synthesized context reached the output; no legacy formatter (`buildApprovalMessageText`/`buildRejectionMessageText`/the old `buildSubstituteDecisionMessageForStaff`) generated the outgoing text — those were removed by this PR. Fixtures 2 (`uncertain_proof`) and 3 (custom instruction) were not run live; closed instead on fixture 1's live evidence plus `api/staff-decision-golden-contract.test.js`'s exhaustive automated coverage of exactly those cases (mutation-style: a deliberately egregious `quality_review_note` proven absent from the outbound message for every review type and decision type) — an explicit, agreed substitution for live verification, not an oversight.
+
+Regression protection: `ra7etbal-v2/api/_staff-decision-message.test.js` (exact canonical copy per decision type, mutation-style leak proof against every parameter the function accepts), `ra7etbal-v2/api/staff-decision-golden-contract.test.js` (closes the confirmed blind spot — `uncertain_proof`/`correction_limit` had zero prior coverage through `resolveAndDeliverEscalationAnswer`; cross-pipeline parity; Pipeline A mutation test), plus updated assertions in `task-owner-whatsapp-substitute-review.test.js`, `task-confirm.test.js`, and `alternative-review-golden-contract.test.js`. All of the above were included in `npm run test:carson-protected` from this PR's first commit — no follow-up hardening PR was needed the way WS2 needed PR #185, since the golden-contract suite was written alongside the implementation rather than discovered missing afterward.
+
+**Separate reliability issue found during production verification, explicitly out of scope for this workstream:** the fixture-1 approval message was Meta-accepted (200 OK, wamid issued) then rejected by Meta's own delivery pipeline via an async status callback — `"In order to maintain a healthy ecosystem engagement, the message failed to be delivered."` on template `ra7etbal_routine_message`. Confirmed via `whatsapp_deliveries` history: this exact failure has recurred **8 times on this account since 2026-07-15**, three weeks before PR #187 existed — it is not caused by, and was not introduced by, this workstream. Because the resulting approval message never reached the worker, and no retry/reconciliation exists for staff-facing sends (unlike Workstream 2's owner-notification lease, which does have this), the worker completed the task via the stale confirmation link from the original 12:26 delegation message instead — a different, pre-existing, generic code path (`Confirm.tsx`) unrelated to the owner-decision flow. Full forensic trace preserved in session history. **Do not fold a fix for this into Workstream 3 — see the new reliability workstream below.**
+
+Protect: the canonical builder's closed input surface (decision/instructionText/confirmationUrl only — no QI/review-note parameter); both pipelines routing every task-based decision through it; the unconditional confirmation-link rule. Reopen only on a reproduced production regression against the verified behavior above.
+
+**Workstream 3 Frozen Baseline: PERMANENT as of 2026-08-06.**
+
+### Staff-facing outbound delivery resilience — NEW, NOT STARTED (reliability workstream)
+
+Opened 2026-08-06, discovered during Workstream 3 production verification. Scope, as specified:
+
+- Retry/reconciliation for a staff-facing WhatsApp send after Meta post-acceptance failure (mirror Workstream 2's owner-notification lease pattern — `claim_task_review_owner_notification`/`reconciliation_required` — which exists for owner-facing sends but has no equivalent for staff-facing sends).
+- Recovery from Meta's "ecosystem engagement" delivery failures specifically — this exact failure has recurred 8 times on `ra7etbal_routine_message` since 2026-07-15; needs root-causing (template quality rating? account tier? pacing?), not just retried blindly.
+- Prevention of a stale confirmation link (from an earlier, unrelated message) silently becoming the de facto task-completion path when the intended follow-up message fails to deliver.
+
+Relationship to the existing roadmap: this may overlap with or be the same item as the already-planned "Workstream 5: Reliability release gate" in the Carson Master Engineering Tracker (external to this repo) — reconcile numbering there, not here. Not started. Do not begin implementation until designed and reviewed, per the same engineering lifecycle used for Workstreams 1–3.
+
 ### Inbox Review V1
 
 Status: complete and stable.
