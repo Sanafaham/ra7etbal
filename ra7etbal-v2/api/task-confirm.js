@@ -57,6 +57,7 @@ import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 import { notifyOwnerOfTaskReview } from './_escalation-notify.js';
+import { buildCanonicalStaffDecisionMessage } from './_staff-decision-message.js';
 
 // Quality Intelligence vision review can legitimately take longer than the
 // default Vercel function window, especially with several proof photos.
@@ -867,12 +868,12 @@ async function handleOwnerDecision(req, res) {
     }
     const recipientName = assigneePerson.name || task.assigned_to || 'there';
 
-    const messageContent =
-      decision === 'rejected_alternative'
-        ? buildRejectionMessageText({ recipientName, taskDescription: task.description, substituteNote: task.quality_review_note })
-        : decision === 'approved_alternative'
-        ? buildApprovalMessageText({ recipientName, taskDescription: task.description })
-        : instructionText;
+    // Workstream 3 canonical builder — recipientName/taskDescription and
+    // task.quality_review_note are deliberately not passed in here. Staff
+    // never receives Quality Intelligence reasoning, review notes, or any
+    // other synthesized/internal text; only the owner's own instructionText
+    // (for custom_instruction) or a fixed operational sentence.
+    const messageContent = buildCanonicalStaffDecisionMessage({ decision, instructionText });
     const workerConfirmationUrl = buildFreshWorkerConfirmationUrl(task.id || taskId);
 
     const reserveFn = decision === 'rejected_alternative' ? 'reserve_rejected_alternative' : 'reserve_custom_instruction';
@@ -1052,11 +1053,11 @@ const ESCALATION_DECISIONS = ['approved', 'rejected', 'custom_instruction', 'app
  * already on the staff_messages row — never a fixed, scenario-specific
  * string. A fixed string (e.g. "Yes, buy the red wine vinegar instead.")
  * would be actively wrong for every escalation except the one it was
- * written for; this codebase already has exactly this problem solved
- * once, for a structurally identical owner-decision flow — see
- * buildApprovalMessageText/buildRejectionMessageText above, which
- * interpolate {recipientName, taskDescription} (real stored fields, never
- * invented) rather than hardcoding wording. This mirrors that pattern:
+ * written for. Note this only applies to a genuine staff_messages-originated
+ * escalation (staffMessage.inbound_text is the staff member's own verified
+ * words); task-based escalations (substitute review, proof-photo review) go
+ * through the separate canonical builder in _staff-decision-message.js
+ * instead, which never quotes back a task/QI field — see Workstream 3.
  * {staffName, inboundText} are both real, stored, already-verified fields
  * (staff_messages.staff_name/inbound_text), quoted verbatim — the exact
  * same "quote it back" technique the owner-decision page itself already
@@ -1371,16 +1372,22 @@ export async function resolveAndDeliverEscalationAnswer({
   }
 
   const isSubstituteReview = reviewType === 'substitute_review';
-  const confirmationUrl =
-    isSubstituteReview && escalationTaskId && decision !== 'rejected_alternative'
-      ? buildFreshWorkerConfirmationUrl(escalationTaskId)
-      : null;
+  // Workstream 3 — every task-based decision (substitute review, proof-photo
+  // review alike) goes through the one canonical staff builder and gets the
+  // confirmation link unconditionally: no per-decision or per-review-type
+  // special case. Genuine staff_escalation (escalationTaskId is null) is
+  // unaffected — it keeps quoting the staff member's own verified words via
+  // recipientBoundReply, which was never the leak surface.
+  const isTaskBasedDecision = Boolean(escalationTaskId);
+  const confirmationUrl = isTaskBasedDecision
+    ? buildFreshWorkerConfirmationUrl(escalationTaskId)
+    : null;
   const recipientBoundReply = normalizeOwnerReplyForRecipient(
     claimResult.reply_text,
     staffMessage.staff_name,
   );
-  const messageText = isSubstituteReview
-    ? buildSubstituteDecisionMessageForStaff({ decision, instructionText: recipientBoundReply, confirmationUrl })
+  const messageText = isTaskBasedDecision
+    ? buildCanonicalStaffDecisionMessage({ decision, instructionText: recipientBoundReply, confirmationUrl })
     : recipientBoundReply;
   if (!messageText) {
     await failEscalationDeliveryLease(
@@ -1597,17 +1604,6 @@ async function markSubstituteRejectionCorrectionRequired({ supabaseUrl, serviceK
   };
 }
 
-export function buildSubstituteDecisionMessageForStaff({ decision, instructionText, confirmationUrl }) {
-  if (decision === 'rejected_alternative') {
-    return 'Do not continue with this task. Please wait for further instructions.';
-  }
-  const base =
-    decision === 'approved_alternative'
-      ? 'Approved. You can go ahead with this task.'
-      : `From the owner: ${String(instructionText || '').trim() || 'please see instructions.'}`;
-  return confirmationUrl ? `${base}\n\n${confirmationUrl}` : base;
-}
-
 /** Verifies the Bearer JWT, returns { uid } or { error }. Same auth/v1/user pattern as api/automations.js's requireUser(). */
 async function requireOwnerUser(req, { supabaseUrl, anonKey }) {
   const authHeader = req.headers?.['authorization'] ?? req.headers?.['Authorization'] ?? '';
@@ -1713,16 +1709,6 @@ function buildCompletedResponse(decisionRow) {
     outcome: decisionRow.outcome || 'approved',
     already_completed: true,
   };
-}
-
-function buildRejectionMessageText({ recipientName, taskDescription, substituteNote }) {
-  const note = String(substituteNote || '').trim();
-  const suffix = note ? ` ${note}` : '';
-  return `${recipientName}, the exact item is needed for "${taskDescription}" instead of the alternative.${suffix} Please try again.`;
-}
-
-function buildApprovalMessageText({ recipientName, taskDescription }) {
-  return `${recipientName}, the alternative for "${taskDescription}" was approved — please go ahead.`;
 }
 
 async function fetchDeliveryStatus({ supabaseUrl, serviceKey, deliveryId }) {

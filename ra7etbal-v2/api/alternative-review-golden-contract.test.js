@@ -196,7 +196,10 @@ describe('Golden contract [3/4/5/6/7/8/9/10] — PATCH owner decision (substitut
 
     const metaCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('graph.facebook.com'));
     expect(metaCalls).toHaveLength(1);
-    expect(JSON.parse(metaCalls[0][1].body).template.components[0].parameters[0].text).toMatch(/exact item is needed/i);
+    // Workstream 3: the canonical operational rejection sentence — never AI
+    // reasoning or the task's quality_review_note (see _staff-decision-message.js).
+    expect(JSON.parse(metaCalls[0][1].body).template.components[0].parameters[0].text)
+      .toBe('Please wait. The owner did not approve this. You will receive further instructions shortly.');
   });
 
   it('[5] Custom Instruction: sends exactly the owner\'s typed instructionText to the worker — not a paraphrase, not a template default', async () => {
@@ -223,8 +226,9 @@ describe('Golden contract [3/4/5/6/7/8/9/10] — PATCH owner decision (substitut
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, decision: 'custom_instruction', outcome: 'custom_instruction_sent' }));
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
     const metaBody = JSON.parse(metaCall[1].body);
-    // Verbatim — not trimmed differently, not templated, not paraphrased.
-    expect(metaBody.template.components[0].parameters[0].text).toBe(exactText);
+    // Verbatim under the "From the owner:" prefix (Workstream 3, Rule 5) —
+    // not trimmed differently, not templated, not paraphrased.
+    expect(metaBody.template.components[0].parameters[0].text).toBe(`From the owner: ${exactText}`);
   });
 
   it('[6] cross-task isolation: two different tasks in substitute_review simultaneously — deciding task A never touches task B\'s row, RPC args, or WhatsApp payload, and vice versa', async () => {
