@@ -1617,7 +1617,7 @@ async function notifyOwnerOfDirectMessageDeliveryFailure({ supabaseUrl, serviceK
 
 async function recordDeliveryFailureNotice({ supabaseUrl, serviceKey, deliveryId, existingMetadata }) {
   try {
-    await fetch(
+    const response = await fetch(
       `${supabaseUrl}/rest/v1/whatsapp_deliveries?id=eq.${encodeURIComponent(deliveryId)}`,
       {
         method: 'PATCH',
@@ -1630,6 +1630,14 @@ async function recordDeliveryFailureNotice({ supabaseUrl, serviceKey, deliveryId
         }),
       },
     );
+    if (!response.ok) {
+      const details = await response.text().catch(() => '');
+      console.warn('[whatsapp-webhook] delivery_failure_notice metadata patch failed', {
+        deliveryId,
+        status: response.status,
+        details,
+      });
+    }
   } catch (err) {
     console.warn('[whatsapp-webhook] delivery_failure_notice metadata patch threw (non-fatal)', {
       deliveryId,
