@@ -851,7 +851,7 @@ export async function updateWhatsappDeliveryStatus({
     const lookupRes = await fetch(
       `${supabaseUrl}/rest/v1/whatsapp_deliveries` +
         `?meta_message_id=eq.${encodeURIComponent(messageId)}` +
-        `&select=id,user_id,delivery_status,last_status_at,automation_run_id,source_type,recipient_phone,metadata` +
+        `&select=id,user_id,delivery_status,last_status_at,automation_run_id,source_type,recipient_phone,recipient_name,metadata` +
         `&limit=1`,
       { headers: serviceHeaders(serviceKey) },
     );
@@ -985,20 +985,50 @@ export async function updateWhatsappDeliveryStatus({
     }
 
     // Phase 8.1 bug fix — a substitute-review decision (Reject Alternative /
-    // Custom Instruction) completes on Meta's synchronous accept, but Meta
-    // can still report a genuine async failure afterward (as it did here:
-    // error 131049). `updated` is only true the first time this delivery
-    // transitions to 'failed' (buildDeliveryStatusPatch treats 'failed' as
-    // terminal and returns null on any later callback), so this reopen path
-    // is naturally idempotent — no separate dedup key needed. Scoped to
-    // exactly the deliveries linked to a completed rejected_alternative/
-    // custom_instruction decision; every other WhatsApp failure (including
-    // Approve Alternative, which never has a linked delivery) is untouched.
+    // Custom Instruction / Approve Alternative, widened 2026-07-12 — see
+    // supabase/migrations/20260712_approve_alternative_message_first.sql)
+    // completes on Meta's synchronous accept, but Meta can still report a
+    // genuine async failure afterward (as it did here: error 131049).
+    // `updated` is only true the first time this delivery transitions to
+    // 'failed' (buildDeliveryStatusPatch treats 'failed' as terminal and
+    // returns null on any later callback), so this reopen path is naturally
+    // idempotent — no separate dedup key needed. Scoped to exactly the
+    // deliveries linked to a completed decision of one of those three types;
+    // every other WhatsApp failure (plain communications, delegations,
+    // corrections, automations, or a decision/task state its own SQL
+    // doesn't reopen) falls through to the Workstream 5 check below instead.
+    let substituteReviewReopened = false;
     if (updated && status === 'failed') {
       try {
-        await reopenSubstituteReviewIfApplicable({ supabaseUrl, serviceKey, deliveryId: delivery.id });
+        substituteReviewReopened = await reopenSubstituteReviewIfApplicable({ supabaseUrl, serviceKey, deliveryId: delivery.id });
       } catch (err) {
         console.warn('[whatsapp-webhook] substitute-review reopen threw (non-fatal)', {
+          deliveryId: delivery.id,
+          error: err?.message ?? String(err),
+        });
+      }
+    }
+
+    // Workstream 5 — staff-facing outbound delivery reliability. Root-caused
+    // against live production data before this was written: every confirmed
+    // 131049 ("ecosystem engagement") failure on source_type 'delegation' or
+    // 'followup' is zero — this gap is scoped exactly to source_type
+    // 'message' (plain direct communication and owner-decision sends riding
+    // the same template), since that is the only category with any observed
+    // failures. This is a safety net, not a replacement: it only fires when
+    // reopenSubstituteReviewIfApplicable's own RPC decides the failure isn't
+    // its concern (returns reopened: false — a plain communication with no
+    // linked decision row, or a decision type/task state its SQL doesn't
+    // reopen), so it can never double-notify a delivery already handled
+    // above. Truthful owner notification only, no retry — retrying a send
+    // already throttled by Meta's own pacing would compound the problem, not
+    // fix it. Reuses the existing single-fire `updated` guarantee for
+    // idempotency — no new lease or claim needed.
+    if (updated && status === 'failed' && !substituteReviewReopened && delivery.source_type === 'message') {
+      try {
+        await notifyOwnerOfDirectMessageDeliveryFailure({ supabaseUrl, serviceKey, delivery });
+      } catch (err) {
+        console.warn('[whatsapp-webhook] staff delivery-failure owner notice threw (non-fatal)', {
           deliveryId: delivery.id,
           error: err?.message ?? String(err),
         });
@@ -1526,12 +1556,12 @@ async function reopenSubstituteReviewIfApplicable({ supabaseUrl, serviceKey, del
       status: response.status,
       details,
     });
-    return;
+    return false;
   }
 
   const rows = await response.json().catch(() => []);
   const row = Array.isArray(rows) ? rows[0] : rows;
-  if (!row?.reopened) return; // not applicable, or the task already moved on for an unrelated reason
+  if (!row?.reopened) return false; // not applicable, or the task already moved on for an unrelated reason
 
   console.log('[whatsapp-webhook] substitute_review reopened after async delivery failure', {
     taskId: row.task_id,
@@ -1547,6 +1577,65 @@ async function reopenSubstituteReviewIfApplicable({ supabaseUrl, serviceKey, del
   }).catch((err) =>
     console.warn('[whatsapp-webhook] substitute-review reopen owner push failed (non-fatal):', err?.message || err),
   );
+  return true;
+}
+
+/**
+ * Workstream 5 — staff-facing outbound delivery reliability.
+ *
+ * Notifies the owner when a source_type 'message' send (plain direct
+ * communication, or an owner-decision send the reopen RPC above didn't
+ * claim) fails asynchronously after Meta accepted it. No auto-retry:
+ * production data showed these failures are Meta's own per-recipient
+ * pacing, and resending would add more proactive-template volume to an
+ * already-throttled recipient rather than fix anything. Reuses the existing
+ * single-fire `updated` guarantee on the caller's side for idempotency, and
+ * the existing `metadata` jsonb column for outcome bookkeeping (same pattern as
+ * recordSmsFallbackOutcome below) — no new table, column, or RPC.
+ */
+async function notifyOwnerOfDirectMessageDeliveryFailure({ supabaseUrl, serviceKey, delivery }) {
+  if (isPlainObject(delivery.metadata) && delivery.metadata.delivery_failure_notice) return;
+
+  await sendOwnerPush({
+    supabaseUrl,
+    serviceKey,
+    userId: delivery.user_id,
+    description: null,
+    assignedTo: delivery.recipient_name || null,
+    variant: 'staff_delivery_failed',
+  }).catch((err) =>
+    console.warn('[whatsapp-webhook] staff delivery-failure owner push failed (non-fatal):', err?.message || err),
+  );
+
+  await recordDeliveryFailureNotice({
+    supabaseUrl,
+    serviceKey,
+    deliveryId: delivery.id,
+    existingMetadata: delivery.metadata,
+  });
+}
+
+async function recordDeliveryFailureNotice({ supabaseUrl, serviceKey, deliveryId, existingMetadata }) {
+  try {
+    await fetch(
+      `${supabaseUrl}/rest/v1/whatsapp_deliveries?id=eq.${encodeURIComponent(deliveryId)}`,
+      {
+        method: 'PATCH',
+        headers: { ...serviceHeaders(serviceKey), Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          metadata: {
+            ...(isPlainObject(existingMetadata) ? existingMetadata : {}),
+            delivery_failure_notice: { notified_at: new Date().toISOString(), variant: 'staff_delivery_failed' },
+          },
+        }),
+      },
+    );
+  } catch (err) {
+    console.warn('[whatsapp-webhook] delivery_failure_notice metadata patch threw (non-fatal)', {
+      deliveryId,
+      error: err?.message ?? String(err),
+    });
+  }
 }
 
 async function recordSmsFallbackOutcome({ supabaseUrl, serviceKey, deliveryId, existingMetadata, outcome }) {

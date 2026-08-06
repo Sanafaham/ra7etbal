@@ -1849,6 +1849,11 @@ export function buildOwnerPushBody({ description, assignedTo, variant }) {
   if (variant === 'substitute_delivery_failed') {
     return `${assignee ? `${assignee}'s` : 'The'} message about "${description}" could not be delivered — please review again.`;
   }
+  if (variant === 'staff_delivery_failed') {
+    return assignee
+      ? `Your message to ${assignee} could not be delivered on WhatsApp — please follow up directly.`
+      : `A staff WhatsApp message could not be delivered — please follow up directly.`;
+  }
   return assignee
     ? `${assignee} confirmed: ${description}`
     : `Task confirmed: ${description}`;
