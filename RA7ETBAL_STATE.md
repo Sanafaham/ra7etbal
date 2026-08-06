@@ -1058,6 +1058,14 @@ Meaningful changes should use a maker-checker review when practical.
 
 Sana performs live production UI testing unless she explicitly delegates it.
 
+Production verification policy (adopted 2026-08-06, Workstream 3): browser/app-driven
+features verify on the PR's Vercel preview deployment before merge; webhook-driven
+features (WhatsApp inbound, delivery-status callbacks, any third-party webhook) verify
+on a dedicated staging webhook environment before merge — target architecture not yet
+built. Until it exists, any webhook-driven PR must document the gap as an explicit
+temporary exception, not treat it as the standard. Full reasoning and the exception
+procedure: `ra7etbal-v2/docs/production-verification-policy.md`.
+
 ## State update rules
 
 After each completed task:
