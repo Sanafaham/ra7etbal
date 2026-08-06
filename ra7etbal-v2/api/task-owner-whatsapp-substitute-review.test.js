@@ -6,10 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * 1. normalizeSubstituteDecisionReply classifies owner replies correctly.
  * 2. resolveAndDeliverEscalationAnswer for substitute_review:
  *    - updates task quality_review_status (approved or correction_required)
- *    - sends Christopher a synthesized instruction, not the raw owner reply
- *    - includes the confirmation link for approved decisions
+ *    - sends Christopher the Workstream 3 canonical operational message, not
+ *      the raw owner reply and never any Quality Intelligence reasoning
+ *    - includes the confirmation link unconditionally (Workstream 3: one
+ *      canonical link rule, no per-decision special case — approved and
+ *      rejected both get it)
  *    - never duplicates sends
- * 3. buildSubstituteDecisionMessageForStaff produces the correct text.
+ * 3. buildCanonicalStaffDecisionMessage (api/_staff-decision-message.js)
+ *    produces the correct canonical text.
  */
 
 // ── Mocks ──────────────────────────────────────────────────────────────────
@@ -29,8 +33,9 @@ const {
 
 const {
   resolveAndDeliverEscalationAnswer,
-  buildSubstituteDecisionMessageForStaff,
 } = await import('./task-confirm.js');
+
+const { buildCanonicalStaffDecisionMessage } = await import('./_staff-decision-message.js');
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -192,40 +197,45 @@ it('preserves the owner\'s original text in instructionText regardless of decisi
   expect(normalizeSubstituteDecisionReply('Buy the Turquoise instead').instructionText).toBe('Buy the Turquoise instead');
 });
 
-// ── 2. buildSubstituteDecisionMessageForStaff ─────────────────────────────
+// ── 2. buildCanonicalStaffDecisionMessage ─────────────────────────────────
+// Full contract (every decision type, mutation-style leak proof) lives in
+// api/_staff-decision-message.test.js. This block only re-confirms the
+// substitute_review-specific decision values integrate with the same
+// canonical builder — Workstream 3's "one canonical pipeline" requirement.
 
-describe('buildSubstituteDecisionMessageForStaff', () => {
-  it('approved_alternative without link → "Approved. You can go ahead with this task."', () => {
-    const msg = buildSubstituteDecisionMessageForStaff({
+describe('buildCanonicalStaffDecisionMessage (substitute_review decision values)', () => {
+  it('approved_alternative without link → "Approved. You can go ahead."', () => {
+    const msg = buildCanonicalStaffDecisionMessage({
       decision: 'approved_alternative',
       instructionText: 'Yes buy it',
       confirmationUrl: null,
     });
-    expect(msg).toBe('Approved. You can go ahead with this task.');
+    expect(msg).toBe('Approved. You can go ahead.');
   });
 
   it('approved_alternative with link → includes confirmation URL', () => {
-    const msg = buildSubstituteDecisionMessageForStaff({
+    const msg = buildCanonicalStaffDecisionMessage({
       decision: 'approved_alternative',
       instructionText: 'Yes',
       confirmationUrl: 'https://app.ra7etbal.com/confirm?task=abc',
     });
-    expect(msg).toContain('Approved. You can go ahead with this task.');
+    expect(msg).toContain('Approved. You can go ahead.');
     expect(msg).toContain('https://app.ra7etbal.com/confirm?task=abc');
   });
 
-  it('rejected_alternative → "Do not continue…" without link', () => {
-    const msg = buildSubstituteDecisionMessageForStaff({
+  it('rejected_alternative → the canonical rejection sentence, with link (no special-case suppression)', () => {
+    const msg = buildCanonicalStaffDecisionMessage({
       decision: 'rejected_alternative',
       instructionText: 'No',
-      confirmationUrl: 'https://app.ra7etbal.com/confirm?task=abc', // should be ignored
+      confirmationUrl: 'https://app.ra7etbal.com/confirm?task=abc',
     });
-    expect(msg).toBe('Do not continue with this task. Please wait for further instructions.');
-    expect(msg).not.toContain('https://');
+    expect(msg).toContain('Please wait. The owner did not approve this. You will receive further instructions shortly.');
+    expect(msg).toContain('https://app.ra7etbal.com/confirm?task=abc');
+    expect(msg).not.toContain('No'); // the owner's raw reply text never surfaces on a plain reject
   });
 
   it('custom_instruction → "From the owner: [text]"', () => {
-    const msg = buildSubstituteDecisionMessageForStaff({
+    const msg = buildCanonicalStaffDecisionMessage({
       decision: 'custom_instruction',
       instructionText: 'Buy the Turquoise instead',
       confirmationUrl: null,
@@ -234,7 +244,7 @@ describe('buildSubstituteDecisionMessageForStaff', () => {
   });
 
   it('custom_instruction with link → includes confirmation URL', () => {
-    const msg = buildSubstituteDecisionMessageForStaff({
+    const msg = buildCanonicalStaffDecisionMessage({
       decision: 'custom_instruction',
       instructionText: 'Buy the Turquoise instead',
       confirmationUrl: 'https://app.ra7etbal.com/confirm?task=abc',
@@ -266,7 +276,7 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
     expect(JSON.parse(taskPatch[1].body).quality_review_status).toBe('approved');
   });
 
-  it('[approved_alternative] Christopher receives "Approved. You can go ahead..." not the raw reply', async () => {
+  it('[approved_alternative] Christopher receives "Approved. You can go ahead." not the raw reply', async () => {
     const fetchMock = makeFetchMock();
     vi.stubGlobal('fetch', fetchMock);
 
@@ -277,7 +287,7 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
     });
 
     const sentPayload = sendMetaMessageMock.mock.calls[0]?.[0]?.payload;
-    expect(getStaffMessageBody(sentPayload)).toContain('Approved. You can go ahead with this task.');
+    expect(getStaffMessageBody(sentPayload)).toContain('Approved. You can go ahead.');
     expect(getStaffMessageBody(sentPayload)).not.toBe('Yes buy it');
   });
 
@@ -310,7 +320,7 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
     const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
     expect(body).not.toMatch(/[\n\t]/);
     expect(body).not.toMatch(/ {5,}/);
-    expect(body).toContain('Approved. You can go ahead with this task.');
+    expect(body).toContain('Approved. You can go ahead.');
     expect(body).toContain(`/confirm?task=${TASK_ID}`);
   });
 
@@ -336,13 +346,15 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
     expect(taskPatch[0]).toContain(`tasks?id=eq.${TASK_ID}`);
     expect(JSON.parse(taskPatch[1].body).quality_review_status).toBe('correction_required');
 
-    // Christopher's message
+    // Christopher's message: canonical rejection sentence, no AI reasoning,
+    // and — Workstream 3 — the confirmation link IS included (one canonical
+    // link rule, no per-decision suppression).
     const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
-    expect(body).toContain('Do not continue with this task');
-    expect(body).not.toContain('/confirm?task=');
+    expect(body).toContain('Please wait. The owner did not approve this. You will receive further instructions shortly.');
+    expect(body).toContain(`/confirm?task=${TASK_ID}`);
   });
 
-  it('[rejected_alternative] does not include confirmation link in Christopher\'s message', async () => {
+  it('[rejected_alternative] includes the confirmation link in Christopher\'s message (Workstream 3: no special-case suppression on rejection)', async () => {
     const rejectFetch = vi.fn()
       .mockResolvedValueOnce(jsonOk({ id: DECISION_ID, status: 'answered', owner_reply_text: 'No', owner_reply_channel: 'whatsapp' }))
       .mockResolvedValueOnce(jsonOk([{ claimed: true, claim_token: 'tok-3', reply_text: 'No', delivery_status: null }]))
@@ -358,7 +370,7 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
     });
 
     const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
-    expect(body).not.toContain('/confirm?task=');
+    expect(body).toContain(`/confirm?task=${TASK_ID}`);
   });
 
   it('[custom_instruction] updates task to approved state', async () => {
@@ -482,9 +494,10 @@ describe('resolveAndDeliverEscalationAnswer for substitute_review', () => {
     });
 
     const body = getStaffMessageBody(sendMetaMessageMock.mock.calls[0]?.[0]?.payload);
-    // Standard path: normalizeOwnerReplyForRecipient applied, not the substitute builder
+    // Standard path: normalizeOwnerReplyForRecipient applied, not the canonical builder
     expect(body).toBeTruthy();
-    expect(body).not.toContain('Approved. You can go ahead with this task.');
+    expect(body).not.toBe('Approved. You can go ahead.');
+    expect(body).toBe('Approved. Please go ahead.');
     // No task PATCH
     expect(standardFetch).toHaveBeenCalledTimes(4);
   });

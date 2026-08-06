@@ -2417,7 +2417,7 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(fetchMock.mock.calls[1][0]).toContain('/rest/v1/tasks?id=eq.task-1&');
     const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
     const metaPayload = JSON.parse(metaCall[1].body);
-    const expectedMessage = 'Ghulam, the alternative for "buy TEREA Silver" was approved — please go ahead.';
+    const expectedMessage = 'Approved. You can go ahead.';
     expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
     expect(metaPayload.template.components).toEqual([
       {
@@ -2544,7 +2544,7 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
 
     const metaPayload = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
     expect(metaPayload.template.name).toBe('ra7etbal_owner_decision');
-    expect(metaPayload.template.components[0].parameters[0].text).toBe('Please get TEREA Turquoise exactly.');
+    expect(metaPayload.template.components[0].parameters[0].text).toBe('From the owner: Please get TEREA Turquoise exactly.');
     expect(metaPayload.template.components.find((component) => component.type === 'button')?.parameters).toEqual([
       { type: 'text', text: taskUuid },
     ]);
@@ -2573,7 +2573,7 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, decision: 'custom_instruction', outcome: 'custom_instruction_sent' }));
     const metaCallBody = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'))[1].body);
-    expect(metaCallBody.template.components[0].parameters[0].text).toBe('Turquoise is fine, thanks!');
+    expect(metaCallBody.template.components[0].parameters[0].text).toBe('From the owner: Turquoise is fine, thanks!');
   });
 
   it('correction-limit fallback: no WhatsApp send when reserve resolves fallback_to_uncertain', async () => {
