@@ -1,14 +1,48 @@
 import sendWhatsappTask from './send-whatsapp-task.js';
 import { normalizeFirstPersonForOwner } from '../shared/owner-reference-normalization.js';
 
-const DIRECT_HINT = /\b(i(?:'m| am|’m)|i(?:'ll| will|’ll)|call (?:me|myself|sana)|wait for (?:me|myself|sana)|contact (?:me|myself|sana)|bring (?:me|myself|sana)|running late|be home)\b/i;
+// Legacy no-"to" fallback only — the primary delegation signal is the
+// infinitive "to <verb>" grammatical marker (see classifyOwnerCommand),
+// which generalizes to any action verb without needing a closed list.
 const WORK_HINT = /\b(clean|make|prepare|confirm|check|buy|pick up|take|fix|wash|cook|organize|deliver)\b/i;
+
+// Bounded, deterministic "personal response" category: requests for the
+// recipient to communicate back to the owner, never a physical/operational
+// action. Deliberately excludes bring/buy/pick up/deliver/prepare/get/wait
+// for — those assign a concrete action and stay delegation-shaped regardless
+// of who is asked. See PERSONAL_RESPONSE ADR note in classifyOwnerCommand.
+const PERSONAL_RESPONSE_RE =
+  /^(?:call|contact|text|message|reply(?:\s+to)?|respond(?:\s+to)?|write\s+back(?:\s+to)?|get\s+back(?:\s+to)?)\s+(?:me|myself|us)\b|^let\s+me\s+know\b/i;
+
+const FIRST_PERSON_RE = /^i\b/i;
+const QUESTION_START_RE =
+  /^(?:if|whether|what|when|where|why|how|who|which|is|are|do|does|did|has|have|can|could|will|would)\b/i;
+
+const ENTRY_VERBS = 'tell|ask|text|message|send|whatsapp|dm';
+const COMM_ENTRY_VERB_RE = /^(?:text|message|send|whatsapp|dm)\b/i;
+const POLITENESS_PREFIX_RE = /^(?:(?:can|could|would)\s+you\s+(?:please\s+)?|please\s+)/i;
+// Compound-command detection deliberately stays scoped to tell|ask|remind —
+// unlike those, text/message/send/whatsapp/dm are common English words that
+// appear inside ordinary sentences ("the owner WhatsApp acknowledgement",
+// "check my message") and would false-positive as a second command start if
+// matched anywhere in the text. They are only ever treated as a command verb
+// when the message literally begins with them (see the `directed` match below).
 const COMMAND_START = /\b(?:tell|ask)\s+[A-Za-z][A-Za-z'’-]*\b|\bremind\s+me\b/gi;
+const COMPOUND_RE = /\b(?:and|then)\s+(?:tell|ask|remind)\b/i;
 const MAX_COMMAND_LENGTH = 2000;
 const MAX_RETRIES = 5;
 
 export function classifyOwnerCommand(text) {
-  const input = String(text || '').trim();
+  const rawInput = String(text || '').trim();
+  const politenessStripped = POLITENESS_PREFIX_RE.test(rawInput);
+  // A "Can you ...?" / "Could you ...?" wrapper's trailing "?" is part of the
+  // polite-request form, not a real content question — strip it alongside the
+  // prefix so it doesn't get misread as a question signal below. A genuine
+  // question word (if/whether/what/…) inside the instruction still fires
+  // independently of this.
+  const input = politenessStripped
+    ? rawInput.replace(POLITENESS_PREFIX_RE, '').replace(/\?\s*$/, '')
+    : rawInput;
   const commandStarts = input.match(COMMAND_START) || [];
   if (commandStarts.length > 1) return { type: 'unsupported', text: input, reason: 'compound_command' };
 
@@ -26,18 +60,44 @@ export function classifyOwnerCommand(text) {
       .trim();
     return { type: 'reminder', text: body || 'Reminder', timeText: temporal[0].trim() };
   }
-  const directed = input.match(/^(?:tell|ask)\s+([A-Za-z][A-Za-z'’-]*)\s+(?:to\s+)?(.+)$/i);
+
+  // "to" is captured separately (not swallowed) so its presence can be used
+  // as the delegation-infinitive signal, while `instruction` — used for the
+  // resulting task/message text — stays exactly as before, without "to".
+  const directed = input.match(
+    new RegExp(`^(?:${ENTRY_VERBS})\\s+([A-Za-z][A-Za-z'’-]*)\\s+(to\\s+)?(.+)$`, 'i'),
+  );
   if (directed) {
-    const [, recipient, instruction] = directed;
-    if (/\b(?:and|then)\s+(?:tell|ask|remind)\b/i.test(instruction)) {
+    const [, recipient, toPrefix, rest] = directed;
+    const instruction = rest.trim();
+    if (COMPOUND_RE.test(instruction)) {
       return { type: 'unsupported', text: input, reason: 'compound_command' };
     }
-    const type = DIRECT_HINT.test(instruction)
+
+    const hasInfinitiveTo = Boolean(toPrefix);
+    // Explicit communication verbs (text/message/send/whatsapp/dm) are
+    // unambiguous by construction — a "to <verb>" body never upgrades them
+    // to delegation, so this check must win outright and must not leave the
+    // personalResponse flag set for Stage 2 to act on.
+    const isCommEntryVerb = COMM_ENTRY_VERB_RE.test(input);
+    const isQuestion = QUESTION_START_RE.test(instruction) || /\?\s*$/.test(instruction);
+    const isFirstPersonStatement = FIRST_PERSON_RE.test(instruction);
+    const isPersonalResponse = !isCommEntryVerb && PERSONAL_RESPONSE_RE.test(instruction);
+    const isOperationalAction = !isPersonalResponse && (hasInfinitiveTo || WORK_HINT.test(instruction));
+
+    // Personal-response requests (call/text/message/reply/get back to me)
+    // default to direct_message here — the safe, lighter-weight action.
+    // executePersonCommand may upgrade this to delegation, but only after
+    // resolving the recipient and confirming they are staff (is_family === false).
+    // Concrete-action requests ("bring me the medicine", "buy me milk") are
+    // never personal-response and stay delegation regardless of role.
+    const type = isCommEntryVerb || isQuestion || isFirstPersonStatement || isPersonalResponse
       ? 'direct_message'
-      : WORK_HINT.test(instruction)
+      : isOperationalAction
         ? 'delegation'
         : 'unsupported';
-    return { type, recipient, text: instruction.trim() };
+
+    return { type, recipient, text: instruction, personalResponse: isPersonalResponse };
   }
   return { type: 'unsupported', text: input };
 }
@@ -163,10 +223,21 @@ function sameInstant(left, right) {
 
 async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, row, classification, ownerName, imageStoragePath }) {
   const people = await select(supabaseUrl, serviceKey, 'people',
-    `user_id=eq.${encodeURIComponent(userId)}&name=ilike.${encodeURIComponent(classification.recipient)}&select=id,name,phone,notes,whatsapp_opted_in&limit=2`);
+    `user_id=eq.${encodeURIComponent(userId)}&name=ilike.${encodeURIComponent(classification.recipient)}&select=id,name,phone,notes,whatsapp_opted_in,is_family&limit=2`);
   if (people.length !== 1) throw new Error('recipient_not_unique');
   const person = people[0];
   if (!person.phone || !person.whatsapp_opted_in) throw new Error('recipient_unreachable');
+
+  // Role resolution happens only here, after the recipient is reliably
+  // identified — never in the text-only classifier. A personal-response
+  // request ("call me", "text me") defaults to direct_message (the safer,
+  // lighter-weight action) and is upgraded to delegation only when the
+  // recipient is confirmed staff (is_family === false). Missing/null/true
+  // is_family all default to direct_message. Concrete-action requests are
+  // unaffected — classification.type is already final for those.
+  const effectiveType = classification.personalResponse && person.is_family === false
+    ? 'delegation'
+    : classification.type;
 
   const normalizedText = normalizeOwnerReferences(classification.text, ownerName);
   const messageId = row.action_message_id || receipt.receipt_id;
@@ -175,7 +246,7 @@ async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, 
   let messageText = normalizedText;
   let sendMode = 'direct_message';
 
-  if (classification.type === 'delegation') {
+  if (effectiveType === 'delegation') {
     taskId ||= receipt.receipt_id;
     confirmationLink = `https://www.ra7etbal.com/confirm?task=${encodeURIComponent(taskId)}`;
     const inserted = await insertOnce(supabaseUrl, serviceKey, 'tasks', {
@@ -193,7 +264,7 @@ async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, 
       await updateCommand(supabaseUrl, serviceKey, receipt, userId, {
         execution_status: 'action_created', action_task_id: taskId,
         execution_result: {
-          command_type: classification.type,
+          command_type: effectiveType,
           recipient_id: person.id,
           escalation_scheduled: true,
         },
@@ -209,9 +280,9 @@ async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, 
   await updateCommand(supabaseUrl, serviceKey, receipt, userId, {
     execution_status: 'action_created', action_task_id: taskId, action_message_id: messageId,
     execution_result: {
-      command_type: classification.type,
+      command_type: effectiveType,
       recipient_id: person.id,
-      ...(classification.type === 'delegation' ? { escalation_scheduled: true } : {}),
+      ...(effectiveType === 'delegation' ? { escalation_scheduled: true } : {}),
     },
   });
 
@@ -223,7 +294,7 @@ async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, 
   if (!transportMessageId) {
     const response = await invokeSendWhatsappTask({
       to: person.phone, messageText, confirmationLink, messageRecordId: messageId,
-      taskId, sourceType: classification.type === 'delegation' ? 'delegation' : 'message',
+      taskId, sourceType: effectiveType === 'delegation' ? 'delegation' : 'message',
       sendMode, recipientName: person.name, ownerName,
       ...(imageStoragePath ? { imagePath: imageStoragePath } : {}),
     });
@@ -234,11 +305,11 @@ async function executePersonCommand({ supabaseUrl, serviceKey, userId, receipt, 
   await updateCommand(supabaseUrl, serviceKey, receipt, userId, {
     execution_status: 'completed', action_task_id: taskId, action_message_id: messageId,
     staff_transport_message_id: transportMessageId,
-    execution_result: { command_type: classification.type, recipient_id: person.id, staff_delivery: 'accepted' },
+    execution_result: { command_type: effectiveType, recipient_id: person.id, staff_delivery: 'accepted' },
   });
   return {
     kind: 'completed',
-    acknowledgement: classification.type === 'delegation'
+    acknowledgement: effectiveType === 'delegation'
       ? `Done — I created the task for ${person.name} and WhatsApp accepted one delivery.`
       : `Done — I sent one direct message to ${person.name}. No task was created.`,
   };

@@ -59,8 +59,13 @@ const WHATSAPP_RE_TEXT       = /\btext\s+\w+\s+(saying|that)\b/i;
 const WHATSAPP_RE_DM         = /\b(dm|direct\s+message)\s+\w+/i;
 
 // "tell/ask [name] to ..." or "tell/ask [name] ..." — includes delegation
-// and direct messages (WORK_HINT vs DIRECT_HINT in the executor).
+// and direct messages (classifyOwnerCommand in the executor does the
+// grammar/verb/role-based sub-classification).
 const DIRECTED_RE            = /^(?:tell|ask)\s+([A-Za-z][A-Za-z''-]*)\s+(?:to\s+)?(.+)$/i;
+// Bounded politeness prefix ("Can you ask...", "Could you tell...", "Please
+// ask...") stripped before matching so these still route to the executor
+// instead of falling through to general_answer/unknown.
+const POLITENESS_PREFIX_RE   = /^(?:(?:can|could|would)\s+you\s+(?:please\s+)?|please\s+)/i;
 const SOCIAL_GREETING_RE     = /^(?:hi|hello|hey|good\s+(?:morning|afternoon|evening|night)|morning|evening|howdy|greetings|salam|مرحبا|أهلاً|صباح الخير|مساء الخير)(?:\s+[A-Za-z]+)?[\s!.,?]*$/i;
 const SOCIAL_ACK_RE          = /^(?:thanks|thank\s+you|ok|okay|got\s+it|perfect|great|sounds\s+good|alright|noted|understood|sure|awesome|cool)[\s!.,?]*$/i;
 const QUESTION_RE            = /^(?:did|does|has|have|is|are|can|what|when|where|who|how|why|which)/i;
@@ -108,8 +113,10 @@ export function classifyOwnerWhatsAppIntent(text) {
 
   // Directed command — "tell/ask [name] to/[verb]" — may be delegation or
   // direct message. Both route to the command executor; executor's own
-  // DIRECT_HINT / WORK_HINT split handles the sub-classification.
-  const directed = DIRECTED_RE.exec(input);
+  // classifyOwnerCommand handles the sub-classification. DIRECTED_RE is
+  // anchored at the start, so a bounded politeness prefix ("Can you ask...")
+  // is stripped first — otherwise it falls through to general_answer below.
+  const directed = DIRECTED_RE.exec(input.replace(POLITENESS_PREFIX_RE, ''));
   if (directed) return result('delegation', ['delegation', 'whatsapp'], 0.85, true);
 
   // Questions — factual queries to Carson.
