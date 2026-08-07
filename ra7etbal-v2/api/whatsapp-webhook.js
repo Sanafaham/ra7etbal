@@ -4,6 +4,7 @@ import { handleTaskConfirmationPost, sendOwnerPush } from './task-confirm.js';
 import { processStaffMessage } from './_staff-comms-engine.js';
 import { notifyOwnerOfEscalation } from './_escalation-notify.js';
 import { handleInboundOwnerMessage } from './_owner-whatsapp-routing.js';
+import { handleInboundPersonalContactReply } from './_personal-contact-reply.js';
 import { persistInboundStaffImage } from './_inbound-staff-evidence.js';
 import { persistWhatsappInboundEvidence } from './_whatsapp-inbound-observability.js';
 
@@ -180,6 +181,7 @@ export async function handleInboundStaffMessage(
     sendMetaMessageImpl = sendMetaMessage,
     persistInboundStaffImageImpl = persistInboundStaffImage,
     handleTaskConfirmationPostImpl = handleTaskConfirmationPost,
+    handleInboundPersonalContactReplyImpl = handleInboundPersonalContactReply,
   } = {},
 ) {
   const phoneNumberId = msg.phoneNumberId;
@@ -194,7 +196,12 @@ export async function handleInboundStaffMessage(
   const matches = people.filter((p) => normalizePhone(p.phone) === sender);
   if (!sender || matches.length !== 1) return { handled: false, reason: matches.length ? 'ambiguous_sender' : 'unknown_sender' };
   const person = matches[0];
-  if (person.is_family) return { handled: false, reason: 'family_sender' };
+  if (person.is_family) {
+    // Personal Contact Reply Relay — structurally isolated from every path
+    // below this line. A family sender never reaches task matching,
+    // staff_messages, processStaffMessage, or escalation/QI code.
+    return handleInboundPersonalContactReplyImpl({ supabaseUrl, serviceKey, msg, person, userId });
+  }
   if (!person.whatsapp_opted_in || !person.whatsapp_consent_at || !person.whatsapp_consent_method) {
     return { handled: false, reason: 'not_opted_in' };
   }

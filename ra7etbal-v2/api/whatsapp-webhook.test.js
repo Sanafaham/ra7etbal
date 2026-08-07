@@ -1426,3 +1426,41 @@ describe.skip('POST /api/whatsapp-webhook — Carson bridge PoC dispatch (read-o
     expect(carsonBridgeMocks.attemptCarsonBridgePoc).not.toHaveBeenCalled();
   });
 });
+
+describe('Personal Contact Reply Relay — dispatch isolation from staff paths', () => {
+  it('dispatches a family sender to the relay handler and never touches any staff-only path', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'person-eren', name: 'Eren', phone: '+905537032912',
+        is_family: true, whatsapp_opted_in: true,
+      }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handleInboundPersonalContactReplyImpl = vi.fn(async () => ({
+      handled: true, reason: 'relayed', route: 'personal_contact_reply', correlationMethod: 'single_recent',
+    }));
+
+    const result = await handleInboundStaffMessage(
+      {
+        supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+        msg: { from: '905537032912', messageId: 'wamid.family-1', body: 'Yes.', phoneNumberId: 'meta-phone-id', contextMessageId: null },
+      },
+      { handleInboundPersonalContactReplyImpl },
+    );
+
+    expect(result).toEqual({ handled: true, reason: 'relayed', route: 'personal_contact_reply', correlationMethod: 'single_recent' });
+    expect(handleInboundPersonalContactReplyImpl).toHaveBeenCalledWith(expect.objectContaining({
+      msg: expect.objectContaining({ messageId: 'wamid.family-1' }),
+      person: expect.objectContaining({ id: 'person-eren', is_family: true }),
+      userId: 'user-1',
+    }));
+    // Structural isolation: no staff-only side effect ever ran for this sender.
+    expect(staffEngineMocks.processStaffMessage).not.toHaveBeenCalled();
+    expect(taskConfirmMocks.handleTaskConfirmationPost).not.toHaveBeenCalled();
+    expect(taskConfirmMocks.sendOwnerPush).not.toHaveBeenCalled();
+    // Only the two resolution fetches ran — no staff_messages/task lookups.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
