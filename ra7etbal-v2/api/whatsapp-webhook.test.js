@@ -752,6 +752,139 @@ describe('updateWhatsappDeliveryStatus — Bug #1 fix: reopen substitute_review 
   });
 });
 
+describe('updateWhatsappDeliveryStatus — Workstream 5: staff-facing outbound delivery reliability', () => {
+  function mockPlainMessageFailure({ reopened = false, existingMetadata = {} } = {}) {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([
+        {
+          id: 'delivery-5',
+          user_id: 'user-1',
+          delivery_status: 'accepted',
+          last_status_at: '2026-08-06T12:34:08Z',
+          automation_run_id: null,
+          source_type: 'message',
+          recipient_phone: '+905010589614',
+          recipient_name: 'Christopher',
+          metadata: existingMetadata,
+        },
+      ])) // lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-5' }])) // CAS PATCH — matched, updated
+      .mockResolvedValueOnce(jsonResponse([{ task_id: null, user_id: null, description: null, assigned_to: null, reopened }])) // reopen RPC
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-5' }])); // delivery_failure_notice metadata PATCH
+    vi.stubGlobal('fetch', fetchMock);
+    return fetchMock;
+  }
+
+  it('notifies the owner exactly once when a plain direct-message send fails asynchronously and the reopen RPC does not claim it', async () => {
+    const fetchMock = mockPlainMessageFailure({ reopened: false });
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.5',
+      status: 'failed',
+      updatedAt: '2026-08-06T12:34:09Z',
+      failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failureCode: 131049,
+      failureSubcode: null,
+    });
+
+    expect(taskConfirmMocks.sendOwnerPush).toHaveBeenCalledTimes(1);
+    expect(taskConfirmMocks.sendOwnerPush).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1', assignedTo: 'Christopher', variant: 'staff_delivery_failed' }),
+    );
+
+    const noticeCall = fetchMock.mock.calls[3];
+    expect(String(noticeCall[0])).toContain('/whatsapp_deliveries?id=eq.delivery-5');
+    const noticeBody = JSON.parse(noticeCall[1].body);
+    expect(noticeBody.metadata.delivery_failure_notice).toEqual(
+      expect.objectContaining({ variant: 'staff_delivery_failed', notified_at: expect.any(String) }),
+    );
+  });
+
+  it('does not send a second, duplicate owner notification when the reopen RPC already claimed and handled the failure', async () => {
+    mockPlainMessageFailure({ reopened: true });
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.6',
+      status: 'failed',
+      updatedAt: '2026-08-06T12:34:09Z',
+      failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failureCode: 131049,
+      failureSubcode: null,
+    });
+
+    // reopenSubstituteReviewIfApplicable already sent its own push (mocked to a
+    // no-op here since only the WS5 gating is under test); the new WS5 path
+    // must see reopened: true and stay silent, not send a second push.
+    expect(taskConfirmMocks.sendOwnerPush).toHaveBeenCalledTimes(1);
+    expect(taskConfirmMocks.sendOwnerPush).not.toHaveBeenCalledWith(
+      expect.objectContaining({ variant: 'staff_delivery_failed' }),
+    );
+  });
+
+  it('never fires for source_type other than message (e.g. delegation), even when the reopen RPC does not claim it', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([
+        {
+          id: 'delivery-7',
+          user_id: 'user-1',
+          delivery_status: 'accepted',
+          last_status_at: '2026-08-06T12:34:08Z',
+          automation_run_id: null,
+          source_type: 'delegation',
+          recipient_phone: '+12025691377',
+          recipient_name: 'Christopher',
+          metadata: {},
+        },
+      ]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-7' }]))
+      .mockResolvedValueOnce(jsonResponse([{ task_id: null, user_id: null, description: null, assigned_to: null, reopened: false }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.7',
+      status: 'failed',
+      updatedAt: '2026-08-06T12:34:09Z',
+      failureReason: 'Recipient number invalid.',
+      failureCode: 131026,
+      failureSubcode: null,
+    });
+
+    expect(taskConfirmMocks.sendOwnerPush).not.toHaveBeenCalled();
+    // No fourth (notice) call beyond lookup/CAS/RPC — nothing to record.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('is idempotent if metadata already records a prior delivery_failure_notice (defense-in-depth beyond the single-fire CAS gate)', async () => {
+    const fetchMock = mockPlainMessageFailure({
+      reopened: false,
+      existingMetadata: { delivery_failure_notice: { notified_at: '2026-08-06T12:00:00Z', variant: 'staff_delivery_failed' } },
+    });
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.8',
+      status: 'failed',
+      updatedAt: '2026-08-06T12:34:09Z',
+      failureReason: 'In order to maintain a healthy ecosystem engagement, the message failed to be delivered.',
+      failureCode: 131049,
+      failureSubcode: null,
+    });
+
+    expect(taskConfirmMocks.sendOwnerPush).not.toHaveBeenCalled();
+    // Only lookup/CAS/RPC — no redundant metadata PATCH either.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
 function jsonResponse(body, status = 200) {
   return {
     ok: status >= 200 && status < 300,

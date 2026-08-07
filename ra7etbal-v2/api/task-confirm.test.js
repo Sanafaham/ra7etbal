@@ -64,6 +64,21 @@ describe('Quality Intelligence owner push copy source of truth', () => {
     expect(body).not.toMatch(/flagged|hasn't confirmed|submitted proof for review/i);
   });
 
+  it('Workstream 5 staff_delivery_failed variant names the recipient and never claims a task outcome', () => {
+    const withRecipient = buildOwnerPushBody({
+      assignedTo: 'Christopher',
+      variant: 'staff_delivery_failed',
+    });
+    const withoutRecipient = buildOwnerPushBody({
+      assignedTo: null,
+      variant: 'staff_delivery_failed',
+    });
+
+    expect(withRecipient).toBe('Your message to Christopher could not be delivered on WhatsApp — please follow up directly.');
+    expect(withoutRecipient).toBe('A staff WhatsApp message could not be delivered — please follow up directly.');
+    expect(withRecipient).not.toMatch(/confirmed|submitted proof|correction/i);
+  });
+
   it('repeated invalid proof escalation uses review copy, not first-failure flagged copy', () => {
     const body = buildOwnerPushBody({
       description: 'make the salad bowl',
