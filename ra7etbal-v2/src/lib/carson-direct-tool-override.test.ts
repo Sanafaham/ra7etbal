@@ -3,6 +3,7 @@ import {
   detectsUnconfirmedNoteSaveClaim,
   resolveCarsonDisplayMessage,
   resolveSanitizedCarsonDisplayMessage,
+  sanitizeTypedAdvisoryReply,
   type DirectToolSuccessResult,
 } from "./carson-direct-tool-override";
 
@@ -511,5 +512,71 @@ describe("resolveSanitizedCarsonDisplayMessage — unconfirmed note save", () =>
       now: NOW,
     });
     expect(result).toBe("Saved.");
+  });
+});
+
+// Confirmed production regression (2026-07-25): typed "I need to make the UI
+// of Ra7etBal better and pay the electricity bill." produced "For the
+// electricity bill, I'll have Grace handle it." — no send_delegation call
+// ever ran; the free-form typed model fabricated the claim on its own. Every
+// state-changing tool is already blocked for typed, so this is a pure
+// wording problem caught here, deterministically, on the displayed text.
+describe("sanitizeTypedAdvisoryReply — typed-only false-promise guard", () => {
+  it.each([
+    "For the electricity bill, I'll have Grace handle it.",
+    "I'll have Christopher handle it.",
+    "Don't worry, I'll take care of it.",
+    "I'll remind you.",
+    "Sure — I'll send it.",
+    "I'll assign it.",
+    "I'll add it.",
+    "It's done.",
+  ])("replaces the false execution promise in '%s'", (agentMessage) => {
+    const result = sanitizeTypedAdvisoryReply(agentMessage);
+    expect(result).not.toBe(agentMessage);
+    expect(result).toMatch(/Talk to Carson/);
+    expect(result.toLowerCase()).not.toMatch(/i'll (?:have|take care|remind|send|assign|add)|it's done/);
+  });
+
+  it.each([
+    "I can help you plan the dinner. Use Talk to Carson to send it.",
+    "Here's how I'd think about the UI redesign.",
+    "What's on your calendar Friday? You have two meetings.",
+    "I can help you draft that message. Use Talk to Carson to send the message.",
+  ])("leaves a genuinely truthful/advisory reply untouched: '%s'", (agentMessage) => {
+    expect(sanitizeTypedAdvisoryReply(agentMessage)).toBe(agentMessage);
+  });
+
+  it("does not misfire on advisory language that merely mentions these verbs without a first-person promise", () => {
+    const safe = "I can help you think through how to handle the tension between the two designs.";
+    expect(sanitizeTypedAdvisoryReply(safe)).toBe(safe);
+  });
+
+  // Independent review finding (2026-07-25): a full-message replacement can
+  // discard a reply that already correctly redirects but happens to also
+  // match the false-promise wording in a hedged, truthful way. The confirmed
+  // bug reply never mentioned Talk to Carson at all — a reply that does is
+  // never the false-promise failure mode this guard exists for.
+  it.each([
+    "I'll remind you that Talk to Carson is the only way to actually create it.",
+    "Once you approve it in Talk to Carson, it's done from there.",
+  ])("leaves a reply that already mentions Talk to Carson untouched, even if it matches the pattern: '%s'", (agentMessage) => {
+    expect(sanitizeTypedAdvisoryReply(agentMessage)).toBe(agentMessage);
+  });
+
+  // CodeRabbit finding (2026-07-25): the pattern only matched the "I'll"
+  // contraction — the free-form model can phrase the identical false promise
+  // uncontracted ("I will have Grace handle it.").
+  it.each([
+    "For the electricity bill, I will have Grace handle it.",
+    "I will take care of it.",
+    "I will remind you.",
+    "I will send it.",
+    "I will assign it.",
+    "I will add it.",
+  ])("also catches the uncontracted 'I will' phrasing of the same promise: '%s'", (agentMessage) => {
+    const result = sanitizeTypedAdvisoryReply(agentMessage);
+    expect(result).not.toBe(agentMessage);
+    expect(result).toMatch(/Talk to Carson/);
   });
 });

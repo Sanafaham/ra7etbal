@@ -23,6 +23,10 @@ const SOURCE = readFileSync(
   join(__dirname, "ElevenLabsAgentWidget.tsx"),
   "utf-8",
 );
+const OPS_SOURCE = readFileSync(
+  join(__dirname, "../../lib/ops-intelligence.ts"),
+  "utf-8",
+);
 
 describe("ElevenLabsAgentWidget — To-do client tool registration", () => {
   it("registers create_todo in the clientTools map, wired to createTodoTool", () => {
@@ -336,8 +340,8 @@ describe("ElevenLabsAgentWidget — hosting planning gate", () => {
     expect(block).toContain("const hostingSource = [latestUserMessageForOps, taskText, message]");
     expect(block).toContain("handleOperationalHostingTurn({");
     expect(block).toContain("executeProposedPlan(plan");
-    expect(SOURCE).toContain("how many guests are coming");
-    expect(SOURCE).toContain("anything I should avoid serving");
+    expect(OPS_SOURCE).toContain("how many guests are coming");
+    expect(OPS_SOURCE).toContain("anything I should avoid serving");
   });
 
   it("checks missing hosting details before execute_instruction can build or execute a guest plan", () => {

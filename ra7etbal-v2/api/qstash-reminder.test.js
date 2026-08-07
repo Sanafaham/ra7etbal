@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveAppBaseUrl, scheduleAutomationRunWakeup } from "./qstash-reminder.js";
+import handler, { resolveAppBaseUrl, scheduleAutomationRunWakeup } from "./qstash-reminder.js";
 
 function jsonResponse(body, status = 200) {
   return {
@@ -241,5 +241,123 @@ describe("scheduleAutomationRunWakeup", () => {
         nextRunAt: "2026-07-12T04:29:00.000Z",
       }),
     ).rejects.toThrow(/boom/);
+  });
+});
+
+function mockReq({ method = "POST", body = {} } = {}) {
+  return {
+    method,
+    body,
+    headers: { authorization: "Bearer user-jwt" },
+  };
+}
+
+function mockRes() {
+  return {
+    statusCode: 200,
+    payload: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.payload = payload;
+      return this;
+    },
+  };
+}
+
+// Protected behavior (item 9): a QStash scheduling failure must never be
+// reported or persisted as a success. The default HTTP handler's 'schedule'
+// action is the boundary between task creation (already succeeded by the
+// time this is called — see src/lib/reminders.ts's fire-and-forget call) and
+// QStash publish (best-effort, with pg_cron as the safety net). If the
+// publish fails, the handler must return success:false AND must never write
+// a qstash_message_id to the task row — persisting an ID for a publish that
+// never actually happened would make the task row itself lie about being
+// scheduled.
+describe("qstash-reminder default handler — 'schedule' action (item 9 lock)", () => {
+  beforeEach(() => {
+    vi.stubEnv("SUPABASE_URL", "https://supabase.test");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role");
+    vi.stubEnv("QSTASH_TOKEN", "qstash-token");
+    vi.stubEnv("CRON_SECRET", "cron-secret");
+    vi.stubEnv("APP_BASE_URL", "https://ra7etbal.test");
+  });
+
+  function queueAuthAndOwnership(fetchMock, { userId = "user-1", taskUserId = "user-1" } = {}) {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ id: userId })) // auth verify (GET /auth/v1/user)
+      .mockResolvedValueOnce(
+        jsonResponse([
+          { id: "task-1", user_id: taskUserId, type: "reminder", status: "pending", qstash_message_id: null },
+        ]),
+      ); // ownership lookup (GET /rest/v1/tasks)
+  }
+
+  it("returns success:true and persists the QStash message ID when the publish succeeds", async () => {
+    const fetchMock = vi.fn();
+    queueAuthAndOwnership(fetchMock);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ messageId: "msg-ok" })); // QStash publish
+    fetchMock.mockResolvedValueOnce(jsonResponse({})); // Supabase PATCH saving the message id
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({ body: { action: "schedule", taskId: "task-1", dueAt: "2026-07-27T09:00:00.000Z" } }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toEqual({ success: true, action: "scheduled", messageId: "msg-ok" });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const [patchUrl, patchInit] = fetchMock.mock.calls[3];
+    expect(String(patchUrl)).toContain("/rest/v1/tasks?id=eq.task-1");
+    expect(patchInit.method).toBe("PATCH");
+    expect(JSON.parse(patchInit.body)).toEqual({
+      qstash_message_id: "msg-ok",
+      reminder_delivery_status: "scheduled",
+      reminder_delivery_error: null,
+    });
+  });
+
+  it("returns success:false and NEVER persists a message ID when the QStash publish fails", async () => {
+    const fetchMock = vi.fn();
+    queueAuthAndOwnership(fetchMock);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: "QStash is down" }, 500)); // QStash publish fails
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({ body: { action: "schedule", taskId: "task-1", dueAt: "2026-07-27T09:00:00.000Z" } }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(500);
+    expect(res.payload.success).toBe(false);
+    expect(res.payload.error).toMatch(/QStash is down/);
+    expect(res.payload.action).toBeUndefined();
+    expect(res.payload.messageId).toBeUndefined();
+    // Exactly 3 calls: auth verify, ownership lookup, the failed QStash
+    // publish attempt. A 4th call would be the Supabase PATCH that persists
+    // qstash_message_id — it must never be reached on a failed publish.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns success:false and never persists a message ID when QStash responds OK but with no messageId in the body", async () => {
+    const fetchMock = vi.fn();
+    queueAuthAndOwnership(fetchMock);
+    fetchMock.mockResolvedValueOnce(jsonResponse({})); // QStash 200 with an unexpected empty body
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({ body: { action: "schedule", taskId: "task-1", dueAt: "2026-07-27T09:00:00.000Z" } }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(500);
+    expect(res.payload.success).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

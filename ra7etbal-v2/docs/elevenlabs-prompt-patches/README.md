@@ -23,8 +23,10 @@ This directory stores **patches only**: the specific, minimal additions needed w
 
 ## Patches
 
-| Date | File | Summary |
-|---|---|---|
+| Date | File | Summary | Status |
+|---|---|---|---|
+| 2026-08-03 | [2026-08-03-commitment-history.md](2026-08-03-commitment-history.md) | `get_commitment_history` — full evidence-based history of one commitment (Historical Lookup Phase 1, Q4) | **Applied and production-verified 2026-08-04** — see `RA7ETBAL_STATE.md` |
+| 2026-08-04 | [2026-08-04-person-history.md](2026-08-04-person-history.md) | `get_person_history` — a person's overall commitment history, outcome counts + recent items (Historical Lookup Phase 2) | **PENDING** — code merged; tool not yet registered on the live agent, prompt not yet pasted |
 
 ## Historical patches
 

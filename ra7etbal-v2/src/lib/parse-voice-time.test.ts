@@ -281,8 +281,20 @@ describe("parseVoiceTime — AM/PM resolution (regression: confirmed 3:15 AM →
   });
 
   it("confirms Europe/Istanbul is the resolved timezone for all of the above (matches the real production account's timezone)", () => {
-    const result = parseVoiceTime("3:15 AM", now);
-    expect(result.timezone).toBe("Europe/Istanbul");
+    // parseVoiceTime reads Intl.DateTimeFormat().resolvedOptions().timeZone,
+    // which follows the running process's TZ — pin it here so this
+    // assertion is deterministic regardless of the machine/CI runner's
+    // default timezone (this describe block's other tests are TZ-invariant
+    // by construction and don't need this).
+    const originalTz = process.env.TZ;
+    process.env.TZ = "Europe/Istanbul";
+    try {
+      const result = parseVoiceTime("3:15 AM", now);
+      expect(result.timezone).toBe("Europe/Istanbul");
+    } finally {
+      if (originalTz === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTz;
+    }
   });
 
   it("no 12-hour inversion: for every hour 1-12 with both AM and PM stated explicitly, the two results are always exactly 12 hours apart, never equal and never off by a different amount", () => {
@@ -300,5 +312,129 @@ describe("parseVoiceTime — AM/PM resolution (regression: confirmed 3:15 AM →
       const normalizedDiff = ((diffMs % twentyFourHoursMs) + twentyFourHoursMs) % twentyFourHoursMs;
       expect(normalizedDiff === twelveHoursMs || normalizedDiff === -twelveHoursMs + twentyFourHoursMs).toBe(true);
     }
+  });
+});
+
+// Confirmed production regression: "I must pay the electricity bill on
+// Monday." led create_reminder to fire immediately with a silently invented
+// 09:00 time, instead of asking the owner what time. The fix is this
+// `dayOnly` flag: true only when a day was named (a weekday via "next <day>",
+// or bare "tomorrow") but no clock time was given, so the caller can tell
+// "the user actually said 9am" apart from "parseVoiceTime had to guess".
+describe("parseVoiceTime — dayOnly flag (day named, no clock time)", () => {
+  // 2026-07-12 10:00 local — a Sunday, so "next Monday" is exactly 1 day away.
+  const now = new Date("2026-07-12T10:00:00");
+
+  it("flags a bare weekday with no clock time as dayOnly, defaulting to 09:00", () => {
+    const result = parseVoiceTime("next Monday", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dayOnly).toBe(true);
+    const due = new Date(result.dueAt);
+    expect(due.getDate()).toBe(13); // Monday, July 13
+    expect(due.getHours()).toBe(9);
+    expect(due.getMinutes()).toBe(0);
+  });
+
+  it("flags standalone \"tomorrow\" (no clock time) as dayOnly, defaulting to 09:00", () => {
+    const result = parseVoiceTime("tomorrow", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dayOnly).toBe(true);
+    const due = new Date(result.dueAt);
+    expect(due.getHours()).toBe(9);
+  });
+
+  it("does NOT flag a weekday phrase that also names an explicit clock time — the explicit time wins over the 09:00 default", () => {
+    const result = parseVoiceTime("next Monday at 4:30 PM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dayOnly).toBeFalsy();
+    const due = new Date(result.dueAt);
+    expect(due.getDate()).toBe(13); // still Monday, July 13
+    expect(due.getHours()).toBe(16);
+    expect(due.getMinutes()).toBe(30);
+  });
+
+  it("does NOT flag phrases that already carry an explicit clock time (\"tomorrow at 5 PM\", \"today at 3:30 PM\")", () => {
+    expect(parseVoiceTime("tomorrow at 5 PM", now).dayOnly).toBeFalsy();
+    expect(parseVoiceTime("today at 3:30 PM", now).dayOnly).toBeFalsy();
+  });
+
+  it("a pure time-only phrase (no day word) resolves via the \"auto\" day branch, distinct from dayOnly", () => {
+    const result = parseVoiceTime("4:30 PM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dayOnly).toBeFalsy();
+    expect(result.parsedAs).toContain('day="auto"');
+  });
+});
+
+// Confirmed production regression: on a Saturday evening (past 5 PM local),
+// "Monday at 5:00 PM" (no "next") matched no weekday pattern at all — the
+// old regex only recognized "next <weekday>" — so the day was silently
+// dropped and the phrase fell through to the generic clock-time "auto"
+// branch (today/tomorrow relative to `now`), turning Monday into Sunday.
+// Reproduced exactly: due_at stored as 2026-07-26T14:00:00Z (Sunday 17:00
+// Europe/Istanbul) for a reminder Carson confirmed as "Monday at 5:00 PM".
+describe("parseVoiceTime — bare weekday without \"next\" (2026-07-25 Saturday→Monday regression)", () => {
+  // 2026-07-25 23:24 local (Europe/Istanbul) — a Saturday night, past 5 PM,
+  // matching the exact production timestamp of the reproduced reminder.
+  const now = new Date("2026-07-25T23:24:00");
+
+  it("resolves \"Monday at 5:00 PM\" (no \"next\") to the upcoming Monday, never to Sunday (tomorrow)", () => {
+    const result = parseVoiceTime("Monday at 5:00 PM", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dayOnly).toBeFalsy();
+    const due = new Date(result.dueAt);
+    expect(due.getDay()).toBe(1); // Monday
+    expect(due.getDate()).toBe(27); // July 27, 2026
+    expect(due.getHours()).toBe(17);
+    expect(due.getMinutes()).toBe(0);
+  });
+
+  it("resolves \"Sunday at 5:00 PM\" (no \"next\") to the upcoming Sunday — tomorrow, not today", () => {
+    const result = parseVoiceTime("Sunday at 5:00 PM", now);
+    expect(result.error).toBeUndefined();
+    const due = new Date(result.dueAt);
+    expect(due.getDay()).toBe(0); // Sunday
+    expect(due.getDate()).toBe(26); // July 26, 2026 — tomorrow
+    expect(due.getHours()).toBe(17);
+  });
+
+  it("a bare weekday with no clock time (\"Monday\", no \"next\") is now flagged dayOnly instead of failing to parse", () => {
+    // Previously this returned a parse error ("Could not parse time
+    // phrase"), which is not the reported bug but is the same underlying
+    // gap: the weekday-only pattern required the literal word "next".
+    const result = parseVoiceTime("Monday", now);
+    expect(result.error).toBeUndefined();
+    expect(result.dayOnly).toBe(true);
+    const due = new Date(result.dueAt);
+    expect(due.getDay()).toBe(1);
+    expect(due.getDate()).toBe(27);
+    expect(due.getHours()).toBe(9);
+  });
+
+  it("\"next Monday at 5:00 PM\" still resolves identically with \"next\" present", () => {
+    const withNext = parseVoiceTime("next Monday at 5:00 PM", now);
+    const withoutNext = parseVoiceTime("Monday at 5:00 PM", now);
+    expect(withNext.dueAt).toBe(withoutNext.dueAt);
+  });
+
+  // CodeRabbit finding on this PR: the weekday branch's clock extraction
+  // only accepted a 12-hour am/pm time and silently fell back to 09:00 for
+  // a 24-hour time or a bare hour with no colon/am-pm — inconsistent with
+  // the generic absolute-time branch, which already handles both.
+  it("resolves \"Monday at 17:00\" (24-hour clock, no am/pm) to 17:00, not the 09:00 default", () => {
+    const result = parseVoiceTime("Monday at 17:00", now);
+    expect(result.dayOnly).toBeFalsy();
+    const due = new Date(result.dueAt);
+    expect(due.getDate()).toBe(27);
+    expect(due.getHours()).toBe(17);
+    expect(due.getMinutes()).toBe(0);
+  });
+
+  it("resolves \"Monday at 5\" (bare hour, no colon, no am/pm) to 17:00 via the same PM heuristic as the generic branch, not the 09:00 default", () => {
+    const result = parseVoiceTime("Monday at 5", now);
+    expect(result.dayOnly).toBeFalsy();
+    const due = new Date(result.dueAt);
+    expect(due.getDate()).toBe(27);
+    expect(due.getHours()).toBe(17); // 5 → PM per the 1-7 heuristic
   });
 });

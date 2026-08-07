@@ -46,15 +46,20 @@ export async function downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath
   }
 }
 
-function buildReviewPrompt({ taskDescription, delegationMessage, hasReferenceImage, proofImageCount, workerReply }) {
+function buildReviewPrompt({ taskDescription, delegationMessage, referenceImageCount, proofImageCount, workerReply }) {
   const proofLabel = proofImageCount === 1 ? 'a proof photo' : `${proofImageCount} proof photos`;
+  const referenceLabel = referenceImageCount === 1 ? 'A reference image' : `${referenceImageCount} reference images`;
   return `You are Carson, a meticulous quality reviewer for household/work task proof photos.
 
 Task: "${taskDescription}"
 Delegation message sent to the assignee: "${delegationMessage || 'none'}"
 ${workerReply ? `The assignee added this note when submitting proof: "${workerReply}"\n` : ''}${
-  hasReferenceImage
-    ? `A reference image showing what the result should look like is attached first, followed by ${proofLabel} submitted by the assignee.`
+  referenceImageCount > 0
+    ? `${referenceLabel} showing what the result should look like ${referenceImageCount === 1 ? 'is' : 'are'} attached first, followed by ${proofLabel} submitted by the assignee.${
+        referenceImageCount > 1 || proofImageCount > 1
+          ? ' When there is more than one reference image or more than one proof photo, treat each group as a whole: the reference images together show everything that was requested, and the proof photos together show everything that was submitted. Do not assume any specific reference photo corresponds to any specific proof photo by position or order — judge whether the full set of proof photos, taken together, satisfies everything shown across the full set of reference photos.'
+          : ''
+      }`
     : `No reference image was provided for this task. Only ${proofLabel} submitted by the assignee ${proofImageCount === 1 ? 'is' : 'are'} attached. Judge them against the task description and delegation message alone.`
 }
 ${proofImageCount > 1 ? 'Treat all attached proof photos together as one submission — approve only if they collectively satisfy the task.' : ''}
@@ -77,8 +82,8 @@ Item-vs-location judgment:
 
 Decide exactly one outcome, in this order — check APPROVED first, then SUBSTITUTE_REVIEW, then CORRECTION_REQUIRED:
 - APPROVED: the requested item/outcome is clearly correct, materially matches the task, and is a reasonable fulfillment of the request. This applies regardless of the proof photo's style, polish, or resemblance to the reference.
-- SUBSTITUTE_REVIEW: use ONLY when the assignee could not obtain the exact requested item/brand/variant and instead clearly sends a different, reasonable alternative — for example a different flavor/color/variant of the same product line when the exact one was unavailable (e.g. TEREA Silver requested, TEREA Turquoise sent), an equivalent brand when the requested brand was unavailable, or a similar arrangement when the exact flowers were unavailable. The assignee's note (if present) is strong evidence for this, but is not required — the photo alone can make the substitution clear (e.g. a visibly different product variant than the reference). Do NOT use SUBSTITUTE_REVIEW for normal variation of the SAME item — a different plate, background, lighting, angle, portion, garnish, arrangement, or a home-made version of a reference dish is still the same requested item and is APPROVED, not a substitute. Do NOT use SUBSTITUTE_REVIEW for a wrong or unrelated item — that is CORRECTION_REQUIRED. If you are not confident the photo shows a genuinely different item/variant than requested, prefer APPROVED. This outcome hands the decision to the task owner — it does not mean the proof failed.
-- CORRECTION_REQUIRED: you can clearly see what's wrong and describe it specifically — wrong required placement/location, missing item, visibly incomplete, or an entirely different/mismatched item than what was asked for (e.g. the wrong product, wrong color/variant when the exact variant matters, wrong object altogether). A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible, and never treat polish, studio quality, or resemblance to the reference as a problem. Do not reject the correct item merely because it is on a different neutral surface/background unless location proof was explicitly requested.
+- SUBSTITUTE_REVIEW: use when the assignee sends the same type of item but with a different attribute (color, variant, brand, size, flavor, model) than what was requested, or an equivalent product that serves the same purpose. The key test: is it the same kind of thing, just not exactly what was specified? If yes, it is a substitute — escalate to the owner. Examples that are SUBSTITUTE_REVIEW: a white pen when a blue pen was requested, a black pen when a blue pen was requested, Pepsi when Coke was requested, a red notebook when a blue one was requested, TEREA Turquoise when TEREA Silver was requested, a different brand of milk, an A5 notebook when A4 was requested. The assignee's note is strong evidence but not required — the photo alone showing a same-category item with a different attribute is sufficient. Do NOT use SUBSTITUTE_REVIEW for normal variation of the SAME item — a different plate, background, lighting, angle, portion, or garnish is still the same item and is APPROVED. Do NOT use SUBSTITUTE_REVIEW for a completely wrong/unrelated item in a different product category — that is CORRECTION_REQUIRED. This outcome hands the decision to the task owner — it does not mean the proof failed.
+- CORRECTION_REQUIRED: the assignee sent an entirely different/mismatched item from a completely different product category, or an object with no plausible relationship to the task — wrong item entirely, missing item, visibly incomplete (e.g. shoes when a pen was requested, food when stationery was requested, IQOS sticks when a pen was requested, an empty shelf when an item was expected). Also use for wrong required placement/location. A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible, and never treat polish, studio quality, or resemblance to the reference as a problem. Do not reject the correct item merely because it is on a different neutral surface/background unless location proof was explicitly requested. IMPORTANT: a different color, brand, size, or variant of the correct product category is SUBSTITUTE_REVIEW, not CORRECTION_REQUIRED.
 - UNCERTAIN: reserve this only for genuine ambiguity where you cannot tell what's in the photo or whether it matches — for example the photo itself is blurry, too dark, or cropped so the relevant item isn't visible, the angle makes it impossible to judge, or there's no reference image and the task description is too vague to judge against. If you can clearly see the item and can clearly see that it does not match, that is CORRECTION_REQUIRED, never UNCERTAIN.
 - FRAUD_SUSPECTED: the proof photo itself is not genuine proof of the completed task — not just wrong or unclear, but not real evidence of the task at all. Use this ONLY when there is strong, concrete evidence that the image is not a photo of a real physical item or scene at all, such as the photo being a screenshot (product listing, marketplace page, menu, app UI, etc.). This is about strong evidence the image isn't a photo, NOT about how polished, professional, stock-like, AI-generated, similar to, or identical to the reference it looks — those are never sufficient evidence on their own, and identity or similarity to the reference is never grounds for FRAUD_SUSPECTED. A real photo of the wrong item is CORRECTION_REQUIRED; a correct, well-composed, professional-looking, or reference-identical photo of the right item is APPROVED.
 
@@ -309,12 +314,13 @@ export async function runQualityReview({
   apiKey,
   taskDescription,
   delegationMessage,
-  referenceImageBase64,
+  referenceImagesBase64,
   proofImagesBase64,
   workerReply,
 }) {
   const fallback = { status: 'uncertain', note: 'Could not complete an automated review — please check manually.' };
 
+  const referenceImages = (Array.isArray(referenceImagesBase64) ? referenceImagesBase64 : []).filter(Boolean);
   const proofImages = (Array.isArray(proofImagesBase64) ? proofImagesBase64 : []).filter(Boolean);
   if (!apiKey || proofImages.length === 0) return fallback;
 
@@ -329,13 +335,13 @@ export async function runQualityReview({
       text: buildReviewPrompt({
         taskDescription,
         delegationMessage,
-        hasReferenceImage: !!referenceImageBase64,
+        referenceImageCount: referenceImages.length,
         proofImageCount: proofImages.length,
         workerReply,
       }),
     },
   ];
-  if (referenceImageBase64) {
+  for (const referenceImageBase64 of referenceImages) {
     content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: referenceImageBase64 } });
   }
   for (const proofImageBase64 of proofImages) {

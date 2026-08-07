@@ -18,6 +18,7 @@
 
 import webpush from 'web-push';
 import { Receiver } from '@upstash/qstash';
+import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -64,7 +65,7 @@ export default async function handler(req, res) {
   // ── 3. Load and validate the task ───────────────────────────────────────
   const taskRes = await fetch(
     `${supabaseUrl}/rest/v1/tasks` +
-    `?select=id,user_id,description,status,type,due_at,last_push_sent_at,archived_at` +
+    `?select=id,user_id,description,status,type,due_at,last_push_sent_at,archived_at,reminder_delivery_status` +
     `&id=eq.${encodeURIComponent(taskId)}&limit=1`,
     { headers: supabaseHeaders(serviceRoleKey) },
   );
@@ -128,11 +129,6 @@ export default async function handler(req, res) {
     return res.status(500).json({ success: false, error: `VAPID init failed: ${getErrorMessage(err)}` });
   }
 
-  const payload = JSON.stringify({
-    title: 'Ra7etBal',
-    body: task.description,
-  });
-
   const sentAt = new Date().toISOString();
   const claimed = await claimTaskForPush(supabaseUrl, serviceRoleKey, taskId, sentAt);
   if (!claimed) {
@@ -149,11 +145,34 @@ export default async function handler(req, res) {
   const errors = [];
   const perSubscription = [];
 
+  await recordDeliveryEvent({
+    supabaseUrl, serviceRoleKey, taskId, userId: task.user_id,
+    eventKey: `callback:qstash:${sentAt}`, stage: 'callback_received', metadata: { source: 'qstash' },
+  });
+
   for (const sub of uniqueSubscriptions) {
     const endpointTail = sub.endpoint ? sub.endpoint.slice(-40) : '(missing)';
     console.log(`[send-push-for-task] sending to sub=${sub.id} endpoint=...${endpointTail}`);
+    const receiptFields = {
+      taskId, userId: task.user_id, subscriptionId: sub.id, dueAt: task.due_at,
+    };
+    const payload = JSON.stringify({
+      title: 'Ra7etBal',
+      body: task.description,
+      receipt: {
+        url: '/api/qstash-reminder',
+        taskId,
+        subscriptionId: sub.id,
+        dueAt: task.due_at,
+        token: signReminderReceipt(receiptFields, process.env.CRON_SECRET),
+      },
+    });
+    await recordDeliveryEvent({
+      supabaseUrl, serviceRoleKey, taskId, userId: task.user_id, subscriptionId: sub.id,
+      eventKey: `provider_send_attempted:${sub.id}:${sentAt}`, stage: 'provider_send_attempted',
+    });
     try {
-      await webpush.sendNotification(
+      const providerResponse = await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
         payload,
         // urgency:high = APNs priority 10 (immediate delivery, not batched).
@@ -161,6 +180,11 @@ export default async function handler(req, res) {
         { urgency: 'high', TTL: 60 },
       );
       sent += 1;
+      await recordDeliveryEvent({
+        supabaseUrl, serviceRoleKey, taskId, userId: task.user_id, subscriptionId: sub.id,
+        eventKey: `provider_accepted:${sub.id}:${sentAt}`, stage: 'provider_accepted',
+        providerStatusCode: providerResponse?.statusCode ?? 201,
+      });
       console.log(`[send-push-for-task] ✓ sent to sub=${sub.id}`);
       perSubscription.push({ id: sub.id, endpointTail, result: 'sent' });
     } catch (err) {
@@ -176,6 +200,12 @@ export default async function handler(req, res) {
         body: err?.body ?? null,
       });
       errors.push(`sub=${sub.id} status=${statusCode} msg=${getErrorMessage(err)}`);
+      await recordDeliveryEvent({
+        supabaseUrl, serviceRoleKey, taskId, userId: task.user_id, subscriptionId: sub.id,
+        eventKey: `provider_rejected:${sub.id}:${sentAt}`, stage: 'provider_rejected',
+        providerStatusCode: statusCode,
+        metadata: { permanent: statusCode === 404 || statusCode === 410 },
+      });
 
       // 410 Gone or 404 Not Found = subscription is permanently invalid.
       // Remove it so future reminders aren't wasted on a dead endpoint.
@@ -186,39 +216,48 @@ export default async function handler(req, res) {
     }
   }
 
-  // ── 6. On success: stamp last_push_sent_at AND mark reminder done ───────
-  // Moving to done keeps a record in history without cluttering Actions.
-  // Guard &last_push_sent_at=is.null prevents a double-send from pg_cron
-  // safety net writing twice.
+  // ── 6. Persist provider acceptance without claiming device delivery ─────
   let markedSent = false;
   let markError = null;
 
-  console.log(`[send-push-for-task] result: sent=${sent} failed=${failed} — ${sent > 0 ? 'marking done' : 'no successful sends, clearing claim'}`);
+  console.log(`[send-push-for-task] result: sent=${sent} failed=${failed}`);
   if (sent > 0) {
-    console.log(`[send-push-for-task] marking status=done on taskId=${taskId}`);
     const patchRes = await fetch(
       `${supabaseUrl}/rest/v1/tasks` +
       `?id=eq.${encodeURIComponent(taskId)}` +
-      `&last_push_sent_at=eq.${encodeURIComponent(sentAt)}`,
+      `&reminder_dispatch_attempted_at=eq.${encodeURIComponent(sentAt)}`,
       {
         method: 'PATCH',
         headers: { ...supabaseHeaders(serviceRoleKey), Prefer: 'return=minimal' },
         body: JSON.stringify({
-          status: 'done',
-          confirmed_at: sentAt,
+          last_push_sent_at: sentAt,
+          reminder_delivery_status: 'delivery_unconfirmed',
+          reminder_provider_accepted_at: sentAt,
+          reminder_delivery_error: failed > 0 ? `${failed} subscription send(s) failed` : null,
         }),
       },
     );
     if (patchRes.ok) {
       markedSent = true;
-      console.log(`[send-push-for-task] ✓ task marked done OK`);
+      console.log(`[send-push-for-task] ✓ provider acceptance persisted`);
     } else {
       const patchData = await patchRes.json().catch(() => null);
       markError = patchData?.message || `PATCH failed (${patchRes.status})`;
       console.error(`[send-push-for-task] ✗ task done stamp FAILED: ${markError}`);
     }
   } else {
-    await clearTaskPushClaim(supabaseUrl, serviceRoleKey, taskId, sentAt);
+    const retryable = perSubscription.some(
+      (result) => result.result === 'failed' && result.statusCode !== 404 && result.statusCode !== 410,
+    );
+    await markTaskDeliveryFailed(
+      supabaseUrl, serviceRoleKey, taskId, sentAt, errors.join('; '), retryable,
+    );
+    if (retryable) {
+      return res.status(500).json({
+        success: false, taskId, sent, failed, markedSent: false,
+        markError: null, errors, debug: perSubscription,
+      });
+    }
   }
 
   console.log(`[send-push-for-task] done — success=${sent > 0} sent=${sent} failed=${failed} markedSent=${markedSent}`);
@@ -268,12 +307,15 @@ async function claimTaskForPush(supabaseUrl, serviceRoleKey, taskId, sentAt) {
       '&type=eq.reminder' +
       '&status=eq.pending' +
       '&archived_at=is.null' +
-      '&last_push_sent_at=is.null' +
+      '&reminder_dispatch_attempted_at=is.null' +
       '&select=id',
     {
       method: 'PATCH',
       headers: { ...supabaseHeaders(serviceRoleKey), Prefer: 'return=representation' },
-      body: JSON.stringify({ last_push_sent_at: sentAt }),
+      body: JSON.stringify({
+        reminder_delivery_status: 'dispatch_attempted',
+        reminder_dispatch_attempted_at: sentAt,
+      }),
     },
   );
   if (!response.ok) {
@@ -285,16 +327,20 @@ async function claimTaskForPush(supabaseUrl, serviceRoleKey, taskId, sentAt) {
   return Array.isArray(rows) && rows.length > 0;
 }
 
-async function clearTaskPushClaim(supabaseUrl, serviceRoleKey, taskId, sentAt) {
+async function markTaskDeliveryFailed(supabaseUrl, serviceRoleKey, taskId, sentAt, error, retryable) {
   try {
     await fetch(
       `${supabaseUrl}/rest/v1/tasks` +
         `?id=eq.${encodeURIComponent(taskId)}` +
-        `&last_push_sent_at=eq.${encodeURIComponent(sentAt)}`,
+        `&reminder_dispatch_attempted_at=eq.${encodeURIComponent(sentAt)}`,
       {
         method: 'PATCH',
         headers: { ...supabaseHeaders(serviceRoleKey), Prefer: 'return=minimal' },
-        body: JSON.stringify({ last_push_sent_at: null }),
+        body: JSON.stringify({
+          reminder_delivery_status: 'failed',
+          reminder_delivery_error: error || 'All provider sends failed.',
+          ...(retryable ? { reminder_dispatch_attempted_at: null } : {}),
+        }),
       },
     );
   } catch (err) {

@@ -767,13 +767,15 @@ describe('photo attachment pipeline', () => {
     expect(templatePayload.template.name).toBe('ra7etbal_task_image');
   });
 
-  it('multi-photo: appends "attached N photos" note and uses text template (no image upload)', async () => {
+  it('multi-photo: primary send appends "attached N photos" note and uses text template (no image header)', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
-      // No signed URL call — multi-photo skips the image template entirely
+      // No signed URL call for imagePath — multi-photo skips the image-header template entirely
       .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.multi' }] }))
-      .mockResolvedValueOnce(emptyResponse());
+      .mockResolvedValueOnce(emptyResponse())
+      // task_attachments lookup for real media delivery — none recorded
+      .mockResolvedValueOnce(jsonResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -792,12 +794,14 @@ describe('photo attachment pipeline', () => {
     );
 
     expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true }));
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ success: true, mediaDeliveryResults: [] }),
+    );
 
     const graphCalls = fetchMock.mock.calls.filter(([url]) =>
       String(url).includes('graph.facebook.com/v20.0'),
     );
-    // Only one graph call — no Meta image upload for multi-photo
+    // Only one graph call — no photos recorded in task_attachments to send
     expect(graphCalls).toHaveLength(1);
     const payload = JSON.parse(graphCalls[0][1].body);
     expect(payload.template.name).toBe('ra7etbal_task_v3');
@@ -807,6 +811,176 @@ describe('photo attachment pipeline', () => {
     expect(messageParam).toBeTruthy();
     expect(messageParam.text).toMatch(/2 photos/);
     expect(messageParam.text).toMatch(/task link/i);
+  });
+
+  // Regression: production incident where a 2-photo delegation ("make these
+  // for lunch") produced only the text+link message — Christopher never
+  // received real photo media. Root cause: the multi-attachment path never
+  // attempted to send the actual photos, only a text note pointing at the
+  // confirmation link. This locks in the fix — each recorded task_attachments
+  // row is now sent as its own freeform WhatsApp image message (media_id,
+  // never a URL) once the primary template message is accepted.
+  it('multi-photo: sends every recorded attachment as a separate freeform image message after the template', async () => {
+    const fakeBuffer = new ArrayBuffer(1024);
+    const fetchMock = vi.fn()
+      // primary send
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.multi' }] }))
+      .mockResolvedValueOnce(emptyResponse())
+      // task_attachments lookup — 2 real photos
+      .mockResolvedValueOnce(jsonResponse([
+        { storage_path: 'user-1/task-1/attachments/0.jpg' },
+        { storage_path: 'user-1/task-1/attachments/1.jpg' },
+      ]))
+      // photo 0: signed url, Meta download, Meta upload, freeform send
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/attachments/0.jpg?token=abc' }))
+      .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) })
+      .mockResolvedValueOnce(jsonResponse({ id: 'meta-media-id-0' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.photo0' }] }))
+      // photo 1: signed url, Meta download, Meta upload, freeform send
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/attachments/1.jpg?token=abc' }))
+      .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) })
+      .mockResolvedValueOnce(jsonResponse({ id: 'meta-media-id-1' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.photo1' }] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'Make these for lunch.',
+        confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
+        taskId: 'task-1',
+        imagePath: 'task-images/user-1/task-1/photo.jpg',
+        attachmentCount: 2,
+        ownerName: 'Sana',
+        recipientName: 'Christopher',
+      }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+
+    const graphCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('graph.facebook.com/v20.0'),
+    );
+    // 1 primary template send + 2 photos × (media upload + freeform image send)
+    expect(graphCalls).toHaveLength(5);
+
+    // The media-upload calls post FormData (not JSON) — only the /messages
+    // calls (template send + the two freeform image sends) have a JSON body.
+    const messageCalls = graphCalls.filter(([url]) => String(url).endsWith('/messages'));
+    expect(messageCalls).toHaveLength(3);
+
+    // The two freeform sends must be real image messages referencing an
+    // uploaded media_id — never a URL-based image payload (Meta rejects those).
+    const imageSends = messageCalls
+      .map(([, init]) => JSON.parse(init.body))
+      .filter((payload) => payload.type === 'image');
+    expect(imageSends).toHaveLength(2);
+    for (const payload of imageSends) {
+      expect(payload.image).toEqual({ id: expect.stringMatching(/^meta-media-id-/) });
+      expect(payload.image.link).toBeUndefined();
+    }
+
+    const jsonCall = res.json.mock.calls.find((call) => call[0]?.mediaDeliveryResults);
+    expect(jsonCall[0].mediaDeliveryResults).toEqual([
+      { storagePath: 'user-1/task-1/attachments/0.jpg', sent: true, messageId: 'wamid.photo0', reason: null },
+      { storagePath: 'user-1/task-1/attachments/1.jpg', sent: true, messageId: 'wamid.photo1', reason: null },
+    ]);
+
+    // task_attachments is shared with Proof Photo V2 (api/task-confirm.js),
+    // which stores the assignee's own submitted proof photos in the same
+    // table with file_name = 'proof'. The lookup must exclude those, or a
+    // task with proof already submitted would send the assignee's own proof
+    // photos back to them.
+    const attachmentsLookupCall = fetchMock.mock.calls.find(([lookupUrl]) =>
+      String(lookupUrl).includes('/rest/v1/task_attachments'),
+    );
+    expect(String(attachmentsLookupCall[0])).toContain('file_name=is.null');
+  });
+
+  it('multi-photo: one photo failing to send is reported truthfully and does not block the other photo or the overall response', async () => {
+    const fakeBuffer = new ArrayBuffer(1024);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.multi' }] }))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(jsonResponse([
+        { storage_path: 'user-1/task-1/attachments/0.jpg' },
+        { storage_path: 'user-1/task-1/attachments/1.jpg' },
+      ]))
+      // photo 0: signed url succeeds, but Meta download fails (e.g. 24h window closed downstream) — upload never gets a media_id
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/attachments/0.jpg?token=abc' }))
+      .mockResolvedValueOnce({ ok: false, status: 403, headers: { get: () => null }, arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(0)) })
+      // photo 1: succeeds fully
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user-1/task-1/attachments/1.jpg?token=abc' }))
+      .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) })
+      .mockResolvedValueOnce(jsonResponse({ id: 'meta-media-id-1' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.photo1' }] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'Make these for lunch.',
+        confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
+        taskId: 'task-1',
+        imagePath: 'task-images/user-1/task-1/photo.jpg',
+        attachmentCount: 2,
+        ownerName: 'Sana',
+        recipientName: 'Christopher',
+      }),
+      res,
+    );
+
+    // The primary text/link message already succeeded — overall response is
+    // still success, but the per-photo results are honest about the failure.
+    expect(res.status).toHaveBeenCalledWith(200);
+    const jsonCall = res.json.mock.calls.find((call) => call[0]?.mediaDeliveryResults);
+    expect(jsonCall[0].mediaDeliveryResults).toEqual([
+      { storagePath: 'user-1/task-1/attachments/0.jpg', sent: false, reason: 'meta_upload_failed' },
+      { storagePath: 'user-1/task-1/attachments/1.jpg', sent: true, messageId: 'wamid.photo1', reason: null },
+    ]);
+  });
+
+  it('single-photo: mediaDeliveryResults stays null — the multi-photo freeform-send path never runs for a single attachment', async () => {
+    const fakeBuffer = new ArrayBuffer(1024);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ signedURL: '/object/sign/task-images/user/task/photo.jpg?token=abc' }))
+      .mockResolvedValueOnce({ ok: true, status: 200, headers: { get: () => 'image/jpeg' }, arrayBuffer: vi.fn().mockResolvedValue(fakeBuffer) })
+      .mockResolvedValueOnce(jsonResponse({ id: 'meta-media-id-123' }))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.image' }] }))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({
+        to: '+971 50 000 0000',
+        messageText: 'Make this for dinner.',
+        confirmationLink: 'https://ra7etbal.com/confirm?task=task-1',
+        taskId: 'task-1',
+        imagePath: 'task-images/user/task/photo.jpg',
+        attachmentCount: null,
+        ownerName: 'Sana',
+        recipientName: 'Christopher',
+      }),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    // Exactly the calls the single-photo path always made (lookup, delivery
+    // insert, signed url, Meta download, Meta upload, template send, delivery
+    // patch) — no task_attachments lookup, no extra freeform-send calls.
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    const jsonCall = res.json.mock.calls.find((call) => 'mediaDeliveryResults' in (call[0] || {}));
+    expect(jsonCall[0].mediaDeliveryResults).toBeNull();
   });
 
   it('single-photo failure does not append raw signed URL to message (avoids leaking expiring URL)', async () => {

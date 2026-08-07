@@ -10,6 +10,14 @@ interface CarsonStore {
   setCallStatus: (status: CallStatus) => void;
   channel: CarsonChannel;
   setChannel: (channel: CarsonChannel) => void;
+  /**
+   * Text queued to appear in the typed input once a text session is
+   * connected (e.g. "Send to Carson" on a Note card). Consumed exactly once —
+   * the widget clears it via setPendingTypedDraft(null) after inserting it,
+   * so it never re-applies on a later, unrelated typed session.
+   */
+  pendingTypedDraft: string | null;
+  setPendingTypedDraft: (draft: string | null) => void;
 }
 
 export const useCarsonStore = create<CarsonStore>((set) => ({
@@ -19,4 +27,6 @@ export const useCarsonStore = create<CarsonStore>((set) => ({
   setCallStatus: (callStatus) => set({ callStatus }),
   channel: "voice",
   setChannel: (channel) => set({ channel }),
+  pendingTypedDraft: null,
+  setPendingTypedDraft: (pendingTypedDraft) => set({ pendingTypedDraft }),
 }));

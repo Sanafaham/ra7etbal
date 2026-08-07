@@ -23,6 +23,7 @@ import { createDelegationTaskAndMessage } from "../lib/delegations";
 import { sendWhatsAppTask } from "../lib/whatsapp";
 import { usePeopleStore } from "../stores/people";
 import { useProfileStore } from "../stores/profile";
+import { useCarsonStore } from "../stores/carson";
 
 export default function Inbox({ headerless = false }: { headerless?: boolean } = {}) {
   const { user } = useAuth();
@@ -168,6 +169,23 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
     } finally {
       setMakingTaskId(null);
     }
+  }
+
+  // ── Send to Carson ────────────────────────────────────────────────────────
+  // Opens Talk to Carson in text mode with the note's exact text queued for
+  // the typed input (see pendingTypedDraft in stores/carson.ts and the
+  // insertion effect in ElevenLabsAgentWidget.tsx). Never sent automatically
+  // — the owner reviews and taps Send themselves, going through the exact
+  // same sendTypedMessage() path (and advisory-only boundary) as anything
+  // typed directly, so Carson can never execute a reminder, message,
+  // delegation, calendar change, or to-do from this without the normal
+  // clarification/approval flow. The note itself is never read from again
+  // here — nothing about it is mutated.
+  function handleSendToCarson(note: CarsonNote) {
+    const carson = useCarsonStore.getState();
+    carson.setChannel("text");
+    carson.setPendingTypedDraft(note.note);
+    carson.setOpen(true);
   }
 
   // ── Delegate handlers ─────────────────────────────────────────────────────
@@ -385,6 +403,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
                   makingTask={makingTaskId === note.id}
                   taskMade={madeTaskIds.has(note.id)}
                   onMakeTask={handleMakeTask}
+                  onSendToCarson={handleSendToCarson}
                   reminding={remindingNoteId === note.id}
                   remindTimeText={remindingNoteId === note.id ? remindTimeText : ""}
                   onRemindTimeChange={setRemindTimeText}
@@ -429,7 +448,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
 
 function NoteCard({
   note, deleting, confirmingDelete, onDelete,
-  makingTask, taskMade, onMakeTask,
+  makingTask, taskMade, onMakeTask, onSendToCarson,
   reminding, remindTimeText, onRemindTimeChange, settingReminder, reminderSet, reminderInputError,
   onRemindMe, onRemindSubmit, onRemindCancel,
   delegating, delegatePersonId, onDelegatePersonChange, sendingDelegate, delegatedName, delegateError,
@@ -441,6 +460,7 @@ function NoteCard({
   note: CarsonNote;
   deleting: boolean; confirmingDelete: boolean; onDelete: (note: CarsonNote) => Promise<void>;
   makingTask: boolean; taskMade: boolean; onMakeTask: (note: CarsonNote) => Promise<void>;
+  onSendToCarson: (note: CarsonNote) => void;
   reminding: boolean; remindTimeText: string; onRemindTimeChange: (v: string) => void;
   settingReminder: boolean; reminderSet: boolean; reminderInputError: string | null;
   onRemindMe: (note: CarsonNote) => void; onRemindSubmit: (note: CarsonNote) => Promise<void>; onRemindCancel: () => void;
@@ -565,6 +585,15 @@ function NoteCard({
             Delegate
           </button>
         ) : null}
+
+        {/* Send to Carson — opens Talk to Carson (text) with this note's
+            exact text queued for the typed input. Carson analyzes it and
+            proposes actions through the normal clarification/approval flow;
+            nothing here executes anything or changes the note. */}
+        <button type="button" onClick={() => onSendToCarson(note)} disabled={busy || reminding || delegating || addingToCalendar}
+          className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/25 bg-sage/8 px-3 py-1 text-xs font-medium text-sage transition hover:bg-sage/15 disabled:opacity-50">
+          Send to Carson
+        </button>
 
         {/* Overflow ··· */}
         <div className="relative ml-auto">

@@ -1,3 +1,5 @@
+import { isSessionRecapOld } from "./carson-epistemic-gate";
+
 /** Prefix marking a row as a session recap (the ACTUAL last conversation). */
 export const RECAP_PREFIX = "• Session recap:";
 
@@ -45,9 +47,12 @@ export function formatRecentMemory(rows: CarsonMemoryRow[]): string {
       minute: "2-digit",
     });
     const summary = row.summary.trim().replace(/\n{3,}/g, "\n");
-    const label =
-      row.created_at === newestRecapAt
-        ? `[Most recent session — ${when}]`
+    const isNewest = row.created_at === newestRecapAt;
+    const isOld = !isNewest && isSessionRecapOld(row.created_at);
+    const label = isNewest
+      ? `[Most recent session — ${when}]`
+      : isOld
+        ? `[Older context — ${when} — treat as background only]`
         : `[Earlier session — ${when}]`;
     return `${label}\n${summary}`;
   });

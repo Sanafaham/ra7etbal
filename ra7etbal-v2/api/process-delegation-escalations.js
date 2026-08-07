@@ -96,6 +96,7 @@
 import webpush from 'web-push';
 import { Receiver } from '@upstash/qstash';
 import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
+import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -178,6 +179,17 @@ export default async function handler(req, res) {
 
   webpush.setVapidDetails(vapidSubject, vapidPublic, vapidPrivate);
 
+  // The existing authenticated 10-minute QStash wake-up also reconciles
+  // bounded owner-command failures. The account-scoped routing flag defaults
+  // off, and this work is isolated so it cannot block delegation escalation.
+  if (String(process.env.OWNER_WHATSAPP_ROUTING_USER_IDS || '').trim()) {
+    await reconcileOwnerWhatsappMessages({ supabaseUrl, serviceKey }).catch((error) => {
+      console.error('[owner-whatsapp] reconciliation failed (cron continues)', {
+        error: error?.message || String(error),
+      });
+    });
+  }
+
   // ── Action dispatch ────────────────────────────────────────────────────────
   const requestBody = (typeof req.body === 'object' && req.body !== null) ? req.body : {};
   if (requestBody.action === 'run-routines') {
@@ -186,6 +198,17 @@ export default async function handler(req, res) {
 
   if (requestBody.action === 'run-automations') {
     return runAutomationsDispatch(req, res, { supabaseUrl, serviceKey, appBaseUrl });
+  }
+
+  // S2: Indeterminate OLG follow-up — dispatched by task-confirm.js +4h after
+  // a task enters the Indeterminate state (uncertain or fraud_suspected).
+  // COS Ch. 13.5 Amendment S2.
+  if (requestBody.trigger === 'uncertain_olg' && requestBody.taskId) {
+    return handleUncertainOLGFollowUp(req, res, {
+      supabaseUrl,
+      serviceKey,
+      taskId: requestBody.taskId,
+    });
   }
 
   const now = new Date();
@@ -1262,6 +1285,97 @@ async function resolvePersonById(supabaseUrl, serviceKey, userId, personId) {
 }
 
 /** Send a web-push to all active subscriptions for a user. */
+// ─── S2: Indeterminate OLG follow-up handler ─────────────────────────────────
+
+/**
+ * Handles {trigger: 'uncertain_olg', taskId} payloads from QStash.
+ *
+ * Fires ~4h after a task entered the Indeterminate state. Checks that the task
+ * is still Indeterminate and that no escalation has been sent yet, claims the
+ * guard atomically, then sends a second owner push.
+ *
+ * COS Ch. 13.5 Amendment S2.
+ */
+async function handleUncertainOLGFollowUp(req, res, { supabaseUrl, serviceKey, taskId }) {
+  const headers = supabaseHeaders(serviceKey);
+
+  // Fetch the task to verify it is still Indeterminate.
+  const taskRes = await fetch(
+    `${supabaseUrl}/rest/v1/tasks` +
+      `?id=eq.${encodeURIComponent(taskId)}` +
+      `&select=id,user_id,description,assigned_to,status,quality_review_status,uncertain_escalated_at` +
+      `&limit=1`,
+    { headers },
+  );
+  const rows = await taskRes.json().catch(() => []);
+
+  if (!taskRes.ok || !Array.isArray(rows) || rows.length === 0) {
+    console.warn('[escalation] uncertain_olg: task not found', { taskId });
+    return res.status(200).json({ skipped: true, reason: 'task_not_found' });
+  }
+
+  const task = rows[0];
+  const INDETERMINATE = new Set(['uncertain', 'fraud_suspected']);
+
+  if (task.status !== 'pending' || !INDETERMINATE.has(task.quality_review_status)) {
+    console.log('[escalation] uncertain_olg: task no longer Indeterminate — skip', {
+      taskId,
+      status: task.status,
+      quality_review_status: task.quality_review_status,
+    });
+    return res.status(200).json({ skipped: true, reason: 'no_longer_indeterminate' });
+  }
+
+  if (task.uncertain_escalated_at) {
+    console.log('[escalation] uncertain_olg: already escalated — skip', {
+      taskId,
+      uncertain_escalated_at: task.uncertain_escalated_at,
+    });
+    return res.status(200).json({ skipped: true, reason: 'already_escalated' });
+  }
+
+  // Claim-before-act guard: conditional PATCH stamps uncertain_escalated_at
+  // only if it is still null. Exactly one concurrent invocation succeeds.
+  const claimRes = await fetch(
+    `${supabaseUrl}/rest/v1/tasks` +
+      `?id=eq.${encodeURIComponent(taskId)}` +
+      `&status=eq.pending` +
+      `&uncertain_escalated_at=is.null`,
+    {
+      method: 'PATCH',
+      headers: { ...headers, Prefer: 'return=representation' },
+      body: JSON.stringify({ uncertain_escalated_at: new Date().toISOString() }),
+    },
+  );
+  const claimRows = await claimRes.json().catch(() => []);
+
+  if (!claimRes.ok || !Array.isArray(claimRows) || claimRows.length === 0) {
+    console.log('[escalation] uncertain_olg: claim guard rejected (concurrent invocation or task changed) — skip', {
+      taskId,
+      claimStatus: claimRes.status,
+    });
+    return res.status(200).json({ skipped: true, reason: 'claim_rejected' });
+  }
+
+  // Send the OLG escalation push.
+  const pushed = await sendOwnerPush({
+    userId: task.user_id,
+    title: 'Ra7etBal',
+    body: `Still waiting on your decision: "${task.description}" assigned to ${task.assigned_to || 'a staff member'} needs your review.`,
+    supabaseUrl,
+    serviceKey,
+  });
+
+  console.log('[escalation] uncertain_olg: escalation sent', {
+    taskId,
+    userId: task.user_id,
+    pushed,
+    quality_review_status: task.quality_review_status,
+  });
+
+  return res.status(200).json({ escalated: true, pushed });
+}
+
 async function sendOwnerPush({ userId, title, body, supabaseUrl, serviceKey }) {
   const subsRes = await fetch(
     `${supabaseUrl}/rest/v1/push_subscriptions` +

@@ -6,9 +6,15 @@ const SOURCE = readFileSync(join(__dirname, "Updates.tsx"), "utf-8");
 
 /**
  * Clear My Head and the internal Inbox tab were removed from the product.
- * Updates now has exactly 7 tabs: Needs You / Waiting / To-do / Notes /
- * Automations / Staff / History. Staff (Owner Visibility V1) was added
- * after the original 6-tab baseline — read-only staff_messages records.
+ * Updates now has exactly 6 tabs: Needs You / Waiting / To-do / Notes /
+ * Automations / History.
+ *
+ * Staff tab removed (2026-07-26): the owner-facing Staff tab (Owner
+ * Visibility V1) duplicated information already available through push
+ * notifications, History, Waiting, Handled, and People, so it was removed
+ * from navigation. StaffUpdates.tsx, staff-messages.ts, and all backend
+ * staff-messaging/delegation/WhatsApp behavior are untouched — this was a
+ * navigation-only removal, not a data or backend change.
  */
 describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
   it("no longer has a tab labeled \"Inbox\" or the clear-my-head tab id", () => {
@@ -23,12 +29,28 @@ describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
     expect(SOURCE).toMatch(/\{ id: "todo",\s*label: "To-do"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "inbox",\s*label: "Notes"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "routines",\s*label: "Automations"\s*\}/);
-    expect(SOURCE).toMatch(/\{ id: "staff",\s*label: "Staff"\s*\}/);
     expect(SOURCE).toMatch(/\{ id: "history",\s*label: "History"\s*\}/);
   });
 
   it("keeps the Notes tab rendering the pre-existing Inbox component", () => {
     expect(SOURCE).toMatch(/\{activeTab === "inbox" && <Inbox headerless \/>\}/);
+  });
+
+  it("the Staff tab is removed from navigation — no tab id/label, no StaffUpdates import or render, no dead activeTab comparisons left behind", () => {
+    expect(SOURCE).not.toMatch(/id: "staff"/);
+    expect(SOURCE).not.toMatch(/label: "Staff"/);
+    expect(SOURCE).not.toContain("StaffUpdates");
+    expect(SOURCE).not.toMatch(/activeTab === "staff"/);
+    expect(SOURCE).not.toMatch(/activeTab !== "staff"/);
+  });
+
+  it("an old /updates?tab=staff deep link falls back to the default tab instead of exposing a broken screen", () => {
+    // isValidTab only accepts a value present in TABS; "staff" is no longer
+    // in TABS, so isValidTab("staff") is false and activeTab falls back to
+    // the existing "needs-you" default — the same pre-existing fallback
+    // mechanism every unrecognized tab param already goes through.
+    expect(SOURCE).toMatch(/const activeTab: Tab = isValidTab\(rawTab\) \? rawTab : "needs-you";/);
+    expect(SOURCE).toMatch(/function isValidTab\(v: string \| null\): v is Tab \{\s*return TABS\.some\(\(t\) => t\.id === v\);\s*\}/);
   });
 });
 
@@ -45,13 +67,13 @@ describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
  * from genuine (including keyboard-driven) user interaction.
  */
 describe("Updates.tsx — chip auto-scroll does not self-pause", () => {
-  it("TABS is exactly these 7 entries, in order, with no eighth tab silently added back", () => {
+  it("TABS is exactly these 6 entries, in order, with no seventh tab silently added back", () => {
     const tabsBlock = SOURCE.slice(
       SOURCE.indexOf("const TABS: { id: Tab; label: string }[] = ["),
       SOURCE.indexOf("];", SOURCE.indexOf("const TABS: { id: Tab; label: string }[] = [")),
     );
     const ids = [...tabsBlock.matchAll(/\{ id: "([a-z-]+)",/g)].map((m) => m[1]);
-    expect(ids).toEqual(["needs-you", "waiting", "todo", "inbox", "routines", "staff", "history"]);
+    expect(ids).toEqual(["needs-you", "waiting", "todo", "inbox", "routines", "history"]);
     expect(SOURCE).toMatch(/\[\.\.\.TABS, \.\.\.TABS\]\.map/);
   });
 
@@ -146,5 +168,43 @@ describe("Updates.tsx — Needs You / Waiting stay mounted through background re
 
   it("the true first-load spinner gate (initialLoading) is untouched — still requires loading with zero cached tasks", () => {
     expect(SOURCE).toMatch(/const initialLoading = tasksStatus === "loading" && tasks\.length === 0;/);
+  });
+});
+
+/**
+ * Phase C — open staff escalations (Phase B) appear inside the existing
+ * Needs You list, without restoring the removed Staff tab and without
+ * duplicating a staff escalation already represented by its linked task.
+ */
+describe("Updates.tsx — Phase C staff escalations inside the existing Needs You list", () => {
+  it("1. renders open staff escalations via the shared hook and card, inside the needs-you tab", () => {
+    expect(SOURCE).toContain('import { useOpenStaffEscalations } from "../hooks/useOpenStaffEscalations";');
+    expect(SOURCE).toContain('import StaffEscalationCard from "../components/tasks/StaffEscalationCard";');
+    expect(SOURCE).toMatch(/visibleStaffEscalations\.map\(\(escalation\) => \(/);
+  });
+
+  it("5. routes staff escalations through the shared filterVisibleStaffEscalations helper — never suppresses one by task_id alone (fixed: PR #90 re-review)", () => {
+    expect(SOURCE).toContain(
+      'import { filterVisibleStaffEscalations } from "../lib/needs-you-staff-escalations";',
+    );
+    expect(SOURCE).toMatch(/filterVisibleStaffEscalations\(staffEscalations, brief\.needsAttention\.map/);
+    // The old, unsafe "dedup" framing must not reappear in this file.
+    expect(SOURCE).not.toMatch(/dropped here to avoid showing the same decision twice/);
+  });
+
+  it("the empty state only shows when both real tasks and staff escalations are empty", () => {
+    expect(SOURCE).toMatch(
+      /brief\.needsAttention\.length === 0 && visibleStaffEscalations\.length === 0/,
+    );
+  });
+
+  it("does not restore the removed Staff tab — no tab id/label reappears", () => {
+    expect(SOURCE).not.toMatch(/id: "staff"/);
+    expect(SOURCE).not.toMatch(/label: "Staff"/);
+  });
+
+  it("6. real task-based Needs You cards are still rendered via the unmodified TaskCard, unchanged by this addition", () => {
+    expect(SOURCE).toMatch(/\{brief\.needsAttention\.map\(\(task\) => \(/);
+    expect(SOURCE).toMatch(/<TaskCard\s/);
   });
 });

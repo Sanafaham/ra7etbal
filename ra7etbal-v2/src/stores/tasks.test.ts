@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useTasksStore } from "./tasks";
-import { listTasks } from "../lib/tasks";
+import {
+  archiveDoneTasks,
+  deleteTask,
+  dismissConfirmationNotices,
+  listTasks,
+} from "../lib/tasks";
+import { selectConfirmationNotices } from "../lib/dismissed-notifications";
 import type { Task } from "../types/task";
 
 vi.mock("../lib/tasks", () => ({
@@ -8,6 +14,7 @@ vi.mock("../lib/tasks", () => ({
   createTask: vi.fn(),
   deleteTask: vi.fn(),
   deleteTasks: vi.fn(),
+  dismissConfirmationNotices: vi.fn(),
   listTasks: vi.fn(),
   updateTask: vi.fn(),
 }));
@@ -19,6 +26,9 @@ vi.mock("../lib/qstash-reminder", () => ({
 }));
 
 const listTasksMock = vi.mocked(listTasks);
+const dismissConfirmationNoticesMock = vi.mocked(dismissConfirmationNotices);
+const archiveDoneTasksMock = vi.mocked(archiveDoneTasks);
+const deleteTaskMock = vi.mocked(deleteTask);
 
 function makeTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -31,6 +41,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     created_at: "2026-07-10T16:01:13.589Z",
     confirmed_at: null,
     due_at: null,
+    dismissed_at: null,
     archived_at: null,
     confirmation_url: null,
     qstash_message_id: null,
@@ -131,5 +142,102 @@ describe("useTasksStore.loadFor — Phase 8.1 Bug #2 regression (stale client st
 
     await useTasksStore.getState().loadFor("user-1");
     expect(listTasksMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("useTasksStore.dismissConfirmationNotice", () => {
+  beforeEach(() => {
+    useTasksStore.getState().reset();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function completedTask(overrides: Partial<Task> = {}): Task {
+    return makeTask({
+      status: "done",
+      confirmed_at: "2026-07-27T12:00:00.000Z",
+      quality_review_status: "approved",
+      ...overrides,
+    });
+  }
+
+  it("keeps a server-dismissed banner hidden after reload, logout/login, and another client load", async () => {
+    const persisted = completedTask({ dismissed_at: "2026-07-27T12:05:00.000Z" });
+    listTasksMock.mockResolvedValue([persisted]);
+
+    await useTasksStore.getState().loadFor("user-1", { force: true });
+    expect(useTasksStore.getState().items[0].dismissed_at).toBe(persisted.dismissed_at);
+    expect(selectConfirmationNotices(useTasksStore.getState().items)).toEqual([]);
+
+    useTasksStore.getState().reset();
+    await useTasksStore.getState().loadFor("user-1", { force: true });
+    expect(useTasksStore.getState().items[0].dismissed_at).toBe(persisted.dismissed_at);
+    expect(selectConfirmationNotices(useTasksStore.getState().items)).toEqual([]);
+
+    useTasksStore.getState().reset();
+    await useTasksStore.getState().loadFor("user-1", { force: true });
+    expect(useTasksStore.getState().items[0].dismissed_at).toBe(persisted.dismissed_at);
+    expect(selectConfirmationNotices(useTasksStore.getState().items)).toEqual([]);
+    expect(listTasksMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ["pending", completedTask({ status: "pending", confirmed_at: null })],
+    ["unconfirmed", completedTask({ confirmed_at: null })],
+    ["non-delegation", completedTask({ type: "reminder" })],
+  ])("does not dismiss %s work", async (_label, task) => {
+    useTasksStore.getState().push([task]);
+
+    await useTasksStore.getState().dismissConfirmationNotice(task.id);
+
+    expect(dismissConfirmationNoticesMock).not.toHaveBeenCalled();
+    expect(useTasksStore.getState().items[0]).toEqual(task);
+  });
+
+  it("rolls back the optimistic dismissal when the database write fails", async () => {
+    const task = completedTask();
+    useTasksStore.getState().push([task]);
+    dismissConfirmationNoticesMock.mockRejectedValueOnce(new Error("database unavailable"));
+
+    const dismissal = useTasksStore.getState().dismissConfirmationNotice(task.id);
+    expect(useTasksStore.getState().items[0].dismissed_at).not.toBeNull();
+    await expect(dismissal).rejects.toThrow("database unavailable");
+
+    expect(useTasksStore.getState().items[0]).toEqual(task);
+  });
+
+  it("rolls back when the guarded database update matches no eligible row", async () => {
+    const task = completedTask();
+    useTasksStore.getState().push([task]);
+    dismissConfirmationNoticesMock.mockResolvedValueOnce([]);
+
+    await useTasksStore.getState().dismissConfirmationNotice(task.id);
+
+    expect(useTasksStore.getState().items[0]).toEqual(task);
+  });
+
+  it("persists only dismissed_at and does not archive, delete, or remove the completed task", async () => {
+    const task = completedTask();
+    const persisted = {
+      ...task,
+      dismissed_at: "2026-07-27T12:05:00.000Z",
+    };
+    useTasksStore.getState().push([task]);
+    dismissConfirmationNoticesMock.mockResolvedValueOnce([persisted]);
+
+    await useTasksStore.getState().dismissConfirmationNotice(task.id);
+
+    expect(dismissConfirmationNoticesMock).toHaveBeenCalledWith([task.id]);
+    expect(archiveDoneTasksMock).not.toHaveBeenCalled();
+    expect(deleteTaskMock).not.toHaveBeenCalled();
+    expect(useTasksStore.getState().items).toEqual([persisted]);
+    expect(useTasksStore.getState().items[0]).toMatchObject({
+      id: task.id,
+      status: "done",
+      archived_at: null,
+      confirmed_at: task.confirmed_at,
+    });
   });
 });

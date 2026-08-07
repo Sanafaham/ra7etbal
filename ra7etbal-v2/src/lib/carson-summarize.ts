@@ -10,6 +10,8 @@
  * Cost: ~$0.0004 per session (1,500 tokens in + 100 out at Haiku rates).
  */
 
+import { looksLikeUnverifiedOperationalNarrative } from "./carson-epistemic-gate";
+
 export interface TranscriptMessage {
   role: "user" | "agent";
   message: string;
@@ -151,7 +153,17 @@ ${transcriptText}`;
   }
 
   const text = body?.content?.[0]?.text?.trim();
-  return text && text !== NOTHING ? text.replace(/\s+/g, " ") : fallback;
+  if (!text || text === NOTHING) return fallback;
+
+  const cleaned = text.replace(/\s+/g, " ");
+
+  // Constitutional write gate (COS Ch. 19.6): this function has no access to
+  // verified tool output — it only summarizes a transcript — so it must never
+  // save a recap asserting a specific operational outcome as fact. Fall back
+  // to the topic-only heuristic instead. See
+  // looksLikeUnverifiedOperationalNarrative's doc comment for the production
+  // failure this closes.
+  return looksLikeUnverifiedOperationalNarrative(cleaned) ? fallback : cleaned;
 }
 
 /**
