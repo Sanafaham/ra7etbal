@@ -296,7 +296,16 @@ Protect: the canonical builder's closed input surface (decision/instructionText/
 
 **Workstream 3 Frozen Baseline: PERMANENT as of 2026-08-06.**
 
-### Workstream 5 — Staff-facing Outbound Delivery Reliability — MERGED, DEPLOYED, SMOKE-VERIFIED; FUNCTIONAL VERIFICATION PENDING LIVE OBSERVATION
+### Workstream 5 — Staff-facing Outbound Delivery Reliability — ACTIVE WORKSTREAM, NOT YET CLOSED
+
+Status (2026-08-07):
+- Implementation: COMPLETE
+- Tests: VERIFIED
+- Production deployment: VERIFIED
+- Smoke verification: VERIFIED
+- Functional production verification: PENDING
+
+Workstream 5 remains the active workstream until the new reliability path (`notifyOwnerOfDirectMessageDeliveryFailure`) is exercised by a real production event or an approved controlled production verification. Do not mark this FORMALLY CLOSED AND FROZEN before that evidence exists. **Do not begin Workstream 6 while this status stands.**
 
 Merged via PR #191 (`ws5/staff-outbound-delivery-reliability`), merge commit `951f38d5b54a7d80c71e40dd20b2860b2c15ee70`, merged 2026-08-07T12:22:22Z. `carson-protected-behaviors` CI was blocked for several hours by a confirmed GitHub Actions platform-wide outage (per GitHub's own status page) — not a code issue; two attempts on the original run failed at "Set up job" with infrastructure errors ("job was not acquired by Runner," "Failed to resolve action download info") before ever reaching the test step. A fresh run, triggered by closing/reopening the PR (no commit, no workflow change, original orphaned run `31121769662` left untouched for the record) after GitHub's status returned to `operational`, completed in 18s with `Test Files 54 passed (54)` — the real protected suite, not an infra artifact.
 
