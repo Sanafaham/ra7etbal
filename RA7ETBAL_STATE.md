@@ -1076,6 +1076,16 @@ Status: not started. Kept separate from the production-verified, protected Unive
 
 These require small additive `tasks`/related-table columns (a real migration, unlike V1A/V2A, which were display-only and zero-migration) — see the full audit for the smallest-safe-fix proposal before starting. Any future work here must be additive and must not break or rewrite the production-verified V1A/V2A displays.
 
+### Staging WhatsApp webhook environment — future infrastructure, not a workstream
+
+Status: not started. Recorded 2026-08-07 during Workstream 5's production-verification design, as a **separate future infrastructure item — explicitly not part of Workstream 5 and not to be folded into it.**
+
+What it is: a dedicated staging WhatsApp Business Account + Meta App + webhook URL/secret, isolated from real recipients, matching the "target architecture, not yet built" language already in this repo's locked "permanent production verification policy" (see above). Would let webhook-driven features be verified with constructed payloads on demand, without touching a real person's phone and without waiting on an unpredictable organic event.
+
+Why it matters: identified as the correct long-term methodology during an engineering review of Workstream 5's verification options (organic wait / controlled real send / staging / historical replay). Staging is the only option that is simultaneously zero production risk, repeatable on demand, and doesn't consume a real recipient's engagement standing every time verification is needed. It does not, however, reproduce Meta's real per-recipient pacing algorithm — so it complements, rather than replaces, occasional real-world confidence.
+
+Do not start this without an explicit, separately-scoped engineering session.
+
 ### PWA authentication or notification restoration difference
 
 Observed behavior: browser sign-in restores notifications, while the installed home-screen PWA may not restore them in the same way.
