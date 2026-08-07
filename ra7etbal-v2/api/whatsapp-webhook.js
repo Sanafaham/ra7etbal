@@ -4,6 +4,7 @@ import { handleTaskConfirmationPost, sendOwnerPush } from './task-confirm.js';
 import { processStaffMessage } from './_staff-comms-engine.js';
 import { notifyOwnerOfEscalation } from './_escalation-notify.js';
 import { handleInboundOwnerMessage } from './_owner-whatsapp-routing.js';
+import { correlateReply, handleInboundPersonalContactReply } from './_personal-contact-reply.js';
 import { persistInboundStaffImage } from './_inbound-staff-evidence.js';
 import { persistWhatsappInboundEvidence } from './_whatsapp-inbound-observability.js';
 
@@ -138,7 +139,7 @@ export default async function handler(req, res) {
     const result = await handleInboundConsentReply({ supabaseUrl, serviceKey, msg });
     consentResults.push(result);
 
-    if (!result.handled && result.reason === 'not_consent_reply') {
+    if (!result.handled && (result.reason === 'not_consent_reply' || result.reason === 'active_personal_conversation')) {
       staffResults.push(await handleInboundStaffMessage({ supabaseUrl, serviceKey, msg, req }));
     }
   }
@@ -180,6 +181,7 @@ export async function handleInboundStaffMessage(
     sendMetaMessageImpl = sendMetaMessage,
     persistInboundStaffImageImpl = persistInboundStaffImage,
     handleTaskConfirmationPostImpl = handleTaskConfirmationPost,
+    handleInboundPersonalContactReplyImpl = handleInboundPersonalContactReply,
   } = {},
 ) {
   const phoneNumberId = msg.phoneNumberId;
@@ -194,7 +196,12 @@ export async function handleInboundStaffMessage(
   const matches = people.filter((p) => normalizePhone(p.phone) === sender);
   if (!sender || matches.length !== 1) return { handled: false, reason: matches.length ? 'ambiguous_sender' : 'unknown_sender' };
   const person = matches[0];
-  if (person.is_family) return { handled: false, reason: 'family_sender' };
+  if (person.is_family) {
+    // Personal Contact Reply Relay — structurally isolated from every path
+    // below this line. A family sender never reaches task matching,
+    // staff_messages, processStaffMessage, or escalation/QI code.
+    return handleInboundPersonalContactReplyImpl({ supabaseUrl, serviceKey, msg, person, userId });
+  }
   if (!person.whatsapp_opted_in || !person.whatsapp_consent_at || !person.whatsapp_consent_method) {
     return { handled: false, reason: 'not_opted_in' };
   }
@@ -650,6 +657,28 @@ async function handleInboundConsentReply({ supabaseUrl, serviceKey, msg }) {
   if (!person) {
     console.warn('WhatsApp inbound: no person found for phone', { from });
     return { handled: false, from, reason: 'person_not_found' };
+  }
+
+  // Scope: an opt-in-shaped short reply ("yes"/"ok"/"sure") from a family
+  // member is ambiguous — it can be a genuine consent decision, or (far more
+  // commonly) a reply to an active direct personal conversation Carson just
+  // sent them. Only defer to the relay when there IS an active conversation
+  // to defer to (reuses correlateReply's own eligibility check, read-only,
+  // no side effects) — a brand-new family contact's first-ever opt-in reply
+  // has no such conversation and is processed as consent exactly as before.
+  // Opt-out ("stop"/"unsubscribe"/...) is never deferred: honoring an
+  // explicit request to stop receiving messages takes priority over this
+  // heuristic. Staff behavior is completely unchanged — staff senders never
+  // have is_family === true.
+  if (isOptIn && person.is_family) {
+    const activeConversation = await correlateReply({
+      supabaseUrl, serviceKey, userId: person.user_id,
+      senderPhone: normalizePhone(from), contextMessageId: msg.contextMessageId,
+    }).catch(() => ({ method: 'unmatched' }));
+    if (activeConversation.method !== 'unmatched') {
+      console.log('WhatsApp inbound: opt-in-shaped reply matches an active personal conversation, deferring to relay', { from });
+      return { handled: false, from, reason: 'active_personal_conversation' };
+    }
   }
 
   const event  = isOptIn ? 'opt_in' : 'opt_out';

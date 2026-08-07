@@ -136,6 +136,134 @@ describe('owner routing precedence', () => {
   });
 });
 
+describe('consent-collision scoping — Personal Contact Reply Relay', () => {
+  it('defers an opt-in-shaped reply ("yes") to the relay when the family sender has an active direct conversation', async () => {
+    vi.stubEnv('META_APP_SECRET', 'meta-app-secret');
+    vi.stubEnv('SUPABASE_URL', 'https://example.supabase.co');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
+    vi.stubEnv('WHATSAPP_ACCESS_TOKEN', 'meta-access-token');
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      const target = String(url);
+      // recordWebhookHeartbeat — unrelated, runs unconditionally for every webhook POST.
+      if (target.includes('/whatsapp_health_state?') && options.method === 'PATCH') {
+        return jsonResponse([]);
+      }
+      // findPersonByPhone (consent handler) — Eren, family, has an active conversation.
+      if (target.includes('/people?select=id,user_id,name,phone,role,is_family,whatsapp_opted_in')) {
+        return jsonResponse([{ id: 'person-eren', user_id: 'user-1', name: 'Eren', phone: '+905537032912', role: null, is_family: true, whatsapp_opted_in: true }]);
+      }
+      // correlateReply's quoted-context / recent-conversation lookups — one eligible delivery.
+      if (target.includes('/whatsapp_deliveries?') && target.includes('created_at=gte.')) {
+        return jsonResponse([{ id: 'delivery-1', created_at: '2026-08-07T20:37:07Z' }]);
+      }
+      if (target.includes('/personal_contact_replies?')) {
+        return jsonResponse([]);
+      }
+      // handleInboundStaffMessage's own resolution (household then person).
+      if (target.includes('/whatsapp_health_state?')) {
+        return jsonResponse([{ user_id: 'user-1' }]);
+      }
+      if (target.includes('/people?user_id=eq.user-1&select=id,user_id,name,phone,role,is_family,whatsapp_opted_in,whatsapp_consent_at,whatsapp_consent_method')) {
+        return jsonResponse([{ id: 'person-eren', user_id: 'user-1', name: 'Eren', phone: '+905537032912', is_family: true, whatsapp_opted_in: true }]);
+      }
+      // handleInboundPersonalContactReply's own persistence + owner relay.
+      if (target.includes('/rpc/record_personal_contact_reply')) {
+        return jsonResponse([{ row_id: 'reply-1', newly_recorded: true, owner_notification_status: 'pending', correlation_method: 'single_recent', correlated_delivery_id: 'delivery-1' }]);
+      }
+      if (target.includes('/people?user_id=eq.user-1&select=id,name,role,phone')) {
+        return jsonResponse([{ id: 'owner-1', name: 'Boss', role: 'Boss', phone: '+971500000001' }]);
+      }
+      if (target.includes('/rpc/complete_personal_contact_reply_notification')) {
+        return jsonResponse([{ id: 'reply-1', owner_notification_status: 'sent' }]);
+      }
+      throw new Error(`unexpected fetch ${target} ${options.method || 'GET'}`);
+    }));
+
+    const { req, res } = makeReqRes(inboundMessagePayload({
+      from: '905537032912', messageId: 'wamid.eren-yes', text: 'Yes',
+    }));
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    // No consent write ever happened for this person — updatePersonConsent's
+    // PATCH to /people?id=eq.person-eren, distinct from the unrelated
+    // whatsapp_health_state heartbeat PATCH stubbed above.
+    expect(fetch.mock.calls.some(([u, o]) => String(u).includes('/people?id=eq.person-eren') && o?.method === 'PATCH')).toBe(false);
+    expect(fetch.mock.calls.some(([url]) => String(url).includes('whatsapp_consent_log'))).toBe(false);
+    // The relay did run.
+    expect(smsMocks.sendMetaMessage).toHaveBeenCalledTimes(1);
+    expect(smsMocks.sendMetaMessage.mock.calls[0][0].payload.text.body).toBe('Eren replied: "Yes"');
+  });
+
+  it('processes "yes" as a normal opt-in for a family member with no active conversation (existing behavior preserved)', async () => {
+    vi.stubEnv('META_APP_SECRET', 'meta-app-secret');
+    vi.stubEnv('SUPABASE_URL', 'https://example.supabase.co');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      const target = String(url);
+      if (target.includes('/people?select=id,user_id,name,phone,role,is_family,whatsapp_opted_in')) {
+        return jsonResponse([{ id: 'person-eren', user_id: 'user-1', name: 'Eren', phone: '+905537032912', role: null, is_family: true, whatsapp_opted_in: false }]);
+      }
+      // No recent direct-message conversation at all for this phone.
+      if (target.includes('/whatsapp_deliveries?') && target.includes('created_at=gte.')) {
+        return jsonResponse([]);
+      }
+      if (target.includes('/people?id=eq.person-eren') && options.method === 'PATCH') {
+        return jsonResponse([{ id: 'person-eren' }]);
+      }
+      if (target.includes('whatsapp_consent_log') && options.method === 'POST') {
+        return jsonResponse([{ id: 'log-1' }]);
+      }
+      throw new Error(`unexpected fetch ${target} ${options.method || 'GET'}`);
+    }));
+
+    const { req, res } = makeReqRes(inboundMessagePayload({
+      from: '905537032912', messageId: 'wamid.eren-optin', text: 'Yes',
+    }));
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.consentHandled).toBe(1);
+    expect(fetch.mock.calls.some(([u, o]) => String(u).includes('/people?id=eq.person-eren') && o?.method === 'PATCH')).toBe(true);
+    expect(smsMocks.sendMetaMessage).not.toHaveBeenCalled();
+  });
+
+  it('never defers for a staff sender — staff consent behavior is completely unaffected', async () => {
+    vi.stubEnv('META_APP_SECRET', 'meta-app-secret');
+    vi.stubEnv('SUPABASE_URL', 'https://example.supabase.co');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
+
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      const target = String(url);
+      if (target.includes('/people?select=id,user_id,name,phone,role,is_family,whatsapp_opted_in')) {
+        return jsonResponse([{ id: 'person-christopher', user_id: 'user-1', name: 'Christopher', phone: '+971501234567', role: 'Cook', is_family: false, whatsapp_opted_in: false }]);
+      }
+      if (target.includes('/people?id=eq.person-christopher') && options.method === 'PATCH') {
+        return jsonResponse([{ id: 'person-christopher' }]);
+      }
+      if (target.includes('whatsapp_consent_log') && options.method === 'POST') {
+        return jsonResponse([{ id: 'log-1' }]);
+      }
+      // is_family is false: correlateReply must never be consulted for this sender.
+      if (target.includes('/whatsapp_deliveries?') || target.includes('/personal_contact_replies?')) {
+        throw new Error(`correlateReply must not run for a staff sender: ${target}`);
+      }
+      throw new Error(`unexpected fetch ${target} ${options.method || 'GET'}`);
+    }));
+
+    const { req, res } = makeReqRes(inboundMessagePayload({
+      from: '971501234567', messageId: 'wamid.christopher-optin', text: 'Yes',
+    }));
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.consentHandled).toBe(1);
+    expect(fetch.mock.calls.some(([u, o]) => String(u).includes('/people?id=eq.person-christopher') && o?.method === 'PATCH')).toBe(true);
+  });
+});
+
 function stubBaseEnv() {
   vi.stubEnv('SUPABASE_URL', 'https://x.supabase.co');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
@@ -1424,5 +1552,43 @@ describe.skip('POST /api/whatsapp-webhook — Carson bridge PoC dispatch (read-o
 
     expect(res.statusCode).toBe(200);
     expect(carsonBridgeMocks.attemptCarsonBridgePoc).not.toHaveBeenCalled();
+  });
+});
+
+describe('Personal Contact Reply Relay — dispatch isolation from staff paths', () => {
+  it('dispatches a family sender to the relay handler and never touches any staff-only path', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'person-eren', name: 'Eren', phone: '+905537032912',
+        is_family: true, whatsapp_opted_in: true,
+      }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handleInboundPersonalContactReplyImpl = vi.fn(async () => ({
+      handled: true, reason: 'relayed', route: 'personal_contact_reply', correlationMethod: 'single_recent',
+    }));
+
+    const result = await handleInboundStaffMessage(
+      {
+        supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+        msg: { from: '905537032912', messageId: 'wamid.family-1', body: 'Yes.', phoneNumberId: 'meta-phone-id', contextMessageId: null },
+      },
+      { handleInboundPersonalContactReplyImpl },
+    );
+
+    expect(result).toEqual({ handled: true, reason: 'relayed', route: 'personal_contact_reply', correlationMethod: 'single_recent' });
+    expect(handleInboundPersonalContactReplyImpl).toHaveBeenCalledWith(expect.objectContaining({
+      msg: expect.objectContaining({ messageId: 'wamid.family-1' }),
+      person: expect.objectContaining({ id: 'person-eren', is_family: true }),
+      userId: 'user-1',
+    }));
+    // Structural isolation: no staff-only side effect ever ran for this sender.
+    expect(staffEngineMocks.processStaffMessage).not.toHaveBeenCalled();
+    expect(taskConfirmMocks.handleTaskConfirmationPost).not.toHaveBeenCalled();
+    expect(taskConfirmMocks.sendOwnerPush).not.toHaveBeenCalled();
+    // Only the two resolution fetches ran — no staff_messages/task lookups.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

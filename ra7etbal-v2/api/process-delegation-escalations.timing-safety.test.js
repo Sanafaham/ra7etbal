@@ -7,6 +7,13 @@ vi.mock('web-push', () => ({
   },
 }));
 
+// vi.hoisted + reconfigured in beforeEach — afterEach's restoreAllMocks()
+// clears any mockResolvedValue configured only inside the vi.mock factory.
+const personalContactReplyMocks = vi.hoisted(() => ({
+  reconcilePersonalContactReplyNotifications: vi.fn(),
+}));
+vi.mock('./_personal-contact-reply.js', () => personalContactReplyMocks);
+
 import webpush from 'web-push';
 import handler, { PROD_ESCALATE_MS, PROD_FOLLOWUP_MS } from './process-delegation-escalations.js';
 import { ESCALATION_DELAY_MS, FOLLOWUP_DELAY_MS } from './qstash-reminder.js';
@@ -20,6 +27,7 @@ beforeEach(() => {
   vi.stubEnv('VAPID_SUBJECT', 'mailto:test@ra7etbal.com');
   vi.stubEnv('APP_BASE_URL', 'https://ra7etbal.com');
   vi.mocked(webpush.sendNotification).mockResolvedValue(undefined);
+  personalContactReplyMocks.reconcilePersonalContactReplyNotifications.mockReset().mockResolvedValue([]);
 });
 
 afterEach(() => {
