@@ -254,6 +254,146 @@ describe('owner command execution boundary', () => {
     });
   });
 
+  it('personal-response request to a family member (is_family: true) stays direct_message', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      const target = String(url);
+      if (target.includes('/rpc/record_owner_whatsapp_command')) return response(recorded());
+      if (target.includes('/profiles?')) return response([{ display_name: 'Sana' }]);
+      if (target.includes('/people?')) {
+        return response([{
+          id: 'person-saeed', name: 'Saeed', phone: '+971500000003',
+          whatsapp_opted_in: true, is_family: true,
+        }]);
+      }
+      if (target.endsWith('/rest/v1/messages') && options.method === 'POST') return response([JSON.parse(options.body)]);
+      if (target.includes('/owner_whatsapp_reply_receipts?') && options.method === 'PATCH') return response([recorded()]);
+      if (target.includes('/whatsapp_deliveries?')) return response([]);
+      throw new Error(`unexpected fetch ${target}`);
+    }));
+
+    const result = await persistAndExecuteOwnerCommand({
+      supabaseUrl: SUPABASE,
+      serviceKey: 'service-key',
+      identity,
+      receipt,
+      msg: { body: 'Ask Saeed to call me.', phoneNumberId: 'phone-1' },
+    });
+
+    expect(result.kind).toBe('completed');
+    expect(calls.some((call) => call.url.endsWith('/rest/v1/tasks'))).toBe(false);
+    expect(calls.some((call) => call.url.startsWith('https://qstash.upstash.io/'))).toBe(false);
+    expect(result.acknowledgement).toBe('Done — I sent one direct message to Saeed. No task was created.');
+  });
+
+  it('personal-response request to confirmed staff (is_family: false) is upgraded to delegation', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      const target = String(url);
+      if (target.includes('/rpc/record_owner_whatsapp_command')) return response(recorded());
+      if (target.includes('/profiles?')) return response([{ display_name: 'Sana' }]);
+      if (target.includes('/people?')) {
+        return response([{
+          id: 'person-christopher', name: 'Christopher', phone: '+971500000004',
+          whatsapp_opted_in: true, is_family: false,
+        }]);
+      }
+      if (target.endsWith('/rest/v1/tasks') && options.method === 'POST') {
+        const body = JSON.parse(options.body);
+        return response([{ ...body, created_at: '2026-07-28T00:00:00.000Z' }]);
+      }
+      if (target.startsWith('https://qstash.upstash.io/')) return response({ messageId: `qstash-${calls.length}` });
+      if (target.endsWith('/rest/v1/messages') && options.method === 'POST') return response([JSON.parse(options.body)]);
+      if (target.includes('/owner_whatsapp_reply_receipts?') && options.method === 'PATCH') return response([recorded()]);
+      if (target.includes('/whatsapp_deliveries?')) return response([]);
+      throw new Error(`unexpected fetch ${target}`);
+    }));
+
+    const result = await persistAndExecuteOwnerCommand({
+      supabaseUrl: SUPABASE,
+      serviceKey: 'service-key',
+      identity,
+      receipt,
+      msg: { body: 'Ask Christopher to call me.', phoneNumberId: 'phone-1' },
+    });
+
+    expect(result.kind).toBe('completed');
+    expect(calls.some((call) => call.url.endsWith('/rest/v1/tasks') && call.options.method === 'POST')).toBe(true);
+    expect(calls.some((call) => call.url.startsWith('https://qstash.upstash.io/'))).toBe(true);
+    expect(result.acknowledgement).toBe('Done — I created the task for Christopher and WhatsApp accepted one delivery.');
+  });
+
+  it('a concrete-action request to family stays delegation regardless of role (explicit trackable assignment)', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      const target = String(url);
+      if (target.includes('/rpc/record_owner_whatsapp_command')) return response(recorded());
+      if (target.includes('/profiles?')) return response([{ display_name: 'Sana' }]);
+      if (target.includes('/people?')) {
+        return response([{
+          id: 'person-saeed', name: 'Saeed', phone: '+971500000003',
+          whatsapp_opted_in: true, is_family: true,
+        }]);
+      }
+      if (target.endsWith('/rest/v1/tasks') && options.method === 'POST') {
+        const body = JSON.parse(options.body);
+        return response([{ ...body, created_at: '2026-07-28T00:00:00.000Z' }]);
+      }
+      if (target.startsWith('https://qstash.upstash.io/')) return response({ messageId: `qstash-${calls.length}` });
+      if (target.endsWith('/rest/v1/messages') && options.method === 'POST') return response([JSON.parse(options.body)]);
+      if (target.includes('/owner_whatsapp_reply_receipts?') && options.method === 'PATCH') return response([recorded()]);
+      if (target.includes('/whatsapp_deliveries?')) return response([]);
+      throw new Error(`unexpected fetch ${target}`);
+    }));
+
+    const result = await persistAndExecuteOwnerCommand({
+      supabaseUrl: SUPABASE,
+      serviceKey: 'service-key',
+      identity,
+      receipt,
+      msg: { body: 'Ask Saeed to buy the medicine.', phoneNumberId: 'phone-1' },
+    });
+
+    expect(result.kind).toBe('completed');
+    expect(calls.some((call) => call.url.endsWith('/rest/v1/tasks') && call.options.method === 'POST')).toBe(true);
+    expect(result.acknowledgement).toBe('Done — I created the task for Saeed and WhatsApp accepted one delivery.');
+  });
+
+  it('a text/message entry verb never gets upgraded to delegation even for confirmed staff (rule 6)', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      const target = String(url);
+      if (target.includes('/rpc/record_owner_whatsapp_command')) return response(recorded());
+      if (target.includes('/profiles?')) return response([{ display_name: 'Sana' }]);
+      if (target.includes('/people?')) {
+        return response([{
+          id: 'person-saeed', name: 'Saeed', phone: '+971500000003',
+          whatsapp_opted_in: true, is_family: false,
+        }]);
+      }
+      if (target.endsWith('/rest/v1/messages') && options.method === 'POST') return response([JSON.parse(options.body)]);
+      if (target.includes('/owner_whatsapp_reply_receipts?') && options.method === 'PATCH') return response([recorded()]);
+      if (target.includes('/whatsapp_deliveries?')) return response([]);
+      throw new Error(`unexpected fetch ${target}`);
+    }));
+
+    const result = await persistAndExecuteOwnerCommand({
+      supabaseUrl: SUPABASE,
+      serviceKey: 'service-key',
+      identity,
+      receipt,
+      msg: { body: 'Text Saeed to call me.', phoneNumberId: 'phone-1' },
+    });
+
+    expect(result.kind).toBe('completed');
+    expect(calls.some((call) => call.url.endsWith('/rest/v1/tasks'))).toBe(false);
+    expect(result.acknowledgement).toBe('Done — I sent one direct message to Saeed. No task was created.');
+  });
+
   it('an accepted staff send is not resent during command retry', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
       const target = String(url);
