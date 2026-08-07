@@ -97,6 +97,7 @@ import webpush from 'web-push';
 import { Receiver } from '@upstash/qstash';
 import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
 import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
+import { reconcilePersonalContactReplyNotifications } from './_personal-contact-reply.js';
 
 const MAX_TASKS_PER_RUN = 50;
 
@@ -189,6 +190,16 @@ export default async function handler(req, res) {
       });
     });
   }
+
+  // Same fail-isolated pattern as the owner-whatsapp reconciliation above,
+  // piggybacked onto this same already-scheduled 10-minute wake-up — not a
+  // new cron mechanism. Unlike owner-command routing, the Personal Contact
+  // Reply Relay has no account-scoped opt-in flag, so this always runs.
+  await reconcilePersonalContactReplyNotifications({ supabaseUrl, serviceKey }).catch((error) => {
+    console.error('[personal-contact-reply] reconciliation failed (cron continues)', {
+      error: error?.message || String(error),
+    });
+  });
 
   // ── Action dispatch ────────────────────────────────────────────────────────
   const requestBody = (typeof req.body === 'object' && req.body !== null) ? req.body : {};

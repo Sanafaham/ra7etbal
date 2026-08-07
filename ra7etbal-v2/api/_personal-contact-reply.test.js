@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const sendMetaMessage = vi.hoisted(() => vi.fn());
 vi.mock('./send-whatsapp-task.js', () => ({ sendMetaMessage }));
 
-import { buildOwnerNotificationText, correlateReply, handleInboundPersonalContactReply } from './_personal-contact-reply.js';
+import {
+  buildOwnerNotificationText,
+  correlateReply,
+  handleInboundPersonalContactReply,
+  reconcilePersonalContactReplyNotifications,
+} from './_personal-contact-reply.js';
 
 const SUPABASE = 'https://example.supabase.co';
 const USER_ID = 'user-1';
@@ -145,22 +150,21 @@ describe('buildOwnerNotificationText', () => {
 });
 
 describe('handleInboundPersonalContactReply — end-to-end persistence, relay, and isolation', () => {
-  function stubHappyPath({ newlyRecorded = true, correlationDeliveryId = 'delivery-1' } = {}) {
+  // Correlation is now decided atomically inside record_personal_contact_reply
+  // (see the migration) — these tests configure what the RPC reports back,
+  // rather than re-deriving it in JS. correlateReply's own priority-order
+  // logic is covered separately above.
+  function stubHappyPath({ newlyRecorded = true, correlationMethod = 'quoted_context', correlatedDeliveryId = 'delivery-1' } = {}) {
     const calls = [];
     vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
       calls.push({ url: String(url), options });
       const target = String(url);
-      if (target.includes('/whatsapp_deliveries?') && target.includes('meta_message_id=eq.')) {
-        return response(correlationDeliveryId ? [{ id: correlationDeliveryId }] : []);
-      }
-      if (target.includes('/whatsapp_deliveries?') && target.includes('created_at=gte.')) {
-        // No contextMessageId was supplied for the unmatched-case test, or the
-        // quoted lookup above returned nothing — either way there is no
-        // recent-conversation fallback candidate in this fixture.
-        return response([]);
-      }
       if (target.includes('/rpc/record_personal_contact_reply')) {
-        return response([{ row_id: 'reply-1', newly_recorded: newlyRecorded, owner_notification_status: newlyRecorded ? 'pending' : 'sent' }]);
+        return response([{
+          row_id: 'reply-1', newly_recorded: newlyRecorded,
+          owner_notification_status: newlyRecorded ? 'pending' : 'sent',
+          correlation_method: correlationMethod, correlated_delivery_id: correlatedDeliveryId,
+        }]);
       }
       if (target.includes('/people?')) {
         return response([{ id: 'owner-1', name: 'Boss', role: 'Boss', phone: '+971500000001' }]);
@@ -174,7 +178,7 @@ describe('handleInboundPersonalContactReply — end-to-end persistence, relay, a
   }
 
   it('persists the reply, relays it to the owner, and marks the notification sent', async () => {
-    const calls = stubHappyPath({ correlationDeliveryId: 'delivery-1' });
+    const calls = stubHappyPath({ correlationMethod: 'quoted_context', correlatedDeliveryId: 'delivery-1' });
 
     const result = await handleInboundPersonalContactReply({
       supabaseUrl: SUPABASE, serviceKey: 'key', userId: USER_ID, person: PERSON,
@@ -190,7 +194,7 @@ describe('handleInboundPersonalContactReply — end-to-end persistence, relay, a
     const recordCall = calls.find((c) => c.url.includes('/rpc/record_personal_contact_reply'));
     expect(JSON.parse(recordCall.options.body)).toMatchObject({
       p_user_id: USER_ID, p_person_id: 'person-eren', p_external_message_id: 'wamid.family-1',
-      p_inbound_text: 'Yes.', p_correlation_method: 'quoted_context', p_correlated_delivery_id: 'delivery-1',
+      p_inbound_text: 'Yes.', p_context_message_id: 'wamid.out-1',
     });
     const completeCall = calls.find((c) => c.url.includes('/rpc/complete_personal_contact_reply_notification'));
     expect(JSON.parse(completeCall.options.body)).toMatchObject({ p_id: 'reply-1', p_status: 'sent' });
@@ -209,7 +213,7 @@ describe('handleInboundPersonalContactReply — end-to-end persistence, relay, a
   });
 
   it('never discards an unmatched reply — persists it and notifies the owner without a false correlation', async () => {
-    const calls = stubHappyPath({ correlationDeliveryId: null });
+    stubHappyPath({ correlationMethod: 'unmatched', correlatedDeliveryId: null });
 
     const result = await handleInboundPersonalContactReply({
       supabaseUrl: SUPABASE, serviceKey: 'key', userId: USER_ID, person: PERSON,
@@ -218,10 +222,6 @@ describe('handleInboundPersonalContactReply — end-to-end persistence, relay, a
 
     expect(result.handled).toBe(true);
     expect(result.correlationMethod).toBe('unmatched');
-    const recordCall = calls.find((c) => c.url.includes('/rpc/record_personal_contact_reply'));
-    expect(JSON.parse(recordCall.options.body)).toMatchObject({
-      p_correlation_method: 'unmatched', p_correlated_delivery_id: null,
-    });
     expect(sendMetaMessage.mock.calls[0][0].payload.text.body)
       .toBe('Eren replied: "Yes." I couldn\'t safely match this to a recent message.');
   });
@@ -231,7 +231,7 @@ describe('handleInboundPersonalContactReply — end-to-end persistence, relay, a
     // Quality Intelligence endpoint is stubbed above — if this module ever
     // touched one of those tables, the unmocked fetch would throw
     // "unexpected fetch", failing this test.
-    stubHappyPath({ correlationDeliveryId: 'delivery-1' });
+    stubHappyPath({ correlationMethod: 'quoted_context', correlatedDeliveryId: 'delivery-1' });
     const result = await handleInboundPersonalContactReply({
       supabaseUrl: SUPABASE, serviceKey: 'key', userId: USER_ID, person: PERSON,
       msg: { from: '905537032912', messageId: 'wamid.family-3', body: 'Yes.', phoneNumberId: 'meta-phone-id', contextMessageId: 'wamid.out-1' },
@@ -245,6 +245,94 @@ describe('handleInboundPersonalContactReply — end-to-end persistence, relay, a
       msg: { from: '905537032912', messageId: 'wamid.family-4', body: '', phoneNumberId: 'meta-phone-id', contextMessageId: null },
     });
     expect(result).toEqual({ handled: false, reason: 'empty_reply_not_supported', route: 'personal_contact_reply' });
+    expect(sendMetaMessage).not.toHaveBeenCalled();
+  });
+
+  it('marks the notification failed (with retry bookkeeping left to the RPC) when the owner relay send fails', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      const target = String(url);
+      if (target.includes('/rpc/record_personal_contact_reply')) {
+        return response([{
+          row_id: 'reply-1', newly_recorded: true, owner_notification_status: 'pending',
+          correlation_method: 'single_recent', correlated_delivery_id: 'delivery-1',
+        }]);
+      }
+      if (target.includes('/people?')) {
+        return response([{ id: 'owner-1', name: 'Boss', role: 'Boss', phone: '+971500000001' }]);
+      }
+      if (target.includes('/rpc/complete_personal_contact_reply_notification')) {
+        return response([{ id: 'reply-1', owner_notification_status: 'failed' }]);
+      }
+      throw new Error(`unexpected fetch ${target}`);
+    }));
+    sendMetaMessage.mockResolvedValue({ ok: false, error: 'meta_rejected' });
+
+    const result = await handleInboundPersonalContactReply({
+      supabaseUrl: SUPABASE, serviceKey: 'key', userId: USER_ID, person: PERSON,
+      msg: { from: '905537032912', messageId: 'wamid.family-5', body: 'Yes.', phoneNumberId: 'meta-phone-id', contextMessageId: null },
+    });
+
+    expect(result.handled).toBe(false);
+    const completeCall = calls.find((c) => c.url.includes('/rpc/complete_personal_contact_reply_notification'));
+    expect(JSON.parse(completeCall.options.body)).toMatchObject({ p_status: 'failed' });
+  });
+});
+
+describe('reconcilePersonalContactReplyNotifications — retry sweep (reuses the owner-command retry pattern)', () => {
+  it('retries a failed notification and marks it sent, without touching rows below the retry threshold or outside the due window', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      const target = String(url);
+      if (target.includes('/personal_contact_replies?') && target.includes('owner_notification_status=eq.failed')) {
+        return response([{
+          id: 'reply-1', user_id: USER_ID, person_id: 'person-eren',
+          sender_phone: '905537032912', inbound_text: 'Yes.', correlation_method: 'single_recent',
+        }]);
+      }
+      if (target.includes('/people?') && target.includes('id=eq.person-eren')) {
+        return response([{ name: 'Eren' }]);
+      }
+      if (target.includes('/whatsapp_health_state?')) {
+        return response([{ phone_number_id: 'meta-phone-id' }]);
+      }
+      if (target.includes('/people?') && target.includes(`user_id=eq.${USER_ID}`)) {
+        return response([{ id: 'owner-1', name: 'Boss', role: 'Boss', phone: '+971500000001' }]);
+      }
+      if (target.includes('/rpc/complete_personal_contact_reply_notification')) {
+        return response([{ id: 'reply-1', owner_notification_status: 'sent' }]);
+      }
+      throw new Error(`unexpected fetch ${target}`);
+    }));
+
+    const results = await reconcilePersonalContactReplyNotifications({ supabaseUrl: SUPABASE, serviceKey: 'key' });
+
+    expect(results).toEqual([{ id: 'reply-1', ok: true }]);
+    expect(sendMetaMessage).toHaveBeenCalledTimes(1);
+    expect(sendMetaMessage.mock.calls[0][0].payload.text.body).toBe('Eren replied: "Yes."');
+    const completeCall = calls.find((c) => c.url.includes('/rpc/complete_personal_contact_reply_notification'));
+    expect(JSON.parse(completeCall.options.body)).toMatchObject({ p_id: 'reply-1', p_status: 'sent' });
+  });
+
+  it('is fail-isolated per row and reports missing send context without throwing', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const target = String(url);
+      if (target.includes('/personal_contact_replies?') && target.includes('owner_notification_status=eq.failed')) {
+        return response([{
+          id: 'reply-2', user_id: USER_ID, person_id: null,
+          sender_phone: '905537032912', inbound_text: 'Yes.', correlation_method: 'unmatched',
+        }]);
+      }
+      if (target.includes('/whatsapp_health_state?')) return response([]);
+      if (target.includes('/people?')) return response([]);
+      throw new Error(`unexpected fetch ${target}`);
+    }));
+
+    const results = await reconcilePersonalContactReplyNotifications({ supabaseUrl: SUPABASE, serviceKey: 'key' });
+
+    expect(results).toEqual([{ id: 'reply-2', ok: false, reason: 'missing_send_context' }]);
     expect(sendMetaMessage).not.toHaveBeenCalled();
   });
 });

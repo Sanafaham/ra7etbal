@@ -24,6 +24,15 @@ vi.mock('./_owner-whatsapp-routing.js', () => ({
   reconcileOwnerWhatsappMessages: vi.fn().mockResolvedValue(undefined),
 }));
 
+// vi.hoisted + reconfigured in beforeEach — afterEach's restoreAllMocks()
+// clears any mockResolvedValue set only inside the vi.mock factory, since
+// that mock object is reused (not recreated) across this file's
+// resetModules()-driven dynamic re-imports.
+const personalContactReplyMocks = vi.hoisted(() => ({
+  reconcilePersonalContactReplyNotifications: vi.fn(),
+}));
+vi.mock('./_personal-contact-reply.js', () => personalContactReplyMocks);
+
 let handler;
 
 const ENV = {
@@ -39,6 +48,7 @@ beforeEach(async () => {
   vi.resetModules();
   ({ default: handler } = await import('./process-delegation-escalations.js'));
   Object.entries(ENV).forEach(([k, v]) => vi.stubEnv(k, v));
+  personalContactReplyMocks.reconcilePersonalContactReplyNotifications.mockReset().mockResolvedValue([]);
 });
 
 afterEach(() => {
