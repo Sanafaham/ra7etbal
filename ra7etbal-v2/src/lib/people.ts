@@ -63,5 +63,8 @@ function friendly(err: { message?: string }): Error {
   if (msg.includes("network") || msg.includes("failed to fetch")) {
     return new Error("Network issue. Please check your connection.");
   }
+  if (msg.includes("people_role_not_test_fixture_check")) {
+    return new Error("That role looks like a test/fixture placeholder, not a real household role.");
+  }
   return new Error(err.message || "Something went wrong. Please try again.");
 }
