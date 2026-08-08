@@ -1020,11 +1020,25 @@ Typed Carson's direct-message fast path (`direct-message-fast-path.ts`) now rewr
 
 Protect: voice behavior, delegation routing, the parser's (`parseSimpleDirectMessage`) unnormalized output contract.
 
-### Confirmed: Meta rejection may still report success
+### Meta rejection may still report success — reclassified UNVERIFIED / NOT CURRENTLY REPRODUCIBLE (2026-08-09)
 
-Status: confirmed, pre-existing, not fixed. Out of scope for the typed/voice owner-normalization task — record only.
+Status: **downgraded from "confirmed" — no supporting trace, date, or reproduction was ever attached to the original entry, and a full investigation now finds no code or prompt defect.** Do not describe this as a confirmed active defect. Do not fold a fix into unrelated work.
 
-When Meta rejects a direct-message send, typed and voice Carson may still report success to the owner. Needs its own scoped fix and verification; do not fold into unrelated work without explicit authorization.
+**End-to-end trace performed** (voice `send_direct_whatsapp_message` tool, voice/typed `execute_instruction` → `executeDirectMessageFastPath`, and the separate inbound-owner-WhatsApp-command channel `_owner-command-executor.js`'s `executePersonCommand`/`persistAndExecuteOwnerCommand`, which is **not** gated by the frontend `TYPED_MODE_IS_ADVISORY_ONLY` constant and was missed in the first pass of this investigation): every path correctly propagates a truthful failure string on a Meta synchronous rejection. `send-whatsapp-task.js`'s `sendMetaMessage` requires both HTTP success and a real message id (`ok: response.ok && Boolean(messageId)`); `whatsapp_deliveries`/`messages` are never marked accepted/sent outside the success branch.
+
+**Effective runtime voice prompt traced**, correcting an initial wrong conclusion: `CARSON_STATUS_POLICY` + `CARSON_VOICE_SESSION_GUARD` + `hostingToolPolicy` (repo constants, `ElevenLabsAgentWidget.tsx:5641-5647`) are joined and injected into the live ElevenLabs session via `dynamicVariables.persistent_instructions`, landing in the dashboard prompt's own `{{persistent_instructions}}` placeholder — they supplement the dashboard prompt, they don't replace or compete with it. Per the maintained live-prompt backup (memory `carson-live-prompt`, last synced 2026-08-03 — **not independently re-verified against the live ElevenLabs dashboard this session; no `ELEVENLABS_API_KEY` available**), the dashboard prompt already contains a global `TOOL TRUTHFULNESS` section applying to "any action tool," including the exact sentence "Speak the tool's returned text as the reply for any action tool — do not add commentary beyond it," plus explicit failure-language instructions. **Prompt freshness (whether the live dashboard still matches this backup) is unconfirmed, not assumed current.**
+
+**Controlled production verification performed (2026-08-09), zero database footprint:** `POST /api/send-whatsapp-task` with a synthetically malformed-but-locally-valid phone number (`10000000000`), no `messageRecordId`/`taskId`/`routineId`/`automationRunId`/`sourceType`/`sendMode`/`imagePath` — no People record created or modified, no real recipient contacted. Meta rejected synchronously: `(#131009) Parameter value is not valid: The phone number is malformed`. Server response: HTTP 400, `success: false`, `delivery_id: null`, full truthful `metaError`/`metaResponse` echoed back — no success-shaped field anywhere. Confirmed via direct query that zero rows were written to `whatsapp_deliveries` or `messages` in the test window — by design: `beginWhatsappDelivery` requires a trusted owner context resolved from a real `messageRecordId`/`taskId`/`routineId`/`automationRunId`/`staffMessageId`; with none supplied, it logs `"skipped: no trusted owner context"` and returns `null` rather than ever writing a row, and every downstream `markWhatsappDeliveryFailed` call safely no-ops on a `null` deliveryId (`patchDeliveryFailOpen`). This test only exercises the deterministic server-side boundary — it does not and cannot verify voice/model behavior, which requires a real ElevenLabs conversation.
+
+**Current findings:**
+- Deterministic server-side code is truthful (now directly verified against production, not just read).
+- Database semantics are truthful.
+- Inbound-owner-WhatsApp acknowledgements are deterministic text, not LLM-paraphrased — no model-adherence risk on that channel.
+- The canonical prompt already contains the correct global truthfulness rule, per the best available (but not freshly re-verified) evidence.
+- **No current reproduction of the alleged false-success behavior exists.** The only remaining theoretical risk is ordinary LLM non-adherence to an already-correct instruction — not a code or prompt gap.
+- There is no present evidence justifying another prompt patch. Do not add a `send_direct_whatsapp_message`-specific rule to `CARSON_VOICE_SESSION_GUARD` — it would be redundant against the existing global rule.
+
+**If this is reopened:** requires either a fresh, independently-verified live-prompt pull (needs `ELEVENLABS_API_KEY`) confirming divergence from the 2026-08-03 backup, or a reproduced real voice conversation where the tool result was a failure string and Carson's spoken reply was success-shaped, inspected via `carson-diagnose.mjs inspect`.
 
 ### Confirmed: delegation misclassification for "make" verb
 
