@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { PersonDraft } from "../types/person";
 
 const { single, supabaseMock } = vi.hoisted(() => {
   const single = vi.fn();
@@ -12,6 +13,28 @@ const { single, supabaseMock } = vi.hoisted(() => {
 vi.mock("./supabase", () => ({ supabase: supabaseMock }));
 
 import { createPerson } from "./people";
+
+function draft(overrides: Partial<PersonDraft>): PersonDraft {
+  return {
+    name: "Unnamed",
+    role: "",
+    phone: null,
+    notes: null,
+    relationship: null,
+    is_family: false,
+    responsibilities: null,
+    reliability_level: null,
+    follow_up_level: null,
+    delegation_guidance: null,
+    should_not_assign: null,
+    escalate_to: null,
+    communication_style: null,
+    whatsapp_opted_in: false,
+    whatsapp_consent_at: null,
+    whatsapp_consent_method: null,
+    ...overrides,
+  };
+}
 
 describe("createPerson — Canonical Staff Identity Cleanup prevention", () => {
   beforeEach(() => {
@@ -28,7 +51,7 @@ describe("createPerson — Canonical Staff Identity Cleanup prevention", () => {
     });
 
     await expect(
-      createPerson({ name: "Regression Guard Test", role: "Test staff" } as never),
+      createPerson(draft({ name: "Regression Guard Test", role: "Test staff" })),
     ).rejects.toThrow("That role looks like a test/fixture placeholder, not a real household role.");
   });
 
@@ -39,7 +62,7 @@ describe("createPerson — Canonical Staff Identity Cleanup prevention", () => {
     });
 
     await expect(
-      createPerson({ name: "Christopher", role: "Gardener" } as never),
+      createPerson(draft({ name: "Christopher", role: "Gardener" })),
     ).resolves.toMatchObject({ name: "Christopher", role: "Gardener" });
   });
 });

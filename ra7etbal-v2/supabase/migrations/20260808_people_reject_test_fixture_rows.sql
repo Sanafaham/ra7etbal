@@ -22,9 +22,16 @@
  * application-layer guard can reach.
  */
 
+-- NOT VALID first: ADD CONSTRAINT without it takes an ACCESS EXCLUSIVE lock
+-- for the duration of a full-table scan validating every existing row.
+-- people is tiny today, but this is the correct pattern regardless of table
+-- size, and costs nothing extra here since we validate immediately after.
 ALTER TABLE public.people
   ADD CONSTRAINT people_role_not_test_fixture_check
   CHECK (
     role IS NULL
     OR lower(btrim(role)) NOT IN ('test staff', 'test', 'fixture', 'test fixture', 'seed', 'dummy')
-  );
+  ) NOT VALID;
+
+ALTER TABLE public.people
+  VALIDATE CONSTRAINT people_role_not_test_fixture_check;
