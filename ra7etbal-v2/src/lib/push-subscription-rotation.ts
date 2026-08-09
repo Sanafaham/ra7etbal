@@ -49,7 +49,12 @@ export function registerPushSubscriptionRotation({
       | undefined;
     if (data?.type !== PUSH_SUBSCRIPTION_CHANGED_MESSAGE_TYPE) return;
     if (!data.subscription?.endpoint || !data.subscription.keys) return;
-    void saveRawPushSubscriptionFn(userId, data.subscription);
+    // No UI status exists for this background auto-save path — log so a
+    // failure (including the dedupe-cleanup failure now thrown by
+    // push-notifications.ts) is never silently swallowed.
+    saveRawPushSubscriptionFn(userId, data.subscription).catch((err: unknown) => {
+      console.error("Failed to save rotated push subscription", err);
+    });
   };
 
   serviceWorkerApi?.addEventListener("message", handleMessage);

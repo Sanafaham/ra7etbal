@@ -312,9 +312,8 @@ describe("push notifications — iPhone PWA subscription recovery", () => {
     });
   });
 
-  it("a failed dedupe cleanup is logged but never fails the user's enable action (non-fatal, matches the codebase's secondary-bookkeeping convention)", async () => {
+  it("a failed dedupe cleanup rejects enableReminderNotifications — never falsely reports 'enabled' while a stale duplicate row is still enabled (Engineering Completeness Review, PR #207 follow-up)", async () => {
     mockSupabase.dedupeUpdateError = { message: "dedupe update failed" };
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const fresh = makeSubscription("https://push.example/fresh");
     const registration = {
       active: true,
@@ -327,11 +326,35 @@ describe("push notifications — iPhone PWA subscription recovery", () => {
 
     const { enableReminderNotifications } = await importPushModule();
 
-    await expect(enableReminderNotifications("user-1")).resolves.toBe("enabled");
-    expect(warnSpy).toHaveBeenCalledWith(
-      "Failed to disable superseded push subscriptions",
-      { message: "dedupe update failed" },
-    );
+    // The new subscription's own row write already happened (it is the
+    // load-bearing write and is not rolled back) — only the secondary
+    // cleanup pass failed. The caller must still see this as a failure, not
+    // a partial success, because the pile-up this exists to fix silently
+    // persisted.
+    await expect(enableReminderNotifications("user-1")).rejects.toEqual({
+      message: "dedupe update failed",
+    });
+    expect(mockSupabase.inserts).toHaveLength(1);
+  });
+
+  it("a failed dedupe cleanup rejects refreshPushSubscription the same way", async () => {
+    mockSupabase.dedupeUpdateError = { message: "dedupe update failed" };
+    const oldSub = makeSubscription("https://push.example/old");
+    const newSub = makeSubscription("https://push.example/new");
+    const registration = {
+      active: true,
+      pushManager: {
+        getSubscription: vi.fn().mockResolvedValue(oldSub),
+        subscribe: vi.fn().mockResolvedValue(newSub),
+      },
+    };
+    navigator.serviceWorker.getRegistration = vi.fn().mockResolvedValue(registration);
+
+    const { refreshPushSubscription } = await importPushModule();
+
+    await expect(refreshPushSubscription("user-1")).rejects.toEqual({
+      message: "dedupe update failed",
+    });
   });
 
   it("saveRawPushSubscription rejects a payload missing required fields", async () => {
@@ -345,5 +368,18 @@ describe("push notifications — iPhone PWA subscription recovery", () => {
     ).rejects.toThrow();
     expect(mockSupabase.inserts).toHaveLength(0);
     expect(mockSupabase.updates).toHaveLength(0);
+  });
+
+  it("saveRawPushSubscription (the pushsubscriptionchange path) also rejects on a failed dedupe cleanup", async () => {
+    mockSupabase.dedupeUpdateError = { message: "dedupe update failed" };
+    const { saveRawPushSubscription } = await importPushModule();
+
+    await expect(
+      saveRawPushSubscription("user-1", {
+        endpoint: "https://push.example/rotated",
+        keys: { p256dh: "p256dh-value", auth: "auth-value" },
+        expirationTime: null,
+      }),
+    ).rejects.toEqual({ message: "dedupe update failed" });
   });
 });

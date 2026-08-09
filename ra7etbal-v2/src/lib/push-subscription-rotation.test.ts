@@ -52,6 +52,26 @@ describe("registerPushSubscriptionRotation — pushsubscriptionchange bridge", (
     expect(saveRawPushSubscriptionFn).toHaveBeenCalledWith("user-1", validSubscription);
   });
 
+  it("logs (never throws) when saving the rotated subscription fails — no UI status exists for this background path, so this is the only surfacing", async () => {
+    const serviceWorkerApi = makeFakeServiceWorker();
+    const saveError = new Error("dedupe update failed");
+    const saveRawPushSubscriptionFn = vi.fn().mockRejectedValue(saveError);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    registerPushSubscriptionRotation({ serviceWorkerApi, userId: "user-1", saveRawPushSubscriptionFn });
+
+    expect(() =>
+      serviceWorkerApi.fireMessage({
+        type: PUSH_SUBSCRIPTION_CHANGED_MESSAGE_TYPE,
+        subscription: validSubscription,
+      }),
+    ).not.toThrow();
+
+    await vi.waitFor(() => {
+      expect(errorSpy).toHaveBeenCalledWith("Failed to save rotated push subscription", saveError);
+    });
+    errorSpy.mockRestore();
+  });
+
   it("ignores unrelated service worker messages", () => {
     const serviceWorkerApi = makeFakeServiceWorker();
     const saveRawPushSubscriptionFn = vi.fn();
