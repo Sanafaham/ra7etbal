@@ -102,7 +102,12 @@ function logOwnerDecisionMetaPayloadAudit({ taskId, decision, payload }) {
     to: '[redacted]',
     template: {
       ...(payload?.template || {}),
-      components,
+      components: components.map((component) => ({
+        type: component?.type || null,
+        sub_type: component?.sub_type || null,
+        index: component?.index ?? null,
+        parameterCount: Array.isArray(component?.parameters) ? component.parameters.length : 0,
+      })),
     },
   };
 
@@ -114,7 +119,7 @@ function logOwnerDecisionMetaPayloadAudit({ taskId, decision, payload }) {
     templateName: payload?.template?.name || null,
     templateLanguage: payload?.template?.language?.code || null,
     bodyParameter: bodyParameter
-      ? { type: bodyParameter.type || null, text: bodyParameter.text || '' }
+      ? { type: bodyParameter.type || null, textLength: bodyParameter.text?.length ?? 0 }
       : null,
     buttonComponent: buttonComponent
       ? {
@@ -122,7 +127,7 @@ function logOwnerDecisionMetaPayloadAudit({ taskId, decision, payload }) {
           sub_type: buttonComponent.sub_type || null,
           index: buttonComponent.index || null,
           parameter: buttonParameter
-            ? { type: buttonParameter.type || null, text: buttonParameter.text || '' }
+            ? { type: buttonParameter.type || null, textLength: buttonParameter.text?.length ?? 0 }
             : null,
         }
       : null,

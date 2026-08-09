@@ -995,7 +995,7 @@ export function buildOwnerDecisionTemplatePayload({
 export async function sendMetaMessage({ url, accessToken, payload }) {
   console.log('[send-whatsapp-task] Meta request', {
     url: redactGraphUrl(url),
-    payload,
+    payload: redactMetaPayloadForLog(payload),
     tokenConfigured: Boolean(accessToken),
   });
 
@@ -1020,7 +1020,7 @@ export async function sendMetaMessage({ url, accessToken, payload }) {
 
   if (response.ok) {
     console.log('WhatsApp Cloud accepted message', {
-      to: payload.to,
+      to: payload.to ? '[redacted]' : payload.to,
       messageId,
       type: payload.type,
       acceptedAt: new Date().toISOString(),
@@ -1116,7 +1116,7 @@ function logSendAttempt(label, details) {
   const buttonComponent = details.payload.template?.components?.find((c) => c.type === 'button');
   console.log(`[send-whatsapp-task] ${label} send attempt`, {
     phoneNumberIdLast4: details.phoneNumberIdLast4,
-    to: details.payload.to,
+    to: details.payload.to ? '[redacted]' : details.payload.to,
     taskId: details.taskId || null,
     messageRecordId: details.messageRecordId || null,
     recipientName: details.recipientName || null,
@@ -1133,8 +1133,36 @@ function logSendAttempt(label, details) {
     bodyParameterCount: bodyComponent?.parameters?.length ?? 0,
     buttonParameterCount: buttonComponent?.parameters?.length ?? 0,
     buttonIndex: buttonComponent?.index ?? null,
-    payload: details.payload,
+    // Deliberately no raw `payload` field here (removed) — it duplicated the
+    // recipient phone number and the full body/button parameter text (owner
+    // name, message text, confirmation link) that the counts/metadata above
+    // already exist to summarize without exposing.
   });
+}
+
+/**
+ * Strips the recipient phone number and any body/button parameter text from
+ * a Meta send payload before it's logged, keeping template shape and
+ * parameter counts for debugging. Never touches the real payload sent to
+ * Meta — logging only.
+ */
+function redactMetaPayloadForLog(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  const redacted = { ...payload };
+  if (redacted.to) redacted.to = '[redacted]';
+  if (redacted.text?.body) redacted.text = { ...redacted.text, body: '[redacted]' };
+  if (Array.isArray(redacted.template?.components)) {
+    redacted.template = {
+      ...redacted.template,
+      components: redacted.template.components.map((component) => ({
+        type: component?.type || null,
+        sub_type: component?.sub_type || null,
+        index: component?.index ?? null,
+        parameterCount: Array.isArray(component?.parameters) ? component.parameters.length : 0,
+      })),
+    };
+  }
+  return redacted;
 }
 
 function redactGraphUrl(url) {
