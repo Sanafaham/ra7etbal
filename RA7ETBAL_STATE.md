@@ -1200,11 +1200,29 @@ Why it matters: identified as the correct long-term methodology during an engine
 
 Do not start this without an explicit, separately-scoped engineering session.
 
-### PWA authentication or notification restoration difference
+### PWA push-subscription accumulation and restoration — FORMALLY CLOSED, PRODUCTION VERIFIED
 
-Observed behavior: browser sign-in restores notifications, while the installed home-screen PWA may not restore them in the same way.
+Status: FIXED. MERGED. DEPLOYED. PRODUCTION VERIFIED on Sana's actual installed iPhone PWA. PROTECTED.
 
-This requires a focused root-cause investigation. Protect normal browser authentication and existing push subscriptions.
+PR #207, merge commit `a896c901b63e1df33fb30193b1f98eb572c4df43`. Docs closure PR (this entry).
+
+What it replaces: the prior "PWA authentication or notification restoration difference" entry ("browser sign-in restores notifications, while the installed home-screen PWA may not restore them in the same way") was an unrooted observation with no investigation. It is superseded by the confirmed root cause and fix below — auth/session restoration was independently confirmed unrelated (Supabase's `onAuthStateChange` session machine and push-subscription persistence are two completely separate systems; no push logic runs on sign-in anywhere).
+
+Root cause (confirmed against production Supabase, not guessed): a fresh `pushManager.subscribe()` always inserted a brand-new `push_subscriptions` row keyed on the new endpoint — it never replaced a prior row for the same device. iOS is documented to evict an infrequently-used installed PWA's service worker and storage; each time that happened and the app was reopened, a new subscription was minted and yet another row piled up, left `enabled: true` forever (the only prior cleanup path required a hard 404/410 from the push provider, which an evicted iOS registration may never produce promptly). Before the fix, Sana's account had accumulated 24 enabled rows total (19 iPhone) across roughly ten weeks, none ever superseded; two real historical reminder sends fanned out to 10 and 5 provider-accepted (HTTP 201) subscriptions but only 2 and 1 respectively ever reached a live service worker.
+
+Fix, two additive pieces, no new API route (respects the 12-function Vercel Hobby cap):
+1. `src/lib/push-notifications.ts` — every successful subscription save now disables (never deletes, preserving audit history) every other still-enabled row for the same `user_id` + `platform`, keeping at most one canonical enabled row per real device.
+2. `public/sw.js` + new `src/lib/push-subscription-rotation.ts` — handles the browser's own `pushsubscriptionchange` event (silent provider-side rotation), resubscribing via `event.oldSubscription.options.applicationServerKey` (no hardcoded VAPID key needed) and relaying the new subscription to an open tab via `postMessage`, since a service worker has no Supabase session of its own. Known, accepted limitation: only catches a rotation while a tab is open — piece 1 is the primary, always-effective fix.
+
+CodeRabbit review (PR #207): one finding fixed (the dedupe update's error was silently swallowed — now logged via `console.warn`, non-fatal, with a regression test). Two findings deliberately deferred and documented inline in `push-notifications.ts`: (a) the write + dedupe pass is not atomic — a genuine fix needs a transactional Supabase RPC, a schema/migration change out of scope for this fix, low-probability given every call site is either a single user-gated tap or the one-device rotation path; (b) `navigator.platform` is not a true per-device identifier — two distinct iPhones on the same account would collide, no reliable device ID exists in the current schema without a migration, matches this product's current single-owner-per-account model, and the failure mode is a recoverable Settings re-enable, not data loss.
+
+**Live production verification, performed step-by-step on Sana's actual installed iPhone PWA (2026-08-09), Supabase project `ggarvhgqzpooloacjgcj`, account `645ddb96-6e09-4d91-b650-cbc75bac9a5d`:**
+- Baseline confirmed before touching anything: 7 enabled iPhone rows + 3 enabled MacIntel rows, matching the pre-fix pile-up pattern exactly.
+- Sana disabled notifications in Settings on-device → row `833a8611…` (this device's tracked subscription) disabled at `17:29:44`, matching exactly.
+- Sana re-enabled notifications on-device → new row `f46621dc…` inserted at `17:49:42.926` (`platform: iPhone`, `enabled: true`); all 6 previously-enabled iPhone rows batch-disabled ~296 ms later at `17:49:43.222` — the dedupe pass firing correctly. All 3 MacIntel rows and the already-disabled legacy rows were left untouched. Exactly one enabled iPhone row remained afterward.
+- Sana created a real reminder via Carson ("check the PWA notification test", task `c101f394…`, `due_at 17:59:59`). Full delivery-event chain for the new subscription `f46621dc…`: `provider_send_attempted` → `provider_accepted` (HTTP 201) → `service_worker_received` → `show_notification_attempted` → `show_notification_resolved`, exactly once, no duplicates. Sana's own screenshot confirms exactly one visible notification banner on the lock screen. Two of the three legitimate MacIntel devices independently fired the same reminder once each (unaffected, correctly untouched by the platform-scoped dedupe) — confirming the fix did not collaterally break other real, valid devices; the third MacIntel subscription was provider-accepted but never reached a live service worker, the same pre-existing, already-documented "provider acceptance is not confirmed delivery" behavior from the reminder golden contract, unrelated to this fix.
+
+Protect: `disableOtherEnabledSubscriptions`'s platform-scoped dedupe in `push-notifications.ts` — do not widen or narrow its scoping without a reproduced regression. The `pushsubscriptionchange` handler in `sw.js` and its `postMessage` bridge to the page — do not attempt to have the service worker persist a subscription directly (it has no Supabase session). The two documented, deliberately deferred CodeRabbit findings (atomicity, per-device identity) remain open follow-up candidates, not defects — reopen only as their own separately-scoped task if a reproduced regression from either is found.
 
 ### Carson capability expansion
 
