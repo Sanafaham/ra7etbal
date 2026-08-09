@@ -18,6 +18,16 @@ const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 const INSTALLATION_ID_STORAGE_KEY = "ra7etbal:push-installation-id";
 
 /**
+ * p_installation_id is a `uuid`-typed RPC parameter. A stored value that
+ * isn't UUID-shaped (corrupted storage, a stale value from a future format
+ * change) would make Postgres reject every save for this browser with
+ * invalid_text_representation until storage is cleared by hand — so a
+ * malformed value is treated as absent and regenerated instead.
+ */
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
  * Returns a stable identifier for this exact PWA installation (this exact
  * browser storage partition), or null if it cannot be reliably persisted.
  *
@@ -39,7 +49,7 @@ const INSTALLATION_ID_STORAGE_KEY = "ra7etbal:push-installation-id";
 function getOrCreateInstallationId(): string | null {
   try {
     const existing = window.localStorage.getItem(INSTALLATION_ID_STORAGE_KEY);
-    if (existing) return existing;
+    if (existing && UUID_PATTERN.test(existing)) return existing;
 
     const fresh = crypto.randomUUID();
     window.localStorage.setItem(INSTALLATION_ID_STORAGE_KEY, fresh);

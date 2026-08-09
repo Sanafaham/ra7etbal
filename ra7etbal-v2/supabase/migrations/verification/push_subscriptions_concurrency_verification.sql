@@ -56,7 +56,7 @@ END $$;
 DO $$
 DECLARE
   v_owner uuid; v_install uuid;
-  v_conn text := 'host=localhost port=5432 dbname=' || current_database() || ' user=' || current_user;
+  v_conn text := 'host=localhost port=' || current_setting('port') || ' dbname=' || current_database() || ' user=' || current_user;
 BEGIN
   SELECT value INTO v_owner FROM _concurrency_fixture_ids WHERE key = 't3_owner';
   SELECT value INTO v_install FROM _concurrency_fixture_ids WHERE key = 't3_install';
@@ -146,7 +146,7 @@ END $$;
 DO $$
 DECLARE
   v_owner uuid; v_install uuid;
-  v_conn text := 'host=localhost port=5432 dbname=' || current_database() || ' user=' || current_user;
+  v_conn text := 'host=localhost port=' || current_setting('port') || ' dbname=' || current_database() || ' user=' || current_user;
 BEGIN
   SELECT value INTO v_owner FROM _concurrency_fixture_ids WHERE key = 't4_owner';
   SELECT value INTO v_install FROM _concurrency_fixture_ids WHERE key = 't4_install';

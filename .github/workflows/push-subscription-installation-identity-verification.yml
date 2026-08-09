@@ -52,6 +52,8 @@ jobs:
       MIGRATIONS: ra7etbal-v2/supabase/migrations
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Wait for Postgres
         run: pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
