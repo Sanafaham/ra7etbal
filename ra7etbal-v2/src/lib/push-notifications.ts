@@ -295,25 +295,36 @@ async function persistSubscriptionRow(
   // not delete — matches the existing disable-first convention used
   // elsewhere in this file, preserving the row for audit history.
   //
-  // Known, accepted limitations (CodeRabbit review, PR #207 — not fixed
-  // here, deliberately deferred):
+  // This is load-bearing, not best-effort: a failed dedupe means the pile-up
+  // this exists to fix silently persists, so it must throw rather than warn
+  // — the caller must never report "enabled" while cleanup actually failed
+  // (Engineering Completeness Review, PR #207 follow-up). Every caller here
+  // already has an existing try/catch that reports failure truthfully
+  // (SettingsModal.tsx's handleEnable/handleRefresh set status "error"; the
+  // pushsubscriptionchange auto-save path logs it — see
+  // push-subscription-rotation.ts), so propagating the error needs no new
+  // status plumbing.
+  //
+  // Known, still-open engineering debt (CodeRabbit review, PR #207 — NOT
+  // fixed by this change, both genuinely require a migration and are
+  // explicitly out of scope here):
   //   1. Not atomic with the write above. Two saves for the same user+
   //      platform completing around each other could each disable the
-  //      other's just-written row. Fixing this correctly needs a single
+  //      other's just-written row. A correct fix needs a single
   //      transactional Supabase RPC (upsert + stale-row disable in one
-  //      statement) — a separate schema/migration change, out of scope for
-  //      this fix. Low-probability in practice (every call site here is
-  //      either a single explicit user tap gated by a busy flag, or the
-  //      one-device-only pushsubscriptionchange path), and strictly no
-  //      worse than the pre-existing behavior of zero deduplication.
+  //      statement) — a separate schema/migration change. Low-probability
+  //      in practice (every call site here is either a single explicit
+  //      user tap gated by a busy flag, or the one-device-only
+  //      pushsubscriptionchange path).
   //   2. `platform` (navigator.platform, e.g. "iPhone") is the closest
   //      existing signal to "this device" but is not a real per-device
   //      identifier — two genuinely different iPhones on the same account
-  //      would collide. No reliable device ID exists in the current schema
-  //      without a migration. Matches this product's current single-owner-
-  //      per-account model; the failure mode is a recoverable UX
-  //      inconvenience (re-enable in Settings), not data loss or a security
-  //      issue.
+  //      would collide, and the newer save would incorrectly disable the
+  //      older device's still-valid subscription. No reliable device ID
+  //      exists in the current schema without a migration (a new column).
+  //      The failure mode is a recoverable UX inconvenience (re-enable in
+  //      Settings), not data loss or a security issue, but it is a real,
+  //      reproducible-by-design gap, not merely theoretical.
   await disableOtherEnabledSubscriptions(userId, platform, fields.endpoint);
 }
 
@@ -322,12 +333,6 @@ async function disableOtherEnabledSubscriptions(
   platform: string,
   keepEndpoint: string,
 ): Promise<void> {
-  // Best-effort cleanup: the caller's own save already succeeded and is the
-  // load-bearing write. A failure here must be visible (never silently
-  // swallowed) but must never fail the user's actual enable/refresh action —
-  // matches the non-fatal, log-and-continue convention used for secondary
-  // bookkeeping elsewhere in this codebase (e.g. api/_escalation-notify.js's
-  // delivery-acceptance bookkeeping).
   const result = await supabase
     .from("push_subscriptions")
     .update({ enabled: false })
@@ -336,9 +341,7 @@ async function disableOtherEnabledSubscriptions(
     .eq("enabled", true)
     .neq("endpoint", keepEndpoint);
 
-  if (result.error) {
-    console.warn("Failed to disable superseded push subscriptions", result.error);
-  }
+  if (result.error) throw result.error;
 }
 
 function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
