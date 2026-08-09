@@ -18,3 +18,26 @@ describe('reminder service-worker observability contract', () => {
     expect(source).toContain('data: { receipt: receipt }');
   });
 });
+
+describe('pushsubscriptionchange handler — resubscribes and reports the new subscription to open clients', () => {
+  it('resubscribes using the original VAPID key and never hardcodes a new one', async () => {
+    const source = await readFile(new URL('./sw.js', import.meta.url), 'utf8');
+    expect(source).toContain('addEventListener("pushsubscriptionchange"');
+    expect(source).toContain('event.waitUntil(');
+    expect(source).toContain('oldSubscription.options.applicationServerKey');
+    expect(source).toContain('self.registration.pushManager');
+    expect(source).toContain('.subscribe(');
+  });
+
+  it('posts the new subscription to every open client, never silently drops it', async () => {
+    const source = await readFile(new URL('./sw.js', import.meta.url), 'utf8');
+    expect(source).toContain('"ra7etbal:push-subscription-changed"');
+    expect(source).toContain('newSubscription.toJSON()');
+    expect(source).toContain('clients.matchAll(');
+  });
+
+  it('no-ops when the browser does not supply oldSubscription, rather than guessing a key', async () => {
+    const source = await readFile(new URL('./sw.js', import.meta.url), 'utf8');
+    expect(source).toContain('if (!applicationServerKey) return;');
+  });
+});

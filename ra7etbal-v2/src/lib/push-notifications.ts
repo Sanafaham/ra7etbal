@@ -225,16 +225,50 @@ async function savePushSubscription(
     throw new Error("Browser did not provide the full push subscription.");
   }
 
-  const row: PushSubscriptionRow = {
-    user_id: userId,
+  await persistSubscriptionRow(userId, {
     endpoint: subscription.endpoint,
     p256dh: arrayBufferToBase64Url(key),
     auth: arrayBufferToBase64Url(auth),
-    expiration_time: subscription.expirationTime
-      ? new Date(subscription.expirationTime).toISOString()
-      : null,
+    expirationTime: subscription.expirationTime ?? null,
+  });
+}
+
+/**
+ * Save a subscription described by its already-encoded JSON shape (the
+ * output of PushSubscription.toJSON()) rather than a live PushSubscription
+ * object. Used by the pushsubscriptionchange path (public/sw.js), where the
+ * new subscription is minted inside the service worker and can only reach
+ * the page via postMessage — see push-subscription-rotation.ts.
+ */
+export async function saveRawPushSubscription(
+  userId: string,
+  raw: { endpoint: string; keys: { p256dh: string; auth: string }; expirationTime?: number | null },
+): Promise<void> {
+  if (!raw?.endpoint || !raw.keys?.p256dh || !raw.keys?.auth) {
+    throw new Error("Push subscription payload is missing required fields.");
+  }
+
+  await persistSubscriptionRow(userId, {
+    endpoint: raw.endpoint,
+    p256dh: raw.keys.p256dh,
+    auth: raw.keys.auth,
+    expirationTime: raw.expirationTime ?? null,
+  });
+}
+
+async function persistSubscriptionRow(
+  userId: string,
+  fields: { endpoint: string; p256dh: string; auth: string; expirationTime: number | null },
+): Promise<void> {
+  const platform = navigator.platform || "unknown";
+  const row: PushSubscriptionRow = {
+    user_id: userId,
+    endpoint: fields.endpoint,
+    p256dh: fields.p256dh,
+    auth: fields.auth,
+    expiration_time: fields.expirationTime ? new Date(fields.expirationTime).toISOString() : null,
     user_agent: navigator.userAgent,
-    platform: navigator.platform || "unknown",
+    platform,
     enabled: true,
   };
 
@@ -242,7 +276,7 @@ async function savePushSubscription(
     .from("push_subscriptions")
     .select("id")
     .eq("user_id", userId)
-    .eq("endpoint", subscription.endpoint)
+    .eq("endpoint", fields.endpoint)
     .maybeSingle();
 
   if (lookup.error) throw lookup.error;
@@ -252,6 +286,31 @@ async function savePushSubscription(
     : await supabase.from("push_subscriptions").insert(row);
 
   if (result.error) throw result.error;
+
+  // A fresh subscribe() on this same device (browser storage/service-worker
+  // eviction, iOS reinstall, key rotation) always mints a new endpoint, so
+  // the lookup above can never find and replace the prior row for this
+  // device — it silently accumulates instead. Superseding every other
+  // still-enabled row for this exact user+platform closes that gap. Scoped
+  // to platform (not just user_id) so a legitimately separate device (e.g.
+  // Mac and iPhone both enabled at once) is never touched. Disable, not
+  // delete — matches the existing disable-first convention used elsewhere
+  // in this file, preserving the row for audit history.
+  await disableOtherEnabledSubscriptions(userId, platform, fields.endpoint);
+}
+
+async function disableOtherEnabledSubscriptions(
+  userId: string,
+  platform: string,
+  keepEndpoint: string,
+): Promise<void> {
+  await supabase
+    .from("push_subscriptions")
+    .update({ enabled: false })
+    .eq("user_id", userId)
+    .eq("platform", platform)
+    .eq("enabled", true)
+    .neq("endpoint", keepEndpoint);
 }
 
 function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
