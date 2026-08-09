@@ -604,6 +604,22 @@ Read-only by design: no form, button, write, insert, update, or RPC exists anywh
 
 Protect: `filterVisibleStaffEscalations`'s no-deduplication behavior — do not reintroduce `task_id`-based suppression or any text/category/timing heuristic. `ConfirmRouter`'s discriminator — do not change the Meta template URL shape or make `Confirm.tsx`/`api/task-confirm.js` aware of owner escalations. The owner page's read-only contract — no write/RPC/message-send may be added without a separate, explicitly-scoped Phase D task. The full regression suite for this contract (`src/lib/staff-messages.test.ts`, `src/lib/needs-you-staff-escalations.test.ts`, `src/routes/Home.test.ts`, `src/routes/Updates.test.ts`, `src/components/nav/BottomNav.staff-escalation-badge.test.ts`, `src/routes/ConfirmRouter.test.tsx`, `src/routes/OwnerEscalationDecision.test.tsx`) runs under `TZ=UTC npm run test:carson-protected`. Do not claim this section "CLOSED" until PR #91 is merged, deployed, and the live copy fix is production-verified — at that point, tag the merge commit `ra7etbal-stable-owner-escalation-phase-c-2026-07-27`.
 
+### Escalation-notify business-number binding parity — COMPLETE, PRODUCTION VERIFIED
+
+Status: FIXED. MERGED. DEPLOYED. PRODUCTION VERIFIED. PROTECTED.
+
+PR #205, merge commit `adbf0b5e7376b16c55112e0d274d5ffe19086679`.
+
+Root cause: `findQuotedEscalation` (`api/_owner-whatsapp-routing.js`) matches an inbound owner WhatsApp reply that quotes an earlier notification back to the correct `staff_escalation_owner_decisions` row via `whatsapp_deliveries.metadata`, and rejects the match if `metadata.owner_phone_number_id` doesn't equal the Meta business `phone_number_id` the reply arrived on — added by an earlier "bind owner decisions to exact recipients" fix so a reply can never be bound to an escalation notification sent from a different business number. That fix updated `notifyOwnerOfTaskReview` (the task-confirm.js proof/substitute-review path) to record `owner_phone_number_id` in its delivery metadata, but never updated its sibling `notifyOwnerOfEscalation` (the staff-message escalation path, called from `whatsapp-webhook.js`'s `handleInboundStaffMessage`). Because the check is `if (boundPhoneNumberId && boundPhoneNumberId !== phoneNumberId)`, the absent field silently disabled the guard rather than failing closed — every staff-escalation quoted reply matched regardless of which business number it arrived on, while the equivalent task-review path already enforced the match.
+
+Fix: added `owner_phone_number_id: phoneNumberId` to `notifyOwnerOfEscalation`'s existing delivery-metadata object literal in `api/_escalation-notify.js` — the only production-code line changed. `findQuotedEscalation`, both notification leases, the decision RPCs, and `notifyOwnerOfTaskReview` are all untouched.
+
+Regression protection: `staff-escalation-phase-b-golden-contract.test.js` now asserts `notifyOwnerOfEscalation` persists `owner_phone_number_id` in `beginWhatsappDelivery`'s metadata; `_owner-whatsapp-routing.test.js` gained dedicated matching-business-number-succeeds and mismatched-business-number-fails-closed tests for a staff-escalation-shaped delivery, alongside the pre-existing task-review-shaped coverage of the same guard.
+
+Verification: focused suite (119 tests) + full `npm run test:carson-protected` (54 files, 1025 passed, 4 skipped, 3 todo) + typecheck + production build all clean. Before merge, confirmed zero currently-open `staff_escalation_owner_decisions` rows in production (Supabase project `ggarvhgqzpooloacjgcj`), so no in-flight notification was affected by the newly-enforced binding. Production deployment `dpl_76aoQy1xjnhJYabwzt1mXzMU7kPf`, `readyState: READY`, `githubCommitSha` matches the merge commit exactly, `alias` includes both `www.ra7etbal.com` and `ra7etbal.com`, `aliasError: null`. Canonical `https://www.ra7etbal.com` loads correctly. `get_runtime_errors` shows zero new error groups attributable to this deployment — the only group present (`DEP0169` Node `url.parse()` deprecation warning) predates this change (first seen 2026-06-16) and is unrelated.
+
+Protect: keep `notifyOwnerOfEscalation` and `notifyOwnerOfTaskReview` recording the same delivery-metadata shape (`owner_phone_number_id` included in both) going forward — any future field added to one for `findQuotedEscalation`'s binding checks must be added to the other in the same change, or this exact asymmetry can reopen silently.
+
 ## Current product rules
 
 ### Carson communication
