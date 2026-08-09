@@ -132,11 +132,17 @@ BEGIN
 END;
 $$;
 
--- Postgres grants EXECUTE to PUBLIC on new functions by default — close
--- that explicitly rather than relying only on RLS as the backstop.
+-- Postgres grants EXECUTE to PUBLIC on new functions by default, AND the
+-- live Supabase project additionally has default privileges that grant
+-- EXECUTE directly to anon/authenticated/service_role on every new
+-- function in the public schema (confirmed live on project
+-- ggarvhgqzpooloacjgcj — REVOKE ... FROM PUBLIC alone left anon able to
+-- call this function, since that grant is direct to the anon role, not
+-- inherited through PUBLIC). Revoke from both explicitly rather than
+-- relying only on RLS as the backstop.
 REVOKE EXECUTE ON FUNCTION public.upsert_push_subscription(
   text, text, text, timestamptz, text, text, uuid
-) FROM PUBLIC;
+) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.upsert_push_subscription(
   text, text, text, timestamptz, text, text, uuid
 ) TO authenticated;

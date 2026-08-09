@@ -16,6 +16,19 @@
  * FOREIGN KEY to auth.users, RLS policies, and the pre-existing
  * push_subscriptions_set_updated_at trigger. The migration under test runs
  * completely unmodified against this.
+ *
+ * Also replicates a real Supabase behavior this bootstrap originally
+ * missed and which let a genuine production security gap through this
+ * exact CI suite undetected: the live project has default privileges
+ * granting EXECUTE directly to anon/authenticated/service_role on every
+ * new function created in the public schema — a grant independent of,
+ * and not removed by, "REVOKE ... FROM PUBLIC" alone. Confirmed live: the
+ * migration's first production apply correctly revoked PUBLIC's grant but
+ * left anon able to call upsert_push_subscription via this direct grant,
+ * caught only by a manual post-apply "SET ROLE anon" probe, not by this
+ * (at-the-time incomplete) verification suite. See push_subscriptions_
+ * security_verification.sql's grant tests, which now fail against a
+ * migration that reverts to the PUBLIC-only revoke.
  */
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -34,6 +47,17 @@ BEGIN
     CREATE ROLE service_role NOLOGIN BYPASSRLS;
   END IF;
 END $$;
+
+-- Replicates the live Supabase project's actual default privileges: every
+-- new function created by this role (postgres, matching CI's PGUSER) in
+-- the public schema is automatically EXECUTE-granted directly to
+-- anon/authenticated/service_role — independent of PUBLIC's own default
+-- grant. Applies to every function created AFTER this statement,
+-- including the migration-under-test's own upsert_push_subscription, so
+-- this bootstrap genuinely reproduces the gap a REVOKE-FROM-PUBLIC-only
+-- migration would leave open.
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
+  GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
 
 -- ── auth schema ──────────────────────────────────────────────────────────
 
