@@ -125,6 +125,18 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     expect(whatsappDeliveryMocks.beginWhatsappDelivery).toHaveBeenCalledWith(
       expect.objectContaining({ staffMessageId: MSG_A }),
     );
+
+    // Recipient-binding parity fix: notifyOwnerOfTaskReview has recorded
+    // owner_phone_number_id in its delivery metadata since PR "bind owner
+    // decisions to exact recipients" — notifyOwnerOfEscalation must record
+    // the exact same field, or findQuotedEscalation's business-number check
+    // (api/_owner-whatsapp-routing.js) silently no-ops for every staff
+    // escalation because `boundPhoneNumberId` is falsy.
+    expect(whatsappDeliveryMocks.beginWhatsappDelivery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ owner_phone_number_id: 'phone-number-id-1' }),
+      }),
+    );
   });
 
   it('[reply-first] owner notification has no task button or task-link instruction and asks for a direct WhatsApp reply', async () => {

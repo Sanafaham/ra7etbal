@@ -158,7 +158,7 @@ export async function notifyOwnerOfEscalation(input, deps) {
     recipientPhone: normalizedPhone,
     recipientName: 'Owner',
     templateName,
-    metadata: { escalation_id: escalationId, staff_message_id: staffMessageId },
+    metadata: { escalation_id: escalationId, staff_message_id: staffMessageId, owner_phone_number_id: phoneNumberId },
   });
 
   let sendResult;
