@@ -1,0 +1,92 @@
+name: push-subscription-installation-identity-verification
+
+# Focused, path-filtered — verifies
+# 20260810_push_subscription_installation_identity.sql against a genuine,
+# ephemeral PostgreSQL service (not Supabase, not production). Applies a
+# self-contained bootstrap (this migration has no in-repo creation
+# migration to build on — push_subscriptions predates this repo's
+# migrations convention), inserts pre-existing legacy data, applies the
+# forward migration, runs lifecycle + legacy-backfill + real two-connection
+# concurrency + security verification, applies the rollback, verifies
+# cleanup and data preservation, reapplies the forward migration, and
+# reruns the (rerun-safe) lifecycle verification.
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - "ra7etbal-v2/supabase/migrations/20260810_push_subscription_installation_identity.sql"
+      - "ra7etbal-v2/supabase/migrations/20260810_push_subscription_installation_identity.rollback.sql"
+      - "ra7etbal-v2/supabase/migrations/verification/push_subscriptions_*.sql"
+      - ".github/workflows/push-subscription-installation-identity-verification.yml"
+  push:
+    branches: [feat/push-subscription-installation-identity]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: push-subscription-installation-identity-verification
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ci_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ci_verify
+      MIGRATIONS: ra7etbal-v2/supabase/migrations
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Wait for Postgres
+        run: pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
+
+      - name: Bootstrap minimal auth-compatible schema + push_subscriptions
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_bootstrap.sql"
+
+      - name: Insert pre-existing legacy data (must survive migration + rollback)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_preexisting_fixture.sql"
+
+      - name: Apply forward migration
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260810_push_subscription_installation_identity.sql"
+
+      - name: Lifecycle verification (first apply)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_lifecycle_verification.sql"
+
+      - name: Legacy backfill verification (run once only)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_legacy_backfill_verification.sql"
+
+      - name: Real two-connection concurrency verification
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_concurrency_verification.sql"
+
+      - name: RPC privilege + cross-user isolation verification
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_security_verification.sql"
+
+      - name: Apply rollback migration
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260810_push_subscription_installation_identity.rollback.sql"
+
+      - name: Post-rollback verification (cleanup + legacy data preservation)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_post_rollback_verification.sql"
+
+      - name: Reapply forward migration
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260810_push_subscription_installation_identity.sql"
+
+      - name: Lifecycle verification (after reapply)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_lifecycle_verification.sql"

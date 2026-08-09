@@ -12,18 +12,52 @@ export interface PushSupportResult {
   reason: "supported" | "unsupported";
 }
 
-interface PushSubscriptionRow {
-  user_id: string;
-  endpoint: string;
-  p256dh: string;
-  auth: string;
-  expiration_time: string | null;
-  user_agent: string;
-  platform: string;
-  enabled: boolean;
-}
-
 const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+
+/** localStorage key for this browser storage partition's stable identity. */
+const INSTALLATION_ID_STORAGE_KEY = "ra7etbal:push-installation-id";
+
+/**
+ * p_installation_id is a `uuid`-typed RPC parameter. A stored value that
+ * isn't UUID-shaped (corrupted storage, a stale value from a future format
+ * change) would make Postgres reject every save for this browser with
+ * invalid_text_representation until storage is cleared by hand — so a
+ * malformed value is treated as absent and regenerated instead.
+ */
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Returns a stable identifier for this exact PWA installation (this exact
+ * browser storage partition), or null if it cannot be reliably persisted.
+ *
+ * Deliberately never falls back to a fresh, unpersisted UUID on storage
+ * failure — that would mint a new "installation" on every single save,
+ * immediately orphaning the previous save's own row and recreating the
+ * exact accumulation problem this identity exists to prevent. null is
+ * passed straight through to upsert_push_subscription, which treats it
+ * exactly like a legacy pre-migration row: saved and fully functional,
+ * just outside the atomic per-installation supersede path.
+ *
+ * Survives normal reload/login/logout (localStorage is origin-scoped, not
+ * session-scoped). Does not survive iOS evicting this PWA's storage, or a
+ * full remove-and-reinstall of the home-screen icon — both wipe the whole
+ * storage partition, this key included, and a fresh id is generated next
+ * time. That is expected, not a bug — see the migration's own comments
+ * for why no attempt is made to detect or reconcile that case.
+ */
+function getOrCreateInstallationId(): string | null {
+  try {
+    const existing = window.localStorage.getItem(INSTALLATION_ID_STORAGE_KEY);
+    if (existing && UUID_PATTERN.test(existing)) return existing;
+
+    const fresh = crypto.randomUUID();
+    window.localStorage.setItem(INSTALLATION_ID_STORAGE_KEY, fresh);
+    return fresh;
+  } catch {
+    return null;
+  }
+}
 
 export function checkPushSupport(): PushSupportResult {
   const flags = getPushSupportFlags();
@@ -105,7 +139,7 @@ export async function enableReminderNotifications(userId: string): Promise<PushN
   // Always save — this inserts if missing for this userId, updates if present.
   // Covers the case where the browser subscription exists but was never saved
   // for the current user_id (e.g. account switch, fresh install, DB wipe).
-  await savePushSubscription(userId, subscription);
+  await savePushSubscription(subscription);
   return "enabled";
 }
 
@@ -127,7 +161,7 @@ export async function refreshPushSubscription(userId: string): Promise<PushNotif
   if (existing) await disableSavedPushSubscription(userId, existing);
 
   const newSub = await subscribeToPush(registration);
-  await savePushSubscription(userId, newSub);
+  await savePushSubscription(newSub);
   return "enabled";
 }
 
@@ -215,7 +249,6 @@ async function disableSavedPushSubscription(
 }
 
 async function savePushSubscription(
-  userId: string,
   subscription: PushSubscription,
 ): Promise<void> {
   const key = subscription.getKey("p256dh");
@@ -225,7 +258,7 @@ async function savePushSubscription(
     throw new Error("Browser did not provide the full push subscription.");
   }
 
-  await persistSubscriptionRow(userId, {
+  await persistSubscriptionRow({
     endpoint: subscription.endpoint,
     p256dh: arrayBufferToBase64Url(key),
     auth: arrayBufferToBase64Url(auth),
@@ -241,14 +274,17 @@ async function savePushSubscription(
  * the page via postMessage — see push-subscription-rotation.ts.
  */
 export async function saveRawPushSubscription(
-  userId: string,
+  // Kept in the public signature for parity with every other function in
+  // this file and for the caller's own documentation — the write itself
+  // is scoped server-side by the RPC's own auth.uid(), never by this value.
+  _userId: string,
   raw: { endpoint: string; keys: { p256dh: string; auth: string }; expirationTime?: number | null },
 ): Promise<void> {
   if (!raw?.endpoint || !raw.keys?.p256dh || !raw.keys?.auth) {
     throw new Error("Push subscription payload is missing required fields.");
   }
 
-  await persistSubscriptionRow(userId, {
+  await persistSubscriptionRow({
     endpoint: raw.endpoint,
     p256dh: raw.keys.p256dh,
     auth: raw.keys.auth,
@@ -256,92 +292,45 @@ export async function saveRawPushSubscription(
   });
 }
 
+/**
+ * Save a subscription row and atomically supersede any prior subscription
+ * for this exact installation, via the upsert_push_subscription RPC
+ * (migration 20260810_push_subscription_installation_identity.sql).
+ *
+ * All correctness properties — same-platform multi-device safety, true
+ * concurrency serialization, atomic disable-then-enable with automatic
+ * rollback on failure — live entirely in that one database function, not
+ * in this client code. This function's only job is to call it and let a
+ * failure propagate untouched: never catch it here, never translate it
+ * into a false "success" — every caller already has its own truthful
+ * failure handling (SettingsModal.tsx's handleEnable/handleRefresh set
+ * status "error"; the pushsubscriptionchange auto-save path in
+ * push-subscription-rotation.ts logs it).
+ *
+ * Known, still-open engineering debt, NOT addressed by installation_id
+ * (see the migration's own comments and RA7ETBAL_STATE.md's "Push
+ * Subscription Installation Management / Orphan Resolution" follow-up):
+ * a row orphaned by iOS evicting this PWA's storage, or a home-screen
+ * reinstall, has no safe deterministic signal linking it back to its
+ * replacement installation. It is deliberately never guessed at or swept
+ * — it remains enabled until an existing, genuinely evidence-based
+ * mechanism resolves it (provider 404/410, explicit user disable, or this
+ * exact installation resubscribing).
+ */
 async function persistSubscriptionRow(
-  userId: string,
   fields: { endpoint: string; p256dh: string; auth: string; expirationTime: number | null },
 ): Promise<void> {
-  const platform = navigator.platform || "unknown";
-  const row: PushSubscriptionRow = {
-    user_id: userId,
-    endpoint: fields.endpoint,
-    p256dh: fields.p256dh,
-    auth: fields.auth,
-    expiration_time: fields.expirationTime ? new Date(fields.expirationTime).toISOString() : null,
-    user_agent: navigator.userAgent,
-    platform,
-    enabled: true,
-  };
+  const { error } = await supabase.rpc("upsert_push_subscription", {
+    p_endpoint: fields.endpoint,
+    p_p256dh: fields.p256dh,
+    p_auth: fields.auth,
+    p_expiration_time: fields.expirationTime ? new Date(fields.expirationTime).toISOString() : null,
+    p_user_agent: navigator.userAgent,
+    p_platform: navigator.platform || "unknown",
+    p_installation_id: getOrCreateInstallationId(),
+  });
 
-  const lookup = await supabase
-    .from("push_subscriptions")
-    .select("id")
-    .eq("user_id", userId)
-    .eq("endpoint", fields.endpoint)
-    .maybeSingle();
-
-  if (lookup.error) throw lookup.error;
-
-  const result = lookup.data
-    ? await supabase.from("push_subscriptions").update(row).eq("id", lookup.data.id)
-    : await supabase.from("push_subscriptions").insert(row);
-
-  if (result.error) throw result.error;
-
-  // A fresh subscribe() on this same device (browser storage/service-worker
-  // eviction, iOS reinstall, key rotation) always mints a new endpoint, so
-  // the lookup above can never find and replace the prior row for this
-  // device — it silently accumulates instead. Superseding every other
-  // still-enabled row for this exact user+platform closes that gap. Disable,
-  // not delete — matches the existing disable-first convention used
-  // elsewhere in this file, preserving the row for audit history.
-  //
-  // This is load-bearing, not best-effort: a failed dedupe means the pile-up
-  // this exists to fix silently persists, so it must throw rather than warn
-  // — the caller must never report "enabled" while cleanup actually failed
-  // (Engineering Completeness Review, PR #207 follow-up). Every caller here
-  // already has an existing try/catch that reports failure truthfully
-  // (SettingsModal.tsx's handleEnable/handleRefresh set status "error"; the
-  // pushsubscriptionchange auto-save path logs it — see
-  // push-subscription-rotation.ts), so propagating the error needs no new
-  // status plumbing.
-  //
-  // Known, still-open engineering debt (CodeRabbit review, PR #207 — NOT
-  // fixed by this change, both genuinely require a migration and are
-  // explicitly out of scope here):
-  //   1. Not atomic with the write above. Two saves for the same user+
-  //      platform completing around each other could each disable the
-  //      other's just-written row. A correct fix needs a single
-  //      transactional Supabase RPC (upsert + stale-row disable in one
-  //      statement) — a separate schema/migration change. Low-probability
-  //      in practice (every call site here is either a single explicit
-  //      user tap gated by a busy flag, or the one-device-only
-  //      pushsubscriptionchange path).
-  //   2. `platform` (navigator.platform, e.g. "iPhone") is the closest
-  //      existing signal to "this device" but is not a real per-device
-  //      identifier — two genuinely different iPhones on the same account
-  //      would collide, and the newer save would incorrectly disable the
-  //      older device's still-valid subscription. No reliable device ID
-  //      exists in the current schema without a migration (a new column).
-  //      The failure mode is a recoverable UX inconvenience (re-enable in
-  //      Settings), not data loss or a security issue, but it is a real,
-  //      reproducible-by-design gap, not merely theoretical.
-  await disableOtherEnabledSubscriptions(userId, platform, fields.endpoint);
-}
-
-async function disableOtherEnabledSubscriptions(
-  userId: string,
-  platform: string,
-  keepEndpoint: string,
-): Promise<void> {
-  const result = await supabase
-    .from("push_subscriptions")
-    .update({ enabled: false })
-    .eq("user_id", userId)
-    .eq("platform", platform)
-    .eq("enabled", true)
-    .neq("endpoint", keepEndpoint);
-
-  if (result.error) throw result.error;
+  if (error) throw error;
 }
 
 function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
