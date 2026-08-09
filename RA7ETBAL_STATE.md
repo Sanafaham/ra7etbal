@@ -1040,6 +1040,23 @@ Status: **downgraded from "confirmed" — no supporting trace, date, or reproduc
 
 **If this is reopened:** requires either a fresh, independently-verified live-prompt pull (needs `ELEVENLABS_API_KEY`) confirming divergence from the 2026-08-03 backup, or a reproduced real voice conversation where the tool result was a failure string and Carson's spoken reply was success-shaped, inspected via `carson-diagnose.mjs inspect`.
 
+### WhatsApp production log redaction — COMPLETE, PRODUCTION VERIFIED (2026-08-09)
+
+Status: COMPLETE. Merged as PR #201, final merge commit `e5919a28ae8bfcb92efd056ca47467a51de7fadc`. Follow-up to the plaintext-logging gap flagged during PR #196 review (`send-whatsapp-task.js`'s shared Meta-request logging included `payload.to`/`payload.text.body` in plaintext) and left out of scope there.
+
+**Scope:** audited every production-reachable WhatsApp send/webhook console log for plaintext phone numbers, message text, or raw payloads. Fixed:
+- `send-whatsapp-task.js`: `sendMetaMessage`'s request/accepted logs dumped the full Meta payload. `logSendAttempt` already computed redacted `bodyParameterCount`/`buttonParameterCount` but then also logged the full raw payload underneath, undoing its own redaction. New `redactMetaPayloadForLog()` strips `to` and body/button parameter text down to counts (logging only — the real payload sent to Meta is untouched); the redundant raw-payload field in `logSendAttempt` was removed.
+- `task-confirm.js`: `logOwnerDecisionMetaPayloadAudit` already redacted `to` but logged the owner-decision message and confirmation-link button text twice in full (once as `bodyParameter.text`, again inside the nominally "sanitized" payload's unredacted components). Both reduced to `textLength`/`parameterCount`.
+- `whatsapp-webhook.js`: four inbound-consent-reply logs included the sender's real phone number in plaintext (one also a 50-char raw body preview).
+
+**Deliberately not touched:** `recipientName`/`ownerName` fields (household member/staff display names, not phone numbers or message content — already visible throughout the app UI to the account owner who reads these logs, and load-bearing for matching a delivery complaint to a specific recipient during debugging); `_owner-command-executor.js`, `_staff-decision-message.js`, `_personal-contact-reply.js`, `_owner-whatsapp-routing.js`, `_escalation-notify.js` (audited, no phone/message-body logging found); Meta's own response body in `sendMetaMessage` (echoes message IDs/status, not sent content); WhatsApp delivery behavior, routing, retries, or correlation — logging only.
+
+**Tests:** targeted (`send-whatsapp-task.test.js`, `whatsapp-webhook.test.js`, `task-confirm.test.js`) 198/198 passing — one existing assertion updated to match the new redacted log shape, plus new negative assertions that the raw owner-decision message text never appears in the log line. Full `npm run test:carson-protected`: 54/54 files, 1018/1018 tests, zero regressions. Typecheck and production build both clean.
+
+**Production verification:** deployment `dpl_2BLj6E7sZC6KmM8Ajqh3dkdmb9bn`, `READY`, `target: production`, `githubCommitSha` matches the merge commit exactly, aliased to `www.ra7etbal.com`/`ra7etbal.com` with `aliasError: null`, canonical URL returns HTTP 200, zero new runtime errors in the post-deploy window. No organic WhatsApp traffic occurred in the immediate post-deploy window to independently observe the redaction firing on real production data — correctness rests on the passing test suite (which directly asserts the redacted shape and the absence of raw message text) plus the deploy-health check above, not on a forced live send.
+
+Protect: `redactMetaPayloadForLog()` and the `logSendAttempt`/`logOwnerDecisionMetaPayloadAudit` redaction shape — do not reintroduce a raw `payload`/`bodyParameter.text`/`buttonParameter.text` field to these specific logs. Reopen only if a new production-reachable WhatsApp log is found leaking phone numbers or message content.
+
 ### Confirmed: delegation misclassification for "make" verb
 
 Status: confirmed, pre-existing, narrowed and partially superseded — see "Carson communication vs. delegation routing fix" below.
