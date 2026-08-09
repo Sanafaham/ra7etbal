@@ -10,6 +10,8 @@ const mockSupabase = vi.hoisted(() => ({
   }>,
   inserts: [] as Array<{ table: string; row: unknown }>,
   selects: [] as Array<{ table: string; column: string; filters: Array<[string, unknown]> }>,
+  /** When set, the dedupe update (the one call using .neq()) resolves with this error. */
+  dedupeUpdateError: null as { message: string } | null,
 }));
 
 vi.mock("./supabase", () => ({
@@ -46,9 +48,10 @@ vi.mock("./supabase", () => ({
               updateState.filters.push([column, value, "neq"]);
               return chain;
             },
-            then(resolve: (value: { error: null }) => void) {
+            then(resolve: (value: { error: { message: string } | null }) => void) {
               mockSupabase.updates.push({ ...updateState });
-              resolve({ error: null });
+              const isDedupeCall = updateState.filters.some((f) => f[2] === "neq");
+              resolve({ error: isDedupeCall ? mockSupabase.dedupeUpdateError : null });
             },
           };
           return chain;
@@ -91,6 +94,7 @@ describe("push notifications — iPhone PWA subscription recovery", () => {
     mockSupabase.updates.length = 0;
     mockSupabase.inserts.length = 0;
     mockSupabase.selects.length = 0;
+    mockSupabase.dedupeUpdateError = null;
 
     const PushManagerMock = function PushManager() {};
     const NotificationMock = {
@@ -306,6 +310,28 @@ describe("push notifications — iPhone PWA subscription recovery", () => {
         ["endpoint", "https://push.example/rotated", "neq"],
       ],
     });
+  });
+
+  it("a failed dedupe cleanup is logged but never fails the user's enable action (non-fatal, matches the codebase's secondary-bookkeeping convention)", async () => {
+    mockSupabase.dedupeUpdateError = { message: "dedupe update failed" };
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fresh = makeSubscription("https://push.example/fresh");
+    const registration = {
+      active: true,
+      pushManager: {
+        getSubscription: vi.fn().mockResolvedValue(null),
+        subscribe: vi.fn().mockResolvedValue(fresh),
+      },
+    };
+    navigator.serviceWorker.getRegistration = vi.fn().mockResolvedValue(registration);
+
+    const { enableReminderNotifications } = await importPushModule();
+
+    await expect(enableReminderNotifications("user-1")).resolves.toBe("enabled");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Failed to disable superseded push subscriptions",
+      { message: "dedupe update failed" },
+    );
   });
 
   it("saveRawPushSubscription rejects a payload missing required fields", async () => {

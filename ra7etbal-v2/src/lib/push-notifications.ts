@@ -291,11 +291,29 @@ async function persistSubscriptionRow(
   // eviction, iOS reinstall, key rotation) always mints a new endpoint, so
   // the lookup above can never find and replace the prior row for this
   // device — it silently accumulates instead. Superseding every other
-  // still-enabled row for this exact user+platform closes that gap. Scoped
-  // to platform (not just user_id) so a legitimately separate device (e.g.
-  // Mac and iPhone both enabled at once) is never touched. Disable, not
-  // delete — matches the existing disable-first convention used elsewhere
-  // in this file, preserving the row for audit history.
+  // still-enabled row for this exact user+platform closes that gap. Disable,
+  // not delete — matches the existing disable-first convention used
+  // elsewhere in this file, preserving the row for audit history.
+  //
+  // Known, accepted limitations (CodeRabbit review, PR #207 — not fixed
+  // here, deliberately deferred):
+  //   1. Not atomic with the write above. Two saves for the same user+
+  //      platform completing around each other could each disable the
+  //      other's just-written row. Fixing this correctly needs a single
+  //      transactional Supabase RPC (upsert + stale-row disable in one
+  //      statement) — a separate schema/migration change, out of scope for
+  //      this fix. Low-probability in practice (every call site here is
+  //      either a single explicit user tap gated by a busy flag, or the
+  //      one-device-only pushsubscriptionchange path), and strictly no
+  //      worse than the pre-existing behavior of zero deduplication.
+  //   2. `platform` (navigator.platform, e.g. "iPhone") is the closest
+  //      existing signal to "this device" but is not a real per-device
+  //      identifier — two genuinely different iPhones on the same account
+  //      would collide. No reliable device ID exists in the current schema
+  //      without a migration. Matches this product's current single-owner-
+  //      per-account model; the failure mode is a recoverable UX
+  //      inconvenience (re-enable in Settings), not data loss or a security
+  //      issue.
   await disableOtherEnabledSubscriptions(userId, platform, fields.endpoint);
 }
 
@@ -304,13 +322,23 @@ async function disableOtherEnabledSubscriptions(
   platform: string,
   keepEndpoint: string,
 ): Promise<void> {
-  await supabase
+  // Best-effort cleanup: the caller's own save already succeeded and is the
+  // load-bearing write. A failure here must be visible (never silently
+  // swallowed) but must never fail the user's actual enable/refresh action —
+  // matches the non-fatal, log-and-continue convention used for secondary
+  // bookkeeping elsewhere in this codebase (e.g. api/_escalation-notify.js's
+  // delivery-acceptance bookkeeping).
+  const result = await supabase
     .from("push_subscriptions")
     .update({ enabled: false })
     .eq("user_id", userId)
     .eq("platform", platform)
     .eq("enabled", true)
     .neq("endpoint", keepEndpoint);
+
+  if (result.error) {
+    console.warn("Failed to disable superseded push subscriptions", result.error);
+  }
 }
 
 function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {
