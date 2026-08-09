@@ -676,7 +676,7 @@ async function handleInboundConsentReply({ supabaseUrl, serviceKey, msg }) {
       senderPhone: normalizePhone(from), contextMessageId: msg.contextMessageId,
     }).catch(() => ({ method: 'unmatched' }));
     if (activeConversation.method !== 'unmatched') {
-      console.log('WhatsApp inbound: opt-in-shaped reply matches an active personal conversation, deferring to relay', { from });
+      console.log('WhatsApp inbound: opt-in-shaped reply matches an active personal conversation, deferring to relay', { from: '[redacted]' });
       return { handled: false, from, reason: 'active_personal_conversation' };
     }
   }
