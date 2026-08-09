@@ -1164,11 +1164,9 @@ function NotificationDevicesPanel({
 }
 
 function formatDeviceDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  } catch {
-    return iso;
-  }
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 // ---------------------------------------------------------------------------
