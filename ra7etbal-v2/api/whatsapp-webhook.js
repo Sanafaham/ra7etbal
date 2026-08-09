@@ -648,14 +648,14 @@ async function handleInboundConsentReply({ supabaseUrl, serviceKey, msg }) {
   const isOptOut = OPT_OUT_REPLIES.has(normalised);
 
   if (!isOptIn && !isOptOut) {
-    console.log('WhatsApp inbound: not a consent reply, ignoring', { from, body: body.slice(0, 50) });
+    console.log('WhatsApp inbound: not a consent reply, ignoring', { from: '[redacted]', bodyLength: body.length });
     return { handled: false, from, reason: 'not_consent_reply' };
   }
 
   // Find person by normalised phone suffix match.
   const person = await findPersonByPhone({ supabaseUrl, serviceKey, rawPhone: from });
   if (!person) {
-    console.warn('WhatsApp inbound: no person found for phone', { from });
+    console.warn('WhatsApp inbound: no person found for phone', { from: '[redacted]' });
     return { handled: false, from, reason: 'person_not_found' };
   }
 
@@ -708,7 +708,7 @@ async function handleInboundConsentReply({ supabaseUrl, serviceKey, msg }) {
   });
 
   console.log('WhatsApp consent updated from inbound reply', {
-    from, event, personId: person.id, personName: person.name,
+    from: '[redacted]', event, personId: person.id, personName: person.name,
   });
 
   return { handled: true, from, event, personId: person.id };

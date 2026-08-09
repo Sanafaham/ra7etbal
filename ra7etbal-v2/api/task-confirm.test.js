@@ -2462,17 +2462,28 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
       decision: 'approved_alternative',
       templateName: 'ra7etbal_owner_decision',
       templateLanguage: 'en_US',
-      bodyParameter: { type: 'text', text: expectedMessage },
+      bodyParameter: { type: 'text', textLength: expectedMessage.length },
       buttonComponent: {
         type: 'button',
         sub_type: 'url',
         index: '0',
-        parameter: { type: 'text', text: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed' },
+        parameter: { type: 'text', textLength: '3dbe480a-c4a0-4680-a5e0-921984a4c0ed'.length },
       },
       computedFinalUrl: 'https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed',
     });
+    // Privacy: the recipient phone is redacted, and the raw template
+    // components (which would otherwise carry the same owner-decision
+    // wording as bodyParameter, twice) are reduced to counts only. The task
+    // UUID itself (taskId, computedFinalUrl, and coincidentally this
+    // template's button-parameter value) is intentionally left visible —
+    // it's an internal identifier already present in the log line, not the
+    // owner's message text.
     expect(auditPayload.payload.to).toBe('[redacted]');
-    expect(auditPayload.payload.template.components).toEqual(metaPayload.template.components);
+    expect(auditPayload.payload.template.components).toEqual([
+      { type: 'body', sub_type: null, index: null, parameterCount: 1 },
+      { type: 'button', sub_type: 'url', index: '0', parameterCount: 1 },
+    ]);
+    expect(auditCall[1]).not.toContain(expectedMessage);
     const reserveBody = JSON.parse(fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_custom_instruction'))[1].body);
     expect(reserveBody.p_confirmation_url).toBe('https://www.ra7etbal.com/confirm?task=3dbe480a-c4a0-4680-a5e0-921984a4c0ed');
   });
