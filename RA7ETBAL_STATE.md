@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-08
+Last updated: 2026-08-10
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -12,12 +12,13 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 ## Current next task
 
-PR #93 (`agent/server-backed-banner-dismissal`) persists completed-confirmation banner dismissal on `tasks.dismissed_at`. Independent verification on 2026-07-28 added client/server eligibility guards and optimistic rollback coverage; focused tests, typecheck, the protected suite, and production build pass. The additive, nullable, idempotent migration was applied directly and verified on the confirmed Ra7etBal production Supabase project `ggarvhgqzpooloacjgcj`. After current `main` introduced the canonical `20260727 owner_whatsapp_reply_receipts` migration, this PR's migration was renumbered to `20260729_add_dismissed_at_to_tasks.sql` so migration tooling will not skip it because of the occupied version. Production UI verification across refresh, logout/login, Safari, and the installed app still requires deployment of the PR code; do not merge PR #93 until that verification can be completed.
+No task is currently active. See the most recent entries below (Push Subscription Installation Identity + Atomic Replacement, formally closed 2026-08-10) for the latest completed work, and the 2026-08-10 state-file reconciliation note for what to check before starting anything new.
 
-### Owner WhatsApp decision message quality
+**Historical note (corrected 2026-08-10 — this section previously read as an open, unmerged task; it was stale):** PR #93 (`agent/server-backed-banner-dismissal`), persisting completed-confirmation banner dismissal on `tasks.dismissed_at`, merged as `62010060306b30c0896379fc66c763eca8c0b1be` on 2026-07-28. Confirmed live: `dismissed_at` is a real column read/written throughout the current codebase (`src/stores/tasks.ts`, `src/components/home/ConfirmationNotices.tsx`, `src/types/task.ts`), and its migration (`20260729_add_dismissed_at_to_tasks.sql`) is present in the repo. Treat as merged and protected, not pending.
 
-Status: focused implementation complete and protected locally; production
-verification pending. The confirmed defect was that the classifier's broadly
+### Owner WhatsApp decision message quality — COMPLETE, MERGED, PROTECTED
+
+Status: **corrected 2026-08-10 — previously read as "production verification pending"; that was stale.** Merged as PR #101 (`78755d25204a103bcb11484b67d767177dc5c80f`, "Keep owner WhatsApp decision requests concise and source-faithful"), 2026-07-28. `ra7etbal-v2/api/owner-whatsapp-decision-message-quality.test.js` (referenced below) is present in the repo and wired into `test:carson-protected`. Treat as merged and protected. The confirmed defect was that the classifier's broadly
 reasoned `escalation_reason` was copied into the owner notification, allowing
 irrelevant household context and hypothetical decisions into a simple staff
 permission request.
@@ -580,7 +581,7 @@ Both fixes were proven against real production traffic, not just tests: a contro
 
 Both remain `status: open`, `owner_reply_text: null`, `answered_at: null` by design — this is correct Phase B behavior, not an incomplete task.
 
-**Exact Phase B/C/D boundary:** Phase B's job ends the moment the owner has been notified and the staff member has a truthful holding reply. It never resolves the escalation, never writes an owner decision, and never routes anything back to staff. **Phase C** (the owner answering, e.g. via the WhatsApp template's "Visit Task" link) and **Phase D** (relaying that answer back to the staff member) are both not implemented — do not build them into this task's scope without a separate, explicitly-scoped task.
+**Exact Phase B/C/D boundary:** Phase B's job ends the moment the owner has been notified and the staff member has a truthful holding reply. It never resolves the escalation, never writes an owner decision, and never routes anything back to staff. **Phase C** (the owner answering) and **Phase D** (relaying that answer back to the staff member) were both later implemented and merged — see the "Phase C" and "Phase D" entries below; **corrected 2026-08-10**, this line previously read "both not implemented," which is stale.
 
 **Separate, explicitly out-of-scope backlog item:** `_staff-comms-engine.js`'s `loadStaffContext` still loads zero prior `staff_messages` conversation turns — each inbound message (including a direct follow-up to Carson's own prior question) is classified with no awareness of what was said moments before. Tracked as a Carson Reliability Engineering item, not fixed by PR #87 or #88.
 
@@ -588,7 +589,7 @@ Protect: the four-PR contract above in full — classification/escalation fields
 
 ### Phase C — Needs You visibility + read-only owner-decision page
 
-Status: IMPLEMENTED. PRODUCTION-VERIFIED (owner-page load, read-only). PR #91 open, independent review in progress — **not yet merged, not yet closed.**
+Status: **corrected 2026-08-10 — previously read "PR #91 open... not yet merged, not yet closed"; stale.** PR #91 (`b386d75`, "owner-decision page copy no longer tells owner to bypass Carson") merged 2026-07-27T04:23:58Z. IMPLEMENTED, MERGED, PRODUCTION-VERIFIED (owner-page load, read-only), PROTECTED. The "Phase D remains not implemented" language further below in this section is also now stale — see the new Phase D entry immediately after this one.
 
 What it is: the open staff escalations Phase B already creates are now surfaced two ways, both read-only: (1) inside the *existing* Needs You list/counts on Home, Updates → Needs You, and the bottom-nav badge — no Staff tab restored, no new navigation surface; (2) via a dedicated, authenticated, read-only owner-decision page (`OwnerEscalationDecision.tsx`) reached through the same `/confirm?task={{1}}` WhatsApp template URL already approved for worker task-confirmation links, discriminated from a real task link purely by probing the existing, unmodified `/api/task-confirm` endpoint (`ConfirmRouter.tsx`'s `resolveConfirmLinkKind`) — a genuine 404 routes to the owner page, anything else routes to the unmodified `Confirm.tsx`.
 
@@ -603,6 +604,20 @@ Read-only by design: no form, button, write, insert, update, or RPC exists anywh
 **Separate, deferred, out-of-scope item:** dismissed Home notifications reappearing is a known, separate regression, unrelated to and not fixed by Phase C — do not conflate the two or attempt to fix it inside Phase C's scope.
 
 Protect: `filterVisibleStaffEscalations`'s no-deduplication behavior — do not reintroduce `task_id`-based suppression or any text/category/timing heuristic. `ConfirmRouter`'s discriminator — do not change the Meta template URL shape or make `Confirm.tsx`/`api/task-confirm.js` aware of owner escalations. The owner page's read-only contract — no write/RPC/message-send may be added without a separate, explicitly-scoped Phase D task. The full regression suite for this contract (`src/lib/staff-messages.test.ts`, `src/lib/needs-you-staff-escalations.test.ts`, `src/routes/Home.test.ts`, `src/routes/Updates.test.ts`, `src/components/nav/BottomNav.staff-escalation-badge.test.ts`, `src/routes/ConfirmRouter.test.tsx`, `src/routes/OwnerEscalationDecision.test.tsx`) runs under `TZ=UTC npm run test:carson-protected`. Do not claim this section "CLOSED" until PR #91 is merged, deployed, and the live copy fix is production-verified — at that point, tag the merge commit `ra7etbal-stable-owner-escalation-phase-c-2026-07-27`.
+
+### Phase D — owner answer delivery to staff — MERGED, PROTECTED (newly documented 2026-08-10)
+
+Status: **added 2026-08-10 — this phase was merged and live in production but had no entry anywhere in this file; the Phase B/C entries above still say "Phase D remains not implemented."** Merged as PR #92 (`657fdf7a1ce7f15a080e9394b3a62c916f45f22f`, "feat: Phase D — owner answer persistence and staff-delivery routing"), 2026-07-27T15:03:49Z. Confirmed live in `api/task-confirm.js` and `api/_owner-whatsapp-routing.js`.
+
+What it is: closes the loop Phase B/C left open — the owner's answer to an open staff escalation (approve / reject / custom instruction) is persisted and delivered back to the staff member who asked, as a plain-text WhatsApp message (never a template, since the staff member messaged first and this send is inside Meta's customer-service window — same convention as Carson's own auto-reply to staff in `whatsapp-webhook.js`'s `handleInboundStaffMessage`).
+
+Two entry points, one shared core: (1) `handleEscalationAnswer` (`api/task-confirm.js`, PATCH route reached via `deepLinkToken` from the Phase C owner-decision page) and (2) the authoritative owner WhatsApp quoted-reply path (`api/_owner-whatsapp-routing.js`). Both call the same extracted core, `resolveAndDeliverEscalationAnswer` (`api/task-confirm.js`, exported) — deliberately no second, independently maintained Phase D implementation. Reuses the Phase A state machine and RPCs unchanged: `answer_escalation_owner_decision` (saves the answer exactly once — a resubmit on an already-answered escalation ignores the newly submitted decision and returns what's already stored, making duplicate submits/second-tab/resubmit-after-refresh all safe) plus `claim_escalation_answer_delivery`/`complete_escalation_answer_delivery`/`fail_escalation_answer_delivery` (delivery lease, same pattern as every other at-most-once send in this codebase). Schema: `20260727_phase_d_escalation_answer_delivery_message_id.sql` (widens `delivery_transport_message_id` on the existing Phase A table — no new table).
+
+`handleEscalationAnswer` adds its own explicit ownership check before any write (the token lookup's `user_id` must match the authenticated session) even though `answer_escalation_owner_decision` itself authorizes by token possession alone (necessary because Phase C's read-only page has no session to check against) — a mismatched or nonexistent token gets the identical generic "invalid link" response either way, never a response that would disclose whether the token exists for a different household.
+
+Regression coverage: exercised across `task-confirm.test.js`, `_owner-whatsapp-routing.test.js`, `owner-whatsapp-decision-golden-contract.test.js`, `staff-decision-golden-contract.test.js`, `staff-escalation-phase-b-golden-contract.test.js`, `task-owner-whatsapp-substitute-review.test.js`, `staff-escalation-owner-decisions-migration.test.js`, `owner-whatsapp-safe-routing-migration.test.js` — all part of `test:carson-protected`.
+
+Protect: `resolveAndDeliverEscalationAnswer` as the single shared core — do not build a second delivery path for either entry point. The exactly-once-answer contract (an already-answered escalation never re-saves a resubmitted decision). The explicit ownership re-check in `handleEscalationAnswer` despite the RPC's own token-only authorization. The generic, non-disclosing "invalid link" response shape. Reopen only on a reproduced production regression.
 
 ### Escalation-notify business-number binding parity — COMPLETE, PRODUCTION VERIFIED
 
@@ -972,17 +987,19 @@ Test interface: `api/_staff-comms-engine.test.js`, 12 focused Vitest tests (all 
 
 Independent review (separate agent, `review:bug-hunter`): 0 critical/high/medium findings across second-Carson risk, cross-household leakage, idempotency, false completion, accidental ElevenLabs/WhatsApp changes, and test-meaningfulness (2 findings mutation-tested to confirm the tests actually fail without the implementation). One Low/nit, not a blocker: if `fail_staff_message` itself throws inside the outer catch block's nested try/catch, the row is left silently stuck in `claimed` with no distinguishing signal — logged at the same level as normal errors. Left as a documented follow-up, not fixed in this task (narrow, pre-existing-shape gap, not a regression risk to protected behavior).
 
-Remaining for issue #46 at the time this section was written: wiring an actual transport to call `processStaffMessage`, and owner-facing UI surfacing of escalations. **Update:** the WhatsApp inbound transport is now wired — see "Phase B — staff-to-owner escalation loop" below, PROTECTED and CLOSED. Owner-facing UI surfacing of escalations (Phase C: the owner answering) and routing that answer back to staff (Phase D) remain not implemented — see that section for the exact boundary.
+Remaining for issue #46 at the time this section was written: wiring an actual transport to call `processStaffMessage`, and owner-facing UI surfacing of escalations. **Update:** the WhatsApp inbound transport is now wired — see "Phase B — staff-to-owner escalation loop" below, PROTECTED and CLOSED. Owner-facing UI surfacing of escalations (Phase C) and routing that answer back to staff (Phase D) were both later implemented and merged — see those sections below (**corrected 2026-08-10** — this line previously said they "remain not implemented," which is stale).
 
 Protect: this table/module design must not be duplicated by a future transport integration — reuse `processStaffMessage`, do not build a second reasoning path.
 
-### Owner visibility for staff communications V1
+### Owner visibility for staff communications V1 — SUPERSEDED, REMOVED FROM NAVIGATION (historical record)
 
-Status: implemented. Not yet merged, PR open against `main`.
+Status: **corrected 2026-08-10 — this section previously read as "implemented, not yet merged" and described the Staff tab as current behavior; both were stale.** Ground truth: merged as PR #48 (`524ac6c76240a4d31e5a4e04f8fece31abb3c7c5`, "Add read-only owner visibility for staff communications (V1)") on 2026-07-20, then the Staff tab itself was **explicitly removed from owner-facing navigation** by PR #76 (`8906ffa89b5627037423ad73dd82db89dc4789dc`, "feat: remove Staff tab from owner-facing navigation") on 2026-07-25. Confirmed against current code: `src/routes/Updates.tsx` has no Staff tab, no `tab=staff` route, and no reference to `StaffUpdates`. `src/routes/StaffUpdates.tsx` and `src/lib/staff-messages.ts`'s `listStaffMessages()`/`getStaffMessageDisplayState()` still exist in the repo but `StaffUpdates.tsx` is not imported by any route — dead code, not reachable from the app UI. **Do not describe the Staff tab as live or reachable.** Owner-facing visibility into staff escalations now happens exclusively through the Needs You surfaces built by Phase B/C (see "Phase B — staff-to-owner escalation loop" and "Phase C — Needs You visibility + read-only owner-decision page" above) — `staff-messages.ts`'s other exports (`listOpenStaffEscalationsForNeedsYou`, `getOwnerEscalationByToken`) remain live and in use there, only the standalone tab UI was removed.
 
-What it is: a read-only "Staff" tab added to the existing Updates screen (`src/routes/Updates.tsx`, the same tab bar that already hosts Needs You / Waiting / To-do / Notes / Automations / History), showing every `staff_messages` row the owner is allowed to see: staff name, their message, Carson's response (when present), the current state (Waiting / Needs You / Completed / In Progress), who owns the next action, the exact decision needed (when `owner_attention_required` is true), when the message arrived, and linked task context when available. No reply, approve/reject, or outbound-messaging controls — display only.
+**Historical implementation record, preserved as-is (describes the removed tab as it existed 2026-07-20–07-25, not current behavior):**
 
-UI location: `/updates?tab=staff`.
+What it was: a read-only "Staff" tab added to the existing Updates screen (`src/routes/Updates.tsx`, the same tab bar that already hosts Needs You / Waiting / To-do / Notes / Automations / History), showing every `staff_messages` row the owner is allowed to see: staff name, their message, Carson's response (when present), the current state (Waiting / Needs You / Completed / In Progress), who owns the next action, the exact decision needed (when `owner_attention_required` is true), when the message arrived, and linked task context when available. No reply, approve/reject, or outbound-messaging controls — display only.
+
+UI location (historical, no longer reachable): `/updates?tab=staff`.
 
 Files: `src/types/staff-message.ts` (new type), `src/lib/staff-messages.ts` (new — `listStaffMessages()`, RLS-only, no manual `user_id` filter, same anon-key `supabase` client as `messages.ts`/`people.ts`/`tasks.ts`; `getStaffMessageDisplayState()` implementing the exact Needs-You-if-either-signal-is-true rule from the spec, nothing invented), `src/routes/StaffUpdates.tsx` (new — a stateful data-fetching wrapper plus pure, hook-free `StaffUpdatesView`/`StaffMessageCard` exports so rendering logic is unit-testable without a DOM/testing-library dependency), `src/routes/Updates.tsx` (edited — one new tab entry + one new conditional render block, mirroring how To-do/Notes/Automations already render as self-contained `headerless` components). Card styling reuses `TaskCard.tsx`'s existing badge language (`rounded-full border ... text-[10px] font-medium uppercase tracking-wide`, rose/amber/sky/emerald semantics) rather than inventing new visual language. No schema change, no new dependency, no new state-management layer (plain `useState`/`useEffect`, matching `Inbox.tsx`'s existing pattern for a self-contained tab).
 
@@ -992,13 +1009,13 @@ Tests: `src/lib/staff-messages.test.ts` (6) + `src/routes/StaffUpdates.test.tsx`
 
 Independent review (separate agent, `review:bug-hunter`, mutation-tested): zero write paths, zero service_role reference, zero cross-household exposure surface, zero duplication of `daily-brief.ts`/`needs-you-timestamp.ts` logic, zero internal-field leakage — all confirmed via mutation testing (introducing each failure mode and confirming the relevant test catches it, then reverting). One High finding (the stale 6-tab regression-guard test) — fixed before delivery.
 
-Known limitation: no live transport (WhatsApp/ElevenLabs) calls `processStaffMessage()` yet, so this tab is expected to show its empty state ("No staff messages need your attention.") in production until a transport is wired — this is truthful, not a bug, and the empty-state copy never mentions ElevenLabs, transports, or implementation status.
+Known limitation (historical, at the time this was live): no live transport (WhatsApp/ElevenLabs) calls `processStaffMessage()` yet, so this tab was expected to show its empty state ("No staff messages need your attention.") until a transport was wired.
 
-Protect: this is a read-only view. Do not add write/reply/approve controls here without a separate, explicitly-scoped task.
+Historical protect note (no longer applicable now that the tab is removed): this was a read-only view; no write/reply/approve controls were ever added.
 
-### Typed Carson delegation execution regression fix
+### Typed Carson delegation execution regression fix — MERGED, PROTECTED
 
-Status: implemented. Not yet merged.
+Status: **corrected 2026-08-10 — previously read "implemented. Not yet merged"; stale.** Merged as PR #30 (`0f43b823dac4dc9909d9fc9ef88c51ea62523cca`, "Fix Type to Carson silently skipping simple delegations"), 2026-07-18. Confirmed live: `executeDelegationFastPath` is imported and called from `ElevenLabsAgentWidget.tsx`'s typed-turn path exactly as described below. Treat as merged and protected.
 
 Confirmed production regression: Talk to Carson (voice) executes both direct messages and delegations correctly. Type to Carson executed direct messages correctly but silently failed simple delegations — "Ask Ghulam to bring the car out." made Carson reply "Ghulam has it" with no real delegation row and no WhatsApp task sent.
 
@@ -1010,9 +1027,9 @@ Focused tests passed: 9 new (`ElevenLabsAgentWidget.typed-delegation-execution.t
 
 Protect: Talk to Carson / voice tool routing (untouched), the protected direct-message baseline from PR #29 (`ra7etbal_direct_operational_message`, two-parameter payload, `en` language — untouched), `ra7etbal_task_v3` and all WhatsApp template mappings (untouched), typed owner-reference normalization from PR #25 (untouched).
 
-### Direct-message WhatsApp template routing fix
+### Direct-message WhatsApp template routing fix — MERGED, PROTECTED
 
-Status: implemented (third attempt). Not yet merged.
+Status: **corrected 2026-08-10 — previously read "implemented (third attempt). Not yet merged"; stale.** Merged as PR #29 (`c0486e5ebcd26595a794ffeef55f42f72ca9e98f`, "Fix direct-message WhatsApp template to send the required two body parameters"), 2026-07-17 — after the #26/#27/#28 attempts described below. Confirmed live: `buildDirectMessagePayload` exists and is called in `send-whatsapp-task.js` exactly as described below. The "before merging, confirm the template is approved" caveat below is now historical — this has been live in production for weeks. Treat as merged and protected.
 
 History: PR #26 first split direct messages onto `ra7etbal_direct_operational_message` but sent only one body parameter, causing Meta error 132000 (wrong parameter count) — messages were accepted then asynchronously marked failed. PR #27 tried an `en_US` → `en` language fix; Meta still rejected with error 132001 because the payload shape was still wrong. PR #28 fully reverted #26 and #27 back to the shared routine-template path (`ra7etbal_routine_message` for both routine and direct messages) to restore delivery, at the cost of reintroducing the original template-mismatch bug for direct messages.
 
@@ -1024,9 +1041,9 @@ Protect: task/delegation templates, owner-decision template, reminder/automation
 
 **Before merging, confirm with Sana / Meta Business Manager that `ra7etbal_direct_operational_message` is approved and live with exactly this two-parameter body** — a correct payload shape still fails if the template itself isn't approved yet.
 
-### Typed direct-message owner-reference normalization
+### Typed direct-message owner-reference normalization — MERGED, PROTECTED
 
-Status: implemented. Not yet merged.
+Status: **corrected 2026-08-10 — previously read "implemented. Not yet merged"; stale.** Merged as PR #25 (`d90aa2aada1d08a94df18bbe35466a1dfcbe7999`, "Add typed/voice direct-message owner-reference normalization"), 2026-07-17. Confirmed live: `normalizeFirstPersonForOwner` exists in `src/lib/direct-message-owner-normalization.ts` and is referenced by name as an already-protected, untouched dependency in several later entries in this file (e.g. the "Typed Carson delegation execution regression fix" and "Direct-message WhatsApp template routing fix" entries above). Treat as merged and protected.
 
 Focused tests passed. Typecheck passed. Build passed. Full suite: 1509/1510, with one confirmed pre-existing unrelated failure in `canonical-paths.test.ts` (hardcoded `CANONICAL_CONFIRMATION_ORIGIN`, not caused by this change).
 
