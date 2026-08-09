@@ -50,8 +50,20 @@ const BODY_MARKER = /\b(?:saying|say|that says|to say)\b\s*:?\s*/i;
 const UNSAFE_OPERATIONAL_LANGUAGE =
   /\b(?:ask|assign|delegate|task|to[-\s]?do|remind|reminder|calendar|schedule|appointment|event|follow\s*up|followup|check\s+back|when\s+done|confirm|confirmation|complete|mark\s+done|due|deadline|by\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?|tomorrow|tonight|today|next\s+(?:week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i;
 
+// The optional "to"/"please" prefix must consume its trailing whitespace —
+// "to<verb>" is not real input, but "to <verb>" ("Tell Christopher to clean
+// the kitchen") is the single most common way delegation-shaped text reaches
+// this parser. Before this fix, only the "please" branch required trailing
+// whitespace (`please\s+`); the "to" branch didn't, so the whole alternation
+// could never match a body still carrying its leading "to" connector — which
+// is how extractMessageBody leaves every "tell X to <verb>" body (see
+// executeDirectMessageFastPath's own leading-connector-stripping comment
+// below). That silently exempted every verb already in this list, not just
+// "make" — confirmed via the full delegation-fast-path/carson-router/
+// classifyOwnerCommand test suites, which already universally expect
+// "Tell/Ask X to clean/buy/fix/prepare/bring..." to route as delegation.
 const DELEGATION_BODY_START =
-  /^(?:to|please\s+)?(?:call|send|bring|take|pick\s+up|drop|check|clean|wash|buy|book|arrange|schedule|confirm|complete|finish|prepare|replace|fix|pay|file|order)\b/i;
+  /^(?:to\s+|please\s+)?(?:call|send|bring|take|pick\s+up|drop|check|clean|wash|buy|book|arrange|schedule|confirm|complete|finish|prepare|replace|fix|pay|file|order|make)\b/i;
 
 export async function executeDirectMessageFastPath(
   input: string,

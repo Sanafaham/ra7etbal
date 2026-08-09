@@ -413,22 +413,56 @@ describe("Routing protection — delegation vs. direct message (typed/voice pari
     expect(parseSimpleDirectMessage("Tell Grace I'm on my way", people)).not.toBeNull();
   });
 
-  // KNOWN, PRE-EXISTING GAP — confirmed on origin/main, independent of the
-  // carson-protected-behaviors fix (see src/lib/carson-protected-behaviors.test.ts):
-  // DELEGATION_BODY_START's fixed verb whitelist does not include "make", so
-  // this instruction currently falls through as a direct message instead of
-  // being excluded for delegation routing. Out of scope for that fix — it's
-  // a separate, narrower verb-whitelist gap, not the confirmed
-  // call-me/contact-me/wait-for-me production regression that fix targets,
-  // and closing it safely requires its own scoped change (see
-  // RA7ETBAL_STATE.md). Written as it.fails so this suite honestly reports
-  // the gap instead of asserting the current (wrong) behavior as if correct.
-  it.fails("7. 'Tell Christopher to make lunch.' remains a delegation, not a direct message", () => {
+  // FIXED — root cause was two-fold: "make" was missing from
+  // DELEGATION_BODY_START's verb whitelist, and separately the whitelist's
+  // optional "to" prefix never consumed its trailing whitespace, so no
+  // whitelisted verb could ever match a "to <verb>" body (the shape every
+  // "tell X to <verb>" instruction actually has). Both fixed together — see
+  // direct-message-fast-path.ts. This instruction is now correctly excluded
+  // from the direct-message fast path (parseSimpleDirectMessage returns
+  // null), so it falls through to delegation routing instead of being
+  // misrouted as a plain message.
+  it("7. 'Tell Christopher to make lunch.' remains a delegation, not a direct message", () => {
     expect(
       parseSimpleDirectMessage(
         "Tell Christopher to make lunch.",
         [person({ id: "p-christopher", name: "Christopher" })],
       ),
+    ).toBeNull();
+  });
+
+  // Explicit regression coverage for the root-cause fix — every verb here
+  // was already in the whitelist but could never match "to <verb>" before
+  // the trailing-whitespace fix; "make" additionally needed adding to the
+  // list itself.
+  it.each([
+    "Tell Christopher to clean the kitchen.",
+    "Tell Christopher to buy groceries.",
+    "Tell Christopher to fix the door.",
+  ])("delegation-shaped body '%s' is excluded from the direct-message fast path", (input) => {
+    expect(
+      parseSimpleDirectMessage(input, [person({ id: "p-christopher", name: "Christopher" })]),
+    ).toBeNull();
+  });
+
+  // Owner-target communication stays unaffected by the delegation-verb fix —
+  // "on my way" is not a delegation verb, so this still matches as a direct
+  // message exactly as before.
+  it("'Tell Eren I'm on my way.' remains a direct message", () => {
+    expect(
+      parseSimpleDirectMessage("Tell Eren I'm on my way.", [person({ id: "p-eren", name: "Eren" })]),
+    ).not.toBeNull();
+  });
+
+  // "Ask ..." phrasing is out of this parser's scope entirely (COMMAND_PREFIX
+  // only recognizes send/message/tell/text/whatsapp) — it always returns
+  // null here, unaffected by the delegation-verb fix, and is classified as a
+  // direct message by a different, more general layer upstream
+  // (executeInstruction), not by this deterministic fast path. See the
+  // Personal Contact Reply Relay production evidence in RA7ETBAL_STATE.md.
+  it("'Ask Loulya if she likes avocado.' is not matched by this fast path (out of its scope, unaffected by the fix)", () => {
+    expect(
+      parseSimpleDirectMessage("Ask Loulya if she likes avocado.", [person({ id: "p-loulya", name: "Loulya" })]),
     ).toBeNull();
   });
 
@@ -544,17 +578,20 @@ describe("Behavioral: outgoing message body for 'Tell <person> to <message>' nev
     );
   });
 
-  it("classification/routing is unaffected — the strip runs after isUnsafeBody, so a real delegation body ('to clean the kitchen') is unchanged by this fix and still excluded from direct-message routing exactly as before", () => {
-    // DELEGATION_BODY_START's known, separate, pre-existing whitelist gap
-    // (see it.fails "7" above) is untouched: "clean" is in the whitelist,
-    // but the missing space after the "to" alternative already prevents a
-    // match today, independent of this fix. Confirming parseSimpleDirectMessage's
-    // classification verdict for this input is identical before and after —
-    // it still matches (the known gap), proving this fix did not touch
-    // classification.
+  it("classification/routing for a real delegation body ('to clean the kitchen') is correctly excluded from direct-message routing", () => {
+    // Historical note: this test previously asserted the opposite
+    // (.not.toBeNull()), documenting DELEGATION_BODY_START's pre-existing
+    // "to <verb>" whitespace bug as if it were expected behavior. That bug
+    // is now fixed (see direct-message-fast-path.ts and test 7 above) —
+    // "clean" was already in the verb whitelist and is now correctly
+    // excluded, exactly like every other whitelisted verb. This test still
+    // exists to prove the connector-stripping fix in
+    // executeDirectMessageFastPath (the leading-"to" removal) runs after
+    // classification and never changes which instructions match as a
+    // direct message.
     expect(
       parseSimpleDirectMessage("Tell Christopher to clean the kitchen.", [christopher()]),
-    ).not.toBeNull();
+    ).toBeNull();
   });
 });
 
