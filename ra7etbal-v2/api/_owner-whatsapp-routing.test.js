@@ -553,6 +553,52 @@ describe('authoritative quoted escalation routing', () => {
     expect(mocks.resolve).not.toHaveBeenCalled();
   });
 
+  // Recipient-binding parity fix: notifyOwnerOfEscalation (the staff-message
+  // escalation path) now stamps owner_phone_number_id in delivery metadata
+  // exactly like notifyOwnerOfTaskReview already did. These two tests prove
+  // the binding is enforced end to end for a staff-escalation-shaped
+  // delivery (escalation.staff_message_id set) specifically, not just for
+  // the task-review shape already covered above.
+  it('staff-escalation quoted reply on the matching business number resolves', async () => {
+    const fetchMock = vi.fn();
+    stubQuoted(fetchMock); // stubQuoted's delivery carries owner_phone_number_id: 'meta-phone-1'
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.resolve.mockResolvedValue({ kind: 'success', status: 'delivered', ownerReplyText: 'Yes' });
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+      // msg()'s default phoneNumberId is 'meta-phone-1' — the same number.
+      msg: msg({ contextMessageId: 'wamid.owner-notification-2' }),
+    });
+
+    expect(result).toMatchObject({ handled: true, route: 'quoted_escalation', reason: 'resolved_escalation' });
+    expect(mocks.resolve).toHaveBeenCalledWith(expect.objectContaining({
+      escalation: expect.objectContaining({ id: 'esc-2', staff_message_id: 'staff-msg-2' }),
+    }));
+  });
+
+  it('staff-escalation quoted reply on a mismatched business number fails closed', async () => {
+    const fetchMock = vi.fn();
+    stubQuoted(fetchMock); // stubQuoted's delivery carries owner_phone_number_id: 'meta-phone-1'
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE,
+      serviceKey: KEY,
+      // Reply arrives on a different Meta business number than the one
+      // notifyOwnerOfEscalation recorded when it sent the notification.
+      msg: msg({ contextMessageId: 'wamid.owner-notification-2', phoneNumberId: 'meta-phone-2' }),
+    });
+
+    expect(result).toMatchObject({ handled: true, route: 'unmatched_quote' });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).includes('staff_escalation_owner_decisions'))).toBe(false);
+  });
+
   it('already-resolved quoted escalation is recorded and silently ignored without another staff send or owner acknowledgement', async () => {
     const fetchMock = vi.fn();
     stubQuoted(fetchMock, 'delivered_to_staff');
