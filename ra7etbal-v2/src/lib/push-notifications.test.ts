@@ -3,9 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mockSupabase = vi.hoisted(() => ({
   savedLookup: null as { id: string } | null,
   saveLookup: null as { id: string } | null,
-  updates: [] as Array<{ table: string; patch: unknown; filters: Array<[string, unknown]> }>,
+  updates: [] as Array<{
+    table: string;
+    patch: unknown;
+    filters: Array<[string, unknown] | [string, unknown, "neq"]>;
+  }>,
   inserts: [] as Array<{ table: string; row: unknown }>,
   selects: [] as Array<{ table: string; column: string; filters: Array<[string, unknown]> }>,
+  /** When set, the dedupe update (the one call using .neq()) resolves with this error. */
+  dedupeUpdateError: null as { message: string } | null,
 }));
 
 vi.mock("./supabase", () => ({
@@ -32,15 +38,20 @@ vi.mock("./supabase", () => ({
           };
         },
         update(patch: unknown) {
-          const updateState = { table, patch, filters: [] as Array<[string, unknown]> };
+          const updateState = { table, patch, filters: [] as Array<[string, unknown] | [string, unknown, "neq"]> };
           const chain = {
             eq(column: string, value: unknown) {
               updateState.filters.push([column, value]);
               return chain;
             },
-            then(resolve: (value: { error: null }) => void) {
+            neq(column: string, value: unknown) {
+              updateState.filters.push([column, value, "neq"]);
+              return chain;
+            },
+            then(resolve: (value: { error: { message: string } | null }) => void) {
               mockSupabase.updates.push({ ...updateState });
-              resolve({ error: null });
+              const isDedupeCall = updateState.filters.some((f) => f[2] === "neq");
+              resolve({ error: isDedupeCall ? mockSupabase.dedupeUpdateError : null });
             },
           };
           return chain;
@@ -83,6 +94,7 @@ describe("push notifications — iPhone PWA subscription recovery", () => {
     mockSupabase.updates.length = 0;
     mockSupabase.inserts.length = 0;
     mockSupabase.selects.length = 0;
+    mockSupabase.dedupeUpdateError = null;
 
     const PushManagerMock = function PushManager() {};
     const NotificationMock = {
@@ -141,6 +153,18 @@ describe("push notifications — iPhone PWA subscription recovery", () => {
       patch: { enabled: false },
       filters: [["user_id", "user-1"], ["endpoint", "https://push.example/stale"]],
     });
+    // Dedupe pass after the save: supersede any other enabled iPhone rows
+    // for this user except the endpoint just saved.
+    expect(mockSupabase.updates).toContainEqual({
+      table: "push_subscriptions",
+      patch: { enabled: false },
+      filters: [
+        ["user_id", "user-1"],
+        ["platform", "iPhone"],
+        ["enabled", true],
+        ["endpoint", "https://push.example/fresh", "neq"],
+      ],
+    });
     expect(mockSupabase.inserts[0]).toMatchObject({
       table: "push_subscriptions",
       row: expect.objectContaining({
@@ -180,6 +204,16 @@ describe("push notifications — iPhone PWA subscription recovery", () => {
         }),
         filters: [["id", "sub-1"]],
       },
+      {
+        table: "push_subscriptions",
+        patch: { enabled: false },
+        filters: [
+          ["user_id", "user-1"],
+          ["platform", "iPhone"],
+          ["enabled", true],
+          ["endpoint", "https://push.example/current", "neq"],
+        ],
+      },
     ]);
   });
 
@@ -212,5 +246,104 @@ describe("push notifications — iPhone PWA subscription recovery", () => {
         enabled: true,
       }),
     );
+  });
+
+  it("dedupes accumulated dead rows: disables every other enabled row for the same platform, never a different one", async () => {
+    const fresh = makeSubscription("https://push.example/fresh");
+    const registration = {
+      active: true,
+      pushManager: {
+        getSubscription: vi.fn().mockResolvedValue(null),
+        subscribe: vi.fn().mockResolvedValue(fresh),
+      },
+    };
+    navigator.serviceWorker.getRegistration = vi.fn().mockResolvedValue(registration);
+
+    const { enableReminderNotifications } = await importPushModule();
+    await expect(enableReminderNotifications("user-1")).resolves.toBe("enabled");
+
+    // Insert (no prior saved subscription for this endpoint), then the
+    // dedupe pass — scoped to this user's iPhone rows only, never MacIntel
+    // or another user's rows, which the mock doesn't even model (proving
+    // the query itself, not just the mock, is user_id + platform scoped).
+    expect(mockSupabase.updates).toEqual([
+      {
+        table: "push_subscriptions",
+        patch: { enabled: false },
+        filters: [
+          ["user_id", "user-1"],
+          ["platform", "iPhone"],
+          ["enabled", true],
+          ["endpoint", "https://push.example/fresh", "neq"],
+        ],
+      },
+    ]);
+  });
+
+  it("saveRawPushSubscription (the pushsubscriptionchange path) persists the rotated subscription and dedupes the same way as a normal save", async () => {
+    const { saveRawPushSubscription } = await importPushModule();
+
+    await saveRawPushSubscription("user-1", {
+      endpoint: "https://push.example/rotated",
+      keys: { p256dh: "p256dh-value", auth: "auth-value" },
+      expirationTime: null,
+    });
+
+    expect(mockSupabase.inserts[0]).toMatchObject({
+      table: "push_subscriptions",
+      row: expect.objectContaining({
+        user_id: "user-1",
+        endpoint: "https://push.example/rotated",
+        p256dh: "p256dh-value",
+        auth: "auth-value",
+        enabled: true,
+        platform: "iPhone",
+      }),
+    });
+    expect(mockSupabase.updates).toContainEqual({
+      table: "push_subscriptions",
+      patch: { enabled: false },
+      filters: [
+        ["user_id", "user-1"],
+        ["platform", "iPhone"],
+        ["enabled", true],
+        ["endpoint", "https://push.example/rotated", "neq"],
+      ],
+    });
+  });
+
+  it("a failed dedupe cleanup is logged but never fails the user's enable action (non-fatal, matches the codebase's secondary-bookkeeping convention)", async () => {
+    mockSupabase.dedupeUpdateError = { message: "dedupe update failed" };
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fresh = makeSubscription("https://push.example/fresh");
+    const registration = {
+      active: true,
+      pushManager: {
+        getSubscription: vi.fn().mockResolvedValue(null),
+        subscribe: vi.fn().mockResolvedValue(fresh),
+      },
+    };
+    navigator.serviceWorker.getRegistration = vi.fn().mockResolvedValue(registration);
+
+    const { enableReminderNotifications } = await importPushModule();
+
+    await expect(enableReminderNotifications("user-1")).resolves.toBe("enabled");
+    expect(warnSpy).toHaveBeenCalledWith(
+      "Failed to disable superseded push subscriptions",
+      { message: "dedupe update failed" },
+    );
+  });
+
+  it("saveRawPushSubscription rejects a payload missing required fields", async () => {
+    const { saveRawPushSubscription } = await importPushModule();
+
+    await expect(
+      saveRawPushSubscription("user-1", {
+        endpoint: "",
+        keys: { p256dh: "", auth: "" },
+      }),
+    ).rejects.toThrow();
+    expect(mockSupabase.inserts).toHaveLength(0);
+    expect(mockSupabase.updates).toHaveLength(0);
   });
 });

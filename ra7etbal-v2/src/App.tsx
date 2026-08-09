@@ -56,6 +56,7 @@ import { usePeopleStore } from "./stores/people";
 import { useProfileStore } from "./stores/profile";
 import { useTasksStore } from "./stores/tasks";
 import { registerTasksLiveRefresh } from "./lib/tasks-live-refresh";
+import { registerPushSubscriptionRotation } from "./lib/push-subscription-rotation";
 
 function LoadingPane() {
   return (
@@ -184,6 +185,25 @@ function useGlobalTasksRefresh() {
       documentApi: document,
       serviceWorkerApi: "serviceWorker" in navigator ? navigator.serviceWorker : null,
       refetch: () => useTasksStore.getState().loadFor(userId, { force: true }),
+    });
+  }, [status, user?.id]);
+}
+
+/**
+ * Persists a push subscription the service worker rotates in the background
+ * (see public/sw.js's pushsubscriptionchange handler) — the service worker
+ * has no Supabase session of its own, so it posts the new subscription to
+ * this tab and this hook saves it through the normal authenticated path.
+ * Only catches a rotation that happens while a tab is open; see
+ * push-subscription-rotation.ts's own note on that limitation.
+ */
+function usePushSubscriptionRotationSync() {
+  const { status, user } = useAuth();
+  useEffect(() => {
+    if (status !== "signed_in" || !user?.id) return;
+    return registerPushSubscriptionRotation({
+      serviceWorkerApi: "serviceWorker" in navigator ? navigator.serviceWorker : null,
+      userId: user.id,
     });
   }, [status, user?.id]);
 }
@@ -419,6 +439,7 @@ function PersistentCarsonWidget({
 
 export default function App() {
   useGlobalTasksRefresh();
+  usePushSubscriptionRotationSync();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);

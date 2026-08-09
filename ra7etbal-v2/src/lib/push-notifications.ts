@@ -225,16 +225,50 @@ async function savePushSubscription(
     throw new Error("Browser did not provide the full push subscription.");
   }
 
-  const row: PushSubscriptionRow = {
-    user_id: userId,
+  await persistSubscriptionRow(userId, {
     endpoint: subscription.endpoint,
     p256dh: arrayBufferToBase64Url(key),
     auth: arrayBufferToBase64Url(auth),
-    expiration_time: subscription.expirationTime
-      ? new Date(subscription.expirationTime).toISOString()
-      : null,
+    expirationTime: subscription.expirationTime ?? null,
+  });
+}
+
+/**
+ * Save a subscription described by its already-encoded JSON shape (the
+ * output of PushSubscription.toJSON()) rather than a live PushSubscription
+ * object. Used by the pushsubscriptionchange path (public/sw.js), where the
+ * new subscription is minted inside the service worker and can only reach
+ * the page via postMessage — see push-subscription-rotation.ts.
+ */
+export async function saveRawPushSubscription(
+  userId: string,
+  raw: { endpoint: string; keys: { p256dh: string; auth: string }; expirationTime?: number | null },
+): Promise<void> {
+  if (!raw?.endpoint || !raw.keys?.p256dh || !raw.keys?.auth) {
+    throw new Error("Push subscription payload is missing required fields.");
+  }
+
+  await persistSubscriptionRow(userId, {
+    endpoint: raw.endpoint,
+    p256dh: raw.keys.p256dh,
+    auth: raw.keys.auth,
+    expirationTime: raw.expirationTime ?? null,
+  });
+}
+
+async function persistSubscriptionRow(
+  userId: string,
+  fields: { endpoint: string; p256dh: string; auth: string; expirationTime: number | null },
+): Promise<void> {
+  const platform = navigator.platform || "unknown";
+  const row: PushSubscriptionRow = {
+    user_id: userId,
+    endpoint: fields.endpoint,
+    p256dh: fields.p256dh,
+    auth: fields.auth,
+    expiration_time: fields.expirationTime ? new Date(fields.expirationTime).toISOString() : null,
     user_agent: navigator.userAgent,
-    platform: navigator.platform || "unknown",
+    platform,
     enabled: true,
   };
 
@@ -242,7 +276,7 @@ async function savePushSubscription(
     .from("push_subscriptions")
     .select("id")
     .eq("user_id", userId)
-    .eq("endpoint", subscription.endpoint)
+    .eq("endpoint", fields.endpoint)
     .maybeSingle();
 
   if (lookup.error) throw lookup.error;
@@ -252,6 +286,59 @@ async function savePushSubscription(
     : await supabase.from("push_subscriptions").insert(row);
 
   if (result.error) throw result.error;
+
+  // A fresh subscribe() on this same device (browser storage/service-worker
+  // eviction, iOS reinstall, key rotation) always mints a new endpoint, so
+  // the lookup above can never find and replace the prior row for this
+  // device — it silently accumulates instead. Superseding every other
+  // still-enabled row for this exact user+platform closes that gap. Disable,
+  // not delete — matches the existing disable-first convention used
+  // elsewhere in this file, preserving the row for audit history.
+  //
+  // Known, accepted limitations (CodeRabbit review, PR #207 — not fixed
+  // here, deliberately deferred):
+  //   1. Not atomic with the write above. Two saves for the same user+
+  //      platform completing around each other could each disable the
+  //      other's just-written row. Fixing this correctly needs a single
+  //      transactional Supabase RPC (upsert + stale-row disable in one
+  //      statement) — a separate schema/migration change, out of scope for
+  //      this fix. Low-probability in practice (every call site here is
+  //      either a single explicit user tap gated by a busy flag, or the
+  //      one-device-only pushsubscriptionchange path), and strictly no
+  //      worse than the pre-existing behavior of zero deduplication.
+  //   2. `platform` (navigator.platform, e.g. "iPhone") is the closest
+  //      existing signal to "this device" but is not a real per-device
+  //      identifier — two genuinely different iPhones on the same account
+  //      would collide. No reliable device ID exists in the current schema
+  //      without a migration. Matches this product's current single-owner-
+  //      per-account model; the failure mode is a recoverable UX
+  //      inconvenience (re-enable in Settings), not data loss or a security
+  //      issue.
+  await disableOtherEnabledSubscriptions(userId, platform, fields.endpoint);
+}
+
+async function disableOtherEnabledSubscriptions(
+  userId: string,
+  platform: string,
+  keepEndpoint: string,
+): Promise<void> {
+  // Best-effort cleanup: the caller's own save already succeeded and is the
+  // load-bearing write. A failure here must be visible (never silently
+  // swallowed) but must never fail the user's actual enable/refresh action —
+  // matches the non-fatal, log-and-continue convention used for secondary
+  // bookkeeping elsewhere in this codebase (e.g. api/_escalation-notify.js's
+  // delivery-acceptance bookkeeping).
+  const result = await supabase
+    .from("push_subscriptions")
+    .update({ enabled: false })
+    .eq("user_id", userId)
+    .eq("platform", platform)
+    .eq("enabled", true)
+    .neq("endpoint", keepEndpoint);
+
+  if (result.error) {
+    console.warn("Failed to disable superseded push subscriptions", result.error);
+  }
 }
 
 function urlBase64ToArrayBuffer(base64String: string): ArrayBuffer {

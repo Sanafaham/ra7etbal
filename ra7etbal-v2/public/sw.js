@@ -46,6 +46,40 @@ self.addEventListener("notificationclick", function (event) {
   );
 });
 
+// Fires when the browser proactively rotates or expires this subscription
+// (endpoint/key change) without the page being open. Without this handler
+// the old, now-dead endpoint is left in push_subscriptions forever — the
+// provider often keeps accepting sends to it long before ever returning a
+// hard 404/410, so the app has no other signal a rotation happened.
+// event.oldSubscription.options.applicationServerKey lets us resubscribe
+// with the exact same VAPID key used originally, so this file never needs
+// its own copy of that key. If the browser doesn't supply oldSubscription
+// (some engines don't), there is no safe way to resubscribe here — no-op.
+self.addEventListener("pushsubscriptionchange", function (event) {
+  var oldSubscription = event.oldSubscription;
+  var applicationServerKey = oldSubscription && oldSubscription.options
+    ? oldSubscription.options.applicationServerKey
+    : null;
+  if (!applicationServerKey) return;
+
+  event.waitUntil(
+    self.registration.pushManager
+      .subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey })
+      .then(function (newSubscription) {
+        return self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (clientList) {
+          clientList.forEach(function (client) {
+            client.postMessage({
+              type: "ra7etbal:push-subscription-changed",
+              subscription: newSubscription.toJSON(),
+              oldEndpoint: oldSubscription ? oldSubscription.endpoint : null
+            });
+          });
+        });
+      })
+      .catch(function () {})
+  );
+});
+
 self.addEventListener("push", function (event) {
   var payload = {};
 
