@@ -157,18 +157,44 @@ export async function fetchOperationsSummary(): Promise<string> {
   const window48hAgo = new Date(Date.now() - 48 * 3_600_000).toISOString();
   const lines: string[] = ["OPERATIONS SUMMARY (live):"];
 
-  // WhatsApp delivery failures in last 48h
-  const { data: waFailures } = await supabase
-    .from("whatsapp_deliveries")
-    .select("recipient_name, source_type, failure_reason, failure_code, failed_at")
-    .eq("delivery_status", "failed")
-    .gte("failed_at", window48hAgo)
-    .order("failed_at", { ascending: false })
-    .limit(10);
+  // WhatsApp delivery failures and reminder delivery issues are independent
+  // queries — neither depends on the other's result, only on `user.id`
+  // above. Fetch them concurrently instead of one after another (same
+  // pattern proven in fetchTaskDeliveryStatus's own first-call client_timeout
+  // fix): this removes one full sequential network round trip from the
+  // critical path (auth.getUser() -> query -> query, now
+  // auth.getUser() -> max(query, query)). Destructuring by fixed position
+  // (not resolution order) keeps section order (WhatsApp failures always
+  // before reminder issues) unaffected by which query resolves first.
+  const [
+    { data: waFailures, error: waFailuresError },
+    { data: reminderIssues, error: reminderIssuesError },
+  ] = await Promise.all([
+    supabase
+      .from("whatsapp_deliveries")
+      .select("recipient_name, source_type, failure_reason, failure_code, failed_at")
+      .eq("delivery_status", "failed")
+      .gte("failed_at", window48hAgo)
+      .order("failed_at", { ascending: false })
+      .limit(10),
+    supabase
+      .from("tasks")
+      .select("description, assigned_to, reminder_delivery_status, reminder_delivery_error, created_at")
+      .eq("user_id", user.id)
+      .eq("type", "reminder")
+      .in("reminder_delivery_status", ["failed", "delivery_unconfirmed"])
+      .gte("created_at", window48hAgo)
+      .order("created_at", { ascending: false })
+      .limit(5),
+  ]);
 
   const nowMs = Date.now();
 
-  if (waFailures && waFailures.length > 0) {
+  // A query error must never be reported as "no failures" — that would be a
+  // false-healthy summary. Report the failure truthfully instead.
+  if (waFailuresError) {
+    lines.push("Could not check WhatsApp delivery failures right now — please try again.");
+  } else if (waFailures && waFailures.length > 0) {
     lines.push(`WhatsApp delivery failures (${waFailures.length}):`);
     for (const f of waFailures as Record<string, unknown>[]) {
       const who = (f.recipient_name as string | null) ? ` to ${f.recipient_name as string}` : "";
@@ -181,18 +207,9 @@ export async function fetchOperationsSummary(): Promise<string> {
     lines.push("No WhatsApp delivery failures in the last 48 hours.");
   }
 
-  // Reminder delivery issues
-  const { data: reminderIssues } = await supabase
-    .from("tasks")
-    .select("description, assigned_to, reminder_delivery_status, reminder_delivery_error, created_at")
-    .eq("user_id", user.id)
-    .eq("type", "reminder")
-    .in("reminder_delivery_status", ["failed", "delivery_unconfirmed"])
-    .gte("created_at", window48hAgo)
-    .order("created_at", { ascending: false })
-    .limit(5);
-
-  if (reminderIssues && reminderIssues.length > 0) {
+  if (reminderIssuesError) {
+    lines.push("Could not check reminder delivery issues right now — please try again.");
+  } else if (reminderIssues && reminderIssues.length > 0) {
     lines.push(`Reminder delivery issues (${reminderIssues.length}):`);
     for (const r of reminderIssues as Record<string, unknown>[]) {
       const desc = ((r.description as string | null) ?? "(no description)").slice(0, 60);

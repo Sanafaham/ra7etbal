@@ -313,4 +313,117 @@ describe("fetchOperationsSummary", () => {
     expect(result).toContain("Reminder delivery issues (1):");
     expect(result).toContain("Reminder: pick up kids");
   });
+
+  /**
+   * Concurrency regression coverage: the WhatsApp-failures and
+   * reminder-issues queries were changed from two sequential `await`s to
+   * `Promise.all`, mirroring fetchTaskDeliveryStatus's own first-call
+   * client_timeout fix (PR #217). A sequential implementation would only
+   * start the reminder-issues ("tasks") query after the WhatsApp-failures
+   * query resolved; a concurrent one starts both before either resolves.
+   */
+  it("fires the WhatsApp-failures and reminder-issues queries concurrently, not sequentially", async () => {
+    const events: string[] = [];
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      events.push(`start:${table}`);
+      const chain = makeChain({ data: [], error: null });
+      const originalThen = chain.then as (res: (v: unknown) => unknown, rej?: (r: unknown) => unknown) => unknown;
+      const delayMs = table === "whatsapp_deliveries" ? 20 : 1;
+      chain.then = (res: (v: unknown) => unknown, rej?: (r: unknown) => unknown) =>
+        new Promise((resolve) => setTimeout(resolve, delayMs)).then(() => {
+          events.push(`resolve:${table}`);
+          return originalThen(res, rej);
+        });
+      return chain;
+    });
+
+    await fetchOperationsSummary();
+
+    const tasksStartIndex = events.indexOf("start:tasks");
+    const waResolveIndex = events.indexOf("resolve:whatsapp_deliveries");
+    expect(tasksStartIndex).toBeGreaterThan(-1);
+    expect(waResolveIndex).toBeGreaterThan(-1);
+    // If this were sequential, "start:tasks" could not appear until after
+    // "resolve:whatsapp_deliveries". Concurrent execution starts it first.
+    expect(tasksStartIndex).toBeLessThan(waResolveIndex);
+  });
+
+  it("preserves fixed section order (WhatsApp failures before reminder issues) regardless of which query resolves first", async () => {
+    const failedAt = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      const isWa = table === "whatsapp_deliveries";
+      const result = isWa
+        ? { data: [{ recipient_name: "Ahmed", source_type: "task", failure_reason: "invalid phone", failure_code: null, failed_at: failedAt }], error: null }
+        : { data: [{ description: "Call doctor", assigned_to: null, reminder_delivery_status: "failed", reminder_delivery_error: null, created_at: new Date().toISOString() }], error: null };
+      const chain = makeChain(result);
+      const originalThen = chain.then as (res: (v: unknown) => unknown, rej?: (r: unknown) => unknown) => unknown;
+      // Reminder-issues ("tasks") query deliberately resolves before
+      // whatsapp_deliveries, to prove output order is fixed by position,
+      // not by resolution order.
+      const delayMs = isWa ? 15 : 1;
+      chain.then = (res: (v: unknown) => unknown, rej?: (r: unknown) => unknown) =>
+        new Promise((resolve) => setTimeout(resolve, delayMs)).then(() => originalThen(res, rej));
+      return chain;
+    });
+
+    const result = await fetchOperationsSummary();
+    const waIndex = result.indexOf("WhatsApp delivery failures");
+    const reminderIndex = result.indexOf("Reminder delivery issues");
+    expect(waIndex).toBeGreaterThan(-1);
+    expect(reminderIndex).toBeGreaterThan(waIndex);
+  });
+
+  it("keeps the reminder-issues query scoped to the caller's own user_id (unchanged ownership filter)", async () => {
+    const eqCalls: [string, unknown][] = [];
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "tasks") {
+        const b: Record<string, unknown> = {};
+        for (const m of ["select", "or", "gte", "in", "order", "limit"]) b[m] = () => b;
+        b.eq = (col: string, val: unknown) => {
+          eqCalls.push([col, val]);
+          return b;
+        };
+        b.then = (res: (v: unknown) => unknown, rej?: (r: unknown) => unknown) =>
+          Promise.resolve({ data: [], error: null }).then(res, rej);
+        return b;
+      }
+      return makeChain({ data: [], error: null });
+    });
+
+    await fetchOperationsSummary();
+
+    expect(eqCalls).toContainEqual(["user_id", "user-1"]);
+  });
+
+  it("reports a WhatsApp-failures query error truthfully instead of a false 'no failures' summary", async () => {
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "whatsapp_deliveries") {
+        return makeChain({ data: null, error: { message: "db error" } });
+      }
+      return makeChain({ data: [], error: null });
+    });
+    const result = await fetchOperationsSummary();
+    expect(result).toMatch(/could not check whatsapp delivery failures/i);
+    expect(result).not.toMatch(/no whatsapp delivery failures/i);
+  });
+
+  it("reports a reminder-issues query error truthfully instead of a false 'no issues' summary", async () => {
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "tasks") {
+        return makeChain({ data: null, error: { message: "db error" } });
+      }
+      return makeChain({ data: [], error: null });
+    });
+    const result = await fetchOperationsSummary();
+    expect(result).toMatch(/could not check reminder delivery issues/i);
+    expect(result).not.toMatch(/no reminder delivery issues/i);
+  });
+
+  it("issues exactly one query per source — no duplicate or retry calls", async () => {
+    mocks.supabaseFrom.mockImplementation(() => makeChain({ data: [], error: null }));
+    await fetchOperationsSummary();
+    expect(mocks.supabaseFrom).toHaveBeenCalledTimes(2);
+    expect(mocks.supabaseFrom).toHaveBeenCalledWith("whatsapp_deliveries");
+    expect(mocks.supabaseFrom).toHaveBeenCalledWith("tasks");
+  });
 });
