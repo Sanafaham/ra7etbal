@@ -149,60 +149,77 @@ export async function fetchTaskDeliveryStatus(keyword: string): Promise<string> 
  * Carson can call this when asked "what's going on" or "is everything working."
  */
 export async function fetchOperationsSummary(): Promise<string> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return "I couldn't load the operations summary right now — not signed in.";
+  try {
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser();
 
-  const window48hAgo = new Date(Date.now() - 48 * 3_600_000).toISOString();
-  const lines: string[] = ["OPERATIONS SUMMARY (live):"];
-
-  // WhatsApp delivery failures in last 48h
-  const { data: waFailures } = await supabase
-    .from("whatsapp_deliveries")
-    .select("recipient_name, source_type, failure_reason, failure_code, failed_at")
-    .eq("delivery_status", "failed")
-    .gte("failed_at", window48hAgo)
-    .order("failed_at", { ascending: false })
-    .limit(10);
-
-  const nowMs = Date.now();
-
-  if (waFailures && waFailures.length > 0) {
-    lines.push(`WhatsApp delivery failures (${waFailures.length}):`);
-    for (const f of waFailures as Record<string, unknown>[]) {
-      const who = (f.recipient_name as string | null) ? ` to ${f.recipient_name as string}` : "";
-      const failedAt = f.failed_at as string | null;
-      const age = failedAt ? msToAgo(nowMs - new Date(failedAt).getTime()) : "unknown time";
-      const reason = (f.failure_reason as string | null) ?? (f.failure_code as string | null) ?? "unknown reason";
-      lines.push(`  - Failed${who} (${age}): ${reason}`);
+    if (authError) {
+      return "I couldn't load the operations summary right now — authentication check failed.";
     }
-  } else {
-    lines.push("No WhatsApp delivery failures in the last 48 hours.");
-  }
+    if (!user) return "I couldn't load the operations summary right now — not signed in.";
 
-  // Reminder delivery issues
-  const { data: reminderIssues } = await supabase
-    .from("tasks")
-    .select("description, assigned_to, reminder_delivery_status, reminder_delivery_error, created_at")
-    .eq("user_id", user.id)
-    .eq("type", "reminder")
-    .in("reminder_delivery_status", ["failed", "delivery_unconfirmed"])
-    .gte("created_at", window48hAgo)
-    .order("created_at", { ascending: false })
-    .limit(5);
+    const window48hAgo = new Date(Date.now() - 48 * 3_600_000).toISOString();
 
-  if (reminderIssues && reminderIssues.length > 0) {
-    lines.push(`Reminder delivery issues (${reminderIssues.length}):`);
-    for (const r of reminderIssues as Record<string, unknown>[]) {
-      const desc = ((r.description as string | null) ?? "(no description)").slice(0, 60);
-      const status = r.reminder_delivery_status as string;
-      const error = r.reminder_delivery_error as string | null;
-      lines.push(`  - "${desc}" — ${status}${error ? `: ${error}` : ""}`);
+    // These reads are independent once the authenticated owner is known.
+    // Run them concurrently so a fresh voice session does not pay two
+    // sequential Supabase round trips before returning the summary.
+    const [waResult, reminderResult] = await Promise.all([
+      supabase
+        .from("whatsapp_deliveries")
+        .select("recipient_name, source_type, failure_reason, failure_code, failed_at")
+        .eq("delivery_status", "failed")
+        .gte("failed_at", window48hAgo)
+        .order("failed_at", { ascending: false })
+        .limit(10),
+      supabase
+        .from("tasks")
+        .select("description, assigned_to, reminder_delivery_status, reminder_delivery_error, created_at")
+        .eq("user_id", user.id)
+        .eq("type", "reminder")
+        .in("reminder_delivery_status", ["failed", "delivery_unconfirmed"])
+        .gte("created_at", window48hAgo)
+        .order("created_at", { ascending: false })
+        .limit(5),
+    ]);
+
+    if (waResult.error || reminderResult.error) {
+      return "I couldn't load the operations summary right now — one or more live status checks failed.";
     }
-  } else {
-    lines.push("No reminder delivery issues in the last 48 hours.");
-  }
 
-  return lines.join("\n");
+    const waFailures = waResult.data;
+    const reminderIssues = reminderResult.data;
+    const lines: string[] = ["OPERATIONS SUMMARY (live):"];
+    const nowMs = Date.now();
+
+    if (waFailures && waFailures.length > 0) {
+      lines.push(`WhatsApp delivery failures (${waFailures.length}):`);
+      for (const f of waFailures as Record<string, unknown>[]) {
+        const who = (f.recipient_name as string | null) ? ` to ${f.recipient_name as string}` : "";
+        const failedAt = f.failed_at as string | null;
+        const age = failedAt ? msToAgo(nowMs - new Date(failedAt).getTime()) : "unknown time";
+        const reason = (f.failure_reason as string | null) ?? (f.failure_code as string | null) ?? "unknown reason";
+        lines.push(`  - Failed${who} (${age}): ${reason}`);
+      }
+    } else {
+      lines.push("No WhatsApp delivery failures in the last 48 hours.");
+    }
+
+    if (reminderIssues && reminderIssues.length > 0) {
+      lines.push(`Reminder delivery issues (${reminderIssues.length}):`);
+      for (const r of reminderIssues as Record<string, unknown>[]) {
+        const desc = ((r.description as string | null) ?? "(no description)").slice(0, 60);
+        const status = r.reminder_delivery_status as string;
+        const error = r.reminder_delivery_error as string | null;
+        lines.push(`  - "${desc}" — ${status}${error ? `: ${error}` : ""}`);
+      }
+    } else {
+      lines.push("No reminder delivery issues in the last 48 hours.");
+    }
+
+    return lines.join("\n");
+  } catch {
+    return "I couldn't load the operations summary right now — the live status check did not complete.";
+  }
 }
