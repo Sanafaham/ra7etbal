@@ -424,15 +424,61 @@ export async function lookupCommitmentHistory(keyword: string): Promise<string> 
  * data-minimization principle Option B established for ra7etbal_state's
  * COMPLETED block (see carson-context.ts): a count is safe to state as
  * fact; a full per-task dump is not, and isn't useful when there are many.
+ *
+ * Takes only the narrow {status, dismissed_at} shape — not a full Task —
+ * so it can be fed either the bounded `candidates` list or the unbounded
+ * full-history row set below without caring which.
  */
-function summarizePersonOutcomes(tasks: Task[]): string {
+function summarizePersonOutcomes(rows: Array<{ status: string | null; dismissed_at: string | null }>): string {
   const counts = new Map<string, number>();
-  for (const t of tasks) {
+  for (const t of rows) {
     const outcome =
       t.status === "cancelled" ? "cancelled" : t.status === "done" ? "done" : t.dismissed_at ? "dismissed" : "pending";
     counts.set(outcome, (counts.get(outcome) ?? 0) + 1);
   }
   return [...counts.entries()].map(([k, v]) => `${v} ${k}`).join(", ");
+}
+
+/**
+ * The true outcome counts for every task matching this person, with no
+ * cap — deliberately separate from findCommitmentCandidates(), whose
+ * .limit(6) exists for Phase 1's "which one do you mean" disambiguation
+ * and must never silently double as a truncated stand-in for someone's
+ * total history. Selects only the two columns outcome-counting needs, not
+ * full task rows, keeping the extra query cheap even though it has no
+ * limit.
+ *
+ * Root cause this fixes (found during live production verification,
+ * 2026-08-10): lookupPersonHistory previously computed outcome counts
+ * from the same capped `candidates` array used for the recent-items list,
+ * so a person with more than 6 real tasks was reported as having exactly
+ * 6 total — every individual fact stated was true, but the aggregate was
+ * a truncated sample presented as a total.
+ */
+/**
+ * Returns null on a genuine query failure — never [] for that case. This
+ * function only ever runs after findCommitmentCandidates() has already
+ * found 2+ real matching rows via the identical filter, so a legitimate
+ * zero-row result here isn't structurally possible; an empty result is
+ * always a failure signal, and the caller must not report a false "0
+ * commitments" total that would contradict the recent items it's about
+ * to list right next to it.
+ */
+async function fetchPersonOutcomeCounts(
+  keyword: string,
+  userId: string,
+): Promise<Array<{ status: string | null; dismissed_at: string | null }> | null> {
+  const kw = keyword.trim();
+  if (!kw) return [];
+
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("status, dismissed_at")
+    .eq("user_id", userId)
+    .or(`description.ilike.%${kw}%,assigned_to.ilike.%${kw}%`);
+
+  if (error) return null;
+  return (data ?? []) as Array<{ status: string | null; dismissed_at: string | null }>;
 }
 
 /**
@@ -465,10 +511,26 @@ export async function lookupPersonHistory(personName: string): Promise<string> {
     return formatCommitmentHistoryAnswer(history);
   }
 
-  const outcomeSummary = summarizePersonOutcomes(candidates);
+  // Total counts come from the full, unbounded match set — never from
+  // `candidates`, which is capped at 6 for Phase 1's disambiguation needs
+  // and must not double as this person's total history. Recent items stay
+  // sourced from `candidates` (already ordered by created_at desc), so the
+  // "which N are most recent" answer is unaffected by this fix.
+  const allOutcomeRows = await fetchPersonOutcomeCounts(name, user.id);
   const recent = candidates
     .slice(0, 3)
     .map((t) => `${formatCandidateSnippet(t)} — ${describeOutcome(t)}`)
     .join("; ");
-  return `${candidates.length} commitments for ${name}: ${outcomeSummary}. Most recent: ${recent}.`;
+
+  // The full-history count failed — never state a false total (e.g. "0
+  // commitments") that would contradict the real recent items right next
+  // to it. Still give the recent items, which came from the separate,
+  // already-succeeded candidates query.
+  if (allOutcomeRows === null) {
+    return `I can see recent commitments for ${name} but couldn't get an accurate total right now. Most recent: ${recent}.`;
+  }
+
+  const totalCount = allOutcomeRows.length;
+  const outcomeSummary = summarizePersonOutcomes(allOutcomeRows);
+  return `${name} total: ${totalCount} commitments (${outcomeSummary}). ${Math.min(3, candidates.length)} most recent: ${recent}.`;
 }
