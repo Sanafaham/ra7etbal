@@ -12,7 +12,26 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 ## Current next task
 
-No task is currently active. See the most recent entries below (Push Subscription Installation Identity + Atomic Replacement, formally closed 2026-08-10) for the latest completed work, and the 2026-08-10 state-file reconciliation note for what to check before starting anything new.
+Public launch remains deliberately closed. Do not start another roadmap task until Sana explicitly decides to reopen registration. Reopening requires both Supabase Auth's server-side **Allow new users to sign up** setting and `VITE_PUBLIC_SIGNUP_ENABLED=true`; never enable only the frontend control.
+
+### Production launch control — CLOSED, PRODUCTION VERIFIED, PROTECTED
+
+Status: fixed and production verified on 2026-08-10.
+
+Exact exposure: Supabase email/password signup was publicly enabled while email auto-confirm was on. The public client called `supabase.auth.signUp()` directly, so a successful request immediately returned an authenticated session and the existing signed-in route guard granted product access. A direct Auth API call bypassed any frontend-only hiding. No Stripe, checkout, paid-plan, invoice, payment, or customer-subscription implementation exists in this production codebase; `subscription` references are Supabase session listeners or web-push subscriptions, not paid subscriptions.
+
+Smallest safe fix: production Supabase Auth now has **Allow new users to sign up** disabled (`disable_signup: true`). This is the enforcement boundary: it blocks new identities at the server before a user or session can be created, preserves every existing owner/test account, changes no data, and can be reopened with the same setting. The Auth screen also defaults to invite-only unless `VITE_PUBLIC_SIGNUP_ENABLED` is explicitly `true`; this is defense in depth and user-facing clarity, not the security boundary.
+
+Production verification with a fresh unapproved identity:
+
+- Direct `POST /auth/v1/signup` returned HTTP 422, `Signups not allowed for this instance`.
+- Response contained no user and no session: no account activation and no product access.
+- Immediate password sign-in for the same identity returned HTTP 400, `Invalid login credentials`, with no access token.
+- No charge and no active paid subscription: the application has no billing/payment path in this deployment, and the blocked signup created no identity or session.
+- Existing owner/approved accounts were not modified; disabling signup does not disable sign-in or revoke sessions. The unchanged sign-in path and full protected regression suite verify that existing-account authentication remains available.
+- Direct API bypass fails at the Supabase Auth server, independently of the deployed frontend.
+
+Regression protection: `ra7etbal-v2/src/routes/Auth.launch-control.test.ts` locks the default-closed UI flag and existing-user sign-in path. Before reopening public registration, deliberately enable both the Supabase server setting and the Vercel client flag, then repeat the full signup/payment/access review. Do not replace the server setting with a hidden button or client-only allowlist.
 
 **Historical note (corrected 2026-08-10 — this section previously read as an open, unmerged task; it was stale):** PR #93 (`agent/server-backed-banner-dismissal`), persisting completed-confirmation banner dismissal on `tasks.dismissed_at`, merged as `62010060306b30c0896379fc66c763eca8c0b1be` on 2026-07-28. Confirmed live: `dismissed_at` is a real column read/written throughout the current codebase (`src/stores/tasks.ts`, `src/components/home/ConfirmationNotices.tsx`, `src/types/task.ts`), and its migration (`20260729_add_dismissed_at_to_tasks.sql`) is present in the repo. Treat as merged and protected, not pending.
 

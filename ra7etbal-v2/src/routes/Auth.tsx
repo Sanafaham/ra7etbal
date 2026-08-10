@@ -7,6 +7,8 @@ import { mapAuthError, sendResetEmail, signInWithPassword, signUpWithPassword } 
 import { upsertProfile } from "../lib/profile";
 
 type Mode = "signin" | "signup";
+export const PUBLIC_SIGNUP_ENABLED =
+  import.meta.env.VITE_PUBLIC_SIGNUP_ENABLED === "true";
 type Notice =
   | { kind: "error" | "info" | "success"; text: string }
   | null;
@@ -147,7 +149,7 @@ export default function Auth() {
         aria-label="Auth mode"
         className="grid grid-cols-2 gap-1 rounded-full border border-border bg-cream/60 p-1"
       >
-        {(["signin", "signup"] as const).map((m) => (
+        {(["signin", ...(PUBLIC_SIGNUP_ENABLED ? ["signup" as const] : [])] as const).map((m) => (
           <button
             key={m}
             role="tab"
@@ -166,6 +168,12 @@ export default function Auth() {
           </button>
         ))}
       </div>
+
+      {!PUBLIC_SIGNUP_ENABLED && (
+        <p className="rounded-xl border border-border bg-cream/60 px-4 py-3 text-center text-sm text-ink/70">
+          Ra7etBal is currently invite-only. Existing approved users can sign in.
+        </p>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         {mode === "signup" && (
