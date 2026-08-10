@@ -165,6 +165,74 @@ describe("fetchTaskDeliveryStatus", () => {
     const result = await fetchTaskDeliveryStatus("tap");
     expect(result).toMatch(/no delivery record found/i);
   });
+
+  /**
+   * Parallelization regression coverage: the per-task whatsapp_deliveries
+   * lookup was changed from a sequential for-loop (one query awaited at a
+   * time) to Promise.all (all queries fired concurrently). This must not
+   * change: task iteration order, which delivery rows attach to which
+   * task, or the resolved-out-of-order case where a later task's query
+   * happens to resolve before an earlier task's.
+   */
+  it("preserves exact task order and correct per-task delivery matching across multiple tasks (parallelized lookup)", async () => {
+    const readAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    const failedAt = new Date(Date.now() - 5 * 3_600_000).toISOString();
+    let deliveryCallCount = 0;
+
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "tasks") {
+        return makeChain({
+          data: [
+            { id: "task-first", description: "First task for Christopher", assigned_to: "Christopher", type: "delegation", status: "done", reminder_delivery_status: null, reminder_delivery_error: null, created_at: new Date().toISOString() },
+            { id: "task-second", description: "Second task for Christopher", assigned_to: "Christopher", type: "delegation", status: "done", reminder_delivery_status: null, reminder_delivery_error: null, created_at: new Date().toISOString() },
+            { id: "task-third", description: "Third task for Christopher", assigned_to: "Christopher", type: "delegation", status: "done", reminder_delivery_status: null, reminder_delivery_error: null, created_at: new Date().toISOString() },
+          ],
+          error: null,
+        });
+      }
+
+      // whatsapp_deliveries — each call returns a chain whose resolution
+      // order is deliberately scrambled (the third task's query resolves
+      // before the first's) to prove Promise.all's index correspondence,
+      // not call-completion order, determines which delivery attaches to
+      // which task in the output.
+      const callIndex = deliveryCallCount;
+      deliveryCallCount += 1;
+      const resultsByCallIndex = [
+        { data: [{ delivery_status: "read", failure_reason: null, failure_code: null, failure_stage: null, accepted_at: null, sent_at: null, delivered_at: null, read_at: readAt, failed_at: null, last_status_at: readAt }], error: null },
+        { data: [], error: null },
+        { data: [{ delivery_status: "failed", failure_reason: "recipient phone not found", failure_code: "131026", failure_stage: "meta_send", accepted_at: null, sent_at: null, delivered_at: null, read_at: null, failed_at: failedAt, last_status_at: failedAt }], error: null },
+      ];
+      const resolveDelays = [15, 1, 5]; // ms — third call's chain resolves before the first's
+      const chain = makeChain(resultsByCallIndex[callIndex]);
+      const originalThen = chain.then as (res: (v: unknown) => unknown, rej?: (r: unknown) => unknown) => unknown;
+      chain.then = (res: (v: unknown) => unknown, rej?: (r: unknown) => unknown) =>
+        new Promise((resolve) => setTimeout(resolve, resolveDelays[callIndex])).then(() => originalThen(res, rej));
+      return chain;
+    });
+
+    const result = await fetchTaskDeliveryStatus("Christopher");
+
+    // Task order in the output must match the original query order
+    // (first/second/third), not resolution order (third/first/second).
+    const firstIndex = result.indexOf("First task for Christopher");
+    const secondIndex = result.indexOf("Second task for Christopher");
+    const thirdIndex = result.indexOf("Third task for Christopher");
+    expect(firstIndex).toBeGreaterThan(-1);
+    expect(secondIndex).toBeGreaterThan(firstIndex);
+    expect(thirdIndex).toBeGreaterThan(secondIndex);
+
+    // Each task's own delivery evidence must appear directly after that
+    // task's own line, not another task's.
+    const firstBlock = result.slice(firstIndex, secondIndex);
+    const secondBlock = result.slice(secondIndex, thirdIndex);
+    const thirdBlock = result.slice(thirdIndex);
+    expect(firstBlock).toMatch(/WhatsApp: read/i);
+    expect(firstBlock).not.toMatch(/FAILED/i);
+    expect(secondBlock).toMatch(/no delivery record found/i);
+    expect(thirdBlock).toMatch(/FAILED/i);
+    expect(thirdBlock).toContain("recipient phone not found");
+  });
 });
 
 // ── fetchOperationsSummary ────────────────────────────────────────────────────

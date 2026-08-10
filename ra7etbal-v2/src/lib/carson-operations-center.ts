@@ -64,8 +64,24 @@ export async function fetchTaskDeliveryStatus(keyword: string): Promise<string> 
 
   const lines: string[] = [];
 
-  for (const task of tasks as Record<string, unknown>[]) {
-    const taskId = task.id as string;
+  // Fetch every matched task's WhatsApp delivery timeline concurrently
+  // instead of one-at-a-time in the loop below. Same query per task (filter,
+  // order, limit all unchanged) — only the network round trips are now
+  // concurrent, not sequential. Promise.all preserves index-to-task
+  // correspondence regardless of which query resolves first, so output
+  // order below is unaffected.
+  const deliveriesByTask = await Promise.all(
+    (tasks as Record<string, unknown>[]).map((task) =>
+      supabase
+        .from("whatsapp_deliveries")
+        .select("delivery_status, failure_reason, failure_code, failure_stage, accepted_at, sent_at, delivered_at, read_at, failed_at, last_status_at")
+        .eq("task_id", task.id as string)
+        .order("last_status_at", { ascending: false })
+        .limit(3),
+    ),
+  );
+
+  (tasks as Record<string, unknown>[]).forEach((task, index) => {
     const desc = (task.description as string | null) ?? "(no description)";
     const assignedTo = (task.assigned_to as string | null) ?? "unassigned";
     const taskType = (task.type as string | null) ?? "task";
@@ -81,12 +97,7 @@ export async function fetchTaskDeliveryStatus(keyword: string): Promise<string> 
     }
 
     // WhatsApp delivery timeline from whatsapp_deliveries
-    const { data: deliveries } = await supabase
-      .from("whatsapp_deliveries")
-      .select("delivery_status, failure_reason, failure_code, failure_stage, accepted_at, sent_at, delivered_at, read_at, failed_at, last_status_at")
-      .eq("task_id", taskId)
-      .order("last_status_at", { ascending: false })
-      .limit(3);
+    const { data: deliveries } = deliveriesByTask[index];
 
     if (!deliveries || deliveries.length === 0) {
       if (taskType === "delegation") {
@@ -119,7 +130,7 @@ export async function fetchTaskDeliveryStatus(keyword: string): Promise<string> 
         }
       }
     }
-  }
+  });
 
   return lines.join("\n");
 }
