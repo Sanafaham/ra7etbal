@@ -905,20 +905,20 @@ PR #217, merge commit `18ffdb74af15e3625753c5546816bfc6b82819b1`. Found during T
 
 Protect: the `Promise.all`-based concurrent per-task delivery lookup — do not reintroduce a sequential loop here. Do not extend this fix to `auth.getUser()` or any other tool without a separate, explicitly-scoped task.
 
-### Historical Lookup — Phase 2, Person History
+### Historical Lookup — Phase 2, Person History — FORMALLY CLOSED, PRODUCTION VERIFIED (2026-08-10)
 
-Status: **CODE COMPLETE, REGISTERED, AUDIT-CLEAN — LIVE CONVERSATION
-VERIFICATION STILL PENDING.** Not closed, not stable, not in Protected
-Completed Work. Steps 1–4 of the completion checklist below are done: the
-tool is registered on the live ElevenLabs agent, the prompt is patched, and
-`carson:diagnose -- audit` reports zero missing/orphaned/prompt-blind result
-for `get_person_history` specifically. Step 5 (one real production
-conversation) has not happened yet — see the exact blocker below. Approved
-as the next Master Plan roadmap item after a rigorous
-9-criteria review confirmed it (not Reliability Engineering, which has no
-predefined implementation phase in the Master Plan) is the correct next
-step. Second capability slice of the frozen Historical Lookup Architecture,
+Status: **COMPLETE. PRODUCTION VERIFIED. PROTECTED.** Second capability slice of the frozen Historical Lookup Architecture,
 directly extending Phase 1 (Commitment History) rather than redesigning it.
+
+**Closure required three rounds of live production verification, not one — a real correctness defect was found and fixed along the way. Full sequence:**
+
+**Round 1 (2026-08-10):** Sana asked "What has Christopher been working on?" via a fresh Talk-to-Carson session. `get_person_history` was genuinely invoked, succeeded, no timeout — but the returned answer was **"6 commitments for Christopher: 6 done."** Cross-checked against unrestricted production data: Christopher genuinely has 40+ tasks at that time, not 6. Every individual fact in the tool's output was real and correctly summarized, but the aggregate was a truncated sample presented as a total — a confirmed Phase 2 correctness defect, not a registration or reliability problem. **Root cause:** `lookupPersonHistory` computed its outcome-count summary from the same `candidates` array `findCommitmentCandidates()` returns for Phase 1's task-keyword disambiguation, which is deliberately capped at `.limit(6)` — correct for "which one do you mean" (Phase 1), silently wrong for a person-overview total (Phase 2), since the two use cases were sharing one capped array.
+
+**Fix, PR #219 (merge `2dcd77b260f91d794aae2319ca060b1a94daf16a`), scoped exactly to `lookupPersonHistory`:** `findCommitmentCandidates()` and its `.limit(6)` are completely untouched — still used for the single-match check and the bounded recent-items list, exactly as before, and Phase 1's own test suite required zero changes. A new, separate, unbounded `fetchPersonOutcomeCounts()` (same person/user filter, but selecting only `status`/`dismissed_at`, not full task rows — checked against production: `tasks` has no supporting index and already does an unindexed scan for the existing capped query at 233 total rows platform-wide, so a second unlimited query with the same shape is a negligible marginal cost at this scale) computes the true aggregate. Output text now explicitly separates total from recent: `"<name> total: N commitments (...). M most recent: ..."`. A CodeRabbit review round caught one further real issue pre-merge — the new unbounded query returning `[]` on a genuine error was indistinguishable from a real empty result, which could have produced a false "0 commitments" claim sitting directly next to a real, non-empty recent-items list; fixed by returning `null` on error and having the caller state a truthful "couldn't get an accurate total" message instead, with a dedicated regression test. 3 new tests total (>6-task total correctness, exactly-6-task total via the new path not the old cap, query-failure truthfulness), mutation-tested. No schema/RPC/ElevenLabs config change — the live prompt patch already said "report exactly as returned" with no hardcoded format dependency, so no dashboard re-patch was needed.
+
+**Round 2 (2026-08-10, after the fix deployed):** fresh Talk-to-Carson session, same question about Christopher. Result: `is_error: false`, no retry, and the raw tool result already showed the new format live: `"Christopher total: 51 commitments (49 done, 2 pending). 3 most recent: ..."`. Cross-checked against unrestricted production data — exact match: 51 total / 49 done / 2 pending, the 3 recent examples genuinely the 3 most-recently-created matching rows, all three genuinely confirmed August 6. Carson's spoken answer ("51 commitments total, 49 done... Two tasks are still pending") was fully grounded, correctly distinguishing total from recent examples, no fabrication, no material misstatement found.
+
+Both live conversations independently verified via raw ElevenLabs conversation inspection (not just the diagnose script's opinionated stage classifier — the raw transcript was pulled directly both times) and cross-checked against production Supabase, not trusted at face value.
 
 What it is: given a person's name, summarizes their overall commitment
 history — outcome counts plus the most recent items — instead of resolving
@@ -945,20 +945,15 @@ gate, or any other protected behavior. Typecheck and production build both
 pass. Deployed to production via PR #174 (squash commit
 `22507ad6d02ade83692c1bc068b2719422605c5c`).
 
-**Completion checklist status (per Sana's 2026-08-04 "Production
-Completion" directive) — done with a fresh `ELEVENLABS_API_KEY` supplied
-2026-08-04:**
+**Completion checklist (per Sana's 2026-08-04 "Production Completion"
+directive) — all 6 steps done:** tool registered on the live ElevenLabs
+agent (2026-08-04); prompt patch applied and diffed byte-for-byte against
+the live prompt; `carson:diagnose -- audit` clean for `get_person_history`
+specifically; step 5 (one real production conversation) completed
+2026-08-10 — see the round 1/2 verification above; step 6 (this closure)
+complete.
 
-1. ✅ Registered `get_person_history` (`tool_6301kz4qec0hexd84n2bvejdk3t7`-style client tool, id `tool_0901kz53faawfhw9y6hc15zqjm3w`) via `POST /v1/convai/tools`, matching `get_commitment_history`'s exact schema pattern.
-2. ✅ Applied the prompt patch (`docs/elevenlabs-prompt-patches/2026-08-04-person-history.md`) via `PATCH /v1/convai/agents/{id}` — diffed byte-for-byte against the actual live prompt (not the saved doc) before and after; confirmed exactly the two intended insertions landed, nothing else touched.
-3. ✅ Ran `npm run carson:diagnose -- audit`.
-4. ✅ Confirmed for `get_person_history` specifically: registered (no longer in the MISSING list), prompt references it, schema matches the documented pattern. **Overall audit result is still FAIL**, but only because of an unrelated, pre-existing finding — see below.
-5. ⏳ **Not done.** One real production conversation (e.g. "What has Christopher been working on?") has not happened — see the exact evidence below. This is the one remaining step before this phase can close.
-6. Not reached yet — depends on 5.
-
-**Step 5's exact blocker, with evidence:** `GET /v1/convai/conversations?agent_id=...` (fetched fresh immediately after registering) shows the most recent conversation is `conv_2401kz4qx1s4errtchfz1afns3gh` at `2026-08-03T21:19:02Z` — the same conversation already used as Blue Pen's closing evidence, hours before this registration. No conversation exists yet that could test `get_person_history`. This agent has no way to originate one: doing so would require an authenticated `www.ra7etbal.com` session (entering login credentials is unconditionally prohibited for this agent, regardless of authorization), and even a bare ElevenLabs-only test call would lack the real `dynamic_variables` (actual tasks/people data) that only `ElevenLabsAgentWidget.tsx`'s `startSession()` injects from a real logged-in session — so it wouldn't be a genuine production test even if it were possible. **What unblocks this:** Sana has one real conversation asking a person-history question; this agent then pulls and independently verifies it via `carson-diagnose.mjs inspect`, exactly like Blue Pen's closing evidence was gathered.
-
-**Unrelated finding surfaced by this same audit run — SUPERSEDED, now
+**Unrelated finding surfaced by an earlier audit run — SUPERSEDED, now
 resolved as its own separate incident.** This originally reported
 `control_task`, `get_task_delivery_status`, and `get_operations_summary` as
 all unregistered, plus 3 orphaned Inbox tools, all left untouched pending
@@ -982,7 +977,11 @@ added.
 
 Protect: keep `get_person_history` distinct from `get_commitment_history` —
 same convention as `get_commitment_history` vs. `get_task_delivery_status` —
-do not merge them or let their routing rules blur.
+do not merge them or let their routing rules blur. `findCommitmentCandidates()`'s
+`.limit(6)` — shared with Phase 1, do not reuse its capped result for any
+future aggregate/total computation. `fetchPersonOutcomeCounts()`'s
+null-on-error contract — never let a query failure produce a false zero
+count next to a real recent-items list.
 
 ### Transport-independent staff communication engine (Issue #46)
 
