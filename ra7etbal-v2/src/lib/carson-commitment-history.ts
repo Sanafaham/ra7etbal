@@ -455,10 +455,19 @@ function summarizePersonOutcomes(rows: Array<{ status: string | null; dismissed_
  * 6 total — every individual fact stated was true, but the aggregate was
  * a truncated sample presented as a total.
  */
+/**
+ * Returns null on a genuine query failure — never [] for that case. This
+ * function only ever runs after findCommitmentCandidates() has already
+ * found 2+ real matching rows via the identical filter, so a legitimate
+ * zero-row result here isn't structurally possible; an empty result is
+ * always a failure signal, and the caller must not report a false "0
+ * commitments" total that would contradict the recent items it's about
+ * to list right next to it.
+ */
 async function fetchPersonOutcomeCounts(
   keyword: string,
   userId: string,
-): Promise<Array<{ status: string | null; dismissed_at: string | null }>> {
+): Promise<Array<{ status: string | null; dismissed_at: string | null }> | null> {
   const kw = keyword.trim();
   if (!kw) return [];
 
@@ -468,8 +477,8 @@ async function fetchPersonOutcomeCounts(
     .eq("user_id", userId)
     .or(`description.ilike.%${kw}%,assigned_to.ilike.%${kw}%`);
 
-  if (error || !data) return [];
-  return data as Array<{ status: string | null; dismissed_at: string | null }>;
+  if (error) return null;
+  return (data ?? []) as Array<{ status: string | null; dismissed_at: string | null }>;
 }
 
 /**
@@ -508,11 +517,20 @@ export async function lookupPersonHistory(personName: string): Promise<string> {
   // sourced from `candidates` (already ordered by created_at desc), so the
   // "which N are most recent" answer is unaffected by this fix.
   const allOutcomeRows = await fetchPersonOutcomeCounts(name, user.id);
-  const totalCount = allOutcomeRows.length;
-  const outcomeSummary = summarizePersonOutcomes(allOutcomeRows);
   const recent = candidates
     .slice(0, 3)
     .map((t) => `${formatCandidateSnippet(t)} — ${describeOutcome(t)}`)
     .join("; ");
+
+  // The full-history count failed — never state a false total (e.g. "0
+  // commitments") that would contradict the real recent items right next
+  // to it. Still give the recent items, which came from the separate,
+  // already-succeeded candidates query.
+  if (allOutcomeRows === null) {
+    return `I can see recent commitments for ${name} but couldn't get an accurate total right now. Most recent: ${recent}.`;
+  }
+
+  const totalCount = allOutcomeRows.length;
+  const outcomeSummary = summarizePersonOutcomes(allOutcomeRows);
   return `${name} total: ${totalCount} commitments (${outcomeSummary}). ${Math.min(3, candidates.length)} most recent: ${recent}.`;
 }

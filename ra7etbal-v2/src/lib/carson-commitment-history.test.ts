@@ -679,6 +679,32 @@ describe("lookupPersonHistory — Historical Lookup Phase 2 (person overview, no
     expect(mentionedRecent).toBeLessThanOrEqual(3);
   });
 
+  /**
+   * CodeRabbit finding (PR #219): the full-history count query returning
+   * [] on a genuine error was indistinguishable from a real zero-row
+   * result, so a query failure could report "0 commitments" right next
+   * to a real recent-items list — a directly self-contradictory false
+   * statement. fetchPersonOutcomeCounts() now returns null on error;
+   * lookupPersonHistory must never state a total in that case.
+   */
+  it("never reports a false '0 commitments' total when the full-history count query fails — still lists real recent items", async () => {
+    const cappedCandidates = Array.from({ length: 3 }, (_, i) =>
+      makeTask({ id: `recent-${i}`, assigned_to: "Christopher", description: `recent task ${i}`, status: "done" }),
+    );
+
+    mocks.supabaseFrom
+      .mockReturnValueOnce(makeChain({ data: cappedCandidates, error: null })) // findCommitmentCandidates
+      .mockReturnValueOnce(makeChain({ data: null, error: { message: "db error" } })); // fetchPersonOutcomeCounts fails
+
+    const result = await lookupPersonHistory("Christopher");
+
+    expect(result).not.toMatch(/0 commitments/i);
+    expect(result).not.toContain("Christopher total:");
+    expect(result).toMatch(/couldn't get an accurate total/i);
+    const mentionedRecent = cappedCandidates.filter((t) => result.includes(t.description)).length;
+    expect(mentionedRecent).toBeGreaterThan(0);
+  });
+
   it("reports total = 6 through the full-count path when a person has exactly 6 tasks (not coincidentally via the candidate cap)", async () => {
     const candidates = Array.from({ length: 6 }, (_, i) =>
       makeTask({ id: `t-${i}`, assigned_to: "Nasira", description: `task ${i}`, status: "done" }),
