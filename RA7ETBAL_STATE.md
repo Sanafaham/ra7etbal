@@ -840,13 +840,11 @@ Not done in this phase (deliberately out of scope — see the frozen Historical 
 
 Remaining before this can move to Stable and protected: prompt patch pasted into the live ElevenLabs dashboard, PR opened and merged, and Sana's live production verification of the validation phrase in the patch doc.
 
-### Reliability Engineering Incident — Tool Registration Drift (2026-08-04)
+### Reliability Engineering Incident — Tool Registration Drift (2026-08-04) — FORMALLY CLOSED, PRODUCTION VERIFIED (2026-08-10)
 
-Status: **FIX APPLIED, AUDIT-CLEAN FOR IN-SCOPE TOOLS — LIVE PRODUCTION
-VERIFICATION PENDING.** Treated as its own incident, separate from Blue Pen,
+Status: **COMPLETE. PRODUCTION VERIFIED. PROTECTED.** Treated as its own incident, separate from Blue Pen,
 surfaced by the same `carson:diagnose -- audit` tool while registering
-Historical Lookup Phase 2. Not yet COMPLETE/PRODUCTION VERIFIED/PROTECTED —
-that requires a live conversation, same blocker as Phase 2 below.
+Historical Lookup Phase 2.
 
 **What was found:** `get_task_delivery_status` and `get_operations_summary`
 (Operations Center V1, PR #151, prompt-patched 2026-08-01) were **not
@@ -883,16 +881,29 @@ this incident's actual scope. Full `test:carson-protected` suite re-run
 clean: 821 passed, 4 skipped, 3 todo, no regressions (no code changed — this
 was an ElevenLabs-side registration fix only).
 
-**Blocked on live production verification — same permission boundary as
-Historical Lookup Phase 2 below:** no conversation exists yet that tests
-either restored tool (most recent conversation checked immediately after
-the fix still predates it). This agent cannot originate one — needs Sana to
-ask something like "Did Christopher get the message?" or "Is everything
-working?" on the live app, after which this agent pulls and verifies the
-evidence via `carson-diagnose.mjs inspect`.
+**Live production verification, round 1 (2026-08-10) — registration confirmed working, but exposed a separate new finding:** Sana asked "Did Christopher get the message?" via Talk to Carson. First attempt: `get_task_delivery_status` was genuinely invoked (confirming the registration fix itself worked) but the tool_result came back `is_error: true`, `error_type: "client_timeout"`, `tool_latency_secs: 1.002` — an ElevenLabs platform-side client-tool response-timeout, not a registration failure. A second, identical attempt seconds later in the same session succeeded and returned real, verified production data. Investigated read-only (see the "Slow task-delivery lookup" entry immediately below) and root-caused to a genuine, always-present inefficiency in `fetchTaskDeliveryStatus` — not a registration problem, so this incident was correctly *not* reopened at the time; the timeout was tracked and fixed as its own separate, narrower item.
 
-**Do not mark this incident COMPLETE / PRODUCTION VERIFIED / PROTECTED until
-that verification succeeds.**
+**Live production verification, round 2 (2026-08-10, after the fix below) — clean, first call, no retry:** fresh Talk-to-Carson session (`conv_7301kznpz48zfckvgfjtwqmqz08e`, 2026-08-10 11:29:47 UTC), Sana asked "Did Christopher get the message?" as the very first question. Verified via raw ElevenLabs conversation inspection (not the diagnose script's opinionated stage classifier, which isn't built for this exact comparison — the raw transcript was pulled directly): the conversation's only turns before this were a `contextual_update` system call and the greeting — confirming this was genuinely the first `get_task_delivery_status` invocation of the session. Result: `is_error: false`, `error_type` empty, `tool_latency_secs: 0.586` — comfortably under whatever boundary tripped the round-1 failure. Parameters identical both times (`{"keyword": "Christopher"}`). No retry needed. The tool's returned evidence (2 "Coke" tasks read, 1 "buy Coca-Cola Zero" task with a `FAILED — ecosystem engagement` WhatsApp delivery alongside other read deliveries for the same task, 2 more Coca-Cola Zero tasks read) was independently cross-checked against live `tasks`/`whatsapp_deliveries` rows and matched exactly — nothing fabricated. Carson's spoken reply ("the Coke tasks are all showing as read") is truthful for the two literal "Coke" tasks; it didn't verbalize the one FAILED Coca-Cola Zero delivery present in the raw tool result — a conversational-summarization nuance, not a tool/registration defect, not investigated further as out of scope for this incident.
+
+### `get_task_delivery_status` first-call `client_timeout` — FIXED, MERGED, DEPLOYED, PRODUCTION VERIFIED (2026-08-10)
+
+Status: COMPLETE. MERGED. DEPLOYED. PRODUCTION VERIFIED. PROTECTED.
+
+PR #217, merge commit `18ffdb74af15e3625753c5546816bfc6b82819b1`. Found during Tool Registration Drift's own live verification (round 1, above) — a genuinely new, narrower reliability finding, not a reopening of the registration incident.
+
+**Root cause, traced by full execution-path inspection before any code changed:** `fetchTaskDeliveryStatus` (`src/lib/carson-operations-center.ts`) fetched each keyword-matched task's `whatsapp_deliveries` timeline **sequentially inside a `for` loop** — one query awaited at a time, up to 5 extra sequential network round trips on top of the auth check and task query, every single call, first or fiftieth. Confirmed via code inspection: no first-call-specific lazy init, no self-inflicted timeout anywhere in this repo's own code (`guardCurrentToolInvocation`, `runDirectToolWithDiagnostic`, and the function itself are all clean) — the `client_timeout`/empty `raw_error_message` shape on the failing call pointed at an externally-enforced ElevenLabs client-tool response window being exceeded, most plausibly because ordinary cold-connection latency on the first call of a fresh session was enough to tip an already-marginal, unparallelized round-trip count over that boundary. Full investigation, including what was ruled out and why, preserved in the 2026-08-10 session transcript.
+
+**Fix, scoped exactly as approved — nothing broader:** the per-task delivery lookups now run concurrently via `Promise.all` instead of one at a time. Same query per task (identical filter/order/limit), same output text, same task iteration order, same ambiguity/failure handling — only the network round trips changed from sequential to concurrent. Explicitly **not** touched, per scope: `supabase.auth.getUser()` (still called once per invocation, unchanged — a systemic pattern shared by other tools, deliberately left for its own separate review), `get_operations_summary`, Historical Lookup tools (`get_commitment_history`/`get_person_history` — already parallelize their multi-table fetch via `Promise.all`, confirmed lower-risk during the investigation), the shared client-tool wrappers, ElevenLabs configuration, schema/migrations/RPCs.
+
+**Tests:** one new regression test proves task order and per-task delivery matching survive even when the underlying queries resolve out of order (deliberately scrambled resolution timing in the test, since `Promise.all` preserves index correspondence regardless of completion order) — mutation-tested by temporarily breaking the index mapping and confirming the test failed, then reverting. 16/16 tests in `carson-operations-center.test.ts`, full `test:carson-protected` (54 files, 1028 passed), typecheck, and build all clean. Zero CodeRabbit findings.
+
+**Production deployment:** SHA-matched to the merge commit for both `ra7etbal-v2` and `ra7etbal-work` Vercel projects, `www.ra7etbal.com` HTTP 200, `ra7etbal.com` redirects correctly, zero new runtime error groups.
+
+**Live production verification (round 2 of the Tool Registration Drift entry above, 2026-08-10):** a fresh Talk-to-Carson session's first `get_task_delivery_status` call succeeded in `0.586s` with no error and no retry, verified against the raw ElevenLabs conversation record and cross-checked against real production delivery data — see that entry for the full evidence.
+
+**Known limitation, honestly recorded, not fixed here:** this class of defect (a first-call platform response-timeout) fundamentally cannot be regression-tested under this codebase's existing mock-based unit tests, which resolve Supabase calls instantly — only a real live conversation can confirm it. `get_operations_summary` shares the same uncached `auth.getUser()` pattern (3 sequential round trips, lower risk than this tool's prior up-to-7) and was **not** fixed here — explicitly out of this task's approved scope, tracked as a possible future item, not started.
+
+Protect: the `Promise.all`-based concurrent per-task delivery lookup — do not reintroduce a sequential loop here. Do not extend this fix to `auth.getUser()` or any other tool without a separate, explicitly-scoped task.
 
 ### Historical Lookup — Phase 2, Person History
 
