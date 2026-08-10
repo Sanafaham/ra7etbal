@@ -12,8 +12,11 @@ import {
   disableReminderNotifications,
   enableReminderNotifications,
   isSubscriptionSavedForUser,
+  listPushSubscriptionDevices,
   refreshPushSubscription,
+  removePushSubscriptionDevice,
   type PushNotificationStatus,
+  type PushSubscriptionDeviceInfo,
 } from "../../lib/push-notifications";
 import { needsIOSInstallGuidance } from "../../lib/pwa-standalone";
 import { useMessagesStore } from "../../stores/messages";
@@ -29,7 +32,7 @@ interface Props {
   onCalendarDisconnected?: () => void;
 }
 
-type View = "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-disconnect" | "delegation-rules";
+type View = "list" | "confirm-clear" | "confirm-archive" | "confirm-calendar-disconnect" | "delegation-rules" | "notification-devices";
 
 export default function SettingsModal({ open, onClose, userId, calendarRevoked, onCalendarReconnected, onCalendarDisconnected }: Props) {
   const navigate = useNavigate();
@@ -219,6 +222,14 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
     );
   }
 
+  if (view === "notification-devices") {
+    return (
+      <Modal open={open} onClose={close} title="Settings">
+        <NotificationDevicesPanel userId={userId} onBack={() => setView("list")} />
+      </Modal>
+    );
+  }
+
   return (
     <Modal open={open} onClose={close} title="Settings">
       <SettingsList
@@ -252,6 +263,7 @@ export default function SettingsModal({ open, onClose, userId, calendarRevoked, 
           setView("confirm-clear");
         }}
         onClickDelegationRules={() => setView("delegation-rules")}
+        onClickManageDevices={() => setView("notification-devices")}
         onClickPrivacy={() => {
           onClose();
           navigate("/privacy");
@@ -285,6 +297,7 @@ function SettingsList({
   onClickArchive,
   onClickClear,
   onClickDelegationRules,
+  onClickManageDevices,
   onClickPrivacy,
   onClickTerms,
   onClickDebug,
@@ -302,6 +315,7 @@ function SettingsList({
   onClickArchive: () => void;
   onClickClear: () => void;
   onClickDelegationRules: () => void;
+  onClickManageDevices: () => void;
   onClickPrivacy: () => void;
   onClickTerms: () => void;
   onClickDebug: () => void;
@@ -334,7 +348,7 @@ function SettingsList({
       </Group>
 
       <Group label="Notifications">
-        <ReminderNotificationsRow userId={userId} />
+        <ReminderNotificationsRow userId={userId} onClickManageDevices={onClickManageDevices} />
       </Group>
 
       <Group label="Carson">
@@ -603,7 +617,13 @@ function ActionRow({ label, onClick }: { label: string; onClick: () => void }) {
 
 // ---------------------------------------------------------------------------
 
-function ReminderNotificationsRow({ userId }: { userId: string | null }) {
+function ReminderNotificationsRow({
+  userId,
+  onClickManageDevices,
+}: {
+  userId: string | null;
+  onClickManageDevices: () => void;
+}) {
   const [status, setStatus] = useState<PushNotificationStatus>(() =>
     checkPushSupport().supported ? "idle" : "unsupported",
   );
@@ -757,6 +777,21 @@ function ReminderNotificationsRow({ userId }: { userId: string | null }) {
             className="text-[11px] text-ink/40 underline underline-offset-2 transition hover:text-ink/70"
           >
             Disable notifications
+          </button>
+        </div>
+      )}
+
+      {/* Manage notification devices — visible whenever there's a signed-in
+          owner, regardless of this device's own toggle state, since the
+          list can include other installations. */}
+      {userId && (
+        <div className="px-4 pb-2.5">
+          <button
+            type="button"
+            onClick={onClickManageDevices}
+            className="text-[11px] text-ink/40 underline underline-offset-2 transition hover:text-ink/70"
+          >
+            Manage notification devices
           </button>
         </div>
       )}
@@ -997,6 +1032,141 @@ function HouseholdDelegationRulesPanel({ onBack }: { onBack: () => void }) {
       </div>
     </div>
   );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Push Subscription Installation Management / Orphan Resolution — owner-
+ * visible list of currently-enabled push subscriptions with a manual
+ * remove action. Deliberately never auto-detects or auto-removes anything:
+ * no age/inactivity heuristic exists here or anywhere in this feature. See
+ * "no confirmed delivery yet" copy below — this is evidence, not a
+ * dead/alive verdict; a device can be perfectly live and simply never have
+ * had a reminder sent to it.
+ */
+function NotificationDevicesPanel({
+  userId,
+  onBack,
+}: {
+  userId: string | null;
+  onBack: () => void;
+}) {
+  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [devices, setDevices] = useState<PushSubscriptionDeviceInfo[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+
+  async function load() {
+    if (!userId) return;
+    setStatus("loading");
+    setError(null);
+    try {
+      const list = await listPushSubscriptionDevices(userId);
+      setDevices(list);
+      setStatus("ready");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load your notification devices.");
+      setStatus("error");
+    }
+  }
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
+
+  async function handleRemove(deviceId: string) {
+    if (!userId || removingId) return;
+    setRemoveError(null);
+    setRemovingId(deviceId);
+    try {
+      await removePushSubscriptionDevice(userId, deviceId);
+      setDevices((prev) => prev.filter((d) => d.id !== deviceId));
+    } catch (err) {
+      setRemoveError(err instanceof Error ? err.message : "Could not remove this device. Please try again.");
+    } finally {
+      setRemovingId(null);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Back nav */}
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex items-center gap-1.5 text-sm text-ink/65 transition hover:text-ink"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M15 18l-6-6 6-6" />
+        </svg>
+        Settings
+      </button>
+
+      {/* Header */}
+      <div>
+        <h3 className="text-base font-semibold text-ink">Notification devices</h3>
+        <p className="mt-0.5 text-xs leading-relaxed text-ink/65">
+          Every device currently set up to receive your reminders and updates. Remove any you no longer use. "No confirmed delivery yet" doesn't mean a device is broken — it may just not have received a notification yet.
+        </p>
+      </div>
+
+      {error && <AuthNotice kind="error">{error}</AuthNotice>}
+      {removeError && <AuthNotice kind="error">{removeError}</AuthNotice>}
+
+      {status === "loading" && (
+        <div className="flex items-center justify-center py-8">
+          <Spinner size={20} />
+        </div>
+      )}
+
+      {status === "ready" && devices.length === 0 && (
+        <p className="py-6 text-center text-sm text-ink/50">No devices currently receive notifications.</p>
+      )}
+
+      {status === "ready" && devices.length > 0 && (
+        <ul className="space-y-2">
+          {devices.map((device) => (
+            <li
+              key={device.id}
+              className="flex items-start justify-between gap-3 rounded-xl border border-border bg-white px-4 py-3"
+            >
+              <div className="min-w-0">
+                <span className="block text-sm font-medium text-ink">
+                  {device.platform || "Unknown device"}
+                </span>
+                <span className="mt-0.5 block truncate text-[11px] text-ink/50">
+                  {device.userAgent || "No device details available"}
+                </span>
+                <span className="mt-1 block text-[11px] text-ink/40">
+                  Added {formatDeviceDate(device.createdAt)}
+                  {device.lastConfirmedDeliveredAt
+                    ? ` · Last confirmed delivery ${formatDeviceDate(device.lastConfirmedDeliveredAt)}`
+                    : " · No confirmed delivery yet"}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleRemove(device.id)}
+                disabled={removingId === device.id}
+                className="shrink-0 text-[11px] font-medium text-danger underline underline-offset-2 transition hover:text-danger/80 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {removingId === device.id ? "Removing…" : "Remove"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function formatDeviceDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 // ---------------------------------------------------------------------------

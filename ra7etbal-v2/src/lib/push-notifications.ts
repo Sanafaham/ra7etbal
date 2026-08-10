@@ -165,6 +165,100 @@ export async function refreshPushSubscription(userId: string): Promise<PushNotif
   return "enabled";
 }
 
+export interface PushSubscriptionDeviceInfo {
+  id: string;
+  platform: string | null;
+  userAgent: string | null;
+  installationId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Timestamp of the most recent `show_notification_resolved` delivery
+   *  event for this exact subscription, or null if none was ever recorded.
+   *  Null does NOT mean the device is dead — it may simply never have had
+   *  a reminder/notification sent to it yet. Callers must not present
+   *  "no evidence" as "inactive" or "dead". */
+  lastConfirmedDeliveredAt: string | null;
+}
+
+/**
+ * Lists every currently-enabled push subscription for this owner, for the
+ * Settings "manage notification devices" view (Push Subscription
+ * Installation Management / Orphan Resolution). Read-only, RLS-scoped —
+ * never returns another household's rows. Deliberately does not attempt to
+ * classify a row as "stale" or "dead": it surfaces the same evidence this
+ * codebase's send paths already use (provider-confirmed delivery, from
+ * `reminder_delivery_events`), and leaves the disable decision entirely to
+ * the owner. No age/inactivity heuristic anywhere in this function.
+ */
+export async function listPushSubscriptionDevices(
+  userId: string,
+): Promise<PushSubscriptionDeviceInfo[]> {
+  const { data: subs, error } = await supabase
+    .from("push_subscriptions")
+    .select("id, platform, user_agent, installation_id, created_at, updated_at")
+    .eq("user_id", userId)
+    .eq("enabled", true)
+    .order("updated_at", { ascending: false });
+  if (error) throw error;
+
+  const subscriptions = subs ?? [];
+  if (subscriptions.length === 0) return [];
+
+  const ids = subscriptions.map((s) => s.id);
+  const { data: events, error: eventsError } = await supabase
+    .from("reminder_delivery_events")
+    .select("subscription_id, event_at")
+    .eq("user_id", userId)
+    .eq("stage", "show_notification_resolved")
+    .in("subscription_id", ids);
+  if (eventsError) throw eventsError;
+
+  const lastDeliveredBySubscription = new Map<string, string>();
+  for (const event of events ?? []) {
+    if (!event.subscription_id || !event.event_at) continue;
+    const previous = lastDeliveredBySubscription.get(event.subscription_id);
+    if (!previous || event.event_at > previous) {
+      lastDeliveredBySubscription.set(event.subscription_id, event.event_at);
+    }
+  }
+
+  return subscriptions.map((s) => ({
+    id: s.id,
+    platform: s.platform,
+    userAgent: s.user_agent,
+    installationId: s.installation_id,
+    createdAt: s.created_at,
+    updatedAt: s.updated_at,
+    lastConfirmedDeliveredAt: lastDeliveredBySubscription.get(s.id) ?? null,
+  }));
+}
+
+/**
+ * Owner-initiated removal of one listed device (Push Subscription
+ * Installation Management / Orphan Resolution). Reuses the exact same
+ * enabled:false update shape as `disableSavedPushSubscription` — never a
+ * hard delete, preserving audit history like every other disable path in
+ * this file. Scoped by id + user_id so it can never affect another row.
+ * Confirms the row was actually affected before reporting success — never
+ * a false "removed" on an id that was already gone or never belonged to
+ * this owner (this codebase's standing truthful-failure convention).
+ */
+export async function removePushSubscriptionDevice(
+  userId: string,
+  subscriptionId: string,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("push_subscriptions")
+    .update({ enabled: false })
+    .eq("id", subscriptionId)
+    .eq("user_id", userId)
+    .select("id");
+  if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error("This device could not be found, or was already removed.");
+  }
+}
+
 /**
  * Disable push notifications: mark the current subscription disabled in DB
  * and unsubscribe the browser-side token. Returns "idle" on success.
