@@ -620,7 +620,7 @@ describe("lookupPersonHistory — Historical Lookup Phase 2 (person overview, no
       return makeChain({ data: [], error: null });
     });
     const result = await lookupPersonHistory("Grace");
-    expect(result).toContain("3 commitments for Grace");
+    expect(result).toContain("Grace total: 3 commitments");
     expect(result).toMatch(/1 done/);
     expect(result).toMatch(/1 pending/);
     expect(result).toMatch(/1 cancelled/);
@@ -641,5 +641,57 @@ describe("lookupPersonHistory — Historical Lookup Phase 2 (person overview, no
     const result = await lookupPersonHistory("Grace");
     const mentioned = rows.filter((t) => result.includes(t.description)).length;
     expect(mentioned).toBeLessThanOrEqual(3);
+  });
+
+  /**
+   * Regression coverage for the 2026-08-10 production defect: a person
+   * with more than 6 real tasks was reported as having exactly 6 total,
+   * because the outcome-count summary was computed from the same
+   * .limit(6)-capped candidate list used for the recent-items display.
+   *
+   * findCommitmentCandidates() (call 1, capped at 6 by the real .limit(6))
+   * and fetchPersonOutcomeCounts() (call 2, unbounded) both query "tasks"
+   * sequentially — mockReturnValueOnce chains simulate that distinction
+   * precisely, since makeChain()'s .limit() is a no-op that doesn't
+   * truncate on its own.
+   */
+  it("reports the TRUE total across all matching tasks, not the 6-row candidate cap, when a person has more than 6 tasks", async () => {
+    const cappedCandidates = Array.from({ length: 6 }, (_, i) =>
+      makeTask({ id: `recent-${i}`, assigned_to: "Christopher", description: `recent task ${i}`, status: "done" }),
+    );
+    const fullHistoryRows = Array.from({ length: 9 }, (_, i) => ({
+      status: i < 8 ? "done" : "pending",
+      dismissed_at: null,
+    }));
+
+    mocks.supabaseFrom
+      .mockReturnValueOnce(makeChain({ data: cappedCandidates, error: null })) // findCommitmentCandidates
+      .mockReturnValueOnce(makeChain({ data: fullHistoryRows, error: null })); // fetchPersonOutcomeCounts
+
+    const result = await lookupPersonHistory("Christopher");
+
+    expect(result).toContain("Christopher total: 9 commitments");
+    expect(result).toMatch(/8 done/);
+    expect(result).toMatch(/1 pending/);
+    expect(result).not.toContain("6 commitments");
+
+    const mentionedRecent = cappedCandidates.filter((t) => result.includes(t.description)).length;
+    expect(mentionedRecent).toBeLessThanOrEqual(3);
+  });
+
+  it("reports total = 6 through the full-count path when a person has exactly 6 tasks (not coincidentally via the candidate cap)", async () => {
+    const candidates = Array.from({ length: 6 }, (_, i) =>
+      makeTask({ id: `t-${i}`, assigned_to: "Nasira", description: `task ${i}`, status: "done" }),
+    );
+    const fullHistoryRows = candidates.map(() => ({ status: "done", dismissed_at: null }));
+
+    mocks.supabaseFrom
+      .mockReturnValueOnce(makeChain({ data: candidates, error: null }))
+      .mockReturnValueOnce(makeChain({ data: fullHistoryRows, error: null }));
+
+    const result = await lookupPersonHistory("Nasira");
+
+    expect(result).toContain("Nasira total: 6 commitments");
+    expect(result).toMatch(/6 done/);
   });
 });
