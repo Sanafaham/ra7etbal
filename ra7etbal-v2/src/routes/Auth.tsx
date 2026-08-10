@@ -9,6 +9,10 @@ import { upsertProfile } from "../lib/profile";
 type Mode = "signin" | "signup";
 export const PUBLIC_SIGNUP_ENABLED =
   import.meta.env.VITE_PUBLIC_SIGNUP_ENABLED === "true";
+interface AuthProps {
+  publicSignupEnabled?: boolean;
+  initialMode?: Mode;
+}
 type Notice =
   | { kind: "error" | "info" | "success"; text: string }
   | null;
@@ -17,8 +21,13 @@ interface FlashState {
   flash?: string;
 }
 
-export default function Auth() {
-  const [mode, setMode] = useState<Mode>("signin");
+export default function Auth({
+  publicSignupEnabled = PUBLIC_SIGNUP_ENABLED,
+  initialMode = "signin",
+}: AuthProps = {}) {
+  const [mode, setMode] = useState<Mode>(() =>
+    publicSignupEnabled && initialMode === "signup" ? "signup" : "signin",
+  );
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -144,32 +153,34 @@ export default function Auth() {
         </p>
       </header>
 
-      <div
-        role="tablist"
-        aria-label="Auth mode"
-        className="grid grid-cols-2 gap-1 rounded-full border border-border bg-cream/60 p-1"
-      >
-        {(["signin", ...(PUBLIC_SIGNUP_ENABLED ? ["signup" as const] : [])] as const).map((m) => (
-          <button
-            key={m}
-            role="tab"
-            type="button"
-            aria-selected={mode === m}
-            onClick={() => switchMode(m)}
-            disabled={submitting || sendingReset}
-            className={
-              "rounded-full px-3 py-2 text-sm font-medium transition " +
-              (mode === m
-                ? "bg-sage text-white shadow-sm"
-                : "text-ink/70 hover:text-ink")
-            }
-          >
-            {m === "signin" ? "Sign in" : "Create account"}
-          </button>
-        ))}
-      </div>
+      {publicSignupEnabled && (
+        <div
+          role="tablist"
+          aria-label="Auth mode"
+          className="grid grid-cols-2 gap-1 rounded-full border border-border bg-cream/60 p-1"
+        >
+          {(["signin", "signup"] as const).map((m) => (
+            <button
+              key={m}
+              role="tab"
+              type="button"
+              aria-selected={mode === m}
+              onClick={() => switchMode(m)}
+              disabled={submitting || sendingReset}
+              className={
+                "rounded-full px-3 py-2 text-sm font-medium transition " +
+                (mode === m
+                  ? "bg-sage text-white shadow-sm"
+                  : "text-ink/70 hover:text-ink")
+              }
+            >
+              {m === "signin" ? "Sign in" : "Create account"}
+            </button>
+          ))}
+        </div>
+      )}
 
-      {!PUBLIC_SIGNUP_ENABLED && (
+      {!publicSignupEnabled && (
         <p className="rounded-xl border border-border bg-cream/60 px-4 py-3 text-center text-sm text-ink/70">
           Ra7etBal is currently invite-only. Existing approved users can sign in.
         </p>
