@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -31,7 +31,7 @@ Production verification with a fresh unapproved identity:
 - Existing owner/approved accounts were not modified; disabling signup does not disable sign-in or revoke sessions. The unchanged sign-in path and full protected regression suite verify that existing-account authentication remains available.
 - Direct API bypass fails at the Supabase Auth server, independently of the deployed frontend.
 
-Regression protection: `ra7etbal-v2/src/routes/Auth.launch-control.test.ts` locks the default-closed UI flag and existing-user sign-in path. Before reopening public registration, deliberately enable both the Supabase server setting and the Vercel client flag, then repeat the full signup/payment/access review. Do not replace the server setting with a hidden button or client-only allowlist.
+Regression protection: `ra7etbal-v2/src/routes/Auth.launch-control.test.tsx` renders both flag states and proves that closed signup hides the signup tab/form, shows the invite-only notice, and leaves sign-in available; it also proves that deliberately enabling the flag restores the signup controls. The closed state now removes the entire auth mode selector and shows sign-in only. Sana manually reverified owner sign-out/sign-in and confirmed that a fresh Jewel signup is rejected. The Supabase server-side signup block, users, sessions, subscriptions, billing, and sign-in implementation were not changed. Before reopening public registration, deliberately enable both the Supabase server setting and the Vercel client flag, then repeat the full signup/payment/access review. Do not replace the server setting with a hidden button or client-only allowlist.
 
 **Historical note (corrected 2026-08-10 — this section previously read as an open, unmerged task; it was stale):** PR #93 (`agent/server-backed-banner-dismissal`), persisting completed-confirmation banner dismissal on `tasks.dismissed_at`, merged as `62010060306b30c0896379fc66c763eca8c0b1be` on 2026-07-28. Confirmed live: `dismissed_at` is a real column read/written throughout the current codebase (`src/stores/tasks.ts`, `src/components/home/ConfirmationNotices.tsx`, `src/types/task.ts`), and its migration (`20260729_add_dismissed_at_to_tasks.sql`) is present in the repo. Treat as merged and protected, not pending.
 
