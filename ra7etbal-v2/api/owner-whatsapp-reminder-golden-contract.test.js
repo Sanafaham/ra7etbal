@@ -130,7 +130,9 @@ describe('golden owner WhatsApp reminder contract', () => {
 
     const sw = sources['../public/sw.js'];
     expect(sw).toContain('event.waitUntil(');
-    expect(sw).toContain('data: { receipt: receipt }');
+    expect(sw).toContain('receipt: receipt');
+    expect(sw).toContain('notificationId: payload.notificationId');
+    expect(sw).toContain('url: safeInternalRoute(payload.url)');
     expect(sw).toContain('"service_worker_received"');
     expect(sw).toContain('"show_notification_attempted"');
     expect(sw).toContain('"show_notification_resolved"');
