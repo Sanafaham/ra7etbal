@@ -17,6 +17,7 @@ vi.mock('./_owner-reminder-whatsapp.js', () => ({
 }));
 
 import {
+  SAFETY_NET_TASK_SELECT,
   compareAuthorizationToCronSecret,
   getUnauthorizedCallerDiagnostic,
   default as handler,
@@ -98,11 +99,13 @@ describe('send-due-reminder-pushes authorization diagnostics', () => {
 
     const fetchMock = vi.fn(async (url, options = {}) => {
       const value = String(url);
-      if (value.includes('/rest/v1/tasks?select=')) return jsonResponse([{
-        id: 'task-1', user_id: 'user-1', description: 'Check the bill',
-        type: 'reminder', status: 'pending', due_at: '2026-08-11T16:03:00.000Z',
-        last_push_sent_at: null, reminder_delivery_status: 'scheduled',
-      }]);
+      if (value.includes('/rest/v1/tasks?select=')) {
+        return jsonResponse([projectSelectedTaskFields(value, {
+          id: 'task-1', user_id: 'user-1', description: 'Check the bill',
+          type: 'reminder', status: 'pending', due_at: '2026-08-11T16:03:00.000Z',
+          last_push_sent_at: null, reminder_delivery_status: 'scheduled',
+        })]);
+      }
       if (value.includes('/rest/v1/push_subscriptions')) return jsonResponse([{
         id: 'sub-1', user_id: 'user-1', endpoint: 'https://push.example/one',
         p256dh: 'p256dh', auth: 'auth',
@@ -121,6 +124,10 @@ describe('send-due-reminder-pushes authorization diagnostics', () => {
     await handler({ method: 'POST', query: { test: '1' }, headers: {}, url: '?test=1' }, res);
 
     expect(mocks.deliverOwnerReminderWhatsapp).toHaveBeenCalledTimes(1);
+    expect(SAFETY_NET_TASK_SELECT.split(',')).toContain('type');
+    expect(mocks.deliverOwnerReminderWhatsapp).toHaveBeenCalledWith(expect.objectContaining({
+      task: expect.objectContaining({ type: 'reminder' }),
+    }));
     expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       pushSuccessCount: 1,
@@ -129,6 +136,11 @@ describe('send-due-reminder-pushes authorization diagnostics', () => {
     }));
   });
 });
+
+function projectSelectedTaskFields(url, row) {
+  const selectedFields = new URL(url).searchParams.get('select').split(',');
+  return Object.fromEntries(selectedFields.map((field) => [field, row[field]]));
+}
 
 function createRes() {
   const res = {

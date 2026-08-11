@@ -95,6 +95,13 @@ complete until a controlled Sana-only production reminder proves one push and
 one owner WhatsApp reminder with no duplicates. Final Master Plan/state
 closeout remains pending that production evidence.
 
+Pre-merge correction (2026-08-11): the safety-net task SELECT now explicitly
+includes `type`, while retaining the database `type=eq.reminder` filter and the
+sender's fail-closed `task.type === 'reminder'` validation. Its test fixture is
+projected from the real SELECT and asserts the sender receives
+`type: 'reminder'`. Removing `type` from the production SELECT was
+mutation-tested and caused the regression test to fail as intended.
+
 Status: production verified and permanently protected. Rollout remains Sana-only
 (`645ddb96-6e09-4d91-b650-cbc75bac9a5d`); staff WhatsApp routing is unchanged.
 

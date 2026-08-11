@@ -3,6 +3,8 @@ import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.j
 import { deliverOwnerReminderWhatsapp } from './_owner-reminder-whatsapp.js';
 
 const MAX_TASKS_PER_RUN = 50;
+export const SAFETY_NET_TASK_SELECT =
+  'id,user_id,description,due_at,type,status,last_push_sent_at,reminder_delivery_status';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') {
@@ -351,7 +353,7 @@ async function fetchDueReminderTasks(config, nowIso) {
 
   const url =
     `${config.supabaseUrl}/rest/v1/tasks` +
-    '?select=id,user_id,description,due_at,status,last_push_sent_at,reminder_delivery_status' +
+    `?select=${SAFETY_NET_TASK_SELECT}` +
     '&type=eq.reminder' +
     '&status=eq.pending' +
     '&archived_at=is.null' +
