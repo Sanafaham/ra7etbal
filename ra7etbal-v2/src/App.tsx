@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import Actions from "./routes/Actions";
 import Active from "./routes/Active";
@@ -15,6 +15,7 @@ import Home from "./routes/Home";
 import Inbox from "./routes/Inbox";
 import Messages from "./routes/Messages";
 import Notes from "./routes/Notes";
+import Notifications from "./routes/Notifications";
 import People from "./routes/People";
 import Landing from "./routes/Landing";
 import Reset from "./routes/Reset";
@@ -57,6 +58,7 @@ import { useProfileStore } from "./stores/profile";
 import { useTasksStore } from "./stores/tasks";
 import { registerTasksLiveRefresh } from "./lib/tasks-live-refresh";
 import { registerPushSubscriptionRotation } from "./lib/push-subscription-rotation";
+import { selectUnreadNotificationCount, useNotificationsStore } from "./stores/notifications";
 
 function LoadingPane() {
   return (
@@ -205,6 +207,26 @@ function usePushSubscriptionRotationSync() {
       serviceWorkerApi: "serviceWorker" in navigator ? navigator.serviceWorker : null,
       userId: user.id,
     });
+  }, [status, user?.id]);
+}
+
+function useGlobalNotificationsRefresh() {
+  const { status, user } = useAuth();
+  useEffect(() => {
+    if (status !== "signed_in" || !user?.id) {
+      if (status === "signed_out") useNotificationsStore.getState().reset();
+      return;
+    }
+    const userId = user.id;
+    void useNotificationsStore.getState().loadFor(userId);
+    if (!("serviceWorker" in navigator)) return;
+    const handleMessage = (event: MessageEvent) => {
+      if ((event.data as { type?: string } | undefined)?.type === "ra7etbal:push-received") {
+        void useNotificationsStore.getState().loadFor(userId, { force: true });
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", handleMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", handleMessage);
   }, [status, user?.id]);
 }
 
@@ -440,6 +462,7 @@ function PersistentCarsonWidget({
 export default function App() {
   useGlobalTasksRefresh();
   usePushSubscriptionRotationSync();
+  useGlobalNotificationsRefresh();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -458,11 +481,32 @@ export default function App() {
   } = useCarsonStore();
 
   const showNav = useShowNavInner();
+  const unreadNotifications = useNotificationsStore(selectUnreadNotificationCount);
 
   return (
     <div className="min-h-dvh bg-cream text-ink">
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <header className="relative mx-auto max-w-3xl px-5 pt-4" style={{ paddingTop: "max(18px, env(safe-area-inset-top))" }}>
+        {showNav && (
+          <Link
+            to="/notifications"
+            aria-label={unreadNotifications > 0 ? `Notifications, ${unreadNotifications} unread` : "Notifications"}
+            className="absolute right-14 top-2 flex h-10 w-10 items-center justify-center rounded-xl text-ink transition hover:bg-ink/5 active:scale-95"
+            style={{ top: "max(2px, env(safe-area-inset-top))" }}
+          >
+            <span className="relative">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+                <path d="M10 21h4" />
+              </svg>
+              {unreadNotifications > 0 && (
+                <span className="absolute -right-2 -top-2 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[9px] font-bold leading-none text-white">
+                  {unreadNotifications > 9 ? "9+" : unreadNotifications}
+                </span>
+              )}
+            </span>
+          </Link>
+        )}
         <button
           type="button"
           aria-label="More options"
@@ -502,6 +546,7 @@ export default function App() {
           <Route path="/reset" element={<ResetRoute />} />
           <Route path="/review" element={<Navigate to="/" replace />} />
           <Route path="/updates" element={<ProtectedRoute><Updates /></ProtectedRoute>} />
+          <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
           {/* Legacy redirects */}
           <Route path="/active" element={<ProtectedRoute><Active /></ProtectedRoute>} />
           <Route path="/inbox" element={<ProtectedRoute><Inbox /></ProtectedRoute>} />

@@ -15,7 +15,19 @@ describe('reminder service-worker observability contract', () => {
     ]) {
       expect(source).toContain(`"${stage}"`);
     }
-    expect(source).toContain('data: { receipt: receipt }');
+    expect(source).toContain('receipt: receipt');
+    expect(source).toContain('notificationId: payload.notificationId');
+    expect(source).toContain('url: safeInternalRoute(payload.url)');
+  });
+
+  it('navigates an existing client, opens a target without one, and rejects unsafe URLs', async () => {
+    const source = await readFile(new URL('./sw.js', import.meta.url), 'utf8');
+    expect(source).toContain('client.navigate(targetUrl)');
+    expect(source).toContain('client.focus()');
+    expect(source).toContain('self.clients.openWindow(targetUrl)');
+    expect(source).toContain('resolved.origin !== self.location.origin');
+    expect(source).toContain('value.startsWith("//")');
+    expect(source).toContain('return "/notifications"');
   });
 });
 

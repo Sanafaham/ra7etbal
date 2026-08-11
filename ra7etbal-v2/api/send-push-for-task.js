@@ -20,6 +20,7 @@ import webpush from 'web-push';
 import { Receiver } from '@upstash/qstash';
 import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
 import { deliverOwnerReminderWhatsapp } from './_owner-reminder-whatsapp.js';
+import { buildDueReminderNotification, getOrCreateOwnerNotification } from './_owner-notifications.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -107,6 +108,12 @@ export default async function handler(req, res) {
     });
   }
 
+  const { notification } = await getOrCreateOwnerNotification({
+    supabaseUrl,
+    serviceRoleKey,
+    ...buildDueReminderNotification(task),
+  });
+
   // ── 4. Load push subscriptions ──────────────────────────────────────────
   const subsRes = await fetch(
     `${supabaseUrl}/rest/v1/push_subscriptions` +
@@ -175,8 +182,10 @@ export default async function handler(req, res) {
       taskId, userId: task.user_id, subscriptionId: sub.id, dueAt: task.due_at,
     };
     const payload = JSON.stringify({
-      title: 'Ra7etBal',
-      body: task.description,
+      title: notification.title,
+      body: notification.body,
+      notificationId: notification.id,
+      url: notification.target_url,
       receipt: {
         url: '/api/qstash-reminder',
         taskId,

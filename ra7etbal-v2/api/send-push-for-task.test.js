@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   sendNotification: vi.fn(),
   verify: vi.fn(),
   deliverOwnerReminderWhatsapp: vi.fn(),
+  getOrCreateOwnerNotification: vi.fn(),
 }));
 
 vi.mock('web-push', () => ({
@@ -23,6 +24,11 @@ vi.mock('./_owner-reminder-whatsapp.js', () => ({
   deliverOwnerReminderWhatsapp: mocks.deliverOwnerReminderWhatsapp,
 }));
 
+vi.mock('./_owner-notifications.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  getOrCreateOwnerNotification: mocks.getOrCreateOwnerNotification,
+}));
+
 import handler, { dedupeSubscriptionsByEndpoint } from './send-push-for-task.js';
 
 beforeEach(() => {
@@ -40,6 +46,15 @@ beforeEach(() => {
     attempted: true,
     status: 'accepted',
     deliveryId: 'owner-reminder-delivery-1',
+  });
+  mocks.getOrCreateOwnerNotification.mockResolvedValue({
+    created: true,
+    notification: {
+      id: 'notification-1',
+      title: 'Ra7etBal',
+      body: 'Call Loulya',
+      target_url: '/updates?tab=todo',
+    },
   });
 });
 
@@ -116,6 +131,7 @@ describe('send-push-for-task reminder delivery', () => {
     );
     expect(mocks.sendNotification).toHaveBeenCalledTimes(2);
     expect(mocks.deliverOwnerReminderWhatsapp).toHaveBeenCalledTimes(1);
+    expect(mocks.getOrCreateOwnerNotification).toHaveBeenCalledTimes(1);
 
     expect(patches[0]).toEqual({
       reminder_delivery_status: 'dispatch_attempted',
@@ -136,6 +152,52 @@ describe('send-push-for-task reminder delivery', () => {
       dueAt: '2026-06-26T18:49:00.000Z',
       token: expect.any(String),
     }));
+    expect(payload).toEqual(expect.objectContaining({
+      title: 'Ra7etBal',
+      body: 'Call Loulya',
+      notificationId: 'notification-1',
+      url: '/updates?tab=todo',
+    }));
+  });
+
+  it('creates the durable inbox event even when the owner has no push subscription', async () => {
+    const fetchMock = successfulReminderFetch();
+    fetchMock.mockImplementationOnce(async () => jsonResponse([{
+      id: 'task-1', user_id: 'user-1', description: 'Call Loulya',
+      status: 'pending', type: 'reminder', due_at: '2026-06-26T18:49:00.000Z',
+      last_push_sent_at: null, archived_at: null, reminder_delivery_status: 'scheduled',
+    }]));
+    fetchMock.mockImplementationOnce(async () => jsonResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(mocks.getOrCreateOwnerNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      reason: 'No enabled push subscriptions.',
+    }));
+  });
+
+  it('does not create a historical inbox row for an already-sent retry', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      if (String(url).includes('/rest/v1/tasks?select=')) return jsonResponse([{
+        id: 'task-1', user_id: 'user-1', description: 'Call Loulya',
+        status: 'pending', type: 'reminder', due_at: '2026-06-26T18:49:00.000Z',
+        last_push_sent_at: '2026-06-26T18:49:02.000Z', archived_at: null,
+        reminder_delivery_status: 'delivery_unconfirmed',
+      }]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(mocks.deliverOwnerReminderWhatsapp).toHaveBeenCalledTimes(1);
+    expect(mocks.getOrCreateOwnerNotification).not.toHaveBeenCalled();
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ reason: 'Push already sent.' }));
   });
 
   it('keeps push truthful when owner WhatsApp fails synchronously', async () => {
