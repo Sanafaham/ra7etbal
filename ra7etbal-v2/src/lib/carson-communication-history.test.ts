@@ -91,6 +91,16 @@ describe("resolvePersonForCommunicationHistory", () => {
     const result = await resolvePersonForCommunicationHistory("Christopher", "user-1");
     expect(result.status).toBe("error");
   });
+
+  it("returns error status, not an uncaught rejection, when the query promise itself rejects", async () => {
+    mocks.supabaseFrom.mockReturnValue({
+      select: () => {
+        throw new Error("network failure");
+      },
+    });
+    const result = await resolvePersonForCommunicationHistory("Christopher", "user-1");
+    expect(result.status).toBe("error");
+  });
 });
 
 // ── Timeline construction ───────────────────────────────────────────────────
@@ -189,10 +199,12 @@ describe("buildCommunicationHistory", () => {
       expect(allCalls[table]).toContainEqual({ method: "eq", args: ["user_id", "user-1"] });
       expect(allCalls[table]).toContainEqual({ method: "eq", args: ["person_id", "p1"] });
     }
-    // Wave-2 tables are also user_id-scoped when they run at all.
-    if (allCalls.whatsapp_deliveries) {
-      expect(allCalls.whatsapp_deliveries).toContainEqual({ method: "eq", args: ["user_id", "user-1"] });
-    }
+    // The staff_messages fixture above has task_id: "task-1", so wave 2's
+    // whatsapp_deliveries query is guaranteed to fire — asserted
+    // unconditionally, not behind an `if`, so this can't pass vacuously if
+    // wave 2 is ever skipped by a future change.
+    expect(allCalls.whatsapp_deliveries).toBeDefined();
+    expect(allCalls.whatsapp_deliveries).toContainEqual({ method: "eq", args: ["user_id", "user-1"] });
   });
 
   it("returns an empty, non-failed result when a person genuinely has no communication evidence", async () => {
@@ -215,6 +227,36 @@ describe("buildCommunicationHistory", () => {
     const result = await buildCommunicationHistory("p1", "Christopher", "user-1");
     expect(result.failedSources).toContain("staff_messages");
     expect(result.events).toEqual([]);
+  });
+
+  it("marks the source as failed, not an uncaught rejection, when a wave-1 query promise itself rejects", async () => {
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "staff_messages") {
+        return { select: () => { throw new Error("network failure"); } };
+      }
+      return makeChain({ data: [], error: null });
+    });
+    const result = await buildCommunicationHistory("p1", "Christopher", "user-1");
+    expect(result.failedSources).toContain("staff_messages");
+  });
+
+  it("drops an event with an unparseable timestamp rather than sorting/rendering it as Invalid Date", async () => {
+    mockTables({
+      staff_messages: {
+        data: [
+          { id: "sm1", task_id: null, inbound_text: "good", carson_response: null, received_at: "2026-08-01T09:00:00Z", responded_at: null, external_message_id: null },
+          { id: "sm2", task_id: null, inbound_text: "corrupted", carson_response: null, received_at: "not-a-real-timestamp", responded_at: null, external_message_id: null },
+        ],
+        error: null,
+      },
+      personal_contact_replies: { data: [], error: null },
+      messages: { data: [], error: null },
+      whatsapp_deliveries: { data: [], error: null },
+      staff_escalation_owner_decisions: { data: [], error: null },
+    });
+    const result = await buildCommunicationHistory("p1", "Christopher", "user-1");
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0].label).toBe("good");
   });
 
   it("never emits a duplicate event from the same source row, even if the same row id is returned more than once by a query", async () => {
@@ -317,6 +359,38 @@ describe("formatCommunicationHistoryAnswer", () => {
     });
     expect(answer).toContain("Delivered");
     expect(answer).not.toMatch(/"Delivered"/); // not quoted as if it were spoken/typed content
+  });
+
+  it("caps rendered events at the most recent MAX_RENDERED_EVENTS and states the true total", () => {
+    const events = Array.from({ length: 25 }, (_, i) => ({
+      at: `2026-08-${String(i + 1).padStart(2, "0")}T09:00:00Z`,
+      direction: "inbound" as const,
+      eventType: "staff_message_received",
+      channel: "whatsapp",
+      label: `event ${i + 1}`,
+      source: "staff_messages" as const,
+      taskId: null,
+      transportMessageId: null,
+    }));
+    const answer = formatCommunicationHistoryAnswer({ personId: "p1", personName: "Christopher", events, failedSources: [] });
+    // Only the most recent (highest-numbered) events render, not the oldest.
+    expect(answer).toContain("event 25");
+    expect(answer).not.toContain("event 1 ");
+    expect(answer).toMatch(/most recent of 25 total/i);
+  });
+
+  it("includes the year in the rendered date only when the event is not from the current year", () => {
+    const lastYear = new Date().getFullYear() - 1;
+    const answer = formatCommunicationHistoryAnswer({
+      personId: "p1",
+      personName: "Christopher",
+      events: [
+        { at: `${lastYear}-08-01T09:00:00Z`, direction: "inbound", eventType: "staff_message_received", channel: "whatsapp", label: "old", source: "staff_messages", taskId: null, transportMessageId: null },
+        { at: new Date().toISOString(), direction: "inbound", eventType: "staff_message_received", channel: "whatsapp", label: "recent", source: "staff_messages", taskId: null, transportMessageId: null },
+      ],
+      failedSources: [],
+    });
+    expect(answer).toContain(String(lastYear));
   });
 });
 

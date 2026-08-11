@@ -59,7 +59,7 @@ true`).
 
 Find the `get_person_history` TOOLS entry. Immediately after it, add:
 
-```
+```text
 get_communication_history — what was said/heard with a specific person, in chronological order, across every channel (staff messages, personal replies, direct messages, delivery status, owner decisions tied to their messages). Use when the user asks what was said, discussed, or heard with someone — "What has Christopher told us?", "What did we hear from Grace?" — not their task outcome counts (use get_person_history) or one specific task's story (use get_commitment_history). Param: person_name.
 ```
 
@@ -68,7 +68,7 @@ get_communication_history — what was said/heard with a specific person, in chr
 Find the `PERSON HISTORY` section (added by the Phase 2 patch). Immediately
 after it, add:
 
-```
+```text
 COMMUNICATION HISTORY
 When the user asks what was said, discussed, or heard with a specific person — not their task outcomes, not one specific commitment — call get_communication_history with the person's name.
 This is distinct from both other history tools: get_commitment_history answers "what happened with this one task"; get_person_history answers "how many commitments and what were the outcomes"; get_communication_history answers "what did we actually say to each other, in order."

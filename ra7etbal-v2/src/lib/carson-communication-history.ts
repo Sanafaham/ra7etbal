@@ -54,6 +54,15 @@ function bound(text: string, max: number): string {
   return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
 }
 
+/** Caps each wave-1 source-table fetch to its most recent rows — see the
+ *  call sites in buildCommunicationHistory() for why an unbounded fetch
+ *  is unsafe here. */
+const WAVE1_ROW_LIMIT = 30;
+
+/** Caps how many events Carson actually reads/types out — a full
+ *  multi-year history must never become hundreds of spoken lines. */
+const MAX_RENDERED_EVENTS = 20;
+
 // ── Person resolution ───────────────────────────────────────────────────────
 
 export interface PersonCandidate {
@@ -80,19 +89,23 @@ export async function resolvePersonForCommunicationHistory(
   const kw = name.trim();
   if (!kw) return { status: "no_match", matches: [] };
 
-  const { data, error } = await supabase
-    .from("people")
-    .select("id, name")
-    .eq("user_id", userId)
-    .ilike("name", `%${kw}%`)
-    .order("name", { ascending: true })
-    .limit(6);
+  try {
+    const { data, error } = await supabase
+      .from("people")
+      .select("id, name")
+      .eq("user_id", userId)
+      .ilike("name", `%${kw}%`)
+      .order("name", { ascending: true })
+      .limit(6);
 
-  if (error) return { status: "error", matches: [] };
-  const matches = (data ?? []) as PersonCandidate[];
-  if (matches.length === 0) return { status: "no_match", matches: [] };
-  if (matches.length > 1) return { status: "ambiguous", matches };
-  return { status: "resolved", matches };
+    if (error) return { status: "error", matches: [] };
+    const matches = (data ?? []) as PersonCandidate[];
+    if (matches.length === 0) return { status: "no_match", matches: [] };
+    if (matches.length > 1) return { status: "ambiguous", matches };
+    return { status: "resolved", matches };
+  } catch {
+    return { status: "error", matches: [] };
+  }
 }
 
 // ── Timeline construction ───────────────────────────────────────────────────
@@ -134,9 +147,16 @@ interface FetchOutcome<T> {
 async function fetchOrFail<T>(
   build: () => PromiseLike<{ data: T[] | null; error: unknown }>,
 ): Promise<FetchOutcome<T>> {
-  const { data, error } = await build();
-  if (error) return { rows: [], failed: true };
-  return { rows: data ?? [], failed: false };
+  try {
+    const { data, error } = await build();
+    if (error) return { rows: [], failed: true };
+    return { rows: data ?? [], failed: false };
+  } catch {
+    // A rejected promise (network failure, abort) must be as truthfully
+    // "failed" as a resolved {error} shape — never let it escape uncaught
+    // and lose the partial-failure answer this module exists to produce.
+    return { rows: [], failed: true };
+  }
 }
 
 /** Dedupes rows by id — guards against the same row matching more than one
@@ -214,7 +234,11 @@ export async function buildCommunicationHistory(
 
   // Wave 1: everything filterable by person_id directly, independent of
   // one another — fetched concurrently (same reliability pattern proven
-  // for get_operations_summary's own first-call fix).
+  // for get_operations_summary's own first-call fix). Capped at the most
+  // recent WAVE1_ROW_LIMIT rows per table (fetched newest-first, then
+  // re-sorted chronologically below along with everything else) — an
+  // unbounded history would grow the wave-2 .in(...) filter URLs without
+  // bound and force Carson to read an ever-growing transcript aloud.
   const [staffMsgsOutcome, contactRepliesOutcome, messagesOutcome] = await Promise.all([
     fetchOrFail<StaffMessageRow>(() =>
       supabase
@@ -222,7 +246,8 @@ export async function buildCommunicationHistory(
         .select("id, task_id, inbound_text, carson_response, received_at, responded_at, external_message_id")
         .eq("user_id", userId)
         .eq("person_id", personId)
-        .order("received_at", { ascending: true }),
+        .order("received_at", { ascending: false })
+        .limit(WAVE1_ROW_LIMIT),
     ),
     fetchOrFail<ContactReplyRow>(() =>
       supabase
@@ -230,7 +255,8 @@ export async function buildCommunicationHistory(
         .select("id, inbound_text, created_at, external_message_id")
         .eq("user_id", userId)
         .eq("person_id", personId)
-        .order("created_at", { ascending: true }),
+        .order("created_at", { ascending: false })
+        .limit(WAVE1_ROW_LIMIT),
     ),
     fetchOrFail<MessageRow>(() =>
       supabase
@@ -238,7 +264,8 @@ export async function buildCommunicationHistory(
         .select("id, task_id, body, content, created_at, whatsapp_message_id, channel")
         .eq("user_id", userId)
         .eq("person_id", personId)
-        .order("created_at", { ascending: true }),
+        .order("created_at", { ascending: false })
+        .limit(WAVE1_ROW_LIMIT),
     ),
   ]);
 
@@ -407,9 +434,14 @@ export async function buildCommunicationHistory(
     }
   }
 
-  events.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  // A malformed (non-null but unparseable) timestamp would sort as NaN and
+  // render as "Invalid Date" in Carson's answer — dropped rather than risk
+  // either. Source columns are typed non-null, but that's a TypeScript
+  // contract, not a runtime guarantee against corrupted data.
+  const validEvents = events.filter((e) => !Number.isNaN(new Date(e.at).getTime()));
+  validEvents.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
 
-  return { personId, personName, events, failedSources };
+  return { personId, personName, events: validEvents, failedSources };
 }
 
 // ── Answer formatting ───────────────────────────────────────────────────────
@@ -435,10 +467,28 @@ export function formatCommunicationHistoryAnswer(result: CommunicationHistoryRes
   const count = events.length;
   lines.push(`${count} communication event${count === 1 ? "" : "s"} with ${personName}, in order:`);
 
-  for (const e of events) {
-    const when = new Date(e.at).toLocaleDateString([], { month: "short", day: "numeric" });
+  // Cap what Carson actually reads/types out — the most recent
+  // MAX_RENDERED_EVENTS, chronologically ordered, not the oldest.
+  const rendered = count > MAX_RENDERED_EVENTS ? events.slice(count - MAX_RENDERED_EVENTS) : events;
+  const currentYear = new Date().getFullYear();
+
+  for (const e of rendered) {
+    const date = new Date(e.at);
+    // Include the year only when the event isn't from the current year —
+    // otherwise two same-day-of-year events a year apart would render
+    // identically ("Aug 1") and Carson would state an ambiguous date.
+    const when = date.toLocaleDateString(
+      [],
+      date.getFullYear() === currentYear
+        ? { month: "short", day: "numeric" }
+        : { month: "short", day: "numeric", year: "numeric" },
+    );
     const arrow = e.direction === "inbound" ? "from" : e.direction === "outbound" ? "to" : "about";
     lines.push(`${when} — ${e.label} (${arrow} ${personName})`);
+  }
+
+  if (count > MAX_RENDERED_EVENTS) {
+    lines.push(`Showing the ${MAX_RENDERED_EVENTS} most recent of ${count} total events.`);
   }
 
   if (failedSources.length > 0) {
@@ -464,9 +514,15 @@ export async function lookupCommunicationHistory(personName: string): Promise<st
     return "I need a person's name to look up their communication history. Ask the user whose history they mean.";
   }
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  let user: { id: string } | null;
+  try {
+    const {
+      data: { user: resolvedUser },
+    } = await supabase.auth.getUser();
+    user = resolvedUser;
+  } catch {
+    return "I couldn't look that up right now — please try again.";
+  }
   if (!user) return "I couldn't look that up right now — not signed in.";
 
   const resolution = await resolvePersonForCommunicationHistory(name, user.id);
