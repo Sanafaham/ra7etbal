@@ -102,6 +102,15 @@ projected from the real SELECT and asserts the sender receives
 `type: 'reminder'`. Removing `type` from the production SELECT was
 mutation-tested and caused the regression test to fail as intended.
 
+Durable-claim correction (2026-08-11): the claim now uses a normal PostgREST
+insert with `return=representation`. Only HTTP 409/PostgreSQL `23505` naming
+the exact `whatsapp_deliveries_owner_reminder_task_uidx` index is treated as a
+lost claim; unrelated database failures remain failures. A genuine PostgreSQL
+lifecycle test proves the first owner-reminder insert succeeds, a duplicate is
+rejected by that exact partial index, another source type may reference the
+same task, and a different task may have its own owner-reminder lifecycle.
+The losing claimant never sends to Meta.
+
 Status: production verified and permanently protected. Rollout remains Sana-only
 (`645ddb96-6e09-4d91-b650-cbc75bac9a5d`); staff WhatsApp routing is unchanged.
 

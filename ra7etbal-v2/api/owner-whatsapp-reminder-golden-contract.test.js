@@ -30,6 +30,7 @@ const CRITICAL_FILES = [
   '../supabase/migrations/20260728_owner_whatsapp_safe_routing_slice_1.sql',
   '../supabase/migrations/20260730_reminder_delivery_observability.sql',
   '../supabase/migrations/20260811_owner_reminder_whatsapp_delivery.sql',
+  '../supabase/migrations/verification/owner_reminder_whatsapp_claim_verification.sql',
 ];
 
 describe('golden owner WhatsApp reminder contract', () => {
@@ -165,6 +166,7 @@ describe('golden owner WhatsApp reminder contract', () => {
     for (const focusedTest of [
       'api/owner-whatsapp-reminder-golden-contract.test.js',
       'api/owner-reminder-whatsapp-delivery.test.js',
+      'api/owner-reminder-whatsapp-migration.test.js',
       'api/_owner-command-executor.execution.test.js',
       'api/_owner-command-executor.test.js',
       'api/_owner-whatsapp-routing.test.js',

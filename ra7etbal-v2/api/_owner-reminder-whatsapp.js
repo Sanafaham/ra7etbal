@@ -11,6 +11,7 @@ const OWNER_REMINDER_SOURCE_TYPE = 'owner_reminder';
 const DEFAULT_TEMPLATE_NAME = 'ra7etbal_routine_message';
 const DEFAULT_TEMPLATE_LANGUAGE = 'en_US';
 const DEFAULT_TIMEZONE = 'Europe/Istanbul';
+const OWNER_REMINDER_UNIQUE_INDEX = 'whatsapp_deliveries_owner_reminder_task_uidx';
 
 /**
  * Claims and sends the WhatsApp channel for one existing reminder task.
@@ -173,7 +174,7 @@ export async function claimOwnerReminderDelivery({
     method: 'POST',
     headers: {
       ...serviceHeaders(serviceRoleKey),
-      Prefer: 'resolution=ignore-duplicates,return=representation',
+      Prefer: 'return=representation',
     },
     body: JSON.stringify({
       user_id: task.user_id,
@@ -188,12 +189,15 @@ export async function claimOwnerReminderDelivery({
       },
     }),
   });
-  if (!response.ok) {
-    throw new Error(`Could not claim owner reminder WhatsApp delivery (${response.status}).`);
+  const result = await response.json().catch(() => null);
+  if (response.ok) {
+    if (!Array.isArray(result) || result.length !== 1) {
+      throw new Error('Owner reminder WhatsApp claim insert returned no delivery row.');
+    }
+    return { claimed: true, deliveryId: result[0].id, status: result[0].delivery_status };
   }
-  const inserted = await response.json().catch(() => []);
-  if (Array.isArray(inserted) && inserted.length === 1) {
-    return { claimed: true, deliveryId: inserted[0].id, status: inserted[0].delivery_status };
+  if (!isOwnerReminderDuplicateClaim(response, result)) {
+    throw new Error(`Could not claim owner reminder WhatsApp delivery (${response.status}).`);
   }
 
   const existingResponse = await fetchImpl(
@@ -204,12 +208,28 @@ export async function claimOwnerReminderDelivery({
       '&select=id,delivery_status&limit=1',
     { headers: serviceHeaders(serviceRoleKey) },
   );
+  if (!existingResponse.ok) {
+    throw new Error(
+      `Could not load the existing owner reminder WhatsApp delivery (${existingResponse.status}).`,
+    );
+  }
   const existing = await existingResponse.json().catch(() => []);
+  if (!Array.isArray(existing) || existing.length !== 1) {
+    throw new Error('Duplicate owner reminder claim has no matching delivery row.');
+  }
   return {
     claimed: false,
-    deliveryId: Array.isArray(existing) ? existing[0]?.id || null : null,
-    status: Array.isArray(existing) ? existing[0]?.delivery_status || null : null,
+    deliveryId: existing[0].id,
+    status: existing[0].delivery_status,
   };
+}
+
+function isOwnerReminderDuplicateClaim(response, body) {
+  if (response.status !== 409 || body?.code !== '23505') return false;
+  const databaseMessage = [body?.message, body?.details, body?.hint]
+    .filter(Boolean)
+    .join(' ');
+  return databaseMessage.includes(OWNER_REMINDER_UNIQUE_INDEX);
 }
 
 export async function loadOwnerReminderContext({

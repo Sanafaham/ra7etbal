@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  claimOwnerReminderDelivery,
   deliverOwnerReminderWhatsapp,
   formatOwnerReminderMessage,
 } from './_owner-reminder-whatsapp.js';
@@ -49,6 +50,10 @@ describe('owner reminder WhatsApp delivery', () => {
       deliveryId: 'delivery-1',
     }));
     expect(state.metaPayloads).toHaveLength(1);
+    expect(state.claimHeaders).toEqual(expect.objectContaining({
+      Prefer: 'return=representation',
+    }));
+    expect(state.claimHeaders.Prefer).not.toContain('resolution=ignore-duplicates');
     expect(state.metaPayloads[0]).toEqual(buildRoutineMessagePayload({
       to: '905010589614',
       message: 'Reminder: Check the electricity bill. Due Tuesday at 7:03 PM.',
@@ -63,6 +68,36 @@ describe('owner reminder WhatsApp delivery', () => {
     expect(state.deliveryPatches.flatMap(Object.keys)).not.toContain('delivered_at');
     expect(state.deliveryPatches.flatMap(Object.keys)).not.toContain('read_at');
     expect(state.taskPatches).toHaveLength(0);
+  });
+
+  it('maps only the exact partial-index duplicate response to claimed:false', async () => {
+    const state = createDeliveryState({ claimed: true });
+    const fetchMock = createFetch(state);
+
+    const result = await claimOwnerReminderDelivery(claimConfig(fetchMock));
+
+    expect(result).toEqual({
+      claimed: false,
+      deliveryId: 'delivery-1',
+      status: 'pending',
+    });
+    expect(state.metaPayloads).toHaveLength(0);
+  });
+
+  it.each([
+    [400, { code: '23514', message: 'check constraint failed' }],
+    [409, {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "whatsapp_deliveries_pkey"',
+    }],
+    [500, { code: 'XX000', message: 'database unavailable' }],
+  ])('does not disguise an unrelated database %s as a duplicate claim', async (status, body) => {
+    const state = createDeliveryState({ claimError: { status, body } });
+    const fetchMock = createFetch(state);
+
+    await expect(claimOwnerReminderDelivery(claimConfig(fetchMock)))
+      .rejects.toThrow(`Could not claim owner reminder WhatsApp delivery (${status}).`);
+    expect(state.metaPayloads).toHaveLength(0);
   });
 
   it('records a synchronous Meta rejection without changing push truth fields', async () => {
@@ -159,9 +194,19 @@ function config(fetchImpl, task = TASK) {
   };
 }
 
+function claimConfig(fetchImpl) {
+  return {
+    ...config(fetchImpl),
+    templateName: 'ra7etbal_routine_message',
+    templateLanguage: 'en_US',
+  };
+}
+
 function createDeliveryState(overrides = {}) {
   return {
-    claimed: false,
+    claimed: overrides.claimed ?? false,
+    claimError: overrides.claimError ?? null,
+    claimHeaders: null,
     deliveryStatus: 'pending',
     metaStatus: overrides.metaStatus ?? 200,
     people: overrides.people ?? [
@@ -179,7 +224,15 @@ function createFetch(state) {
   return vi.fn(async (url, options = {}) => {
     const value = String(url);
     if (value.endsWith('/rest/v1/whatsapp_deliveries') && options.method === 'POST') {
-      if (state.claimed) return jsonResponse([]);
+      state.claimHeaders = options.headers;
+      if (state.claimError) return jsonResponse(state.claimError.body, state.claimError.status);
+      if (state.claimed) return jsonResponse({
+        code: '23505',
+        details: `Key (task_id)=(${TASK.id}) already exists.`,
+        hint: null,
+        message: 'duplicate key value violates unique constraint ' +
+          '"whatsapp_deliveries_owner_reminder_task_uidx"',
+      }, 409);
       state.claimed = true;
       return jsonResponse([{ id: 'delivery-1', delivery_status: 'pending' }], 201);
     }
