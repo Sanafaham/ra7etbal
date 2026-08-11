@@ -110,4 +110,35 @@ describe("SettingsModal — notification devices management (Orphan Resolution)"
     expect(SOURCE).toContain("Disable notifications");
     expect(SOURCE).toContain('onClick={() => void handleDisable()}');
   });
+
+  it("uses the read-only getStoredInstallationId, never the mint-on-read getOrCreateInstallationId, to determine the current device", () => {
+    const panelBlock = blockBetween(
+      "function NotificationDevicesPanel(",
+      "function formatDeviceDate(",
+    );
+    expect(panelBlock).toContain("getStoredInstallationId()");
+    // getOrCreateInstallationId is the internal, unexported save-path
+    // helper that mints and persists a fresh id when none exists — it must
+    // never be reachable from a read-only "which device is this" panel,
+    // since opening Settings must not have the side effect of creating a
+    // new installation identity.
+    expect(panelBlock).not.toContain("getOrCreateInstallationId");
+  });
+
+  it("renders the 'This device' badge only via isCurrentDeviceRow, not an inline platform/user-agent heuristic", () => {
+    const panelBlock = blockBetween(
+      "function NotificationDevicesPanel(",
+      "function formatDeviceDate(",
+    );
+    expect(panelBlock).toContain("isCurrentDeviceRow(device, currentInstallationId)");
+    expect(panelBlock).toContain("This device");
+    // Must not infer device identity from platform/user-agent text alone.
+    expect(panelBlock).not.toMatch(/device\.platform\s*===/);
+    expect(panelBlock).not.toMatch(/device\.userAgent\s*===/);
+  });
+
+  it("imports getStoredInstallationId and isCurrentDeviceRow from push-notifications", () => {
+    expect(SOURCE).toContain("getStoredInstallationId");
+    expect(SOURCE).toContain("isCurrentDeviceRow");
+  });
 });

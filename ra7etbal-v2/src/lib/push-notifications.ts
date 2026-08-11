@@ -59,6 +59,24 @@ function getOrCreateInstallationId(): string | null {
   }
 }
 
+/**
+ * Read-only counterpart to getOrCreateInstallationId() — for "which listed
+ * device am I looking at right now" UI (Notification devices panel's "This
+ * device" badge). Never mints or persists a new id: a badge check must not
+ * have the side effect of creating a fresh, never-saved installation id for
+ * a device that has none yet (e.g. it predates the installation_id
+ * migration and has never re-saved since). Returns null in that case —
+ * callers must never render a badge on any row when this returns null.
+ */
+export function getStoredInstallationId(): string | null {
+  try {
+    const existing = window.localStorage.getItem(INSTALLATION_ID_STORAGE_KEY);
+    return existing && UUID_PATTERN.test(existing) ? existing : null;
+  } catch {
+    return null;
+  }
+}
+
 export function checkPushSupport(): PushSupportResult {
   const flags = getPushSupportFlags();
 
@@ -178,6 +196,25 @@ export interface PushSubscriptionDeviceInfo {
    *  a reminder/notification sent to it yet. Callers must not present
    *  "no evidence" as "inactive" or "dead". */
   lastConfirmedDeliveredAt: string | null;
+}
+
+/**
+ * Pure predicate behind the Notification devices panel's "This device"
+ * badge. Extracted as a standalone, hook-free function (rather than an
+ * inline JSX expression) so the actual matching logic is unit-testable
+ * without a DOM/testing-library dependency — this project doesn't have one.
+ *
+ * currentInstallationId === null (no id stored for this browser yet, e.g.
+ * this device's subscription predates the installation_id migration and
+ * has never re-saved since) must never match any row, including another
+ * row whose installationId also happens to be null — two different rows
+ * both lacking an id are not evidence they're the same device.
+ */
+export function isCurrentDeviceRow(
+  device: Pick<PushSubscriptionDeviceInfo, "installationId">,
+  currentInstallationId: string | null,
+): boolean {
+  return currentInstallationId !== null && device.installationId === currentInstallationId;
 }
 
 /**
