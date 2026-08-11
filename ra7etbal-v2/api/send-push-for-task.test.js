@@ -180,6 +180,26 @@ describe('send-push-for-task reminder delivery', () => {
     }));
   });
 
+  it('does not create a historical inbox row for an already-sent retry', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      if (String(url).includes('/rest/v1/tasks?select=')) return jsonResponse([{
+        id: 'task-1', user_id: 'user-1', description: 'Call Loulya',
+        status: 'pending', type: 'reminder', due_at: '2026-06-26T18:49:00.000Z',
+        last_push_sent_at: '2026-06-26T18:49:02.000Z', archived_at: null,
+        reminder_delivery_status: 'delivery_unconfirmed',
+      }]);
+      throw new Error(`Unexpected fetch: ${url}`);
+    }));
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(mocks.deliverOwnerReminderWhatsapp).toHaveBeenCalledTimes(1);
+    expect(mocks.getOrCreateOwnerNotification).not.toHaveBeenCalled();
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ reason: 'Push already sent.' }));
+  });
+
   it('keeps push truthful when owner WhatsApp fails synchronously', async () => {
     mocks.deliverOwnerReminderWhatsapp.mockResolvedValue({
       attempted: true,

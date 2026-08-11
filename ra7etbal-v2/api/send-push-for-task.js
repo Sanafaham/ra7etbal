@@ -100,12 +100,6 @@ export default async function handler(req, res) {
     task, supabaseUrl, serviceRoleKey,
   });
 
-  const { notification } = await getOrCreateOwnerNotification({
-    supabaseUrl,
-    serviceRoleKey,
-    ...buildDueReminderNotification(task),
-  });
-
   if (task.last_push_sent_at) {
     console.log(`[send-push-for-task] skipping — already sent at ${task.last_push_sent_at}`);
     return res.status(200).json({
@@ -113,6 +107,12 @@ export default async function handler(req, res) {
       sentAt: task.last_push_sent_at, whatsapp,
     });
   }
+
+  const { notification } = await getOrCreateOwnerNotification({
+    supabaseUrl,
+    serviceRoleKey,
+    ...buildDueReminderNotification(task),
+  });
 
   // ── 4. Load push subscriptions ──────────────────────────────────────────
   const subsRes = await fetch(

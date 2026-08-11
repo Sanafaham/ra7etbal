@@ -1,16 +1,18 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import AuthNotice from "../components/auth/AuthNotice";
 import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import { selectUnreadNotificationCount, useNotificationsStore } from "../stores/notifications";
 import type { OwnerNotification } from "../types/notification";
+import { markEveryOwnerNotificationRead, openOwnerNotification } from "../lib/notification-actions";
 
 export default function Notifications() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { status, items, error, loadFor, markRead, markAllRead } = useNotificationsStore();
   const unreadCount = useNotificationsStore(selectUnreadNotificationCount);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (user?.id) void loadFor(user.id);
@@ -18,9 +20,19 @@ export default function Notifications() {
 
   async function openNotification(item: OwnerNotification) {
     try {
-      await markRead(item.id);
-    } finally {
-      if (isSafeInternalRoute(item.target_url)) navigate(item.target_url!);
+      setActionError(null);
+      await openOwnerNotification(item, { markRead, navigate });
+    } catch (actionFailure) {
+      setActionError(actionFailure instanceof Error ? actionFailure.message : "Could not mark this notification read.");
+    }
+  }
+
+  async function markAll() {
+    try {
+      setActionError(null);
+      await markEveryOwnerNotificationRead(markAllRead);
+    } catch (actionFailure) {
+      setActionError(actionFailure instanceof Error ? actionFailure.message : "Could not mark notifications read.");
     }
   }
 
@@ -34,7 +46,7 @@ export default function Notifications() {
         {unreadCount > 0 && (
           <button
             type="button"
-            onClick={() => void markAllRead()}
+            onClick={() => void markAll()}
             className="shrink-0 rounded-full border border-sage/25 bg-white px-3 py-1.5 text-xs font-medium text-ink shadow-sm"
           >
             Mark all read
@@ -45,6 +57,12 @@ export default function Notifications() {
       {error && (
         <AuthNotice kind="error">
           {error} <button type="button" className="underline" onClick={() => user?.id && void loadFor(user.id, { force: true })}>Try again</button>
+        </AuthNotice>
+      )}
+
+      {actionError && (
+        <AuthNotice kind="error">
+          {actionError} <button type="button" className="underline" onClick={() => setActionError(null)}>Dismiss</button>
         </AuthNotice>
       )}
 
@@ -81,10 +99,6 @@ export default function Notifications() {
       </ul>
     </section>
   );
-}
-
-export function isSafeInternalRoute(value: string | null): boolean {
-  return Boolean(value && /^\/(notifications|updates|history|people)(?:$|[/?#])/.test(value));
 }
 
 function formatTimestamp(value: string): string {
