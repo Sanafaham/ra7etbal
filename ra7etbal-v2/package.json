@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "pretest:carson-protected": "TZ=UTC vitest run api/_inbound-staff-evidence.test.js api/staff-evidence-reclaim-migration.test.js api/owner-whatsapp-decision-message-quality.test.js api/owner-whatsapp-decision-production-path.test.js",
+    "pretest:carson-protected": "TZ=UTC vitest run api/_inbound-staff-evidence.test.js api/staff-evidence-reclaim-migration.test.js api/owner-whatsapp-decision-message-quality.test.js api/owner-whatsapp-decision-production-path.test.js api/owner-reminder-whatsapp-delivery.test.js api/owner-reminder-whatsapp-migration.test.js",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",

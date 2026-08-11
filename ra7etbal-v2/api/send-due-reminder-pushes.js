@@ -1,7 +1,10 @@
 import webpush from 'web-push';
 import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
+import { deliverOwnerReminderWhatsapp } from './_owner-reminder-whatsapp.js';
 
 const MAX_TASKS_PER_RUN = 50;
+export const SAFETY_NET_TASK_SELECT =
+  'id,user_id,description,due_at,type,status,last_push_sent_at,reminder_delivery_status';
 
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') {
@@ -99,10 +102,21 @@ export default async function handler(req, res) {
     let skipped = 0;
     let failed = 0;
     let markedSent = 0;
+    const whatsappStats = { attempted: 0, accepted: 0, failed: 0, skipped: 0 };
     const errors = [];
     const debugTasks = [];
 
     for (const task of tasks) {
+      const whatsapp = await attemptOwnerReminderWhatsapp({
+        task,
+        supabaseUrl: config.values.supabaseUrl,
+        serviceRoleKey: config.values.serviceRoleKey,
+      });
+      if (whatsapp.attempted) whatsappStats.attempted += 1;
+      if (whatsapp.status === 'accepted') whatsappStats.accepted += 1;
+      else if (whatsapp.status === 'failed') whatsappStats.failed += 1;
+      else whatsappStats.skipped += 1;
+
       const subscriptions = subscriptionsByUser.get(task.user_id) ?? [];
       if (subscriptions.length === 0) {
         skipped += 1;
@@ -114,6 +128,7 @@ export default async function handler(req, res) {
           status: task.status,
           last_push_sent_at: task.last_push_sent_at ?? null,
           subscriptionsFound: 0,
+          whatsapp,
           reason: 'skipped: no enabled push subscriptions found for user_id',
         });
         continue;
@@ -130,6 +145,7 @@ export default async function handler(req, res) {
           status: task.status,
           last_push_sent_at: task.last_push_sent_at ?? null,
           subscriptionsFound: subscriptions.length,
+          whatsapp,
           reason: 'skipped: already claimed or sent',
         });
         continue;
@@ -175,6 +191,7 @@ export default async function handler(req, res) {
         },
         markedSent: result.sent > 0 && markError === null,
         markError,
+        whatsapp,
         reason: result.sent > 0 ? 'sent' : 'send_failed',
       });
     }
@@ -191,6 +208,7 @@ export default async function handler(req, res) {
         pushFailureCount: failed,
         skipped,
         markedSent,
+        whatsapp: whatsappStats,
         errors,
         debug: debugTasks,
       });
@@ -203,6 +221,7 @@ export default async function handler(req, res) {
       skipped,
       failed,
       markedSent,
+      whatsapp: whatsappStats,
       debug: debugTasks,
     });
   } catch (error) {
@@ -225,6 +244,18 @@ export default async function handler(req, res) {
       error: 'Could not send due reminder pushes.',
       details: error instanceof Error ? error.message : 'Unexpected server error.',
     });
+  }
+}
+
+async function attemptOwnerReminderWhatsapp({ task, supabaseUrl, serviceRoleKey }) {
+  try {
+    return await deliverOwnerReminderWhatsapp({ task, supabaseUrl, serviceRoleKey });
+  } catch (error) {
+    console.error('[safety-net] owner WhatsApp reminder attempt failed', {
+      taskId: task.id,
+      error: getErrorMessage(error),
+    });
+    return { attempted: false, status: 'failed', reason: getErrorMessage(error) };
   }
 }
 
@@ -322,7 +353,7 @@ async function fetchDueReminderTasks(config, nowIso) {
 
   const url =
     `${config.supabaseUrl}/rest/v1/tasks` +
-    '?select=id,user_id,description,due_at,status,last_push_sent_at,reminder_delivery_status' +
+    `?select=${SAFETY_NET_TASK_SELECT}` +
     '&type=eq.reminder' +
     '&status=eq.pending' +
     '&archived_at=is.null' +

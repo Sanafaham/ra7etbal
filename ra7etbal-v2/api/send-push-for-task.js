@@ -19,6 +19,7 @@
 import webpush from 'web-push';
 import { Receiver } from '@upstash/qstash';
 import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
+import { deliverOwnerReminderWhatsapp } from './_owner-reminder-whatsapp.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -89,9 +90,21 @@ export default async function handler(req, res) {
     console.log(`[send-push-for-task] skipping — task is archived`);
     return res.status(200).json({ success: false, skipped: true, reason: 'Task is archived.' });
   }
+
+  // The WhatsApp channel has its own durable claim and lifecycle. Attempt it
+  // independently of push availability/outcome; retries and the safety net may
+  // call this again, but the owner_reminder partial unique index allows only
+  // one intended Meta send for this canonical reminder task.
+  const whatsapp = await attemptOwnerReminderWhatsapp({
+    task, supabaseUrl, serviceRoleKey,
+  });
+
   if (task.last_push_sent_at) {
     console.log(`[send-push-for-task] skipping — already sent at ${task.last_push_sent_at}`);
-    return res.status(200).json({ success: false, skipped: true, reason: 'Push already sent.', sentAt: task.last_push_sent_at });
+    return res.status(200).json({
+      success: false, skipped: true, reason: 'Push already sent.',
+      sentAt: task.last_push_sent_at, whatsapp,
+    });
   }
 
   // ── 4. Load push subscriptions ──────────────────────────────────────────
@@ -108,7 +121,9 @@ export default async function handler(req, res) {
   console.log(`[send-push-for-task] userId=${task.user_id} subscriptions found=${Array.isArray(subscriptions) ? subscriptions.length : 0}`);
   if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
     console.log(`[send-push-for-task] skipping — no enabled push subscriptions for userId=${task.user_id}`);
-    return res.status(200).json({ success: false, skipped: true, reason: 'No enabled push subscriptions.' });
+    return res.status(200).json({
+      success: false, skipped: true, reason: 'No enabled push subscriptions.', whatsapp,
+    });
   }
   if (uniqueSubscriptions.length !== subscriptions.length) {
     console.log(`[send-push-for-task] deduped subscriptions by endpoint — raw=${subscriptions.length} unique=${uniqueSubscriptions.length}`);
@@ -120,13 +135,15 @@ export default async function handler(req, res) {
   const vapidSubject = process.env.VAPID_SUBJECT;
 
   if (!vapidPublicKey || !vapidPrivateKey || !vapidSubject) {
-    return res.status(500).json({ success: false, error: 'VAPID keys not configured.' });
+    return res.status(500).json({ success: false, error: 'VAPID keys not configured.', whatsapp });
   }
 
   try {
     webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
   } catch (err) {
-    return res.status(500).json({ success: false, error: `VAPID init failed: ${getErrorMessage(err)}` });
+    return res.status(500).json({
+      success: false, error: `VAPID init failed: ${getErrorMessage(err)}`, whatsapp,
+    });
   }
 
   const sentAt = new Date().toISOString();
@@ -137,6 +154,7 @@ export default async function handler(req, res) {
       success: false,
       skipped: true,
       reason: 'Reminder push already claimed or sent.',
+      whatsapp,
     });
   }
 
@@ -255,7 +273,7 @@ export default async function handler(req, res) {
     if (retryable) {
       return res.status(500).json({
         success: false, taskId, sent, failed, markedSent: false,
-        markError: null, errors, debug: perSubscription,
+        markError: null, errors, debug: perSubscription, whatsapp,
       });
     }
   }
@@ -269,8 +287,21 @@ export default async function handler(req, res) {
     markedSent,
     markError,
     errors,
+    whatsapp,
     debug: perSubscription,
   });
+}
+
+async function attemptOwnerReminderWhatsapp({ task, supabaseUrl, serviceRoleKey }) {
+  try {
+    return await deliverOwnerReminderWhatsapp({ task, supabaseUrl, serviceRoleKey });
+  } catch (error) {
+    console.error('[send-push-for-task] owner WhatsApp reminder attempt failed', {
+      taskId: task.id,
+      error: getErrorMessage(error),
+    });
+    return { attempted: false, status: 'failed', reason: getErrorMessage(error) };
+  }
 }
 
 async function removeExpiredSubscription(supabaseUrl, serviceRoleKey, subId) {

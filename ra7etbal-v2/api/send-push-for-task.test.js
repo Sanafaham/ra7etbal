@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   sendNotification: vi.fn(),
   verify: vi.fn(),
+  deliverOwnerReminderWhatsapp: vi.fn(),
 }));
 
 vi.mock('web-push', () => ({
@@ -18,6 +19,10 @@ vi.mock('@upstash/qstash', () => ({
   })),
 }));
 
+vi.mock('./_owner-reminder-whatsapp.js', () => ({
+  deliverOwnerReminderWhatsapp: mocks.deliverOwnerReminderWhatsapp,
+}));
+
 import handler, { dedupeSubscriptionsByEndpoint } from './send-push-for-task.js';
 
 beforeEach(() => {
@@ -31,6 +36,11 @@ beforeEach(() => {
   vi.stubEnv('CRON_SECRET', 'receipt-secret');
   mocks.verify.mockResolvedValue(true);
   mocks.sendNotification.mockResolvedValue({});
+  mocks.deliverOwnerReminderWhatsapp.mockResolvedValue({
+    attempted: true,
+    status: 'accepted',
+    deliveryId: 'owner-reminder-delivery-1',
+  });
 });
 
 afterEach(() => {
@@ -105,6 +115,7 @@ describe('send-push-for-task reminder delivery', () => {
       }),
     );
     expect(mocks.sendNotification).toHaveBeenCalledTimes(2);
+    expect(mocks.deliverOwnerReminderWhatsapp).toHaveBeenCalledTimes(1);
 
     expect(patches[0]).toEqual({
       reminder_delivery_status: 'dispatch_attempted',
@@ -126,7 +137,67 @@ describe('send-push-for-task reminder delivery', () => {
       token: expect.any(String),
     }));
   });
+
+  it('keeps push truthful when owner WhatsApp fails synchronously', async () => {
+    mocks.deliverOwnerReminderWhatsapp.mockResolvedValue({
+      attempted: true,
+      status: 'failed',
+      deliveryId: 'owner-reminder-delivery-1',
+      reason: 'Meta rejected owner reminder.',
+    });
+    vi.stubGlobal('fetch', successfulReminderFetch());
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      sent: 1,
+      markedSent: true,
+      whatsapp: expect.objectContaining({ status: 'failed' }),
+    }));
+  });
+
+  it('preserves accepted WhatsApp evidence when push fails', async () => {
+    const pushError = new Error('Push provider unavailable');
+    pushError.statusCode = 503;
+    mocks.sendNotification.mockRejectedValue(pushError);
+    vi.stubGlobal('fetch', successfulReminderFetch());
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: false,
+      sent: 0,
+      failed: 1,
+      whatsapp: expect.objectContaining({ status: 'accepted' }),
+    }));
+  });
 });
+
+function successfulReminderFetch() {
+  return vi.fn(async (url, options = {}) => {
+    const value = String(url);
+    if (value.includes('/rest/v1/tasks?select=')) return jsonResponse([{
+      id: 'task-1', user_id: 'user-1', description: 'Call Loulya',
+      status: 'pending', type: 'reminder', due_at: '2026-06-26T18:49:00.000Z',
+      last_push_sent_at: null, archived_at: null, reminder_delivery_status: 'scheduled',
+    }]);
+    if (value.includes('/rest/v1/push_subscriptions')) return jsonResponse([
+      subscription('sub-1', 'https://push.example/a'),
+    ]);
+    if (value.includes('/rest/v1/reminder_delivery_events')) return emptyResponse();
+    if (value.includes('/rest/v1/tasks') && options.method === 'PATCH') {
+      return options.headers.Prefer === 'return=representation'
+        ? jsonResponse([{ id: 'task-1' }])
+        : emptyResponse();
+    }
+    throw new Error(`Unexpected fetch: ${value}`);
+  });
+}
 
 function createReq(body) {
   return {

@@ -7,6 +7,7 @@ const ALLOWED_SOURCE_TYPES = new Set([
   'automation_delegation',
   'automation_message',
   'image',
+  'owner_reminder',
 ]);
 
 /**

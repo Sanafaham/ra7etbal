@@ -22,12 +22,15 @@ const CRITICAL_FILES = [
   'qstash-reminder.js',
   'send-push-for-task.js',
   'send-due-reminder-pushes.js',
+  '_owner-reminder-whatsapp.js',
   '_reminder-delivery.js',
   '../public/sw.js',
   '../src/lib/push-notifications.ts',
   '../supabase/migrations/20260727_owner_whatsapp_reply_receipts.sql',
   '../supabase/migrations/20260728_owner_whatsapp_safe_routing_slice_1.sql',
   '../supabase/migrations/20260730_reminder_delivery_observability.sql',
+  '../supabase/migrations/20260811_owner_reminder_whatsapp_delivery.sql',
+  '../supabase/migrations/verification/owner_reminder_whatsapp_claim_verification.sql',
 ];
 
 describe('golden owner WhatsApp reminder contract', () => {
@@ -144,15 +147,26 @@ describe('golden owner WhatsApp reminder contract', () => {
     expect(migration).toContain('revoke insert, update, delete');
     expect(migration).toContain("'delivery_unconfirmed'");
     expect(migration).toContain("'notification_clicked'");
+
+    const ownerReminderMigration =
+      sources['../supabase/migrations/20260811_owner_reminder_whatsapp_delivery.sql'];
+    expect(ownerReminderMigration).toContain("'owner_reminder'");
+    expect(ownerReminderMigration).toContain('CREATE UNIQUE INDEX IF NOT EXISTS');
+    expect(ownerReminderMigration).toContain('WHERE source_type = \'owner_reminder\'');
   });
 
   it('keeps the focused contract and direct dependencies in the always-on Carson gate', async () => {
     const packageJson = JSON.parse(
       await readFile(new URL('../package.json', import.meta.url), 'utf8'),
     );
-    const protectedScript = packageJson.scripts['test:carson-protected'];
+    const protectedScript = [
+      packageJson.scripts['pretest:carson-protected'],
+      packageJson.scripts['test:carson-protected'],
+    ].join(' ');
     for (const focusedTest of [
       'api/owner-whatsapp-reminder-golden-contract.test.js',
+      'api/owner-reminder-whatsapp-delivery.test.js',
+      'api/owner-reminder-whatsapp-migration.test.js',
       'api/_owner-command-executor.execution.test.js',
       'api/_owner-command-executor.test.js',
       'api/_owner-whatsapp-routing.test.js',

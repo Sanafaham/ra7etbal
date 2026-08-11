@@ -1,0 +1,50 @@
+name: owner-reminder-whatsapp-claim-verification
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - "ra7etbal-v2/supabase/migrations/20260811_owner_reminder_whatsapp_delivery.sql"
+      - "ra7etbal-v2/supabase/migrations/verification/owner_reminder_whatsapp_*.sql"
+      - ".github/workflows/owner-reminder-whatsapp-claim-verification.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: owner-reminder-whatsapp-claim-verification
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ci_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ci_verify
+      MIGRATIONS: ra7etbal-v2/supabase/migrations
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Wait for PostgreSQL
+        run: pg_isready
+      - name: Bootstrap minimal WhatsApp delivery schema
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/owner_reminder_whatsapp_bootstrap.sql"
+      - name: Apply owner reminder migration
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260811_owner_reminder_whatsapp_delivery.sql"
+      - name: Verify partial unique claim lifecycle
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/owner_reminder_whatsapp_claim_verification.sql"
