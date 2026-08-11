@@ -28,6 +28,7 @@ This directory stores **patches only**: the specific, minimal additions needed w
 | 2026-08-03 | [2026-08-03-commitment-history.md](2026-08-03-commitment-history.md) | `get_commitment_history` — full evidence-based history of one commitment (Historical Lookup Phase 1, Q4) | **Applied and production-verified 2026-08-04** — see `RA7ETBAL_STATE.md` |
 | 2026-08-04 | [2026-08-04-person-history.md](2026-08-04-person-history.md) | `get_person_history` — a person's overall commitment history, outcome counts + recent items (Historical Lookup Phase 2) | **Applied and production-verified 2026-08-10** — see `RA7ETBAL_STATE.md` (corrected here — this row previously said "PENDING", which was stale) |
 | 2026-08-11 | [2026-08-11-communication-history.md](2026-08-11-communication-history.md) | `get_communication_history` — chronological communication timeline for a person, read-only, not immutable (Workstream 4, Phase 1) | **PENDING** — code merged; tool not yet registered on the live agent, prompt not yet pasted |
+| 2026-08-11 | [2026-08-11-communication-history-actor-attribution.md](2026-08-11-communication-history-actor-attribution.md) | Additive guidance for `get_communication_history`'s answers: preserve historical tense, actor attribution (person/Carson/owner), and date attribution; reframe stored third-person audience wording for the current listener | **PENDING** — awaiting live re-test of "What has Christopher told us?" |
 
 ## Historical patches
 
