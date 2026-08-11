@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import AuthNotice from "../auth/AuthNotice";
 import Spinner from "../Spinner";
@@ -11,6 +11,8 @@ import {
   checkPushSupport,
   disableReminderNotifications,
   enableReminderNotifications,
+  getStoredInstallationId,
+  isCurrentDeviceRow,
   isSubscriptionSavedForUser,
   listPushSubscriptionDevices,
   refreshPushSubscription,
@@ -1057,6 +1059,10 @@ function NotificationDevicesPanel({
   const [error, setError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
+  // Read-only — never mints a fresh id just for viewing this panel. A row
+  // is only ever badged "This device" when this is non-null AND matches
+  // that row's own installation_id exactly.
+  const currentInstallationId = useMemo(() => getStoredInstallationId(), []);
 
   async function load() {
     if (!userId) return;
@@ -1128,14 +1134,21 @@ function NotificationDevicesPanel({
 
       {status === "ready" && devices.length > 0 && (
         <ul className="space-y-2">
-          {devices.map((device) => (
+          {devices.map((device) => {
+            const isThisDevice = isCurrentDeviceRow(device, currentInstallationId);
+            return (
             <li
               key={device.id}
               className="flex items-start justify-between gap-3 rounded-xl border border-border bg-white px-4 py-3"
             >
               <div className="min-w-0">
-                <span className="block text-sm font-medium text-ink">
+                <span className="flex items-center gap-1.5 text-sm font-medium text-ink">
                   {device.platform || "Unknown device"}
+                  {isThisDevice && (
+                    <span className="shrink-0 rounded-full bg-sage/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sage">
+                      This device
+                    </span>
+                  )}
                 </span>
                 <span className="mt-0.5 block truncate text-[11px] text-ink/50">
                   {device.userAgent || "No device details available"}
@@ -1156,7 +1169,8 @@ function NotificationDevicesPanel({
                 {removingId === device.id ? "Removing…" : "Remove"}
               </button>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>
