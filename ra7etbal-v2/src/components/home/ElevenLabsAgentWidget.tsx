@@ -48,6 +48,7 @@ import {
 import { filterCalendarEventsByRange, searchCalendarHistory } from "../../lib/calendar";
 import { fetchTaskDeliveryStatus, fetchOperationsSummary } from "../../lib/carson-operations-center";
 import { lookupCommitmentHistory, lookupPersonHistory } from "../../lib/carson-commitment-history";
+import { lookupCommunicationHistory } from "../../lib/carson-communication-history";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
 import { callCalendarApi } from "../../lib/calendar-actions";
 import { sanitizeForCarsonSpeech } from "../../lib/speech-sanitize";
@@ -5969,6 +5970,18 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("get_person_history", params, () =>
               lookupPersonHistory(params?.person_name ?? ""),
+            );
+          },
+          // Workstream 4, Phase 1 — Unified Communication History. Read-only,
+          // not immutable (see carson-communication-history.ts's own header).
+          // Distinct question shape from get_person_history above: this
+          // answers "what was said/heard, in order" across every channel,
+          // not "how many commitments and what were the outcomes."
+          get_communication_history: (params: { person_name?: string }) => {
+            const captureBlock = guardCurrentToolInvocation("get_communication_history");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("get_communication_history", params, () =>
+              lookupCommunicationHistory(params?.person_name ?? ""),
             );
           },
           create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
