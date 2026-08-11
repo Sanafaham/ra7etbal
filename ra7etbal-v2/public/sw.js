@@ -18,6 +18,19 @@ function reportDelivery(receipt, stage, detail) {
     })
   }).catch(function () {});
 }
+
+function safeInternalRoute(value) {
+  if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) {
+    return "/notifications";
+  }
+  try {
+    var resolved = new URL(value, self.location.origin);
+    if (resolved.origin !== self.location.origin) return "/notifications";
+    return resolved.pathname + resolved.search + resolved.hash;
+  } catch (_error) {
+    return "/notifications";
+  }
+}
 self.addEventListener("install", function (event) {
   event.waitUntil(self.skipWaiting());
 });
@@ -28,6 +41,7 @@ self.addEventListener("activate", function (event) {
 
 self.addEventListener("notificationclick", function (event) {
   var receipt = event.notification.data && event.notification.data.receipt;
+  var targetUrl = safeInternalRoute(event.notification.data && event.notification.data.url);
   event.notification.close();
   event.waitUntil(
     reportDelivery(receipt, "notification_clicked").then(function () {
@@ -36,11 +50,16 @@ self.addEventListener("notificationclick", function (event) {
       for (var i = 0; i < clientList.length; i++) {
         var client = clientList[i];
         if (client.url && "focus" in client) {
+          if ("navigate" in client) {
+            return client.navigate(targetUrl).then(function (navigatedClient) {
+              return (navigatedClient || client).focus();
+            });
+          }
           return client.focus();
         }
       }
       if (self.clients.openWindow) {
-        return self.clients.openWindow("/");
+        return self.clients.openWindow(targetUrl);
       }
     })
   );
@@ -99,7 +118,11 @@ self.addEventListener("push", function (event) {
         body: payload.body || "A reminder is due now.",
         icon: "/icons/ra7etbal-icon-192.png",
         badge: "/icons/ra7etbal-icon-180.png",
-        data: { receipt: receipt }
+        data: {
+          receipt: receipt,
+          notificationId: payload.notificationId,
+          url: safeInternalRoute(payload.url)
+        }
       });
     })
     .then(function () { return reportDelivery(receipt, "show_notification_resolved"); })

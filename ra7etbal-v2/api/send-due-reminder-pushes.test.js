@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   sendNotification: vi.fn(),
   deliverOwnerReminderWhatsapp: vi.fn(),
+  getOrCreateOwnerNotification: vi.fn(),
 }));
 
 vi.mock('web-push', () => ({
@@ -14,6 +15,11 @@ vi.mock('web-push', () => ({
 
 vi.mock('./_owner-reminder-whatsapp.js', () => ({
   deliverOwnerReminderWhatsapp: mocks.deliverOwnerReminderWhatsapp,
+}));
+
+vi.mock('./_owner-notifications.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  getOrCreateOwnerNotification: mocks.getOrCreateOwnerNotification,
 }));
 
 import {
@@ -96,6 +102,13 @@ describe('send-due-reminder-pushes authorization diagnostics', () => {
       status: 'accepted',
       deliveryId: 'delivery-1',
     });
+    mocks.getOrCreateOwnerNotification.mockResolvedValue({
+      created: false,
+      notification: {
+        id: 'notification-1', title: 'Ra7etBal', body: 'Check the bill',
+        target_url: '/updates?tab=todo',
+      },
+    });
 
     const fetchMock = vi.fn(async (url, options = {}) => {
       const value = String(url);
@@ -129,6 +142,13 @@ describe('send-due-reminder-pushes authorization diagnostics', () => {
       task: expect.objectContaining({ type: 'reminder' }),
     }));
     expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.getOrCreateOwnerNotification).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(mocks.sendNotification.mock.calls[0][1])).toEqual(expect.objectContaining({
+      title: 'Ra7etBal',
+      body: 'Check the bill',
+      notificationId: 'notification-1',
+      url: '/updates?tab=todo',
+    }));
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       pushSuccessCount: 1,
       markedSent: 1,

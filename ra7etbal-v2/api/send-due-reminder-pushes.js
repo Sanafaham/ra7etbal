@@ -1,6 +1,7 @@
 import webpush from 'web-push';
 import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
 import { deliverOwnerReminderWhatsapp } from './_owner-reminder-whatsapp.js';
+import { buildDueReminderNotification, getOrCreateOwnerNotification } from './_owner-notifications.js';
 
 const MAX_TASKS_PER_RUN = 50;
 export const SAFETY_NET_TASK_SELECT =
@@ -117,6 +118,12 @@ export default async function handler(req, res) {
       else if (whatsapp.status === 'failed') whatsappStats.failed += 1;
       else whatsappStats.skipped += 1;
 
+      const { notification } = await getOrCreateOwnerNotification({
+        supabaseUrl: config.values.supabaseUrl,
+        serviceRoleKey: config.values.serviceRoleKey,
+        ...buildDueReminderNotification(task),
+      });
+
       const subscriptions = subscriptionsByUser.get(task.user_id) ?? [];
       if (subscriptions.length === 0) {
         skipped += 1;
@@ -154,7 +161,7 @@ export default async function handler(req, res) {
       const overdueMs = new Date(runStartedAt).getTime() - new Date(task.due_at).getTime();
       const overdueSec = Math.round(overdueMs / 1000);
       console.log(`[safety-net] sending overdue reminder push after 30s grace — taskId=${task.id} overdue=${overdueSec}s due_at=${task.due_at}`);
-      const result = await sendTaskReminder(task, subscriptions, config.values, runStartedAt);
+      const result = await sendTaskReminder(task, notification, subscriptions, config.values, runStartedAt);
       sent += result.sent;
       failed += result.failed;
       errors.push(...result.errors);
@@ -426,7 +433,7 @@ async function removeExpiredSubscription(config, subId) {
   }
 }
 
-async function sendTaskReminder(task, subscriptions, config, attemptAt) {
+async function sendTaskReminder(task, notification, subscriptions, config, attemptAt) {
   let sent = 0;
   let failed = 0;
   const errors = [];
@@ -438,8 +445,10 @@ async function sendTaskReminder(task, subscriptions, config, attemptAt) {
       taskId: task.id, userId: task.user_id, subscriptionId: row.id, dueAt: task.due_at,
     };
     const payload = JSON.stringify({
-      title: 'Ra7etBal reminder',
-      body: `${task.description} is due now.`,
+      title: notification.title,
+      body: notification.body,
+      notificationId: notification.id,
+      url: notification.target_url,
       receipt: {
         url: '/api/qstash-reminder',
         taskId: task.id,
