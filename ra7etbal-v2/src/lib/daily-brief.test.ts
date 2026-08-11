@@ -204,6 +204,14 @@ describe("daily-brief — Needs You is a decision queue, not an ownership queue"
     expect(brief.later.map((t) => t.id)).toContain(task.id);
   });
 
+  it("orders overdue unresolved reminders before current and future unresolved reminders", () => {
+    const overdue = makeTask({ id: "overdue", type: "reminder", assigned_to: null, due_at: "2026-07-07T09:00:00.000Z" });
+    const current = makeTask({ id: "current", type: "reminder", assigned_to: null, due_at: "2026-07-08T13:00:00.000Z" });
+    const future = makeTask({ id: "future", type: "reminder", assigned_to: null, due_at: "2026-07-20T09:00:00.000Z" });
+    const brief = buildDailyBrief([future, current, overdue], NOW);
+    expect(brief.later.map((task) => task.id)).toEqual(["overdue", "current", "future"]);
+  });
+
   it("a self-assigned decision still reaches Needs You — the one genuine self-owned path is preserved", () => {
     const task = makeTask({ type: "decision", assigned_to: null, description: "Decide on the school." });
     const brief = buildDailyBrief([task], NOW);

@@ -54,6 +54,27 @@ describe("Updates.tsx — Clear My Head Inbox tab removed", () => {
   });
 });
 
+describe("Updates.tsx — notification reminder destination and Pending clarity", () => {
+  it("labels the unresolved catch-all section Pending instead of Later", () => {
+    expect(SOURCE).toContain(">Pending</span>");
+    expect(SOURCE).not.toContain(">Later</span>");
+  });
+
+  it("opens Pending and scrolls to the exact task ID from a notification deep link", () => {
+    expect(SOURCE).toContain('const targetTaskId = searchParams.get("task");');
+    expect(SOURCE).toContain("pendingDetailsRef.current.open = true");
+    expect(SOURCE).toContain('scrollIntoView({ behavior: "smooth", block: "center" })');
+    expect(SOURCE).toContain("task.id !== targetTaskId");
+    expect(SOURCE).toContain("lastScrolledTaskIdRef.current === targetTaskId");
+  });
+
+  it("renders the targeted reminder through the existing TaskCard actions", () => {
+    expect(SOURCE).toMatch(/laterFiltered\.map\(\(task\) => \([\s\S]*?taskTargetProps\(task\)[\s\S]*?<TaskCard/);
+    expect(SOURCE).toContain("onToggleDone: handleToggleDone");
+    expect(SOURCE).toContain("onDelete: handleDelete");
+  });
+});
+
 /**
  * Mobile tab reachability fix (2026-07-10): the chip row's own auto-scroll
  * caused a self-inflicted pause loop. Setting scrollLeft in tick() fires a

@@ -41,6 +41,18 @@ describe("formatReminderCreatedTime", () => {
   });
 });
 
+describe("far-future reminder dates", () => {
+  it("shows the year when the due date is outside the current year", () => {
+    const now = new Date("2026-08-12T01:00:00");
+    expect(formatReminderDue("2099-01-01T03:00:00", now)).toBe("Jan 1, 2099 at 3:00 AM");
+  });
+
+  it("keeps the compact date for dates in the current year", () => {
+    const now = new Date("2026-08-12T01:00:00");
+    expect(formatReminderDue("2026-12-01T03:00:00", now)).toBe("Dec 1 at 3:00 AM");
+  });
+});
+
 // Protects the display/persistence boundary explicitly: reminder-time.ts is
 // pure display formatting over an already-stored value. It must never be
 // able to read or write reminder scheduling data itself — that would let a

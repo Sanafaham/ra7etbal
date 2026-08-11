@@ -491,7 +491,7 @@ export default function App() {
           <Link
             to="/notifications"
             aria-label={unreadNotifications > 0 ? `Notifications, ${unreadNotifications} unread` : "Notifications"}
-            className="absolute right-14 top-2 flex h-10 w-10 items-center justify-center rounded-xl text-ink transition hover:bg-ink/5 active:scale-95"
+            className="absolute right-14 top-2 flex h-10 items-center justify-center gap-1.5 rounded-xl px-2 text-ink transition hover:bg-ink/5 active:scale-95"
             style={{ top: "max(2px, env(safe-area-inset-top))" }}
           >
             <span className="relative">
@@ -505,6 +505,7 @@ export default function App() {
                 </span>
               )}
             </span>
+            <span className="text-xs font-semibold">Alerts</span>
           </Link>
         )}
         <button

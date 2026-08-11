@@ -32,6 +32,7 @@ describe("Notifications Inbox V1 UI wiring", () => {
 
   it("keeps the bell count independent from What's Happening attention", () => {
     expect(app).toContain("selectUnreadNotificationCount");
+    expect(app).toContain('>Alerts</span>');
     expect(bottomNav).toContain("brief.needsAttention.length + visible.length");
     expect(bottomNav).not.toContain("useNotificationsStore");
   });
