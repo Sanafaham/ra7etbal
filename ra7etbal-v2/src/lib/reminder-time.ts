@@ -26,7 +26,7 @@ export function formatReminderDue(value: string | null, now = new Date()): strin
     return `${formatWeekday(due)} at ${formatTime(due)}`;
   }
 
-  return `${formatDate(due)} at ${formatTime(due)}`;
+  return `${formatDate(due, now)} at ${formatTime(due)}`;
 }
 
 export function formatReminderDueTime(value: string | null, now = new Date()): string | null {
@@ -50,7 +50,7 @@ export function formatReminderDueTime(value: string | null, now = new Date()): s
     return `Due: ${formatWeekday(due)} at ${formatTime(due)}`;
   }
 
-  return `Due: ${formatDate(due)} at ${formatTime(due)}`;
+  return `Due: ${formatDate(due, now)} at ${formatTime(due)}`;
 }
 
 export function formatReminderCreatedTime(value: string | null, now = new Date()): string | null {
@@ -62,7 +62,7 @@ export function formatReminderCreatedTime(value: string | null, now = new Date()
     return `Created today at ${formatTime(created)}`;
   }
 
-  return `Created ${formatDate(created)} at ${formatTime(created)}`;
+  return `Created ${formatDate(created, now)} at ${formatTime(created)}`;
 }
 
 export function isReminderOverdue(value: string | null, now = new Date()): boolean {
@@ -130,9 +130,10 @@ export function formatWeekday(date: Date): string {
   return date.toLocaleDateString(undefined, { weekday: "long" });
 }
 
-export function formatDate(date: Date): string {
+export function formatDate(date: Date, now = new Date()): string {
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
   });
 }

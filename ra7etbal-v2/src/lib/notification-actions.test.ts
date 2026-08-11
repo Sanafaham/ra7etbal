@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { markEveryOwnerNotificationRead, openOwnerNotification } from "./notification-actions";
+import { getOwnerNotificationRoute, markEveryOwnerNotificationRead, openOwnerNotification } from "./notification-actions";
 import type { OwnerNotification } from "../types/notification";
 
 describe("notification read actions", () => {
@@ -10,6 +10,18 @@ describe("notification read actions", () => {
       navigate: vi.fn(() => { order.push("navigate"); }),
     });
     expect(order).toEqual(["read", "navigate"]);
+  });
+
+  it("routes a reminder to its canonical task even when a legacy row stores the wrong To-do URL", () => {
+    expect(getOwnerNotificationRoute(notification())).toBe(
+      "/updates?tab=needs-you&task=task-1",
+    );
+  });
+
+  it("preserves validated internal destinations and rejects external URLs", () => {
+    const general = { ...notification(), kind: "general", target_type: null, target_id: null };
+    expect(getOwnerNotificationRoute({ ...general, target_url: "/notifications" })).toBe("/notifications");
+    expect(getOwnerNotificationRoute({ ...general, target_url: "https://attacker.example" })).toBeNull();
   });
 
   it("does not navigate when marking one read fails", async () => {

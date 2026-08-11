@@ -35,7 +35,7 @@ describe('owner notification canonical claim', () => {
     })).toEqual(expect.objectContaining({
       eventKey: 'reminder_due:task-1',
       userId: 'user-1',
-      targetUrl: '/updates?tab=todo',
+      targetUrl: '/updates?tab=needs-you&task=task-1',
     }));
   });
 });

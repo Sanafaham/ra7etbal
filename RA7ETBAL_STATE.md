@@ -14,6 +14,16 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 Public launch remains deliberately closed. Do not start another roadmap task until Sana explicitly decides to reopen registration. Reopening requires both Supabase Auth's server-side **Allow new users to sign up** setting and `VITE_PUBLIC_SIGNUP_ENABLED=true`; never enable only the frontend control.
 
+### Notifications Inbox V1 — PRODUCTION CORRECTION PENDING VERIFICATION
+
+PR #230 is merged and deployed at `20dd476cf17ccd1e3797b40f0234f8d27aae1b30`. The controlled production reminder `7a982c35-df7f-4e67-b635-cc73425867ff` proved one canonical `owner_notifications` row, one QStash callback, one push attempt batch, one owner-WhatsApp lifecycle, independent channel truth, retry/safety-net deduplication, and cross-owner RLS isolation. Sana confirmed the durable inbox item and unread badge in production.
+
+Production also exposed a V1 completeness defect: reminder notifications stored `/updates?tab=todo`, but that tab reads the separate `carson_todos` model, so the underlying reminder task and its existing Mark done/Delete actions were absent. The narrow correction routes reminder notifications to `/updates?tab=needs-you&task=<task-id>`, opens the existing Pending task section, and scrolls/highlights the exact canonical task. Legacy stored reminder notifications derive the same safe route from their kind and task ID, so no production data rewrite is required. The same UI pass renames Later to Pending, keeps the existing due-time ordering (overdue unresolved reminders first), labels the header bell Alerts, and displays the year for dates outside the current year. No notification, task, reminder, push, WhatsApp, auth, billing, or household schema/truth contract changes.
+
+The artificial parked task `56666716-ba02-4677-975c-78453b77865f` was verified to have no QStash ID, push attempt, reminder-delivery state, delivery event, notification row, WhatsApp delivery, or automation-run dependency, then deleted through an exact guarded production query on 2026-08-12. Immediate production verification returned zero rows for that ID.
+
+Do not mark Notifications Inbox V1 complete until the correction is merged/deployed and Sana proves that the existing controlled notification opens the exact reminder card with its existing actions, while database evidence still shows no duplicate inbox, push, or owner-WhatsApp lifecycle and reminder truth remains unchanged.
+
 ### Production launch control — CLOSED, PRODUCTION VERIFIED, PROTECTED
 
 Status: fixed and production verified on 2026-08-10.

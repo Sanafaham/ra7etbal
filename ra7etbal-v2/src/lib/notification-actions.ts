@@ -5,7 +5,15 @@ export async function openOwnerNotification(
   actions: { markRead: (id: string) => Promise<void>; navigate: (url: string) => void },
 ): Promise<void> {
   await actions.markRead(item.id);
-  if (isSafeNotificationRoute(item.target_url)) actions.navigate(item.target_url!);
+  const route = getOwnerNotificationRoute(item);
+  if (route) actions.navigate(route);
+}
+
+export function getOwnerNotificationRoute(item: OwnerNotification): string | null {
+  if (item.kind === "reminder_due" && item.target_type === "task" && item.target_id) {
+    return `/updates?tab=needs-you&task=${encodeURIComponent(item.target_id)}`;
+  }
+  return isSafeNotificationRoute(item.target_url) ? item.target_url : null;
 }
 
 export async function markEveryOwnerNotificationRead(

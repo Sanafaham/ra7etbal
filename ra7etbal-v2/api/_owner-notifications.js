@@ -69,7 +69,7 @@ export function buildDueReminderNotification(task) {
     occurredAt: task.due_at,
     targetType: 'task',
     targetId: task.id,
-    targetUrl: '/updates?tab=todo',
+    targetUrl: `/updates?tab=needs-you&task=${encodeURIComponent(task.id)}`,
     metadata: { task_type: 'reminder' },
   };
 }

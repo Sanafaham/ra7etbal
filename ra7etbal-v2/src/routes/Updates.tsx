@@ -43,6 +43,10 @@ export default function Updates() {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get("tab");
   const activeTab: Tab = isValidTab(rawTab) ? rawTab : "needs-you";
+  const targetTaskId = searchParams.get("task");
+  const targetTaskElementRef = useRef<HTMLLIElement>(null);
+  const pendingDetailsRef = useRef<HTMLDetailsElement>(null);
+  const lastScrolledTaskIdRef = useRef<string | null>(null);
 
   function setTab(tab: Tab) {
     setSearchParams({ tab }, { replace: true });
@@ -252,6 +256,31 @@ export default function Updates() {
     [brief.later, upcomingReminderIds],
   );
 
+  const targetIsPending = Boolean(
+    targetTaskId && laterFiltered.some((task) => task.id === targetTaskId),
+  );
+
+  useEffect(() => {
+    if (activeTab !== "needs-you" || !listReady || !targetTaskId) return;
+    if (lastScrolledTaskIdRef.current === targetTaskId) return;
+    if (!tasks.some((task) => task.id === targetTaskId)) return;
+    if (targetIsPending && pendingDetailsRef.current) pendingDetailsRef.current.open = true;
+    lastScrolledTaskIdRef.current = targetTaskId;
+
+    const frame = window.requestAnimationFrame(() => {
+      targetTaskElementRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, listReady, targetIsPending, targetTaskId, tasks]);
+
+  function taskTargetProps(task: Task) {
+    if (task.id !== targetTaskId) return {};
+    return {
+      ref: targetTaskElementRef,
+      className: "scroll-mt-24 rounded-2xl ring-2 ring-gold/55 ring-offset-2 ring-offset-cream",
+    };
+  }
+
   async function handleToggleDone(task: Task) {
     const action =
       task.status === "done"
@@ -377,7 +406,7 @@ export default function Updates() {
                 </li>
               ))}
               {brief.needsAttention.map((task) => (
-                <li key={task.id}>
+                <li key={task.id} {...taskTargetProps(task)}>
                   <TaskCard
                     task={task}
                     message={messageByTaskId.get(task.id) ?? null}
@@ -403,7 +432,7 @@ export default function Updates() {
               </div>
               <ul className="space-y-3">
                 {upcomingReminders.map((task) => (
-                  <li key={task.id}>
+                  <li key={task.id} {...taskTargetProps(task)}>
                     <TaskCard
                       task={task}
                       message={messageByTaskId.get(task.id) ?? null}
@@ -416,17 +445,17 @@ export default function Updates() {
             </div>
           )}
 
-          {/* Later — muted, hidden when empty */}
+          {/* Pending — unresolved tracked work, hidden when empty */}
           {laterFiltered.length > 0 && (
-            <details className="group">
+            <details ref={pendingDetailsRef} className="group">
               <summary className="flex cursor-pointer select-none list-none items-center gap-2 py-1 px-1">
-                <span className="text-xs font-medium uppercase tracking-wide text-ink/55">Later</span>
+                <span className="text-xs font-medium uppercase tracking-wide text-ink/55">Pending</span>
                 <span className="text-xs text-ink/55">{laterFiltered.length}</span>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-ink/40 transition-transform group-open:rotate-180" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
               </summary>
               <ul className="mt-2 space-y-3">
                 {laterFiltered.map((task) => (
-                  <li key={task.id}>
+                  <li key={task.id} {...taskTargetProps(task)}>
                     <TaskCard
                       task={task}
                       message={messageByTaskId.get(task.id) ?? null}
