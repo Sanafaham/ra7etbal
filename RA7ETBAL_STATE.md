@@ -76,6 +76,25 @@ Supabase project `ggarvhgqzpooloacjgcj`.
 
 ### Owner WhatsApp one-time reminder — production verified and protected
 
+#### Owner WhatsApp due-time delivery — PRE-MERGE, PRODUCTION VERIFICATION PENDING
+
+Status (2026-08-11): the isolated implementation is ready for review but is not
+yet merged, deployed, or capability-complete. It adds one `owner_reminder`
+WhatsApp delivery lifecycle to the existing canonical reminder task, guarded by
+a partial unique index on `whatsapp_deliveries.task_id`. Both the primary QStash
+callback and the safety net use the same atomic claim before any Meta request.
+
+The implementation reuses `buildRoutineMessagePayload` and the approved
+`ra7etbal_routine_message` template. It resolves exactly one Boss recipient
+inside the task's household, uses the owner's configured timezone with
+`Europe/Istanbul` fallback, and records Meta acceptance only as `accepted`.
+Push delivery fields and task completion truth are unchanged; staff reminder
+delivery and staff routing are untouched. Focused tests, typecheck, production
+build, and the full Carson protected suite pass. Do not mark this capability
+complete until a controlled Sana-only production reminder proves one push and
+one owner WhatsApp reminder with no duplicates. Final Master Plan/state
+closeout remains pending that production evidence.
+
 Status: production verified and permanently protected. Rollout remains Sana-only
 (`645ddb96-6e09-4d91-b650-cbc75bac9a5d`); staff WhatsApp routing is unchanged.
 
