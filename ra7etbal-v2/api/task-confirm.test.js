@@ -160,7 +160,34 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(patchBody.needs_follow_up).toBe(false);
     expect(patchBody.updated_at).toBe(patchBody.confirmed_at);
     // No proof photos submitted — no task_attachments writes at all.
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[3][0]).toContain('/rest/v1/automation_runs?task_id=eq.task-1&user_id=eq.user-1');
+    expect(fetchMock.mock.calls[3][1]?.method).toBeUndefined();
+  });
+
+  it('projects a winning canonical confirmation onto exactly the linked automation run with the same timestamp', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', confirmed_at: null, description: 'd', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', status: 'done' }]))
+      .mockResolvedValueOnce(emptyResponse())
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', task_id: 'task-1', user_id: 'user-1', current_state: 'sent', confirmed_at: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', current_state: 'confirmed' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', confirmedBy: 'Christopher' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
+    const taskPatch = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/tasks?id=eq.task-1&status=eq.pending'));
+    const runPatch = fetchMock.mock.calls.find(([url, init]) => String(url).includes('/rest/v1/automation_runs?') && init?.method === 'PATCH');
+    expect(runPatch[0]).toContain('task_id=eq.task-1&user_id=eq.user-1');
+    expect(JSON.parse(runPatch[1].body)).toEqual({
+      current_state: 'confirmed',
+      confirmed_at: JSON.parse(taskPatch[1].body).confirmed_at,
+    });
+    expect(fetchMock.mock.calls.findIndex(([url]) => String(url).includes('/rest/v1/confirmations')))
+      .toBeLessThan(fetchMock.mock.calls.indexOf(runPatch));
   });
 
   it('normalizes a nested full confirmation URL in POST taskId before marking the task done', async () => {
@@ -1403,7 +1430,10 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
         image_path: 'task-images/u/t/photo.jpg',
       }]))
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
-      .mockResolvedValueOnce(jsonResponse([])); // PATCH tasks -> duplicate lost the pending race
+      .mockResolvedValueOnce(jsonResponse([])) // PATCH tasks -> duplicate lost the pending race
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: '2026-08-12T01:40:00.123Z' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', task_id: 'task-1', user_id: 'user-1', current_state: 'sent' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', current_state: 'confirmed' }]));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -1415,6 +1445,11 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
     expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
+    const runPatch = fetchMock.mock.calls.find(([url, init]) => String(url).includes('/rest/v1/automation_runs?') && init?.method === 'PATCH');
+    expect(JSON.parse(runPatch[1].body)).toEqual({
+      current_state: 'confirmed',
+      confirmed_at: '2026-08-12T01:40:00.123Z',
+    });
   });
 
   it('stale invalid review cannot send a flagged owner notification after a corrected proof already completed the task', async () => {
@@ -1785,6 +1820,26 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     // Idempotent short-circuit — no attachment writes either.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('an already-confirmed task safely heals a stale linked run without repeating confirmation side effects', async () => {
+    const confirmedAt = '2026-08-12T01:40:00.123Z';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: confirmedAt, description: 'd', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', task_id: 'task-1', user_id: 'user-1', current_state: 'sent' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', current_state: 'confirmed', confirmed_at: confirmedAt }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ already_done: true }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
+    expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
+    const runPatch = fetchMock.mock.calls[2];
+    expect(JSON.parse(runPatch[1].body)).toEqual({ current_state: 'confirmed', confirmed_at: confirmedAt });
+  });
 });
 
 describe('Proof Photo V2 — task-confirm GET upload-slot signing', () => {
@@ -2139,7 +2194,7 @@ describe('Quality Intelligence safety lockdown — source-of-truth invariants', 
 
   it('POST loads quality review fields before deciding whether a fresh proof must clear stale state', () => {
     const postTaskSelectIdx = TASK_CONFIRM_SOURCE.indexOf(
-      '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,proof_image_path,quality_review_status,quality_review_note,quality_review_cycle_count',
+      '&select=id,user_id,status,confirmed_at,description,assigned_to,image_path,attachment_count,proof_image_path,quality_review_status,quality_review_note,quality_review_cycle_count',
     );
     const clearIdx = TASK_CONFIRM_SOURCE.indexOf('clearPreviousQualityReviewForFreshProof');
     const reviewIdx = TASK_CONFIRM_SOURCE.indexOf('review = await runQualityReview');

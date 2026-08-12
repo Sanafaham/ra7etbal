@@ -970,7 +970,8 @@ export async function updateWhatsappDeliveryStatus({
       try {
         await fetch(
           `${supabaseUrl}/rest/v1/automation_runs` +
-          `?id=eq.${encodeURIComponent(delivery.automation_run_id)}`,
+          `?id=eq.${encodeURIComponent(delivery.automation_run_id)}` +
+          `&current_state=in.(scheduled,task_created,sent,followup_sent,escalated,failed)`,
           {
             method: 'PATCH',
             headers: { ...serviceHeaders(serviceKey), Prefer: 'return=minimal' },
