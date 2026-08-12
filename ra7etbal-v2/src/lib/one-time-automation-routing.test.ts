@@ -49,6 +49,87 @@ describe("one-time automation routing", () => {
     ).toMatchObject({ kind: "blocked" });
   });
 
+  it("does not match Ann inside the unrelated word automation", () => {
+    expect(
+      routeExplicitOneTimeAutomation({
+        latestUserMessage: "Create an automation to send Unknown a task at 6:30 AM.",
+        reminder: { description: "Confirm X", time_text: "at 6:30 AM" },
+        knownPeopleNames: ["Ann"],
+      }),
+    ).toMatchObject({ kind: "blocked" });
+  });
+
+  it("does not match Ana inside a larger unrelated token", () => {
+    expect(
+      routeExplicitOneTimeAutomation({
+        latestUserMessage: "Create an automation to send Bananas a task at 6:30 AM.",
+        reminder: { description: "Confirm X", time_text: "at 6:30 AM" },
+        knownPeopleNames: ["Ana"],
+      }),
+    ).toMatchObject({ kind: "blocked" });
+  });
+
+  it("prefers the longest exact household name when mentions overlap", () => {
+    expect(
+      routeExplicitOneTimeAutomation({
+        latestUserMessage: "Create an automation to ask Ali Hassan to confirm at 6:30 AM.",
+        reminder: { description: "Confirm X", time_text: "at 6:30 AM" },
+        knownPeopleNames: ["Ali", "Ali Hassan"],
+      }),
+    ).toMatchObject({
+      kind: "automation",
+      params: { assignee_name: "Ali Hassan" },
+    });
+  });
+
+  it("resolves Christopher as a complete case-insensitive mention", () => {
+    expect(
+      routeExplicitOneTimeAutomation({
+        latestUserMessage: "Create an automation to ask cHrIsToPhEr to confirm at 6:30 AM.",
+        reminder: { description: "Confirm X", time_text: "at 6:30 AM" },
+        knownPeopleNames: [CHRISTOPHER],
+      }),
+    ).toMatchObject({
+      kind: "automation",
+      params: { assignee_name: CHRISTOPHER },
+    });
+  });
+
+  it("allows normal possessive punctuation after Grace", () => {
+    expect(
+      routeExplicitOneTimeAutomation({
+        latestUserMessage: "Create an automation to send Grace's task at 6:30 AM.",
+        reminder: { description: "Send the task", time_text: "at 6:30 AM" },
+        knownPeopleNames: [GRACE],
+      }),
+    ).toMatchObject({
+      kind: "automation",
+      params: { assignee_name: GRACE },
+    });
+  });
+
+  it("supports Unicode names, spaces, apostrophes, and hyphens as exact mentions", () => {
+    for (const name of ["نور الهدى", "D'Arcy", "Anne-Marie"]) {
+      expect(
+        routeExplicitOneTimeAutomation({
+          latestUserMessage: `Create an automation to ask ${name} to confirm at 6:30 AM.`,
+          reminder: { description: "Confirm X", time_text: "at 6:30 AM" },
+          knownPeopleNames: [name],
+        }),
+      ).toMatchObject({ kind: "automation", params: { assignee_name: name } });
+    }
+  });
+
+  it("fails closed for a misspelled recipient instead of using fuzzy matching", () => {
+    expect(
+      routeExplicitOneTimeAutomation({
+        latestUserMessage: "Create an automation to ask Christofer to confirm at 6:30 AM.",
+        reminder: { description: "Confirm X", time_text: "at 6:30 AM" },
+        knownPeopleNames: [CHRISTOPHER],
+      }),
+    ).toMatchObject({ kind: "blocked" });
+  });
+
   it("fails closed instead of creating a reminder when the automation run time is missing", () => {
     expect(
       routeExplicitOneTimeAutomation({

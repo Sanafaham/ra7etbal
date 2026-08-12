@@ -29,13 +29,26 @@ export function hasExplicitNonRecurringAutomationIntent(text: string | null | un
 }
 
 function findKnownRecipient(text: string, knownPeopleNames: string[]): string | null {
-  const lower = text.toLocaleLowerCase();
+  const normalizedText = text.normalize("NFKC");
   return (
     [...knownPeopleNames]
       .map((name) => name.trim())
       .filter(Boolean)
       .sort((a, b) => b.length - a.length)
-      .find((name) => lower.includes(name.toLocaleLowerCase())) ?? null
+      .find((name) => {
+        const escapedName = name
+          .normalize("NFKC")
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        // Unicode letters, combining marks, and numbers are name-token
+        // characters. Requiring a non-token boundary on both sides prevents
+        // short contacts from matching inside unrelated words or longer
+        // names, while still allowing punctuation such as Grace's task.
+        const exactMention = new RegExp(
+          `(?:^|[^\\p{L}\\p{M}\\p{N}])${escapedName}(?=$|[^\\p{L}\\p{M}\\p{N}])`,
+          "iu",
+        );
+        return exactMention.test(normalizedText);
+      }) ?? null
   );
 }
 
