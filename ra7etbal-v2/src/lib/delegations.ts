@@ -15,6 +15,14 @@ export interface DelegationAssignee {
   phone?: string | null;
   notes?: string | null;
   whatsapp_opted_in?: boolean | null;
+  /**
+   * The assignee's real people.id, when the caller already resolved one
+   * (e.g. an exact id or exact-name match against the people table).
+   * Never invented from the name alone — left undefined/null when the
+   * caller only has free text. Passing a Person object here already
+   * satisfies this via structural typing (Person.id flows through).
+   */
+  id?: string | null;
 }
 
 export interface CreateDelegationTaskAndMessageInput {
@@ -138,6 +146,7 @@ export async function createDelegationTaskAndMessage({
         recipient: assigneeName,
         content: messageText,
         confirmation_url: confirmationUrl,
+        person_id: assignee.id ?? null,
       });
     } catch (err) {
       console.warn(`[${source}] companion delegation message creation failed`, err);

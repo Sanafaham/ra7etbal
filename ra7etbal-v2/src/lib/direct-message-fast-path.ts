@@ -154,6 +154,7 @@ export async function executeDirectMessageFastPath(
       source: "direct-message-fast-path",
       userId: context.userId,
       recipient: person.name,
+      recipientPersonId: person.id,
       messageText,
       phone: person.phone,
       ownerName: context.displayName ?? null,

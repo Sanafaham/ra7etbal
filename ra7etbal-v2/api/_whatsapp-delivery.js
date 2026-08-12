@@ -72,6 +72,7 @@ export async function beginWhatsappDelivery({
         task_id: context.taskId,
         routine_id: context.routineId,
         automation_run_id: context.automationRunId,
+        person_id: context.personId ?? null,
         parent_delivery_id: parentDeliveryId || null,
         source_type: resolvedSourceType,
         message_kind: messageKind === 'image' ? 'image' : 'template',
@@ -198,12 +199,13 @@ async function resolveDeliveryContext({
         serviceKey,
         table: 'messages',
         id: messageRecordId,
-        select: 'id,user_id,task_id',
+        select: 'id,user_id,task_id,person_id',
       }).then((row) => ({
         kind: 'message',
         userId: row?.user_id ?? null,
         messageId: row?.id ?? null,
         taskId: row?.task_id ?? null,
+        personId: row?.person_id ?? null,
       })),
     );
   }
@@ -264,11 +266,12 @@ async function resolveDeliveryContext({
         serviceKey,
         table: 'staff_messages',
         id: staffMessageId,
-        select: 'id,user_id,task_id',
+        select: 'id,user_id,task_id,person_id',
       }).then((row) => ({
         kind: 'staff_message',
         userId: row?.user_id ?? null,
         taskId: row?.task_id ?? null,
+        personId: row?.person_id ?? null,
       })),
     );
   }
@@ -307,12 +310,25 @@ async function resolveDeliveryContext({
     return null;
   }
 
+  // Durable person identity — independent of task_id, never affected by
+  // task deletion later. Only message and staff_message can carry it (task,
+  // routine, and automation_run rows have no person_id column). If both are
+  // present and disagree, fail safely: leave person_id null rather than
+  // guessing which one is right — this must never silently misattribute.
+  const linkedPersonIds = [message?.personId, staffMessage?.personId].filter(Boolean);
+  const personIdSet = new Set(linkedPersonIds);
+  if (personIdSet.size > 1) {
+    console.warn('[whatsapp-delivery] linked records reference different people; leaving person_id null');
+  }
+  const personId = personIdSet.size === 1 ? linkedPersonIds[0] : null;
+
   return {
     userId: userIds[0],
     messageId: message?.messageId ?? null,
     taskId: linkedTaskIds[0] ?? null,
     routineId: routine?.routineId ?? null,
     automationRunId: automationRun?.automationRunId ?? null,
+    personId,
   };
 }
 

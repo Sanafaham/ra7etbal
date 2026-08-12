@@ -286,6 +286,91 @@ describe('WhatsApp delivery persistence', () => {
       reason: 'Recipient unavailable',
     });
   });
+
+  // ── Durable person_id (Workstream 4 durability fix) ────────────────────
+  //
+  // person_id is written independent of task_id, so it survives the
+  // linked task being deleted later. Only messages/staff_messages carry it
+  // — task/routine/automation_run rows have no person_id column.
+
+  it('carries person_id from a linked staff message into the delivery row', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-msg-1', user_id: 'user-1', task_id: null, person_id: 'person-christopher' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-11' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await beginWhatsappDelivery({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      staffMessageId: 'staff-msg-1',
+      sourceType: 'message',
+      recipientPhone: '+905010589614',
+    });
+
+    const inserted = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(inserted.person_id).toBe('person-christopher');
+  });
+
+  it('carries person_id from a linked message into the delivery row', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'msg-1', user_id: 'user-1', task_id: null, person_id: 'person-grace' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-12' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await beginWhatsappDelivery({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageRecordId: 'msg-1',
+      sourceType: 'message',
+      recipientPhone: '+905010589614',
+    });
+
+    const inserted = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(inserted.person_id).toBe('person-grace');
+  });
+
+  it('leaves person_id null rather than guessing when linked records disagree on the person', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'msg-1', user_id: 'user-1', task_id: null, person_id: 'person-a' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-msg-1', user_id: 'user-1', task_id: null, person_id: 'person-b' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-13' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await beginWhatsappDelivery({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageRecordId: 'msg-1',
+      staffMessageId: 'staff-msg-1',
+      sourceType: 'message',
+      recipientPhone: '+905010589614',
+    });
+
+    const inserted = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(inserted.person_id).toBeNull();
+  });
+
+  it('leaves person_id null when no linked record carries one (e.g. task-only delegation send)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-14' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await beginWhatsappDelivery({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      taskId: 'task-1',
+      sourceType: 'delegation',
+      recipientPhone: '971500000000',
+      recipientName: 'Grace',
+    });
+
+    const inserted = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(inserted.person_id).toBeNull();
+  });
 });
 
 function jsonResponse(body, status = 200) {

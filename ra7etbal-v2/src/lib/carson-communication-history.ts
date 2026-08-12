@@ -287,40 +287,43 @@ export async function buildCommunicationHistory(
     ),
   ];
 
-  // Wave 2: whatsapp_deliveries and staff_escalation_owner_decisions are
-  // joined via the ids resolved in wave 1 — never matched by phone/name
-  // text, so they can only surface here if a real FK links them to this
-  // person's own staff_messages/messages/task rows. Skipped entirely (no
-  // network call, not a failure) when there is nothing to join against.
-  const deliveryFilters: string[] = [];
+  // Wave 2: whatsapp_deliveries and staff_escalation_owner_decisions.
+  // Primary path: a durable person_id, set at write time, independent of
+  // task_id — survives the linked task being deleted later (Clear History,
+  // voice "delete that task"). Legacy path: the ids resolved in wave 1
+  // (message_id/task_id/staff_message_id), kept as a fallback for rows
+  // written before person_id existed. Both are folded into one .or(...) per
+  // table — a single query, and Postgres returns each matching row exactly
+  // once even when it satisfies more than one branch, so no separate
+  // dedup step is needed beyond the existing dedupeById() below. Always
+  // runs now (person_id.eq is always a valid filter), unlike the old
+  // legacy-only version which skipped the query entirely when no task/
+  // message id existed to join against.
+  const deliveryFilters: string[] = [`person_id.eq.${personId}`];
   if (messageIds.length > 0) deliveryFilters.push(`message_id.in.(${messageIds.join(",")})`);
   if (taskIds.length > 0) deliveryFilters.push(`task_id.in.(${taskIds.join(",")})`);
 
-  const escalationFilters: string[] = [];
+  const escalationFilters: string[] = [`person_id.eq.${personId}`];
   if (staffMessageIds.length > 0) escalationFilters.push(`staff_message_id.in.(${staffMessageIds.join(",")})`);
   if (taskIds.length > 0) escalationFilters.push(`task_id.in.(${taskIds.join(",")})`);
 
   const [deliveriesOutcome, escalationsOutcome] = await Promise.all([
-    deliveryFilters.length > 0
-      ? fetchOrFail<DeliveryRow>(() =>
-          supabase
-            .from("whatsapp_deliveries")
-            .select(
-              "id, message_id, task_id, delivery_status, failure_reason, accepted_at, sent_at, delivered_at, read_at, failed_at, meta_message_id",
-            )
-            .eq("user_id", userId)
-            .or(deliveryFilters.join(",")),
+    fetchOrFail<DeliveryRow>(() =>
+      supabase
+        .from("whatsapp_deliveries")
+        .select(
+          "id, message_id, task_id, delivery_status, failure_reason, accepted_at, sent_at, delivered_at, read_at, failed_at, meta_message_id",
         )
-      : Promise.resolve<FetchOutcome<DeliveryRow>>({ rows: [], failed: false }),
-    escalationFilters.length > 0
-      ? fetchOrFail<EscalationRow>(() =>
-          supabase
-            .from("staff_escalation_owner_decisions")
-            .select("id, task_id, staff_message_id, status, owner_reply_text, answered_at, created_at")
-            .eq("user_id", userId)
-            .or(escalationFilters.join(",")),
-        )
-      : Promise.resolve<FetchOutcome<EscalationRow>>({ rows: [], failed: false }),
+        .eq("user_id", userId)
+        .or(deliveryFilters.join(",")),
+    ),
+    fetchOrFail<EscalationRow>(() =>
+      supabase
+        .from("staff_escalation_owner_decisions")
+        .select("id, task_id, staff_message_id, status, owner_reply_text, answered_at, created_at")
+        .eq("user_id", userId)
+        .or(escalationFilters.join(",")),
+    ),
   ]);
 
   if (deliveriesOutcome.failed) failedSources.push("whatsapp_deliveries");
