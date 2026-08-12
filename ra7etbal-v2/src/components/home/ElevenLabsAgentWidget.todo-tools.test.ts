@@ -303,6 +303,43 @@ describe("ElevenLabsAgentWidget — createReminder success override", () => {
   });
 });
 
+describe("ElevenLabsAgentWidget — explicit one-time automation routing", () => {
+  it("intercepts the registered create_reminder tool and invokes createAutomation instead", () => {
+    const start = SOURCE.indexOf("create_reminder: async (params");
+    const end = SOURCE.indexOf("create_automation: (params", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("routeExplicitOneTimeAutomation({");
+    expect(block).toContain('runDirectToolWithDiagnostic("create_automation", routing.params');
+    expect(block).toContain("createAutomation(routing.params)");
+    expect(block.indexOf("createAutomation(routing.params)")).toBeLessThan(
+      block.indexOf("createReminder(params)"),
+    );
+  });
+
+  it("fails closed before createReminder when routing cannot safely build an automation", () => {
+    const start = SOURCE.indexOf("create_reminder: async (params");
+    const end = SOURCE.indexOf("create_automation: (params", start);
+    const block = SOURCE.slice(start, end);
+    const blockedIndex = block.indexOf('if (routing.kind === "blocked")');
+    const reminderIndex = block.indexOf("createReminder(params)");
+    expect(blockedIndex).toBeGreaterThan(-1);
+    expect(block).toContain('toolName: "create_automation"');
+    expect(block).toContain('outcome: "failure"');
+    expect(blockedIndex).toBeLessThan(reminderIndex);
+  });
+
+  it("uses one-time assignee wording only after create_automation confirms an id", () => {
+    const start = SOURCE.indexOf("const createAutomation = useCallback(");
+    const successIdCheck = SOURCE.indexOf("if (!result?.automation?.id)", start);
+    const wording = SOURCE.indexOf("will get the task", successIdCheck);
+    expect(successIdCheck).toBeGreaterThan(start);
+    expect(wording).toBeGreaterThan(successIdCheck);
+  });
+});
+
 describe("ElevenLabsAgentWidget — hosting planning gate", () => {
   it("imports the reusable operation lifecycle from ops-intelligence", () => {
     expect(SOURCE).toContain("handleOperationalHostingTurn");
@@ -624,7 +661,8 @@ describe("ElevenLabsAgentWidget — create_automation prefers today's occurrence
 
   it("declares nextRunAt as mutable (let), not const, since it is reassigned after parseVoiceTime resolves it", () => {
     const block = createAutomationBlock();
-    expect(block).toContain("let nextRunAt = parsed.dueAt;");
+    expect(block).toContain("let nextRunAt: string;");
+    expect(block).toContain("nextRunAt = parsed.dueAt;");
     expect(block).not.toContain("const nextRunAt = parsed.dueAt;");
   });
 });
@@ -654,7 +692,7 @@ describe("ElevenLabsAgentWidget — create_automation disambiguates morning cade
   it("resolves the recurring first-run parse text through the shared helper before calling parseVoiceTime", () => {
     const block = createAutomationBlock();
     expect(block).toContain("const firstRunTextForParsing = resolveRecurringFirstRunTextForParsing({");
-    expect(block).toContain("firstRunText: first_run_text,");
+    expect(block).toContain("firstRunText: first_run_text!,");
     expect(block).toContain("cadencePhrase: cadence_phrase,");
     expect(block).toContain("cadenceType,");
   });

@@ -68,6 +68,10 @@ import {
 import { buildCarsonOpeningLine } from "../../lib/carson-opening";
 import { createReminderTask } from "../../lib/reminders";
 import {
+  hasExplicitNonRecurringAutomationIntent,
+  routeExplicitOneTimeAutomation,
+} from "../../lib/one-time-automation-routing";
+import {
   CANONICAL_CONFIRMATION_ORIGIN,
   createDelegationTaskAndMessage,
 } from "../../lib/delegations";
@@ -2717,7 +2721,9 @@ export default function ElevenLabsAgentWidget({
        * Natural-language first-run time, e.g. "tomorrow at 9 AM", "tonight",
        * "next Monday at 8 AM". Resolved via parseVoiceTime.
        */
-      first_run_text: string;
+      first_run_text?: string;
+      /** Exact ISO fallback used only by the deterministic create_reminder reroute. */
+      first_run_at?: string;
       /** Optional: name of the person to assign this loop to. */
       assignee_name?: string;
       /** Whether the assignee must submit proof of completion. */
@@ -2725,7 +2731,7 @@ export default function ElevenLabsAgentWidget({
       /** Type of proof required: "photo", "confirmation", or "text". */
       proof_type?: "photo" | "confirmation" | "text" | null;
     }): Promise<string> => {
-      const { cadence_phrase, first_run_text, proof_required, proof_type } = params;
+      const { cadence_phrase, first_run_text, first_run_at, proof_required, proof_type } = params;
       // Exact key only — no generic name/to/recipient_name/person_name
       // fallback here. Unlike tools whose whole purpose requires a person
       // (send_direct_whatsapp_message, control_task, etc., where a missing
@@ -2765,7 +2771,7 @@ export default function ElevenLabsAgentWidget({
       if (!titleTrimmed) return "I did not receive a title. Ask the user what to call this automation.";
       if (!instrTrimmed) return "I did not receive an instruction. Ask the user what Carson should do.";
       if (!cadence_phrase?.trim()) return "I did not receive a cadence. Ask the user how often this should run.";
-      if (!first_run_text?.trim()) return "I did not receive a first-run time. Ask the user when this should first fire.";
+      if (!first_run_text?.trim() && !first_run_at?.trim()) return "I did not receive a first-run time. Ask the user when this should first fire.";
 
       // ── Parse cadence phrase → (cadence_type, cadence_value) ───────────
       const raw = cadence_phrase.trim().toLowerCase();
@@ -2803,38 +2809,51 @@ export default function ElevenLabsAgentWidget({
       }
 
       // ── Resolve first run time ──────────────────────────────────────────
-      const firstRunTextForParsing = resolveRecurringFirstRunTextForParsing({
-        firstRunText: first_run_text,
-        cadencePhrase: cadence_phrase,
-        cadenceType,
-      });
-      if (firstRunTextForParsing.error) {
-        console.warn("[create_automation] first-run resolution failed", firstRunTextForParsing.error);
-        const failureText = "I need the exact clock time for that recurring reminder. Ask the user what time it should run.";
-        recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
-        return failureText;
-      }
+      let nextRunAt: string;
+      let timezone: string;
+      if (first_run_at?.trim()) {
+        const exactFirstRun = new Date(first_run_at);
+        if (Number.isNaN(exactFirstRun.getTime())) {
+          const failureText = "I did not receive a valid first-run time. Ask the user when this should first fire.";
+          recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+          return failureText;
+        }
+        nextRunAt = exactFirstRun.toISOString();
+        timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Istanbul";
+      } else {
+        const firstRunTextForParsing = resolveRecurringFirstRunTextForParsing({
+          firstRunText: first_run_text!,
+          cadencePhrase: cadence_phrase,
+          cadenceType,
+        });
+        if (firstRunTextForParsing.error) {
+          console.warn("[create_automation] first-run resolution failed", firstRunTextForParsing.error);
+          const failureText = "I need the exact clock time for that recurring reminder. Ask the user what time it should run.";
+          recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+          return failureText;
+        }
 
-      const parsed = parseVoiceTime(firstRunTextForParsing.timeText);
-      if (parsed.error || !parsed.dueAt) {
-        const failureText = `I could not understand "${first_run_text}" as a time. Ask the user when this should first fire.`;
-        recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
-        return failureText;
-      }
-      let nextRunAt = parsed.dueAt;
-      const timezone = parsed.timezone;
+        const parsed = parseVoiceTime(firstRunTextForParsing.timeText);
+        if (parsed.error || !parsed.dueAt) {
+          const failureText = `I could not understand "${first_run_text}" as a time. Ask the user when this should first fire.`;
+          recordCreateAutomationFailure(failureText, titleTrimmed, cadenceType);
+          return failureText;
+        }
+        nextRunAt = parsed.dueAt;
+        timezone = parsed.timezone;
 
-      // ── Prefer today's occurrence for a recurring loop's first run ──────
-      // Confirmed production failure: a daily automation requested ~2
-      // minutes ahead ("charge your phone" at 1:36 AM, created at 1:34 AM)
-      // was scheduled for the following day instead, because first_run_text
-      // — Carson's own tool-call argument, not something the user
-      // necessarily asked for — contained the literal word "tomorrow". See
-      // resolveRecurringAutomationFirstRun's own doc comment (parse-voice-
-      // time.ts) for the full reasoning and DST-safety details; pulled out
-      // as a standalone pure function so it can be tested against its
-      // actual output rather than only via source-pattern matching.
-      nextRunAt = resolveRecurringAutomationFirstRun(parsed, cadenceType);
+        // ── Prefer today's occurrence for a recurring loop's first run ────
+        // Confirmed production failure: a daily automation requested ~2
+        // minutes ahead ("charge your phone" at 1:36 AM, created at 1:34 AM)
+        // was scheduled for the following day instead, because first_run_text
+        // — Carson's own tool-call argument, not something the user
+        // necessarily asked for — contained the literal word "tomorrow". See
+        // resolveRecurringAutomationFirstRun's own doc comment (parse-voice-
+        // time.ts) for the full reasoning and DST-safety details; pulled out
+        // as a standalone pure function so it can be tested against its
+        // actual output rather than only via source-pattern matching.
+        nextRunAt = resolveRecurringAutomationFirstRun(parsed, cadenceType);
+      }
 
       // ── Store wall-clock time in cadence_value so runner can snap back ──
       // Extract HH:MM from the resolved first-run timestamp in the user's timezone.
@@ -2978,7 +2997,9 @@ export default function ElevenLabsAgentWidget({
 
       sessionActionsRef.current.push(`Created automation: ${titleTrimmed} (${cadenceLabel[cadenceType]})`);
       console.log("[create_automation] created id=", result.automation?.id, "cadence=", cadenceType);
-      const successText = `I've got that running${assigneeLabel}. First check is ${dateLabel} at ${timeStr}.`;
+      const successText = cadenceType === "once" && assignee_name?.trim()
+        ? `That's set — ${assignee_name.trim()} will get the task ${dateLabel} at ${timeStr}.`
+        : `I've got that running${assigneeLabel}. First check is ${dateLabel} at ${timeStr}.`;
       lastDirectToolSuccessRef.current = {
         toolName: "create_automation",
         resultText: successText,
@@ -5865,9 +5886,49 @@ export default function ElevenLabsAgentWidget({
               toolInFlightRef.current = null;
             }
           },
-          create_reminder: (params: Parameters<typeof createReminder>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_reminder");
+          create_reminder: async (params: Parameters<typeof createReminder>[0]) => {
+            const latestUserMessage = [...sessionTranscriptRef.current]
+              .reverse()
+              .find((entry) => entry.role === "user")?.message ?? null;
+            const explicitOneTimeAutomation = hasExplicitNonRecurringAutomationIntent(latestUserMessage);
+            const routedToolName = explicitOneTimeAutomation ? "create_automation" : "create_reminder";
+            const captureBlock = guardCurrentToolInvocation(routedToolName);
             if (captureBlock) return captureBlock;
+            if (explicitOneTimeAutomation) {
+              const authUserId = useAuthStore.getState().user?.id;
+              const peopleState = usePeopleStore.getState();
+              if (
+                authUserId &&
+                (peopleState.loadedForUserId !== authUserId || peopleState.status !== "ready")
+              ) {
+                await usePeopleStore.getState().loadFor(authUserId);
+              }
+            }
+            const authUserId = useAuthStore.getState().user?.id;
+            const currentPeopleState = usePeopleStore.getState();
+            const routing = routeExplicitOneTimeAutomation({
+              latestUserMessage,
+              reminder: params,
+              knownPeopleNames:
+                authUserId && currentPeopleState.loadedForUserId === authUserId
+                  ? currentPeopleState.items.map((person) => person.name)
+                  : [],
+            });
+            if (routing.kind === "blocked") {
+              lastDirectToolSuccessRef.current = {
+                toolName: "create_automation",
+                resultText: routing.message,
+                at: new Date().toISOString(),
+                outcome: "failure",
+                inputSummary: { explicitAutomation: true },
+              };
+              return routing.message;
+            }
+            if (routing.kind === "automation") {
+              return runDirectToolWithDiagnostic("create_automation", routing.params, () =>
+                createAutomation(routing.params),
+              );
+            }
             return runDirectToolWithDiagnostic("create_reminder", params, () =>
               createReminder(params),
             );
@@ -6637,7 +6698,7 @@ export default function ElevenLabsAgentWidget({
       setStatus("error");
       setErrorMsg(`Couldn't connect. ${sanitizeCarsonErrorDetail(err)}`);
     }
-  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot, ensureTypedHistoryLoaded]);
+  }, [agentId, authenticatedUserId, briefStateText, spokenBrief, displayName, mode, createReminder, createAutomation, sendDelegation, sendFollowup, saveCity, saveNote, actOnNote, executeInstruction, forceCleanupSession, endConversationSession, releaseMicWarmupStream, clearCarsonSessionTimers, clearPendingPhotoPreviews, onBeforeCallStart, runDirectToolWithDiagnostic, guardCurrentVoiceCapture, saveVoiceSessionSnapshot, ensureTypedHistoryLoaded]);
 
   const startCall = useCallback(() => {
     void startCarsonSession("voice");
