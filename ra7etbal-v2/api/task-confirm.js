@@ -58,6 +58,10 @@ import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailur
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 import { notifyOwnerOfTaskReview } from './_escalation-notify.js';
 import { buildCanonicalStaffDecisionMessage } from './_staff-decision-message.js';
+import {
+  loadCanonicalConfirmedTask,
+  synchronizeAutomationRunFromConfirmedTask,
+} from './_automation-run-confirmation-sync.js';
 
 // Quality Intelligence vision review can legitimately take longer than the
 // default Vercel function window, especially with several proof photos.
@@ -393,7 +397,7 @@ export async function handleTaskConfirmationPost(
     const fetchRes = await fetch(
       supabaseUrl + '/rest/v1/tasks' +
         '?id=eq.' + encodeURIComponent(taskId) +
-        '&select=id,user_id,status,description,assigned_to,image_path,attachment_count,proof_image_path,quality_review_status,quality_review_note,quality_review_cycle_count',
+        '&select=id,user_id,status,confirmed_at,description,assigned_to,image_path,attachment_count,proof_image_path,quality_review_status,quality_review_note,quality_review_cycle_count',
       { headers },
     );
 
@@ -407,6 +411,12 @@ export async function handleTaskConfirmationPost(
 
     // Idempotent — already done
     if (task.status === 'done') {
+      await reconcileConfirmedAutomationProjection({
+        supabaseUrl,
+        serviceKey,
+        taskId,
+        userId: task.user_id,
+      });
       return res.status(200).json({ already_done: true, description: task.description });
     }
 
@@ -567,6 +577,12 @@ export async function handleTaskConfirmationPost(
           taskId,
           outcome: savedReviewStatus,
         });
+        await reconcileConfirmedAutomationProjection({
+          supabaseUrl,
+          serviceKey,
+          taskId,
+          userId: task.user_id,
+        });
         return res.status(200).json({
           success: true,
           already_done: true,
@@ -725,6 +741,12 @@ export async function handleTaskConfirmationPost(
     const approvedRows = await readSupabaseRows(updateRes);
     if (Array.isArray(approvedRows) && approvedRows.length === 0) {
       console.warn('[task-confirm] duplicate approval ignored after task left pending state', { taskId });
+      await reconcileConfirmedAutomationProjection({
+        supabaseUrl,
+        serviceKey,
+        taskId,
+        userId: task.user_id,
+      });
       return res.status(200).json({
         success: true,
         already_done: true,
@@ -771,6 +793,20 @@ export async function handleTaskConfirmationPost(
       console.error('[task-confirm] owner push failed (non-fatal):', err?.message || err);
     }
 
+    // Project the already-canonical confirmation only after the established
+    // confirmation record and owner-push side effects have run. Projection
+    // failure must never prevent or reorder canonical task confirmation.
+    await reconcileConfirmedAutomationProjection({
+      supabaseUrl,
+      serviceKey,
+      task: {
+        id: task.id,
+        user_id: task.user_id,
+        status: 'done',
+        confirmed_at: now,
+      },
+    });
+
     return res.status(200).json({ success: true, outcome: 'approved', description: task.description });
   } catch (err) {
     console.error('[task-confirm] proof confirmation failed', {
@@ -781,6 +817,37 @@ export async function handleTaskConfirmationPost(
       stack: err?.stack || null,
     });
     return res.status(500).json({ error: taskConfirmErrorMessageForStep(step) });
+  }
+}
+
+async function reconcileConfirmedAutomationProjection({
+  supabaseUrl,
+  serviceKey,
+  task = null,
+  taskId = null,
+  userId = null,
+}) {
+  try {
+    const canonicalTask = task ?? await loadCanonicalConfirmedTask({
+      supabaseUrl,
+      serviceKey,
+      taskId,
+      userId,
+    });
+    if (!canonicalTask) return;
+    await synchronizeAutomationRunFromConfirmedTask({
+      supabaseUrl,
+      serviceKey,
+      task: canonicalTask,
+    });
+  } catch (err) {
+    // The canonical task confirmation already succeeded. Keep that truthful
+    // outcome and let a safe resubmission heal this projection later.
+    console.error('[task-confirm] automation run projection sync failed (confirmation preserved)', {
+      taskId: task?.id ?? taskId,
+      userId: task?.user_id ?? userId,
+      error: err?.message || String(err),
+    });
   }
 }
 

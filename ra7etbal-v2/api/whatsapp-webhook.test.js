@@ -695,7 +695,7 @@ describe('updateWhatsappDeliveryStatus — SMS fallback trigger gating', () => {
 
   it('does NOT trigger the SMS fallback for 131049 on a non-automation_message source_type (e.g. delegation)', async () => {
     configureSmsEnvGlobal();
-    mockDeliveryLookupAndPatch({ sourceType: 'automation_delegation' });
+    const fetchMock = mockDeliveryLookupAndPatch({ sourceType: 'automation_delegation' });
 
     await updateWhatsappDeliveryStatus({
       supabaseUrl: 'https://example.supabase.co',
@@ -709,6 +709,34 @@ describe('updateWhatsappDeliveryStatus — SMS fallback trigger gating', () => {
     });
 
     expect(smsMocks.sendTwilioSms).not.toHaveBeenCalled();
+    const runFailurePatch = fetchMock.mock.calls.find(([url, init]) =>
+      String(url).includes('/rest/v1/automation_runs?') && init?.method === 'PATCH');
+    expect(runFailurePatch[0]).toContain(
+      'current_state=in.(scheduled,task_created,sent,followup_sent,escalated,failed)',
+    );
+    expect(runFailurePatch[0]).not.toMatch(/confirmed|completed|skipped/);
+    expect(JSON.parse(runFailurePatch[1].body)).toMatchObject({ current_state: 'failed' });
+  });
+
+  it('late Meta failure is conditionally fenced from confirmed and completed automation runs', async () => {
+    const fetchMock = mockDeliveryLookupAndPatch({ sourceType: 'automation_delegation' });
+
+    await updateWhatsappDeliveryStatus({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageId: 'wamid.late',
+      status: 'failed',
+      updatedAt: '2026-08-12T01:41:00Z',
+      failureReason: 'Late transport failure.',
+      failureCode: 131026,
+      failureSubcode: null,
+    });
+
+    const runFailurePatch = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/automation_runs?'));
+    expect(runFailurePatch[0]).toContain('id=eq.run-1');
+    expect(runFailurePatch[0]).toContain(
+      'current_state=in.(scheduled,task_created,sent,followup_sent,escalated,failed)',
+    );
   });
 
   function configureSmsEnvGlobal() {
