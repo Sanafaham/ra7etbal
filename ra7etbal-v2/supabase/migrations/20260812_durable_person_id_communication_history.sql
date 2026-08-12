@@ -148,11 +148,17 @@ WHERE wd.metadata ? 'staff_message_id'
   AND sm.person_id IS NOT NULL;
 
 -- whatsapp_deliveries: via message_id -> messages.person_id, only when
--- messages.person_id is already a real, non-null value (it almost never
--- is today -- this covers the one row where it happens to be true).
+-- messages.person_id is already a real, non-null value that itself
+-- resolves to a real people row. messages.person_id has no FK (see
+-- above) -- its one existing non-null value in production does not
+-- match any real people.id, so this extra EXISTS guard is required to
+-- avoid propagating an already-broken value into a column that does
+-- have a real FK. Still fully deterministic: only copies a value that
+-- independently proves out, never guesses.
 UPDATE public.whatsapp_deliveries wd
 SET person_id = m.person_id
 FROM public.messages m
 WHERE wd.message_id = m.id
   AND wd.person_id IS NULL
-  AND m.person_id IS NOT NULL;
+  AND m.person_id IS NOT NULL
+  AND EXISTS (SELECT 1 FROM public.people p WHERE p.id = m.person_id);
