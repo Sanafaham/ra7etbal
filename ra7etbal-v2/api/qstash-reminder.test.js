@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import handler, { resolveAppBaseUrl, scheduleAutomationRunWakeup } from "./qstash-reminder.js";
+import { signReminderReceipt } from "./_reminder-delivery.js";
 
 function jsonResponse(body, status = 200) {
   return {
@@ -359,5 +360,210 @@ describe("qstash-reminder default handler — 'schedule' action (item 9 lock)", 
     expect(res.statusCode).toBe(500);
     expect(res.payload.success).toBe(false);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+// Owner completion push reliability — widened notification-receipt handler.
+// Reminder-path tests here are the regression proof: identical inputs to
+// what the already-deployed service worker sends today (no `kind` field)
+// must behave exactly as before. Completion-path tests prove the new kind
+// is validated against a real, independently-fetched DB fact (confirmed_at)
+// with the same signed-receipt strength, not a weaker or trusting check.
+describe("qstash-reminder 'notification-receipt' action — reminder vs. completion kind", () => {
+  const CRON_SECRET = "cron-secret";
+
+  beforeEach(() => {
+    vi.stubEnv("SUPABASE_URL", "https://supabase.test");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role");
+    vi.stubEnv("CRON_SECRET", CRON_SECRET);
+  });
+
+  function receiptBody({ kind, taskId = "task-1", userId = "user-1", subscriptionId = "sub-1", dueAt, stage, token }) {
+    const fields = { taskId, userId, subscriptionId, dueAt };
+    return {
+      action: "notification-receipt",
+      kind,
+      taskId,
+      subscriptionId,
+      dueAt,
+      stage,
+      token: token ?? signReminderReceipt(fields, CRON_SECRET),
+      swVersion: "test-sw",
+    };
+  }
+
+  it("reminder receipt (no kind field, matching every already-deployed client): still validated by task.type==='reminder' && due_at, records the event", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: "task-1", user_id: "user-1", type: "reminder", due_at: "2026-08-12T09:00:00.000Z", confirmed_at: null }])) // task lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: "sub-1" }])) // subscription ownership
+      .mockResolvedValueOnce(jsonResponse({}, 201)); // recordDeliveryEvent insert
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({
+        body: receiptBody({ kind: undefined, dueAt: "2026-08-12T09:00:00.000Z", stage: "service_worker_received" }),
+      }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toEqual({ success: true });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const [, eventInit] = fetchMock.mock.calls[2];
+    expect(JSON.parse(eventInit.body).metadata.kind).toBe("reminder");
+  });
+
+  it("reminder receipt: due_at mismatch is still rejected with 404 (unchanged)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: "task-1", user_id: "user-1", type: "reminder", due_at: "2026-08-12T09:00:00.000Z", confirmed_at: null }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({
+        body: receiptBody({ kind: undefined, dueAt: "2026-08-12T10:00:00.000Z", stage: "service_worker_received" }),
+      }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(res.payload.error).toBe("Reminder not found.");
+  });
+
+  it("reminder receipt: notification_clicked still auto-completes the task (unchanged)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: "task-1", user_id: "user-1", type: "reminder", due_at: "2026-08-12T09:00:00.000Z", confirmed_at: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: "sub-1" }]))
+      .mockResolvedValueOnce(jsonResponse({}, 201))
+      .mockResolvedValueOnce(jsonResponse({}, 200)); // the auto-complete PATCH
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({
+        body: receiptBody({ kind: undefined, dueAt: "2026-08-12T09:00:00.000Z", stage: "notification_clicked" }),
+      }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const [patchUrl, patchInit] = fetchMock.mock.calls[3];
+    expect(String(patchUrl)).toContain("status=eq.pending");
+    expect(JSON.parse(patchInit.body).confirmed_by).toBe("notification_click");
+  });
+
+  it("completion receipt: validated against confirmed_at (not due_at), any task type accepted, records the event with kind=completion", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: "task-1", user_id: "user-1", type: "delegation", due_at: null, confirmed_at: "2026-08-12T13:23:58.480Z" }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: "sub-1" }]))
+      .mockResolvedValueOnce(jsonResponse({}, 201));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({
+        body: receiptBody({ kind: "completion", dueAt: "2026-08-12T13:23:58.480Z", stage: "service_worker_received" }),
+      }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toEqual({ success: true });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const [, eventInit] = fetchMock.mock.calls[2];
+    expect(JSON.parse(eventInit.body).metadata.kind).toBe("completion");
+  });
+
+  it("completion receipt: confirmed_at mismatch is rejected with 404 — never trusts the client's claimed dueAt", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: "task-1", user_id: "user-1", type: "delegation", due_at: null, confirmed_at: "2026-08-12T13:23:58.480Z" }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({
+        body: receiptBody({ kind: "completion", dueAt: "2026-08-12T00:00:00.000Z", stage: "service_worker_received" }),
+      }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(404);
+    expect(res.payload.error).toBe("Completion event not found.");
+  });
+
+  it("completion receipt: tampered token fails closed with 401 — HMAC strength unchanged for the new kind", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: "task-1", user_id: "user-1", type: "delegation", due_at: null, confirmed_at: "2026-08-12T13:23:58.480Z" }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({
+        body: receiptBody({
+          kind: "completion",
+          dueAt: "2026-08-12T13:23:58.480Z",
+          stage: "service_worker_received",
+          token: "not-a-real-token",
+        }),
+      }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("completion receipt: notification_clicked does NOT auto-complete the task — that semantic belongs only to reminders", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: "task-1", user_id: "user-1", type: "delegation", due_at: null, confirmed_at: "2026-08-12T13:23:58.480Z" }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: "sub-1" }]))
+      .mockResolvedValueOnce(jsonResponse({}, 201));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({
+        body: receiptBody({ kind: "completion", dueAt: "2026-08-12T13:23:58.480Z", stage: "notification_clicked" }),
+      }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(200);
+    // Exactly 3 calls: task lookup, subscription ownership, event record —
+    // no 4th PATCH attempting to re-complete an already-done task.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("duplicate receipts stay idempotent through the existing event_key mechanism — same stage+subscription always produces the same key", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: "task-1", user_id: "user-1", type: "delegation", due_at: null, confirmed_at: "2026-08-12T13:23:58.480Z" }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: "sub-1" }]))
+      .mockResolvedValueOnce(jsonResponse({}, 201))
+      .mockResolvedValueOnce(jsonResponse([{ id: "task-1", user_id: "user-1", type: "delegation", due_at: null, confirmed_at: "2026-08-12T13:23:58.480Z" }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: "sub-1" }]))
+      .mockResolvedValueOnce(jsonResponse({}, 201));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const body = receiptBody({ kind: "completion", dueAt: "2026-08-12T13:23:58.480Z", stage: "service_worker_received" });
+
+    const res1 = mockRes();
+    await handler(mockReq({ body }), res1);
+    const res2 = mockRes();
+    await handler(mockReq({ body }), res2);
+
+    expect(res1.statusCode).toBe(200);
+    expect(res2.statusCode).toBe(200);
+    const firstEventKey = JSON.parse(fetchMock.mock.calls[2][1].body).event_key;
+    const secondEventKey = JSON.parse(fetchMock.mock.calls[5][1].body).event_key;
+    expect(firstEventKey).toBe(secondEventKey);
   });
 });

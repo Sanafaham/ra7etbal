@@ -209,17 +209,34 @@ export default async function handler(req, res) {
 
 async function handleNotificationReceipt(body, res, config) {
   const { taskId, subscriptionId, dueAt, token, stage } = body;
+  // Defaults missing kind to 'reminder' — every existing/cached service
+  // worker sends no kind field at all, and this keeps their receipts
+  // validated exactly as before. 'completion' is the only other kind this
+  // endpoint recognizes; anything else falls back to 'reminder' validation
+  // (and will simply fail it, same as any other malformed receipt).
+  const kind = body.kind === 'completion' ? 'completion' : 'reminder';
   if (!taskId || !subscriptionId || !dueAt || !CLIENT_RECEIPT_STAGES.has(stage)) {
     return res.status(400).json({ success: false, error: 'Invalid notification receipt.' });
   }
   const taskResponse = await fetch(
-    `${config.supabaseUrl}/rest/v1/tasks?select=id,user_id,type,due_at&id=eq.${encodeURIComponent(taskId)}&limit=1`,
+    `${config.supabaseUrl}/rest/v1/tasks?select=id,user_id,type,due_at,confirmed_at&id=eq.${encodeURIComponent(taskId)}&limit=1`,
     { headers: supabaseHeaders(config.serviceRoleKey) },
   );
   const rows = await taskResponse.json().catch(() => []);
   const task = Array.isArray(rows) ? rows[0] : null;
-  if (!task || task.type !== 'reminder' || task.due_at !== dueAt) {
-    return res.status(404).json({ success: false, error: 'Reminder not found.' });
+  // Reminder receipts: exact existing validation, byte-for-byte unchanged.
+  // Completion receipts: the same "receipt matches a real, current fact
+  // about this exact task" rule, just anchored to confirmed_at (the dueAt
+  // slot carries it) instead of due_at — there is no due_at concept for a
+  // completion push. Neither branch trusts anything the client claims;
+  // both re-derive the comparison value from the database.
+  const isValidReminder = kind === 'reminder' && task && task.type === 'reminder' && task.due_at === dueAt;
+  const isValidCompletion = kind === 'completion' && task && task.confirmed_at === dueAt;
+  if (!isValidReminder && !isValidCompletion) {
+    return res.status(404).json({
+      success: false,
+      error: kind === 'reminder' ? 'Reminder not found.' : 'Completion event not found.',
+    });
   }
   const fields = { taskId, userId: task.user_id, subscriptionId, dueAt };
   if (!verifyReminderReceipt(fields, token, config.secret)) {
@@ -245,11 +262,18 @@ async function handleNotificationReceipt(body, res, config) {
     eventKey,
     stage,
     metadata: {
+      kind,
       swVersion: typeof body.swVersion === 'string' ? body.swVersion.slice(0, 80) : null,
       detail: typeof body.detail === 'string' ? body.detail.slice(0, 80) : null,
     },
   });
-  if (stage === 'notification_clicked') {
+  // Reminder-specific interaction semantics: tapping a due reminder's
+  // notification means "I'm done." A completion push's notification_click
+  // has no such meaning (the task is already done — this PATCH's own
+  // status=eq.pending filter would no-op for it regardless, but scoping to
+  // kind === 'reminder' keeps reminder-only business logic from silently
+  // reapplying to a different event kind if this block ever changes).
+  if (stage === 'notification_clicked' && kind === 'reminder') {
     await fetch(`${config.supabaseUrl}/rest/v1/tasks?id=eq.${encodeURIComponent(taskId)}&status=eq.pending`, {
       method: 'PATCH',
       headers: { ...supabaseHeaders(config.serviceRoleKey), Prefer: 'return=minimal' },

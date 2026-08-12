@@ -62,6 +62,8 @@ import {
   loadCanonicalConfirmedTask,
   synchronizeAutomationRunFromConfirmedTask,
 } from './_automation-run-confirmation-sync.js';
+import { recordDeliveryEvent, signReminderReceipt } from './_reminder-delivery.js';
+import { dedupeSubscriptionsByEndpoint } from './send-push-for-task.js';
 
 // Quality Intelligence vision review can legitimately take longer than the
 // default Vercel function window, especially with several proof photos.
@@ -788,6 +790,12 @@ export async function handleTaskConfirmationPost(
         userId: task.user_id,
         description: task.description,
         assignedTo: task.assigned_to,
+        // Only this call site (final staff-task completion) opts into the
+        // durable delivery-lifecycle recording below -- passing taskId is
+        // the sole trigger. The other four sendOwnerPush call sites (QI
+        // review/escalation variants) never pass it, so their behavior is
+        // byte-for-byte unchanged.
+        taskId: task.id || taskId,
       });
     } catch (err) {
       console.error('[task-confirm] owner push failed (non-fatal):', err?.message || err);
@@ -1846,7 +1854,20 @@ async function loadReferenceImagePaths({ supabaseUrl, headers, taskId, fallbackI
   return fallbackImagePath ? [fallbackImagePath] : [];
 }
 
-export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant }) {
+/**
+ * taskId is optional and gates the entire durable evidence lifecycle below
+ * (signed receipt + reminder_delivery_events rows) — deliberately reusing
+ * the reminder-push observability system built for send-push-for-task.js
+ * rather than a second one. Only the final-completion call site passes it;
+ * the four QI review/escalation-variant call sites do not, so their
+ * behavior (payload shape, no durable recording) is completely unchanged.
+ * Never claims visible delivery from provider acceptance alone — this
+ * function only ever records provider_send_attempted/accepted/rejected;
+ * service_worker_received, show_notification stages, and notification_clicked
+ * can only come from the device itself, via the widened qstash-reminder.js
+ * receipt handler.
+ */
+export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant, taskId }) {
   if (!userId) return;
 
   const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY;
@@ -1871,30 +1892,89 @@ export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, descripti
       '&select=id,endpoint,p256dh,auth',
     { headers },
   );
-  const subscriptions = await subsRes.json().catch(() => []);
+  const rawSubscriptions = await subsRes.json().catch(() => []);
 
-  if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
+  if (!Array.isArray(rawSubscriptions) || rawSubscriptions.length === 0) {
     console.log('[task-confirm] no enabled push subscriptions for owner — skipping');
     return;
   }
 
+  // Endpoint dedup only for the evidence-tracked completion path — matches
+  // send-push-for-task.js's existing guard against a duplicate-endpoint row
+  // producing two device sends for one logical notification. The other
+  // (non-taskId) call sites are left exactly as they were: no dedup was
+  // ever reported as an issue there, and touching them is out of scope.
+  const subscriptions = taskId ? dedupeSubscriptionsByEndpoint(rawSubscriptions) : rawSubscriptions;
+
   webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 
   const notificationBody = buildOwnerPushBody({ description, assignedTo, variant });
-
-  const payload = JSON.stringify({ title: 'Ra7etBal', body: notificationBody });
+  const sentAt = taskId ? new Date().toISOString() : null;
 
   for (const sub of subscriptions) {
+    let payload = JSON.stringify({ title: 'Ra7etBal', body: notificationBody });
+
+    if (taskId) {
+      // Evidence/receipt construction is best-effort and must never block
+      // the actual notification send — a signing failure (e.g. CRON_SECRET
+      // briefly unset) degrades to the exact plain payload used before this
+      // capability existed, not a lost push.
+      try {
+        const receiptFields = { taskId, userId, subscriptionId: sub.id, dueAt: sentAt };
+        payload = JSON.stringify({
+          title: 'Ra7etBal',
+          body: notificationBody,
+          receipt: {
+            url: '/api/qstash-reminder',
+            kind: 'completion',
+            taskId,
+            subscriptionId: sub.id,
+            dueAt: sentAt,
+            token: signReminderReceipt(receiptFields, process.env.CRON_SECRET),
+          },
+        });
+      } catch (err) {
+        console.error('[task-confirm] completion push receipt signing failed (sending without evidence):', err?.message || err);
+      }
+      await recordDeliveryEvent({
+        supabaseUrl, serviceRoleKey: serviceKey, taskId, userId, subscriptionId: sub.id,
+        eventKey: `provider_send_attempted:${sub.id}:${sentAt}`, stage: 'provider_send_attempted',
+        metadata: { kind: 'completion_push' },
+      }).catch((err) =>
+        console.error('[task-confirm] completion push evidence (attempted) failed (non-fatal):', err?.message || err),
+      );
+    }
+
     try {
-      await webpush.sendNotification(
+      const providerResponse = await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
         payload,
         { urgency: 'high', TTL: 300 },
       );
       console.log(`[task-confirm] owner push sent to sub=${sub.id}`);
+      if (taskId) {
+        await recordDeliveryEvent({
+          supabaseUrl, serviceRoleKey: serviceKey, taskId, userId, subscriptionId: sub.id,
+          eventKey: `provider_accepted:${sub.id}:${sentAt}`, stage: 'provider_accepted',
+          providerStatusCode: providerResponse?.statusCode ?? 201,
+          metadata: { kind: 'completion_push' },
+        }).catch((err) =>
+          console.error('[task-confirm] completion push evidence (accepted) failed (non-fatal):', err?.message || err),
+        );
+      }
     } catch (err) {
       const statusCode = err?.statusCode ?? null;
       console.error(`[task-confirm] owner push failed sub=${sub.id} status=${statusCode}:`, err?.message);
+      if (taskId) {
+        await recordDeliveryEvent({
+          supabaseUrl, serviceRoleKey: serviceKey, taskId, userId, subscriptionId: sub.id,
+          eventKey: `provider_rejected:${sub.id}:${sentAt}`, stage: 'provider_rejected',
+          providerStatusCode: statusCode,
+          metadata: { kind: 'completion_push', permanent: statusCode === 410 || statusCode === 404 },
+        }).catch((err2) =>
+          console.error('[task-confirm] completion push evidence (rejected) failed (non-fatal):', err2?.message || err2),
+        );
+      }
       if (statusCode === 410 || statusCode === 404) {
         await fetch(
           supabaseUrl + '/rest/v1/push_subscriptions?id=eq.' + encodeURIComponent(sub.id),
