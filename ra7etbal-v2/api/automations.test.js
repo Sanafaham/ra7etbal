@@ -54,6 +54,56 @@ function jsonResponse(payload, ok = true, status = ok ? 200 : 500) {
 }
 
 describe("api/automations POST", () => {
+  it("creates exactly one assignee-bound one-time automation without creating a task", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: "automation-once-1",
+        user_id: "user-1",
+        assignee_id: "person-christopher",
+        cadence_type: "once",
+      }]));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({
+        method: "POST",
+        body: {
+          title: "PR236 automation synchronization verification",
+          instruction: "Confirm PR236 automation synchronization verification.",
+          cadence_type: "once",
+          cadence_value: {},
+          next_run_at: "2026-08-12T03:30:00.000Z",
+          timezone: "Europe/Istanbul",
+          assignee_id: "person-christopher",
+          created_by: "carson",
+        },
+      }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(201);
+    expect(res.payload.automation.id).toBe("automation-once-1");
+    const automationWrites = fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).includes("/rest/v1/automations") && init?.method === "POST",
+    );
+    const taskWrites = fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).includes("/rest/v1/tasks") && init?.method === "POST",
+    );
+    expect(automationWrites).toHaveLength(1);
+    expect(taskWrites).toHaveLength(0);
+    expect(JSON.parse(automationWrites[0][1].body)).toMatchObject({
+      user_id: "user-1",
+      assignee_id: "person-christopher",
+      cadence_type: "once",
+      automation_type: "delegation",
+      next_run_at: "2026-08-12T03:30:00.000Z",
+      status: "active",
+    });
+  });
+
   it("creates an owner-only automation on a valid request", async () => {
     const fetchMock = vi
       .fn()

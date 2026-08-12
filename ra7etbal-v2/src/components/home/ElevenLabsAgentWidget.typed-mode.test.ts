@@ -70,7 +70,12 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "create_calendar_event",
       "save_instruction",
     ]) {
-      expect(toolBlock).toContain(`guardCurrentToolInvocation("${toolName}")`);
+      if (toolName === "create_reminder") {
+        expect(toolBlock).toContain('const routedToolName = explicitOneTimeAutomation ? "create_automation" : "create_reminder";');
+        expect(toolBlock).toContain("guardCurrentToolInvocation(routedToolName)");
+      } else {
+        expect(toolBlock).toContain(`guardCurrentToolInvocation("${toolName}")`);
+      }
     }
   });
 
@@ -550,8 +555,8 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
   });
 
   it("blocks a typed reminder request from creating a reminder or triggering push scheduling", () => {
-    const toolBlock = blockBetween('create_reminder: (params: Parameters<typeof createReminder>[0]) => {', "  },");
-    const guardIndex = toolBlock.indexOf('guardCurrentToolInvocation("create_reminder")');
+    const toolBlock = blockBetween('create_reminder: async (params: Parameters<typeof createReminder>[0]) => {', "  },");
+    const guardIndex = toolBlock.indexOf("guardCurrentToolInvocation(routedToolName)");
     const executorIndex = toolBlock.indexOf("createReminder(params)");
     expect(guardIndex).toBeGreaterThan(-1);
     expect(executorIndex).toBeGreaterThan(guardIndex);
