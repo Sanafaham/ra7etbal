@@ -117,3 +117,49 @@ describe("TaskCard.tsx — reminder card creation-time display", () => {
     expect(SOURCE).toContain('const reminderDue = task.type === "reminder" ? getReminderDue(task.due_at, isDone, now) : null;');
   });
 });
+
+/**
+ * What's Happening -> History completion timestamp. UI-only addition —
+ * reuses the pure formatHistoryCompletedAt helper (tested directly in
+ * history-timestamp.test.ts) and the same confirmed_at -> archived_at ->
+ * created_at fallback chain History.tsx/HistoryCard.tsx already use.
+ */
+describe("TaskCard.tsx — History completion timestamp display", () => {
+  it("imports formatHistoryCompletedAt from the shared history-timestamp helper", () => {
+    expect(SOURCE).toContain("formatHistoryCompletedAt");
+    expect(SOURCE).toMatch(/from "\.\.\/\.\.\/lib\/history-timestamp"/);
+  });
+
+  it("only computes a completion label when the task is done, in confirmed_at -> archived_at -> created_at order", () => {
+    expect(SOURCE).toContain(
+      "const completedAtLabel = isDone\n"
+        + "    ? formatHistoryCompletedAt(task.confirmed_at, task.archived_at, task.created_at)\n"
+        + "    : null;",
+    );
+  });
+
+  it("renders the label only when present, so an active (not-done) card never gains a completion stamp", () => {
+    expect(SOURCE).toContain("{completedAtLabel && (");
+    const start = SOURCE.indexOf("{completedAtLabel && (");
+    const end = SOURCE.indexOf(")}", start) + 2;
+    const block = SOURCE.slice(start, end);
+    expect(block).toContain("{completedAtLabel}");
+  });
+
+  it("does not touch the followup/delegation \"Sent ...\" line, the needs-you timestamp, or their formatters", () => {
+    expect(SOURCE).toContain('(task.type === "followup" || task.type === "delegation") && task.created_at && (');
+    expect(SOURCE).toContain("formatFollowUpSentTime(task.created_at)");
+    expect(SOURCE).toContain("{showNeedsYouTimestamp && (");
+    const completedBlock = SOURCE.slice(
+      SOURCE.indexOf("{completedAtLabel && ("),
+      SOURCE.indexOf("{showNeedsYouTimestamp"),
+    );
+    expect(completedBlock).not.toContain("formatFollowUpSentTime");
+    expect(completedBlock).not.toContain("needsYouTimestampLabel");
+  });
+
+  it("does not alter the Reopen/Mark done or Delete actions", () => {
+    expect(SOURCE).toContain('<span>{isDone ? "Reopen" : "Mark done"}</span>');
+    expect(SOURCE).toContain('<span>{confirmingDelete ? "Tap to confirm" : "Delete"}</span>');
+  });
+});
