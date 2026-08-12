@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  claimFreshRoutingTurn,
   hasExplicitNonRecurringAutomationIntent,
   routeExplicitOneTimeAutomation,
 } from "./one-time-automation-routing";
@@ -8,6 +9,44 @@ const CHRISTOPHER = "Christopher";
 const GRACE = "Grace";
 
 describe("one-time automation routing", () => {
+  it("routes a scheduled delegation without requiring the word automation", () => {
+    expect(
+      routeExplicitOneTimeAutomation({
+        latestUserMessage: "Tomorrow at 7, ask Christopher to confirm the documents.",
+        reminder: { description: "Confirm the documents", time_text: "tomorrow at 7" },
+        knownPeopleNames: [CHRISTOPHER],
+      }),
+    ).toMatchObject({ kind: "automation", params: { assignee_name: CHRISTOPHER } });
+  });
+
+  it("keeps an explicit remind-me request owner-directed", () => {
+    expect(
+      routeExplicitOneTimeAutomation({
+        latestUserMessage: "Remind me tomorrow at 7 to ask Christopher about the menu.",
+        reminder: { description: "Ask Christopher about the menu", time_text: "tomorrow at 7" },
+        knownPeopleNames: [CHRISTOPHER],
+      }),
+    ).toEqual({ kind: "reminder" });
+  });
+
+  it("fails closed when a tool callback arrives before the current transcript", () => {
+    expect(claimFreshRoutingTurn(null)).toEqual({
+      ok: false,
+      reasonCode: "fresh_transcript_unavailable",
+    });
+  });
+
+  it("claims the current transcript once and rejects a later callback from the same turn", () => {
+    const first = claimFreshRoutingTurn({
+      eventId: 7,
+      message: "Ask Christopher tomorrow at 7.",
+      claimed: false,
+      operationId: "4c438c39-7b8f-43f6-9085-0b4b64905bf8",
+    });
+    expect(first).toMatchObject({ ok: true, message: "Ask Christopher tomorrow at 7." });
+    if (!first.ok) throw new Error("expected a routing turn claim");
+    expect(claimFreshRoutingTurn(first.context)).toEqual({ ok: false, reasonCode: "turn_already_claimed" });
+  });
   it("routes an explicit one-time Christopher automation to create_automation inputs", () => {
     expect(
       routeExplicitOneTimeAutomation({

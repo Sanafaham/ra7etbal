@@ -147,18 +147,17 @@ describe("ElevenLabsAgentWidget — reminder replacement on correction (2026-07-
     expect(correctionIndex).toBeGreaterThan(hardBlockIndex);
   });
 
-  it("still schedules the QStash push for the corrected reminder through the same unmodified createReminderTask boundary", () => {
+  it("still schedules the QStash push for the corrected reminder through the canonical createReminderTask boundary", () => {
     const block = reminderBlock();
-    expect(block).toContain("source: \"create_reminder\"");
-    expect(block).toContain("createTaskFn: useTasksStore.getState().add");
-    // createReminderTask itself (src/lib/reminders.ts) is untouched — it
-    // unconditionally calls scheduleReminderPush when due_at is present,
-    // for every call, correction or not.
+    expect(block).toContain("source: \"voice\"");
+    expect(block).toContain("routingEvidence: params.routingEvidence");
+    // createReminderTask remains the one boundary for both legacy reminders
+    // and authoritative routed reminders; correction calls use it too.
   });
 
   it("keeps genuine reminders behind the client-tool guard and diagnostic wrapper", () => {
     expect(SOURCE).toContain("create_reminder: async (params: Parameters<typeof createReminder>[0]) => {");
-    expect(SOURCE).toContain('const routedToolName = explicitOneTimeAutomation ? "create_automation" : "create_reminder";');
+    expect(SOURCE).toContain('const routedToolName = routing.kind === "automation" ? "create_automation" : "create_reminder";');
     expect(SOURCE).toContain("guardCurrentToolInvocation(routedToolName)");
     expect(SOURCE).toContain('runDirectToolWithDiagnostic("create_reminder", params');
   });

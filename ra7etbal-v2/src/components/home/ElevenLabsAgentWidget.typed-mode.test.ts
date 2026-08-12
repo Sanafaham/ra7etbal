@@ -71,7 +71,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
       "save_instruction",
     ]) {
       if (toolName === "create_reminder") {
-        expect(toolBlock).toContain('const routedToolName = explicitOneTimeAutomation ? "create_automation" : "create_reminder";');
+        expect(toolBlock).toContain('const routedToolName = routing.kind === "automation" ? "create_automation" : "create_reminder";');
         expect(toolBlock).toContain("guardCurrentToolInvocation(routedToolName)");
       } else {
         expect(toolBlock).toContain(`guardCurrentToolInvocation("${toolName}")`);
@@ -557,7 +557,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
   it("blocks a typed reminder request from creating a reminder or triggering push scheduling", () => {
     const toolBlock = blockBetween('create_reminder: async (params: Parameters<typeof createReminder>[0]) => {', "  },");
     const guardIndex = toolBlock.indexOf("guardCurrentToolInvocation(routedToolName)");
-    const executorIndex = toolBlock.indexOf("createReminder(params)");
+    const executorIndex = toolBlock.indexOf("createReminder({ ...params, routingEvidence })");
     expect(guardIndex).toBeGreaterThan(-1);
     expect(executorIndex).toBeGreaterThan(guardIndex);
     expect(toolBlock).toContain("if (captureBlock) return captureBlock;");
@@ -741,7 +741,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
 
   it("keeps Talk to Carson's reminder, calendar, and delegation tools calling their real executors unconditionally", () => {
     for (const [toolName, executorCall] of [
-      ["create_reminder", "createReminder(params)"],
+      ["create_reminder", "createReminder({ ...params, routingEvidence })"],
       ["create_automation", "createAutomation(params)"],
       ["create_calendar_event", "createCalendarEvent(params)"],
       ["update_calendar_event", "updateCalendarEventTool(params)"],
@@ -914,7 +914,7 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
     // Every real executor call for reminders/calendar/delegation/followup is
     // still present, unconditionally reachable for voice.
     for (const executorCall of [
-      "createReminder(params)",
+      "createReminder({ ...params, routingEvidence })",
       "createCalendarEvent(params)",
       "sendDelegation(params)",
       "sendFollowup(params)",

@@ -11,13 +11,44 @@ vi.mock("./supabase", () => ({
   },
 }));
 
-import { cancelReminderPush, rescheduleReminderPush, scheduleReminderPush } from "./qstash-reminder";
+import { cancelReminderPush, createRoutedReminder, rescheduleReminderPush, scheduleReminderPush } from "./qstash-reminder";
 
 // System time frozen so "due in the future" fixtures below never go stale as
 // real calendar time passes (they were previously hardcoded wall-clock
 // dates that silently fell into the past and started failing).
 const FROZEN_NOW = new Date("2026-01-01T00:00:00.000Z");
 const FUTURE_DUE_AT = new Date(FROZEN_NOW.getTime() + 60 * 60 * 1000).toISOString(); // +1 hour
+
+describe("createRoutedReminder", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("sends the exact current-client creation contract to the server-owned boundary", async () => {
+    const task = { id: "55f85b48-7dc0-4cbf-8eb4-c44836dff39c", type: "reminder" };
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ task }) }));
+    vi.stubGlobal("fetch", fetchMock);
+    const creationContract = {
+      contract_version: "reminder-creation-v1" as const,
+      source: "inbox" as const,
+      operation_id: task.id,
+    };
+    await expect(createRoutedReminder({
+      description: "Buy flowers",
+      dueAt: null,
+      creationContract,
+    })).resolves.toEqual(task);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      action: "create-and-schedule",
+      description: "Buy flowers",
+      dueAt: null,
+      imagePath: null,
+      creationContract,
+    });
+  });
+});
 
 /**
  * Protected behavior (item 9): a QStash scheduling failure must never cause

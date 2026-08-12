@@ -1,0 +1,59 @@
+name: server-authoritative-reminder-rls-verification
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - "ra7etbal-v2/supabase/migrations/20260812190000_server_authoritative_reminder_inserts.sql"
+      - "ra7etbal-v2/supabase/migrations/verification/server_authoritative_reminder_*.sql"
+      - ".github/workflows/server-authoritative-reminder-rls-verification.yml"
+  push:
+    branches: [fix/authoritative-one-time-routing]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: real-postgres-rls-proof
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ci_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ci_verify
+      MIGRATIONS: ra7etbal-v2/supabase/migrations
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Wait for PostgreSQL 16
+        run: pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
+
+      - name: Bootstrap the production-relevant tasks schema and owner policies
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/server_authoritative_reminder_rls_bootstrap.sql"
+
+      - name: Insert pre-migration reminder fixtures
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/server_authoritative_reminder_rls_fixture.sql"
+
+      - name: Apply the exact forward migration
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260812190000_server_authoritative_reminder_inserts.sql"
+
+      - name: Prove RLS composition, role behavior, isolation, and legacy-row safety
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/server_authoritative_reminder_rls_verification.sql"

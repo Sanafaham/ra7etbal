@@ -17,6 +17,7 @@ const calls = {
   saveCarsonNote: [] as any[],
   createMessage: [] as any[],
   scheduleReminderPush: [] as any[],
+  createRoutedReminder: [] as any[],
   scheduleEscalationMessages: [] as any[],
 };
 
@@ -66,6 +67,25 @@ vi.mock("./messages", () => ({
 }));
 
 vi.mock("./qstash-reminder", () => ({
+  REMINDER_CREATION_CONTRACT_VERSION: "reminder-creation-v1",
+  createRoutedReminder: vi.fn(async (input: any) => {
+    calls.createRoutedReminder.push(input);
+    const draft = {
+      id: input.creationContract?.operation_id ?? input.routingEvidence?.operation_id,
+      user_id: "user-1",
+      description: input.description,
+      type: "reminder",
+      assigned_to: null,
+      status: "pending",
+      needs_follow_up: false,
+      confirmation_url: null,
+      due_at: input.dueAt,
+      image_path: input.imagePath ?? null,
+    };
+    calls.createTask.push(draft);
+    if (input.dueAt) calls.scheduleReminderPush.push([draft.id, input.dueAt]);
+    return { ...draft, created_at: new Date().toISOString() };
+  }),
   scheduleReminderPush: vi.fn(async (...args: any[]) => {
     calls.scheduleReminderPush.push(args);
   }),
@@ -174,6 +194,7 @@ beforeEach(() => {
   calls.saveCarsonNote.length = 0;
   calls.createMessage.length = 0;
   calls.scheduleReminderPush.length = 0;
+  calls.createRoutedReminder.length = 0;
   calls.scheduleEscalationMessages.length = 0;
 });
 
