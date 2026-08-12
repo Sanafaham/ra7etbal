@@ -2778,6 +2778,168 @@ describe('Phase 8.1 — PATCH owner decision (substitute_review)', () => {
     expect(res.status).toHaveBeenCalledWith(409);
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
+
+  // Post-owner-decision worker WhatsApp identity continuity. The worker
+  // notification ("Approved. You can go ahead.", etc.) previously wrote
+  // messages/whatsapp_deliveries with no person_id at all -- there was
+  // nowhere for it to come from. findAssigneePerson now also resolves the
+  // canonical people.id, using the exact same exact-match/unambiguous-only
+  // discipline as resolveAssigneePersonId (api/_escalation-notify.js,
+  // PR #237) -- not a new algorithm -- and threads it into the shared
+  // reserve RPC call site for all three decision types.
+  describe('worker-notification person_id continuity', () => {
+    it('approved_alternative: threads the resolved canonical person_id into reserve_custom_instruction', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Ghulam', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+        .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' }))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'person-ghulam-1', name: 'Ghulam', phone: '+15551234567' }])) // findAssigneePerson — exactly one match
+        .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }])) // reserve_custom_instruction
+        .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(metaAcceptedResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse());
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
+      const reserveCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_custom_instruction'));
+      expect(reserveCall).toBeDefined();
+      const reserveBody = JSON.parse(reserveCall[1].body);
+      expect(reserveBody.p_person_id).toBe('person-ghulam-1');
+      expect(reserveBody.p_recipient).toBe('+15551234567'); // send eligibility unchanged
+    });
+
+    it('custom_instruction: threads the resolved canonical person_id into reserve_custom_instruction, message wording unchanged', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+        .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'custom_instruction' }))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'person-christopher-1', name: 'Christopher', phone: '+12025691377' }]))
+        .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }]))
+        .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(metaAcceptedResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse());
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handler(
+        patchReq({ taskId: 'task-1', decision: 'custom_instruction', instructionText: 'Get two Turquoise instead.', reviewedAt: '2026-07-10T00:00:00.000Z' }),
+        res,
+      );
+
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'custom_instruction_sent' }));
+      const reserveCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_custom_instruction'));
+      const reserveBody = JSON.parse(reserveCall[1].body);
+      expect(reserveBody.p_person_id).toBe('person-christopher-1');
+      const metaCall = fetchMock.mock.calls.find(([url]) => String(url).includes('graph.facebook.com'));
+      const metaCallBody = JSON.parse(metaCall[1].body);
+      expect(metaCallBody.template.components[0].parameters[0].text).toContain('Get two Turquoise instead.');
+    });
+
+    it('rejected_alternative: threads the resolved canonical person_id into reserve_rejected_alternative', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: 'https://ra7etbal.com/confirm?task=task-1', quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+        .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'rejected_alternative' }))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'person-christopher-1', name: 'Christopher', phone: '+15551234567' }]))
+        .mockResolvedValueOnce(jsonResponse([{ outcome: 'correction_required', message_id: 'msg-1', delivery_id: 'delivery-1' }])) // reserve_rejected_alternative
+        .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(metaAcceptedResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse());
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handler(patchReq({ taskId: 'task-1', decision: 'rejected_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'correction_required' }));
+      const reserveCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_rejected_alternative'));
+      expect(reserveCall).toBeDefined();
+      const reserveBody = JSON.parse(reserveCall[1].body);
+      expect(reserveBody.p_person_id).toBe('person-christopher-1');
+    });
+
+    it('ambiguous assignee name (two people rows match): never guesses person_id, but still resolves phone/name and sends normally — fail-closed identity, not a delivery failure', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Christopher', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+        .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' }))
+        .mockResolvedValueOnce(jsonResponse([
+          { id: 'person-a', name: 'Christopher', phone: '+15551234567' },
+          { id: 'person-b', name: 'Christopher', phone: '+15559999999' },
+        ])) // findAssigneePerson — two matches, genuinely ambiguous
+        .mockResolvedValueOnce(jsonResponse([{ message_id: 'msg-1', delivery_id: 'delivery-1' }]))
+        .mockResolvedValueOnce(jsonResponse([{ delivery_status: 'pending' }]))
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(metaAcceptedResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse());
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+      // Send still succeeds — ambiguity in the durable identity must never
+      // become a new worker-message delivery failure.
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
+      const reserveCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rpc/reserve_custom_instruction'));
+      const reserveBody = JSON.parse(reserveCall[1].body);
+      expect(reserveBody.p_person_id).toBeNull();
+      expect(reserveBody.p_recipient).toBe('+15551234567'); // first match still used for send, unchanged
+    });
+
+    it('zero-match assignee name: unchanged existing behavior — no phone on file, 400, never reaches the reserve RPC', async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({ id: 'user-1' }))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', description: 'buy TEREA Silver', assigned_to: 'Nobody', confirmation_url: null, quality_review_status: 'substitute_review', quality_review_note: 'note', quality_reviewed_at: '2026-07-10T00:00:00.000Z', worker_reply: null }]))
+        .mockResolvedValueOnce(jsonResponse({ id: 'decision-1', lease_token: 'lease-1', status: 'processing', decision: 'approved_alternative' }))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'person-a', name: 'Christopher', phone: '+15551234567' }])); // no match for "Nobody"
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handler(patchReq({ taskId: 'task-1', decision: 'approved_alternative', reviewedAt: '2026-07-10T00:00:00.000Z' }), res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rpc/reserve_custom_instruction'))).toBe(false);
+    });
+
+    it('source-level regression guard: both reserve RPCs accept p_person_id and write it to both messages and whatsapp_deliveries, with the old 7-argument signatures explicitly dropped first', () => {
+      const migrationSource = readFileSync(
+        join(__dirname, '..', 'supabase', 'migrations', '20260812_worker_notification_person_id.sql'),
+        'utf-8',
+      );
+      expect(migrationSource).toContain(
+        'DROP FUNCTION IF EXISTS public.reserve_custom_instruction(uuid, uuid, uuid, text, text, text, text);',
+      );
+      expect(migrationSource).toContain(
+        'DROP FUNCTION IF EXISTS public.reserve_rejected_alternative(uuid, uuid, uuid, text, text, text, text);',
+      );
+      expect(migrationSource).toContain('p_person_id uuid DEFAULT NULL');
+      // Both functions' messages INSERT carries person_id.
+      expect(migrationSource.match(/INSERT INTO messages \([^)]*person_id[^)]*\)/g)?.length).toBe(2);
+      // Both functions' whatsapp_deliveries INSERT carries person_id.
+      expect(migrationSource.match(/INSERT INTO whatsapp_deliveries\s*\n?\s*\([^)]*person_id[^)]*\)/g)?.length).toBe(2);
+    });
+  });
 });
 
 describe('owner decision staff-facing recipient normalization', () => {

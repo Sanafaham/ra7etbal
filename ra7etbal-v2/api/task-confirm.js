@@ -965,6 +965,7 @@ async function handleOwnerDecision(req, res) {
       p_confirmation_url: workerConfirmationUrl,
       p_recipient: assigneePerson.phone,
       p_recipient_name: recipientName,
+      p_person_id: assigneePerson.id,
     });
     if (reserve.error) return respondRpcError(res, reserve.error);
     const reserveResult = reserve.data[0];
@@ -2160,11 +2161,22 @@ async function createCorrectionMessageRecord({ supabaseUrl, serviceKey, userId, 
   return Array.isArray(rows) ? rows[0] : null;
 }
 
+/**
+ * Sending eligibility (name/phone) is unchanged from before this fix: the
+ * first case-insensitive exact-name match is still used, same as the prior
+ * .find() behavior, so an existing ambiguous-name household never loses its
+ * ability to send. The canonical `id` (durable person_id) is gated
+ * strictly, though — populated only when the match is unambiguous (exactly
+ * one), mirroring the same filter+length-check discipline already
+ * established by resolveAssigneePersonId (api/_escalation-notify.js,
+ * PR #237) rather than a new identity algorithm. Ambiguous or zero matches
+ * leave `id: null` — never guessed.
+ */
 async function findAssigneePerson({ supabaseUrl, serviceKey, userId, assignedTo }) {
   if (!userId || !assignedTo) return null;
   const response = await fetch(
     supabaseUrl + '/rest/v1/people?user_id=eq.' +
-      encodeURIComponent(userId) + '&select=name,phone',
+      encodeURIComponent(userId) + '&select=id,name,phone',
     {
       headers: {
         apikey: serviceKey,
@@ -2177,7 +2189,13 @@ async function findAssigneePerson({ supabaseUrl, serviceKey, userId, assignedTo 
   const people = await response.json().catch(() => []);
   if (!Array.isArray(people)) return null;
   const target = String(assignedTo).trim().toLowerCase();
-  return people.find((person) => String(person.name || '').trim().toLowerCase() === target) ?? null;
+  const matches = people.filter((person) => String(person.name || '').trim().toLowerCase() === target);
+  if (matches.length === 0) return null;
+  return {
+    name: matches[0].name,
+    phone: matches[0].phone,
+    id: matches.length === 1 ? matches[0].id : null,
+  };
 }
 
 // ── Storage helpers (from get-confirm-task.js) ────────────────────────────────
