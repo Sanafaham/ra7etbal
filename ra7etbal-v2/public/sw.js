@@ -8,6 +8,10 @@ function reportDelivery(receipt, stage, detail) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       action: "notification-receipt",
+      // Omitted (undefined) for any receipt that doesn't set it — the
+      // server already defaults a missing kind to "reminder", so this is
+      // backward compatible with every already-cached copy of this file.
+      kind: receipt.kind,
       taskId: receipt.taskId,
       subscriptionId: receipt.subscriptionId,
       dueAt: receipt.dueAt,

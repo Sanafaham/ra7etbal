@@ -20,6 +20,11 @@ describe('reminder service-worker observability contract', () => {
     expect(source).toContain('url: safeInternalRoute(payload.url)');
   });
 
+  it('forwards receipt.kind so the server can distinguish reminder vs. completion push receipts', async () => {
+    const source = await readFile(new URL('./sw.js', import.meta.url), 'utf8');
+    expect(source).toContain('kind: receipt.kind');
+  });
+
   it('navigates an existing client, opens a target without one, and rejects unsafe URLs', async () => {
     const source = await readFile(new URL('./sw.js', import.meta.url), 'utf8');
     expect(source).toContain('client.navigate(targetUrl)');

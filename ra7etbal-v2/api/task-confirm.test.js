@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import webpush from 'web-push';
+import { verifyReminderReceipt } from './_reminder-delivery.js';
 
 const downloadImageAsBase64Mock = vi.fn();
 const runQualityReviewMock = vi.fn();
@@ -3285,3 +3286,162 @@ function emptyResponse(status = 204) {
     text: vi.fn().mockResolvedValue(''),
   };
 }
+
+// Owner completion push reliability — durable evidence lifecycle. Reuses the
+// exact reminder-push observability infrastructure (reminder_delivery_events
+// via recordDeliveryEvent, signed receipts via signReminderReceipt) rather
+// than a second system. Only the final-completion sendOwnerPush call site
+// (no `variant`) opts into this — every test elsewhere in this file that
+// exercises a QI review/escalation push variant already proves those are
+// unaffected (they never pass taskId, so none of this code runs for them).
+describe('Owner completion push reliability — durable evidence lifecycle', () => {
+  const CRON_SECRET = 'cron-secret';
+
+  function stubPushEnv() {
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+    vi.stubEnv('CRON_SECRET', CRON_SECRET);
+  }
+
+  it('dedupes duplicate-endpoint subscriptions, sends exactly one push per unique endpoint, records provider_send_attempted + provider_accepted for a success and provider_rejected + subscription cleanup for a 404, and includes a valid signed receipt', async () => {
+    stubPushEnv();
+
+    const gone = new Error('Gone');
+    gone.statusCode = 404;
+    vi.mocked(webpush.sendNotification)
+      .mockResolvedValueOnce({ statusCode: 201 }) // sub-1 (endpoint A) accepted
+      .mockRejectedValueOnce(gone); // sub-3 (endpoint B) permanently gone
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // confirmations insert
+      .mockResolvedValueOnce(jsonResponse([
+        { id: 'sub-1', endpoint: 'https://push.example/endpoint-A', p256dh: 'p1', auth: 'a1' },
+        { id: 'sub-2', endpoint: 'https://push.example/endpoint-A', p256dh: 'p1-dup', auth: 'a1-dup' }, // duplicate endpoint — must be deduped, not double-sent
+        { id: 'sub-3', endpoint: 'https://push.example/endpoint-B', p256dh: 'p2', auth: 'a2' },
+      ])) // push_subscriptions GET
+      .mockResolvedValueOnce(jsonResponse({}, 201)) // recordDeliveryEvent: provider_send_attempted (sub-1)
+      .mockResolvedValueOnce(jsonResponse({}, 201)) // recordDeliveryEvent: provider_accepted (sub-1)
+      .mockResolvedValueOnce(jsonResponse({}, 201)) // recordDeliveryEvent: provider_send_attempted (sub-3)
+      .mockResolvedValueOnce(jsonResponse({}, 201)) // recordDeliveryEvent: provider_rejected (sub-3)
+      .mockResolvedValueOnce(emptyResponse()); // DELETE push_subscriptions?id=eq.sub-3 (expired cleanup)
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
+
+    // Exactly one send per unique endpoint — sub-2 (duplicate of sub-1's
+    // endpoint) never reaches webpush.sendNotification.
+    expect(vi.mocked(webpush.sendNotification)).toHaveBeenCalledTimes(2);
+
+    const attemptedCalls = fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).includes('/rest/v1/reminder_delivery_events') && init?.body && JSON.parse(init.body).stage === 'provider_send_attempted');
+    const acceptedCalls = fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).includes('/rest/v1/reminder_delivery_events') && init?.body && JSON.parse(init.body).stage === 'provider_accepted');
+    const rejectedCalls = fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).includes('/rest/v1/reminder_delivery_events') && init?.body && JSON.parse(init.body).stage === 'provider_rejected');
+    expect(attemptedCalls).toHaveLength(2); // one per unique subscription, never per raw row
+    expect(acceptedCalls).toHaveLength(1);
+    expect(rejectedCalls).toHaveLength(1);
+
+    // Event-kind discriminator lives in existing metadata — no schema change.
+    for (const [, init] of [...attemptedCalls, ...acceptedCalls, ...rejectedCalls]) {
+      expect(JSON.parse(init.body).metadata.kind).toBe('completion_push');
+    }
+    // provider acceptance is recorded as provider_accepted only — never a
+    // claim of visible/delivered status.
+    for (const [, init] of acceptedCalls) {
+      const body = JSON.parse(init.body);
+      expect(body.stage).toBe('provider_accepted');
+      expect(body.stage).not.toBe('delivered');
+    }
+
+    // The 404 permanently-gone subscription is removed, matching existing
+    // reminder-push cleanup behavior.
+    const deleteCall = fetchMock.mock.calls.find(([url, init]) =>
+      String(url).includes('/rest/v1/push_subscriptions?id=eq.sub-3') && init?.method === 'DELETE');
+    expect(deleteCall).toBeTruthy();
+
+    // The accepted send's payload carries a receipt the widened
+    // qstash-reminder.js endpoint would actually accept — verified with the
+    // real verifyReminderReceipt function, not just a non-empty-string check.
+    const acceptedPushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
+    expect(acceptedPushPayload.receipt.kind).toBe('completion');
+    expect(acceptedPushPayload.receipt.url).toBe('/api/qstash-reminder');
+    expect(acceptedPushPayload.receipt.taskId).toBe('task-1');
+    expect(acceptedPushPayload.receipt.subscriptionId).toBe('sub-1');
+    const isValid = verifyReminderReceipt(
+      {
+        taskId: acceptedPushPayload.receipt.taskId,
+        userId: 'user-1',
+        subscriptionId: acceptedPushPayload.receipt.subscriptionId,
+        dueAt: acceptedPushPayload.receipt.dueAt,
+      },
+      acceptedPushPayload.receipt.token,
+      CRON_SECRET,
+    );
+    expect(isValid).toBe(true);
+  });
+
+  it('QI review-variant pushes (e.g. substitute_review) are completely unaffected — no taskId means no dedup, no receipt, no durable evidence recording', async () => {
+    stubPushEnv();
+    runQualityReviewMock.mockResolvedValue({ status: 'substitute_review', note: 'White pen instead of blue.' });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-1', user_id: 'user-1', status: 'pending', description: 'Buy a blue pen.',
+        assigned_to: 'Christopher', image_path: null,
+      }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (stays pending, quality_review_status=substitute_review)
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])) // sendOwnerPush(variant: substitute_review)
+      .mockResolvedValueOnce(jsonResponse([{ id: 'decision-1', deep_link_token: 'aaaaaaaa-1111-4111-8111-111111111111', owner_notified_at: null }])) // notifyOwnerOfTaskReview: claim
+      .mockResolvedValueOnce(jsonResponse({ decision_id: 'decision-1', claimed: true, claim_token: 'tok', notification_status: 'sending' }))
+      .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'owner', phone: '+15550000099' }]))
+      .mockResolvedValueOnce(jsonResponse({}, 200)); // complete notification lease
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof.jpg'] }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'substitute_review' }));
+    // No call ever touches reminder_delivery_events for this push variant.
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('reminder_delivery_events'))).toBe(false);
+    // sendOwnerPush's own single push call carries no receipt.
+    const pushCall = vi.mocked(webpush.sendNotification).mock.calls.find(([, body]) =>
+      JSON.parse(body).body?.includes('sent an alternative'));
+    expect(pushCall).toBeTruthy();
+    expect(JSON.parse(pushCall[1]).receipt).toBeUndefined();
+  });
+
+  it('a receipt-signing failure (e.g. CRON_SECRET unset) still sends the push, without a receipt, instead of losing the notification entirely', async () => {
+    vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+    vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+    vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+    // CRON_SECRET deliberately left unset.
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // confirmations insert
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])) // push_subscriptions GET
+      .mockResolvedValueOnce(jsonResponse({}, 201)) // recordDeliveryEvent: provider_send_attempted
+      .mockResolvedValueOnce(jsonResponse({}, 201)); // recordDeliveryEvent: provider_accepted
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
+    expect(vi.mocked(webpush.sendNotification)).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
+    expect(payload.body).toBe('Christopher confirmed: get the pizza');
+    expect(payload.receipt).toBeUndefined();
+  });
+});
