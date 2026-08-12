@@ -1160,6 +1160,18 @@ export async function resolveCanonicalOwner({ supabaseUrl, serviceKey, msg }) {
   );
   const userIds = [...new Set(accounts.map((row) => row.user_id).filter(Boolean))];
   if (userIds.length !== 1) {
+    // Zero matches is a normal, expected state (no binding yet). More than
+    // one is never expected -- it means whatsapp_health_state has cross-
+    // account contamination on this exact business number (see the
+    // 2026-08-11 incident: recordWebhookHeartbeat used to invent bindings
+    // for unrelated accounts). This must be loud, not a silent fallthrough
+    // into consent/staff handling -- never logs the actual user_ids
+    // (cross-account private data), only the count.
+    if (userIds.length > 1) {
+      console.error('[owner_whatsapp_routing] AMBIGUOUS phone_number_id binding — owner routing disabled', {
+        distinctAccountCount: userIds.length,
+      });
+    }
     return { isOwner: false, routingEnabled: false, reason: 'account_not_unique' };
   }
   const userId = userIds[0];

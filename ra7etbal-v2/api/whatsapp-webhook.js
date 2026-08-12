@@ -1140,6 +1140,32 @@ export function buildDeliveryStatusPatch({
   return patch;
 }
 
+/**
+ * Best-effort heartbeat only -- refreshes health timestamps on rows that
+ * ALREADY exist for this exact phone_number_id. Never invents a new
+ * ownership binding.
+ *
+ * Root cause of the 2026-08-11 cross-account contamination incident: this
+ * function used to also discover "owners" by querying the 100 most
+ * recently created whatsapp_deliveries rows GLOBALLY (no phone_number_id
+ * filter at all) and upsert a whatsapp_health_state row for every user_id
+ * found there against the CURRENT webhook's phone_number_id -- silently
+ * binding any recently-active account in the whole Supabase project to
+ * whichever real production number happened to receive a webhook, even
+ * though that account never sent or received anything through it. Two
+ * unrelated accounts (a family member's own account, and a synthetic test
+ * account) each had one recent whatsapp_deliveries row and were swept in,
+ * breaking resolveCanonicalOwner()'s uniqueness guard and silently
+ * degrading the real owner's WhatsApp reply routing for a full day with no
+ * error anywhere.
+ *
+ * The legitimate way a NEW binding gets created is updateMatchedHealthState
+ * (below), reached only via a delivery-status webhook matched by its own
+ * real Meta message id against a whatsapp_deliveries row's own user_id --
+ * that mechanism is untouched and remains the sole source of truth for
+ * "who owns this number." A heartbeat with no matched delivery has no
+ * legitimate way to learn a new owner, so it must not try.
+ */
 async function recordWebhookHeartbeat({
   supabaseUrl,
   serviceKey,
@@ -1153,8 +1179,8 @@ async function recordWebhookHeartbeat({
 
   for (const phoneNumberId of ids) {
     try {
-      // Update any existing rows even when no delivery owner can be resolved
-      // from this particular payload.
+      // Updates every row already bound to this exact phone_number_id --
+      // matches zero rows (a harmless no-op) if no binding exists yet.
       await patchHealthRowsForPhoneNumber({
         supabaseUrl,
         serviceKey,
@@ -1164,35 +1190,6 @@ async function recordWebhookHeartbeat({
           ...(hasStatuses ? { last_status_webhook_at: webhookReceivedAt } : {}),
         },
       });
-
-      const ownersRes = await fetch(
-        `${supabaseUrl}/rest/v1/whatsapp_deliveries` +
-          `?select=user_id` +
-          `&order=created_at.desc` +
-          `&limit=100`,
-        { headers: serviceHeaders(serviceKey) },
-      );
-      if (!ownersRes.ok) continue;
-      const rows = await ownersRes.json().catch(() => []);
-      const userIds = [
-        ...new Set(
-          (Array.isArray(rows) ? rows : [])
-            .map((row) => row.user_id)
-            .filter(Boolean),
-        ),
-      ];
-      for (const userId of userIds) {
-        await upsertHealthState({
-          supabaseUrl,
-          serviceKey,
-          userId,
-          phoneNumberId,
-          fields: {
-            last_webhook_received_at: webhookReceivedAt,
-            ...(hasStatuses ? { last_status_webhook_at: webhookReceivedAt } : {}),
-          },
-        });
-      }
     } catch (err) {
       console.warn('WhatsApp webhook heartbeat update failed open', {
         phoneNumberId,
