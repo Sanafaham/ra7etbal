@@ -276,6 +276,32 @@ async function rpc(supabaseUrl, serviceKey, fetchImpl, name, args) {
 export { buildEscalationMessage, OWNER_DECISION_REPLY_TEMPLATE_NAME };
 
 /**
+ * Resolves assignedTo (free text, from tasks.assigned_to) to a real
+ * people.id via an exact, case-insensitive name match — the same
+ * resolution shape already trusted elsewhere in this codebase (e.g.
+ * task-confirm.js's findAssigneePerson) for deciding who to message.
+ * Never fuzzy-matches; returns null rather than guessing when there is
+ * no unique match, so a mistaken identity is never recorded.
+ */
+async function resolveAssigneePersonId(supabaseUrl, serviceKey, fetchImpl, userId, assignedTo) {
+  if (!userId || !assignedTo) return null;
+  try {
+    const response = await fetchImpl(
+      `${supabaseUrl}/rest/v1/people?user_id=eq.${encodeURIComponent(userId)}&select=id,name`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' } },
+    );
+    if (!response.ok) return null;
+    const people = await response.json().catch(() => []);
+    if (!Array.isArray(people)) return null;
+    const target = String(assignedTo).trim().toLowerCase();
+    const matches = people.filter((p) => String(p.name || '').trim().toLowerCase() === target);
+    return matches.length === 1 ? matches[0].id : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Notify the owner via WhatsApp when a task-confirm event (uncertain proof,
  * substitute_review) requires their decision. Unlike notifyOwnerOfEscalation,
  * this path has no WhatsApp staff message — the trigger is a proof upload.
@@ -305,12 +331,21 @@ export async function notifyOwnerOfTaskReview(input, deps) {
   const { taskId, userId, reviewType, taskDescription, assignedTo, reviewNote, proofImagePath } = input;
   const fetchImpl = deps.fetchImpl || fetch;
 
+  // Durable person attribution: resolved once here, from the same
+  // assignedTo/userId this function already receives — not new identity
+  // input, just an added lookup against an already-existing, already-
+  // trusted resolution shape. Never blocks the notification: a failed or
+  // ambiguous resolution simply means person_id stays null on the decision
+  // row, same as it always has.
+  const personId = await resolveAssigneePersonId(supabaseUrl, serviceKey, fetchImpl, userId, assignedTo);
+
   let decision;
   try {
     decision = await rpc(supabaseUrl, serviceKey, fetchImpl, 'claim_task_escalation_owner_decision', {
       p_task_id: taskId,
       p_user_id: userId,
       p_review_type: reviewType,
+      p_person_id: personId,
     });
   } catch (err) {
     console.error('[escalation-notify] claim_task_escalation_owner_decision failed', {

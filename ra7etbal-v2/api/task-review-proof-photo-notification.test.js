@@ -53,6 +53,7 @@ const NOTIFICATION_CLAIM = {
 
 function makeFetchMock({ decisionRow = DECISION_ROW, alreadySent = false } = {}) {
   return vi.fn()
+    .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }])) // resolveAssigneePersonId
     .mockResolvedValueOnce(jsonResponse(decisionRow))              // claim_task_escalation_owner_decision
     .mockResolvedValueOnce(jsonResponse(alreadySent ? {
       decision_id: decisionRow.id, claimed: false, claim_token: null, notification_status: 'sent',
