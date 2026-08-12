@@ -2644,8 +2644,7 @@ export default function ElevenLabsAgentWidget({
           userId,
           text,
           dueAt: resolvedDueAt,
-          source: "create_reminder",
-          createTaskFn: useTasksStore.getState().add,
+          source: "voice",
           routingEvidence: params.routingEvidence,
         });
         currentTaskContextRef.current = {

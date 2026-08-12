@@ -145,6 +145,24 @@ vi.mock("./supabase", () => ({
 }));
 
 vi.mock("./qstash-reminder", () => ({
+  REMINDER_CREATION_CONTRACT_VERSION: "reminder-creation-v1",
+  createRoutedReminder: vi.fn(async (input: any) => {
+    const id = input.creationContract?.operation_id ?? input.routingEvidence?.operation_id;
+    const row = insertRows("tasks", {
+      id,
+      user_id: h.activeUserId,
+      description: input.description,
+      type: "reminder",
+      assigned_to: null,
+      status: "pending",
+      needs_follow_up: false,
+      confirmation_url: null,
+      due_at: input.dueAt,
+      image_path: input.imagePath ?? null,
+    })[0] as any;
+    if (input.dueAt) h.reminderSchedules.push([row.id, input.dueAt]);
+    return row;
+  }),
   scheduleReminderPush: vi.fn(async (taskId: string, dueAt: string) => {
     h.reminderSchedules.push([taskId, dueAt]);
   }),
@@ -467,7 +485,7 @@ describe("canonical path source adapters", () => {
 
     expect(inbox).toMatch(/async function handleRemindSubmit[\s\S]*createReminderTask\(\{[\s\S]*source:\s*"inbox"/);
     expect(todos).toMatch(/async function handleRemindSubmit[\s\S]*createReminderTask\(\{[\s\S]*source:\s*"todos"/);
-    expect(widget).toMatch(/const createReminder = useCallback\([\s\S]*createReminderTask\(\{[\s\S]*source:\s*"create_reminder"/);
+    expect(widget).toMatch(/const createReminder = useCallback\([\s\S]*createReminderTask\(\{[\s\S]*source:\s*"voice"/);
     expect(widget).toMatch(/if \(action === "reminder"\)[\s\S]*createReminderTask\(\{[\s\S]*source:\s*"act_on_note"/);
   });
 

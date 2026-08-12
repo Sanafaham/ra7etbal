@@ -1,16 +1,18 @@
 import type { Task } from "../types/task";
-import { createRoutedReminder, scheduleReminderPush } from "./qstash-reminder";
-import { createTask } from "./tasks";
+import {
+  createRoutedReminder,
+  REMINDER_CREATION_CONTRACT_VERSION,
+  type ReminderCreationSource,
+} from "./qstash-reminder";
 import type { OneTimeRoutingEvidence } from "./one-time-automation-routing";
 
 interface CreateReminderTaskInput {
   userId: string;
   text: string;
   dueAt: string | null;
-  source: string;
+  source: ReminderCreationSource;
   id?: string;
   imagePath?: string | null;
-  createTaskFn?: typeof createTask;
   routingEvidence?: OneTimeRoutingEvidence;
 }
 
@@ -29,36 +31,24 @@ export async function createReminderTask({
   source,
   id,
   imagePath,
-  createTaskFn = createTask,
   routingEvidence,
 }: CreateReminderTaskInput): Promise<Task> {
   const description = text.trim();
   if (!userId) throw new Error("Not signed in.");
   if (!description) throw new Error("Cannot create a reminder without text.");
 
-  if (routingEvidence) {
-    if (!dueAt) throw new Error("Cannot create a routed reminder without a due time.");
-    return createRoutedReminder({ description, dueAt, routingEvidence });
-  }
-
-  const task = await createTaskFn({
-    ...(id ? { id } : {}),
-    user_id: userId,
+  const operationId = id ?? routingEvidence?.operation_id ?? crypto.randomUUID();
+  return createRoutedReminder({
     description,
-    type: "reminder",
-    assigned_to: null,
-    status: "pending",
-    needs_follow_up: false,
-    confirmation_url: null,
-    due_at: dueAt,
-    ...(imagePath !== undefined ? { image_path: imagePath } : {}),
+    dueAt,
+    imagePath,
+    routingEvidence,
+    creationContract: routingEvidence
+      ? undefined
+      : {
+          contract_version: REMINDER_CREATION_CONTRACT_VERSION,
+          source,
+          operation_id: operationId,
+        },
   });
-
-  if (task.due_at) {
-    scheduleReminderPush(task.id, task.due_at, routingEvidence).catch((err) =>
-      console.error(`[${source}] QStash reminder schedule failed`, task.id, err),
-    );
-  }
-
-  return task;
 }

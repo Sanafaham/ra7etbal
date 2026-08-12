@@ -584,6 +584,11 @@ describe("qstash-reminder authoritative routed reminder creation", () => {
     client_build: "35c71db848741082766ae9b960c704764f71336d",
     operation_id: "4c438c39-7b8f-43f6-9085-0b4b64905bf8",
   };
+  const creationContract = {
+    contract_version: "reminder-creation-v1",
+    source: "inbox",
+    operation_id: "55f85b48-7dc0-4cbf-8eb4-c44836dff39c",
+  };
 
   it("rejects automation evidence before any task insert", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ id: "user-1" }));
@@ -599,6 +604,76 @@ describe("qstash-reminder authoritative routed reminder creation", () => {
     expect(res.statusCode).toBe(409);
     expect(res.payload.reasonCode).toBe("destination_mismatch");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/rest/v1/tasks"))).toBe(false);
+  });
+
+  it("does not let a generic creation contract override mismatched voice evidence", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ id: "user-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+    await handler(mockReq({ body: {
+      action: "create-and-schedule",
+      description: "Confirm X",
+      dueAt: "2026-08-13T04:00:00.000Z",
+      routingEvidence: { ...evidence, destination: "one_time_automation" },
+      creationContract,
+    } }), res);
+    expect(res.statusCode).toBe(409);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/rest/v1/tasks"))).toBe(false);
+  });
+
+  it("creates an ordinary current-client reminder through the server contract", async () => {
+    const task = {
+      id: creationContract.operation_id,
+      user_id: "user-1",
+      description: "Inbox reminder",
+      type: "reminder",
+      due_at: null,
+      image_path: null,
+      status: "pending",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+      .mockResolvedValueOnce(jsonResponse([task], 201));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+    await handler(mockReq({ body: {
+      action: "create-and-schedule",
+      description: task.description,
+      dueAt: null,
+      creationContract,
+    } }), res);
+    expect(res.statusCode).toBe(201);
+    expect(res.payload).toMatchObject({ action: "created", task: { id: task.id }, messageId: null });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("qstash.upstash.io"))).toHaveLength(0);
+  });
+
+  it("rejects a missing creation contract before persistence", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ id: "user-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+    await handler(mockReq({ body: {
+      action: "create-and-schedule",
+      description: "No contract",
+      dueAt: null,
+    } }), res);
+    expect(res.statusCode).toBe(409);
+    expect(res.payload.reasonCode).toBe("creation_contract_missing");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an image path outside the exact owner and operation namespace", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ id: "user-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+    await handler(mockReq({ body: {
+      action: "create-and-schedule",
+      description: "Image reminder",
+      dueAt: null,
+      imagePath: "task-images/another-user/another-task/photo.jpg",
+      creationContract,
+    } }), res);
+    expect(res.statusCode).toBe(400);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/rest/v1/tasks"))).toBe(false);
   });
 
@@ -659,5 +734,33 @@ describe("qstash-reminder authoritative routed reminder creation", () => {
     expect(res.payload.task.id).toBe(evidence.operation_id);
     expect(fetchMock.mock.calls.filter(([url]) => String(url) === "https://supabase.test/rest/v1/tasks")).toHaveLength(1);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`id=eq.${evidence.operation_id}`))).toBe(true);
+  });
+
+  it("does not republish QStash when an idempotent retry finds the operation already scheduled", async () => {
+    const task = {
+      id: evidence.operation_id,
+      user_id: "user-1",
+      description: "Owner reminder",
+      type: "reminder",
+      due_at: "2026-08-13T04:00:00.000Z",
+      status: "pending",
+      image_path: null,
+      qstash_message_id: "msg-existing",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+      .mockResolvedValueOnce(jsonResponse([], 201))
+      .mockResolvedValueOnce(jsonResponse([task]));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+    await handler(mockReq({ body: {
+      action: "create-and-schedule",
+      description: task.description,
+      dueAt: task.due_at,
+      routingEvidence: evidence,
+    } }), res);
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toMatchObject({ action: "already-created-and-scheduled", messageId: "msg-existing" });
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("qstash.upstash.io"))).toBe(false);
   });
 });

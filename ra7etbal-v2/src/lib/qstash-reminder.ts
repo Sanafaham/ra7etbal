@@ -1,27 +1,37 @@
 /**
  * Browser-side helpers to schedule, cancel, and reschedule QStash reminder jobs.
  *
- * All functions are fire-and-log: errors are caught and logged with console.error
- * so that a QStash failure never blocks a task mutation from completing, but is
- * always visible in the browser console.
+ * Schedule/cancel/reschedule mutations are fire-and-log. Creation is different:
+ * createRoutedReminder is the required server-authoritative persistence boundary
+ * and throws unless the server proves the reminder row was saved.
  */
 
 import { supabase } from "./supabase";
 import type { OneTimeRoutingEvidence } from "./one-time-automation-routing";
 import type { Task } from "../types/task";
 
+export const REMINDER_CREATION_CONTRACT_VERSION = "reminder-creation-v1" as const;
+export type ReminderCreationSource = "voice" | "inbox" | "todos" | "save" | "act_on_note";
+
+export interface ReminderCreationContract {
+  contract_version: typeof REMINDER_CREATION_CONTRACT_VERSION;
+  source: ReminderCreationSource;
+  operation_id: string;
+}
+
 async function getAccessToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ?? null;
 }
 
-/** Authoritative voice-reminder boundary. The server validates routing intent
- * before it creates any task, so automation-shaped evidence cannot leave an
- * owner reminder behind even if a stale caller targets this endpoint. */
+/** Authoritative one-off reminder boundary. Voice calls carry routing evidence;
+ * other current UI writers carry a narrow creation contract. */
 export async function createRoutedReminder(input: {
   description: string;
-  dueAt: string;
-  routingEvidence: OneTimeRoutingEvidence;
+  dueAt: string | null;
+  imagePath?: string | null;
+  routingEvidence?: OneTimeRoutingEvidence;
+  creationContract?: ReminderCreationContract;
 }): Promise<Task> {
   const token = await getAccessToken();
   if (!token) throw new Error("Not signed in.");
@@ -35,7 +45,9 @@ export async function createRoutedReminder(input: {
       action: "create-and-schedule",
       description: input.description,
       dueAt: input.dueAt,
+      imagePath: input.imagePath ?? null,
       routingEvidence: input.routingEvidence,
+      creationContract: input.creationContract,
     }),
   });
   const data = await res.json().catch(() => null);

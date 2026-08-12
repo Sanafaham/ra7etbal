@@ -149,8 +149,8 @@ describe("ElevenLabsAgentWidget — reminder replacement on correction (2026-07-
 
   it("still schedules the QStash push for the corrected reminder through the canonical createReminderTask boundary", () => {
     const block = reminderBlock();
-    expect(block).toContain("source: \"create_reminder\"");
-    expect(block).toContain("createTaskFn: useTasksStore.getState().add");
+    expect(block).toContain("source: \"voice\"");
+    expect(block).toContain("routingEvidence: params.routingEvidence");
     // createReminderTask remains the one boundary for both legacy reminders
     // and authoritative routed reminders; correction calls use it too.
   });

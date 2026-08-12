@@ -1,164 +1,103 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Task, TaskDraft } from "../types/task";
+import type { Task } from "../types/task";
 
-const h = vi.hoisted(() => ({
-  drafts: [] as TaskDraft[],
-  schedules: [] as Array<[string, string]>,
-}));
+const h = vi.hoisted(() => ({ calls: [] as Array<Record<string, unknown>> }));
 
-vi.mock("./tasks", () => ({
-  createTask: vi.fn(async (draft: TaskDraft) => {
-    h.drafts.push(draft);
+vi.mock("./qstash-reminder", () => ({
+  REMINDER_CREATION_CONTRACT_VERSION: "reminder-creation-v1",
+  createRoutedReminder: vi.fn(async (input: Record<string, unknown>) => {
+    h.calls.push(input);
+    const evidence = input.routingEvidence as { operation_id?: string } | undefined;
+    const contract = input.creationContract as { operation_id?: string } | undefined;
     return {
-      id: draft.id ?? `task-${h.drafts.length}`,
-      created_at: "2026-06-28T12:00:00.000Z",
+      id: evidence?.operation_id ?? contract?.operation_id ?? "missing",
+      user_id: "user-1",
+      description: input.description,
+      type: "reminder",
+      assigned_to: null,
+      status: "pending",
+      needs_follow_up: false,
+      confirmation_url: null,
       confirmed_at: null,
+      due_at: input.dueAt,
       archived_at: null,
+      created_at: "2026-06-28T12:00:00.000Z",
       qstash_message_id: null,
       followup_sent_at: null,
       escalated_at: null,
-      image_path: draft.image_path ?? null,
+      image_path: input.imagePath ?? null,
       proof_image_path: null,
       quality_review_status: null,
       quality_review_note: null,
       quality_reviewed_at: null,
       worker_reply: null,
-      ...draft,
-    } satisfies Task;
-  }),
-}));
-
-vi.mock("./qstash-reminder", () => ({
-  scheduleReminderPush: vi.fn(async (taskId: string, dueAt: string) => {
-    h.schedules.push([taskId, dueAt]);
+    } as Task;
   }),
 }));
 
 import { createReminderTask } from "./reminders";
 
-describe("createReminderTask", () => {
-  beforeEach(() => {
-    h.drafts.length = 0;
-    h.schedules.length = 0;
-  });
+describe("createReminderTask server authority", () => {
+  beforeEach(() => h.calls.splice(0));
 
-  it("creates the canonical reminder task shape and schedules the reminder push", async () => {
-    const dueAt = "2026-06-29T09:00:00.000Z";
-
+  it("routes a normal current reminder through the server contract", async () => {
     const task = await createReminderTask({
+      id: "4c438c39-7b8f-43f6-9085-0b4b64905bf8",
       userId: "user-1",
       text: "  buy flowers  ",
-      dueAt,
-      source: "test",
+      dueAt: "2026-06-29T09:00:00.000Z",
+      source: "inbox",
     });
 
-    expect(h.drafts).toEqual([
-      {
-        user_id: "user-1",
-        description: "buy flowers",
-        type: "reminder",
-        assigned_to: null,
-        status: "pending",
-        needs_follow_up: false,
-        confirmation_url: null,
-        due_at: dueAt,
+    expect(h.calls).toEqual([expect.objectContaining({
+      description: "buy flowers",
+      dueAt: "2026-06-29T09:00:00.000Z",
+      creationContract: {
+        contract_version: "reminder-creation-v1",
+        source: "inbox",
+        operation_id: "4c438c39-7b8f-43f6-9085-0b4b64905bf8",
       },
-    ]);
-    expect(task).toMatchObject({ id: "task-1", type: "reminder", due_at: dueAt });
-    expect(h.schedules).toEqual([["task-1", dueAt]]);
+    })]);
+    expect(task.type).toBe("reminder");
   });
 
-  it("preserves optional id and image path for Clear My Head attachment saves", async () => {
-    const dueAt = "2026-06-29T09:00:00.000Z";
-
+  it("preserves pre-generated id and image path for extracted attachment saves", async () => {
     await createReminderTask({
-      id: "task-pregen",
-      userId: "user-1",
-      text: "buy flowers",
-      dueAt,
-      source: "save",
-      imagePath: "task-images/user-1/task-pregen/photo.jpg",
-    });
-
-    expect(h.drafts[0]).toMatchObject({
-      id: "task-pregen",
-      image_path: "task-images/user-1/task-pregen/photo.jpg",
-      due_at: dueAt,
-    });
-    expect(h.schedules).toEqual([["task-pregen", dueAt]]);
-  });
-
-  it("does not schedule a push when dueAt is absent", async () => {
-    await createReminderTask({
+      id: "4c438c39-7b8f-43f6-9085-0b4b64905bf8",
       userId: "user-1",
       text: "buy flowers",
       dueAt: null,
-      source: "inbox-review",
+      source: "save",
+      imagePath: "task-images/user-1/4c438c39-7b8f-43f6-9085-0b4b64905bf8/photo.jpg",
     });
-
-    expect(h.drafts[0]).toMatchObject({
-      type: "reminder",
-      due_at: null,
+    expect(h.calls[0]).toMatchObject({
+      dueAt: null,
+      imagePath: "task-images/user-1/4c438c39-7b8f-43f6-9085-0b4b64905bf8/photo.jpg",
+      creationContract: { source: "save" },
     });
-    expect(h.schedules).toHaveLength(0);
   });
 
-  // Protected behavior: the reminder's creation timestamp must remain present
-  // and unaltered on the returned/persisted record. created_at is a
-  // DB-assigned column (see tasks.ts's createTask, a plain insert+select) —
-  // createReminderTask must never set, override, or drop it from either the
-  // outgoing draft or the returned task, so what's displayed later
-  // (formatReminderCreatedTime, locked separately in reminder-time.test.ts)
-  // always reflects the real creation moment.
-  it("never sets created_at on the outgoing draft and returns whatever the DB/store assigned, unaltered", async () => {
-    const dueAt = "2026-06-29T09:00:00.000Z";
-
-    const task = await createReminderTask({
-      userId: "user-1",
-      text: "buy flowers",
-      dueAt,
-      source: "test",
-    });
-
-    expect(h.drafts[0]).not.toHaveProperty("created_at");
-    expect(task.created_at).toBe("2026-06-28T12:00:00.000Z");
-  });
-
-  it("can use an injected createTask function for store-backed Voice creation", async () => {
-    const createTaskFn = vi.fn(async (draft: TaskDraft) => ({
-      id: "store-task-1",
-      created_at: "2026-06-28T12:00:00.000Z",
-      confirmed_at: null,
-      archived_at: null,
-      qstash_message_id: null,
-      followup_sent_at: null,
-      escalated_at: null,
-      image_path: null,
-      proof_image_path: null,
-      quality_review_status: null,
-      quality_review_note: null,
-      quality_reviewed_at: null,
-      worker_reply: null,
-      ...draft,
-    }) satisfies Task);
-    const dueAt = "2026-06-29T09:00:00.000Z";
-
+  it("uses voice routing evidence instead of a generic creation contract", async () => {
+    const routingEvidence = {
+      contract_version: "one-time-routing-v1" as const,
+      destination: "owner_reminder" as const,
+      decision_source: "fresh_user_transcript" as const,
+      client_build: "build-1",
+      operation_id: "4c438c39-7b8f-43f6-9085-0b4b64905bf8",
+    };
     await createReminderTask({
       userId: "user-1",
       text: "buy flowers",
-      dueAt,
-      source: "create_reminder",
-      createTaskFn,
+      dueAt: "2026-06-29T09:00:00.000Z",
+      source: "voice",
+      routingEvidence,
     });
+    expect(h.calls[0]).toMatchObject({ routingEvidence, creationContract: undefined });
+  });
 
-    expect(createTaskFn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        user_id: "user-1",
-        description: "buy flowers",
-        type: "reminder",
-        due_at: dueAt,
-      }),
-    );
-    expect(h.schedules).toEqual([["store-task-1", dueAt]]);
+  it("never calls the authenticated direct task insert boundary", async () => {
+    const source = await import("./reminders?raw").then((module) => module.default as string);
+    expect(source).not.toContain("createTask(");
+    expect(source).not.toContain('.from("tasks")');
   });
 });

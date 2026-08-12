@@ -34,6 +34,7 @@ import {
   verifyReminderReceipt,
 } from './_reminder-delivery.js';
 import { safeBuildForLog, validateOneTimeRoutingEvidence } from './_one-time-routing-contract.js';
+import { validateReminderCreationContract } from './_reminder-creation-contract.js';
 
 const QSTASH_BASE = 'https://qstash.upstash.io/v2';
 // Exported so a test can assert these stay in lockstep with
@@ -112,7 +113,7 @@ export default async function handler(req, res) {
   if (!action || (action !== 'create-and-schedule' && !taskId)) {
     return res.status(400).json({ success: false, error: 'action and taskId are required.' });
   }
-  if ((action === 'schedule' || action === 'reschedule' || action === 'create-and-schedule') && !dueAt) {
+  if ((action === 'schedule' || action === 'reschedule') && !dueAt) {
     return res.status(400).json({ success: false, error: 'dueAt is required for schedule/reschedule.' });
   }
   if (action === 'schedule-escalation' && !sentAt) {
@@ -121,30 +122,46 @@ export default async function handler(req, res) {
 
   if (action === 'create-and-schedule') {
     const routing = validateOneTimeRoutingEvidence(body.routingEvidence, 'owner_reminder');
+    const creation = validateReminderCreationContract(body.creationContract);
+    const acceptedContract = routing.present
+      ? {
+          valid: routing.valid,
+          operationId: routing.valid ? body.routingEvidence.operation_id : null,
+          source: 'voice',
+          reasonCode: routing.reasonCode,
+        }
+      : creation.valid
+        ? { valid: true, operationId: body.creationContract.operation_id, source: body.creationContract.source, reasonCode: creation.reasonCode }
+        : { valid: false, operationId: null, source: 'missing', reasonCode: creation.reasonCode };
     console.info('[qstash-reminder] routing decision', {
       requestId,
       taskId: null,
       toolInvoked: 'create_reminder',
       destination: body.routingEvidence?.destination ?? 'missing',
-      reasonCode: routing.reasonCode,
+      reasonCode: acceptedContract.reasonCode,
       clientBuild: safeBuildForLog(body.routingEvidence),
+      creationSource: acceptedContract.source,
     });
-    if (!routing.valid || !routing.present) {
+    if (!acceptedContract.valid) {
       return res.status(409).json({
         success: false,
         error: 'Routing contract rejected reminder creation.',
-        reasonCode: routing.reasonCode,
+        reasonCode: acceptedContract.reasonCode,
       });
     }
     const description = typeof body.description === 'string' ? body.description.trim() : '';
     if (!description) {
       return res.status(400).json({ success: false, error: 'description is required.' });
     }
-    const dueMs = new Date(dueAt).getTime();
-    if (Number.isNaN(dueMs)) {
+    const dueMs = dueAt == null ? null : new Date(dueAt).getTime();
+    if (dueMs != null && Number.isNaN(dueMs)) {
       return res.status(400).json({ success: false, error: 'dueAt must be a valid ISO timestamp.' });
     }
-    const taskIdForOperation = body.routingEvidence.operation_id;
+    const taskIdForOperation = acceptedContract.operationId;
+    const imagePath = typeof body.imagePath === 'string' ? body.imagePath : null;
+    if (imagePath && imagePath !== `task-images/${userId}/${taskIdForOperation}/photo.jpg`) {
+      return res.status(400).json({ success: false, error: 'imagePath does not belong to this reminder operation.' });
+    }
     const insertRes = await fetch(`${supabaseUrl}/rest/v1/tasks`, {
       method: 'POST',
       headers: { ...supabaseHeaders(serviceRoleKey), Prefer: 'resolution=ignore-duplicates,return=representation' },
@@ -158,7 +175,8 @@ export default async function handler(req, res) {
         status: 'pending',
         needs_follow_up: false,
         confirmation_url: null,
-        due_at: new Date(dueMs).toISOString(),
+        due_at: dueMs == null ? null : new Date(dueMs).toISOString(),
+        image_path: imagePath,
       }),
     });
     const inserted = await insertRes.json().catch(() => null);
@@ -179,11 +197,32 @@ export default async function handler(req, res) {
         !existing ||
         existing.type !== 'reminder' ||
         existing.description !== description ||
-        new Date(existing.due_at).toISOString() !== new Date(dueMs).toISOString()
+        (existing.due_at == null ? null : new Date(existing.due_at).toISOString()) !==
+          (dueMs == null ? null : new Date(dueMs).toISOString()) ||
+        (existing.image_path ?? null) !== imagePath
       ) {
         return res.status(409).json({ success: false, error: 'Routing operation conflicts with existing data.' });
       }
       createdTask = existing;
+    }
+    if (!createdTask.due_at) {
+      console.info('[qstash-reminder] routing destination persisted', {
+        requestId,
+        taskId: createdTask.id,
+        destination: 'owner_reminder',
+        reasonCode: acceptedContract.reasonCode,
+        clientBuild: safeBuildForLog(body.routingEvidence),
+        creationSource: acceptedContract.source,
+      });
+      return res.status(201).json({ success: true, action: 'created', task: createdTask, messageId: null });
+    }
+    if (createdTask.qstash_message_id) {
+      return res.status(200).json({
+        success: true,
+        action: 'already-created-and-scheduled',
+        task: createdTask,
+        messageId: createdTask.qstash_message_id,
+      });
     }
     try {
       const messageId = await scheduleMessage(appBaseUrl, createdTask.id, createdTask.due_at, qstashToken, requestId);
@@ -193,8 +232,9 @@ export default async function handler(req, res) {
         requestId,
         taskId: createdTask.id,
         destination: 'owner_reminder',
-        reasonCode: routing.reasonCode,
+        reasonCode: acceptedContract.reasonCode,
         clientBuild: safeBuildForLog(body.routingEvidence),
+        creationSource: acceptedContract.source,
       });
       return res.status(201).json({ success: true, action: 'created-and-scheduled', task: createdTask, messageId });
     } catch (err) {
