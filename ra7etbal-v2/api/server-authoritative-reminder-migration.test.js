@@ -6,6 +6,14 @@ const SQL = readFileSync(
   'utf8',
 );
 const EXECUTABLE_SQL = SQL.replace(/--.*$/gm, '');
+const WORKFLOW = readFileSync(
+  new URL('../../.github/workflows/server-authoritative-reminder-rls-verification.yml', import.meta.url),
+  'utf8',
+);
+const DATABASE_VERIFICATION = readFileSync(
+  new URL('../supabase/migrations/verification/server_authoritative_reminder_rls_verification.sql', import.meta.url),
+  'utf8',
+);
 
 describe('server-authoritative reminder INSERT migration', () => {
   it('adds a narrow restrictive authenticated INSERT policy', () => {
@@ -19,17 +27,15 @@ describe('server-authoritative reminder INSERT migration', () => {
     expect(EXECUTABLE_SQL).not.toMatch(/type\s*=\s*'reminder'/i);
   });
 
-  it('models the stale-client boundary: its direct reminder INSERT fails while ordinary task INSERTs remain eligible', () => {
-    const restrictiveCheck = (row) => row.type !== 'reminder';
-    const staleVoiceClientDraft = {
-      user_id: 'owner-1',
-      type: 'reminder',
-      description: 'PR236 automation synchronization production verification',
-      assigned_to: null,
-      due_at: '2026-08-12T04:00:00.000Z',
-    };
-    expect(restrictiveCheck(staleVoiceClientDraft)).toBe(false);
-    expect(restrictiveCheck({ ...staleVoiceClientDraft, type: 'action' })).toBe(true);
-    expect(restrictiveCheck({ ...staleVoiceClientDraft, type: 'delegation' })).toBe(true);
+  it('has a path-filtered PostgreSQL 16 check that applies the exact migration and executes role-level proof', () => {
+    expect(WORKFLOW).toMatch(/image: postgres:16/);
+    expect(WORKFLOW).toContain('20260812190000_server_authoritative_reminder_inserts.sql');
+    expect(WORKFLOW).toContain('server_authoritative_reminder_rls_verification.sql');
+
+    expect(DATABASE_VERIFICATION).toMatch(/SET ROLE authenticated/);
+    expect(DATABASE_VERIFICATION).toMatch(/SET ROLE service_role/);
+    expect(DATABASE_VERIFICATION).toMatch(/cross-owner INSERT unexpectedly succeeded/);
+    expect(DATABASE_VERIFICATION).toMatch(/pre-existing reminder update changed/);
+    expect(DATABASE_VERIFICATION).toMatch(/pg_policies/);
   });
 });
