@@ -94,6 +94,7 @@ describe('notifyOwnerOfTaskReview', () => {
   it('[happy-path] returns sent when RPC, phone, and Meta all succeed', async () => {
     const decision = makeDecision();
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }])) // resolveAssigneePersonId
       .mockResolvedValueOnce(jsonResponse(decision))              // claim_task_escalation_owner_decision
       .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))    // claim notification lease
       .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }])) // findOwnerPhone
@@ -133,6 +134,7 @@ describe('notifyOwnerOfTaskReview', () => {
   it('[idempotency] returns skipped_already_sent when owner_notified_at is already set', async () => {
     const decision = makeDecision({ owner_notified_at: '2026-08-01T10:00:00Z' });
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }])) // resolveAssigneePersonId
       .mockResolvedValueOnce(jsonResponse(decision))
       .mockResolvedValueOnce(jsonResponse({
         decision_id: DECISION_ID, claimed: false, claim_token: null, notification_status: 'sent',
@@ -193,7 +195,9 @@ describe('notifyOwnerOfTaskReview', () => {
   });
 
   it('[rpc-failure] returns failed when claim RPC throws a network error', async () => {
-    const fetchMock = vi.fn().mockRejectedValueOnce(new Error('network_down'));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }])) // resolveAssigneePersonId
+      .mockRejectedValueOnce(new Error('network_down'));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await notifyOwnerOfTaskReview(
@@ -209,6 +213,7 @@ describe('notifyOwnerOfTaskReview', () => {
 
   it('[no-decision-row] returns failed when claim RPC returns null', async () => {
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }])) // resolveAssigneePersonId
       .mockResolvedValueOnce(jsonResponse(null)); // claim RPC returns null
 
     vi.stubGlobal('fetch', fetchMock);
@@ -225,6 +230,7 @@ describe('notifyOwnerOfTaskReview', () => {
   it('[no-phone] returns skipped_no_phone when owner has no phone on file', async () => {
     const decision = makeDecision();
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }])) // resolveAssigneePersonId
       .mockResolvedValueOnce(jsonResponse(decision))       // claim
       .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
       .mockResolvedValueOnce(jsonResponse([]))             // findOwnerPhone: no boss row
@@ -246,6 +252,7 @@ describe('notifyOwnerOfTaskReview', () => {
     vi.unstubAllEnvs(); // clear the stubbed env vars
     const decision = makeDecision();
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }])) // resolveAssigneePersonId
       .mockResolvedValueOnce(jsonResponse(decision))
       .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
       .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]))
@@ -268,6 +275,7 @@ describe('notifyOwnerOfTaskReview', () => {
 
     const decision = makeDecision();
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }])) // resolveAssigneePersonId
       .mockResolvedValueOnce(jsonResponse(decision))
       .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
       .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]))
@@ -292,6 +300,7 @@ describe('notifyOwnerOfTaskReview', () => {
   it('[completion-failure-after-Meta-acceptance] reports sent without continuing secondary sends', async () => {
     const decision = makeDecision();
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher' }])) // resolveAssigneePersonId
       .mockResolvedValueOnce(jsonResponse(decision))
       .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
       .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]))
@@ -333,6 +342,7 @@ describe('buildTaskReviewMessage — message text', () => {
     });
 
     const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: assignedTo }])) // resolveAssigneePersonId
       .mockResolvedValueOnce(jsonResponse(decision))
       .mockResolvedValueOnce(jsonResponse(NOTIFICATION_CLAIM))
       .mockResolvedValueOnce(jsonResponse([{ name: 'boss', role: 'boss', phone: '+971501234567' }]))
