@@ -25,11 +25,29 @@ describe("direct message boundary", () => {
       recipient: "Sana",
       content: "hello",
       confirmation_url: null,
+      person_id: null,
     });
     expect(message).toMatchObject({
       task_id: null,
       confirmation_url: null,
     });
+  });
+
+  it("carries a resolved recipientPersonId into the message row", async () => {
+    const createMessageFn = vi.fn(async (draft: any) => ({ id: "message-2", ...draft }));
+
+    await createDirectMessageRecord({
+      source: "test",
+      userId: "user-1",
+      recipient: "Grace",
+      recipientPersonId: "person-grace",
+      messageText: "hello",
+      createMessageFn,
+    });
+
+    expect(createMessageFn).toHaveBeenCalledWith(
+      expect.objectContaining({ person_id: "person-grace" }),
+    );
   });
 
   it("sends an existing direct message through direct_message mode", async () => {
@@ -407,6 +425,7 @@ function messageRow(overrides: Partial<Message> = {}): Message {
     recipient: "Grace",
     content: "Hello",
     confirmation_url: null,
+    person_id: null,
     archived_at: null,
     created_at: "2026-06-28T00:00:00.000Z",
     ...overrides,

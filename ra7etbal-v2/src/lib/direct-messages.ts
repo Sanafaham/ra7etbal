@@ -21,6 +21,13 @@ export interface CreateDirectMessageInput {
   source: string;
   userId: string;
   recipient: string;
+  /**
+   * The recipient's real people.id, when the caller already resolved one
+   * before calling (e.g. an exact-name match against the people table).
+   * Never invented from `recipient` text — left null/undefined when the
+   * caller only has free text.
+   */
+  recipientPersonId?: string | null;
   messageText: string;
   /**
    * The message's actual author. When present, messageText's owner-relative
@@ -57,6 +64,7 @@ export async function createDirectMessageRecord({
   source,
   userId,
   recipient,
+  recipientPersonId,
   messageText,
   ownerName,
   ownerInstruction,
@@ -91,6 +99,7 @@ export async function createDirectMessageRecord({
     recipient: cleanRecipient,
     content: cleanMessage,
     confirmation_url: null,
+    person_id: recipientPersonId ?? null,
   });
 }
 
@@ -119,6 +128,7 @@ export async function createAndSendDirectMessage({
   source,
   userId,
   recipient,
+  recipientPersonId,
   messageText,
   phone,
   ownerName = null,
@@ -132,6 +142,7 @@ export async function createAndSendDirectMessage({
       source,
       userId,
       recipient,
+      recipientPersonId,
       messageText,
       ownerName,
       ownerInstruction,

@@ -323,6 +323,144 @@ describe("buildCommunicationHistory", () => {
     // throwing is itself the proof — they throw unconditionally if called.
     await expect(buildCommunicationHistory("p1", "Christopher", "user-1")).resolves.toBeDefined();
   });
+
+  // ── Durable person_id retrieval (task-deletion survival) ──────────────────
+  //
+  // task_id/message_id/staff_message_id are all ON DELETE SET NULL when the
+  // linked task is deleted (Clear History, voice "delete that task") — a
+  // real, intentional, actively-used feature, not a bug. person_id is
+  // written independent of task_id and is never touched by that deletion.
+  // These tests use rows with task_id/staff_message_id/message_id already
+  // null (as they are after a real deletion) and only person_id set —
+  // exactly the shape of a real orphaned-but-recoverable row.
+
+  it("owner-decision history survives task deletion — found via person_id alone", async () => {
+    mockTables({
+      staff_messages: { data: [], error: null },
+      personal_contact_replies: { data: [], error: null },
+      messages: { data: [], error: null },
+      whatsapp_deliveries: { data: [], error: null },
+      staff_escalation_owner_decisions: {
+        data: [
+          {
+            id: "esc-orphaned",
+            task_id: null,
+            staff_message_id: null,
+            status: "delivered_to_staff",
+            owner_reply_text: "Approve it",
+            answered_at: "2026-08-05T19:53:23Z",
+            created_at: "2026-08-04T22:47:01Z",
+          },
+        ],
+        error: null,
+      },
+    });
+
+    const result = await buildCommunicationHistory("p1", "Christopher", "user-1");
+    const decided = result.events.find((e) => e.eventType === "escalation_decided");
+    expect(decided).toBeDefined();
+    expect(decided?.label).toContain("Approve it");
+  });
+
+  it("delivery history survives task deletion — found via person_id alone", async () => {
+    mockTables({
+      staff_messages: { data: [], error: null },
+      personal_contact_replies: { data: [], error: null },
+      messages: { data: [], error: null },
+      whatsapp_deliveries: {
+        data: [
+          {
+            id: "wd-orphaned",
+            message_id: null,
+            task_id: null,
+            delivery_status: "delivered",
+            failure_reason: null,
+            accepted_at: null,
+            sent_at: null,
+            delivered_at: "2026-08-04T22:50:00Z",
+            read_at: null,
+            failed_at: null,
+            meta_message_id: null,
+          },
+        ],
+        error: null,
+      },
+      staff_escalation_owner_decisions: { data: [], error: null },
+    });
+
+    const result = await buildCommunicationHistory("p1", "Christopher", "user-1");
+    expect(result.events.some((e) => e.eventType === "delivery_delivered")).toBe(true);
+  });
+
+  it("always queries wave-2 tables by person_id, even with nothing to legacy-link against", async () => {
+    const allCalls: Record<string, QueryCall[]> = {};
+    mockTables(
+      {
+        staff_messages: { data: [], error: null },
+        personal_contact_replies: { data: [], error: null },
+        messages: { data: [], error: null },
+      },
+      allCalls,
+    );
+
+    await buildCommunicationHistory("p1", "Christopher", "user-1");
+
+    const deliveryOr = allCalls.whatsapp_deliveries?.find((c) => c.method === "or");
+    const escalationOr = allCalls.staff_escalation_owner_decisions?.find((c) => c.method === "or");
+    expect(String(deliveryOr?.args[0])).toContain("person_id.eq.p1");
+    expect(String(escalationOr?.args[0])).toContain("person_id.eq.p1");
+  });
+
+  it("does not double-report a row found through both the durable and legacy paths", async () => {
+    // A single row can legitimately satisfy person_id.eq AND task_id.in in
+    // the same .or(...) query — Postgres/PostgREST returns it once, and
+    // buildCommunicationHistory's existing dedupeById() must not turn that
+    // one row into two events.
+    mockTables({
+      staff_messages: {
+        data: [
+          { id: "sm1", task_id: "task-1", inbound_text: "hi", carson_response: null, received_at: "2026-08-01T09:00:00Z", responded_at: null, external_message_id: null },
+        ],
+        error: null,
+      },
+      personal_contact_replies: { data: [], error: null },
+      messages: { data: [], error: null },
+      whatsapp_deliveries: { data: [], error: null },
+      staff_escalation_owner_decisions: {
+        data: [
+          { id: "esc-dual", task_id: "task-1", staff_message_id: null, status: "delivered_to_staff", owner_reply_text: "Yes", answered_at: "2026-08-01T09:10:00Z", created_at: "2026-08-01T09:05:00Z" },
+        ],
+        error: null,
+      },
+    });
+
+    const result = await buildCommunicationHistory("p1", "Christopher", "user-1");
+    const decidedEvents = result.events.filter((e) => e.eventType === "escalation_decided" && e.label.includes("Yes"));
+    expect(decidedEvents).toHaveLength(1);
+  });
+
+  it("legacy-only rows (no person_id, pre-dating this column) still surface via task/message id", async () => {
+    mockTables({
+      staff_messages: {
+        data: [
+          { id: "sm1", task_id: "task-1", inbound_text: "hi", carson_response: null, received_at: "2026-08-01T09:00:00Z", responded_at: null, external_message_id: null },
+        ],
+        error: null,
+      },
+      personal_contact_replies: { data: [], error: null },
+      messages: { data: [], error: null },
+      whatsapp_deliveries: { data: [], error: null },
+      staff_escalation_owner_decisions: {
+        data: [
+          { id: "esc-legacy", task_id: "task-1", staff_message_id: null, status: "delivered_to_staff", owner_reply_text: "Legacy approval", answered_at: "2026-08-01T09:10:00Z", created_at: "2026-08-01T09:05:00Z" },
+        ],
+        error: null,
+      },
+    });
+
+    const result = await buildCommunicationHistory("p1", "Christopher", "user-1");
+    expect(result.events.some((e) => e.label.includes("Legacy approval"))).toBe(true);
+  });
 });
 
 // ── Answer formatting ───────────────────────────────────────────────────────

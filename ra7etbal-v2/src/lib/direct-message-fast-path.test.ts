@@ -76,6 +76,7 @@ describe("Voice Carson direct message fast path", () => {
       recipient: "Sana",
       content: "Ra7etBal notification test",
       confirmation_url: null,
+      person_id: "person-1",
     });
     expect(deliverTaskMessageFn).toHaveBeenCalledWith({
       to: "+971500000000",
@@ -628,6 +629,7 @@ function messageRow(overrides: Partial<Message> = {}): Message {
     recipient: "Sana",
     content: "Ra7etBal notification test",
     confirmation_url: null,
+    person_id: null,
     archived_at: null,
     created_at: "2026-06-23T00:00:00.000Z",
     ...overrides,

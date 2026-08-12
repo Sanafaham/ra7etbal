@@ -199,6 +199,7 @@ export async function savePending(
             assignee: {
               name: assignedTo,
               notes: assignedPerson?.notes ?? null,
+              id: assignedPerson?.id ?? null,
             },
             taskText: item.description,
             note: item.personalNote,

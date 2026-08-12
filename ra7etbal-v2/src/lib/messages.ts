@@ -2,7 +2,7 @@ import { supabase } from "./supabase";
 import type { Message, MessageDraft } from "../types/message";
 
 const COLUMNS =
-  "id, user_id, task_id, recipient, content, confirmation_url, archived_at, created_at";
+  "id, user_id, task_id, recipient, content, confirmation_url, person_id, archived_at, created_at";
 
 /** Active workspace messages — excludes archived rows. */
 export async function listMessages(): Promise<Message[]> {

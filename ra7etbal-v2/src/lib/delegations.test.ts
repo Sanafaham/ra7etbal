@@ -156,4 +156,44 @@ describe("createDelegationTaskAndMessage schedules escalation using task.created
     );
     expect(mocks.scheduleEscalationMessages).toHaveBeenCalledTimes(1);
   });
+
+  // Durable person attribution (Workstream 4 durability fix): when the
+  // caller already resolved a real Person before calling — the normal case,
+  // since send_delegation/Todos/Inbox all look up the assignee against the
+  // people table first — that id must flow into the message row so
+  // Communication History can find it later even if the linked task is
+  // deleted. When the caller only has a free-text name (no matching people
+  // row, e.g. save.ts's assignedPerson lookup missing), person_id must stay
+  // null rather than being guessed from the name.
+  it("carries assignee.id into the message row when the caller already resolved a person", async () => {
+    mocks.createTask.mockImplementation(async (draft) => taskFixture({ ...draft, id: draft.id }));
+
+    await createDelegationTaskAndMessage({
+      source: "test",
+      userId: "user-1",
+      assignee: { name: "Christopher", id: "person-christopher" },
+      taskText: "Buy milk tomorrow morning.",
+      confirmationOrigin: "https://ra7etbal.test",
+    });
+
+    expect(mocks.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ person_id: "person-christopher" }),
+    );
+  });
+
+  it("leaves person_id null when the assignee has no resolved id", async () => {
+    mocks.createTask.mockImplementation(async (draft) => taskFixture({ ...draft, id: draft.id }));
+
+    await createDelegationTaskAndMessage({
+      source: "test",
+      userId: "user-1",
+      assignee: { name: "A New Name" },
+      taskText: "Buy milk tomorrow morning.",
+      confirmationOrigin: "https://ra7etbal.test",
+    });
+
+    expect(mocks.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ person_id: null }),
+    );
+  });
 });
