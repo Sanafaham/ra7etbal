@@ -24,7 +24,7 @@ The artificial parked task `56666716-ba02-4677-975c-78453b77865f` was verified t
 
 Do not mark Notifications Inbox V1 complete until the correction is merged/deployed and Sana proves that the existing controlled notification opens the exact reminder card with its existing actions, while database evidence still shows no duplicate inbox, push, or owner-WhatsApp lifecycle and reminder truth remains unchanged.
 
-### Communication History durable person attribution — PENDING PRODUCTION VERIFICATION
+### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
 Sana's own master-plan tracking (kept outside this repo) numbers the Unified/Immutable Communication History capability as Workstream 4, Phase 1 — this file has never carried that numbering, so this entry documents the durability fix on its own terms; do not mark Workstream 4 complete based on this entry alone — that decision belongs to Sana's own tracking, and is explicitly gated on the production test below.
 
@@ -48,7 +48,9 @@ Sana's own master-plan tracking (kept outside this repo) numbers the Unified/Imm
 
 **Correction, found during the required production retest (2026-08-12):** the retest failed. The "Approve it" decision still did not appear, and Carson separately fabricated an unsupported "August 5" date for a Christopher photo event (traced and confirmed: no such event exists anywhere in the reachable data — model-side rendering issue, tracked separately below, prompt not touched). Investigating the missing "Approve it" row corrected an assumption this entry's own earlier write-up carried: the row is **`review_type = 'substitute_review'`**, created via `claim_task_escalation_owner_decision` (the task-based quality-review path) — **it was never staff-message-linked**, despite being chronologically adjacent to a Christopher photo submission. The backfill above (9/18) only ever covered `claim_escalation_owner_decision`'s staff-message-linked path; it could never have reached this row. This was a genuine gap in the fix described above, not a defect in it — see the next entry.
 
-### Task-based owner-decision durable person attribution — PENDING PRODUCTION VERIFICATION
+**CLOSED, PRODUCTION VERIFIED PASS (2026-08-12).** A fresh controlled production delegation (task `f51a864c-5625-4c39-8a37-bd6ea0fc3489`, "Buy a blue pen," assigned to Christopher) proved this fix's own write path directly: the original assignment `messages` row and its `whatsapp_deliveries` row both carried Christopher's canonical `person_id` at write time, exactly as this fix implemented. The "Approve it" historical row remains permanently unrecoverable as documented above — that is expected, not a defect. See the next entry for the follow-up gap this same test surfaced and closed.
+
+### Task-based owner-decision durable person attribution — CLOSED, PRODUCTION VERIFIED PASS (PR #237)
 
 Follow-up to the entry above. The prior fix (PR #235) made `person_id` durable for `claim_escalation_owner_decision` (WhatsApp-staff-message-triggered escalations, `review_type='staff_escalation'`) only. `claim_task_escalation_owner_decision` (`uncertain_proof`/`substitute_review`/`correction_limit` — proof-upload-triggered, no WhatsApp staff message involved) was deliberately left unchanged, because `tasks` has no person identity to derive one from. A full read-only trace of every caller confirmed no canonical `people.id` was resolved anywhere in that call path before this fix — `task-confirm.js`'s two active call sites (`uncertain_proof`, `substitute_review`) only ever had `task.assigned_to` (free text).
 
@@ -60,9 +62,9 @@ Communication History's query was not touched — it already queries `staff_esca
 
 **Separate, still-open issue, not addressed by any of this:** Carson fabricated an "August 5" date for a Christopher event with no supporting row anywhere in the reachable data, during the production retest that surfaced this whole gap. This is a model-rendering issue, not a database or query defect — the prompt's existing actor/date rules were deliberately not touched in this pass, per explicit instruction. Remains open.
 
-**Production verification required before closing:** ask Carson "What has Christopher told us?" — the "Approve it" event will still not appear (its row is permanently unrecoverable, not a defect in this fix), but any *new* `uncertain_proof`/`substitute_review`/`correction_limit` owner decision created after this deploy, for a person with an exact-matching `people` row, should survive a later task deletion. Verifying that requires a fresh production event of that type post-deploy, not this specific historical case. Do not mark this closed, and do not mark Sana's own Workstream 4 tracking complete, before that evidence exists.
+**CLOSED, PRODUCTION VERIFIED PASS (2026-08-12).** A fresh `substitute_review` owner decision was created post-deploy on the same controlled test task (`f51a864c-5625-4c39-8a37-bd6ea0fc3489`): Christopher submitted a white pen instead of the requested blue pen, and the resulting `staff_escalation_owner_decisions` row (`c1737d63-1920-45ce-ba96-7d6ac7ba7441`) was queried directly and confirmed to carry `review_type = 'substitute_review'`, `person_id` = Christopher's exact canonical `people.id`, and `staff_message_id = NULL` — proving this fix's write-time assertion for the task-based path, exactly as designed. Exactly one decision row existed (no duplicate creation). This production test is the same event that surfaced the separate, still-open post-owner-decision worker WhatsApp identity gap recorded below — that gap is **not** part of this fix's scope and does not affect this verdict; PR #237's own write path is closed and correct.
 
-### Owner completion push reliability — PENDING PRODUCTION VERIFICATION
+### Owner completion push reliability — CLOSED, PRODUCTION VERIFIED PASS (PR #240)
 
 Not part of Workstream 4 / PR #237 — a separate capability, surfaced while producing PR #237's own controlled production test. Do not fold this into or reopen PR #237 based on this entry.
 
@@ -76,7 +78,23 @@ No WhatsApp completion behavior added — WhatsApp was never part of this contra
 
 **Tests:** `api/task-confirm.test.js` (+3), `api/qstash-reminder.test.js` (+8), `public/sw.test.js` (+1). `npm run test:carson-protected` — 1068/1068 passing. Typecheck and production build clean.
 
-**Production verification required before closing:** trigger one real staff-task completion, then read-only-verify exactly one logical completion-push lifecycle (`provider_send_attempted` + `provider_accepted` or `provider_rejected`, plus `service_worker_received`/`show_notification_attempted`/`notification_clicked` if the device actually receives and the owner actually interacts), correct enabled subscriptions targeted, no duplicate device sends. If the owner still doesn't visibly receive the push, the durable lifecycle must now identify the last confirmed stage instead of leaving the failure unknowable — that is the actual test of whether this capability is complete. Do not mark this closed before that evidence exists.
+**CLOSED, PRODUCTION VERIFIED PASS (2026-08-12).** A real post-deployment staff-task completion (task `d9a814f8-1862-476d-888d-04f8de033001`, "Please confirm the kitchen is ready," assigned to Christopher, `confirmed_at = 2026-08-12 16:59:54.555+00`) produced exactly one logical completion-push lifecycle per each of the 3 enabled subscriptions (`provider_send_attempted` → `provider_accepted`, all `metadata.kind = "completion_push"`, no duplicates, no extra/missing subscriptions targeted) — confirmed via direct `reminder_delivery_events` query. Sana visibly received the push ("Christopher confirmed: Please confirm the kitchen is ready."). `service_worker_received`/`show_notification_attempted`/`notification_clicked` were absent for this event — the client-side receipt never reached the server (confirmed via Vercel runtime logs on the exact deployment: no `notification-receipt` POST in that window). This is truthful, not a defect: the durable lifecycle correctly shows evidence stops at `provider_accepted`, exactly the "tell us where it stopped" behavior this capability was built to provide, rather than falsely claiming visible delivery. Reminder-push regression: confirmed unchanged from the merged code/tests (byte-for-byte identical reminder-kind validation in the widened receipt handler); no live reminder retest was run since no evidence indicated a regression.
+
+### Post-owner-decision worker WhatsApp identity gap — OPEN
+
+Discovered during PR #237's controlled production verification (task `f51a864c-5625-4c39-8a37-bd6ea0fc3489`, 2026-08-12). Separate from PR #237's own scope — does not reopen or change PR #237's CLOSED verdict above.
+
+**Confirmed finding:** when the owner approves/rejects/custom-instructs a `substitute_review`/`uncertain_proof` decision, the resulting worker-facing WhatsApp message (e.g. "Approved. You can go ahead.") is written via `reserve_custom_instruction`/`reserve_rejected_alternative` (`supabase/migrations/20260710_quality_substitute_review.sql`, `20260712_approve_alternative_message_first.sql`). Their `INSERT INTO messages (...)` / `INSERT INTO whatsapp_deliveries (...)` column lists do not include `person_id` — confirmed directly in production: both the `messages` row and `whatsapp_deliveries` row for this exact event have `person_id = NULL`, even though the original task-assignment message to the same person correctly carried it. This makes that specific communication unreachable through person-based Communication History (`get_communication_history`'s Wave 1 `messages` query is `.eq("person_id", personId)` with no fallback).
+
+Continuation of the Communication History identity-completeness objective (same tables, same consumer as PR #235/#237) — not a new workstream, and not a defect in either closed PR. Fix not yet implemented; investigation in progress.
+
+### Communication History event timestamps — OPEN
+
+Clarified requirement (2026-08-12): each Communication History entry (`get_communication_history`'s spoken/typed answer) must visibly show when it happened, including a useful date **and clock time**, using the correct account/user timezone — not just a date. Current state (confirmed by code trace, `formatCommunicationHistoryAnswer` in `carson-communication-history.ts`): renders a per-event date only, no time, formatted via the executing device's local timezone rather than the stored account timezone (`profiles.morning_brief_timezone`). Not implemented. Do not implement until explicitly scoped — preserved here as a separate, outstanding item.
+
+### Documentation workflow safeguard
+
+Documentation-only changes to this file (and other repo docs) must go through the normal branch → PR → required-checks → merge workflow, the same as code changes, unless an explicit repository exception exists. A prior direct-to-main documentation push (commit `7c32124`, 2026-08-12) bypassed the required `carson-protected-behaviors` check — no corrective action was required for it since it changed no runtime behavior, and it is not treated as precedent for future documentation changes.
 
 ### Production launch control — CLOSED, PRODUCTION VERIFIED, PROTECTED
 
@@ -140,7 +158,7 @@ Supabase project `ggarvhgqzpooloacjgcj`.
 
 ### Owner WhatsApp one-time reminder — production verified and protected
 
-#### Owner WhatsApp due-time delivery — PRE-MERGE, PRODUCTION VERIFICATION PENDING
+#### Owner WhatsApp due-time delivery — CLOSED, PRODUCTION VERIFIED, PROTECTED
 
 Status (2026-08-11): the isolated implementation is ready for review but is not
 yet merged, deployed, or capability-complete. It adds one `owner_reminder`
