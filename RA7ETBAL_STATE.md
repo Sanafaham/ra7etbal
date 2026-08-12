@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-11
+Last updated: 2026-08-12
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -61,6 +61,22 @@ Communication History's query was not touched — it already queries `staff_esca
 **Separate, still-open issue, not addressed by any of this:** Carson fabricated an "August 5" date for a Christopher event with no supporting row anywhere in the reachable data, during the production retest that surfaced this whole gap. This is a model-rendering issue, not a database or query defect — the prompt's existing actor/date rules were deliberately not touched in this pass, per explicit instruction. Remains open.
 
 **Production verification required before closing:** ask Carson "What has Christopher told us?" — the "Approve it" event will still not appear (its row is permanently unrecoverable, not a defect in this fix), but any *new* `uncertain_proof`/`substitute_review`/`correction_limit` owner decision created after this deploy, for a person with an exact-matching `people` row, should survive a later task deletion. Verifying that requires a fresh production event of that type post-deploy, not this specific historical case. Do not mark this closed, and do not mark Sana's own Workstream 4 tracking complete, before that evidence exists.
+
+### Owner completion push reliability — PENDING PRODUCTION VERIFICATION
+
+Not part of Workstream 4 / PR #237 — a separate capability, surfaced while producing PR #237's own controlled production test. Do not fold this into or reopen PR #237 based on this entry.
+
+**Verified production incident (task `f51a864c-5625-4c39-8a37-bd6ea0fc3489`, "Buy a blue pen," 2026-08-12 13:23:58 UTC):** Christopher completed the task through the normal confirmation flow. Vercel runtime logs proved `sendOwnerPush()` ran and `webpush.sendNotification()` resolved without error for all 3 of the owner's enabled push subscriptions (server-side send confirmed clean) — but the owner never saw the notification, and `push_subscriptions.enabled=true` confirmed the eligibility gate was open. Root cause could not be proven beyond "provider accepted the send" because `sendOwnerPush` had zero durable evidence — only `console.log`, no database row — for anywhere between provider acceptance and device display.
+
+**What was implemented** (PR #240, merge commit `7e497adc137d40e9b37e8a08eb2315a322690fb2`): reuses the existing reminder-push observability system (`reminder_delivery_events`, `recordDeliveryEvent`, signed receipts, `send-push-for-task.js`'s endpoint dedup, `sw.js`'s already-generic receipt reporting) rather than building a second one. `sendOwnerPush()` gains an optional `taskId` — only the final-completion call site (no `variant`) passes it; the four QI review/escalation-variant call sites are unaffected (verified by a dedicated regression test: unchanged payload, no durable recording). When present: dedupes subscriptions by endpoint, includes a signed receipt in the push payload, records `provider_send_attempted`/`provider_accepted`/`provider_rejected`. Receipt signing is wrapped so a signing failure (e.g. `CRON_SECRET` unset) degrades to the pre-existing plain payload rather than losing the notification entirely. `qstash-reminder.js`'s `notification-receipt` handler is widened to accept `kind: 'completion'` (validated against `tasks.confirmed_at`) alongside the existing default `kind: 'reminder'` (validated against `due_at`, byte-for-byte unchanged) — same HMAC signing/verification, no security weakening. `sw.js` forwards one new field (`receipt.kind`) — the only service-worker change, additive, backward compatible with already-cached copies. Event-kind separation uses existing `metadata.kind` — no schema change for that.
+
+**Evidence-retention fix, resolved before implementation per the Engineering Completeness Rule** (migration `20260812_reminder_delivery_events_survive_task_deletion.sql`, applied to production): `reminder_delivery_events.task_id` was `NOT NULL, ON DELETE CASCADE` — Clear History deleting a just-completed task would have deleted this new evidence outright, the same durability class already fixed for `staff_escalation_owner_decisions`/`whatsapp_deliveries.person_id` above. Verified against every current reader before changing it: `carson-commitment-history.ts` only queries a still-loaded reminder task by id (unaffected); `push-notifications.ts`'s `listPushSubscriptionDevices()` filters by `user_id`/`subscription_id` only, never `task_id` (unaffected, and benefits — its "last delivered" evidence no longer disappears when history is cleared). Relaxed the FK to `ON DELETE SET NULL`, dropped `NOT NULL` — additive/backward-compatible, existing rows untouched, mirrors the PR #235 precedent exactly.
+
+No WhatsApp completion behavior added — WhatsApp was never part of this contract (confirmed by code trace and absence in git history) and stays that way.
+
+**Tests:** `api/task-confirm.test.js` (+3), `api/qstash-reminder.test.js` (+8), `public/sw.test.js` (+1). `npm run test:carson-protected` — 1068/1068 passing. Typecheck and production build clean.
+
+**Production verification required before closing:** trigger one real staff-task completion, then read-only-verify exactly one logical completion-push lifecycle (`provider_send_attempted` + `provider_accepted` or `provider_rejected`, plus `service_worker_received`/`show_notification_attempted`/`notification_clicked` if the device actually receives and the owner actually interacts), correct enabled subscriptions targeted, no duplicate device sends. If the owner still doesn't visibly receive the push, the durable lifecycle must now identify the last confirmed stage instead of leaving the failure unknowable — that is the actual test of whether this capability is complete. Do not mark this closed before that evidence exists.
 
 ### Production launch control — CLOSED, PRODUCTION VERIFIED, PROTECTED
 
