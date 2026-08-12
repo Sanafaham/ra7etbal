@@ -54,6 +54,47 @@ function jsonResponse(payload, ok = true, status = ok ? 200 : 500) {
 }
 
 describe("api/automations POST", () => {
+  it("reuses the exact routed automation on an idempotent retry", async () => {
+    const operationId = "4c438c39-7b8f-43f6-9085-0b4b64905bf8";
+    const existing = {
+      id: operationId,
+      user_id: "user-1",
+      title: "Confirm X",
+      instruction: "Confirm X",
+      cadence_type: "once",
+      assignee_id: "person-christopher",
+      next_run_at: "2026-08-13T04:00:00.000Z",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([existing]));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(mockReq({ method: "POST", body: {
+      title: existing.title,
+      instruction: existing.instruction,
+      cadence_type: "once",
+      cadence_value: {},
+      next_run_at: existing.next_run_at,
+      assignee_id: existing.assignee_id,
+      routing_evidence: {
+        contract_version: "one-time-routing-v1",
+        destination: "one_time_automation",
+        decision_source: "fresh_user_transcript",
+        client_build: "35c71db848741082766ae9b960c704764f71336d",
+        operation_id: operationId,
+      },
+    } }), res);
+
+    expect(res.statusCode).toBe(201);
+    expect(res.payload.automation.id).toBe(operationId);
+    expect(fetchMock.mock.calls.filter(([url, init]) =>
+      String(url).includes("/rest/v1/automations") && init?.method === "POST",
+    )).toHaveLength(1);
+  });
+
   it("creates exactly one assignee-bound one-time automation without creating a task", async () => {
     const fetchMock = vi
       .fn()

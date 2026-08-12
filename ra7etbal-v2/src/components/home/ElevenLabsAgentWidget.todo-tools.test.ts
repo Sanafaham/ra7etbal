@@ -313,9 +313,9 @@ describe("ElevenLabsAgentWidget — explicit one-time automation routing", () =>
     const block = SOURCE.slice(start, end);
     expect(block).toContain("routeExplicitOneTimeAutomation({");
     expect(block).toContain('runDirectToolWithDiagnostic("create_automation", routing.params');
-    expect(block).toContain("createAutomation(routing.params)");
-    expect(block.indexOf("createAutomation(routing.params)")).toBeLessThan(
-      block.indexOf("createReminder(params)"),
+    expect(block).toContain("createAutomation({ ...routing.params, routingEvidence })");
+    expect(block.indexOf("createAutomation({ ...routing.params, routingEvidence })")).toBeLessThan(
+      block.indexOf("createReminder({ ...params, routingEvidence })"),
     );
   });
 
@@ -324,7 +324,7 @@ describe("ElevenLabsAgentWidget — explicit one-time automation routing", () =>
     const end = SOURCE.indexOf("create_automation: (params", start);
     const block = SOURCE.slice(start, end);
     const blockedIndex = block.indexOf('if (routing.kind === "blocked")');
-    const reminderIndex = block.indexOf("createReminder(params)");
+    const reminderIndex = block.indexOf("createReminder({ ...params, routingEvidence })");
     expect(blockedIndex).toBeGreaterThan(-1);
     expect(block).toContain('toolName: "create_automation"');
     expect(block).toContain('outcome: "failure"');

@@ -7,16 +7,49 @@
  */
 
 import { supabase } from "./supabase";
+import type { OneTimeRoutingEvidence } from "./one-time-automation-routing";
+import type { Task } from "../types/task";
 
 async function getAccessToken(): Promise<string | null> {
   const { data } = await supabase.auth.getSession();
   return data.session?.access_token ?? null;
 }
 
+/** Authoritative voice-reminder boundary. The server validates routing intent
+ * before it creates any task, so automation-shaped evidence cannot leave an
+ * owner reminder behind even if a stale caller targets this endpoint. */
+export async function createRoutedReminder(input: {
+  description: string;
+  dueAt: string;
+  routingEvidence: OneTimeRoutingEvidence;
+}): Promise<Task> {
+  const token = await getAccessToken();
+  if (!token) throw new Error("Not signed in.");
+  const res = await fetch("/api/qstash-reminder", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      action: "create-and-schedule",
+      description: input.description,
+      dueAt: input.dueAt,
+      routingEvidence: input.routingEvidence,
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data?.task?.id) {
+    throw new Error(data?.error || "Could not create the reminder.");
+  }
+  return data.task as Task;
+}
+
 async function callQStashApi(
   action: "schedule" | "cancel" | "reschedule",
   taskId: string,
   dueAt?: string,
+  routingEvidence?: OneTimeRoutingEvidence,
 ): Promise<void> {
   const token = await getAccessToken();
   if (!token) {
@@ -24,8 +57,9 @@ async function callQStashApi(
     return;
   }
 
-  const body: Record<string, string> = { action, taskId };
+  const body: Record<string, unknown> = { action, taskId };
   if (dueAt) body.dueAt = dueAt;
+  if (routingEvidence) body.routingEvidence = routingEvidence;
 
   console.log(`[qstash-reminder] → POST /api/qstash-reminder action=${action} taskId=${taskId} dueAt=${dueAt ?? "n/a"}`);
 
@@ -58,7 +92,11 @@ async function callQStashApi(
 }
 
 /** Schedule a QStash push job at the reminder's exact due_at time. */
-export async function scheduleReminderPush(taskId: string, dueAt: string): Promise<void> {
+export async function scheduleReminderPush(
+  taskId: string,
+  dueAt: string,
+  routingEvidence?: OneTimeRoutingEvidence,
+): Promise<void> {
   const dueMs = new Date(dueAt).getTime();
   if (Number.isNaN(dueMs)) {
     console.error("[qstash-reminder] Invalid dueAt — cannot schedule:", dueAt);
@@ -69,7 +107,7 @@ export async function scheduleReminderPush(taskId: string, dueAt: string): Promi
     console.warn("[qstash-reminder] dueAt >1 min in past — skipping QStash, pg_cron safety net covers it:", dueAt);
     return;
   }
-  await callQStashApi("schedule", taskId, dueAt);
+  await callQStashApi("schedule", taskId, dueAt, routingEvidence);
 }
 
 /** Cancel the QStash push job for a reminder (on delete or mark done). */

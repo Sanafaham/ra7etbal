@@ -13,6 +13,33 @@ export interface OneTimeAutomationToolInput {
   assignee_name?: string;
 }
 
+export const ONE_TIME_ROUTING_CONTRACT_VERSION = "one-time-routing-v1" as const;
+
+export interface OneTimeRoutingEvidence {
+  contract_version: typeof ONE_TIME_ROUTING_CONTRACT_VERSION;
+  destination: "owner_reminder" | "one_time_automation";
+  decision_source: "fresh_user_transcript";
+  client_build: string;
+  operation_id: string;
+}
+
+export interface FreshRoutingTurn {
+  eventId: number | null;
+  message: string;
+  claimed: boolean;
+  operationId: string;
+}
+
+export type RoutingTurnClaim =
+  | { ok: true; message: string; context: FreshRoutingTurn }
+  | { ok: false; reasonCode: "fresh_transcript_unavailable" | "turn_already_claimed" };
+
+export function claimFreshRoutingTurn(context: FreshRoutingTurn | null): RoutingTurnClaim {
+  if (!context) return { ok: false, reasonCode: "fresh_transcript_unavailable" };
+  if (context.claimed) return { ok: false, reasonCode: "turn_already_claimed" };
+  return { ok: true, message: context.message, context: { ...context, claimed: true } };
+}
+
 export type OneTimeAutomationRoutingDecision =
   | { kind: "reminder" }
   | { kind: "automation"; params: OneTimeAutomationToolInput }
@@ -22,6 +49,8 @@ const EXPLICIT_AUTOMATION_RE = /\bautomation\b/i;
 const RECURRING_AUTOMATION_RE =
   /\b(?:daily|weekly|monthly|every\s+(?:day|week|month|morning|afternoon|evening|night|\d+\s+days?|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|each\s+(?:day|morning|afternoon|evening|night)|recurring|regularly)\b/i;
 const RECIPIENT_SHAPED_RE = /\b(?:send|ask|tell|have|get|assign)\s+[\p{L}][\p{L}'’.-]*/iu;
+const OWNER_REMINDER_RE = /\bremind\s+me\b/i;
+const IMMEDIATE_TIME_RE = /\b(?:now|right\s+now|immediately)\b/i;
 
 export function hasExplicitNonRecurringAutomationIntent(text: string | null | undefined): boolean {
   if (!text) return false;
@@ -52,6 +81,20 @@ function findKnownRecipient(text: string, knownPeopleNames: string[]): string | 
   );
 }
 
+export function buildOneTimeRoutingEvidence(
+  destination: OneTimeRoutingEvidence["destination"],
+  clientBuild: string,
+  operationId: string,
+): OneTimeRoutingEvidence {
+  return {
+    contract_version: ONE_TIME_ROUTING_CONTRACT_VERSION,
+    destination,
+    decision_source: "fresh_user_transcript",
+    client_build: clientBuild || "unknown",
+    operation_id: operationId,
+  };
+}
+
 function automationTitle(description: string): string {
   const normalized = description.trim().replace(/\s+/g, " ");
   return normalized.length <= 80 ? normalized : `${normalized.slice(0, 77).trimEnd()}…`;
@@ -74,10 +117,6 @@ export function routeExplicitOneTimeAutomation({
   reminder: ReminderToolInput;
   knownPeopleNames: string[];
 }): OneTimeAutomationRoutingDecision {
-  if (!hasExplicitNonRecurringAutomationIntent(latestUserMessage)) {
-    return { kind: "reminder" };
-  }
-
   const instruction = reminder.description?.trim();
   if (!instruction) {
     return {
@@ -96,7 +135,22 @@ export function routeExplicitOneTimeAutomation({
   }
 
   const utterance = latestUserMessage ?? "";
+  if (RECURRING_AUTOMATION_RE.test(utterance)) {
+    return { kind: "reminder" };
+  }
   const assigneeName = findKnownRecipient(utterance, knownPeopleNames);
+  const explicitOwnerReminder = OWNER_REMINDER_RE.test(utterance);
+  const scheduledDelegation =
+    !explicitOwnerReminder &&
+    !IMMEDIATE_TIME_RE.test(reminder.time_text ?? "") &&
+    RECIPIENT_SHAPED_RE.test(utterance) &&
+    Boolean(assigneeName) &&
+    Boolean(reminder.time_text?.trim() || reminder.due_at?.trim());
+
+  if (!hasExplicitNonRecurringAutomationIntent(latestUserMessage) && !scheduledDelegation) {
+    return { kind: "reminder" };
+  }
+
   if (RECIPIENT_SHAPED_RE.test(utterance) && !assigneeName) {
     return {
       kind: "blocked",

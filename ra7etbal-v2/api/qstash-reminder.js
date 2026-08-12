@@ -14,7 +14,7 @@
  * request (automation creation and the automation runner both already
  * operate under the service role key, impersonating no one).
  *
- * Body: { action: 'schedule' | 'cancel' | 'reschedule', taskId, dueAt? }
+ * Body: { action: 'schedule' | 'cancel' | 'reschedule' | 'create-and-schedule', taskId?, dueAt? }
  *
  * Auth: Supabase access token in Authorization: Bearer <token> header.
  *       Verified server-side; only the task owner may schedule/cancel.
@@ -33,6 +33,7 @@ import {
   recordDeliveryEvent,
   verifyReminderReceipt,
 } from './_reminder-delivery.js';
+import { safeBuildForLog, validateOneTimeRoutingEvidence } from './_one-time-routing-contract.js';
 
 const QSTASH_BASE = 'https://qstash.upstash.io/v2';
 // Exported so a test can assert these stay in lockstep with
@@ -108,14 +109,120 @@ export default async function handler(req, res) {
   const body = req.body ?? {};
   const { action, taskId, dueAt, sentAt } = body;
 
-  if (!action || !taskId) {
+  if (!action || (action !== 'create-and-schedule' && !taskId)) {
     return res.status(400).json({ success: false, error: 'action and taskId are required.' });
   }
-  if ((action === 'schedule' || action === 'reschedule') && !dueAt) {
+  if ((action === 'schedule' || action === 'reschedule' || action === 'create-and-schedule') && !dueAt) {
     return res.status(400).json({ success: false, error: 'dueAt is required for schedule/reschedule.' });
   }
   if (action === 'schedule-escalation' && !sentAt) {
     return res.status(400).json({ success: false, error: 'sentAt is required for schedule-escalation.' });
+  }
+
+  if (action === 'create-and-schedule') {
+    const routing = validateOneTimeRoutingEvidence(body.routingEvidence, 'owner_reminder');
+    console.info('[qstash-reminder] routing decision', {
+      requestId,
+      taskId: null,
+      toolInvoked: 'create_reminder',
+      destination: body.routingEvidence?.destination ?? 'missing',
+      reasonCode: routing.reasonCode,
+      clientBuild: safeBuildForLog(body.routingEvidence),
+    });
+    if (!routing.valid || !routing.present) {
+      return res.status(409).json({
+        success: false,
+        error: 'Routing contract rejected reminder creation.',
+        reasonCode: routing.reasonCode,
+      });
+    }
+    const description = typeof body.description === 'string' ? body.description.trim() : '';
+    if (!description) {
+      return res.status(400).json({ success: false, error: 'description is required.' });
+    }
+    const dueMs = new Date(dueAt).getTime();
+    if (Number.isNaN(dueMs)) {
+      return res.status(400).json({ success: false, error: 'dueAt must be a valid ISO timestamp.' });
+    }
+    const taskIdForOperation = body.routingEvidence.operation_id;
+    const insertRes = await fetch(`${supabaseUrl}/rest/v1/tasks`, {
+      method: 'POST',
+      headers: { ...supabaseHeaders(serviceRoleKey), Prefer: 'resolution=ignore-duplicates,return=representation' },
+      body: JSON.stringify({
+        id: taskIdForOperation,
+        user_id: userId,
+        description,
+        type: 'reminder',
+        assigned_to: null,
+        assigned_person_id: null,
+        status: 'pending',
+        needs_follow_up: false,
+        confirmation_url: null,
+        due_at: new Date(dueMs).toISOString(),
+      }),
+    });
+    const inserted = await insertRes.json().catch(() => null);
+    let createdTask = Array.isArray(inserted) ? inserted[0] : null;
+    if (!insertRes.ok) {
+      console.error(`[qstash-reminder][${requestId}] routed reminder insert failed`, { status: insertRes.status });
+      return res.status(500).json({ success: false, error: 'Failed to create reminder.' });
+    }
+    if (!createdTask) {
+      const existingRes = await fetch(
+        `${supabaseUrl}/rest/v1/tasks?select=*&id=eq.${encodeURIComponent(taskIdForOperation)}&user_id=eq.${encodeURIComponent(userId)}&limit=1`,
+        { headers: supabaseHeaders(serviceRoleKey) },
+      );
+      const existingRows = await existingRes.json().catch(() => []);
+      const existing = Array.isArray(existingRows) ? existingRows[0] : null;
+      if (
+        !existingRes.ok ||
+        !existing ||
+        existing.type !== 'reminder' ||
+        existing.description !== description ||
+        new Date(existing.due_at).toISOString() !== new Date(dueMs).toISOString()
+      ) {
+        return res.status(409).json({ success: false, error: 'Routing operation conflicts with existing data.' });
+      }
+      createdTask = existing;
+    }
+    try {
+      const messageId = await scheduleMessage(appBaseUrl, createdTask.id, createdTask.due_at, qstashToken, requestId);
+      await saveMessageId(supabaseUrl, serviceRoleKey, createdTask.id, messageId, requestId);
+      createdTask.qstash_message_id = messageId;
+      console.info('[qstash-reminder] routing destination persisted', {
+        requestId,
+        taskId: createdTask.id,
+        destination: 'owner_reminder',
+        reasonCode: routing.reasonCode,
+        clientBuild: safeBuildForLog(body.routingEvidence),
+      });
+      return res.status(201).json({ success: true, action: 'created-and-scheduled', task: createdTask, messageId });
+    } catch (err) {
+      console.error(`[qstash-reminder][${requestId}] routed reminder scheduling failed`, {
+        taskId: createdTask.id,
+        error: err?.message,
+      });
+      return res.status(500).json({ success: false, error: 'Reminder saved but exact scheduling failed.' });
+    }
+  }
+
+  if (action === 'schedule' || action === 'reschedule') {
+    const routing = validateOneTimeRoutingEvidence(body.routingEvidence, 'owner_reminder');
+    console.info('[qstash-reminder] routing decision', {
+      requestId,
+      taskId,
+      toolInvoked: 'create_reminder',
+      destination: body.routingEvidence?.destination ?? 'legacy_owner_reminder',
+      reasonCode: routing.reasonCode,
+      clientBuild: safeBuildForLog(body.routingEvidence),
+    });
+    if (!routing.valid) {
+      return res.status(409).json({
+        success: false,
+        error: 'Routing contract rejected reminder scheduling.',
+        reasonCode: routing.reasonCode,
+      });
+    }
   }
 
   // ── 4. Verify task ownership ────────────────────────────────────────────────

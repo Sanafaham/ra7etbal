@@ -68,8 +68,10 @@ import {
 import { buildCarsonOpeningLine } from "../../lib/carson-opening";
 import { createReminderTask } from "../../lib/reminders";
 import {
-  hasExplicitNonRecurringAutomationIntent,
+  buildOneTimeRoutingEvidence,
+  claimFreshRoutingTurn,
   routeExplicitOneTimeAutomation,
+  type OneTimeRoutingEvidence,
 } from "../../lib/one-time-automation-routing";
 import {
   CANONICAL_CONFIRMATION_ORIGIN,
@@ -1424,6 +1426,16 @@ export default function ElevenLabsAgentWidget({
    * Cleared at session start and consumed (set null) after the first matching tool call.
    */
   const recurringRawRef = useRef<string | null>(null);
+  /** Current final user transcript available to state-changing tool routing.
+   * Cleared when the agent reply arrives and claimed by the first reminder or
+   * automation tool. A callback that races ahead of the final transcript has
+   * no context and must fail closed instead of reusing an older utterance. */
+  const activeUserRoutingContextRef = useRef<{
+    eventId: number | null;
+    message: string;
+    claimed: boolean;
+    operationId: string;
+  } | null>(null);
   const invalidCaptureRef = useRef<{
     message: string;
     reason: CarsonTranscriptGuardReason;
@@ -2321,6 +2333,8 @@ export default function ElevenLabsAgentWidget({
       time_text?: string;
       /** ISO fallback — only used when time_text is absent. */
       due_at?: string;
+      /** Internal decision evidence; never supplied by ElevenLabs itself. */
+      routingEvidence?: OneTimeRoutingEvidence;
     }): Promise<string> => {
       const due_at = params?.due_at;
       // "description" is create_reminder's existing exact key — tried first,
@@ -2632,6 +2646,7 @@ export default function ElevenLabsAgentWidget({
           dueAt: resolvedDueAt,
           source: "create_reminder",
           createTaskFn: useTasksStore.getState().add,
+          routingEvidence: params.routingEvidence,
         });
         currentTaskContextRef.current = {
           id: task.id,
@@ -2639,6 +2654,9 @@ export default function ElevenLabsAgentWidget({
           assigned_to: task.assigned_to,
           type: task.type,
         };
+        if (params.routingEvidence) {
+          useTasksStore.getState().push([task]);
+        }
       } catch (err) {
         const failureText = `Could not save the reminder. ${sanitizeCarsonErrorDetail(err)}`;
         recordCreateReminderFailure(failureText, text);
@@ -2730,6 +2748,7 @@ export default function ElevenLabsAgentWidget({
       proof_required?: boolean;
       /** Type of proof required: "photo", "confirmation", or "text". */
       proof_type?: "photo" | "confirmation" | "text" | null;
+      routingEvidence?: OneTimeRoutingEvidence;
     }): Promise<string> => {
       const { cadence_phrase, first_run_text, first_run_at, proof_required, proof_type } = params;
       // Exact key only — no generic name/to/recipient_name/person_name
@@ -2947,6 +2966,7 @@ export default function ElevenLabsAgentWidget({
           created_by: "carson",
           proof_required: proof_required === true,
           proof_type: proof_type ?? null,
+          ...(params.routingEvidence ? { routing_evidence: params.routingEvidence } : {}),
         };
 
         const res = await fetch("/api/automations", {
@@ -5887,24 +5907,35 @@ export default function ElevenLabsAgentWidget({
             }
           },
           create_reminder: async (params: Parameters<typeof createReminder>[0]) => {
-            const latestUserMessage = [...sessionTranscriptRef.current]
-              .reverse()
-              .find((entry) => entry.role === "user")?.message ?? null;
-            const explicitOneTimeAutomation = hasExplicitNonRecurringAutomationIntent(latestUserMessage);
-            const routedToolName = explicitOneTimeAutomation ? "create_automation" : "create_reminder";
-            const captureBlock = guardCurrentToolInvocation(routedToolName);
-            if (captureBlock) return captureBlock;
-            if (explicitOneTimeAutomation) {
-              const authUserId = useAuthStore.getState().user?.id;
-              const peopleState = usePeopleStore.getState();
-              if (
-                authUserId &&
-                (peopleState.loadedForUserId !== authUserId || peopleState.status !== "ready")
-              ) {
-                await usePeopleStore.getState().loadFor(authUserId);
-              }
+            const turnContext = activeUserRoutingContextRef.current;
+            const turnClaim = claimFreshRoutingTurn(turnContext);
+            if (!turnClaim.ok) {
+              const failureText =
+                "I could not safely determine whether that was a reminder or a delegation. Please say it again.";
+              console.warn("[one-time-routing] blocked before persistence", {
+                reasonCode: turnClaim.reasonCode,
+                clientBuild: import.meta.env.VITE_APP_BUILD_SHA ?? "unknown",
+                toolInvoked: "create_reminder",
+              });
+              lastDirectToolSuccessRef.current = {
+                toolName: "create_reminder",
+                resultText: failureText,
+                at: new Date().toISOString(),
+                outcome: "failure",
+                inputSummary: { routingBlocked: true },
+              };
+              return failureText;
             }
+            activeUserRoutingContextRef.current = turnClaim.context;
+            const latestUserMessage = turnClaim.message;
             const authUserId = useAuthStore.getState().user?.id;
+            const peopleState = usePeopleStore.getState();
+            if (
+              authUserId &&
+              (peopleState.loadedForUserId !== authUserId || peopleState.status !== "ready")
+            ) {
+              await usePeopleStore.getState().loadFor(authUserId);
+            }
             const currentPeopleState = usePeopleStore.getState();
             const routing = routeExplicitOneTimeAutomation({
               latestUserMessage,
@@ -5914,6 +5945,9 @@ export default function ElevenLabsAgentWidget({
                   ? currentPeopleState.items.map((person) => person.name)
                   : [],
             });
+            const routedToolName = routing.kind === "automation" ? "create_automation" : "create_reminder";
+            const captureBlock = guardCurrentToolInvocation(routedToolName);
+            if (captureBlock) return captureBlock;
             if (routing.kind === "blocked") {
               lastDirectToolSuccessRef.current = {
                 toolName: "create_automation",
@@ -5925,17 +5959,30 @@ export default function ElevenLabsAgentWidget({
               return routing.message;
             }
             if (routing.kind === "automation") {
+              const routingEvidence = buildOneTimeRoutingEvidence(
+                "one_time_automation",
+                import.meta.env.VITE_APP_BUILD_SHA ?? "unknown",
+                turnClaim.context.operationId,
+              );
               return runDirectToolWithDiagnostic("create_automation", routing.params, () =>
-                createAutomation(routing.params),
+                createAutomation({ ...routing.params, routingEvidence }),
               );
             }
+            const routingEvidence = buildOneTimeRoutingEvidence(
+              "owner_reminder",
+              import.meta.env.VITE_APP_BUILD_SHA ?? "unknown",
+              turnClaim.context.operationId,
+            );
             return runDirectToolWithDiagnostic("create_reminder", params, () =>
-              createReminder(params),
+              createReminder({ ...params, routingEvidence }),
             );
           },
           create_automation: (params: Parameters<typeof createAutomation>[0]) => {
             const captureBlock = guardCurrentToolInvocation("create_automation");
             if (captureBlock) return captureBlock;
+            if (activeUserRoutingContextRef.current) {
+              activeUserRoutingContextRef.current.claimed = true;
+            }
             setTurnPhase("acting");
             toolRanForCurrentTranscriptRef.current = true;
             return createAutomation(params).finally(() => {
@@ -6176,6 +6223,12 @@ export default function ElevenLabsAgentWidget({
               sessionTranscriptRef.current.push({ role, message });
             }
             setLastUserTranscript(message);
+            activeUserRoutingContextRef.current = {
+              eventId: event_id ?? null,
+              message,
+              claimed: false,
+              operationId: crypto.randomUUID(),
+            };
             setTurnPhase("thinking");
             if (detectAllRecurringSchedules(message).length > 0) {
               recurringRawRef.current = message;
@@ -6251,6 +6304,12 @@ export default function ElevenLabsAgentWidget({
 
             invalidCaptureRef.current = null;
             sessionTranscriptRef.current.push({ role, message });
+            activeUserRoutingContextRef.current = {
+              eventId: event_id ?? null,
+              message,
+              claimed: false,
+              operationId: crypto.randomUUID(),
+            };
             setLastUserTranscript(message);
             if (userTranscriptTimerRef.current) {
               clearTimeout(userTranscriptTimerRef.current);
@@ -6281,6 +6340,7 @@ export default function ElevenLabsAgentWidget({
               console.log("[routine:RAW_CAPTURE]", message);
             }
           } else if (role === "agent") {
+            activeUserRoutingContextRef.current = null;
             recordCarsonDiagnostic("carson-audio-session", {
               phase: "agent_message",
               eventId: event_id ?? null,

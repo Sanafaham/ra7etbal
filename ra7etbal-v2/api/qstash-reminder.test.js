@@ -567,3 +567,97 @@ describe("qstash-reminder 'notification-receipt' action — reminder vs. complet
     expect(firstEventKey).toBe(secondEventKey);
   });
 });
+
+describe("qstash-reminder authoritative routed reminder creation", () => {
+  beforeEach(() => {
+    vi.stubEnv("SUPABASE_URL", "https://supabase.test");
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role");
+    vi.stubEnv("QSTASH_TOKEN", "qstash-token");
+    vi.stubEnv("CRON_SECRET", "cron-secret");
+    vi.stubEnv("APP_BASE_URL", "https://ra7etbal.test");
+  });
+
+  const evidence = {
+    contract_version: "one-time-routing-v1",
+    destination: "owner_reminder",
+    decision_source: "fresh_user_transcript",
+    client_build: "35c71db848741082766ae9b960c704764f71336d",
+    operation_id: "4c438c39-7b8f-43f6-9085-0b4b64905bf8",
+  };
+
+  it("rejects automation evidence before any task insert", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ id: "user-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+    await handler(mockReq({ body: {
+      action: "create-and-schedule",
+      description: "Confirm X",
+      dueAt: "2026-08-13T04:00:00.000Z",
+      routingEvidence: { ...evidence, destination: "one_time_automation" },
+    } }), res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.payload.reasonCode).toBe("destination_mismatch");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/rest/v1/tasks"))).toBe(false);
+  });
+
+  it("creates and schedules exactly one owner reminder after valid evidence", async () => {
+    const task = {
+      id: evidence.operation_id,
+      user_id: "user-1",
+      description: "Owner reminder",
+      type: "reminder",
+      due_at: "2026-08-13T04:00:00.000Z",
+      status: "pending",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+      .mockResolvedValueOnce(jsonResponse([task], 201))
+      .mockResolvedValueOnce(jsonResponse({ messageId: "msg-routed-1" }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+    await handler(mockReq({ body: {
+      action: "create-and-schedule",
+      description: "Owner reminder",
+      dueAt: task.due_at,
+      routingEvidence: evidence,
+    } }), res);
+
+    expect(res.statusCode).toBe(201);
+    expect(res.payload.task).toMatchObject({ id: task.id, qstash_message_id: "msg-routed-1" });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === "https://supabase.test/rest/v1/tasks")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("qstash.upstash.io/v2/publish"))).toHaveLength(1);
+  });
+
+  it("reuses the exact operation task on an idempotent retry instead of inserting a duplicate", async () => {
+    const task = {
+      id: evidence.operation_id,
+      user_id: "user-1",
+      description: "Owner reminder",
+      type: "reminder",
+      due_at: "2026-08-13T04:00:00.000Z",
+      status: "pending",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ id: "user-1" }))
+      .mockResolvedValueOnce(jsonResponse([], 201))
+      .mockResolvedValueOnce(jsonResponse([task]))
+      .mockResolvedValueOnce(jsonResponse({ messageId: "msg-routed-1" }))
+      .mockResolvedValueOnce(jsonResponse({}));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+    await handler(mockReq({ body: {
+      action: "create-and-schedule",
+      description: task.description,
+      dueAt: task.due_at,
+      routingEvidence: evidence,
+    } }), res);
+
+    expect(res.statusCode).toBe(201);
+    expect(res.payload.task.id).toBe(evidence.operation_id);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === "https://supabase.test/rest/v1/tasks")).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`id=eq.${evidence.operation_id}`))).toBe(true);
+  });
+});

@@ -18,6 +18,7 @@
  */
 
 import { scheduleAutomationRunWakeup, resolveAppBaseUrl } from './qstash-reminder.js';
+import { safeBuildForLog, validateOneTimeRoutingEvidence } from './_one-time-routing-contract.js';
 
 const VALID_CADENCE_TYPES = ['once', 'daily', 'weekly', 'every_n_days', 'monthly'];
 const VALID_PROOF_TYPES   = ['photo', 'confirmation', 'text'];
@@ -168,6 +169,11 @@ async function handlePost(req, res) {
   if (error) return res.status(401).json({ error });
 
   const body = req.body ?? {};
+  const routing = validateOneTimeRoutingEvidence(body.routing_evidence, 'one_time_automation');
+  if (!routing.valid) {
+    logAutomationPostRejection(routing.reasonCode, uid, body);
+    return res.status(409).json({ error: 'Routing contract rejected automation creation.', reasonCode: routing.reasonCode });
+  }
 
   // ── Required field validation ─────────────────────────────────────────────
   const { title, instruction, cadence_type, cadence_value, next_run_at } = body;
@@ -245,6 +251,7 @@ async function handlePost(req, res) {
 
   // ── Build and insert row ──────────────────────────────────────────────────
   const row = {
+    ...(routing.present ? { id: body.routing_evidence.operation_id } : {}),
     user_id:            uid,
     title:              title.trim(),
     instruction:        instruction.trim(),
@@ -267,7 +274,7 @@ async function handlePost(req, res) {
     `${config.supabaseUrl}/rest/v1/automations`,
     {
       method:  'POST',
-      headers: { Prefer: 'return=representation' },
+      headers: { Prefer: routing.present ? 'resolution=ignore-duplicates,return=representation' : 'return=representation' },
       body:    JSON.stringify(row),
     },
   );
@@ -278,13 +285,43 @@ async function handlePost(req, res) {
     return res.status(500).json({ error: 'Failed to create automation.' });
   }
 
-  const created    = await insertRes.json().catch(() => null);
-  const automation = Array.isArray(created) ? created[0] : created;
+  const created = await insertRes.json().catch(() => null);
+  let automation = Array.isArray(created) ? created[0] : created;
+
+  if (!automation?.id && routing.present) {
+    const existingRes = await sbFetch(
+      config,
+      `${config.supabaseUrl}/rest/v1/automations` +
+        `?select=*&id=eq.${e(body.routing_evidence.operation_id)}&user_id=eq.${e(uid)}&limit=1`,
+    );
+    const rows = existingRes.ok ? await existingRes.json().catch(() => []) : [];
+    const existing = Array.isArray(rows) ? rows[0] : null;
+    if (
+      existing &&
+      existing.title === row.title &&
+      existing.instruction === row.instruction &&
+      existing.cadence_type === row.cadence_type &&
+      existing.assignee_id === row.assignee_id
+    ) {
+      automation = existing;
+    } else {
+      return res.status(409).json({ error: 'Routing operation conflicts with existing automation.' });
+    }
+  }
 
   if (!automation?.id) {
     console.error('[automations POST] insert succeeded but no automation id was returned');
     return res.status(500).json({ error: 'Automation was not confirmed as saved.' });
   }
+
+  console.info('[automations POST] routing decision', {
+    automationId: automation.id,
+    ownerId: uid,
+    toolInvoked: 'create_automation',
+    destination: body.routing_evidence?.destination ?? 'legacy_automation',
+    reasonCode: routing.reasonCode,
+    clientBuild: safeBuildForLog(body.routing_evidence),
+  });
 
   // ── Exact-time wake-up — server-side only ─────────────────────────────────
   // The browser must never be responsible for operational scheduling: a

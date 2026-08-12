@@ -1,6 +1,7 @@
 import type { Task } from "../types/task";
-import { scheduleReminderPush } from "./qstash-reminder";
+import { createRoutedReminder, scheduleReminderPush } from "./qstash-reminder";
 import { createTask } from "./tasks";
+import type { OneTimeRoutingEvidence } from "./one-time-automation-routing";
 
 interface CreateReminderTaskInput {
   userId: string;
@@ -10,6 +11,7 @@ interface CreateReminderTaskInput {
   id?: string;
   imagePath?: string | null;
   createTaskFn?: typeof createTask;
+  routingEvidence?: OneTimeRoutingEvidence;
 }
 
 /**
@@ -28,10 +30,16 @@ export async function createReminderTask({
   id,
   imagePath,
   createTaskFn = createTask,
+  routingEvidence,
 }: CreateReminderTaskInput): Promise<Task> {
   const description = text.trim();
   if (!userId) throw new Error("Not signed in.");
   if (!description) throw new Error("Cannot create a reminder without text.");
+
+  if (routingEvidence) {
+    if (!dueAt) throw new Error("Cannot create a routed reminder without a due time.");
+    return createRoutedReminder({ description, dueAt, routingEvidence });
+  }
 
   const task = await createTaskFn({
     ...(id ? { id } : {}),
@@ -47,7 +55,7 @@ export async function createReminderTask({
   });
 
   if (task.due_at) {
-    scheduleReminderPush(task.id, task.due_at).catch((err) =>
+    scheduleReminderPush(task.id, task.due_at, routingEvidence).catch((err) =>
       console.error(`[${source}] QStash reminder schedule failed`, task.id, err),
     );
   }
