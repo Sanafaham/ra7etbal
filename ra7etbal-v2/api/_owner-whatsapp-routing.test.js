@@ -907,6 +907,46 @@ describe('idempotency and identity', () => {
     expect(result).toMatchObject({ isOwner: false, routingEnabled: true, reason: 'not_owner' });
   });
 
+  // 2026-08-12 incident regression: whatsapp_health_state had 3 distinct
+  // user_ids bound to one production phone_number_id (recordWebhookHeartbeat
+  // bug, api/whatsapp-webhook.js), which silently fell through to
+  // consent/staff handling for a full day with zero error signal anywhere.
+  // account_not_unique itself was never regression-tested before this.
+  it('ambiguous phone_number_id binding (account_not_unique, >1 distinct user) fails closed and logs a loud diagnostic signal, never leaking the actual user_ids', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      response([{ user_id: 'user-1' }, { user_id: 'user-2' }, { user_id: 'user-3' }]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await resolveCanonicalOwner({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg(),
+    });
+
+    expect(result).toEqual({ isOwner: false, routingEnabled: false, reason: 'account_not_unique' });
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const [logMessage, logPayload] = errorSpy.mock.calls[0];
+    expect(logMessage).toMatch(/AMBIGUOUS/);
+    expect(logPayload).toEqual({ distinctAccountCount: 3 });
+    // Never logs the actual user ids — cross-account private data.
+    expect(JSON.stringify(logPayload)).not.toContain('user-1');
+    expect(JSON.stringify(logPayload)).not.toContain('user-2');
+    expect(JSON.stringify(logPayload)).not.toContain('user-3');
+  });
+
+  it('zero-match binding (no owner ever set up for this number) is a normal state and never logs an error', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchMock = vi.fn().mockResolvedValueOnce(response([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await resolveCanonicalOwner({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg(),
+    });
+
+    expect(result).toEqual({ isOwner: false, routingEnabled: false, reason: 'account_not_unique' });
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
   it('ambiguous Boss candidates perform no owner action', async () => {
     const fetchMock = vi.fn();
     stubIdentity(fetchMock, [owner, { ...owner, id: 'boss-2' }]);

@@ -273,6 +273,103 @@ function stubBaseEnv() {
   vi.stubEnv('WHATSAPP_PHONE_NUMBER_ID', ''); // keeps recordWebhookHeartbeat a no-op
 }
 
+// 2026-08-12 incident: recordWebhookHeartbeat used to discover "owners" by
+// querying the 100 most recently created whatsapp_deliveries rows GLOBALLY
+// (no phone_number_id filter at all) and upsert a whatsapp_health_state
+// binding for every user_id found there against the CURRENT webhook's
+// phone_number_id -- silently binding unrelated accounts to the real
+// production number. Fixed to only refresh already-existing bindings for
+// the exact phone_number_id in the current webhook; it can never again
+// invent a new ownership binding.
+describe('recordWebhookHeartbeat — never invents a cross-account ownership binding', () => {
+  it('never queries whatsapp_deliveries globally to discover owners', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn(async (url, options = {}) => {
+      const target = String(url);
+      if (target.includes('/whatsapp_health_state?') && options.method === 'PATCH') {
+        return jsonResponse([]);
+      }
+      // Any other call this test doesn't expect fails loudly.
+      // handleInboundStaffMessage's own separate household lookup (unrelated
+      // to the heartbeat) — zero households cleanly short-circuits it.
+      if (target.includes('/whatsapp_health_state?')) {
+        return jsonResponse([]);
+      }
+      throw new Error(`unexpected fetch ${target} ${options.method || 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { req, res } = makeReqRes(inboundMessagePayload({
+      messageId: 'wamid.heartbeat-1', text: 'hello',
+    }));
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    // The removed global-discovery query must never be issued again.
+    expect(fetchMock.mock.calls.some(([u]) =>
+      String(u).includes('/whatsapp_deliveries?select=user_id') && String(u).includes('order=created_at.desc'),
+    )).toBe(false);
+  });
+
+  it('only PATCHes rows already bound to this exact phone_number_id — never POSTs a new binding for an unrelated account', async () => {
+    stubBaseEnv();
+    const patchCalls = [];
+    const fetchMock = vi.fn(async (url, options = {}) => {
+      const target = String(url);
+      if (target.includes('/whatsapp_health_state?') && options.method === 'PATCH') {
+        patchCalls.push({ url: target, body: JSON.parse(options.body) });
+        return jsonResponse([{ id: 'health-row-1' }]);
+      }
+      if (target.includes('/whatsapp_health_state') && options.method === 'POST') {
+        throw new Error('heartbeat must never POST/upsert a new health-state binding');
+      }
+      // handleInboundStaffMessage's own separate household lookup (unrelated
+      // to the heartbeat) — zero households cleanly short-circuits it.
+      if (target.includes('/whatsapp_health_state?')) {
+        return jsonResponse([]);
+      }
+      throw new Error(`unexpected fetch ${target} ${options.method || 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { req, res } = makeReqRes(inboundMessagePayload({
+      messageId: 'wamid.heartbeat-2', text: 'hello',
+    }));
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+    // Exactly one PATCH, scoped to the exact phone_number_id from this webhook.
+    expect(patchCalls).toHaveLength(1);
+    expect(patchCalls[0].url).toContain('phone_number_id=eq.meta-phone-id');
+    expect(patchCalls[0].body).toHaveProperty('last_webhook_received_at');
+  });
+
+  it('an already-valid single binding still receives its heartbeat refresh normally', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn(async (url, options = {}) => {
+      const target = String(url);
+      if (target.includes('/whatsapp_health_state?') && options.method === 'PATCH') {
+        // Simulates the real row (Sana's canonical binding) being matched and refreshed.
+        return jsonResponse([{ id: '1d0ee9c5-baed-4263-a426-547a4c90d89e', user_id: '645ddb96-6e09-4d91-b650-cbc75bac9a5d' }]);
+      }
+      // handleInboundStaffMessage's own separate household lookup (unrelated
+      // to the heartbeat) — zero households cleanly short-circuits it.
+      if (target.includes('/whatsapp_health_state?')) {
+        return jsonResponse([]);
+      }
+      throw new Error(`unexpected fetch ${target} ${options.method || 'GET'}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { req, res } = makeReqRes(inboundMessagePayload({
+      messageId: 'wamid.heartbeat-3', text: 'hello',
+    }));
+    await handler(req, res);
+
+    expect(res.statusCode).toBe(200);
+  });
+});
+
 describe('WhatsApp delivery status progression', () => {
   it('advances accepted through sent, delivered, and read with timestamps', () => {
     expect(
