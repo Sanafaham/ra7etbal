@@ -7,6 +7,7 @@ import {
   formatReminderDueTime,
   isReminderOverdue,
 } from "../../lib/reminder-time";
+import { formatHistoryCompletedAt } from "../../lib/history-timestamp";
 import { getNeedsYouTimestampLabel } from "../../lib/needs-you-timestamp";
 import { resolveQualityLifecycle } from "../../lib/quality-lifecycle";
 import { openWhatsAppMessage, sendWhatsAppTask } from "../../lib/whatsapp";
@@ -94,6 +95,12 @@ export default function TaskCard({
   const reminderCreatedLabel =
     task.type === "reminder" ? formatReminderCreatedTime(task.created_at, now) : null;
   const needsYouTimestampLabel = isNeedsYouCard ? getNeedsYouTimestampLabel(task, now) : null;
+  // What's Happening -> History: the only place a done task's card needs a
+  // visible completion date/time. Never computed for a task that isn't done,
+  // so an active card can never pick up a stale/incorrect completion stamp.
+  const completedAtLabel = isDone
+    ? formatHistoryCompletedAt(task.confirmed_at, task.archived_at, task.created_at)
+    : null;
   // The followup/delegation "Sent ..." line below already shows created_at
   // truthfully — don't repeat the same instant under a second label when
   // no more specific Needs You reason (review/escalation/due time) applies.
@@ -239,6 +246,10 @@ export default function TaskCard({
         <p className="mt-1 text-[11px] text-ink/40">
           {formatFollowUpSentTime(task.created_at)}
         </p>
+      )}
+
+      {completedAtLabel && (
+        <p className="mt-1 text-[11px] text-ink/40">{completedAtLabel}</p>
       )}
 
       {showNeedsYouTimestamp && (
