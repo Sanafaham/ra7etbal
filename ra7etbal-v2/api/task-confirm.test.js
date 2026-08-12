@@ -190,6 +190,23 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .toBeLessThan(fetchMock.mock.calls.indexOf(runPatch));
   });
 
+  it('a concurrent loser before confirmation evidence persists safely no-ops without touching the run', async () => {
+    const confirmedAt = '2026-08-12T01:40:00.123Z';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', confirmed_at: null, description: 'd', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: confirmedAt }]))
+      .mockResolvedValueOnce(jsonResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ already_done: true, duplicate: true }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/automation_runs'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('/rest/v1/confirmations') && init?.method === 'POST')).toBe(false);
+  });
+
   it('normalizes a nested full confirmation URL in POST taskId before marking the task done', async () => {
     const fetchMock = vi
       .fn()
@@ -1432,6 +1449,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       .mockResolvedValueOnce(jsonResponse([{ content: 'Please check if this outfit is in the closet.' }]))
       .mockResolvedValueOnce(jsonResponse([])) // PATCH tasks -> duplicate lost the pending race
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: '2026-08-12T01:40:00.123Z' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'confirmation-1', task_id: 'task-1', confirmed_at: '2026-08-12T01:40:00.123Z' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', task_id: 'task-1', user_id: 'user-1', current_state: 'sent' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', current_state: 'confirmed' }]));
     vi.stubGlobal('fetch', fetchMock);
@@ -1442,7 +1460,7 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ success: true, already_done: true, outcome: 'approved', duplicate: true }),
     );
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('/rest/v1/confirmations') && init?.method === 'POST')).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
     expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
     const runPatch = fetchMock.mock.calls.find(([url, init]) => String(url).includes('/rest/v1/automation_runs?') && init?.method === 'PATCH');
@@ -1809,7 +1827,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
   it('is idempotent — an already-done task short-circuits before any review runs', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', description: 'd', assigned_to: 'Christopher', image_path: null }]));
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', description: 'd', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([]));
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -1818,7 +1837,23 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(runQualityReviewMock).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ already_done: true }));
     // Idempotent short-circuit — no attachment writes either.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reopening a stale assignee link after owner/manual completion does not confirm the linked run', async () => {
+    const confirmedAt = '2026-08-12T01:40:00.123Z';
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: confirmedAt, description: 'manually done', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: confirmedAt }]))
+      .mockResolvedValueOnce(jsonResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ already_done: true }));
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/automation_runs'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('/rest/v1/confirmations') && init?.method === 'POST')).toBe(false);
   });
 
   it('an already-confirmed task safely heals a stale linked run without repeating confirmation side effects', async () => {
@@ -1826,6 +1861,8 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: confirmedAt, description: 'd', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: confirmedAt }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'confirmation-1', task_id: 'task-1', confirmed_at: confirmedAt }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', task_id: 'task-1', user_id: 'user-1', current_state: 'sent' }]))
       .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', current_state: 'confirmed', confirmed_at: confirmedAt }]));
     vi.stubGlobal('fetch', fetchMock);
@@ -1834,10 +1871,10 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     await handler(createReq({ taskId: 'task-1' }), res);
 
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ already_done: true }));
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/rest/v1/confirmations'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes('/rest/v1/confirmations') && init?.method === 'POST')).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('push_subscriptions'))).toBe(false);
     expect(vi.mocked(webpush.sendNotification)).not.toHaveBeenCalled();
-    const runPatch = fetchMock.mock.calls[2];
+    const runPatch = fetchMock.mock.calls[4];
     expect(JSON.parse(runPatch[1].body)).toEqual({ current_state: 'confirmed', confirmed_at: confirmedAt });
   });
 });

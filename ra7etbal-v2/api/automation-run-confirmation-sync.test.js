@@ -94,7 +94,9 @@ describe('automation run confirmation projection', () => {
   });
 
   it('reloads only the exact owner task in a confirmed canonical state for repair', async () => {
-    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([confirmedTask]));
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([confirmedTask]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'confirmation-1', task_id: confirmedTask.id, confirmed_at: confirmedTask.confirmed_at }]));
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(loadCanonicalConfirmedTask({
@@ -104,6 +106,42 @@ describe('automation run confirmation projection', () => {
     })).resolves.toEqual(confirmedTask);
     const url = fetchMock.mock.calls[0][0];
     expect(url).toContain('id=eq.task-1&user_id=eq.owner-1&status=eq.done&confirmed_at=not.is.null');
+    expect(fetchMock.mock.calls[1][0]).toContain(
+      `task_id=eq.task-1&confirmed_at=eq.${encodeURIComponent(confirmedTask.confirmed_at)}`,
+    );
+  });
+
+  it('rejects done + confirmed_at when no canonical confirmation evidence exists', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([confirmedTask]))
+      .mockResolvedValueOnce(jsonResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(loadCanonicalConfirmedTask({ ...context, taskId: 'task-1', userId: 'owner-1' }))
+      .resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects wrong-task confirmation evidence by querying only the exact task', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([confirmedTask]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'confirmation-wrong', task_id: 'task-2', confirmed_at: confirmedTask.confirmed_at }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(loadCanonicalConfirmedTask({ ...context, taskId: 'task-1', userId: 'owner-1' }))
+      .resolves.toBeNull();
+    expect(fetchMock.mock.calls[1][0]).toContain('task_id=eq.task-1');
+    expect(fetchMock.mock.calls[1][0]).not.toContain('task_id=eq.task-2');
+  });
+
+  it('rejects wrong-owner repair before consulting confirmation evidence', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(loadCanonicalConfirmedTask({ ...context, taskId: 'task-1', userId: 'wrong-owner' }))
+      .resolves.toBeNull();
+    expect(fetchMock.mock.calls[0][0]).toContain('id=eq.task-1&user_id=eq.wrong-owner');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it.each([400, 500])('does not disguise a database %s error as an idempotent no-op', async (status) => {

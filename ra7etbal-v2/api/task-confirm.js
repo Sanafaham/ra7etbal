@@ -414,7 +414,8 @@ export async function handleTaskConfirmationPost(
       await reconcileConfirmedAutomationProjection({
         supabaseUrl,
         serviceKey,
-        task,
+        taskId,
+        userId: task.user_id,
       });
       return res.status(200).json({ already_done: true, description: task.description });
     }

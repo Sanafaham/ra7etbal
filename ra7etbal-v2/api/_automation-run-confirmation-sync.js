@@ -109,6 +109,7 @@ export async function loadCanonicalConfirmedTask({
 }) {
   if (!taskId || !userId) return null;
 
+  const headers = serviceHeaders(serviceKey);
   const res = await fetch(
     `${supabaseUrl}/rest/v1/tasks` +
       `?id=eq.${encodeURIComponent(taskId)}` +
@@ -117,11 +118,31 @@ export async function loadCanonicalConfirmedTask({
       `&confirmed_at=not.is.null` +
       `&select=id,user_id,status,confirmed_at` +
       `&limit=1`,
-    { headers: serviceHeaders(serviceKey) },
+    { headers },
   );
   const rows = await res.json().catch(() => []);
   if (!res.ok) {
     throw new Error(`confirmed task reload failed (${res.status})`);
   }
-  return Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+  if (!Array.isArray(rows) || rows.length !== 1) return null;
+
+  const task = rows[0];
+  const evidenceRes = await fetch(
+    `${supabaseUrl}/rest/v1/confirmations` +
+      `?task_id=eq.${encodeURIComponent(task.id)}` +
+      `&confirmed_at=eq.${encodeURIComponent(task.confirmed_at)}` +
+      `&select=id,task_id,confirmed_at` +
+      `&limit=1`,
+    { headers },
+  );
+  const evidenceRows = await evidenceRes.json().catch(() => []);
+  if (!evidenceRes.ok) {
+    throw new Error(`confirmation evidence lookup failed (${evidenceRes.status})`);
+  }
+
+  if (!Array.isArray(evidenceRows) || evidenceRows.length !== 1) return null;
+  const evidence = evidenceRows[0];
+  return evidence?.task_id === task.id && evidence?.confirmed_at === task.confirmed_at
+    ? task
+    : null;
 }
