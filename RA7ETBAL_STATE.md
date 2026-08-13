@@ -34,12 +34,7 @@ Notifications Inbox V1 is no longer the current next task — see below.
 
 **Correction (2026-08-13):** Post-owner-decision worker WhatsApp identity gap, set as the next task above, was itself found to already be fixed and merged (PR #243) — see its entry below, now marked CLOSED. This file's OPEN-item tracking has repeatedly gone stale this way (see also the Notifications Inbox V1 correction above); do not assume any status in this file reflects `main` without checking the actual code/production state first.
 
-After excluding everything closed/protected (PR #236, #239 superseded, #240/#246, #241, Notifications Inbox V1, and now the identity gap), the two remaining `OPEN` items in this file are:
-
-- **Communication History event timestamps** (below): genuinely still not implemented (verified directly in `formatCommunicationHistoryAnswer`, `src/lib/carson-communication-history.ts` — date only, no time, device-local timezone rather than the stored account timezone). Its own entry says explicitly: "Do not implement until explicitly scoped" — not authorized to start without that scoping decision.
-- **Workstream 5 — Staff-facing Outbound Delivery Reliability** (below): implementation/tests/deployment already verified; only "functional production verification" remains, and that requires waiting for a real organic `source_type='message'` delivery failure to occur (or an approved controlled test) — not an implementation task.
-
-Neither is a ready, unblocked "start coding now" task. Do not start either without an explicit decision from Sana.
+**Correction (2026-08-14):** Communication History event timestamps (PR #250), the automation-runner Communication History identity/linkage gap (Item B), and Workstream 5 — Staff-facing Outbound Delivery Reliability are now all CLOSED — see their own entries below. A full current-state reconciliation of every remaining OPEN/PENDING/REOPENED item against `main` is in progress; do not trust this summary paragraph's item list until that reconciliation entry (below) replaces it.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
@@ -555,16 +550,20 @@ Protect: the canonical builder's closed input surface (decision/instructionText/
 
 **Workstream 3 Frozen Baseline: PERMANENT as of 2026-08-06.**
 
-### Workstream 5 — Staff-facing Outbound Delivery Reliability — ACTIVE WORKSTREAM, NOT YET CLOSED
+### Workstream 5 — Staff-facing Outbound Delivery Reliability — CLOSED / IMPLEMENTED / DEPLOYED / REGRESSION VERIFIED
 
-Status (2026-08-07):
+Status (2026-08-14):
 - Implementation: COMPLETE
 - Tests: VERIFIED
 - Production deployment: VERIFIED
 - Smoke verification: VERIFIED
-- Functional production verification: PENDING
+- Functional production verification: not organically exercised — see qualification below (not a blocker)
 
-Workstream 5 remains the active workstream until the new reliability path (`notifyOwnerOfDirectMessageDeliveryFailure`) is exercised by a real production event or an approved controlled production verification. Do not mark this FORMALLY CLOSED AND FROZEN before that evidence exists. **Do not begin Workstream 6 while this status stands.**
+**Reconciliation (2026-08-14):** re-verified `notifyOwnerOfDirectMessageDeliveryFailure` (`ra7etbal-v2/api/whatsapp-webhook.js`) and the `staff_delivery_failed` push variant (`ra7etbal-v2/api/task-confirm.js`) are unchanged on `main` since the PR #191 merge; regression tests (`api/whatsapp-webhook.test.js`, `api/task-confirm.test.js`) remain part of `npm run test:carson-protected` and green. Traced the exact runtime mechanics: `updateWhatsappDeliveryStatus` (the function this handler is wired into) looks a delivery up by `meta_message_id` and only ever runs from Meta's asynchronous status-webhook callback — it is structurally unreachable from a synchronous send-time API rejection (those are written directly by `markWhatsappDeliveryFailed()` in `send-whatsapp-task.js`, a separate code path Workstream 5 does not touch). Of all historical `source_type='message'` failures, only the async ones (`failure_code 131049`/`131026` — Meta accepts synchronously with a WAMID, then rejects asynchronously) can exercise this handler; the synchronous ones (`132018`/`132000`/`132001`, template/param errors) cannot, by design of the existing architecture. Confirmed zero qualifying async `source_type='message'` failures have occurred since the PR #191 deploy (`2026-08-07T12:22:22Z`) through today, despite continued unthrottled traffic to the number that produced the historical 131049s (19 sends in the trailing 14 days, zero failures) — the underlying Meta "ecosystem engagement" pacing signal that caused the historical failures is not currently active and cannot be safely or deterministically forced on demand; it is Meta-internal and opaque, not something this codebase controls or can query in advance. No controlled test was run.
+
+**Permanent qualification:** the async-webhook failure-notification path `notifyOwnerOfDirectMessageDeliveryFailure` has not yet been organically exercised by a post-deployment production `source_type='message'` async failure. This is **not an implementation blocker** — the relevant Meta failure condition is non-deterministic and cannot be safely forced on demand. When a genuine async `source_type='message'` failure occurs in production in the future: verify `metadata.delivery_failure_notice`, verify the owner push attempt, verify exactly-once behavior, and record that production evidence here. Do not reopen engineering or redesign this path solely because that organic event has not happened yet.
+
+Reopen only if: a genuine production async failure occurs and the handler does not behave correctly, or production evidence reveals a real regression.
 
 Merged via PR #191 (`ws5/staff-outbound-delivery-reliability`), merge commit `951f38d5b54a7d80c71e40dd20b2860b2c15ee70`, merged 2026-08-07T12:22:22Z. `carson-protected-behaviors` CI was blocked for several hours by a confirmed GitHub Actions platform-wide outage (per GitHub's own status page) — not a code issue; two attempts on the original run failed at "Set up job" with infrastructure errors ("job was not acquired by Runner," "Failed to resolve action download info") before ever reaching the test step. A fresh run, triggered by closing/reopening the PR (no commit, no workflow change, original orphaned run `31121769662` left untouched for the record) after GitHub's status returned to `operational`, completed in 18s with `Test Files 54 passed (54)` — the real protected suite, not an infra artifact.
 
