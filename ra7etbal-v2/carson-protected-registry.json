@@ -79,13 +79,14 @@
         "api/owner-whatsapp-decision-golden-contract.test.js",
         "api/staff-decision-golden-contract.test.js"
       ],
-      "protected_suite": true,
+      "protected_suite": false,
       "golden_journey_required": true,
       "golden_journey_tests": [],
       "production_canary_required": false,
       "rollback_risk": "high — root cause history shows this contract has two independently-implemented legs (owner-notify vs. worker-notify) that can regress independently",
       "verification_status": "PRODUCTION VERIFIED — PR #237 (owner-notify leg), PR #243 (worker-notify leg)",
       "unresolved": [
+        "protected_suite is false, not true, because one of this capability's own focused tests — api/_escalation-notify.test.js, which covers the owner-notify leg fixed by PR #237 — is not present in package.json's required test:carson-protected/pretest:carson-protected script list. Every other focused test listed here IS in the required gate. This gap was caught by the registry's own validator (npm run validate:carson-registry) after CodeRabbit review flagged that protected_suite:true was not being cross-checked against the actual required CI file list. Adding api/_escalation-notify.test.js to the required suite was judged out of the Phase 1 authorization (which named only automation execution, daily-brief/Needs-You, Communication History, and push-lifecycle tests for CI-membership closure) — left as an explicit, truthfully-flagged item rather than silently expanding scope.",
         "No standing CI check yet proves every RPC writing into messages/whatsapp_deliveries/staff_escalation_owner_decisions threads person_id — the PR #243 guard is a one-off test, not a generic rule (see Phase 0 §1 Incident 3, future gate). Not built in Phase 1; deferred to a future phase."
       ]
     },
@@ -365,13 +366,14 @@
         "src/lib/whatsapp-delivery-context.test.ts",
         "api/_whatsapp-inbound-observability.test.js"
       ],
-      "protected_suite": true,
+      "protected_suite": false,
       "golden_journey_required": false,
       "golden_journey_tests": [],
       "production_canary_required": true,
       "rollback_risk": "high — this is exactly the shared dependency identified in Phase 0's Impact-Aware CI design as needing broad fan-out mapping (a change here can silently break owner_decision_lifecycle, automation_execution_confirmation, and communication_history simultaneously)",
       "verification_status": "PARTIALLY VERIFIED — the live-conversation writer path is fully covered; the automation-runner and owner-reminder writer paths were the exact subject of Incidents 3/4 and are fixed only where explicitly investigated",
       "unresolved": [
+        "protected_suite is false, not true, because one of this capability's own focused tests — src/lib/whatsapp-delivery-context.test.ts — is not present in package.json's required test:carson-protected/pretest:carson-protected script list. The other three focused tests listed here ARE in the required gate. Same reasoning as owner_decision_lifecycle's equivalent note: caught by the registry's own validator after CodeRabbit review, and left as an explicit flagged gap rather than silently expanding the Phase 1-authorized CI-membership scope.",
         "No single-writer RPC gatekeeper exists for whatsapp_deliveries (unlike staff_escalation_owner_decisions, which is RPC-gated). This is flagged as an open structural risk, not resolved in Phase 1."
       ]
     },

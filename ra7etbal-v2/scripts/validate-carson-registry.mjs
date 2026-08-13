@@ -15,14 +15,24 @@
  *   3. A capability id is duplicated.
  *   4. A registered focused test file (or golden-journey test file) does not
  *      exist on disk.
- *   5. A registered production path in files_functions does not exist on
- *      disk (checked as the substring before the first ":", so
- *      "path/to/file.ts:functionName" and bare "path/to/file.ts" both work).
+ *   5. A registered production path in files_functions,
+ *      production_entry_points, or shared_dependencies does not exist on
+ *      disk. Each entry is normalized first: a trailing parenthetical note
+ *      ("path/to/file.js (some description)") is stripped, then the
+ *      substring before the first ":" is taken, so "path:functionName",
+ *      "path (note)", and bare "path" all resolve to the same file check.
  *   6. A registered db migration / data-repair path does not exist on disk.
  *   7. A Tier 1 capability (protected_suite !== false and no explicit
  *      "unresolved" note excusing it) has zero focused_tests AND zero
  *      golden_journey_tests — i.e. a capability claiming protection with no
  *      identifiable test evidence at all.
+ *   8. A capability marked protected_suite: true lists a focused_tests or
+ *      golden_journey_tests file that is NOT actually present in either of
+ *      package.json's pretest:carson-protected or test:carson-protected
+ *      script strings — i.e. the registry claims a test is enforced by the
+ *      required CI gate when it would not actually run there. An existing,
+ *      passing, but uncalled test must not be able to satisfy
+ *      protected_suite: true.
  *
  * Deliberately NOT enforced here (left for a future phase, not guessed at):
  *   - Whether a focused test file's assertions actually exercise the named
@@ -41,6 +51,42 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
 const registryPath = resolve(repoRoot, "carson-protected-registry.json");
+const packageJsonPath = resolve(repoRoot, "package.json");
+
+/**
+ * Normalizes a registry path-bearing entry down to just its file path.
+ * Handles three shapes seen in the registry:
+ *   "path/to/file.ts:functionName"        -> "path/to/file.ts"
+ *   "path/to/file.js (some description)"  -> "path/to/file.js"
+ *   "path/to/file.js"                     -> "path/to/file.js"
+ */
+function extractFilePath(entry) {
+  const withoutParenthetical = String(entry).replace(/\s*\([^)]*\)\s*$/, "");
+  return withoutParenthetical.split(":")[0].trim();
+}
+
+/**
+ * Extracts the set of test files that will actually run under the required
+ * `carson-protected-behaviors` CI check — i.e. every file listed in either
+ * package.json's `pretest:carson-protected` (an npm pre-hook that runs
+ * automatically before `test:carson-protected`) or `test:carson-protected`
+ * script strings themselves.
+ */
+function loadRequiredCiTestFiles() {
+  const pkg = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const scripts = pkg.scripts || {};
+  const files = new Set();
+  for (const key of ["pretest:carson-protected", "test:carson-protected"]) {
+    const script = scripts[key];
+    if (typeof script !== "string") continue;
+    for (const token of script.split(/\s+/)) {
+      if (token.endsWith(".test.js") || token.endsWith(".test.ts") || token.endsWith(".test.tsx")) {
+        files.add(token);
+      }
+    }
+  }
+  return files;
+}
 
 const errors = [];
 const warnings = [];
@@ -98,6 +144,7 @@ const REQUIRED_BOOLEAN_FIELDS = [
 ];
 
 const seenIds = new Set();
+const requiredCiTestFiles = loadRequiredCiTestFiles();
 
 for (const [index, cap] of registry.capabilities.entries()) {
   const label = cap && typeof cap.id === "string" ? cap.id : `capabilities[${index}]`;
@@ -155,12 +202,18 @@ for (const [index, cap] of registry.capabilities.entries()) {
     }
   }
 
-  if (Array.isArray(cap.files_functions)) {
-    for (const entry of cap.files_functions) {
-      const relPath = String(entry).split(":")[0].trim();
+  const filePathFieldsToCheck = [
+    ["files_functions", cap.files_functions],
+    ["production_entry_points", cap.production_entry_points],
+    ["shared_dependencies", cap.shared_dependencies],
+  ];
+  for (const [fieldName, list] of filePathFieldsToCheck) {
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      const relPath = extractFilePath(entry);
       const abs = resolve(repoRoot, relPath);
       if (!existsSync(abs)) {
-        fail(`${label}: files_functions references nonexistent production path "${relPath}" (from "${entry}")`);
+        fail(`${label}: ${fieldName} references nonexistent production path "${relPath}" (from "${entry}")`);
       }
     }
   }
@@ -177,6 +230,21 @@ for (const [index, cap] of registry.capabilities.entries()) {
   }
   if (cap.protected_suite === false && !hasAnyTest && !hasExplicitUnresolvedExcuse) {
     fail(`${label}: not in the protected suite and has no focused_tests/golden_journey_tests, but also gives no "unresolved" explanation — a Tier 1 capability with no identifiable protection and no acknowledgement is exactly what this validator exists to catch`);
+  }
+
+  // --- 8. protected_suite: true must be backed by the real required CI gate --
+  if (cap.protected_suite === true) {
+    const allTests = [
+      ...(Array.isArray(cap.focused_tests) ? cap.focused_tests : []),
+      ...(Array.isArray(cap.golden_journey_tests) ? cap.golden_journey_tests : []),
+    ];
+    for (const testPath of allTests) {
+      if (!requiredCiTestFiles.has(testPath)) {
+        fail(
+          `${label}: protected_suite is true and lists "${testPath}", but that file is not present in package.json's pretest:carson-protected or test:carson-protected script — it would not actually run in the required carson-protected-behaviors CI check`
+        );
+      }
+    }
   }
 }
 
