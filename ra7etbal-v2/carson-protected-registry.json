@@ -1,0 +1,489 @@
+{
+  "$schema_version": 1,
+  "generated_from": "Carson Engineering Hardening Project — Phase 0 root-cause investigation (2026-08-14) plus direct repository verification at Phase 1 authorship time (commit ea53420, origin/main)",
+  "notes": [
+    "Every path/RPC/migration/test file listed below was verified to exist in the repository at Phase 1 authorship time (git ls-files / direct file read), not inferred from memory or the Phase 0 narrative alone.",
+    "`protected_suite: true` means the file is included in package.json's `test:carson-protected` script (the required `carson-protected-behaviors` CI check) as of this registry's commit. `pretest:carson-protected` files (an npm pre-hook that also runs automatically whenever `test:carson-protected` runs) are treated as protected-suite for this field, since they execute unconditionally as part of the same required check.",
+    "Where a mapping could not be proven from repository evidence, it is marked under `unresolved` on that capability rather than guessed."
+  ],
+  "capabilities": [
+    {
+      "id": "owner_whatsapp_canonical_routing",
+      "contract": "Exactly one Supabase account may be bound to a given WhatsApp phone_number_id at any time. An inbound WhatsApp message is only trusted as an authoritative owner message when routing resolves to exactly one bound account; ambiguous (>1) or zero bindings fail closed, and an ambiguous binding logs a loud diagnostic instead of silently guessing.",
+      "business_importance": "critical — this is the gate that decides whether an inbound reply is trusted as an owner decision at all",
+      "production_entry_points": ["api/whatsapp-webhook.js (POST handler, inbound Meta webhook)"],
+      "files_functions": [
+        "api/whatsapp-webhook.js:recordWebhookHeartbeat",
+        "api/whatsapp-webhook.js:upsertHealthState",
+        "api/whatsapp-webhook.js:updateMatchedHealthState",
+        "api/_owner-whatsapp-routing.js:resolveCanonicalOwner"
+      ],
+      "shared_dependencies": ["api/_owner-whatsapp-routing.js"],
+      "db": {
+        "tables": ["whatsapp_health_state"],
+        "rpcs": [],
+        "migrations": [
+          "supabase/migrations/20260622_whatsapp_health_state.sql",
+          "supabase/migrations/20260813_whatsapp_health_state_phone_number_unique.sql"
+        ],
+        "data_repairs": ["supabase/data-repairs/20260813_whatsapp_health_state_phantom_bindings.sql"]
+      },
+      "external_boundaries": ["Meta/WhatsApp Cloud API webhook"],
+      "focused_tests": ["api/whatsapp-webhook.test.js", "api/_owner-whatsapp-routing.test.js"],
+      "protected_suite": true,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": true,
+      "rollback_risk": "high — prior failure mode was silent (zero error surface) for a full day",
+      "verification_status": "PRODUCTION VERIFIED — PR #244, migration 20260813_whatsapp_health_state_phone_number_unique.sql adds UNIQUE(phone_number_id)",
+      "unresolved": [
+        "No test or CI check currently proves that every future writer into whatsapp_health_state is scoped to phone_number_id + caller-verified user_id — only recordWebhookHeartbeat's current shape is covered. Flagged as an open design gap, not fabricated as already-covered."
+      ]
+    },
+    {
+      "id": "owner_decision_lifecycle",
+      "contract": "An owner's decision on an escalated task (approve alternative / reject alternative / custom instruction) must correctly notify the owner of the pending review, correctly record the decision, and correctly notify the worker of the outcome — with the worker-facing message carrying the same durable person_id as the original task assignment so it remains reachable via Communication History after task_id is lost.",
+      "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order",
+      "production_entry_points": [
+        "api/task-confirm.js (PATCH owner-decision handler)",
+        "api/_escalation-notify.js (owner review notification)"
+      ],
+      "files_functions": [
+        "api/task-confirm.js:handleOwnerDecision",
+        "api/task-confirm.js:findAssigneePerson",
+        "api/_escalation-notify.js:notifyOwnerOfTaskReview",
+        "api/_escalation-notify.js:resolveAssigneePersonId"
+      ],
+      "shared_dependencies": ["api/_whatsapp-delivery.js"],
+      "db": {
+        "tables": ["staff_escalation_owner_decisions", "messages", "whatsapp_deliveries"],
+        "rpcs": [
+          "claim_task_escalation_owner_decision",
+          "reserve_custom_instruction",
+          "reserve_rejected_alternative"
+        ],
+        "migrations": [
+          "supabase/migrations/20260812_durable_person_id_communication_history.sql",
+          "supabase/migrations/20260812_task_review_owner_decision_person_id.sql",
+          "supabase/migrations/20260812_worker_notification_person_id.sql"
+        ],
+        "data_repairs": ["supabase/data-repairs/20260812_worker_notification_person_id_backfill.sql"]
+      },
+      "external_boundaries": ["WhatsApp/Meta send"],
+      "focused_tests": [
+        "api/task-confirm.test.js",
+        "api/_escalation-notify.test.js",
+        "api/task-based-escalation-owner-decisions.test.js",
+        "api/task-owner-whatsapp-substitute-review.test.js",
+        "api/recipient-bound-owner-decisions.test.js",
+        "api/owner-whatsapp-decision-golden-contract.test.js",
+        "api/staff-decision-golden-contract.test.js"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": true,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "high — root cause history shows this contract has two independently-implemented legs (owner-notify vs. worker-notify) that can regress independently",
+      "verification_status": "PRODUCTION VERIFIED — PR #237 (owner-notify leg), PR #243 (worker-notify leg)",
+      "unresolved": [
+        "No standing CI check yet proves every RPC writing into messages/whatsapp_deliveries/staff_escalation_owner_decisions threads person_id — the PR #243 guard is a one-off test, not a generic rule (see Phase 0 §1 Incident 3, future gate). Not built in Phase 1; deferred to a future phase."
+      ]
+    },
+    {
+      "id": "staff_delegation",
+      "contract": "A delegation instruction to staff creates exactly one task, sends exactly one WhatsApp message with a working confirmation link, and never duplicates on immediate resubmission. Typed and voice Carson converge on the same sendDelegation() implementation so they cannot diverge.",
+      "business_importance": "critical — core product function",
+      "production_entry_points": [
+        "src/components/home/ElevenLabsAgentWidget.tsx (sendDelegation, both typed fast-path and voice send_delegation tool)"
+      ],
+      "files_functions": [
+        "src/lib/delegations.ts:createDelegationTaskAndMessage",
+        "src/lib/delegation-fast-path.ts:parseDelegationFastPath / executeDelegationFastPath",
+        "src/lib/communication-vs-delegation.ts:isCommunicationStyleTaskText",
+        "api/send-whatsapp-task.js",
+        "api/task-confirm.js:handleGet"
+      ],
+      "shared_dependencies": ["api/_whatsapp-delivery.js"],
+      "db": {
+        "tables": ["tasks", "messages", "whatsapp_deliveries"],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": ["WhatsApp/Meta send"],
+      "focused_tests": [
+        "src/lib/delegations.test.ts",
+        "src/lib/delegation-fast-path.test.ts",
+        "src/lib/carson-protected-behaviors.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.typed-delegation-execution.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.delegation-duplicate-guard.test.ts"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": true,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "medium",
+      "verification_status": "PRODUCTION VERIFIED — PR #49/#50/#52/#53 (communication-vs-delegation contract), PERMANENTLY LOCKED per RA7ETBAL_STATE.md",
+      "unresolved": [
+        "api/send-whatsapp-task.test.js (worker WhatsApp send / photo attachment pipeline) is not currently in the required protected suite. Not added in Phase 1 — Phase 1 scope was limited to the four categories the user explicitly named (automation execution, daily-brief/Needs-You, Communication History, push lifecycle). Flagged for Phase 2 consideration, not silently added."
+      ]
+    },
+    {
+      "id": "direct_staff_communication",
+      "contract": "A communication-style instruction targeting the owner personally (e.g. 'call me', 'wait for me') is classified as plain communication, never delegation: no task is created, no confirmation link is sent, and acknowledgement wording is communication-style, never task-style. Typed and voice Carson behave identically because both route through the same classifier and the same sendDelegation()/createAndSendDirectMessage() convergence points.",
+      "business_importance": "critical — PERMANENTLY LOCKED contract per RA7ETBAL_STATE.md, with a documented history of narrow-classifier regressions (PR #49/#50/#52/#53)",
+      "production_entry_points": [
+        "src/components/home/ElevenLabsAgentWidget.tsx:sendTypedMessage",
+        "src/components/home/ElevenLabsAgentWidget.tsx:sendDelegation (communication reroute)"
+      ],
+      "files_functions": [
+        "src/lib/communication-vs-delegation.ts:isCommunicationStyleTaskText",
+        "src/lib/direct-message-fast-path.ts:parseSimpleDirectMessage / executeDirectMessageFastPath",
+        "src/lib/direct-messages.ts:createAndSendDirectMessage"
+      ],
+      "shared_dependencies": ["api/_whatsapp-delivery.js"],
+      "db": {
+        "tables": ["messages", "whatsapp_deliveries"],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": ["WhatsApp/Meta send"],
+      "focused_tests": [
+        "src/lib/carson-protected-behaviors.test.ts",
+        "src/lib/direct-message-fast-path.test.ts",
+        "src/lib/direct-message-reply-intent.test.ts",
+        "src/lib/direct-messages.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.direct-message-parity.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.direct-whatsapp-duplicate.test.ts",
+        "api/_staff-comms-engine.test.js",
+        "api/staff-message-response-delivery.test.js",
+        "src/lib/staff-messages.test.ts"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": true,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "high — documented history of narrow-classifier regressions across four PRs (#49/#50/#52/#53)",
+      "verification_status": "PRODUCTION VERIFIED — PERMANENTLY LOCKED per RA7ETBAL_STATE.md",
+      "unresolved": []
+    },
+    {
+      "id": "automation_execution_confirmation",
+      "contract": "Scheduled/automation-run WhatsApp sends (one-time delegations, one-time direct messages) execute correctly, confirm correctly against the originating task, and produce Communication-History-reachable evidence (person_id populated) — matching the same identity discipline as live-conversation sends.",
+      "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order; root cause of Incident 4 (automation-runner Communication History linkage gap)",
+      "production_entry_points": ["api/process-delegation-escalations.js (scheduled job)"],
+      "files_functions": [
+        "api/process-delegation-escalations.js:processAutomation",
+        "api/process-delegation-escalations.js:processMessageAutomation",
+        "api/process-delegation-escalations.js:runAutomationsCore",
+        "api/send-whatsapp-task.js",
+        "api/_whatsapp-delivery.js:beginWhatsappDelivery / resolveDeliveryContext"
+      ],
+      "shared_dependencies": ["api/_whatsapp-delivery.js", "api/send-whatsapp-task.js"],
+      "db": {
+        "tables": ["automation_runs", "automations", "whatsapp_deliveries", "tasks"],
+        "rpcs": [],
+        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql"],
+        "data_repairs": ["supabase/data-repairs/20260813_automation_delivery_person_id_backfill.sql"]
+      },
+      "external_boundaries": ["WhatsApp/Meta send", "Upstash QStash scheduler"],
+      "focused_tests": [
+        "api/automation-run-confirmation-sync.test.js",
+        "api/process-delegation-escalations.test.js",
+        "api/process-delegation-escalations.followup-guard.test.js",
+        "api/process-delegation-escalations.timing-safety.test.js",
+        "api/process-delegation-escalations.uncertain-olg.test.js",
+        "api/automations.test.js",
+        "src/lib/automation-context.test.ts",
+        "src/lib/automation-support.test.ts",
+        "src/lib/one-time-automation-routing.test.ts"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": true,
+      "golden_journey_tests": [],
+      "production_canary_required": true,
+      "rollback_risk": "high — prior failure mode (Incident 4) was silent (structurally unreachable evidence, no error) until manual production forensics",
+      "verification_status": "PRODUCTION VERIFIED for automation_delegation (PR #254, live test with real contact); automation_message shares the same fixed code path but was NOT independently exercised live per PR #254's own follow-up commit — this distinction is preserved here, not collapsed",
+      "unresolved": [
+        "whatsapp_deliveries has no single-writer RPC gatekeeper (contrast: staff_escalation_owner_decisions is RPC-gated and did not have this bug class). This structural gap is not closed by Phase 1 — flagged for future-phase consideration.",
+        "api/_owner-reminder-whatsapp.js:claimOwnerReminderDelivery does a raw REST insert into whatsapp_deliveries that still never sets person_id — found during Phase 0 investigation, out of scope for this capability (it's an owner-facing reminder, not a per-person communication event) but recorded here as known current-state evidence of a third writer into the same table."
+      ]
+    },
+    {
+      "id": "reminders",
+      "contract": "Owner reminders are created, scheduled via QStash, delivered on time via push and/or WhatsApp, and their completion is recorded truthfully with idempotent, non-duplicate delivery.",
+      "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order",
+      "production_entry_points": ["api/qstash-reminder.js", "api/send-due-reminder-pushes.js", "api/send-push-for-task.js"],
+      "files_functions": [
+        "api/qstash-reminder.js:handleNotificationReceipt",
+        "api/_reminder-delivery.js:recordDeliveryEvent / signReminderReceipt / verifyReminderReceipt",
+        "src/lib/reminders.ts",
+        "src/lib/reminder-time.ts"
+      ],
+      "shared_dependencies": ["api/_owner-reminder-whatsapp.js", "public/sw.js"],
+      "db": {
+        "tables": ["tasks", "reminder_delivery_events"],
+        "rpcs": [],
+        "migrations": [
+          "supabase/migrations/20260730_reminder_delivery_observability.sql",
+          "supabase/migrations/20260812_reminder_delivery_events_survive_task_deletion.sql"
+        ]
+      },
+      "external_boundaries": ["Upstash QStash", "Web Push/VAPID", "WhatsApp/Meta send"],
+      "focused_tests": [
+        "src/lib/reminders.test.ts",
+        "src/lib/reminder-time.test.ts",
+        "src/lib/qstash-reminder.test.ts",
+        "api/qstash-reminder.test.js",
+        "api/owner-whatsapp-reminder-golden-contract.test.js",
+        "api/send-due-reminder-pushes.test.js",
+        "api/send-push-for-task.test.js",
+        "api/_reminder-delivery.test.js",
+        "public/sw.test.js",
+        "src/components/home/ElevenLabsAgentWidget.reminder-replacement.test.ts",
+        "src/lib/parse-voice-time.test.ts"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": true,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "medium",
+      "verification_status": "PRODUCTION VERIFIED per RA7ETBAL_STATE.md",
+      "unresolved": [
+        "api/reminder-writer-authority.test.js and api/server-authoritative-reminder-migration.test.js exist and pass, but were not identified as belonging to the four categories the user named for Phase 1 CI-membership closure; not added in this phase. A separate real-Postgres CI workflow (server-authoritative-reminder-rls-verification.yml) already covers part of this capability but is not a required check — flagged, not changed, per the explicit Phase 1 instruction not to touch branch protection."
+      ]
+    },
+    {
+      "id": "owner_completion_push",
+      "contract": "When a delegated task is completed, the owner receives a push notification, and the durable evidence lifecycle (reminder_delivery_events) records true device-stage delivery — with the completion-push receipt's dueAt bound exactly to the canonical tasks.confirmed_at value the same request persisted, never an independently generated timestamp.",
+      "business_importance": "critical — root cause of Incident 2",
+      "production_entry_points": ["api/task-confirm.js (completion push send)", "api/qstash-reminder.js (notification-receipt handler)"],
+      "files_functions": [
+        "api/task-confirm.js:sendOwnerPush",
+        "api/qstash-reminder.js:handleNotificationReceipt"
+      ],
+      "shared_dependencies": ["api/_reminder-delivery.js"],
+      "db": {
+        "tables": ["tasks", "reminder_delivery_events"],
+        "rpcs": [],
+        "migrations": [
+          "supabase/migrations/20260730_reminder_delivery_observability.sql",
+          "supabase/migrations/20260812_reminder_delivery_events_survive_task_deletion.sql"
+        ]
+      },
+      "external_boundaries": ["Web Push/VAPID", "browser Service Worker callback"],
+      "focused_tests": ["api/task-confirm.test.js", "api/qstash-reminder.test.js", "public/sw.test.js"],
+      "protected_suite": true,
+      "golden_journey_required": true,
+      "golden_journey_tests": [],
+      "production_canary_required": true,
+      "rollback_risk": "high — prior failure mode was a silent, undetectable-by-existing-tests cross-module timestamp mismatch",
+      "verification_status": "PRODUCTION VERIFIED — PR #240 (initial), PR #246 (device-stage observability fix, exact confirmed_at binding + full round-trip test)",
+      "unresolved": []
+    },
+    {
+      "id": "needs_you_waiting_handled_state",
+      "contract": "Needs You is a decision queue, not an ownership queue: only tasks the extraction pipeline classified as type === 'decision' (plus always-surfaced cancelled tasks and quality-review intervention items) appear in Needs You. Waiting and Handled counts and the bottom-nav badge all read the single shared buildDailyBrief().needsAttention classifier so the three surfaces cannot drift.",
+      "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order; PROTECTED per RA7ETBAL_STATE.md (PR #59)",
+      "production_entry_points": ["src/routes/Home.tsx", "src/routes/Updates.tsx"],
+      "files_functions": [
+        "src/lib/daily-brief.ts:buildDailyBrief / isNeedsYouTask / isWaitingInterventionTask",
+        "src/lib/needs-you-timestamp.ts:getNeedsYouTimestampLabel"
+      ],
+      "shared_dependencies": [],
+      "db": {
+        "tables": ["tasks"],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": [],
+      "focused_tests": [
+        "src/lib/daily-brief.test.ts",
+        "src/lib/needs-you-timestamp.test.ts",
+        "src/lib/needs-you-staff-escalations.test.ts",
+        "src/routes/Home.test.ts",
+        "src/routes/Updates.test.ts",
+        "src/components/nav/BottomNav.staff-escalation-badge.test.ts"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "medium",
+      "verification_status": "PRODUCTION VERIFIED, PROTECTED — PR #59",
+      "unresolved": []
+    },
+    {
+      "id": "communication_history",
+      "contract": "Every durable staff/owner WhatsApp communication event — live-conversation or automation-scheduled — is reachable via get_communication_history by person_id, with correct calendar-date and clock-time-in-account-timezone display, and remains reachable after the originating task is deleted (Clear History).",
+      "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order; root cause of Incident 4",
+      "production_entry_points": ["src/components/home/ElevenLabsAgentWidget.tsx (get_communication_history tool)"],
+      "files_functions": [
+        "src/lib/carson-communication-history.ts:buildCommunicationHistory / lookupCommunicationHistory / formatCommunicationHistoryAnswer / resolvePersonForCommunicationHistory",
+        "src/lib/history-timestamp.ts"
+      ],
+      "shared_dependencies": ["api/_whatsapp-delivery.js"],
+      "db": {
+        "tables": ["staff_messages", "personal_contact_replies", "messages", "whatsapp_deliveries", "staff_escalation_owner_decisions"],
+        "rpcs": ["claim_escalation_owner_decision"],
+        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql"]
+      },
+      "external_boundaries": [],
+      "focused_tests": [
+        "src/lib/carson-communication-history.test.ts",
+        "src/lib/history-timestamp.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.communication-history.test.ts"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": true,
+      "golden_journey_tests": [],
+      "production_canary_required": true,
+      "rollback_risk": "high — prior failure mode (Incident 4) was a structurally unreachable event with zero error surface, only found via manual production forensics",
+      "verification_status": "PRODUCTION VERIFIED — PR #229 (original), PR #250 (timestamps), PR #253/#254 (automation-runner linkage)",
+      "unresolved": [
+        "No test anywhere in the repository exercises buildCommunicationHistory against a real writer's actual insert payload for every known writer (live-conversation, automation-runner, and the owner-reminder writer noted under automation_execution_confirmation) in one integration test — this is exactly the Golden Journey #6 gap identified in Phase 0 and is not built in Phase 1 (Golden Journeys are explicitly out of scope this phase)."
+      ]
+    },
+    {
+      "id": "whatsapp_delivery_person_identity_continuity",
+      "contract": "Every application-layer WhatsApp delivery record carries the correct, durable person_id when a legitimate identity is resolvable, using a fail-closed rule (an identity conflict between two derivation sources yields null, never a guess) — this is the shared substrate underneath owner_decision_lifecycle, automation_execution_confirmation, and communication_history, not a separate product feature.",
+      "business_importance": "critical — this is the shared infrastructure whose incomplete rollout caused Incidents 3 and 4",
+      "production_entry_points": ["api/send-whatsapp-task.js", "api/_whatsapp-delivery.js"],
+      "files_functions": [
+        "api/_whatsapp-delivery.js:beginWhatsappDelivery / resolveDeliveryContext",
+        "api/whatsapp-webhook.js:updateWhatsappDeliveryStatus"
+      ],
+      "shared_dependencies": [],
+      "db": {
+        "tables": ["whatsapp_deliveries", "messages"],
+        "rpcs": [],
+        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql"]
+      },
+      "external_boundaries": ["Meta/WhatsApp Cloud API"],
+      "focused_tests": [
+        "api/_whatsapp-delivery.test.js",
+        "api/whatsapp-webhook.test.js",
+        "src/lib/whatsapp-delivery-context.test.ts",
+        "api/_whatsapp-inbound-observability.test.js"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": true,
+      "rollback_risk": "high — this is exactly the shared dependency identified in Phase 0's Impact-Aware CI design as needing broad fan-out mapping (a change here can silently break owner_decision_lifecycle, automation_execution_confirmation, and communication_history simultaneously)",
+      "verification_status": "PARTIALLY VERIFIED — the live-conversation writer path is fully covered; the automation-runner and owner-reminder writer paths were the exact subject of Incidents 3/4 and are fixed only where explicitly investigated",
+      "unresolved": [
+        "No single-writer RPC gatekeeper exists for whatsapp_deliveries (unlike staff_escalation_owner_decisions, which is RPC-gated). This is flagged as an open structural risk, not resolved in Phase 1."
+      ]
+    },
+    {
+      "id": "auth_rls",
+      "contract": "All Supabase tables enforce user_id-scoped row-level security; no cross-account data access is possible through the anon/authenticated roles.",
+      "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order",
+      "production_entry_points": [],
+      "files_functions": [],
+      "shared_dependencies": [],
+      "db": {
+        "tables": ["all RLS-protected tables — see supabase/migrations/*.sql for individual policies"],
+        "rpcs": [],
+        "migrations": [
+          "supabase/migrations/verification/server_authoritative_reminder_rls_bootstrap.sql",
+          "supabase/migrations/verification/server_authoritative_reminder_rls_fixture.sql",
+          "supabase/migrations/verification/server_authoritative_reminder_rls_verification.sql"
+        ]
+      },
+      "external_boundaries": [],
+      "focused_tests": [],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "unresolved — see below",
+      "verification_status": "PARTIALLY VERIFIED — real-Postgres RLS verification exists for exactly 4 of 76 migrations (server-authoritative reminders, staff escalation, push-subscription installation identity, owner-reminder-WhatsApp claim), each via its own dedicated GitHub Actions workflow; none of these are required status checks",
+      "unresolved": [
+        "There is no vitest-level RLS test at all — the only real-Postgres proof is the 4 path-filtered, non-required workflows named above. Phase 0 explicitly scoped extending this to a required check as Phase 4 work (real DB contract testing), which this Phase 1 does not touch per the user's explicit instruction not to expand database-contract testing yet. This entry is intentionally left with protected_suite: false and no focused_tests — fabricating a mapping here would violate the 'do not invent mappings' instruction."
+      ]
+    },
+    {
+      "id": "push_lifecycle",
+      "contract": "Push subscription installation, dedupe, delivery, and completion-receipt handling are correct and idempotent — including installation identity, atomic replacement, dedupe-failure propagation (never false success), and the 'This device' badge in the notification-devices panel.",
+      "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order",
+      "production_entry_points": ["public/sw.js", "api/send-push-for-task.js", "api/send-due-reminder-pushes.js"],
+      "files_functions": [
+        "src/lib/push-notifications.ts",
+        "public/sw.js"
+      ],
+      "shared_dependencies": ["api/_reminder-delivery.js"],
+      "db": {
+        "tables": ["push_subscriptions"],
+        "rpcs": [],
+        "migrations": ["supabase/migrations/20260810_push_subscription_installation_identity.sql"]
+      },
+      "external_boundaries": ["Web Push/VAPID"],
+      "focused_tests": [
+        "src/lib/push-notifications.test.ts",
+        "src/lib/push-notifications.device-management.test.ts",
+        "src/lib/push-notifications.this-device-badge.test.ts",
+        "src/lib/push-subscription-rotation.test.ts",
+        "public/sw.test.js",
+        "api/send-push-for-task.test.js",
+        "api/send-due-reminder-pushes.test.js"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "medium",
+      "verification_status": "PRODUCTION VERIFIED per RA7ETBAL_STATE.md (Push Subscription Installation Management / Orphan Resolution)",
+      "unresolved": [
+        "A dedicated real-Postgres verification workflow (push-subscription-installation-identity-verification.yml) exists for the installation-identity migration but is not a required status check — flagged, not changed, per the explicit Phase 1 instruction not to touch branch protection or database-contract expansion."
+      ]
+    },
+    {
+      "id": "hosting_operations",
+      "contract": "Carson's deterministic hosting-recall fast-path correctly distinguishes yes/no confirmation-recall questions from confirmation-timing questions (which must fall through to the model + get_communication_history), and correctly tracks multi-person hosting/guest-arrival operation state.",
+      "business_importance": "UNRESOLVED — the locked engineering plan's own Phase 0 mandate describes hosting as included 'only if still launch-critical,' and the Phase 0 investigation could not find the literal phrase 'launch-critical' anywhere in RA7ETBAL_STATE.md, AGENTS.md, SKILL.md, or CLAUDE.md to confirm or deny current Tier classification. RA7ETBAL_STATE.md does list hosting among protected systems with LOCKED, PRODUCTION VERIFIED sections, which is circumstantial evidence of continued importance but not a confirmed Tier 1 classification. This entry is included per the locked order's minimum coverage list but its tier is explicitly marked unresolved pending Sana's decision.",
+      "production_entry_points": ["src/components/home/ElevenLabsAgentWidget.tsx (hosting recall pre-LLM interception)"],
+      "files_functions": [
+        "src/lib/ops-intelligence.ts:resolveHostingOperationRecall / answerHostingOperationRecall / loadLatestCompletedHostingOperation"
+      ],
+      "shared_dependencies": [],
+      "db": {
+        "tables": ["carson_pending_operations", "tasks"],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": ["ElevenLabs voice model"],
+      "focused_tests": ["src/lib/ops-intelligence.test.ts"],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "medium",
+      "verification_status": "PRODUCTION VERIFIED for the specific confirmation-timing fix (PR #251); overall Tier classification unresolved",
+      "unresolved": [
+        "Tier classification (Tier 1 vs. lower) requires an explicit product decision from Sana — not guessed here.",
+        "src/lib/ops-intelligence.test.ts is not currently in the required protected suite. Not added in Phase 1 since hosting's Tier 1 status itself is unresolved — adding it would be guessing at a priority decision that belongs to Sana, not this registry."
+      ]
+    },
+    {
+      "id": "stale_state_doc_integrity",
+      "contract": "RA7ETBAL_STATE.md must never silently regress a CLOSED/PROTECTED/PRODUCTION VERIFIED status back to OPEN/PENDING without an explicit, evidence-backed Correction/Reopen note in the same change.",
+      "business_importance": "process-critical — root cause of Incident 6 (a direct, unreviewed push to main, not a stale-branch PR merge as originally assumed; corrected by Phase 0 investigation)",
+      "production_entry_points": [],
+      "files_functions": ["../RA7ETBAL_STATE.md"],
+      "shared_dependencies": [],
+      "db": { "tables": [], "rpcs": [], "migrations": [] },
+      "external_boundaries": [],
+      "focused_tests": [],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "medium — engineering-time cost, not runtime risk",
+      "verification_status": "NOT YET PROTECTED — no CI check inspects RA7ETBAL_STATE.md content today; branch protection changes and the docs-integrity CI job are explicitly out of scope for Phase 1 per the user's instruction not to change GitHub branch-protection settings yet",
+      "unresolved": [
+        "This capability has no code-level test surface — it needs the docs-integrity CI job and branch-protection changes (enforce_admins, required review) proposed in Phase 0 §8/§9. Both are explicitly deferred past Phase 1 by the user's instructions. Included here only as a registry placeholder so Phase 2+ does not have to rediscover this capability."
+      ]
+    }
+  ]
+}
