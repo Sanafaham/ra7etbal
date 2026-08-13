@@ -37,6 +37,11 @@ function makeChain(result: { data: unknown; error: unknown } = { data: [], error
       throw new Error(`Unexpected write call: ${m}() against a communication-history source table`);
     };
   }
+  // getProfile() (src/lib/profile.ts) terminates its chain with
+  // .maybeSingle() rather than the implicit thenable used by every other
+  // query in this file — supported here only so lookupCommunicationHistory's
+  // orchestrator-level tests can exercise the real profile-timezone fetch.
+  b.maybeSingle = () => Promise.resolve(result);
   b.then = (res: (v: typeof result) => unknown, rej?: (r: unknown) => unknown) =>
     Promise.resolve(result).then(res, rej);
   return b;
@@ -47,6 +52,7 @@ const {
   buildCommunicationHistory,
   formatCommunicationHistoryAnswer,
   lookupCommunicationHistory,
+  resolveCommunicationHistoryTimezone,
 } = await import("./carson-communication-history");
 
 beforeEach(() => {
@@ -467,13 +473,13 @@ describe("buildCommunicationHistory", () => {
 
 describe("formatCommunicationHistoryAnswer", () => {
   it("states truthful no-history, not an error, when there is genuinely no evidence", () => {
-    const answer = formatCommunicationHistoryAnswer({ personId: "p1", personName: "Christopher", events: [], failedSources: [] });
+    const answer = formatCommunicationHistoryAnswer({ personId: "p1", personName: "Christopher", events: [], failedSources: [] }, "UTC");
     expect(answer).toMatch(/don't have a record/i);
     expect(answer).not.toMatch(/couldn't|error|try again/i);
   });
 
   it("states a truthful partial-failure message, never a false 'no history', when a query failed and nothing was returned", () => {
-    const answer = formatCommunicationHistoryAnswer({ personId: "p1", personName: "Christopher", events: [], failedSources: ["staff_messages"] });
+    const answer = formatCommunicationHistoryAnswer({ personId: "p1", personName: "Christopher", events: [], failedSources: ["staff_messages"] }, "UTC");
     expect(answer).toMatch(/couldn't fully check/i);
     expect(answer).not.toMatch(/don't have a record/i);
   });
@@ -484,7 +490,7 @@ describe("formatCommunicationHistoryAnswer", () => {
       personName: "Christopher",
       events: [{ at: "2026-08-01T09:00:00Z", direction: "inbound", eventType: "staff_message_received", channel: "whatsapp", label: "hi", source: "staff_messages", taskId: null, transportMessageId: null }],
       failedSources: ["messages"],
-    });
+    }, "UTC");
     expect(answer).toMatch(/may be incomplete/i);
   });
 
@@ -494,7 +500,7 @@ describe("formatCommunicationHistoryAnswer", () => {
       personName: "Christopher",
       events: [{ at: "2026-08-01T09:00:00Z", direction: "outbound", eventType: "delivery_delivered", channel: "whatsapp", label: "Delivered", source: "whatsapp_deliveries", taskId: null, transportMessageId: null }],
       failedSources: [],
-    });
+    }, "UTC");
     expect(answer).toContain("Delivered");
     expect(answer).not.toMatch(/"Delivered"/); // not quoted as if it were spoken/typed content
   });
@@ -510,14 +516,14 @@ describe("formatCommunicationHistoryAnswer", () => {
       taskId: null,
       transportMessageId: null,
     }));
-    const answer = formatCommunicationHistoryAnswer({ personId: "p1", personName: "Christopher", events, failedSources: [] });
+    const answer = formatCommunicationHistoryAnswer({ personId: "p1", personName: "Christopher", events, failedSources: [] }, "UTC");
     // Only the most recent (highest-numbered) events render, not the oldest.
     expect(answer).toContain("event 25");
     expect(answer).not.toContain("event 1 ");
     expect(answer).toMatch(/most recent of 25 total/i);
   });
 
-  it("includes the year in the rendered date only when the event is not from the current year", () => {
+  it("includes the year in the rendered date only when the event is not from the current year, judged in the account timezone", () => {
     const lastYear = new Date().getFullYear() - 1;
     const answer = formatCommunicationHistoryAnswer({
       personId: "p1",
@@ -527,8 +533,87 @@ describe("formatCommunicationHistoryAnswer", () => {
         { at: new Date().toISOString(), direction: "inbound", eventType: "staff_message_received", channel: "whatsapp", label: "recent", source: "staff_messages", taskId: null, transportMessageId: null },
       ],
       failedSources: [],
-    });
+    }, "UTC");
     expect(answer).toContain(String(lastYear));
+  });
+
+  // ── Timestamp rendering (Communication History event timestamps) ─────────
+
+  it("renders both calendar date and clock time for every event", () => {
+    const answer = formatCommunicationHistoryAnswer({
+      personId: "p1",
+      personName: "Christopher",
+      events: [{ at: "2026-08-01T14:30:00Z", direction: "inbound", eventType: "staff_message_received", channel: "whatsapp", label: "hi", source: "staff_messages", taskId: null, transportMessageId: null }],
+      failedSources: [],
+    }, "UTC");
+    expect(answer).toMatch(/Aug 1/);
+    expect(answer).toMatch(/2:30\s*PM/i);
+  });
+
+  it("renders in the stored account timezone, not a hardcoded or device default — the same UTC instant differs across two account timezones", () => {
+    const event = { at: "2026-08-01T14:30:00Z", direction: "inbound" as const, eventType: "staff_message_received", channel: "whatsapp", label: "hi", source: "staff_messages" as const, taskId: null, transportMessageId: null };
+    const inTokyo = formatCommunicationHistoryAnswer({ personId: "p1", personName: "Christopher", events: [event], failedSources: [] }, "Asia/Tokyo");
+    const inLosAngeles = formatCommunicationHistoryAnswer({ personId: "p1", personName: "Christopher", events: [event], failedSources: [] }, "America/Los_Angeles");
+    // 14:30 UTC is 23:30 in Tokyo (UTC+9) the same calendar day, and 07:30
+    // in Los Angeles (UTC-7 in August) — genuinely different clock times,
+    // proving the timezone argument is actually applied, not ignored.
+    expect(inTokyo).toMatch(/11:30\s*PM/i);
+    expect(inLosAngeles).toMatch(/7:30\s*AM/i);
+    expect(inTokyo).not.toBe(inLosAngeles);
+  });
+
+  it("a timezone day-boundary crossing displays the account-local calendar date, not the UTC date", () => {
+    // 23:30 UTC on Aug 1 is already 08:30 on Aug 2 in Tokyo (UTC+9) — the
+    // UTC date and the account-local date genuinely disagree here.
+    const answer = formatCommunicationHistoryAnswer({
+      personId: "p1",
+      personName: "Christopher",
+      events: [{ at: "2026-08-01T23:30:00Z", direction: "inbound", eventType: "staff_message_received", channel: "whatsapp", label: "hi", source: "staff_messages", taskId: null, transportMessageId: null }],
+      failedSources: [],
+    }, "Asia/Tokyo");
+    expect(answer).toMatch(/Aug 2/);
+    expect(answer).not.toMatch(/Aug 1\b/);
+  });
+
+  it("never renders 'Invalid Date' when given a valid event and a valid timezone", () => {
+    const answer = formatCommunicationHistoryAnswer({
+      personId: "p1",
+      personName: "Christopher",
+      events: [{ at: "2026-08-01T14:30:00Z", direction: "inbound", eventType: "staff_message_received", channel: "whatsapp", label: "hi", source: "staff_messages", taskId: null, transportMessageId: null }],
+      failedSources: [],
+    }, "Europe/Istanbul");
+    expect(answer).not.toMatch(/invalid date/i);
+  });
+});
+
+// ── Timezone resolution ──────────────────────────────────────────────────────
+
+describe("resolveCommunicationHistoryTimezone", () => {
+  it("uses the stored account timezone when it is a valid IANA identifier — the authoritative source", () => {
+    expect(resolveCommunicationHistoryTimezone("Asia/Tokyo")).toBe("Asia/Tokyo");
+  });
+
+  it("falls through to the browser/device timezone when the stored timezone is missing (null)", () => {
+    const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(resolveCommunicationHistoryTimezone(null)).toBe(deviceTimezone);
+  });
+
+  it("falls through to the browser/device timezone when the stored timezone is missing (undefined) — the failed-profile-fetch case", () => {
+    // Simulates lookupCommunicationHistory's own behavior on a failed
+    // profile fetch: it passes null through, never a hardcoded location
+    // standing in for a real account it couldn't actually check.
+    const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(resolveCommunicationHistoryTimezone(undefined)).toBe(deviceTimezone);
+  });
+
+  it("falls through to the browser/device timezone, not a hardcoded location, when the stored value is an invalid IANA identifier", () => {
+    const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(resolveCommunicationHistoryTimezone("Not/A_Real_Timezone")).toBe(deviceTimezone);
+  });
+
+  it("resolves to a real, valid timezone identifier usable by Intl.DateTimeFormat, never throwing", () => {
+    const resolved = resolveCommunicationHistoryTimezone("garbage-value");
+    expect(() => new Intl.DateTimeFormat("en-US", { timeZone: resolved }).format()).not.toThrow();
   });
 });
 
@@ -557,5 +642,85 @@ describe("lookupCommunicationHistory", () => {
     mocks.supabaseFrom.mockImplementation(() => makeChain({ data: [], error: null }));
     const result = await lookupCommunicationHistory("Nobody");
     expect(result).toMatch(/don't have anyone matching/i);
+  });
+
+  // ── Account-timezone threading (Communication History event timestamps) ──
+
+  function mockResolvedPersonWithEvent(morningBriefTimezone: string | null) {
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "people") {
+        return makeChain({ data: [{ id: "p1", name: "Christopher" }], error: null });
+      }
+      if (table === "profiles") {
+        return makeChain({
+          data: { display_name: "Sana", weather_city: null, morning_brief_timezone: morningBriefTimezone, evening_brief_enabled: false, evening_brief_time: "20:00" },
+          error: null,
+        });
+      }
+      if (table === "staff_messages") {
+        return makeChain({
+          data: [{ id: "sm1", task_id: null, inbound_text: "hi", carson_response: null, received_at: "2026-08-01T23:30:00Z", responded_at: null, external_message_id: null }],
+          error: null,
+        });
+      }
+      return makeChain({ data: [], error: null });
+    });
+  }
+
+  it("uses the stored profiles.morning_brief_timezone end to end — the resulting answer reflects the account-local date, not UTC", async () => {
+    mockResolvedPersonWithEvent("Asia/Tokyo");
+    const result = await lookupCommunicationHistory("Christopher");
+    // 23:30 UTC on Aug 1 is 08:30 Aug 2 in Tokyo — proves the real fetched
+    // profile value was actually threaded through to the render, not a
+    // default.
+    expect(result).toMatch(/Aug 2/);
+  });
+
+  it("falls back to the browser/device timezone, not a hardcoded location, when the profile has no stored timezone", async () => {
+    mockResolvedPersonWithEvent(null);
+    const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    // A full "month day" fragment, not a bare day number — a bare number
+    // (e.g. "1") would trivially match the answer's own "1 communication
+    // event..." header line regardless of whether the date rendering was
+    // actually correct.
+    const expectedDate = new Intl.DateTimeFormat("en-US", { timeZone: deviceTimezone, month: "short", day: "numeric" }).format(new Date("2026-08-01T23:30:00Z"));
+    const result = await lookupCommunicationHistory("Christopher");
+    expect(result).toContain(expectedDate);
+  });
+
+  it("falls back to the browser/device timezone, not Europe/Istanbul or any other hardcoded location, when the profile fetch itself fails", async () => {
+    mocks.supabaseFrom.mockImplementation((table: string) => {
+      if (table === "people") {
+        return makeChain({ data: [{ id: "p1", name: "Christopher" }], error: null });
+      }
+      if (table === "profiles") {
+        return makeChain({ data: null, error: { message: "db error" } });
+      }
+      if (table === "staff_messages") {
+        return makeChain({
+          data: [{ id: "sm1", task_id: null, inbound_text: "hi", carson_response: null, received_at: "2026-08-01T23:30:00Z", responded_at: null, external_message_id: null }],
+          error: null,
+        });
+      }
+      return makeChain({ data: [], error: null });
+    });
+    const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    // A full "month day" fragment, not a bare day number — a bare number
+    // (e.g. "1") would trivially match the answer's own "1 communication
+    // event..." header line regardless of whether the date rendering was
+    // actually correct.
+    const expectedDate = new Intl.DateTimeFormat("en-US", { timeZone: deviceTimezone, month: "short", day: "numeric" }).format(new Date("2026-08-01T23:30:00Z"));
+    const result = await lookupCommunicationHistory("Christopher");
+    expect(result).toContain(expectedDate);
+  });
+
+  // ── Existing behavior unaffected by the timestamp/timezone change ────────
+
+  it("still surfaces the exact same event content, attribution, and direction wording after the timezone fetch is added", async () => {
+    mockResolvedPersonWithEvent("Asia/Tokyo");
+    const result = await lookupCommunicationHistory("Christopher");
+    expect(result).toContain("hi");
+    expect(result).toMatch(/from Christopher/);
+    expect(result).toMatch(/^1 communication event with Christopher, in order:/);
   });
 });
