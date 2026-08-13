@@ -1707,6 +1707,79 @@ describe("production baseline — verified afternoon-tea hosting loop", () => {
     expect(mocks.sendDirectMessageRecord).not.toHaveBeenCalled();
   });
 
+  // ── Confirmation-timing questions must not be swallowed by the yes/no
+  // confirmation-recall fast-path ──────────────────────────────────────────
+  //
+  // resolveHostingOperationRecall's confirmation branch can only ever answer
+  // yes/no ("X has confirmed") -- it has no timestamp to give. A production
+  // Type-to-Carson turn asking a genuine Communication History question
+  // ("When exactly did Christopher's PR236 confirmation come in? Give me the
+  // calendar date and exact local time.") was incorrectly intercepted here
+  // and answered "No worker confirmation has been verified for that hosting
+  // operation." -- a non-answer to a question this function was never able
+  // to answer, instead of falling through to the model/tool layer where
+  // get_communication_history could actually answer it. These tests prove
+  // the exact reproduced failure phrase, plus every "when/what time/what
+  // date" shape, now correctly returns null (no interception) even when a
+  // real completed hosting operation exists to recall from.
+  describe("confirmation-timing questions fall through instead of returning a yes/no non-answer", () => {
+    function mockCompletedOperationWithConfirmedTask() {
+      const operationRow = {
+        id: "op-1",
+        type: "guest_arrival",
+        tasks: [{ personId: "c", personName: "Christopher", taskId: "task-c", deliveryStatus: "sent", message: "Prepare food." }],
+        summary: "Christopher has the plan.",
+        source_text: TRIGGER,
+        created_at: "2026-07-24T10:00:00.000Z",
+      };
+      const taskRows = [{ id: "task-c", assigned_to: "Christopher", status: "done", confirmed_at: "2026-07-24T12:00:00Z" }];
+      mocks.supabaseFrom.mockImplementation((table: string) => {
+        if (table === "carson_pending_operations") return queryStub({ data: operationRow, error: null });
+        if (table === "tasks") return queryStub({ data: taskRows, error: null });
+        return queryStub({ data: null, error: null });
+      });
+    }
+
+    it("does not answer the exact reproduced production failure phrase with the yes/no non-answer", async () => {
+      mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+      mockCompletedOperationWithConfirmedTask();
+
+      const answer = await resolveHostingOperationRecall(
+        "When exactly did Christopher's PR236 confirmation come in? Give me the calendar date and exact local time.",
+      );
+
+      expect(answer).not.toBe("No worker confirmation has been verified for that hosting operation.");
+      expect(answer).toBeNull();
+      // No interception at all -- the recall path must never even query for
+      // a hosting operation to recall from a pure timing question.
+      expect(mocks.supabaseFrom).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      "When did Christopher confirm?",
+      "What time did Christopher confirm?",
+      "What date did Christopher confirm?",
+      "Exactly when did Christopher confirm?",
+    ])('falls through (returns null) for "%s" instead of the yes/no confirmation answer', async (question) => {
+      mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+      mockCompletedOperationWithConfirmedTask();
+
+      const answer = await resolveHostingOperationRecall(question);
+
+      expect(answer).toBeNull();
+      expect(mocks.supabaseFrom).not.toHaveBeenCalled();
+    });
+
+    it("preserves the existing protected yes/no confirmation-recall behavior unchanged — 'Has Christopher confirmed?'", async () => {
+      mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+      mockCompletedOperationWithConfirmedTask();
+
+      const answer = await resolveHostingOperationRecall("Has Christopher confirmed?");
+
+      expect(answer).toBe("Christopher has confirmed.");
+    });
+  });
+
   it("returns null (no fabricated answer) when there is no completed hosting operation to recall", async () => {
     mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
     mocks.supabaseFrom.mockImplementation(() => queryStub({ data: null, error: null }));

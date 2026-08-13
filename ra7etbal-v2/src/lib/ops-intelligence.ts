@@ -1017,17 +1017,30 @@ const HOSTING_OPERATION_RECALL_RE =
   /\b(?:what did you ask|what (?:did|was) .{0,30}(?:prepare|do)|what time did you tell|when did you tell|who (?:received|got|has) the plan|who did you (?:send|message)|what was sent)\b/i;
 const HOSTING_CONFIRMATION_RECALL_RE =
   /\b(?:who|has|have|did|is|are).{0,40}\bconfirm(?:ed|ation)?\b/i;
+// The confirmation-recall branch below can only ever answer yes/no ("X has
+// confirmed") -- it has no timestamp to give. A message asking WHEN/WHAT
+// TIME/WHAT DATE a confirmation happened must not be swallowed by that
+// yes/no fast-path with a non-answer; it needs to reach the model/tool
+// layer (e.g. get_communication_history) instead. Scoped narrowly to
+// confirmation-timing questions only -- HOSTING_OPERATION_RECALL_RE's own
+// existing "when did you tell"/"what time did you tell" deadline-recall
+// handling (a different question, already answered correctly by
+// answerHostingOperationRecall below) is untouched by this exclusion.
+const CONFIRMATION_TIMING_QUESTION_RE = /\b(?:when|what time|what date|exactly when)\b/i;
 
 function escapeHostingRecallRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export async function resolveHostingOperationRecall(text: string): Promise<string | null> {
-  if (!HOSTING_OPERATION_RECALL_RE.test(text.trim()) && !HOSTING_CONFIRMATION_RECALL_RE.test(text.trim())) return null;
+  const trimmed = text.trim();
+  const isConfirmationRecall =
+    HOSTING_CONFIRMATION_RECALL_RE.test(trimmed) && !CONFIRMATION_TIMING_QUESTION_RE.test(trimmed);
+  if (!HOSTING_OPERATION_RECALL_RE.test(trimmed) && !isConfirmationRecall) return null;
   const operation = await loadLatestCompletedHostingOperation().catch(() => null);
   if (!operation) return null;
 
-  if (HOSTING_CONFIRMATION_RECALL_RE.test(text.trim())) {
+  if (isConfirmationRecall) {
     const taskIds = operation.tasks
       .map((task) => task.taskId)
       .filter((id): id is string => Boolean(id));
