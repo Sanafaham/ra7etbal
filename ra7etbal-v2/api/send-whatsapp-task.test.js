@@ -281,6 +281,42 @@ describe('routine message shared boundary', () => {
     );
   });
 
+  // Automation-runner Communication History identity/linkage gap fix: the
+  // automation runner already resolves the canonical assignee before
+  // calling this endpoint and passes it as personId — no messageRecordId
+  // exists for this send path, so this is the only source beginWhatsappDelivery
+  // has to carry a real person_id into the whatsapp_deliveries row.
+  it('threads an explicit personId from the request body into the whatsapp_deliveries insert', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', user_id: 'user-1', task_id: 'task-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-automation-personid-1' }]))
+      .mockResolvedValueOnce(jsonResponse({ messages: [{ id: 'wamid.automation-personid' }] }))
+      .mockResolvedValueOnce(emptyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq(
+        {
+          to: '+971 50 000 0000',
+          messageText: 'Recurring automation test.',
+          automationRunId: 'run-1',
+          sourceType: 'automation_message',
+          sendMode: 'routine_message',
+          recipientName: 'Sana',
+          personId: 'person-christopher',
+        },
+        { 'x-ra7etbal-internal-secret': 'cron-secret' },
+      ),
+      res,
+    );
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    const insertedDelivery = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(insertedDelivery.person_id).toBe('person-christopher');
+  });
+
   it('accepts a direct message without a confirmation link using the approved direct-message template', async () => {
     const fetchMock = vi
       .fn()

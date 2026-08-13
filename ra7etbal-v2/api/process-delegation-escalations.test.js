@@ -65,6 +65,10 @@ describe('processMessageAutomation', () => {
       sourceType: 'automation_message',
       sendMode: 'routine_message',
       recipientName: 'Sana',
+      // Already-resolved canonical identity threaded through — no second
+      // lookup, no name-matching (Automation-runner Communication History
+      // identity/linkage gap fix).
+      personId: 'person-1',
     });
 
     expect(JSON.parse(fetchMock.mock.calls[2][1].body)).toMatchObject({
@@ -107,6 +111,53 @@ describe('processMessageAutomation', () => {
     expect(JSON.parse(fetchMock.mock.calls[3][1].body)).toMatchObject({
       next_run_at: '2026-06-27T14:30:00.000Z',
     });
+  });
+});
+
+// Automation-runner Communication History identity/linkage gap: both
+// automation WhatsApp send paths already resolve the canonical assignee
+// before sending (resolvePersonById) — this proves that already-resolved
+// id is threaded into the send-whatsapp-task payload as personId, with no
+// second lookup and no name-matching, so the resulting whatsapp_deliveries
+// row becomes reachable via Communication History's person_id.eq branch.
+describe('processAutomation delegation — WhatsApp payload carries canonical personId', () => {
+  it('includes the already-resolved assignee.id as personId in the WhatsApp send payload, with no extra person lookup', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1' }], 201)) // automation_run insert
+      .mockResolvedValueOnce(jsonResponse([{ id: 'person-1', name: 'Christopher', phone: '+12025691377' }])) // resolvePersonById
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1' }], 201)) // createTask
+      .mockResolvedValueOnce(emptyResponse()) // patchAutomationRun: task_id/task_created
+      .mockResolvedValueOnce(emptyResponse()) // patchTask: confirmation_url
+      .mockResolvedValueOnce(jsonResponse([{ display_name: 'Sana' }])) // resolveOwnerName
+      .mockResolvedValueOnce(jsonResponse({ success: true })) // send-whatsapp-task
+      .mockResolvedValueOnce(emptyResponse()) // patchAutomationRun: sent
+      .mockResolvedValueOnce(advancedAutomationResponse('2026-06-27T14:30:00.000Z')); // advanceNextRunAt
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await processAutomation({
+      // cadence_type: 'once' — a recurring WhatsApp delegation is
+      // deliberately unsupported/skipped (see RA7ETBAL_STATE.md's
+      // Automations trust list); this test targets the one-time send path.
+      automation: ownerOnlyAutomationRow({ assignee_id: 'person-1', cadence_type: 'once' }),
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      appBaseUrl: 'https://ra7etbal.com',
+      now: new Date('2026-06-26T14:30:00.000Z'),
+    });
+
+    expect(result).toBe('ok');
+
+    // Exactly one person lookup — the WhatsApp send must reuse it, never
+    // re-resolve or name-match a second time.
+    const peopleCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes('/rest/v1/people'));
+    expect(peopleCalls).toHaveLength(1);
+
+    const sendCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/send-whatsapp-task'));
+    expect(sendCall).toBeTruthy();
+    const sendBody = JSON.parse(sendCall[1].body);
+    expect(sendBody.personId).toBe('person-1');
+    expect(sendBody.recipientName).toBe('Christopher');
   });
 });
 
