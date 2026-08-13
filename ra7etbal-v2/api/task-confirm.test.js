@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import webpush from 'web-push';
 import { verifyReminderReceipt } from './_reminder-delivery.js';
+import qstashReminderHandler from './qstash-reminder.js';
 
 const downloadImageAsBase64Mock = vi.fn();
 const runQualityReviewMock = vi.fn();
@@ -3605,5 +3606,149 @@ describe('Owner completion push reliability — durable evidence lifecycle', () 
     const payload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
     expect(payload.body).toBe('Christopher confirmed: get the pizza');
     expect(payload.receipt).toBeUndefined();
+  });
+
+  // Regression coverage for the confirmed production defect (task
+  // c5a07eff-a624-4d03-8ea9-5c6bacb2a78b): sendOwnerPush() used to mint its
+  // own `new Date().toISOString()` for the completion receipt's dueAt,
+  // independent of the confirmed_at value actually persisted moments
+  // earlier in the same request -- qstash-reminder.js's exact-equality
+  // validation rejected every genuine device receipt as a result (6/6,
+  // HTTP 404, confirmed via Vercel logs). The fix threads the PATCH's own
+  // PostgREST-returned confirmed_at through instead of generating a second,
+  // independent timestamp.
+  it('completion receipt dueAt binds exactly to the PostgREST-returned confirmed_at — never a freshly generated timestamp', async () => {
+    stubPushEnv();
+    const canonicalConfirmedAt = '2026-08-12T22:31:44.395+00:00'; // deliberately not "now" — proves the fix isn't just regenerating Date.now()
+
+    vi.mocked(webpush.sendNotification).mockResolvedValueOnce({ statusCode: 201 });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: null }]))
+      // PATCH tasks -> done, Prefer: return=representation — the real production shape, not emptyResponse().
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: canonicalConfirmedAt }]))
+      .mockResolvedValueOnce(emptyResponse()) // confirmations insert
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])) // push_subscriptions GET
+      .mockResolvedValueOnce(jsonResponse({}, 201)) // provider_send_attempted
+      .mockResolvedValueOnce(jsonResponse({}, 201)); // provider_accepted
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
+    const payload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
+    expect(payload.receipt.dueAt).toBe(canonicalConfirmedAt);
+    expect(payload.receipt.dueAt).not.toBe(new Date().toISOString());
+  });
+
+  it('a completion receipt built by sendOwnerPush is genuinely accepted by qstash-reminder.js — end-to-end round-trip proof for the fixed production defect', async () => {
+    stubPushEnv();
+    const canonicalConfirmedAt = '2026-08-12T22:31:44.395+00:00';
+
+    vi.mocked(webpush.sendNotification).mockResolvedValueOnce({ statusCode: 201 });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: canonicalConfirmedAt }])) // PATCH tasks -> done (representation)
+      .mockResolvedValueOnce(emptyResponse()) // confirmations insert
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])) // push_subscriptions GET
+      .mockResolvedValueOnce(jsonResponse({}, 201)) // provider_send_attempted
+      .mockResolvedValueOnce(jsonResponse({}, 201)); // provider_accepted
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+    const receipt = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]).receipt;
+
+    // Now play the exact receipt sendOwnerPush produced back through
+    // qstash-reminder.js's own validation, exactly as a real service worker
+    // would on service_worker_received and then show_notification_attempted.
+    vi.stubEnv('SUPABASE_URL', 'https://example.supabase.co');
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
+    vi.stubEnv('CRON_SECRET', CRON_SECRET);
+
+    const qstashFetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', type: 'delegation', due_at: null, confirmed_at: canonicalConfirmedAt }])) // task lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1' }])) // subscription ownership
+      .mockResolvedValueOnce(jsonResponse({}, 201)) // recordDeliveryEvent: service_worker_received
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', type: 'delegation', due_at: null, confirmed_at: canonicalConfirmedAt }])) // task lookup (2nd stage)
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1' }])) // subscription ownership (2nd stage)
+      .mockResolvedValueOnce(jsonResponse({}, 201)); // recordDeliveryEvent: show_notification_attempted
+    vi.stubGlobal('fetch', qstashFetchMock);
+
+    function qstashReq(stage) {
+      return {
+        method: 'POST',
+        headers: {},
+        body: {
+          action: 'notification-receipt',
+          kind: receipt.kind,
+          taskId: receipt.taskId,
+          subscriptionId: receipt.subscriptionId,
+          dueAt: receipt.dueAt,
+          token: receipt.token,
+          stage,
+        },
+      };
+    }
+    function qstashRes() {
+      return { statusCode: 200, payload: null, status(c) { this.statusCode = c; return this; }, json(p) { this.payload = p; return this; } };
+    }
+
+    const swReceivedRes = qstashRes();
+    await qstashReminderHandler(qstashReq('service_worker_received'), swReceivedRes);
+    expect(swReceivedRes.statusCode).toBe(200);
+    expect(swReceivedRes.payload).toEqual({ success: true });
+
+    const showAttemptedRes = qstashRes();
+    await qstashReminderHandler(qstashReq('show_notification_attempted'), showAttemptedRes);
+    expect(showAttemptedRes.statusCode).toBe(200);
+    expect(showAttemptedRes.payload).toEqual({ success: true });
+
+    const swReceivedEvent = JSON.parse(qstashFetchMock.mock.calls[2][1].body);
+    expect(swReceivedEvent.stage).toBe('service_worker_received');
+    expect(swReceivedEvent.metadata.kind).toBe('completion');
+    const showAttemptedEvent = JSON.parse(qstashFetchMock.mock.calls[5][1].body);
+    expect(showAttemptedEvent.stage).toBe('show_notification_attempted');
+    expect(showAttemptedEvent.metadata.kind).toBe('completion');
+  });
+
+  it('the automation-run synchronization (PR #236) still receives its own consistent confirmed_at in the same request that sends the completion push — no interference between the two fixes', async () => {
+    stubPushEnv();
+    const canonicalConfirmedAt = '2026-08-12T22:31:44.395+00:00';
+
+    vi.mocked(webpush.sendNotification).mockResolvedValueOnce({ statusCode: 201 });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'get the pizza', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'done', confirmed_at: canonicalConfirmedAt }])) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // confirmations insert
+      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])) // push_subscriptions GET
+      .mockResolvedValueOnce(jsonResponse({}, 201)) // provider_send_attempted
+      .mockResolvedValueOnce(jsonResponse({}, 201)) // provider_accepted
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', user_id: 'user-1', task_id: 'task-1', current_state: 'sent' }])) // automation_runs lookup (PR #236 sync)
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', current_state: 'confirmed' }])); // automation_runs PATCH
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, outcome: 'approved' }));
+
+    // The completion-push receipt binds to the PATCH's returned confirmed_at.
+    const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
+    expect(pushPayload.receipt.dueAt).toBe(canonicalConfirmedAt);
+
+    // PR #236's automation-run projection still fires, still targeting the
+    // task's own confirmed_at value — unaffected by the push-receipt fix.
+    const runPatch = fetchMock.mock.calls.find(([url, init]) =>
+      String(url).includes('/rest/v1/automation_runs?') && init?.method === 'PATCH');
+    expect(runPatch).toBeTruthy();
+    expect(JSON.parse(runPatch[1].body).current_state).toBe('confirmed');
   });
 });
