@@ -679,9 +679,13 @@ describe("lookupCommunicationHistory", () => {
   it("falls back to the browser/device timezone, not a hardcoded location, when the profile has no stored timezone", async () => {
     mockResolvedPersonWithEvent(null);
     const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const expectedDay = new Intl.DateTimeFormat("en-US", { timeZone: deviceTimezone, day: "numeric" }).format(new Date("2026-08-01T23:30:00Z"));
+    // A full "month day" fragment, not a bare day number — a bare number
+    // (e.g. "1") would trivially match the answer's own "1 communication
+    // event..." header line regardless of whether the date rendering was
+    // actually correct.
+    const expectedDate = new Intl.DateTimeFormat("en-US", { timeZone: deviceTimezone, month: "short", day: "numeric" }).format(new Date("2026-08-01T23:30:00Z"));
     const result = await lookupCommunicationHistory("Christopher");
-    expect(result).toContain(expectedDay);
+    expect(result).toContain(expectedDate);
   });
 
   it("falls back to the browser/device timezone, not Europe/Istanbul or any other hardcoded location, when the profile fetch itself fails", async () => {
@@ -701,9 +705,13 @@ describe("lookupCommunicationHistory", () => {
       return makeChain({ data: [], error: null });
     });
     const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const expectedDay = new Intl.DateTimeFormat("en-US", { timeZone: deviceTimezone, day: "numeric" }).format(new Date("2026-08-01T23:30:00Z"));
+    // A full "month day" fragment, not a bare day number — a bare number
+    // (e.g. "1") would trivially match the answer's own "1 communication
+    // event..." header line regardless of whether the date rendering was
+    // actually correct.
+    const expectedDate = new Intl.DateTimeFormat("en-US", { timeZone: deviceTimezone, month: "short", day: "numeric" }).format(new Date("2026-08-01T23:30:00Z"));
     const result = await lookupCommunicationHistory("Christopher");
-    expect(result).toContain(expectedDay);
+    expect(result).toContain(expectedDate);
   });
 
   // ── Existing behavior unaffected by the timestamp/timezone change ────────
