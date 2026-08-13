@@ -183,7 +183,7 @@ Protect: `resolveCommunicationHistoryTimezone`'s precedence order (stored → de
 
 Scope note for the Universal Timestamp System's rule 7 below ("always display timestamps in the owner's local device timezone unless an explicitly approved product change says otherwise"): Communication History is exactly that explicitly-approved exception, and only for Communication History — no other V1A/V2A display (Type to Carson message times, Needs You, Waiting, To-do, Notes, Automations, History) changed timezone source in this work.
 
-### Automation-runner Communication History identity/linkage gap — IMPLEMENTED, PENDING PRODUCTION VERIFICATION
+### Automation-runner Communication History identity/linkage gap — CLOSED, PRODUCTION VERIFIED, PROTECTED
 
 Discovered during PR #250's own production verification (2026-08-13), using the pre-existing PR #236 test event. Separate from PR #250 — does not reopen or change PR #250's CLOSED verdict above; the formatter is proven correct independent of this gap.
 
@@ -202,7 +202,17 @@ Root cause confirmed in `process-delegation-escalations.js`: both `processAutoma
 
 Protect: the identity-conflict fail-closed rule in `resolveDeliveryContext` — never silently prefer explicit over derived identity or vice versa. Protect the backfill's guard conditions (`person_id IS NULL`, ownership-scoped UUID joins only) if this migration is ever referenced again.
 
-**Remaining before CLOSED:** production verification via one controlled real one-time automation to Christopher (see production verification plan below) — not yet performed as of this entry.
+**Live production verification (2026-08-13, PR #253 merge `24a32d76a03086b39597bc02a5fe691f63d39f31`, deployment `dpl_LkkkrWPddichdCZS4ZSH3FToLSWJ`, live from 19:17:30 UTC):** Sana created one real one-time delegation automation to Christopher through Talk to Carson ("automation history linkage production verification"). Verified read-only, independently:
+
+- Automation `fd331452-2463-4152-8ac2-b87f5c529d2e` → exactly one `automation_runs` row (`a51cc1de-f474-46ef-b2ef-f695dfccfbf1`, `current_state = sent`) → exactly one `tasks` row (`c13c4c29-3710-48ca-afcf-160446013839`) → exactly one `whatsapp_deliveries` row (`f1ab4526-0e74-4a6b-8a5f-80e8ba9bfb68`). No duplicates at any stage.
+- `whatsapp_deliveries.person_id = 0a854693-b873-4a36-b187-dbb161bcd7d6`, confirmed to be Christopher's canonical `people.id` under Sana's `user_id` — the primary proof this fix was live and correct at send time, not backfilled after the fact.
+- `automation_run_id` on the delivery links to the exact run above; `messages` rows for this task: 0 (confirms no synthetic `messages` row was needed, as designed).
+- Full normal lifecycle observed: accepted 19:45:04.912 → sent 19:45:06 → delivered 19:45:09 → read 19:45:23 (UTC). Rendered in the account's stored `profiles.morning_brief_timezone` (`Europe/Istanbul`, UTC+3): 10:45:23 PM — consistent with Carson's own spoken acknowledgment ("10:45 PM tonight").
+- **Communication History reachability proved by exercising `buildCommunicationHistory`'s exact wave-1 → wave-2 filter logic** (read verbatim from `src/lib/carson-communication-history.ts`, not reimplemented or guessed) directly against production for Christopher: both the new delivery (`f1ab4526...`) and the historical PR #236 delivery (`ec6900b3...`) are present in the result set, the latter reachable *only* through the `person_id.eq` branch (its task has no `messages`/`staff_messages` row to derive a `task_id.in(...)` match from) — proving the fix, not an unrelated fallback path, is what makes it reachable.
+- Historical PR #236 delivery (`ec6900b3-0edf-4c2c-a5c1-8e21619fe969`) re-checked: `person_id` now Christopher's canonical id; `read_at`, `sent_at`, `delivery_status`, `task_id`, and `automation_run_id` all unchanged from before the backfill (the backfill UPDATE statement's `SET` clause touches only the `person_id` column, so no other field could have changed) — no message content existed to alter (this path creates no `messages` row).
+- Backfill safety re-confirmed structurally: the applied `UPDATE ... SET person_id = ...` cannot alter timestamps, delivery state, task state, automation state, or message content by construction, and a re-run against production returns 0 remaining eligible rows (idempotent).
+
+**Definition of Done met:** new `automation_delegation` deliveries preserve canonical person identity — proved live in production (this verification), not just backfilled; new `automation_message` deliveries preserve canonical person identity — verified by the same code path and test coverage (`api/process-delegation-escalations.test.js`), not independently live-tested with a real message-type automation; Communication History retrieves automation-created events without a synthetic `messages` row; identity contradictions fail closed (tested); historical affected rows safely repaired (6/6, idempotent); focused/protected tests pass; production verification passes; this file updated.
 
 ### Documentation workflow safeguard
 
