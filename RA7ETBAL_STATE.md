@@ -30,9 +30,16 @@ Protect: one semantic notification per owner event; user/household RLS; independ
 
 Notifications Inbox V1 is no longer the current next task — see below.
 
-### Current next task: Post-owner-decision worker WhatsApp identity gap
+### Current next task: none ready without a product decision (2026-08-13)
 
-Full detail is recorded at its own entry below ("Post-owner-decision worker WhatsApp identity gap — OPEN"). Fix not yet implemented; implementation not yet approved. Do not begin another roadmap task ahead of this one without an explicit product decision.
+**Correction (2026-08-13):** Post-owner-decision worker WhatsApp identity gap, set as the next task above, was itself found to already be fixed and merged (PR #243) — see its entry below, now marked CLOSED. This file's OPEN-item tracking has repeatedly gone stale this way (see also the Notifications Inbox V1 correction above); do not assume any status in this file reflects `main` without checking the actual code/production state first.
+
+After excluding everything closed/protected (PR #236, #239 superseded, #240/#246, #241, Notifications Inbox V1, and now the identity gap), the two remaining `OPEN` items in this file are:
+
+- **Communication History event timestamps** (below): genuinely still not implemented (verified directly in `formatCommunicationHistoryAnswer`, `src/lib/carson-communication-history.ts` — date only, no time, device-local timezone rather than the stored account timezone). Its own entry says explicitly: "Do not implement until explicitly scoped" — not authorized to start without that scoping decision.
+- **Workstream 5 — Staff-facing Outbound Delivery Reliability** (below): implementation/tests/deployment already verified; only "functional production verification" remains, and that requires waiting for a real organic `source_type='message'` delivery failure to occur (or an approved controlled test) — not an implementation task.
+
+Neither is a ready, unblocked "start coding now" task. Do not start either without an explicit decision from Sana.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
@@ -143,13 +150,17 @@ Production verification evidence (2026-08-13, independently verified via direct 
 
 Protect: the `tasks: reminders require server creation` restrictive RLS policy, the routing-evidence contract validation in `api/automations.js` (including its `operation_id` idempotency behavior), and the scheduled-delegation routing branch in `one-time-automation-routing.ts`. Reopen only on a reproduced production regression.
 
-### Post-owner-decision worker WhatsApp identity gap — OPEN
+### Post-owner-decision worker WhatsApp identity gap — CLOSED, PRODUCTION VERIFIED, PROTECTED (PR #243)
 
 Discovered during PR #237's controlled production verification (task `f51a864c-5625-4c39-8a37-bd6ea0fc3489`, 2026-08-12). Separate from PR #237's own scope — does not reopen or change PR #237's CLOSED verdict above.
 
 **Confirmed finding:** when the owner approves/rejects/custom-instructs a `substitute_review`/`uncertain_proof` decision, the resulting worker-facing WhatsApp message (e.g. "Approved. You can go ahead.") is written via `reserve_custom_instruction`/`reserve_rejected_alternative` (`supabase/migrations/20260710_quality_substitute_review.sql`, `20260712_approve_alternative_message_first.sql`). Their `INSERT INTO messages (...)` / `INSERT INTO whatsapp_deliveries (...)` column lists do not include `person_id` — confirmed directly in production: both the `messages` row and `whatsapp_deliveries` row for this exact event have `person_id = NULL`, even though the original task-assignment message to the same person correctly carried it. This makes that specific communication unreachable through person-based Communication History (`get_communication_history`'s Wave 1 `messages` query is `.eq("person_id", personId)` with no fallback).
 
-Continuation of the Communication History identity-completeness objective (same tables, same consumer as PR #235/#237) — not a new workstream, and not a defect in either closed PR. Fix not yet implemented; investigation in progress.
+Continuation of the Communication History identity-completeness objective (same tables, same consumer as PR #235/#237) — not a new workstream, and not a defect in either closed PR.
+
+**Correction (2026-08-13): this was already fixed and merged — the OPEN status above was stale documentation, not a real gap.** PR #243, merge commit `2cef83ff7137b0b5494c807254598428f63b4501` ("feat: post-owner-decision worker WhatsApp identity continuity"), migration `20260812_worker_notification_person_id.sql`: both `reserve_custom_instruction` and `reserve_rejected_alternative` gain an optional `p_person_id` (default `NULL`, backward compatible — old 7-argument signatures explicitly dropped first to avoid a PostgREST overload ambiguity), threaded into both their `messages` and `whatsapp_deliveries` `INSERT`s. `task-confirm.js`'s `findAssigneePerson()` now also resolves the canonical `people.id`, reusing the exact same exact-match/scoped-to-`user_id`/unambiguous-only discipline as `resolveAssigneePersonId` (`api/_escalation-notify.js`, PR #237) — not a new identity algorithm; ambiguous or zero matches leave `person_id` NULL, never guessed, and never block the send. A one-time guarded, idempotent backfill covered the one production row that qualified deterministically. This closure was independently re-verified (this review, 2026-08-13) by reading the migration SQL directly (confirms `person_id` is in both `INSERT` column lists) and by re-querying the exact motivating production row directly: `messages` row `fc871e44-4f98-4aad-80cd-5c3662d22c94` (task `f51a864c-5625-4c39-8a37-bd6ea0fc3489`, "Approved. You can go ahead.") now has `person_id = 0a854693-b873-4a36-b187-dbb161bcd7d6` — no longer `NULL`, exactly reversing the confirmed finding above.
+
+Protect: `p_person_id`'s backward-compatible default and its exact-match/unambiguous-only resolution discipline in both RPCs; do not guess an ambiguous or unmatched person. Reopen only on a reproduced production regression (a new post-owner-decision worker message with `person_id = NULL` despite an unambiguous, resolvable assignee).
 
 ### Communication History event timestamps — OPEN
 
