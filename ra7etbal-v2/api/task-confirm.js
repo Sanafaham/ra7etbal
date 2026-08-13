@@ -796,6 +796,15 @@ export async function handleTaskConfirmationPost(
         // review/escalation variants) never pass it, so their behavior is
         // byte-for-byte unchanged.
         taskId: task.id || taskId,
+        // The exact PostgREST-returned confirmed_at from the PATCH above
+        // (Prefer: return=representation, no select= filter -> full row),
+        // not the in-memory `now` string -- qstash-reminder.js will later
+        // re-fetch confirmed_at via the same PostgREST layer and compare it
+        // byte-for-byte, so the value handed to the receipt must come from
+        // that same layer to be guaranteed to match. Falls back to `now`
+        // only if PostgREST didn't return a representation (defensive; not
+        // expected in production since this PATCH always requests one).
+        confirmedAt: approvedRows?.[0]?.confirmed_at || now,
       });
     } catch (err) {
       console.error('[task-confirm] owner push failed (non-fatal):', err?.message || err);
@@ -1867,8 +1876,21 @@ async function loadReferenceImagePaths({ supabaseUrl, headers, taskId, fallbackI
  * service_worker_received, show_notification stages, and notification_clicked
  * can only come from the device itself, via the widened qstash-reminder.js
  * receipt handler.
+ *
+ * confirmedAt must be the caller's already-persisted, PostgREST-returned
+ * `tasks.confirmed_at` value (required whenever taskId is passed) — never
+ * a freshly generated timestamp. qstash-reminder.js validates a completion
+ * receipt by re-fetching `confirmed_at` from Postgres via PostgREST and
+ * comparing it byte-for-byte against the receipt's dueAt; a second,
+ * independently-timed value here can never be guaranteed to equal that
+ * re-fetched value (confirmed in production: 6/6 genuine device receipts
+ * for task c5a07eff-a624-4d03-8ea9-5c6bacb2a78b were rejected 404 because
+ * this used to call `new Date().toISOString()` instead of reusing the
+ * value already written to the row). Mirrors the existing reminder path
+ * (`send-push-for-task.js`'s `dueAt: task.due_at`), which has always
+ * sourced its comparison value from a PostgREST read for the same reason.
  */
-export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant, taskId }) {
+export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant, taskId, confirmedAt }) {
   if (!userId) return;
 
   const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY;
@@ -1910,7 +1932,13 @@ export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, descripti
   webpush.setVapidDetails(vapidSubject, vapidPublicKey, vapidPrivateKey);
 
   const notificationBody = buildOwnerPushBody({ description, assignedTo, variant });
-  const sentAt = taskId ? new Date().toISOString() : null;
+  // Bind to the caller's already-persisted confirmed_at — never generate a
+  // second, independent timestamp here. See the confirmedAt doc comment
+  // above the function signature for why.
+  const sentAt = taskId ? confirmedAt : null;
+  if (taskId && !sentAt) {
+    console.error('[task-confirm] completion push requested without a canonical confirmedAt — sending without receipt evidence');
+  }
 
   for (const sub of subscriptions) {
     let payload = JSON.stringify({ title: 'Ra7etBal', body: notificationBody });
@@ -1918,24 +1946,26 @@ export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, descripti
     if (taskId) {
       // Evidence/receipt construction is best-effort and must never block
       // the actual notification send — a signing failure (e.g. CRON_SECRET
-      // briefly unset) degrades to the exact plain payload used before this
-      // capability existed, not a lost push.
-      try {
-        const receiptFields = { taskId, userId, subscriptionId: sub.id, dueAt: sentAt };
-        payload = JSON.stringify({
-          title: 'Ra7etBal',
-          body: notificationBody,
-          receipt: {
-            url: '/api/qstash-reminder',
-            kind: 'completion',
-            taskId,
-            subscriptionId: sub.id,
-            dueAt: sentAt,
-            token: signReminderReceipt(receiptFields, process.env.CRON_SECRET),
-          },
-        });
-      } catch (err) {
-        console.error('[task-confirm] completion push receipt signing failed (sending without evidence):', err?.message || err);
+      // briefly unset) or a missing confirmedAt degrades to the exact plain
+      // payload used before this capability existed, not a lost push.
+      if (sentAt) {
+        try {
+          const receiptFields = { taskId, userId, subscriptionId: sub.id, dueAt: sentAt };
+          payload = JSON.stringify({
+            title: 'Ra7etBal',
+            body: notificationBody,
+            receipt: {
+              url: '/api/qstash-reminder',
+              kind: 'completion',
+              taskId,
+              subscriptionId: sub.id,
+              dueAt: sentAt,
+              token: signReminderReceipt(receiptFields, process.env.CRON_SECRET),
+            },
+          });
+        } catch (err) {
+          console.error('[task-confirm] completion push receipt signing failed (sending without evidence):', err?.message || err);
+        }
       }
       await recordDeliveryEvent({
         supabaseUrl, serviceRoleKey: serviceKey, taskId, userId, subscriptionId: sub.id,

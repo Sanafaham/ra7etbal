@@ -480,6 +480,30 @@ describe("qstash-reminder 'notification-receipt' action — reminder vs. complet
     expect(JSON.parse(eventInit.body).metadata.kind).toBe("completion");
   });
 
+  it("completion receipt: show_notification_attempted stage is validated and recorded the same as service_worker_received", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: "task-1", user_id: "user-1", type: "delegation", due_at: null, confirmed_at: "2026-08-12T13:23:58.480Z" }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: "sub-1" }]))
+      .mockResolvedValueOnce(jsonResponse({}, 201));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = mockRes();
+
+    await handler(
+      mockReq({
+        body: receiptBody({ kind: "completion", dueAt: "2026-08-12T13:23:58.480Z", stage: "show_notification_attempted" }),
+      }),
+      res,
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(res.payload).toEqual({ success: true });
+    const [, eventInit] = fetchMock.mock.calls[2];
+    const eventBody = JSON.parse(eventInit.body);
+    expect(eventBody.stage).toBe("show_notification_attempted");
+    expect(eventBody.metadata.kind).toBe("completion");
+  });
+
   it("completion receipt: confirmed_at mismatch is rejected with 404 — never trusts the client's claimed dueAt", async () => {
     const fetchMock = vi
       .fn()
