@@ -48,6 +48,7 @@
  */
 
 import { supabase } from "./supabase";
+import { getProfile } from "./profile";
 
 function bound(text: string, max: number): string {
   const trimmed = text.trim();
@@ -447,15 +448,68 @@ export async function buildCommunicationHistory(
   return { personId, personName, events: validEvents, failedSources };
 }
 
+// ── Timezone resolution ─────────────────────────────────────────────────────
+
+/** Deterministic last-resort timezone when neither the stored account
+ *  timezone nor the browser/device timezone yields a usable value — never
+ *  a real place, so it can never masquerade as anyone's actual location. */
+const DETERMINISTIC_FALLBACK_TIMEZONE = "UTC";
+
+function isValidTimezone(tz: string | null | undefined): tz is string {
+  if (!tz) return false;
+  try {
+    // Throws RangeError for a malformed/unknown IANA identifier.
+    new Intl.DateTimeFormat("en-US", { timeZone: tz }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolves the timezone Communication History renders in, in order:
+ * 1. profiles.morning_brief_timezone, the stored account timezone — the
+ *    authoritative source, when it's a valid IANA identifier.
+ * 2. the browser/device's own resolved timezone — used only when the
+ *    stored value is missing or invalid, never as a silent substitute for
+ *    a merely-failed fetch overriding a value we didn't actually see.
+ * 3. DETERMINISTIC_FALLBACK_TIMEZONE, only if neither above yields a
+ *    usable value (device API unavailable/throws).
+ * Never throws — every branch is guarded, so a malformed stored or device
+ * timezone degrades to the next step instead of breaking the answer.
+ */
+export function resolveCommunicationHistoryTimezone(storedTimezone: string | null | undefined): string {
+  if (isValidTimezone(storedTimezone)) return storedTimezone;
+  try {
+    const deviceTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (isValidTimezone(deviceTimezone)) return deviceTimezone;
+  } catch {
+    // Fall through to the deterministic fallback below.
+  }
+  return DETERMINISTIC_FALLBACK_TIMEZONE;
+}
+
+/** The event's calendar year as observed in the given timezone — never the
+ *  UTC or device-local year, which can differ from the account-timezone
+ *  year near a year boundary. */
+function yearInTimezone(date: Date, timezone: string): number {
+  return Number(new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric" }).format(date));
+}
+
 // ── Answer formatting ───────────────────────────────────────────────────────
 
 /**
  * Formats the evidence-based answer for Carson to speak or type. Pure and
  * network-free. Truthfully distinguishes a genuinely empty history from a
  * partial result caused by a query failure — never silently treats a
- * failure as "no history".
+ * failure as "no history". `timezone` should already be resolved via
+ * resolveCommunicationHistoryTimezone() — this function does not re-derive
+ * or validate it, only renders in it.
  */
-export function formatCommunicationHistoryAnswer(result: CommunicationHistoryResult): string {
+export function formatCommunicationHistoryAnswer(
+  result: CommunicationHistoryResult,
+  timezone: string,
+): string {
   const { personName, events, failedSources } = result;
 
   if (events.length === 0 && failedSources.length > 0) {
@@ -473,18 +527,25 @@ export function formatCommunicationHistoryAnswer(result: CommunicationHistoryRes
   // Cap what Carson actually reads/types out — the most recent
   // MAX_RENDERED_EVENTS, chronologically ordered, not the oldest.
   const rendered = count > MAX_RENDERED_EVENTS ? events.slice(count - MAX_RENDERED_EVENTS) : events;
-  const currentYear = new Date().getFullYear();
+  const currentYear = yearInTimezone(new Date(), timezone);
 
   for (const e of rendered) {
     const date = new Date(e.at);
-    // Include the year only when the event isn't from the current year —
-    // otherwise two same-day-of-year events a year apart would render
-    // identically ("Aug 1") and Carson would state an ambiguous date.
-    const when = date.toLocaleDateString(
+    // Include the year only when the event isn't from the current year in
+    // the account timezone — otherwise two same-day-of-year events a year
+    // apart would render identically ("Aug 1") and Carson would state an
+    // ambiguous date. Calendar date and clock time are both rendered in
+    // the resolved account timezone, never the browser/device default.
+    const when = date.toLocaleString(
       [],
-      date.getFullYear() === currentYear
-        ? { month: "short", day: "numeric" }
-        : { month: "short", day: "numeric", year: "numeric" },
+      {
+        month: "short",
+        day: "numeric",
+        ...(yearInTimezone(date, timezone) === currentYear ? {} : { year: "numeric" }),
+        hour: "numeric",
+        minute: "2-digit",
+        timeZone: timezone,
+      },
     );
     const arrow = e.direction === "inbound" ? "from" : e.direction === "outbound" ? "to" : "about";
     lines.push(`${when} — ${e.label} (${arrow} ${personName})`);
@@ -543,5 +604,19 @@ export async function lookupCommunicationHistory(personName: string): Promise<st
 
   const person = resolution.matches[0];
   const result = await buildCommunicationHistory(person.id, person.name, user.id);
-  return formatCommunicationHistoryAnswer(result);
+
+  // A failed/missing profile fetch must fall through to the browser/device
+  // timezone (resolveCommunicationHistoryTimezone's own next step below),
+  // never a hardcoded location standing in as if it were this owner's real
+  // account timezone.
+  let storedTimezone: string | null = null;
+  try {
+    const profile = await getProfile();
+    storedTimezone = profile.morning_brief_timezone;
+  } catch {
+    storedTimezone = null;
+  }
+  const timezone = resolveCommunicationHistoryTimezone(storedTimezone);
+
+  return formatCommunicationHistoryAnswer(result, timezone);
 }
