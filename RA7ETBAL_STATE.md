@@ -30,11 +30,17 @@ Protect: one semantic notification per owner event; user/household RLS; independ
 
 Notifications Inbox V1 is no longer the current next task — see below.
 
-### Current next task: none ready without a product decision (2026-08-13)
+### Current next task: none ready without Sana's own live check (2026-08-14)
 
 **Correction (2026-08-13):** Post-owner-decision worker WhatsApp identity gap, set as the next task above, was itself found to already be fixed and merged (PR #243) — see its entry below, now marked CLOSED. This file's OPEN-item tracking has repeatedly gone stale this way (see also the Notifications Inbox V1 correction above); do not assume any status in this file reflects `main` without checking the actual code/production state first.
 
-**Correction (2026-08-14):** Communication History event timestamps (PR #250), the automation-runner Communication History identity/linkage gap (Item B), and Workstream 5 — Staff-facing Outbound Delivery Reliability are now all CLOSED — see their own entries below. A full current-state reconciliation of every remaining OPEN/PENDING/REOPENED item against `main` is in progress; do not trust this summary paragraph's item list until that reconciliation entry (below) replaces it.
+**Full current-state reconciliation (2026-08-14, Stage 1 Item 3):** every section in this file was inspected and cross-checked against `main`, merged PRs, tests, and production evidence where relevant. Result: every item is genuinely CLOSED, LOCKED, FORMALLY CLOSED, or intentionally deferred by product decision (D — e.g. Universal Timestamp System V2, the staging WhatsApp webhook environment, Carson capability expansion, "Meta rejection may still report success" reclassified unverified), **except exactly one genuine C item (implemented but needs a production check only Sana can perform):**
+
+- **"Morning brief does not proactively include reminders"** (PR #24): the fix is merged and deployed — Carson's morning brief automation now includes supported owner reminders due in the next 24 hours. This has never been confirmed by Sana actually hearing/reading a real morning brief that includes a real reminder. This agent cannot self-verify a spoken/typed morning brief experience. **Action needed from Sana:** the next time a real reminder is due within 24 hours, confirm the morning brief actually mentions it, then this file can mark that entry Stable and protected.
+
+Two stale documentation corrections found and fixed in this same pass (no code involved): the "WhatsApp owner decision template" section incorrectly still read "pending Meta approval" despite 24 real production sends since 2026-07-13 (now corrected to CLOSED, PRODUCTION VERIFIED, PROTECTED); the Historical Lookup Phase 1 section had a leftover pre-closure "remaining work" paragraph contradicting its own PERMANENTLY CLOSED header (removed).
+
+**Zero genuine B (open, needs new implementation) items were found.** The Carson Engineering Hardening Project may begin once Sana's morning-brief check above is resolved, or on her explicit decision to proceed without waiting for it.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
@@ -922,23 +928,11 @@ Not trusted and currently excluded:
 - Recurring WhatsApp delegations
 - Recurring WhatsApp direct-message automations
 
-### WhatsApp owner decision template
+### WhatsApp owner decision template — CLOSED, PRODUCTION VERIFIED, PROTECTED
 
-Status: pending Meta approval or final live validation.
+**Correction (2026-08-14, Stage 1 Item 3 reconciliation): this status was stale.** "Pending Meta approval or final live validation" predates the template going live. The `ra7etbal_owner_decision` template is approved and has been in continuous production use: 24 real sends between 2026-07-13 and 2026-08-12 (confirmed directly against `whatsapp_deliveries`), including live-tested Approve Alternative, Reject Alternative, and Custom Instruction decisions (see "Alternative review (substitute_review) — golden regression contract," "Owner WhatsApp decision message quality," and Phase B/C/D above). Dynamic task URL (`https://www.ra7etbal.com/confirm?task={{1}}`) confirmed live and in use.
 
-Dynamic task URL requirement:
-
-`https://www.ra7etbal.com/confirm?task={{1}}`
-
-Ra7etBal supplies only the task UUID.
-
-After approval, live-test:
-
-- Approve Alternative
-- Reject Alternative
-- Custom Instruction
-
-Protect normal delegations, proof upload, worker replies, routine templates, and Quality Intelligence.
+Protect: normal delegations, proof upload, worker replies, routine templates, and Quality Intelligence — unaffected by this correction.
 
 ## Known current issues and near-term priorities
 
@@ -1095,7 +1089,7 @@ Protect: keep this tool distinct from `get_task_delivery_status` — they answer
 
 Not done in this phase (deliberately out of scope — see the frozen Historical Lookup Architecture for Q1–Q3, Q5–Q7): person history, topic/keyword recall across free text, time-anchored recall, communication recall, calendar-past recall (already separately shipped as `search_calendar_history`), and aggregate/pattern recall. Each is its own future phase.
 
-Remaining before this can move to Stable and protected: prompt patch pasted into the live ElevenLabs dashboard, PR opened and merged, and Sana's live production verification of the validation phrase in the patch doc.
+**Correction (2026-08-14, Stage 1 Item 3 reconciliation):** the paragraph that previously followed this one ("Remaining before this can move to Stable and protected: prompt patch pasted...") was stale — a leftover from before this section's own PERMANENTLY CLOSED status (above) was reached. All of that was completed and independently production-verified; see the closure evidence at the top of this section.
 
 ### Reliability Engineering Incident — Tool Registration Drift (2026-08-04) — FORMALLY CLOSED, PRODUCTION VERIFIED (2026-08-10)
 
