@@ -371,6 +371,116 @@ describe('WhatsApp delivery persistence', () => {
     const inserted = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(inserted.person_id).toBeNull();
   });
+
+  // ── Explicit caller-supplied personId (Automation-runner Communication
+  // History identity/linkage gap fix) ───────────────────────────────────────
+  //
+  // The automation runner already resolves the canonical assignee before
+  // sending (resolvePersonById) and has no messages/staff_messages row to
+  // derive an identity from — it passes personId directly. These tests
+  // prove the identity-conflict rule: explicit-only wins, explicit+derived
+  // agreement wins, explicit+derived disagreement fails closed to null
+  // (never silently prefers either side), and the exact automation-runner
+  // call shape (taskId + automationRunId, no messageRecordId) is reachable
+  // with no synthetic messages row required.
+
+  it('uses the explicit personId when no derived (message/staff_message) identity exists', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-15' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await beginWhatsappDelivery({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      taskId: 'task-1',
+      personId: 'person-christopher',
+      sourceType: 'delegation',
+      recipientPhone: '+12025691377',
+      recipientName: 'Christopher',
+    });
+
+    const inserted = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(inserted.person_id).toBe('person-christopher');
+  });
+
+  it('uses the shared value when explicit and derived (linked message) identity agree', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'msg-1', user_id: 'user-1', task_id: null, person_id: 'person-grace' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-16' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await beginWhatsappDelivery({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageRecordId: 'msg-1',
+      personId: 'person-grace',
+      sourceType: 'message',
+      recipientPhone: '+905010589614',
+    });
+
+    const inserted = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(inserted.person_id).toBe('person-grace');
+  });
+
+  it('fails closed (null) — never guesses — when explicit and derived identity conflict, and logs structured diagnostics without message content', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'msg-1', user_id: 'user-1', task_id: null, person_id: 'person-grace' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-17' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await beginWhatsappDelivery({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      messageRecordId: 'msg-1',
+      personId: 'person-christopher', // deliberately different from msg-1's own person_id
+      sourceType: 'message',
+      recipientPhone: '+905010589614',
+    });
+
+    const inserted = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(inserted.person_id).toBeNull();
+
+    const conflictWarning = warnSpy.mock.calls.find(([msg]) =>
+      typeof msg === 'string' && msg.includes('explicit and derived person identity conflict'),
+    );
+    expect(conflictWarning).toBeTruthy();
+    // Structured diagnostics only — never the message text/content itself.
+    const loggedPayload = JSON.stringify(conflictWarning);
+    expect(loggedPayload).not.toContain('person-grace');
+    expect(loggedPayload).not.toContain('person-christopher');
+  });
+
+  it('reproduces the exact automation-runner call shape — taskId + automationRunId + explicit personId, no messageRecordId — and carries person_id through with no synthetic messages row required', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-c5a07eff', user_id: 'user-1' }])) // task lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', user_id: 'user-1', task_id: 'task-c5a07eff' }])) // automation_run lookup
+      .mockResolvedValueOnce(jsonResponse([{ id: 'delivery-18' }])); // insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const deliveryId = await beginWhatsappDelivery({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      taskId: 'task-c5a07eff',
+      automationRunId: 'run-1',
+      personId: 'person-christopher',
+      sourceType: 'automation_delegation',
+      recipientPhone: '+12025691377',
+      recipientName: 'Christopher',
+    });
+
+    expect(deliveryId).toBe('delivery-18');
+    const inserted = JSON.parse(fetchMock.mock.calls[2][1].body);
+    expect(inserted.person_id).toBe('person-christopher');
+    expect(inserted.task_id).toBe('task-c5a07eff');
+    expect(inserted.automation_run_id).toBe('run-1');
+    expect(inserted.message_id).toBeNull();
+  });
 });
 
 function jsonResponse(body, status = 200) {

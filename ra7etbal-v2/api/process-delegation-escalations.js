@@ -1753,6 +1753,11 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
           automationRunId: runId,
           sourceType:      'automation_delegation',
           recipientName:   assignee.name,
+          // Already-resolved canonical identity (resolvePersonById above) —
+          // no second lookup, no name-matching. Makes this delegation's
+          // whatsapp_deliveries row reachable via Communication History's
+          // person_id.eq branch without requiring a messages row.
+          personId:        assignee.id,
           ownerName,
         }),
       });
@@ -1992,6 +1997,10 @@ export async function processMessageAutomation({
         sourceType: 'automation_message',
         sendMode: 'routine_message',
         recipientName: person.name,
+        // Already-resolved canonical identity (resolvePersonById above) —
+        // no second lookup, no name-matching. See the matching comment on
+        // the automation_delegation payload above for why.
+        personId: person.id,
       }),
     });
     const messageBody = await messageRes.json().catch(() => ({}));

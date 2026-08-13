@@ -368,6 +368,47 @@ describe("buildCommunicationHistory", () => {
     expect(decided?.label).toContain("Approve it");
   });
 
+  // Automation-runner Communication History identity/linkage gap fix: an
+  // automation-created delivery (person_id populated at write time, no
+  // messages row ever created for this send path — see
+  // process-delegation-escalations.js/send-whatsapp-task.js) must be
+  // reachable purely via the person_id.eq branch, with no synthetic
+  // messages row required. This is the exact real-world shape the PR236
+  // automation event now produces once repaired.
+  it("an automation-created delivery with person_id and no linked messages row is reachable via person_id alone", async () => {
+    mockTables({
+      staff_messages: { data: [], error: null },
+      personal_contact_replies: { data: [], error: null },
+      messages: { data: [], error: null },
+      whatsapp_deliveries: {
+        data: [
+          {
+            id: "wd-automation",
+            message_id: null,
+            task_id: "task-automation-1",
+            delivery_status: "read",
+            failure_reason: null,
+            accepted_at: "2026-08-12T22:20:04Z",
+            sent_at: "2026-08-12T22:20:05Z",
+            delivered_at: "2026-08-12T22:20:07Z",
+            read_at: "2026-08-12T22:20:14Z",
+            failed_at: null,
+            meta_message_id: null,
+          },
+        ],
+        error: null,
+      },
+      staff_escalation_owner_decisions: { data: [], error: null },
+    });
+
+    const result = await buildCommunicationHistory("p1", "Christopher", "user-1");
+    expect(result.failedSources).toEqual([]);
+    const readEvent = result.events.find((e) => e.eventType === "delivery_read");
+    expect(readEvent).toBeDefined();
+    expect(readEvent?.at).toBe("2026-08-12T22:20:14Z");
+    expect(readEvent?.taskId).toBe("task-automation-1");
+  });
+
   it("delivery history survives task deletion — found via person_id alone", async () => {
     mockTables({
       staff_messages: { data: [], error: null },

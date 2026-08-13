@@ -23,6 +23,7 @@ export async function beginWhatsappDelivery({
   routineId,
   automationRunId,
   staffMessageId,
+  personId,
   parentDeliveryId,
   sourceType,
   messageKind = 'template',
@@ -42,6 +43,7 @@ export async function beginWhatsappDelivery({
       routineId,
       automationRunId,
       staffMessageId,
+      explicitPersonId: personId,
     });
     if (!context?.userId) {
       console.warn('[whatsapp-delivery] skipped: no trusted owner context', {
@@ -189,6 +191,7 @@ async function resolveDeliveryContext({
   routineId,
   automationRunId,
   staffMessageId,
+  explicitPersonId,
 }) {
   const lookups = [];
 
@@ -320,7 +323,31 @@ async function resolveDeliveryContext({
   if (personIdSet.size > 1) {
     console.warn('[whatsapp-delivery] linked records reference different people; leaving person_id null');
   }
-  const personId = personIdSet.size === 1 ? linkedPersonIds[0] : null;
+  const derivedPersonId = personIdSet.size === 1 ? linkedPersonIds[0] : null;
+
+  // The caller (e.g. the automation runner, which already resolves the
+  // canonical assignee before sending) may supply personId directly —
+  // never a second identity algorithm, just an explicit value from an
+  // already-resolved identity. When both an explicit and a derived
+  // (message/staff_message-linked) identity exist:
+  //   - if they agree, use the shared value;
+  //   - if they disagree, fail closed (null) rather than silently
+  //     preferring either one — this is never guessed, and is logged with
+  //     structured diagnostics only (ids/kinds, never message content).
+  // When only one of the two exists, it is used as-is (preserves the
+  // pre-existing derived-only behavior exactly when no explicit value is
+  // passed at all).
+  let personId;
+  if (explicitPersonId && derivedPersonId) {
+    personId = explicitPersonId === derivedPersonId ? explicitPersonId : null;
+    if (personId === null) {
+      console.warn('[whatsapp-delivery] explicit and derived person identity conflict; leaving person_id null', {
+        sourceKinds: records.map((record) => record.kind),
+      });
+    }
+  } else {
+    personId = explicitPersonId || derivedPersonId || null;
+  }
 
   return {
     userId: userIds[0],

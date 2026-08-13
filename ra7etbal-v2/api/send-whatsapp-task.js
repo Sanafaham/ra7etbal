@@ -59,6 +59,12 @@ export default async function handler(req, res) {
     ownerName,
     imagePath,
     attachmentCount,
+    // Optional caller-supplied canonical person identity (e.g. the
+    // automation runner, which already resolves the assignee before
+    // calling this endpoint). Never required, never guessed here — see
+    // beginWhatsappDelivery/resolveDeliveryContext for how it's combined
+    // with any messages/staff_messages-derived identity.
+    personId,
   } = req.body || {};
 
   const isRoutineMessage = sendMode === 'routine_message';
@@ -118,6 +124,7 @@ export default async function handler(req, res) {
     taskId,
     routineId,
     automationRunId,
+    personId,
     sourceType: deliverySourceType,
     recipientPhone: normalizedTo,
     recipientName: String(recipientName || '').trim() || null,
