@@ -181,6 +181,8 @@ Discovered and fixed in the same window, as a genuinely separate defect: **PR #2
 
 Protect: `resolveCommunicationHistoryTimezone`'s precedence order (stored → device → deterministic `UTC`, never a hardcoded location standing in for a failed fetch) and the year-in-timezone current-year check. Reopen only on a reproduced production regression in the formatter itself (not model-layer paraphrasing).
 
+Scope note for the Universal Timestamp System's rule 7 below ("always display timestamps in the owner's local device timezone unless an explicitly approved product change says otherwise"): Communication History is exactly that explicitly-approved exception, and only for Communication History — no other V1A/V2A display (Type to Carson message times, Needs You, Waiting, To-do, Notes, Automations, History) changed timezone source in this work.
+
 ### Automation-runner Communication History identity/linkage gap — OPEN
 
 Discovered during PR #250's own production verification (2026-08-13), using the pre-existing PR #236 test event. Separate from PR #250 — does not reopen or change PR #250's CLOSED verdict above; the formatter is proven correct independent of this gap.
