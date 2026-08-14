@@ -1,0 +1,153 @@
+name: carson-tier1-db-contracts
+
+# Phase 4 of the Carson Engineering Hardening Project. Reuses the existing
+# real-Postgres verification architecture (postgres service container ->
+# bootstrap -> fixture -> forward migration -> verification -> rollback ->
+# post-rollback verification -> reapply -> re-verification) already
+# established by staff-escalation-migration-verification.yml and
+# server-authoritative-reminder-rls-verification.yml — no new framework.
+#
+# Applies the exact, real, unmodified production migrations that construct
+# the CURRENT schema for four Tier 1 tables (whatsapp_health_state,
+# whatsapp_deliveries, messages, staff_escalation_owner_decisions) against
+# a genuine, ephemeral PostgreSQL 17 instance, then proves — with real SQL,
+# real roles, real RLS, real SECURITY DEFINER RPCs — the invariants Phase 0
+# found missing: the canonical phone_number_id binding, durable person_id
+# survival across task deletion, cross-account RLS isolation, and the
+# task-based owner-decision RPC chain's claim/duplicate/cross-account
+# contracts.
+#
+# NOT a required merge gate yet — visible and reliable, per the Phase 4
+# authorization's explicit instruction not to touch branch protection this
+# phase.
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - "ra7etbal-v2/supabase/migrations/20260613_routines.sql"
+      - "ra7etbal-v2/supabase/migrations/20260620_agent_automation_layer.sql"
+      - "ra7etbal-v2/supabase/migrations/20260622_whatsapp_health_state.sql"
+      - "ra7etbal-v2/supabase/migrations/20260622_whatsapp_deliveries.sql"
+      - "ra7etbal-v2/supabase/migrations/20260710_quality_substitute_review.sql"
+      - "ra7etbal-v2/supabase/migrations/20260712_approve_alternative_message_first.sql"
+      - "ra7etbal-v2/supabase/migrations/20260720_create_staff_messages.sql"
+      - "ra7etbal-v2/supabase/migrations/20260726_staff_escalation_owner_decisions.sql"
+      - "ra7etbal-v2/supabase/migrations/20260801_task_based_escalation_owner_decisions.sql"
+      - "ra7etbal-v2/supabase/migrations/20260812_durable_person_id_communication_history.sql"
+      - "ra7etbal-v2/supabase/migrations/20260812_durable_person_id_communication_history.rollback.sql"
+      - "ra7etbal-v2/supabase/migrations/20260812_task_review_owner_decision_person_id.sql"
+      - "ra7etbal-v2/supabase/migrations/20260812_worker_notification_person_id.sql"
+      - "ra7etbal-v2/supabase/migrations/20260813_whatsapp_health_state_phone_number_unique.sql"
+      - "ra7etbal-v2/supabase/migrations/20260813_whatsapp_health_state_phone_number_unique.rollback.sql"
+      - "ra7etbal-v2/supabase/migrations/verification/carson_tier1_*.sql"
+      - ".github/workflows/carson-tier1-db-contracts.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: carson-tier1-db-contracts
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ci_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ci_verify
+      MIGRATIONS: ra7etbal-v2/supabase/migrations
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Wait for Postgres
+        run: pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
+
+      - name: Bootstrap minimal auth-compatible schema (reused from the staff-escalation suite)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/00_bootstrap_minimal_auth.sql"
+
+      - name: Apply prerequisite migration — routines
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260613_routines.sql"
+
+      - name: Apply prerequisite migration — agent automation layer (automations, automation_runs)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260620_agent_automation_layer.sql"
+
+      - name: Apply forward migration — whatsapp_health_state
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260622_whatsapp_health_state.sql"
+
+      - name: Extend bootstrap with the minimal public.messages table and additional tasks columns
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/carson_tier1_bootstrap_extension.sql"
+
+      - name: Apply forward migration — whatsapp_deliveries
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260622_whatsapp_deliveries.sql"
+
+      - name: Apply prerequisite migration — quality_substitute_review (quality_substitute_decisions + reserve/complete RPCs)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260710_quality_substitute_review.sql"
+
+      - name: Apply prerequisite migration — approve_alternative_message_first
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260712_approve_alternative_message_first.sql"
+
+      - name: Apply prerequisite migration — create_staff_messages
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260720_create_staff_messages.sql"
+
+      - name: Apply forward migration — staff_escalation_owner_decisions
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260726_staff_escalation_owner_decisions.sql"
+
+      - name: Apply forward migration — task_based_escalation_owner_decisions
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260801_task_based_escalation_owner_decisions.sql"
+
+      - name: Apply forward migration — durable_person_id_communication_history
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260812_durable_person_id_communication_history.sql"
+
+      - name: Apply forward migration — task_review_owner_decision_person_id
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260812_task_review_owner_decision_person_id.sql"
+
+      - name: Apply forward migration — worker_notification_person_id
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260812_worker_notification_person_id.sql"
+
+      - name: Apply forward migration — whatsapp_health_state_phone_number_unique
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260813_whatsapp_health_state_phone_number_unique.sql"
+
+      - name: Real-database Tier 1 contract verification (whatsapp_health_state, whatsapp_deliveries, messages, staff_escalation_owner_decisions)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/carson_tier1_db_contracts_verification.sql"
+
+      - name: Apply rollback — whatsapp_health_state_phone_number_unique
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260813_whatsapp_health_state_phone_number_unique.rollback.sql"
+
+      - name: Post-rollback verification (constraint removed, pre-existing constraint/data untouched, protection genuinely reversed)
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/carson_tier1_whatsapp_health_state_post_rollback_verification.sql"
+
+      - name: Reapply forward migration — whatsapp_health_state_phone_number_unique
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260813_whatsapp_health_state_phone_number_unique.sql"
+
+      - name: Re-verify constraint restored after reapply
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "
+            DO \$\$
+            BEGIN
+              IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conname = 'whatsapp_health_state_phone_number_id_unique'
+                  AND conrelid = 'public.whatsapp_health_state'::regclass
+              ) THEN
+                RAISE EXCEPTION 'FAIL: constraint did not come back after reapplying the forward migration';
+              END IF;
+              RAISE NOTICE 'PASS: forward migration reapplies cleanly, constraint restored';
+            END \$\$;
+          "

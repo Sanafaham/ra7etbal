@@ -31,6 +31,8 @@ function fixtureRegistry() {
         db: { migrations: ["supabase/migrations/20260101_a.sql"], data_repairs: [] },
         focused_tests: ["api/foo.test.js"],
         golden_journey_tests: [],
+        db_contract_tests: ["supabase/migrations/verification/a_contract.sql"],
+        db_contract_workflow: ".github/workflows/a-contract.yml",
       },
       {
         id: "cap_b",
@@ -63,6 +65,26 @@ describe("mapChangedFiles — direct capability dependency", () => {
     const result = mapChangedFiles(["src/lib/bar.ts"], registry, new Set());
     expect(result.affectedCapabilities).toEqual(["cap_b"]);
     expect(result.requiredTests).toEqual(["src/lib/bar.golden-contract.test.ts", "src/lib/bar.test.ts"]);
+  });
+});
+
+describe("mapChangedFiles — Phase 4 DB contract surfacing", () => {
+  it("a change to a migration file surfaces the owning capability's db_contract_tests/workflow, informationally, not as a vitest requiredTest", () => {
+    const registry = fixtureRegistry();
+    const result = mapChangedFiles(["supabase/migrations/20260101_a.sql"], registry, new Set());
+    expect(result.affectedCapabilities).toEqual(["cap_a"]);
+    expect(result.affectedDbContractTests).toEqual(["supabase/migrations/verification/a_contract.sql"]);
+    expect(result.affectedDbContractWorkflows).toEqual([".github/workflows/a-contract.yml"]);
+    // Not conflated with the vitest-run requiredTests list.
+    expect(result.requiredTests).not.toContain("supabase/migrations/verification/a_contract.sql");
+  });
+
+  it("a capability with no db_contract_tests contributes nothing to the DB contract lists", () => {
+    const registry = fixtureRegistry();
+    const result = mapChangedFiles(["src/lib/bar.ts"], registry, new Set());
+    expect(result.affectedCapabilities).toEqual(["cap_b"]);
+    expect(result.affectedDbContractTests).toEqual([]);
+    expect(result.affectedDbContractWorkflows).toEqual([]);
   });
 });
 

@@ -33,6 +33,8 @@
  *      required CI gate when it would not actually run there. An existing,
  *      passing, but uncalled test must not be able to satisfy
  *      protected_suite: true.
+ *   9. (Phase 4) A registered db_contract_tests entry does not exist on
+ *      disk, or a db_contract_workflow entry does not exist on disk.
  *
  * Deliberately NOT enforced here (left for a future phase, not guessed at):
  *   - Whether a focused test file's assertions actually exercise the named
@@ -177,6 +179,14 @@ for (const [index, cap] of registry.capabilities.entries()) {
     }
   }
 
+  // --- Phase 4: db_contract_tests / db_contract_workflow, if present -------
+  if (cap.db_contract_tests !== undefined && !Array.isArray(cap.db_contract_tests)) {
+    fail(`${label}: db_contract_tests, if present, must be an array`);
+  }
+  if (cap.db_contract_workflow !== undefined && typeof cap.db_contract_workflow !== "string") {
+    fail(`${label}: db_contract_workflow, if present, must be a string`);
+  }
+
   // --- 3. Duplicate ids ---------------------------------------------
   if (typeof cap.id === "string") {
     if (seenIds.has(cap.id)) {
@@ -185,12 +195,13 @@ for (const [index, cap] of registry.capabilities.entries()) {
     seenIds.add(cap.id);
   }
 
-  // --- 4/5/6. Referenced paths must exist on disk --------------------
+  // --- 4/5/6/9. Referenced paths must exist on disk --------------------
   const pathFieldsToCheck = [
     ["focused_tests", cap.focused_tests],
     ["golden_journey_tests", cap.golden_journey_tests],
     ["db.migrations", cap.db && cap.db.migrations],
     ["db.data_repairs", cap.db && cap.db.data_repairs],
+    ["db_contract_tests", cap.db_contract_tests],
   ];
   for (const [fieldName, list] of pathFieldsToCheck) {
     if (!Array.isArray(list)) continue;
@@ -199,6 +210,15 @@ for (const [index, cap] of registry.capabilities.entries()) {
       if (!existsSync(abs)) {
         fail(`${label}: ${fieldName} references nonexistent path "${relPath}"`);
       }
+    }
+  }
+  if (typeof cap.db_contract_workflow === "string") {
+    // db_contract_workflow paths are relative to the actual git repo root
+    // (one directory above repoRoot — see impact-map.mjs's identical note
+    // on this layout), not repoRoot itself, since .github/ lives there.
+    const abs = resolve(repoRoot, "..", cap.db_contract_workflow);
+    if (!existsSync(abs)) {
+      fail(`${label}: db_contract_workflow references nonexistent path "${cap.db_contract_workflow}"`);
     }
   }
 

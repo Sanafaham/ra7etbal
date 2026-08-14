@@ -167,10 +167,20 @@ export function mapChangedFiles(changedFiles, registry, exclusions = new Set()) 
   }
 
   const requiredTests = new Set();
+  // Phase 4: DB-layer contract protection (real-Postgres SQL verification
+  // scripts, run via a dedicated GitHub Actions workflow, never via vitest)
+  // is surfaced here as informational output — this mapper cannot itself
+  // spin up a Postgres service, so it reports which contracts/workflows
+  // are relevant rather than "selecting tests to run" the way it does for
+  // vitest-based focused_tests/golden_journey_tests.
+  const affectedDbContractTests = new Set();
+  const affectedDbContractWorkflows = new Set();
   for (const cap of registry.capabilities || []) {
     if (!affectedCapabilities.has(cap.id)) continue;
     for (const t of cap.focused_tests || []) requiredTests.add(t);
     for (const t of cap.golden_journey_tests || []) requiredTests.add(t);
+    for (const t of cap.db_contract_tests || []) affectedDbContractTests.add(t);
+    if (cap.db_contract_workflow) affectedDbContractWorkflows.add(cap.db_contract_workflow);
   }
 
   return {
@@ -178,6 +188,8 @@ export function mapChangedFiles(changedFiles, registry, exclusions = new Set()) 
     requiredTests: [...requiredTests].sort(),
     unmappedProtectedFiles: [...new Set(unmappedProtectedFiles)].sort(),
     matchDetail,
+    affectedDbContractTests: [...affectedDbContractTests].sort(),
+    affectedDbContractWorkflows: [...affectedDbContractWorkflows].sort(),
   };
 }
 
@@ -268,6 +280,11 @@ function main() {
   console.log(`impact-map: affected capabilities (${result.affectedCapabilities.length}): ${result.affectedCapabilities.join(", ") || "(none)"}`);
   console.log(`impact-map: required tests (${result.requiredTests.length}):`);
   for (const t of result.requiredTests) console.log(`  - ${t}`);
+  if (result.affectedDbContractTests.length > 0) {
+    console.log(`impact-map: relevant real-Postgres DB contract tests (${result.affectedDbContractTests.length}, run via a dedicated workflow, not vitest):`);
+    for (const t of result.affectedDbContractTests) console.log(`  - ${t}`);
+    console.log(`impact-map: relevant DB contract workflow(s): ${result.affectedDbContractWorkflows.join(", ")}`);
+  }
 
   if (args["tests-out"]) {
     writeFileSync(resolve(repoRoot, args["tests-out"]), result.requiredTests.join("\n") + (result.requiredTests.length ? "\n" : ""));
