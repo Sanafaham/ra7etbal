@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-14 (Notifications Inbox release-stabilization closure; Carson Engineering Hardening Project Phase 7)
+Last updated: 2026-08-14 (Notifications Inbox release-stabilization closure; Carson Engineering Hardening Project Phase 8)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -52,7 +52,7 @@ Two stale documentation corrections found and fixed in this same pass (no code i
 
 **Zero genuine B (open, needs new implementation) items were found.** The Carson Engineering Hardening Project may begin once Sana's morning-brief check above is resolved, or on her explicit decision to proceed without waiting for it.
 
-**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–7 are complete and merged (PR #257, #258, #259, #260, #261, #262, #263, #266, #267, #268) — see "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)", "— Phase 5 (stale-state / engineering-record protection)", "— Phase 6 (GitHub merge/branch protection hardening)", and "— Phase 7 (release canaries for high-risk capabilities)" below for the current phases' evidence. Phase 8 has not been authorized.
+**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–8 are complete and merged (PR #257, #258, #259, #260, #261, #262, #263, #266, #267, #268, #269, #270) — see "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)", "— Phase 5 (stale-state / engineering-record protection)", "— Phase 6 (GitHub merge/branch protection hardening)", "— Phase 7 (release canaries for high-risk capabilities)", and "— Phase 8 (safe release + rollback contract)" below for the current phases' evidence. Phase 9 has not been authorized.
 
 ### Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing) — CLOSED, MERGED
 
@@ -108,7 +108,25 @@ Not implemented, honestly: `evaluateConstraintExists` (schema-catalog check) is 
 
 No production runtime code or schema changed. No Carson business contract (WhatsApp semantics, owner decisions, Needs You/Waiting/Handled, task confirmation, Communication History, Talk/Type, reminder scheduling, automation sync, Notifications Inbox) touched.
 
-Phase 8 scope has not been authorized — do not begin without Sana's explicit go-ahead.
+### Carson Engineering Hardening Project — Phase 8 (safe release + rollback contract) — CLOSED, MERGED
+
+PR #270 (`2dd6aad8e0fdc7b00048a088ef7377cd1d81c273`). A merge alone proves code is correct, not that a release is safe to roll back from, or that an older commit can even run against today's database. This adds a deterministic, fail-closed rollback eligibility system, reusing Phase 4's `*.rollback.sql`/CI-verification evidence and Phase 7's deployment-identity/canary infrastructure rather than building a parallel one.
+
+New: `scripts/carson-migration-classifier.mjs` classifies every production migration 1-5 (backward-compatible / tested-rollback / unverified-rollback-asset / destructive / unknown) from real SQL content plus real CI evidence — never guesses a migration safe. `scripts/carson-release-manifest.mjs` builds a release manifest and a fail-closed `evaluateKnownGoodEligibility()` — a merge, missing/failed/wrong-SHA canary report, or an incomplete required human-only boundary all block eligibility. `scripts/carson-rollback-eligibility.mjs` evaluates two independent paths: application-only rollback (safe only if every migration since the target is class 1) and application+database rollback (safe if class 1 or 2, with the exact rollback SQL files listed in apply order). `scripts/carson-rollback-dry-run.mjs` is a read-only report combining all of this against real git history and the new durable ledger `carson-known-good-release.json` (repo root, git-tracked, same convention as `carson-protected-registry.json`) — never runs SQL, git push/reset, or a Vercel action.
+
+Two real bugs were found and fixed while building this: `/** */` block comments (this repo's own migration-header convention) weren't stripped before classification, misclassifying a purely additive migration as unknown; and git's pathspec glob crosses `/` boundaries, so a naive `migrations/*.sql` filter also matched Phase 4's CI-only `migrations/verification/*.sql` fixtures — both fixed with regression tests using real repository data.
+
+Proven with real history, not only synthetic fixtures: the dry-run tool correctly identifies the real `20260813_whatsapp_health_state_phone_number_unique.sql` migration (a genuine class-2, CI-tested rollback) between two real historical SHAs, correctly blocks application-only rollback across that range while allowing application+database rollback with the exact rollback file listed.
+
+**Live production verification (2026-08-14, twice — bootstrap and post-merge):** `carson-known-good-release.json` now chains two real entries. First, the Phase 8 bootstrap SHA (`e3218bb`, Phase 7's close) was verified live (Vercel deployment READY, `githubCommitSha` match, `aliasError: null`; zero ambiguous WhatsApp bindings; zero automation-runner person_id-continuity violations) and recorded with `previous_known_good_sha: null`. After PR #270 itself merged, the resulting deployment (`dpl_DU4TKkLoo43YT84FfrWPBfZiJ1bj`, `githubCommitSha 2dd6aad...`) was verified live the same way and the ledger advanced, chaining `previous_known_good_sha: e3218bb...`. Neither entry required Notifications Inbox human acceptance, since neither Phase 7 nor Phase 8 changed that capability's behavior.
+
+New `workflow_dispatch`-only CI (`carson-rollback-dry-run.yml`) — never runs on PRs, never mutates anything. Registry: new `safe_release_rollback_contract` capability.
+
+Honest limitations, not silently covered: the migration classifier is a text-pattern heuristic, not a real DDL parser — PL/pgSQL function bodies always fall back to class 5 (unknown) by design, even when a human would judge them safe, conservatively blocking some probably-safe migrations from automated rollback eligibility. Only the current release window's migrations were spot-checked against real CI-verification evidence; the classifier runs over all 77+ real migration files but historical classifications beyond spot-checks weren't hand-verified. No automatic mechanism updates `carson-known-good-release.json` after a real deploy today — it must be updated by hand (or by an agent) through a normal protected PR, the same operational gap Phase 7's canary CI has (pending repository secrets). Executing an actual rollback (redeploying an old Vercel deployment, and/or applying rollback SQL to production) remains explicitly NOT automated — a deliberate human/operator action.
+
+No production runtime code or schema changed. No Carson business contract touched.
+
+Phase 9 scope has not been authorized — do not begin without Sana's explicit go-ahead.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
