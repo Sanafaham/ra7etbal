@@ -18,6 +18,8 @@
     "carson:impact-map": "node scripts/impact-map.mjs",
     "test:carson-state-integrity": "TZ=UTC vitest run scripts/state-doc-integrity.test.mjs",
     "carson:state-integrity": "node scripts/state-doc-integrity.mjs",
+    "test:carson-production-canary": "TZ=UTC vitest run scripts/carson-production-canary.test.mjs",
+    "carson:production-canary": "node scripts/carson-production-canary.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "carson:diagnose": "node scripts/carson-diagnose.mjs"

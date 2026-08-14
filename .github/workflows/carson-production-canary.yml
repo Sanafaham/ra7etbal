@@ -1,0 +1,82 @@
+name: carson-production-canary
+
+# Phase 7 of the Carson Engineering Hardening Project.
+#
+# workflow_dispatch ONLY — this must never run on a pull_request. It reads
+# live production (Vercel deployment metadata + Supabase, read-only) and
+# has no business running as part of an ordinary PR build; that would also
+# make it a merge gate, which it explicitly is not (Phase 7 does not touch
+# branch protection).
+#
+# Every check this workflow runs is read-only — see
+# ra7etbal-v2/scripts/carson-production-canary.mjs's own header comment
+# for the full safety contract. It cannot send a WhatsApp message, push
+# notification, or create/alter any task, reminder, automation, or owner
+# decision.
+#
+# Requires four repository secrets that are NOT currently configured
+# (only CRON_SECRET exists as of Phase 7): VERCEL_TOKEN, VERCEL_PROJECT_ID
+# (prj_f32jTzGmYS5m8pc2XU6E0Apw6Y1K for the production ra7etbal-v2 project,
+# not secret in itself but kept as a secret alongside the others for
+# convenience), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY. Until Sana adds
+# them, this workflow's live-production step fails loudly with a clear
+# explanation rather than silently reporting a false success — see the
+# "Check required secrets are configured" step below. The canary's own
+# test suite (fixture-based, no live credentials needed) always runs
+# regardless, on every dispatch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: "Expected production githubCommitSha (defaults to the SHA this workflow run itself is on)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  carson-production-canary:
+    name: carson-production-canary
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ra7etbal-v2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ra7etbal-v2/package-lock.json
+      - run: npm ci
+
+      - name: Run the canary's own fixture-based test suite (always — no live credentials required)
+        run: npm run test:carson-production-canary
+
+      - name: Check required secrets are configured
+        id: secrets_check
+        env:
+          HAS_VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN != '' }}
+          HAS_VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID != '' }}
+          HAS_SUPABASE_URL: ${{ secrets.SUPABASE_URL != '' }}
+          HAS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        run: |
+          if [ "$HAS_VERCEL_TOKEN" != "true" ] || [ "$HAS_VERCEL_PROJECT_ID" != "true" ] || [ "$HAS_SUPABASE_URL" != "true" ] || [ "$HAS_SUPABASE_SERVICE_ROLE_KEY" != "true" ]; then
+            echo "::error::carson-production-canary requires VERCEL_TOKEN, VERCEL_PROJECT_ID, SUPABASE_URL, and SUPABASE_SERVICE_ROLE_KEY repository secrets, which are not all configured. This is a known, documented limitation as of Phase 7 (see RA7ETBAL_STATE.md) — the live-production check cannot run until these are added. Failing loudly rather than reporting a false success."
+            exit 1
+          fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Run the live production canary
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          EXPECTED_PRODUCTION_SHA: ${{ inputs.expected_sha || github.sha }}
+        run: npm run carson:production-canary
