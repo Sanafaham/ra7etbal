@@ -1,0 +1,52 @@
+name: carson-rollback-dry-run
+
+# Phase 8 of the Carson Engineering Hardening Project.
+#
+# workflow_dispatch ONLY — never on pull_request. This is a read-only
+# reporting tool (see ra7etbal-v2/scripts/carson-rollback-dry-run.mjs's own
+# header comment for the full guarantee): it runs no SQL, no git push/reset,
+# no Vercel promote/rollback call. It only reads git history, the Phase 8
+# migration classifier, and carson-known-good-release.json, and prints a
+# report of what a rollback to a given target (or the current known-good
+# release, if no target is given) would require and whether it would be
+# safe.
+"on":
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "Rollback target SHA (defaults to carson-known-good-release.json's recorded SHA)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  carson-rollback-dry-run:
+    name: carson-rollback-dry-run
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ra7etbal-v2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ra7etbal-v2/package-lock.json
+      - run: npm ci
+
+      - name: Run the release/rollback module's own fixture-based test suite
+        run: npm run test:carson-release-rollback
+
+      - name: Run the read-only rollback dry-run report
+        run: |
+          if [ -n "${{ inputs.target_sha }}" ]; then
+            node scripts/carson-rollback-dry-run.mjs --target="${{ inputs.target_sha }}"
+          else
+            node scripts/carson-rollback-dry-run.mjs
+          fi

@@ -20,6 +20,9 @@
     "carson:state-integrity": "node scripts/state-doc-integrity.mjs",
     "test:carson-production-canary": "TZ=UTC vitest run scripts/carson-production-canary.test.mjs",
     "carson:production-canary": "node scripts/carson-production-canary.mjs",
+    "test:carson-release-rollback": "TZ=UTC vitest run scripts/carson-migration-classifier.test.mjs scripts/carson-rollback-eligibility.test.mjs scripts/carson-release-manifest.test.mjs",
+    "carson:rollback-dry-run": "node scripts/carson-rollback-dry-run.mjs",
+    "carson:migration-classifier": "node scripts/carson-migration-classifier.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "carson:diagnose": "node scripts/carson-diagnose.mjs"
