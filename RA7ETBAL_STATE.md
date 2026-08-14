@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-14 (Notifications Inbox release-stabilization closure)
+Last updated: 2026-08-14 (Notifications Inbox release-stabilization closure; Carson Engineering Hardening Project Phase 6)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -52,7 +52,7 @@ Two stale documentation corrections found and fixed in this same pass (no code i
 
 **Zero genuine B (open, needs new implementation) items were found.** The Carson Engineering Hardening Project may begin once Sana's morning-brief check above is resolved, or on her explicit decision to proceed without waiting for it.
 
-**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–5 are complete and merged (PR #257, #258, #259, #260, #261, #262) — see "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)" and "— Phase 5 (stale-state / engineering-record protection)" below for the current phases' evidence. Phase 6 has not been authorized.
+**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–6 are complete and merged (PR #257, #258, #259, #260, #261, #262, #263, #266) — see "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)", "— Phase 5 (stale-state / engineering-record protection)", and "— Phase 6 (GitHub merge/branch protection hardening)" below for the current phases' evidence. Phase 7 has not been authorized.
 
 ### Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing) — CLOSED, MERGED
 
@@ -78,7 +78,21 @@ CodeRabbit's initial review returned 4 legitimate findings (a doc/code mismatch 
 
 Known limitations, not silently covered: only closed-class-section regression/disappearance is detected — an OPEN/PENDING section disappearing, or a closed section's body being materially gutted while its status wording stays untouched, is not mechanically caught (deliberately, to avoid a brittle prose-diff system that would block harmless wording edits). Section identity is matched by normalized heading title text; a heading rename that also drops its status is not distinguishable from a genuine disappearance-plus-new-section.
 
-Phase 6 scope has not been authorized — do not begin without Sana's explicit go-ahead.
+### Carson Engineering Hardening Project — Phase 6 (GitHub merge/branch protection hardening) — CLOSED, MERGED
+
+PR #266 (`c7dbc3793da5fc2bca4d5049a15f8f9755578c12`) made `carson-tier1-db-contracts` and `carson-state-doc-integrity` safe to require: both had `paths:`-filtered triggers, which would deadlock any PR that didn't touch those paths if made required (the check would simply never run, leaving GitHub's "expected" status permanently pending). `carson-state-doc-integrity`'s filter was removed entirely (its own cost is small and running unconditionally is also more correct). `carson-tier1-db-contracts` now triggers on every PR but internally computes relevance via a real `git diff` against the PR base and skips only the expensive Postgres verification steps — not the job — when nothing Tier-1-relevant changed, so an unrelated PR still gets a genuine, fast success instead of no status at all. No test coverage was weakened.
+
+Branch protection on `main` was then updated directly via the GitHub API: `required_status_checks` now lists all four hardening checks (`carson-protected-behaviors`, `carson-impact-aware-ci`, `carson-tier1-db-contracts`, `carson-state-doc-integrity`) with `strict: true` (branches must be up to date with `main` before merging); `enforce_admins` was turned on (previously `false` — this was the exact gap that let the historical stale-state incident land as a direct authenticated push, bypassing all protection as an admin). Force-push and branch-deletion protection were already enabled and are unchanged. No branch-protection ruleset or merge queue was configured — classic protection already covers the target contract and a second, potentially-conflicting mechanism wasn't warranted for a single-owner repository processing one PR at a time.
+
+**Deliberately not enabled: required PR review/approval.** This repository has one human owner and no second collaborator who could approve Sana's own PRs — GitHub does not count self-approval, so a "1 approving review" rule would have made the repository unusable by its own owner. CodeRabbit was also confirmed unreliable as a review gate (rate-limited on multiple prior phases' PRs, and it comments rather than issuing a formal APPROVE review state). Protection instead comes from `required_status_checks` (which, by construction, can only be satisfied by a commit that went through a `pull_request`-triggered CI run — a direct push to `main` can never carry that status) combined with `enforce_admins`.
+
+**Historical counterfactual, proven live, not simulated:** a throwaway commit was built directly in the object database on top of `origin/main` (never checked out, never part of any branch) and pushed straight to `refs/heads/main` — the exact mechanism of the historical incident. GitHub's server rejected it: `error: GH006: Protected branch update failed... 4 of 4 required status checks are expected.` `origin/main`'s SHA was confirmed unchanged before and after the attempt. The historical route is mechanically closed.
+
+**Deadlock-safety proven live, not just by design:** PR #266 itself doesn't touch `RA7ETBAL_STATE.md`, its integrity tooling, or any Tier 1 DB-contract migration/verification path (aside from the workflow file it edits, which is itself in `carson-tier1-db-contracts`' relevance set) — and both `carson-state-doc-integrity` and `carson-tier1-db-contracts` still reported genuine, real successes on it, confirmed by inspecting each job's own log output (`state-doc-integrity: OK ...` ran unconditionally; the DB-contracts job's "Determine relevance" step correctly evaluated the changed-file set via a real `git diff`).
+
+Remaining limitations: no branch-protection ruleset (classic protection only); no merge queue (not needed at current single-PR-at-a-time usage); required PR review is intentionally absent per the reasoning above, so a compromised admin credential could still merge unreviewed code as long as it passes CI — only a second human reviewer or signed-commit policy would close that residual gap, and neither is operationally available today.
+
+Phase 7 scope has not been authorized — do not begin without Sana's explicit go-ahead.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
