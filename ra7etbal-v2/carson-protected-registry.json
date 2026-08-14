@@ -42,6 +42,13 @@
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "production_canary_required": true,
+      "production_canary": {
+        "classification": "A",
+        "script": "scripts/carson-production-canary.mjs (evaluateAmbiguousBindings, evaluateDeploymentIdentity)",
+        "workflow": ".github/workflows/carson-production-canary.yml",
+        "proves": "No two active accounts are bound to the same WhatsApp phone_number_id in production right now, read-only, against real live data — the exact Incident 1 shape (a phantom/ambiguous binding silently broke inbound-owner trust for a full day with zero error surface).",
+        "does_not_prove": "That every future writer into whatsapp_health_state is correctly scoped (see this capability's existing 'unresolved' note above) — the canary only observes the resulting row state, not writer discipline. Does not verify the UNIQUE(phone_number_id) constraint still exists in the schema catalog (PostgREST has no pg_catalog access without a dedicated introspection RPC, which Phase 7 deliberately did not create — that check is instead already covered pre-merge by Phase 4's carson-tier1-db-contracts.yml)."
+      },
       "rollback_risk": "high — prior failure mode was silent (zero error surface) for a full day",
       "verification_status": "PRODUCTION VERIFIED — PR #244, migration 20260813_whatsapp_health_state_phone_number_unique.sql adds UNIQUE(phone_number_id). Phase 4: real-PostgreSQL contract proof added (UNIQUE(phone_number_id) rejection, RLS owner isolation, service-role write distinction, rollback/reapply cycle) — carson-tier1-db-contracts.yml, not yet a required check.",
       "unresolved": [
@@ -226,6 +233,13 @@
       "golden_journey_required": true,
       "golden_journey_tests": ["api/golden-journey-one-time-scheduled-delegation.test.js"],
       "production_canary_required": true,
+      "production_canary": {
+        "classification": "A (partial)",
+        "script": "scripts/carson-production-canary.mjs (evaluatePersonIdContinuity)",
+        "workflow": ".github/workflows/carson-production-canary.yml",
+        "proves": "Recent (last 30 days) whatsapp_deliveries rows created by the automation runner have person_id populated whenever the originating automation has a resolvable assignee — the exact Incidents 3/4 shape, read-only, against real live data. Historical pre-fix rows are intentionally excluded (documented, permanent, accepted gap — see the real production backfill's own notes).",
+        "does_not_prove": "The 'confirm correctly against the originating task' half of this capability's contract — i.e. that a confirmed task's linked automation_runs row reaches current_state='confirmed' (PR #236's synchronizeAutomationRunFromConfirmedTask contract). No canary check for this was implemented in Phase 7; flagged here honestly as a residual gap rather than silently claimed as covered by the person_id check above, which is a different invariant."
+      },
       "rollback_risk": "high — prior failure mode (Incident 4) was silent (structurally unreachable evidence, no error) until manual production forensics",
       "verification_status": "PRODUCTION VERIFIED for automation_delegation (PR #254, live test with real contact); automation_message shares the same fixed code path but was NOT independently exercised live per PR #254's own follow-up commit — this distinction is preserved here, not collapsed",
       "unresolved": [
@@ -303,7 +317,11 @@
       "protected_suite": true,
       "golden_journey_required": true,
       "golden_journey_tests": ["api/golden-journey-immediate-staff-delegation.test.js"],
-      "production_canary_required": true,
+      "production_canary_required": false,
+      "production_canary": {
+        "classification": "B",
+        "reason": "Investigated in Phase 7 and determined NOT to need a dedicated production canary, correcting the Phase 1 placeholder true value. The specific historical defect (dueAt independently generated instead of sourced from the same PATCH's confirmed_at) has no stored production column recording what value was actually sent in a push payload — only the final tasks.confirmed_at is durable, so a live production check cannot observe the counterfactual without fabricating an unsafe production mutation. This class is instead fully, deterministically covered pre-merge by task-confirm.test.js's dueAt-binding regression test plus a full round-trip test, both required in every PR via carson-protected-behaviors since PR #246 — a stronger guarantee for this specific defect class than a post-deploy read-only check could add."
+      },
       "rollback_risk": "high — prior failure mode was a silent, undetectable-by-existing-tests cross-module timestamp mismatch",
       "verification_status": "PRODUCTION VERIFIED — PR #240 (initial), PR #246 (device-stage observability fix, exact confirmed_at binding + full round-trip test)",
       "unresolved": []
@@ -371,6 +389,13 @@
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "production_canary_required": true,
+      "production_canary": {
+        "classification": "A (partial)",
+        "script": "scripts/carson-production-canary.mjs (evaluatePersonIdContinuity)",
+        "workflow": ".github/workflows/carson-production-canary.yml",
+        "proves": "The exact Incident 4 shape (automation-runner-linked whatsapp_deliveries silently missing person_id) is not currently reproducing in live production, read-only, for recent (30-day) rows.",
+        "does_not_prove": "Golden Journey #6's full cross-writer integration gap (this capability's own existing 'unresolved' note below) — the canary only checks one writer path (automation-runner), not every known writer in one combined check, and does not verify get_communication_history's actual output shape/timestamps against a live query."
+      },
       "rollback_risk": "high — prior failure mode (Incident 4) was a structurally unreachable event with zero error surface, only found via manual production forensics",
       "verification_status": "PRODUCTION VERIFIED — PR #229 (original), PR #250 (timestamps), PR #253/#254 (automation-runner linkage). Phase 4: real-PostgreSQL proof that person_id survives the real ON DELETE SET NULL task-deletion transformation on both whatsapp_deliveries and messages — carson-tier1-db-contracts.yml, not yet a required check.",
       "unresolved": [
@@ -410,6 +435,13 @@
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "production_canary_required": true,
+      "production_canary": {
+        "classification": "A (partial)",
+        "script": "scripts/carson-production-canary.mjs (evaluatePersonIdContinuity)",
+        "workflow": ".github/workflows/carson-production-canary.yml",
+        "proves": "The automation-runner writer path (one of this capability's writer paths, and the one behind Incidents 3/4) is not currently producing person_id-less deliveries with a resolvable assignee, read-only, against real recent production data.",
+        "does_not_prove": "person_id correctness for the live-conversation or owner-reminder writer paths — this capability's own 'unresolved' note below already flags that api/_owner-reminder-whatsapp.js:claimOwnerReminderDelivery never sets person_id at all (by design, an owner-facing reminder, not a per-person event) and that no single-writer RPC gatekeeper exists. The canary does not (and structurally cannot, without becoming a much larger system) verify every writer path in one check."
+      },
       "rollback_risk": "high — this is exactly the shared dependency identified in Phase 0's Impact-Aware CI design as needing broad fan-out mapping (a change here can silently break owner_decision_lifecycle, automation_execution_confirmation, and communication_history simultaneously)",
       "verification_status": "PARTIALLY VERIFIED — the live-conversation writer path is fully covered; the automation-runner and owner-reminder writer paths were the exact subject of Incidents 3/4 and are fixed only where explicitly investigated. Phase 4: real-PostgreSQL proof of person_id/task_id/automation_run_id linkage acceptance, durability across task deletion, and RLS owner isolation (read-only, cross-account write rejection, same-account write also rejected by design) on whatsapp_deliveries — carson-tier1-db-contracts.yml, not yet a required check.",
       "unresolved": [
@@ -439,6 +471,10 @@
       "golden_journey_required": false,
       "golden_journey_tests": [],
       "production_canary_required": false,
+      "production_canary": {
+        "classification": "B",
+        "reason": "Evaluated in Phase 7. Exercising RLS live in production would require authenticating as a second real account against real data, which is a materially riskier and more invasive check than a canary should be — Phase 4's carson-tier1-db-contracts.yml already proves RLS with real roles/real SET ROLE authenticated/cross-account rejection pre-merge for the tables it covers, which is the stronger and safer place for this class of proof. This does not close this capability's own 'unresolved' gap below (only 4 of 76 migrations have real RLS verification at all) — that is a Phase 4/8 scope question, not something a production canary can retroactively fix."
+      },
       "rollback_risk": "unresolved — see below",
       "verification_status": "PARTIALLY VERIFIED — real-Postgres RLS verification exists for exactly 4 of 76 migrations (server-authoritative reminders, staff escalation, push-subscription installation identity, owner-reminder-WhatsApp claim), each via its own dedicated GitHub Actions workflow; none of these are required status checks",
       "unresolved": [
@@ -533,11 +569,38 @@
       "golden_journey_tests": [],
       "production_canary_required": false,
       "rollback_risk": "medium — engineering-time cost, not runtime risk",
-      "verification_status": "Phase 5: a real CI check (.github/workflows/carson-state-doc-integrity.yml) now inspects every PR's proposed RA7ETBAL_STATE.md against its true PR base and fails on an unexplained status regression or disappearance of a closed-class section — proven against the actual historical regression commit as a counterfactual test, not a synthetic reproduction. This check is visible and green but is NOT YET a required branch-protection merge gate — that remains explicit Phase 6 scope, not decided here.",
+      "verification_status": "Phase 5: a real CI check (.github/workflows/carson-state-doc-integrity.yml) now inspects every PR's proposed RA7ETBAL_STATE.md against its true PR base and fails on an unexplained status regression or disappearance of a closed-class section — proven against the actual historical regression commit as a counterfactual test, not a synthetic reproduction. Phase 6: this check is now a required branch-protection merge gate on main (required_status_checks, strict mode, enforce_admins on) — a direct push bypassing it was proven rejected server-side.",
       "unresolved": [
-        "Branch-protection changes (making this check a required merge gate, enforce_admins, required review) are explicitly deferred to Phase 6 per the user's instructions — a green check today can still be bypassed by an admin merge.",
+        "enforce_admins is on, but there is still no required PR-review/approval gate (a deliberate Phase 6 decision — see RA7ETBAL_STATE.md's Phase 6 entry). A compromised admin credential could still merge unreviewed-by-a-human code as long as it passes this and the other required checks.",
         "Only closed-class-section regression/disappearance is detected. A previously OPEN/PENDING/neutral section disappearing, or a closed-class section's body being materially gutted or reverted to older prose while its status wording is left untouched, is not mechanically caught — deliberately, to avoid a brittle prose-diff system that would block harmless wording edits (see the module's own header comment).",
         "Section identity is matched by normalized heading title text (whitespace/case-insensitive, exact otherwise). A heading rename that also drops its status is not currently distinguishable from a genuine disappearance-plus-new-unrelated-section; not encountered in this file's real history to date, but a known limitation."
+      ]
+    },
+    {
+      "id": "deployment_identity_verification",
+      "contract": "A production canary run must be checking the deployment that is actually serving production traffic — the exact expected githubCommitSha, readyState READY, target production, no aliasError, and the canonical www.ra7etbal.com alias present — never silently report PASS against a stale or wrong deployment. New in Phase 7; process-infrastructure, not a Carson product behavior (same category as stale_state_doc_integrity above).",
+      "business_importance": "process-critical — every other production canary check in this registry is meaningless if it silently ran against the wrong deployment",
+      "production_entry_points": [],
+      "files_functions": ["scripts/carson-production-canary.mjs:evaluateDeploymentIdentity"],
+      "shared_dependencies": [],
+      "db": { "tables": [], "rpcs": [], "migrations": [] },
+      "external_boundaries": ["Vercel deployments API"],
+      "focused_tests": ["scripts/carson-production-canary.test.mjs"],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": true,
+      "production_canary": {
+        "classification": "A",
+        "script": "scripts/carson-production-canary.mjs (evaluateDeploymentIdentity)",
+        "workflow": ".github/workflows/carson-production-canary.yml",
+        "proves": "The currently-live production deployment's githubCommitSha matches the expected SHA, is READY, targets production, has no aliasError, and serves the canonical www.ra7etbal.com alias — manually verified live during Phase 7 via the Vercel MCP against the real production project (prj_f32jTzGmYS5m8pc2XU6E0Apw6Y1K), which returned githubCommitSha a34e671b6e00c45fb88f1ad562eeccd3b449c5ce, readyState READY, aliasError null.",
+        "does_not_prove": "Nothing about application behavior itself — this is purely a deployment-identity gate other checks' results should be read through, not a substitute for them."
+      },
+      "rollback_risk": "low — a failure here means 'stop trusting the rest of this canary run,' not a production incident by itself",
+      "verification_status": "Phase 7: implemented and manually verified against real production (see above). Not yet wired into automated CI (workflow_dispatch workflow added, but VERCEL_TOKEN/VERCEL_PROJECT_ID/SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY repository secrets are not yet configured — see .github/workflows/carson-production-canary.yml's own header comment).",
+      "unresolved": [
+        "The GitHub Actions workflow cannot run for real until Sana adds the four required repository secrets. Until then, this check can only be run by hand (or by an agent with equivalent Vercel/Supabase access), not on a schedule or automatically after deploy."
       ]
     }
   ]
