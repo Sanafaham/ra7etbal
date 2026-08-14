@@ -71,7 +71,10 @@ export function loadExclusions(exclusionsPath = EXCLUSIONS_PATH) {
 /**
  * Builds a Map from normalized relative path -> Set of capability ids that
  * reference that path anywhere in files_functions, production_entry_points,
- * shared_dependencies, db.migrations, or db.data_repairs.
+ * shared_dependencies, db.migrations, db.data_repairs, db_contract_tests, or
+ * db_contract_workflow. db_contract_workflow entries are repo-root-relative
+ * (e.g. ".github/workflows/...") — the same layout impact-map's CLI diff
+ * output uses — so they are added to the index unmodified.
  */
 export function buildPathIndex(registry) {
   const index = new Map();
@@ -87,6 +90,8 @@ export function buildPathIndex(registry) {
     }
     for (const relPath of (cap.db && cap.db.migrations) || []) add(relPath, cap.id);
     for (const relPath of (cap.db && cap.db.data_repairs) || []) add(relPath, cap.id);
+    for (const relPath of cap.db_contract_tests || []) add(relPath, cap.id);
+    if (cap.db_contract_workflow) add(cap.db_contract_workflow, cap.id);
   }
   return index;
 }
@@ -167,10 +172,20 @@ export function mapChangedFiles(changedFiles, registry, exclusions = new Set()) 
   }
 
   const requiredTests = new Set();
+  // Phase 4: DB-layer contract protection (real-Postgres SQL verification
+  // scripts, run via a dedicated GitHub Actions workflow, never via vitest)
+  // is surfaced here as informational output — this mapper cannot itself
+  // spin up a Postgres service, so it reports which contracts/workflows
+  // are relevant rather than "selecting tests to run" the way it does for
+  // vitest-based focused_tests/golden_journey_tests.
+  const affectedDbContractTests = new Set();
+  const affectedDbContractWorkflows = new Set();
   for (const cap of registry.capabilities || []) {
     if (!affectedCapabilities.has(cap.id)) continue;
     for (const t of cap.focused_tests || []) requiredTests.add(t);
     for (const t of cap.golden_journey_tests || []) requiredTests.add(t);
+    for (const t of cap.db_contract_tests || []) affectedDbContractTests.add(t);
+    if (cap.db_contract_workflow) affectedDbContractWorkflows.add(cap.db_contract_workflow);
   }
 
   return {
@@ -178,6 +193,8 @@ export function mapChangedFiles(changedFiles, registry, exclusions = new Set()) 
     requiredTests: [...requiredTests].sort(),
     unmappedProtectedFiles: [...new Set(unmappedProtectedFiles)].sort(),
     matchDetail,
+    affectedDbContractTests: [...affectedDbContractTests].sort(),
+    affectedDbContractWorkflows: [...affectedDbContractWorkflows].sort(),
   };
 }
 
@@ -268,6 +285,11 @@ function main() {
   console.log(`impact-map: affected capabilities (${result.affectedCapabilities.length}): ${result.affectedCapabilities.join(", ") || "(none)"}`);
   console.log(`impact-map: required tests (${result.requiredTests.length}):`);
   for (const t of result.requiredTests) console.log(`  - ${t}`);
+  if (result.affectedDbContractTests.length > 0) {
+    console.log(`impact-map: relevant real-Postgres DB contract tests (${result.affectedDbContractTests.length}, run via a dedicated workflow, not vitest):`);
+    for (const t of result.affectedDbContractTests) console.log(`  - ${t}`);
+    console.log(`impact-map: relevant DB contract workflow(s): ${result.affectedDbContractWorkflows.join(", ")}`);
+  }
 
   if (args["tests-out"]) {
     writeFileSync(resolve(repoRoot, args["tests-out"]), result.requiredTests.join("\n") + (result.requiredTests.length ? "\n" : ""));
