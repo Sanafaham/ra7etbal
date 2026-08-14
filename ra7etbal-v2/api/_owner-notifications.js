@@ -59,6 +59,34 @@ export async function getOrCreateOwnerNotification({
   return { notification, created: false };
 }
 
+/** Persist an inbox companion without allowing this secondary write to block push delivery. */
+export async function prepareOwnerPushNotification({ supabaseUrl, serviceRoleKey, notification, fallback }) {
+  if (!notification) return fallback;
+  try {
+    const { notification: row } = await getOrCreateOwnerNotification({
+      supabaseUrl,
+      serviceRoleKey,
+      ...notification,
+    });
+    return {
+      title: row.title,
+      body: row.body,
+      notificationId: row.id,
+      url: row.target_url,
+    };
+  } catch (error) {
+    console.error('[owner-notifications] durable inbox write failed; preserving push delivery', {
+      eventKey: notification.eventKey,
+      error: error?.message || String(error),
+    });
+    return fallback;
+  }
+}
+
+export function ownerNotification({ userId, eventKey, kind, title, body, occurredAt, targetType = null, targetId = null, targetUrl = '/notifications', metadata = {} }) {
+  return { userId, eventKey, kind, title, body, occurredAt, targetType, targetId, targetUrl, metadata };
+}
+
 export function buildDueReminderNotification(task) {
   return {
     userId: task.user_id,

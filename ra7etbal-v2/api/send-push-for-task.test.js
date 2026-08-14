@@ -238,6 +238,19 @@ describe('send-push-for-task reminder delivery', () => {
       whatsapp: expect.objectContaining({ status: 'accepted' }),
     }));
   });
+
+  it('does not block or duplicate the working push when inbox persistence fails', async () => {
+    mocks.getOrCreateOwnerNotification.mockRejectedValueOnce(new Error('inbox unavailable'));
+    vi.stubGlobal('fetch', successfulReminderFetch());
+
+    const res = createRes();
+    await handler(createReq({ taskId: 'task-1' }), res);
+
+    expect(mocks.getOrCreateOwnerNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.sendNotification).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(mocks.sendNotification.mock.calls[0][1])).not.toHaveProperty('notificationId');
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ success: true, sent: 1 }));
+  });
 });
 
 function successfulReminderFetch() {

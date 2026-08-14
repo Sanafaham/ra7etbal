@@ -3551,22 +3551,29 @@ describe('Owner completion push reliability — durable evidence lifecycle', () 
     expect(isValid).toBe(true);
   });
 
-  it('QI review-variant pushes (e.g. substitute_review) are completely unaffected — no taskId means no dedup, no receipt, no durable evidence recording', async () => {
+  it('QI review-variant pushes keep their receipt-free behavior while gaining one durable inbox companion', async () => {
     stubPushEnv();
     runQualityReviewMock.mockResolvedValue({ status: 'substitute_review', note: 'White pen instead of blue.' });
 
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse([{
-        id: 'task-1', user_id: 'user-1', status: 'pending', description: 'Buy a blue pen.',
-        assigned_to: 'Christopher', image_path: null,
-      }]))
-      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks (stays pending, quality_review_status=substitute_review)
-      .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])) // sendOwnerPush(variant: substitute_review)
-      .mockResolvedValueOnce(jsonResponse([{ id: 'decision-1', deep_link_token: 'aaaaaaaa-1111-4111-8111-111111111111', owner_notified_at: null }])) // notifyOwnerOfTaskReview: claim
-      .mockResolvedValueOnce(jsonResponse({ decision_id: 'decision-1', claimed: true, claim_token: 'tok', notification_status: 'sending' }))
-      .mockResolvedValueOnce(jsonResponse([{ name: 'Sana', role: 'owner', phone: '+15550000099' }]))
-      .mockResolvedValueOnce(jsonResponse({}, 200)); // complete notification lease
+    const fetchMock = vi.fn(async (url, init = {}) => {
+      const requestUrl = String(url);
+      if (requestUrl.includes('/rest/v1/tasks?') && init.method !== 'PATCH') {
+        return jsonResponse([{
+          id: 'task-1', user_id: 'user-1', status: 'pending', description: 'Buy a blue pen.',
+          assigned_to: 'Christopher', image_path: null,
+        }]);
+      }
+      if (requestUrl.includes('/rest/v1/tasks?') && init.method === 'PATCH') return emptyResponse();
+      if (requestUrl.includes('/rest/v1/push_subscriptions?')) {
+        return jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }]);
+      }
+      if (requestUrl.includes('/rest/v1/owner_notifications')) {
+        return jsonResponse([{ id: 'notification-1', event_key: 'task_substitute_review:task-1', title: 'Ra7etBal', body: 'Christopher sent an alternative for review.', target_url: '/updates?tab=needs-you&task=task-1' }], 201);
+      }
+      // The WhatsApp owner-review companion is independently non-fatal and
+      // outside this push/inbox contract; an empty response safely stops it.
+      return emptyResponse();
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
@@ -3580,6 +3587,9 @@ describe('Owner completion push reliability — durable evidence lifecycle', () 
       JSON.parse(body).body?.includes('sent an alternative'));
     expect(pushCall).toBeTruthy();
     expect(JSON.parse(pushCall[1]).receipt).toBeUndefined();
+    const inboxCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/owner_notifications'));
+    expect(inboxCall).toBeTruthy();
+    expect(JSON.parse(inboxCall[1].body).event_key).toBe('task_substitute_review:task-1');
   });
 
   it('a receipt-signing failure (e.g. CRON_SECRET unset) still sends the push, without a receipt, instead of losing the notification entirely', async () => {
@@ -3731,6 +3741,7 @@ describe('Owner completion push reliability — durable evidence lifecycle', () 
       .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }])) // push_subscriptions GET
       .mockResolvedValueOnce(jsonResponse({}, 201)) // provider_send_attempted
       .mockResolvedValueOnce(jsonResponse({}, 201)) // provider_accepted
+      .mockResolvedValueOnce(jsonResponse([{ id: 'notification-1', event_key: 'task_completed:task-1', title: 'Ra7etBal', body: 'Christopher confirmed: get the pizza', target_url: '/updates?tab=needs-you&task=task-1' }], 201)) // durable inbox companion
       .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', user_id: 'user-1', task_id: 'task-1', current_state: 'sent' }])) // automation_runs lookup (PR #236 sync)
       .mockResolvedValueOnce(jsonResponse([{ id: 'run-1', current_state: 'confirmed' }])); // automation_runs PATCH
     vi.stubGlobal('fetch', fetchMock);

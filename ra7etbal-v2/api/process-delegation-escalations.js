@@ -94,6 +94,7 @@
  */
 
 import webpush from 'web-push';
+import { ownerNotification, prepareOwnerPushNotification } from './_owner-notifications.js';
 import { Receiver } from '@upstash/qstash';
 import { scheduleAutomationRunWakeup } from './qstash-reminder.js';
 import { reconcileOwnerWhatsappMessages } from './_owner-whatsapp-routing.js';
@@ -607,7 +608,17 @@ async function sendOwnerEscalationPush({ task, supabaseUrl, serviceKey, testMode
   const who = assigned_to ? `${assigned_to} hasn't confirmed` : 'Unconfirmed task';
   const timeLabel = testMode ? '(test)' : '20 minutes ago';
   const body = `${who}: ${description}. Sent ${timeLabel}.`;
-  const payload = JSON.stringify({ title: 'Ra7etBal · Action needed', body });
+  const pushContent = await prepareOwnerPushNotification({
+    supabaseUrl, serviceRoleKey: serviceKey,
+    fallback: { title: 'Ra7etBal · Action needed', body },
+    notification: ownerNotification({
+      userId: user_id, eventKey: `task_escalation:${taskId}`, kind: 'task_escalation',
+      title: 'Ra7etBal · Action needed', body, occurredAt: new Date().toISOString(),
+      targetType: 'task', targetId: taskId,
+      targetUrl: `/updates?tab=needs-you&task=${encodeURIComponent(taskId)}`,
+    }),
+  });
+  const payload = JSON.stringify(pushContent);
 
   const label = testMode ? '[testMode] ' : '';
   console.log(`[escalation] ${label}sending owner escalation push for task ${taskId}`, {
@@ -1031,6 +1042,13 @@ async function executeReminderRoutine({ routine, supabaseUrl, serviceKey }) {
     body: title,
     supabaseUrl,
     serviceKey,
+    notification: ownerNotification({
+      userId: user_id, eventKey: `routine_reminder:${routine.id}:${taskId}`, kind: 'routine_reminder',
+      title: 'Ra7etBal · Reminder', body: title, occurredAt: new Date().toISOString(),
+      targetType: 'task', targetId: taskId,
+      targetUrl: `/updates?tab=needs-you&task=${encodeURIComponent(taskId)}`,
+      metadata: { routine_id: routine.id },
+    }),
   });
   if (!pushed) {
     console.warn('[routines] reminder push not delivered (no subscriptions?)', { routineId: routine.id });
@@ -1242,6 +1260,11 @@ async function executeMessageRoutine({ routine, supabaseUrl, serviceKey, appBase
       body: `Routine message sent: ${routineName || person.name}`,
       supabaseUrl,
       serviceKey,
+      notification: ownerNotification({
+        userId: user_id, eventKey: `routine_message:${routineId}:${messageBody?.delivery_id || messageBody?.messageId || routine.last_run_at || 'current'}`,
+        kind: 'routine_message_sent', title: 'Ra7etBal', body: `Routine message sent: ${routineName || person.name}`,
+        occurredAt: new Date().toISOString(), metadata: { routine_id: routineId },
+      }),
     });
     if (!pushed) {
       console.warn('[routines] message: owner push not delivered (no subscriptions?)', { routineId });
@@ -1375,6 +1398,12 @@ async function handleUncertainOLGFollowUp(req, res, { supabaseUrl, serviceKey, t
     body: `Still waiting on your decision: "${task.description}" assigned to ${task.assigned_to || 'a staff member'} needs your review.`,
     supabaseUrl,
     serviceKey,
+    notification: ownerNotification({
+      userId: task.user_id, eventKey: `task_review_followup:${taskId}`, kind: 'task_review_followup',
+      title: 'Ra7etBal', body: `Still waiting on your decision: "${task.description}" assigned to ${task.assigned_to || 'a staff member'} needs your review.`,
+      occurredAt: new Date().toISOString(), targetType: 'task', targetId: taskId,
+      targetUrl: `/updates?tab=needs-you&task=${encodeURIComponent(taskId)}`,
+    }),
   });
 
   console.log('[escalation] uncertain_olg: escalation sent', {
@@ -1387,7 +1416,7 @@ async function handleUncertainOLGFollowUp(req, res, { supabaseUrl, serviceKey, t
   return res.status(200).json({ escalated: true, pushed });
 }
 
-async function sendOwnerPush({ userId, title, body, supabaseUrl, serviceKey }) {
+async function sendOwnerPush({ userId, title, body, supabaseUrl, serviceKey, notification = null }) {
   const subsRes = await fetch(
     `${supabaseUrl}/rest/v1/push_subscriptions` +
       `?user_id=eq.${encodeURIComponent(userId)}` +
@@ -1398,7 +1427,10 @@ async function sendOwnerPush({ userId, title, body, supabaseUrl, serviceKey }) {
   const subscriptions = await subsRes.json().catch(() => []);
   if (!subsRes.ok || !Array.isArray(subscriptions) || subscriptions.length === 0) return false;
 
-  const payload = JSON.stringify({ title, body });
+  const pushContent = await prepareOwnerPushNotification({
+    supabaseUrl, serviceRoleKey: serviceKey, notification, fallback: { title, body },
+  });
+  const payload = JSON.stringify(pushContent);
   let sent = false;
 
   for (const sub of subscriptions) {
@@ -1809,6 +1841,13 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
       body: automation.instruction,
       supabaseUrl,
       serviceKey,
+      notification: ownerNotification({
+        userId: automation.user_id, eventKey: `automation_run:${runId}`, kind: 'automation_reminder',
+        title: 'Ra7etBal · Reminder', body: automation.instruction, occurredAt: now.toISOString(),
+        targetType: 'task', targetId: taskId,
+        targetUrl: `/updates?tab=needs-you&task=${encodeURIComponent(taskId)}`,
+        metadata: { automation_id: automation.id, automation_run_id: runId },
+      }),
     });
     if (pushed) {
       await patchAutomationRun(supabaseUrl, serviceKey, runId, {

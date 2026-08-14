@@ -28,6 +28,8 @@ describe("Notifications Inbox V1 UI wiring", () => {
     expect(route).toContain("await openOwnerNotification(item, { markRead, navigate })");
     expect(route).toContain("await markEveryOwnerNotificationRead(markAllRead)");
     expect(route).toContain("actionError");
+    expect(route).toContain("dismissNotification(item.id)");
+    expect(route).toContain("Could not dismiss this notification.");
   });
 
   it("keeps the bell count independent from What's Happening attention", () => {

@@ -108,11 +108,16 @@ export default async function handler(req, res) {
     });
   }
 
-  const { notification } = await getOrCreateOwnerNotification({
-    supabaseUrl,
-    serviceRoleKey,
-    ...buildDueReminderNotification(task),
-  });
+  let notification = { id: null, title: 'Ra7etBal', body: task.description, target_url: `/updates?tab=needs-you&task=${encodeURIComponent(task.id)}` };
+  try {
+    ({ notification } = await getOrCreateOwnerNotification({
+      supabaseUrl,
+      serviceRoleKey,
+      ...buildDueReminderNotification(task),
+    }));
+  } catch (error) {
+    console.error('[send-push-for-task] inbox persistence failed; preserving reminder push', error?.message || error);
+  }
 
   // ── 4. Load push subscriptions ──────────────────────────────────────────
   const subsRes = await fetch(
@@ -184,7 +189,7 @@ export default async function handler(req, res) {
     const payload = JSON.stringify({
       title: notification.title,
       body: notification.body,
-      notificationId: notification.id,
+      ...(notification.id ? { notificationId: notification.id } : {}),
       url: notification.target_url,
       receipt: {
         url: '/api/qstash-reminder',

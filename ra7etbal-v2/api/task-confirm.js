@@ -53,6 +53,7 @@
  */
 
 import webpush from 'web-push';
+import { ownerNotification, prepareOwnerPushNotification } from './_owner-notifications.js';
 import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
@@ -620,6 +621,9 @@ export async function handleTaskConfirmationPost(
           description: task.description,
           assignedTo: task.assigned_to,
           variant: 'correction_limit',
+          eventKey: `task_correction_limit:${task.id || taskId}`,
+          targetType: 'task',
+          targetId: task.id || taskId,
         }).catch((err) =>
           console.error('[task-confirm] correction-limit owner push failed (non-fatal):', err?.message || err),
         );
@@ -643,6 +647,9 @@ export async function handleTaskConfirmationPost(
           description: task.description,
           assignedTo: task.assigned_to,
           variant: review.status,
+          eventKey: `task_${review.status}:${task.id || taskId}`,
+          targetType: 'task',
+          targetId: task.id || taskId,
         }).catch((err) =>
           console.error(`[task-confirm] ${review.status}-review owner push failed (non-fatal):`, err?.message || err),
         );
@@ -668,6 +675,9 @@ export async function handleTaskConfirmationPost(
           description: task.description,
           assignedTo: task.assigned_to,
           variant: 'substitute_review',
+          eventKey: `task_substitute_review:${task.id || taskId}`,
+          targetType: 'task',
+          targetId: task.id || taskId,
         }).catch((err) =>
           console.error('[task-confirm] substitute_review owner push failed (non-fatal):', err?.message || err),
         );
@@ -791,10 +801,9 @@ export async function handleTaskConfirmationPost(
         description: task.description,
         assignedTo: task.assigned_to,
         // Only this call site (final staff-task completion) opts into the
-        // durable delivery-lifecycle recording below -- passing taskId is
-        // the sole trigger. The other four sendOwnerPush call sites (QI
-        // review/escalation variants) never pass it, so their behavior is
-        // byte-for-byte unchanged.
+        // durable delivery-lifecycle recording below. Review/escalation
+        // variants use eventKey/targetId for inbox identity without passing
+        // taskId, so they retain their existing receipt-free push behavior.
         taskId: task.id || taskId,
         // The exact PostgREST-returned confirmed_at from the PATCH above
         // (Prefer: return=representation, no select= filter -> full row),
@@ -985,6 +994,8 @@ async function handleOwnerDecision(req, res) {
       await sendOwnerPush({
         supabaseUrl, serviceKey, userId: task.user_id, description: task.description,
         assignedTo: task.assigned_to, variant: 'correction_limit',
+        eventKey: `task_correction_limit:${task.id || taskId}`,
+        targetType: 'task', targetId: task.id || taskId,
       }).catch((err) =>
         console.error('[task-confirm] substitute-review correction-limit owner push failed (non-fatal):', err?.message || err),
       );
@@ -1890,7 +1901,7 @@ async function loadReferenceImagePaths({ supabaseUrl, headers, taskId, fallbackI
  * (`send-push-for-task.js`'s `dueAt: task.due_at`), which has always
  * sourced its comparison value from a PostgREST read for the same reason.
  */
-export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant, taskId, confirmedAt }) {
+export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, description, assignedTo, variant, taskId, confirmedAt, eventKey, targetType, targetId, targetUrl, occurredAt }) {
   if (!userId) return;
 
   const vapidPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.VITE_VAPID_PUBLIC_KEY;
@@ -1940,6 +1951,7 @@ export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, descripti
     console.error('[task-confirm] completion push requested without a canonical confirmedAt — sending without receipt evidence');
   }
 
+  const notificationKind = variant ? `task_${variant}` : 'task_completed';
   for (const sub of subscriptions) {
     let payload = JSON.stringify({ title: 'Ra7etBal', body: notificationBody });
 
@@ -2013,6 +2025,23 @@ export async function sendOwnerPush({ supabaseUrl, serviceKey, userId, descripti
         ).catch(() => {});
       }
     }
+  }
+
+  if (taskId || eventKey) {
+    await prepareOwnerPushNotification({
+      supabaseUrl,
+      serviceRoleKey: serviceKey,
+      fallback: { title: 'Ra7etBal', body: notificationBody },
+      notification: ownerNotification({
+        userId,
+        eventKey: eventKey || `${notificationKind}:${taskId}`,
+        kind: notificationKind,
+        title: 'Ra7etBal', body: notificationBody,
+        occurredAt: occurredAt || confirmedAt || new Date().toISOString(),
+        targetType: targetType || (taskId ? 'task' : null), targetId: targetId || taskId || null,
+        targetUrl: targetUrl || (taskId ? `/updates?tab=needs-you&task=${encodeURIComponent(taskId)}` : '/notifications'),
+      }),
+    });
   }
 }
 
