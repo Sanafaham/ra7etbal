@@ -602,6 +602,40 @@
       "unresolved": [
         "The GitHub Actions workflow cannot run for real until Sana adds the four required repository secrets. Until then, this check can only be run by hand (or by an agent with equivalent Vercel/Supabase access), not on a schedule or automatically after deploy."
       ]
+    },
+    {
+      "id": "safe_release_rollback_contract",
+      "contract": "A production release only becomes KNOWN GOOD when durable, freshly-gathered evidence exists for it (deployment READY, SHA/alias verified, production canaries passed, required human-only acceptance completed) — a merge alone is never sufficient. A rollback (application-only, or application+database) is only ever classified SAFE when every migration between the target and current release is proven backward-compatible or has CI-tested rollback SQL — an unclassified or destructive migration always blocks, never silently assumed safe. Process-infrastructure, not a Carson product behavior (same category as stale_state_doc_integrity and deployment_identity_verification above).",
+      "business_importance": "process-critical — without this, 'we can redeploy an old commit' is not the same claim as 'it is safe to do so', and an operator or agent could unknowingly roll back into an application/database schema mismatch",
+      "production_entry_points": [],
+      "files_functions": [
+        "scripts/carson-migration-classifier.mjs",
+        "scripts/carson-release-manifest.mjs",
+        "scripts/carson-rollback-eligibility.mjs",
+        "scripts/carson-rollback-dry-run.mjs",
+        "../carson-known-good-release.json"
+      ],
+      "shared_dependencies": [],
+      "db": { "tables": [], "rpcs": [], "migrations": [] },
+      "external_boundaries": ["Vercel deployments API", "git history"],
+      "focused_tests": [
+        "scripts/carson-migration-classifier.test.mjs",
+        "scripts/carson-rollback-eligibility.test.mjs",
+        "scripts/carson-release-manifest.test.mjs"
+      ],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "low — this capability's own job is to prevent rollback risk elsewhere; a defect here means a wrong classification, not a direct production incident by itself",
+      "verification_status": "Phase 8: implemented and bootstrapped against real evidence — carson-known-good-release.json's first entry (SHA e3218bbcdfdd2fa695f5545b175c1b2420f04154) was built from a live Vercel deployment check and live read-only Supabase queries, not fabricated. The migration classifier was run against all real production migrations; spot-checked against known real CI-verified rollbacks (3) and a known real destructive migration (the server-authoritative-reminder RLS policy). The rollback dry-run tool was proven against real git history spanning a genuine rollback-sensitive migration. workflow_dispatch-only CI added (carson-rollback-dry-run.yml) — never runs on PRs, never mutates anything.",
+      "unresolved": [
+        "The migration classifier is a text-pattern heuristic, not a real DDL parser — PL/pgSQL function bodies (CREATE FUNCTION ... AS $$ ... $$) are not statement-parsed and always fall back to class 5 (unknown), even when a human would judge them safe. This is a deliberate fail-closed default, not a bug, but it means several real migrations that ARE probably additive are conservatively blocked from automated rollback eligibility rather than confirmed safe.",
+      "Only migrations from the current release window were exercised against real CI-verification evidence during Phase 8; the classifier itself runs over all 77+ real migration files, but no attempt was made to hand-verify every historical classification beyond spot-checks.",
+        "carson-known-good-release.json currently has no PREVIOUS entry to chain against (previous_known_good_sha is null, the Phase 8 bootstrap) — the ledger's cross-release history starts here, not retroactively reconstructed for earlier phases.",
+        "No automatic mechanism updates carson-known-good-release.json after a real deploy today — it must be updated by hand (or by an agent) through a normal protected PR after re-running the canary + eligibility check, the same operational gap Phase 7's own canary CI has (pending repository secrets).",
+        "Executing an actual rollback (redeploying an old Vercel deployment, and/or applying rollback SQL to production) is explicitly NOT automated by this capability — it remains a deliberate human/operator action, per this repository's standing safety rules on destructive operations."
+      ]
     }
   ]
 }
