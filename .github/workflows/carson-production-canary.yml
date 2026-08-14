@@ -14,14 +14,13 @@ name: carson-production-canary
 # notification, or create/alter any task, reminder, automation, or owner
 # decision.
 #
-# Requires four repository secrets that are NOT currently configured
-# (only CRON_SECRET exists as of Phase 7): VERCEL_TOKEN, VERCEL_PROJECT_ID
-# (prj_f32jTzGmYS5m8pc2XU6E0Apw6Y1K for the production ra7etbal-v2 project,
-# not secret in itself but kept as a secret alongside the others for
-# convenience), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY. Until Sana adds
-# them, this workflow's live-production step fails loudly with a clear
-# explanation rather than silently reporting a false success — see the
-# "Check required secrets are configured" step below. The canary's own
+# Requires two repository secrets (VERCEL_TOKEN, CANARY_RPC_TOKEN) and
+# three non-secret repository variables (VERCEL_PROJECT_ID, SUPABASE_URL,
+# SUPABASE_PUBLISHABLE_KEY). GitHub Actions never receives
+# SUPABASE_SERVICE_ROLE_KEY. CANARY_RPC_TOKEN authorizes only the bounded,
+# aggregate-only carson_production_canary_health RPC. Until Sana configures
+# these values, the live-production step fails loudly with a clear
+# explanation rather than silently reporting a false success. The canary's own
 # test suite (fixture-based, no live credentials needed) always runs
 # regardless, on every dispatch.
 
@@ -57,16 +56,17 @@ jobs:
       - name: Run the canary's own fixture-based test suite (always — no live credentials required)
         run: npm run test:carson-production-canary
 
-      - name: Check required secrets are configured
-        id: secrets_check
+      - name: Check required canary configuration
+        id: config_check
         env:
           HAS_VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN != '' }}
-          HAS_VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID != '' }}
-          HAS_SUPABASE_URL: ${{ secrets.SUPABASE_URL != '' }}
-          HAS_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+          HAS_CANARY_RPC_TOKEN: ${{ secrets.CANARY_RPC_TOKEN != '' }}
+          HAS_VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID != '' }}
+          HAS_SUPABASE_URL: ${{ vars.SUPABASE_URL != '' }}
+          HAS_SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY != '' }}
         run: |
-          if [ "$HAS_VERCEL_TOKEN" != "true" ] || [ "$HAS_VERCEL_PROJECT_ID" != "true" ] || [ "$HAS_SUPABASE_URL" != "true" ] || [ "$HAS_SUPABASE_SERVICE_ROLE_KEY" != "true" ]; then
-            echo "::error::carson-production-canary requires VERCEL_TOKEN, VERCEL_PROJECT_ID, SUPABASE_URL, and SUPABASE_SERVICE_ROLE_KEY repository secrets, which are not all configured. This is a known, documented limitation as of Phase 7 (see RA7ETBAL_STATE.md) — the live-production check cannot run until these are added. Failing loudly rather than reporting a false success."
+          if [ "$HAS_VERCEL_TOKEN" != "true" ] || [ "$HAS_CANARY_RPC_TOKEN" != "true" ] || [ "$HAS_VERCEL_PROJECT_ID" != "true" ] || [ "$HAS_SUPABASE_URL" != "true" ] || [ "$HAS_SUPABASE_PUBLISHABLE_KEY" != "true" ]; then
+            echo "::error::carson-production-canary requires secrets VERCEL_TOKEN/CANARY_RPC_TOKEN and variables VERCEL_PROJECT_ID/SUPABASE_URL/SUPABASE_PUBLISHABLE_KEY. SUPABASE_SERVICE_ROLE_KEY is deliberately forbidden. Failing loudly rather than reporting a false success."
             exit 1
           fi
           echo "configured=true" >> "$GITHUB_OUTPUT"
@@ -74,9 +74,10 @@ jobs:
       - name: Run the live production canary
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-          VERCEL_TEAM_ID: ${{ secrets.VERCEL_TEAM_ID }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+          VERCEL_TEAM_ID: ${{ vars.VERCEL_TEAM_ID }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY }}
+          CANARY_RPC_TOKEN: ${{ secrets.CANARY_RPC_TOKEN }}
           EXPECTED_PRODUCTION_SHA: ${{ inputs.expected_sha || github.sha }}
         run: npm run carson:production-canary

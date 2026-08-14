@@ -7,6 +7,7 @@ import {
   evaluateAmbiguousBindings,
   evaluateConstraintExists,
   evaluatePersonIdContinuity,
+  evaluateDerivedDatabaseHealth,
   buildCanaryReport,
   HUMAN_ONLY_BOUNDARIES,
   redactAuthHeader,
@@ -168,6 +169,41 @@ describe("evaluatePersonIdContinuity — automation-runner Communication History
   });
 });
 
+describe("evaluateDerivedDatabaseHealth — aggregate-only RPC boundary", () => {
+  it("maps a healthy bounded aggregate to both existing canary verdicts", () => {
+    const result = evaluateDerivedDatabaseHealth({
+      canonical_binding_healthy: true,
+      ambiguous_binding_count: 0,
+      person_id_continuity_healthy: true,
+      violating_row_count: 0,
+      checked_since: "2026-07-16T00:00:00Z",
+    });
+    expect(result.binding).toEqual({ ok: true, ambiguousBindingCount: 0 });
+    expect(result.continuity).toEqual({
+      ok: true,
+      violatingRowCount: 0,
+      checkedSince: "2026-07-16T00:00:00Z",
+    });
+  });
+
+  it("reports counts without accepting an inconsistent healthy flag", () => {
+    const result = evaluateDerivedDatabaseHealth({
+      canonical_binding_healthy: true,
+      ambiguous_binding_count: 1,
+      person_id_continuity_healthy: false,
+      violating_row_count: 2,
+    });
+    expect(result.binding).toEqual({ ok: false, ambiguousBindingCount: 1 });
+    expect(result.continuity.ok).toBe(false);
+    expect(result.continuity.violatingRowCount).toBe(2);
+  });
+
+  it("fails closed on missing or malformed RPC output", () => {
+    expect(evaluateDerivedDatabaseHealth(null).binding.ok).toBe(false);
+    expect(evaluateDerivedDatabaseHealth({ ambiguous_binding_count: "not-a-count" }).continuity.ok).toBe(false);
+  });
+});
+
 describe("buildCanaryReport", () => {
   it("ok=true when every check passes, and humanOnlyBoundaries is still reported (not omitted just because everything passed)", () => {
     const report = buildCanaryReport({
@@ -223,24 +259,28 @@ describe("secrets are never printed", () => {
     expect(source).toMatch(/redactAuthHeader/); // the redaction helper must exist and be used
   });
 
-  it("redactAuthHeader redacts BOTH Authorization and apikey — fetchSupabaseTable sends the same raw service-role key in both headers at once, so redacting only one would still leak it in an error message", () => {
-    const headers = { Authorization: "Bearer service-role-secret-value", apikey: "service-role-secret-value", "Content-Type": "application/json" };
+  it("redactAuthHeader redacts BOTH Authorization and apikey", () => {
+    const headers = { Authorization: "Bearer publishable-key-value", apikey: "publishable-key-value", "Content-Type": "application/json" };
     const redacted = redactAuthHeader(headers);
     expect(redacted.Authorization).toBe("[redacted]");
     expect(redacted.apikey).toBe("[redacted]");
     expect(redacted["Content-Type"]).toBe("application/json"); // unrelated headers pass through untouched
-    expect(JSON.stringify(redacted)).not.toContain("service-role-secret-value");
+    expect(JSON.stringify(redacted)).not.toContain("publishable-key-value");
+  });
+
+  it("never references the Supabase service-role credential and never logs the RPC request body", () => {
+    const source = readFileSync(resolve(__dirname, "carson-production-canary.mjs"), "utf8");
+    expect(source).not.toContain("SUPABASE_SERVICE_ROLE_KEY");
+    expect(source).not.toMatch(/JSON\.stringify\(options\?\.body|options\?\.body.*console/);
   });
 });
 
 describe("cannot mutate protected business state — static source scan", () => {
-  it("the canary module never calls a Supabase/PostgREST mutation method or HTTP verb", () => {
+  it("the canary module has exactly one POST, to the fixed aggregate-only RPC, and no mutation method", () => {
     const source = readFileSync(resolve(__dirname, "carson-production-canary.mjs"), "utf8");
-    // Forbidden: any Supabase client mutation call, or a fetch with a
-    // non-GET method (PostgREST mutations always require POST/PATCH/PUT/
-    // DELETE — a plain GET, which is all this file ever issues, cannot
-    // mutate anything).
     expect(source).not.toMatch(/\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);
-    expect(source).not.toMatch(/method:\s*["'](POST|PATCH|PUT|DELETE)["']/i);
+    expect(source.match(/method:\s*["']POST["']/g)).toHaveLength(1);
+    expect(source).toContain("/rest/v1/rpc/carson_production_canary_health");
+    expect(source).not.toMatch(/method:\s*["'](PATCH|PUT|DELETE)["']/i);
   });
 });
