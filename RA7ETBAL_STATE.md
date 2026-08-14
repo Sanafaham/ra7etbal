@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-14 (Notifications Inbox release-stabilization closure; Carson Engineering Hardening Project Phase 6)
+Last updated: 2026-08-14 (Notifications Inbox release-stabilization closure; Carson Engineering Hardening Project Phase 7)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -52,7 +52,7 @@ Two stale documentation corrections found and fixed in this same pass (no code i
 
 **Zero genuine B (open, needs new implementation) items were found.** The Carson Engineering Hardening Project may begin once Sana's morning-brief check above is resolved, or on her explicit decision to proceed without waiting for it.
 
-**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–6 are complete and merged (PR #257, #258, #259, #260, #261, #262, #263, #266) — see "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)", "— Phase 5 (stale-state / engineering-record protection)", and "— Phase 6 (GitHub merge/branch protection hardening)" below for the current phases' evidence. Phase 7 has not been authorized.
+**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–7 are complete and merged (PR #257, #258, #259, #260, #261, #262, #263, #266, #267, #268) — see "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)", "— Phase 5 (stale-state / engineering-record protection)", "— Phase 6 (GitHub merge/branch protection hardening)", and "— Phase 7 (release canaries for high-risk capabilities)" below for the current phases' evidence. Phase 8 has not been authorized.
 
 ### Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing) — CLOSED, MERGED
 
@@ -92,7 +92,23 @@ Branch protection on `main` was then updated directly via the GitHub API: `requi
 
 Remaining limitations: no branch-protection ruleset (classic protection only); no merge queue (not needed at current single-PR-at-a-time usage); required PR review is intentionally absent per the reasoning above, so a compromised admin credential could still merge unreviewed code as long as it passes CI — only a second human reviewer or signed-commit policy would close that residual gap, and neither is operationally available today.
 
-Phase 7 scope has not been authorized — do not begin without Sana's explicit go-ahead.
+### Carson Engineering Hardening Project — Phase 7 (release canaries for high-risk capabilities) — CLOSED, MERGED
+
+PR #268 (`dc02540109b5d6602151ae04966e7f62c06fd644`). Merge success alone doesn't prove a deployed system is healthy, so this adds a deliberately small, read-only, out-of-band post-deployment canary (`ra7etbal-v2/scripts/carson-production-canary.mjs`) for the invariant classes known from Phase 0's real incidents to be able to pass CI and still fail after deployment: deployment identity, WhatsApp canonical-binding ambiguity (Incident 1), and automation-runner person_id continuity (Incidents 3/4).
+
+No new `/api` health route was added — the repository is on Vercel's Hobby plan with exactly 12/12 Serverless Functions already in use (confirmed live via `lambdaRuntimeStats`), and a 13th route risks breaking production entirely. The canary instead runs as an out-of-band Node script, the same pattern already established by `scripts/carson-diagnose.mjs`, invoked manually or via a new `workflow_dispatch`-only GitHub Actions workflow (`.github/workflows/carson-production-canary.yml`) that never runs on ordinary PR builds.
+
+Every check is strictly read-only (`GET`-only, no Supabase mutation method anywhere in the file — statically scanned by its own test suite); it cannot send a WhatsApp message, push notification, or create/alter any task, reminder, automation, or owner decision.
+
+`carson-protected-registry.json`'s five Phase-1-era `production_canary_required` placeholders (never implemented until now) were investigated and honestly classified: `owner_whatsapp_canonical_routing` and the new `deployment_identity_verification` entry are **A** (fully automated); `automation_execution_confirmation`, `communication_history`, and `whatsapp_delivery_person_identity_continuity` are **A (partial)** — each entry documents precisely what the canary proves and what it explicitly does not; `owner_completion_push` was corrected from `true` to **B** (its specific historical defect has no stored production evidence to check against — task-confirm.js's existing pre-merge regression test is the stronger, correct guard); `auth_rls` is **B** (Phase 4's real-Postgres RLS tests are the stronger pre-merge guard); Notifications Inbox durable lifecycle is **C** (genuinely requires a real device/human tap, documented, never silently marked PASS).
+
+**Live production verification (2026-08-14, not a fixture):** run against the real, freshly-deployed production system at this PR's own merge SHA (Vercel deployment `dpl_CWNGcEv1wgziy5RZFmy8CAYWXYyu`, confirmed `readyState: READY`, `target: production`, `aliasError: null`, `githubCommitSha` matching exactly, `www.ra7etbal.com` alias present, `lambdaRuntimeStats` confirming still 12 functions). Supabase project `ggarvhgqzpooloacjgcj` queried read-only: zero ambiguous `whatsapp_health_state` bindings (2 healthy rows, one per phone_number_id), zero automation-runner `whatsapp_deliveries` rows missing `person_id` despite a resolvable assignee in the last 30 days. All three automated checks passed; the one human-only boundary (Notifications Inbox) was reported, not silently marked PASS.
+
+Not implemented, honestly: `evaluateConstraintExists` (schema-catalog check) is exported and tested but not wired into the live CLI — PostgREST has no `pg_catalog` route without a dedicated introspection RPC, and creating one would itself be a schema change, out of scope; that exact constraint is already verified pre-merge by Phase 4's `carson-tier1-db-contracts.yml`. The GitHub Actions workflow cannot run unattended yet — it requires `VERCEL_TOKEN`, `VERCEL_PROJECT_ID`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` repository secrets that are not yet configured (only `CRON_SECRET` exists); it fails loudly with a clear message rather than reporting a false success when they're absent, and its fixture-based test suite (needing no live credentials) always runs regardless.
+
+No production runtime code or schema changed. No Carson business contract (WhatsApp semantics, owner decisions, Needs You/Waiting/Handled, task confirmation, Communication History, Talk/Type, reminder scheduling, automation sync, Notifications Inbox) touched.
+
+Phase 8 scope has not been authorized — do not begin without Sana's explicit go-ahead.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
