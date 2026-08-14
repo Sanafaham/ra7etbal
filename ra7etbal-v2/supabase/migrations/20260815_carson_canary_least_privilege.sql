@@ -132,12 +132,12 @@ $function$;
 
 ALTER FUNCTION public.carson_production_canary_health(text)
   OWNER TO carson_canary_function_owner;
-REVOKE carson_canary_function_owner FROM postgres;
 REVOKE CREATE ON SCHEMA public FROM carson_canary_function_owner;
 
 REVOKE ALL ON FUNCTION public.carson_production_canary_health(text)
   FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.carson_production_canary_health(text) TO anon;
+REVOKE carson_canary_function_owner FROM postgres;
 
 COMMENT ON FUNCTION public.carson_production_canary_health(text) IS
   'Token-gated, read-only aggregate health for the out-of-band Carson production canary. Returns no raw production rows.';
