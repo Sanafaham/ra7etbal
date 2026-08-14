@@ -1,26 +1,22 @@
 name: staff-escalation-migration-verification
 
-# Focused, path-filtered — unlike carson-protected-behaviors.yml this only
-# needs to run when the Phase A owner-escalation migration files or this
-# workflow itself change. Verifies the migration against a genuine,
-# ephemeral PostgreSQL service (not Supabase, not production): applies the
-# two real prerequisite migrations plus the new forward migration, runs a
-# full real-database lifecycle/RLS/grants/atomicity verification, applies
-# the rollback, verifies cleanup and pre-existing-data preservation,
-# reapplies the forward migration, and reruns the lifecycle verification.
-
+# Verifies the migration against a genuine, ephemeral PostgreSQL service
+# (not Supabase, not production): applies the two real prerequisite
+# migrations plus the new forward migration, runs a full real-database
+# lifecycle/RLS/grants/atomicity verification, applies the rollback,
+# verifies cleanup and pre-existing-data preservation, reapplies the
+# forward migration, and reruns the lifecycle verification.
+#
+# Final gap-closure pass (Carson Engineering Hardening Project): no longer
+# path-filtered at the workflow-trigger level, for the same reason Phase 6
+# removed carson-tier1-db-contracts.yml's filter — a required check that
+# never runs on an unrelated PR deadlocks it forever. Triggers on every PR
+# to main; an internal "Determine relevance" step (git diff against the
+# PR base) gates the expensive Postgres steps, not the job itself, so an
+# unrelated PR still gets a genuine, fast success.
 "on":
   pull_request:
     branches: [main]
-    paths:
-      - "ra7etbal-v2/supabase/migrations/20260720_create_staff_messages.sql"
-      - "ra7etbal-v2/supabase/migrations/20260724_staff_message_response_delivery.sql"
-      - "ra7etbal-v2/supabase/migrations/20260726_staff_escalation_owner_decisions.sql"
-      - "ra7etbal-v2/supabase/migrations/20260726_staff_escalation_owner_decisions.rollback.sql"
-      - "ra7etbal-v2/supabase/migrations/20260727_staff_escalation_owner_notification_lease.sql"
-      - "ra7etbal-v2/supabase/migrations/20260727_staff_escalation_owner_notification_lease.rollback.sql"
-      - "ra7etbal-v2/supabase/migrations/verification/**"
-      - ".github/workflows/staff-escalation-migration-verification.yml"
   push:
     branches: [feat/staff-escalation-owner-decisions-schema, feat/staff-escalation-phase-b-notify]
   workflow_dispatch: {}
@@ -54,54 +50,91 @@ jobs:
       MIGRATIONS: ra7etbal-v2/supabase/migrations
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine relevance
+        id: relevance
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
+          echo "$CHANGED"
+          PATTERN='^ra7etbal-v2/supabase/migrations/(20260720_create_staff_messages\.sql|20260724_staff_message_response_delivery\.sql|20260726_staff_escalation_owner_decisions(\.rollback)?\.sql|20260727_staff_escalation_owner_notification_lease(\.rollback)?\.sql|verification/(00_bootstrap_minimal_auth|0[1-5]_.*)\.sql)$|^\.github/workflows/staff-escalation-migration-verification\.yml$'
+          if echo "$CHANGED" | grep -Eq "$PATTERN"; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Wait for Postgres
+        if: steps.relevance.outputs.relevant == 'true'
         run: pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
 
       - name: Bootstrap minimal auth-compatible schema
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/00_bootstrap_minimal_auth.sql"
 
       - name: Apply prerequisite migration — create_staff_messages
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260720_create_staff_messages.sql"
 
       - name: Apply prerequisite migration — staff_message_response_delivery
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260724_staff_message_response_delivery.sql"
 
       - name: Insert pre-existing-data fixture (must survive rollback)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/01_preexisting_data_fixture.sql"
 
       - name: Apply forward migration — staff_escalation_owner_decisions
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260726_staff_escalation_owner_decisions.sql"
 
       - name: Real-database lifecycle verification (first apply)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/02_lifecycle_verification.sql"
 
       - name: Apply rollback migration
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260726_staff_escalation_owner_decisions.rollback.sql"
 
       - name: Post-rollback verification (cleanup + data preservation)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/03_post_rollback_verification.sql"
 
       - name: Reapply forward migration
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260726_staff_escalation_owner_decisions.sql"
 
       - name: Real-database lifecycle verification (after reapply)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/02_lifecycle_verification.sql"
 
       - name: Apply forward migration — owner_notification_lease
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260727_staff_escalation_owner_notification_lease.sql"
 
       - name: Owner-notification lease verification (first apply)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/04_owner_notification_lease_verification.sql"
 
       - name: Apply rollback migration — owner_notification_lease
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260727_staff_escalation_owner_notification_lease.rollback.sql"
 
       - name: Owner-notification lease post-rollback verification
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/05_owner_notification_lease_post_rollback_verification.sql"
 
       - name: Reapply forward migration — owner_notification_lease
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260727_staff_escalation_owner_notification_lease.sql"
 
       - name: Owner-notification lease verification (after reapply)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/04_owner_notification_lease_verification.sql"

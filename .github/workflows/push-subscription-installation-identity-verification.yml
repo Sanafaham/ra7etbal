@@ -1,24 +1,25 @@
 name: push-subscription-installation-identity-verification
 
-# Focused, path-filtered — verifies
-# 20260810_push_subscription_installation_identity.sql against a genuine,
-# ephemeral PostgreSQL service (not Supabase, not production). Applies a
-# self-contained bootstrap (this migration has no in-repo creation
-# migration to build on — push_subscriptions predates this repo's
-# migrations convention), inserts pre-existing legacy data, applies the
-# forward migration, runs lifecycle + legacy-backfill + real two-connection
-# concurrency + security verification, applies the rollback, verifies
-# cleanup and data preservation, reapplies the forward migration, and
-# reruns the (rerun-safe) lifecycle verification.
-
+# Verifies 20260810_push_subscription_installation_identity.sql against a
+# genuine, ephemeral PostgreSQL service (not Supabase, not production).
+# Applies a self-contained bootstrap (this migration has no in-repo
+# creation migration to build on — push_subscriptions predates this
+# repo's migrations convention), inserts pre-existing legacy data, applies
+# the forward migration, runs lifecycle + legacy-backfill + real
+# two-connection concurrency + security verification, applies the
+# rollback, verifies cleanup and data preservation, reapplies the forward
+# migration, and reruns the (rerun-safe) lifecycle verification.
+#
+# Final gap-closure pass (Carson Engineering Hardening Project): no longer
+# path-filtered at the workflow-trigger level, for the same reason Phase 6
+# removed carson-tier1-db-contracts.yml's filter — a required check that
+# never runs on an unrelated PR deadlocks it forever. Triggers on every PR
+# to main; an internal "Determine relevance" step (git diff against the
+# PR base) gates the expensive Postgres steps, not the job itself, so an
+# unrelated PR still gets a genuine, fast success.
 "on":
   pull_request:
     branches: [main]
-    paths:
-      - "ra7etbal-v2/supabase/migrations/20260810_push_subscription_installation_identity.sql"
-      - "ra7etbal-v2/supabase/migrations/20260810_push_subscription_installation_identity.rollback.sql"
-      - "ra7etbal-v2/supabase/migrations/verification/push_subscriptions_*.sql"
-      - ".github/workflows/push-subscription-installation-identity-verification.yml"
   push:
     branches: [feat/push-subscription-installation-identity]
   workflow_dispatch: {}
@@ -53,40 +54,71 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
 
+      - name: Determine relevance
+        id: relevance
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
+          echo "$CHANGED"
+          PATTERN='^ra7etbal-v2/supabase/migrations/(20260810_push_subscription_installation_identity(\.rollback)?\.sql|verification/push_subscriptions_.*\.sql)$|^\.github/workflows/push-subscription-installation-identity-verification\.yml$'
+          if echo "$CHANGED" | grep -Eq "$PATTERN"; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Wait for Postgres
+        if: steps.relevance.outputs.relevant == 'true'
         run: pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
 
       - name: Bootstrap minimal auth-compatible schema + push_subscriptions
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_bootstrap.sql"
 
       - name: Insert pre-existing legacy data (must survive migration + rollback)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_preexisting_fixture.sql"
 
       - name: Apply forward migration
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260810_push_subscription_installation_identity.sql"
 
       - name: Lifecycle verification (first apply)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_lifecycle_verification.sql"
 
       - name: Legacy backfill verification (run once only)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_legacy_backfill_verification.sql"
 
       - name: Real two-connection concurrency verification
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_concurrency_verification.sql"
 
       - name: RPC privilege + cross-user isolation verification
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_security_verification.sql"
 
       - name: Apply rollback migration
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260810_push_subscription_installation_identity.rollback.sql"
 
       - name: Post-rollback verification (cleanup + legacy data preservation)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_post_rollback_verification.sql"
 
       - name: Reapply forward migration
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260810_push_subscription_installation_identity.sql"
 
       - name: Lifecycle verification (after reapply)
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/push_subscriptions_lifecycle_verification.sql"
