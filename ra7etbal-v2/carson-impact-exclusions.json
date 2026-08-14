@@ -1,0 +1,66 @@
+{
+  "$schema_version": 1,
+  "purpose": "The narrowest possible allowlist of production files under api/, src/lib/, and supabase/migrations/ that the Impact-Aware CI fail-closed gate (scripts/impact-map.mjs) must NOT require a registry mapping for. This is not a directory exclusion — every entry is one exact file path with an individually-verified, one-line justification. A file only belongs here if it contains zero Carson protected-capability business logic (no decision routing, delegation, WhatsApp send/delivery, automation execution, reminder scheduling, Communication History, push lifecycle, or auth/RLS enforcement) — generic app-shell, third-party integration passthrough, or UI-only plumbing. When in doubt, a file is NOT excluded and must fail closed until the registry is updated truthfully.",
+  "excluded_files": [
+    {
+      "path": "api/weather.js",
+      "justification": "Weather widget backend (Open-Meteo passthrough). Produces a Carson-ready spoken sentence as a data source, but contains no decision routing, delegation, WhatsApp, automation, reminder, Communication History, push, or auth logic of its own."
+    },
+    {
+      "path": "api/google-calendar.js",
+      "justification": "Google Calendar OAuth + read integration. Listed as an in-progress/beta roadmap item (CLAUDE.md 'NEXT PRIORITY ORDER #2'), not yet a registered Tier 1 capability, and contains no logic touching any of the 14 registered capabilities' contracts."
+    },
+    {
+      "path": "api/anthropic.js",
+      "justification": "Generic passthrough proxy to the Anthropic API (forwards the request body, checks for an API key, returns the response). No Carson-specific business logic — used as raw infrastructure by higher-level modules that ARE registered."
+    },
+    {
+      "path": "api/transcribe.js",
+      "justification": "Generic passthrough proxy to OpenAI Whisper transcription (streams the multipart body through unchanged). No Carson-specific business logic."
+    },
+    {
+      "path": "src/lib/supabase.ts",
+      "justification": "Supabase client singleton initialization only (reads env vars, constructs the client). No business logic."
+    },
+    {
+      "path": "src/lib/pwa.ts",
+      "justification": "Service worker registration boilerplate (navigator.serviceWorker.register). No Carson business logic."
+    },
+    {
+      "path": "src/lib/pwa-standalone.ts",
+      "justification": "Detects whether the app is running as an installed standalone PWA, for iOS push-support messaging. Platform-detection utility, not a Carson decision/communication/automation contract."
+    },
+    {
+      "path": "src/lib/chip-auto-scroll.ts",
+      "justification": "Pure DOM-free UI logic for the Updates chip row's idle auto-scroll marquee. Presentational only."
+    },
+    {
+      "path": "src/lib/session.ts",
+      "justification": "Client-side Supabase Auth session state machine (sign-in/sign-out/session-restore). This is NOT the auth_rls capability, which is about server-side Postgres row-level-security policy enforcement — this file has no RLS policy logic, it only tracks the browser's current auth session."
+    },
+    {
+      "path": "src/lib/auth.ts",
+      "justification": "Public sign-in/sign-up/sign-out action wrappers around the Supabase Auth SDK, with error-message normalization. Same distinction as session.ts — no RLS policy logic."
+    },
+    {
+      "path": "src/lib/image-upload.ts",
+      "justification": "Generic Supabase Storage image resize/upload helper used by multiple unrelated features (task images, proof photos). No decision, delegation, or delivery logic of its own — it is a storage utility other registered modules call into."
+    },
+    {
+      "path": "src/lib/cleanup.ts",
+      "justification": "Account-level 'delete all my tasks and messages' data-management utility. Not part of any Carson decision/communication/automation/delivery contract."
+    },
+    {
+      "path": "src/lib/archive.ts",
+      "justification": "Sets archived_at on completed tasks/messages so they leave active views. UI/data-lifecycle housekeeping, not a Carson decision or communication contract."
+    },
+    {
+      "path": "src/lib/copy-message.ts",
+      "justification": "Builds delegation message text for the owner to manually copy to clipboard as a fallback UI action — not the system's actual WhatsApp delegation send path (that is src/lib/delegations.ts, already registered under staff_delegation)."
+    },
+    {
+      "path": "src/lib/dismissed-notifications.ts",
+      "justification": "UI-only confirmation-banner dismissal state persisted on the task row. Presentational, not a decision/communication/automation contract."
+    }
+  ]
+}
