@@ -52,7 +52,7 @@ Two stale documentation corrections found and fixed in this same pass (no code i
 
 **Zero genuine B (open, needs new implementation) items were found.** The Carson Engineering Hardening Project may begin once Sana's morning-brief check above is resolved, or on her explicit decision to proceed without waiting for it.
 
-**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–8 are complete and merged (PR #257, #258, #259, #260, #261, #262, #263, #266, #267, #268, #269, #270) — see "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)", "— Phase 5 (stale-state / engineering-record protection)", "— Phase 6 (GitHub merge/branch protection hardening)", "— Phase 7 (release canaries for high-risk capabilities)", and "— Phase 8 (safe release + rollback contract)" below for the current phases' evidence. Phase 9 has not been authorized.
+**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–8 are complete and merged (PR #257, #258, #259, #260, #261, #262, #263, #266, #267, #268, #269, #270, #271). No numbered Phase 9 was authorized — instead, a final gap-closure pass was run against every unresolved gap already recorded across Phases 0–8 (see "— Final gap-closure pass 1" below). See "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)", "— Phase 5 (stale-state / engineering-record protection)", "— Phase 6 (GitHub merge/branch protection hardening)", "— Phase 7 (release canaries for high-risk capabilities)", "— Phase 8 (safe release + rollback contract)", and "— Final gap-closure pass 1" below for evidence.
 
 ### Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing) — CLOSED, MERGED
 
@@ -126,7 +126,24 @@ Honest limitations, not silently covered: the migration classifier is a text-pat
 
 No production runtime code or schema changed. No Carson business contract touched.
 
-Phase 9 scope has not been authorized — do not begin without Sana's explicit go-ahead.
+### Carson Engineering Hardening Project — Final gap-closure pass 1 — CLOSED, MERGED
+
+PR #272 (`cd12f2c17e42b41c2a2c1afb2a93a9bef905bc4b`). No numbered "Phase 9" was invented — investigation confirmed no such phase exists anywhere in this file, `carson-protected-registry.json`, or the Carson Master Plan; every phase from 0–8 was individually scoped by Sana in real time. Instead, every unresolved gap already recorded across Phases 0–8's registry entries was inventoried, classified, and closed where it was genuinely safe to do so.
+
+**MUST CLOSE items closed:**
+- CI-membership gap: 6 registry-flagged test files (`api/_escalation-notify.test.js`, `api/send-whatsapp-task.test.js`, `api/reminder-writer-authority.test.js`, `api/server-authoritative-reminder-migration.test.js`, `src/lib/whatsapp-delivery-context.test.ts`, plus the new cross-writer journey below), each verified to pass standalone before being added to the required `test:carson-protected` suite. `owner_decision_lifecycle` and `whatsapp_delivery_person_identity_continuity` flipped `protected_suite: true`, now genuinely accurate.
+- Golden Journey #6 cross-writer gap: new `api/golden-journey-communication-history-cross-writer.test.js` proves `buildCommunicationHistory` correctly combines a live-conversation-written event and an automation-runner-written event for the same person in one call — the specific "in one integration test" gap left open since Phase 0/3. The third writer named in the original gap note (the owner-facing reminder path) was investigated and confirmed to never set `person_id` at all, by design — correctly excluded, not a remaining gap.
+- 4 already-existing, already-passing real-Postgres verification workflows made deadlock-safe (same pattern Phase 6 used for `carson-tier1-db-contracts.yml` — path filters removed, internal git-diff relevance gating added instead): `push-subscription-installation-identity-verification.yml`, `staff-escalation-migration-verification.yml`, `server-authoritative-reminder-rls-verification.yml` (verifies the exact migration Phase 8's classifier independently flagged class 4/destructive), `owner-reminder-whatsapp-claim-verification.yml`. All 4 proven live in PR #272's own CI run.
+
+**Investigated and honestly classified as PRODUCT/ROADMAP (requires Sana's own design review), not implemented:** a single-writer RPC gatekeeper for `whatsapp_deliveries`. Real investigation found 3+ genuinely distinct production writer paths today (`api/_whatsapp-delivery.js:beginWhatsappDelivery` and `api/_owner-reminder-whatsapp.js:claimOwnerReminderDelivery`, both raw REST inserts, plus SQL-embedded `INSERT`s inside 3+ separate RPC functions across different migrations). Converting this to one gatekeeper RPC means rewriting every current writer's established call shape — a real production writer-contract change, not a test gap.
+
+**ACCEPTABLE DOCUMENTED LIMITATIONS (not closed, deliberately):** every deliberate design tradeoff already documented in Phases 1–8's own registry `unresolved` notes remains exactly that — e.g. `stale_state_doc_integrity`'s neutral-section-disappearance and heading-rename edge cases (avoiding a brittle prose-diff system), `safe_release_rollback_contract`'s PL/pgSQL fail-closed-to-unknown classifier behavior, `auth_rls`'s remaining 72-of-76 unverified migrations (spot-checking high-risk ones was always the stated scope, not exhaustive coverage).
+
+**REQUIRES SANA (not closed, cannot be):** `hosting_operations`' Tier classification (an explicit product decision); the 4 GitHub Actions secrets Phase 7's canary and Phase 8's automated ledger updates need (`VERCEL_TOKEN`, `VERCEL_PROJECT_ID`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`); branch-protection required-check status for the 4 newly deadlock-safe workflows above (an explicit follow-up action on GitHub's own configuration, not bundled into this code PR).
+
+No production runtime code or schema changed. No Carson business contract touched.
+
+**Engineering hardening status:** the approved Carson Engineering Hardening Project (Phases 0–8) plus this gap-closure pass constitute the complete, currently-authorized scope. Every genuinely closeable gap identified through this pass has been closed, documented as an acceptable limitation, classified as product/roadmap work, or flagged as requiring Sana directly — none were silently dropped. Remaining work (the RPC gatekeeper investigation, the 4 pending secrets, Tier classification, branch-protection follow-up) all require a decision only Sana can make. No further phase is authorized — do not begin new hardening work without Sana's explicit go-ahead.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
