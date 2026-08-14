@@ -181,9 +181,15 @@ export const HUMAN_ONLY_BOUNDARIES = [
 
 const VERCEL_API = "https://api.vercel.com";
 
-function redactAuthHeader(headers) {
+export function redactAuthHeader(headers) {
   const copy = { ...headers };
+  // Both the Vercel Bearer token and the Supabase service-role key travel
+  // as raw values in these two header names — fetchSupabaseTable sends
+  // the SAME secret in both `apikey` and `Authorization` at once, so both
+  // must be redacted or a failed Supabase call would leak the raw
+  // service-role key into a public CI log via this error message.
   if (copy.Authorization) copy.Authorization = "[redacted]";
+  if (copy.apikey) copy.apikey = "[redacted]";
   return copy;
 }
 

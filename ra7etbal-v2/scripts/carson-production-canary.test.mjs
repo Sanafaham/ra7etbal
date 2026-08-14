@@ -9,6 +9,7 @@ import {
   evaluatePersonIdContinuity,
   buildCanaryReport,
   HUMAN_ONLY_BOUNDARIES,
+  redactAuthHeader,
 } from "./carson-production-canary.mjs";
 
 // Phase 7 of the Carson Engineering Hardening Project. These tests prove
@@ -220,6 +221,15 @@ describe("secrets are never printed", () => {
     const source = readFileSync(resolve(__dirname, "carson-production-canary.mjs"), "utf8");
     expect(source).not.toMatch(/Bearer [A-Za-z0-9_-]{20,}/);
     expect(source).toMatch(/redactAuthHeader/); // the redaction helper must exist and be used
+  });
+
+  it("redactAuthHeader redacts BOTH Authorization and apikey — fetchSupabaseTable sends the same raw service-role key in both headers at once, so redacting only one would still leak it in an error message", () => {
+    const headers = { Authorization: "Bearer service-role-secret-value", apikey: "service-role-secret-value", "Content-Type": "application/json" };
+    const redacted = redactAuthHeader(headers);
+    expect(redacted.Authorization).toBe("[redacted]");
+    expect(redacted.apikey).toBe("[redacted]");
+    expect(redacted["Content-Type"]).toBe("application/json"); // unrelated headers pass through untouched
+    expect(JSON.stringify(redacted)).not.toContain("service-role-secret-value");
   });
 });
 
