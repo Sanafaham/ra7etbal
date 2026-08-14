@@ -11,16 +11,19 @@ name: carson-state-doc-integrity
 # be deleted) — see ra7etbal-v2/scripts/state-doc-integrity.mjs for the
 # full mechanism and its real-history counterfactual test.
 #
-# This is visible and reliable but is NOT yet a required branch-protection
-# merge gate — that is explicit Phase 6 scope, not decided here.
+# Phase 6: no longer path-filtered. This check's own cost is small (no
+# Postgres service, a lightweight unit-test suite, one node invocation), so
+# there is no expensive work worth conditionally skipping — it simply runs
+# on every PR. This also matters for correctness, not just deadlock-safety:
+# a required GitHub check that only runs when RA7ETBAL_STATE.md itself
+# changed would never run on a PR that changed something else, so it would
+# never appear at all on such a PR and permanently block it (a deadlock).
+# Running unconditionally is both simpler and safe — when RA7ETBAL_STATE.md
+# isn't touched, the base and proposed content are identical and the
+# checker trivially reports zero findings.
 "on":
   pull_request:
     branches: [main]
-    paths:
-      - "RA7ETBAL_STATE.md"
-      - "ra7etbal-v2/scripts/state-doc-integrity.mjs"
-      - "ra7etbal-v2/scripts/state-doc-integrity.test.mjs"
-      - ".github/workflows/carson-state-doc-integrity.yml"
 
 permissions:
   contents: read
