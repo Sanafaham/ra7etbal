@@ -32,7 +32,7 @@
         "data_repairs": ["supabase/data-repairs/20260813_whatsapp_health_state_phantom_bindings.sql"]
       },
       "external_boundaries": ["Meta/WhatsApp Cloud API webhook"],
-      "focused_tests": ["api/whatsapp-webhook.test.js", "api/_owner-whatsapp-routing.test.js"],
+      "focused_tests": ["api/whatsapp-webhook.test.js", "api/_owner-whatsapp-routing.test.js", "api/whatsapp-health-state-writer-authority.test.js"],
       "protected_suite": true,
       "golden_journey_required": false,
       "golden_journey_tests": [],
@@ -50,12 +50,11 @@
         "script": "scripts/carson-production-canary.mjs (evaluateAmbiguousBindings, evaluateDeploymentIdentity)",
         "workflow": ".github/workflows/carson-production-canary.yml",
         "proves": "No two active accounts are bound to the same WhatsApp phone_number_id in production right now, read-only, against real live data — the exact Incident 1 shape (a phantom/ambiguous binding silently broke inbound-owner trust for a full day with zero error surface).",
-        "does_not_prove": "That every future writer into whatsapp_health_state is correctly scoped (see this capability's existing 'unresolved' note above) — the canary only observes the resulting row state, not writer discipline. Does not verify the UNIQUE(phone_number_id) constraint still exists in the schema catalog (PostgREST has no pg_catalog access without a dedicated introspection RPC, which Phase 7 deliberately did not create — that check is instead already covered pre-merge by Phase 4's carson-tier1-db-contracts.yml)."
+        "does_not_prove": "That every future writer into whatsapp_health_state is correctly scoped — the canary only observes the resulting row state, not writer discipline; that is now covered separately by api/whatsapp-health-state-writer-authority.test.js (a static-source writer-authority test, proven live via real counterfactual mutation of each invariant it checks). Does not verify the UNIQUE(phone_number_id) constraint still exists in the schema catalog (PostgREST has no pg_catalog access without a dedicated introspection RPC, which Phase 7 deliberately did not create — that check is instead already covered pre-merge by Phase 4's carson-tier1-db-contracts.yml)."
       },
       "rollback_risk": "high — prior failure mode was silent (zero error surface) for a full day",
       "verification_status": "PRODUCTION VERIFIED — PR #244, migration 20260813_whatsapp_health_state_phone_number_unique.sql adds UNIQUE(phone_number_id). Phase 4: real-PostgreSQL contract proof added (UNIQUE(phone_number_id) rejection, RLS owner isolation, service-role write distinction, rollback/reapply cycle) — carson-tier1-db-contracts.yml, not yet a required check.",
       "unresolved": [
-        "No test or CI check currently proves that every future writer into whatsapp_health_state is scoped to phone_number_id + caller-verified user_id — only recordWebhookHeartbeat's current shape is covered. Flagged as an open design gap, not fabricated as already-covered.",
         "api/_owner-command-executor.js was found unreferenced by any Phase 1 capability during Phase 2's impact-mapper build, even though its tests (api/_owner-command-executor.test.js, api/_owner-command-executor.execution.test.js) were already in the required CI suite since Phase 1. It classifies inbound owner WhatsApp instructions (personal-response vs. delegation-shaped) — placed here as the closest existing capability (downstream of canonical-owner resolution), a judgment call rather than a proven mapping; may belong more precisely under a future owner-command-execution capability if one is registered."
       ]
     },
