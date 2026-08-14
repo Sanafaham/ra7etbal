@@ -11,11 +11,11 @@
  * and still fail after deployment.
  *
  * HARD SAFETY CONTRACT — every check in this file is read-only. Nothing
- * here ever INSERTs, UPDATEs, DELETEs, or calls any Supabase RPC that
- * mutates state. It cannot send a WhatsApp message, push notification, or
- * create/alter a task, reminder, automation, or owner decision. It only
- * reads already-existing rows via Supabase's REST client (`.select()`)
- * and reads Vercel's own deployment metadata. See
+ * here ever INSERTs, UPDATEs, or DELETEs. It cannot send a WhatsApp
+ * message, push notification, or create/alter a task, reminder,
+ * automation, or owner decision. It calls exactly one token-gated,
+ * aggregate-only SECURITY DEFINER RPC and reads Vercel's deployment
+ * metadata. The RPC returns no raw production rows. See
  * carson-production-canary.test.mjs's "cannot mutate protected business
  * state" test, which statically scans this file for any Supabase mutation
  * method call and fails the test suite if one is ever added.
@@ -142,6 +142,40 @@ export function evaluatePersonIdContinuity(deliveryRows, automationRunsById, aut
   return { ok: violations.length === 0, violations };
 }
 
+export function evaluateDerivedDatabaseHealth(row) {
+  if (!row || typeof row !== "object") {
+    return {
+      binding: { ok: false, ambiguousBindingCount: null, findings: ["database health RPC returned no row"] },
+      continuity: { ok: false, violatingRowCount: null, findings: ["database health RPC returned no row"] },
+    };
+  }
+
+  const ambiguousBindingCount = Number(row.ambiguous_binding_count);
+  const violatingRowCount = Number(row.violating_row_count);
+  const valid = Number.isSafeInteger(ambiguousBindingCount) && ambiguousBindingCount >= 0
+    && Number.isSafeInteger(violatingRowCount) && violatingRowCount >= 0
+    && typeof row.canonical_binding_healthy === "boolean"
+    && typeof row.person_id_continuity_healthy === "boolean";
+  if (!valid) {
+    return {
+      binding: { ok: false, ambiguousBindingCount: null, findings: ["database health RPC returned an invalid bounded aggregate"] },
+      continuity: { ok: false, violatingRowCount: null, findings: ["database health RPC returned an invalid bounded aggregate"] },
+    };
+  }
+
+  return {
+    binding: {
+      ok: row.canonical_binding_healthy && ambiguousBindingCount === 0,
+      ambiguousBindingCount,
+    },
+    continuity: {
+      ok: row.person_id_continuity_healthy && violatingRowCount === 0,
+      violatingRowCount,
+      checkedSince: row.checked_since,
+    },
+  };
+}
+
 /**
  * Combines every check result into one report. `checks` is an array of
  * { name, capability, result: { ok, ... } }. `humanOnlyBoundaries` documents
@@ -224,14 +258,19 @@ async function fetchLatestProductionDeployment({ vercelToken, projectId, teamId 
   return full;
 }
 
-async function fetchSupabaseTable(supabaseUrl, serviceRoleKey, path) {
-  const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/${path}`;
-  return fetchJson(url, {
+async function fetchSupabaseCanaryHealth(supabaseUrl, publishableKey, canaryToken) {
+  const url = `${supabaseUrl.replace(/\/$/, "")}/rest/v1/rpc/carson_production_canary_health`;
+  const rows = await fetchJson(url, {
+    method: "POST",
     headers: {
-      apikey: serviceRoleKey,
-      Authorization: `Bearer ${serviceRoleKey}`,
+      apikey: publishableKey,
+      Authorization: `Bearer ${publishableKey}`,
+      "Content-Type": "application/json",
     },
+    // fetchJson never includes request bodies in errors or logs.
+    body: JSON.stringify({ p_token: canaryToken }),
   });
+  return Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
 }
 
 function requireEnv(name) {
@@ -249,7 +288,8 @@ async function main() {
   const vercelTeamId = process.env.VERCEL_TEAM_ID || "";
   const expectedSha = requireEnv("EXPECTED_PRODUCTION_SHA");
   const supabaseUrl = requireEnv("SUPABASE_URL");
-  const supabaseServiceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
+  const supabasePublishableKey = requireEnv("SUPABASE_PUBLISHABLE_KEY");
+  const canaryRpcToken = requireEnv("CANARY_RPC_TOKEN");
 
   const deployment = await fetchLatestProductionDeployment({
     vercelToken,
@@ -258,26 +298,13 @@ async function main() {
   });
   const deploymentCheck = evaluateDeploymentIdentity({ expectedSha, deployment });
 
-  const bindingRows = await fetchSupabaseTable(supabaseUrl, supabaseServiceRoleKey, "whatsapp_health_state?select=phone_number_id");
-  const bindingCheck = evaluateAmbiguousBindings(bindingRows);
-
-  const sinceIso = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  const deliveryRows = await fetchSupabaseTable(
+  const databaseHealth = await fetchSupabaseCanaryHealth(
     supabaseUrl,
-    supabaseServiceRoleKey,
-    `whatsapp_deliveries?select=id,created_at,automation_run_id&person_id=is.null&automation_run_id=not.is.null&created_at=gt.${sinceIso}`
+    supabasePublishableKey,
+    canaryRpcToken,
   );
-  const runIds = [...new Set(deliveryRows.map((r) => r.automation_run_id))];
-  const automationRuns = runIds.length
-    ? await fetchSupabaseTable(supabaseUrl, supabaseServiceRoleKey, `automation_runs?select=id,automation_id&id=in.(${runIds.join(",")})`)
-    : [];
-  const automationRunsById = new Map(automationRuns.map((r) => [r.id, r]));
-  const automationIds = [...new Set(automationRuns.map((r) => r.automation_id))];
-  const automations = automationIds.length
-    ? await fetchSupabaseTable(supabaseUrl, supabaseServiceRoleKey, `automations?select=id,assignee_id&id=in.(${automationIds.join(",")})`)
-    : [];
-  const automationsById = new Map(automations.map((a) => [a.id, a]));
-  const continuityCheck = evaluatePersonIdContinuity(deliveryRows, automationRunsById, automationsById);
+  const { binding: bindingCheck, continuity: continuityCheck } =
+    evaluateDerivedDatabaseHealth(databaseHealth);
 
   const report = buildCanaryReport({
     deploymentSha: expectedSha,

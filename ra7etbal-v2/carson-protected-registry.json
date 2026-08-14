@@ -23,10 +23,11 @@
       "shared_dependencies": ["api/_owner-whatsapp-routing.js"],
       "db": {
         "tables": ["whatsapp_health_state"],
-        "rpcs": [],
+        "rpcs": ["carson_production_canary_health"],
         "migrations": [
           "supabase/migrations/20260622_whatsapp_health_state.sql",
-          "supabase/migrations/20260813_whatsapp_health_state_phone_number_unique.sql"
+          "supabase/migrations/20260813_whatsapp_health_state_phone_number_unique.sql",
+          "supabase/migrations/20260815_carson_canary_least_privilege.sql"
         ],
         "data_repairs": ["supabase/data-repairs/20260813_whatsapp_health_state_phantom_bindings.sql"]
       },
@@ -38,7 +39,9 @@
       "db_contract_tests": [
         "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
         "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql",
-        "supabase/migrations/verification/carson_tier1_whatsapp_health_state_post_rollback_verification.sql"
+        "supabase/migrations/verification/carson_tier1_whatsapp_health_state_post_rollback_verification.sql",
+        "supabase/migrations/verification/carson_canary_least_privilege_verification.sql",
+        "supabase/migrations/verification/carson_canary_least_privilege_post_rollback_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "production_canary_required": true,
@@ -212,8 +215,8 @@
       "shared_dependencies": ["api/_whatsapp-delivery.js", "api/send-whatsapp-task.js"],
       "db": {
         "tables": ["automation_runs", "automations", "whatsapp_deliveries", "tasks"],
-        "rpcs": [],
-        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql"],
+        "rpcs": ["carson_production_canary_health"],
+        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql", "supabase/migrations/20260815_carson_canary_least_privilege.sql"],
         "data_repairs": ["supabase/data-repairs/20260813_automation_delivery_person_id_backfill.sql"]
       },
       "external_boundaries": ["WhatsApp/Meta send", "Upstash QStash scheduler"],
@@ -231,6 +234,11 @@
       "protected_suite": true,
       "golden_journey_required": true,
       "golden_journey_tests": ["api/golden-journey-one-time-scheduled-delegation.test.js"],
+      "db_contract_tests": [
+        "supabase/migrations/verification/carson_canary_least_privilege_verification.sql",
+        "supabase/migrations/verification/carson_canary_least_privilege_post_rollback_verification.sql"
+      ],
+      "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "production_canary_required": true,
       "production_canary": {
         "classification": "A (partial)",
@@ -415,8 +423,8 @@
       "shared_dependencies": [],
       "db": {
         "tables": ["whatsapp_deliveries", "messages"],
-        "rpcs": [],
-        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql"]
+        "rpcs": ["carson_production_canary_health"],
+        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql", "supabase/migrations/20260815_carson_canary_least_privilege.sql"]
       },
       "external_boundaries": ["Meta/WhatsApp Cloud API"],
       "focused_tests": [
@@ -430,7 +438,9 @@
       "golden_journey_tests": ["api/golden-journey-immediate-staff-delegation.test.js", "api/golden-journey-owner-alternative-approval.test.js", "api/golden-journey-one-time-scheduled-delegation.test.js", "api/golden-journey-communication-history-durability.test.js"],
       "db_contract_tests": [
         "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
-        "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql"
+        "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql",
+        "supabase/migrations/verification/carson_canary_least_privilege_verification.sql",
+        "supabase/migrations/verification/carson_canary_least_privilege_post_rollback_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "production_canary_required": true,
@@ -598,9 +608,9 @@
         "does_not_prove": "Nothing about application behavior itself — this is purely a deployment-identity gate other checks' results should be read through, not a substitute for them."
       },
       "rollback_risk": "low — a failure here means 'stop trusting the rest of this canary run,' not a production incident by itself",
-      "verification_status": "Phase 7: implemented and manually verified against real production (see above). Not yet wired into automated CI (workflow_dispatch workflow added, but VERCEL_TOKEN/VERCEL_PROJECT_ID/SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY repository secrets are not yet configured — see .github/workflows/carson-production-canary.yml's own header comment).",
+      "verification_status": "Phase 7: implemented and manually verified against real production (see above). 2026-08-15 least-privilege correction: workflow updated to use a token-gated aggregate RPC instead of SUPABASE_SERVICE_ROLE_KEY; pending protected merge, migration deployment, and Sana's manual GitHub configuration.",
       "unresolved": [
-        "The GitHub Actions workflow cannot run for real until Sana adds the four required repository secrets. Until then, this check can only be run by hand (or by an agent with equivalent Vercel/Supabase access), not on a schedule or automatically after deploy."
+        "The GitHub Actions workflow cannot run for real until the least-privilege migration is deployed and Sana configures secrets VERCEL_TOKEN/CANARY_RPC_TOKEN plus variables VERCEL_PROJECT_ID/SUPABASE_URL/SUPABASE_PUBLISHABLE_KEY. SUPABASE_SERVICE_ROLE_KEY is deliberately forbidden. Until then, this check can only be run by hand (or by an agent with equivalent access), not automatically."
       ]
     },
     {
