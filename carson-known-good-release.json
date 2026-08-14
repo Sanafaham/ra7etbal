@@ -1,14 +1,14 @@
 {
   "$schema_note": "Carson Engineering Hardening Project — Phase 8. The durable known-good release ledger. Updated only through a normal protected PR, after carson-release-manifest.mjs's evaluateKnownGoodEligibility() reports eligible:true against real, freshly-gathered evidence (never fabricated or carried forward from an earlier release without re-verification). See scripts/carson-rollback-dry-run.mjs for how this file is used to compute a rollback target when no explicit --target is given.",
-  "sha": "e3218bbcdfdd2fa695f5545b175c1b2420f04154",
-  "vercel_deployment_id": "dpl_3qdHmFhc1RV8UJWvC61DGDKezCH7",
+  "sha": "2dd6aad8e0fdc7b00048a088ef7377cd1d81c273",
+  "vercel_deployment_id": "dpl_DU4TKkLoo43YT84FfrWPBfZiJ1bj",
   "vercel_project_id": "prj_f32jTzGmYS5m8pc2XU6E0Apw6Y1K",
   "production_alias": "www.ra7etbal.com",
-  "verified_at": "2026-08-14T19:05:36.966Z",
-  "previous_known_good_sha": null,
+  "verified_at": "2026-08-14T19:15:09.278Z",
+  "previous_known_good_sha": "e3218bbcdfdd2fa695f5545b175c1b2420f04154",
   "migrations_since_previous": [],
   "canary_report": {
-    "deploymentSha": "e3218bbcdfdd2fa695f5545b175c1b2420f04154",
+    "deploymentSha": "2dd6aad8e0fdc7b00048a088ef7377cd1d81c273",
     "ok": true,
     "checks": [
       { "name": "deployment_identity", "capability": "deployment_identity_verification", "ok": true },
@@ -18,5 +18,5 @@
   },
   "human_acceptance_required": [],
   "human_acceptance_note": "Empty because no capability with a genuine human-only acceptance boundary (see scripts/carson-production-canary.mjs's HUMAN_ONLY_BOUNDARIES) changed behavior in the releases folded into this SHA. A future release that DOES change one of those capabilities must list it here with completed:false until a real human/device acceptance test is recorded, and evaluateKnownGoodEligibility() will correctly refuse to mark that release known-good until then.",
-  "notes": "This is the first entry in this ledger (Phase 8 bootstrap) — previous_known_good_sha is null because no prior ledger existed. All evidence above was gathered live during Phase 8 against real production (Vercel deployment dpl_3qdHmFhc1RV8UJWvC61DGDKezCH7, Supabase project ggarvhgqzpooloacjgcj), not fabricated or assumed."
+  "notes": "Second ledger entry — advanced from the Phase 8 bootstrap SHA to Phase 8's own merged PR #270 (the safe-release-rollback tooling itself), chaining previous_known_good_sha. migrations_since_previous is empty because PR #270 introduced no new production migration (only new scripts/registry/workflow files). All evidence above was gathered live against real production (Vercel deployment dpl_DU4TKkLoo43YT84FfrWPBfZiJ1bj, Supabase project ggarvhgqzpooloacjgcj), not fabricated or assumed."
 }
