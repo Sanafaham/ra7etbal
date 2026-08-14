@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildDueReminderNotification, getOrCreateOwnerNotification } from './_owner-notifications.js';
+import { buildDueReminderNotification, getOrCreateOwnerNotification, prepareOwnerPushNotification } from './_owner-notifications.js';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -37,6 +37,21 @@ describe('owner notification canonical claim', () => {
       userId: 'user-1',
       targetUrl: '/updates?tab=needs-you&task=task-1',
     }));
+  });
+
+  it('reuses the canonical row on retry and preserves push delivery when inbox persistence fails', async () => {
+    const fallback = { title: 'Ra7etBal', body: 'Check the bill' };
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ code: '23505', message: 'owner_notifications_user_event_key_key' }, 409))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'notification-1', ...fallback, target_url: '/notifications' }])));
+    await expect(prepareOwnerPushNotification({
+      ...input(), serviceRoleKey: 'service-key', notification: input(), fallback,
+    })).resolves.toEqual({ ...fallback, notificationId: 'notification-1', url: '/notifications' });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ message: 'denied' }, 403)));
+    await expect(prepareOwnerPushNotification({
+      ...input(), serviceRoleKey: 'service-key', notification: input(), fallback,
+    })).resolves.toEqual(fallback);
   });
 });
 

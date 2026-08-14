@@ -449,17 +449,21 @@
       "id": "push_lifecycle",
       "contract": "Push subscription installation, dedupe, delivery, and completion-receipt handling are correct and idempotent — including installation identity, atomic replacement, dedupe-failure propagation (never false success), and the 'This device' badge in the notification-devices panel.",
       "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order",
-      "production_entry_points": ["public/sw.js", "api/send-push-for-task.js", "api/send-due-reminder-pushes.js"],
+      "production_entry_points": ["public/sw.js", "api/send-push-for-task.js", "api/send-due-reminder-pushes.js", "src/lib/notifications.ts"],
       "files_functions": [
         "src/lib/push-notifications.ts",
+        "src/lib/notifications.ts:listOwnerNotifications / dismissOwnerNotification",
         "public/sw.js",
         "src/lib/push-subscription-rotation.ts"
       ],
-      "shared_dependencies": ["api/_reminder-delivery.js"],
+      "shared_dependencies": ["api/_reminder-delivery.js", "api/_owner-notifications.js"],
       "db": {
-        "tables": ["push_subscriptions"],
+        "tables": ["push_subscriptions", "owner_notifications"],
         "rpcs": [],
-        "migrations": ["supabase/migrations/20260810_push_subscription_installation_identity.sql"]
+        "migrations": [
+          "supabase/migrations/20260810_push_subscription_installation_identity.sql",
+          "supabase/migrations/20260814180000_owner_notifications_soft_dismiss.sql"
+        ]
       },
       "external_boundaries": ["Web Push/VAPID"],
       "focused_tests": [
@@ -468,8 +472,14 @@
         "src/lib/push-notifications.this-device-badge.test.ts",
         "src/lib/push-subscription-rotation.test.ts",
         "public/sw.test.js",
+        "api/_owner-notifications.test.js",
+        "api/owner-notifications-migration.test.js",
+        "api/owner-notifications-dismissal-migration.test.js",
         "api/send-push-for-task.test.js",
-        "api/send-due-reminder-pushes.test.js"
+        "api/send-due-reminder-pushes.test.js",
+        "src/lib/notification-actions.test.ts",
+        "src/stores/notifications.test.ts",
+        "src/routes/Notifications.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": false,

@@ -1601,6 +1601,7 @@ async function reopenSubstituteReviewIfApplicable({ supabaseUrl, serviceKey, del
     description: row.description,
     assignedTo: row.assigned_to,
     variant: 'substitute_delivery_failed',
+    taskId: row.task_id,
   }).catch((err) =>
     console.warn('[whatsapp-webhook] substitute-review reopen owner push failed (non-fatal):', err?.message || err),
   );
@@ -1630,6 +1631,11 @@ async function notifyOwnerOfDirectMessageDeliveryFailure({ supabaseUrl, serviceK
     description: null,
     assignedTo: delivery.recipient_name || null,
     variant: 'staff_delivery_failed',
+    taskId: delivery.task_id || undefined,
+    eventKey: `staff_delivery_failed:${delivery.id}`,
+    targetType: 'whatsapp_delivery',
+    targetId: delivery.id,
+    targetUrl: '/history',
   }).catch((err) =>
     console.warn('[whatsapp-webhook] staff delivery-failure owner push failed (non-fatal):', err?.message || err),
   );

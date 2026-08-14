@@ -7,6 +7,7 @@ export interface OwnerNotification {
   body: string;
   occurred_at: string;
   read_at: string | null;
+  dismissed_at: string | null;
   target_type: string | null;
   target_id: string | null;
   target_url: string | null;

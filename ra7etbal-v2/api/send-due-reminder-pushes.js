@@ -118,11 +118,16 @@ export default async function handler(req, res) {
       else if (whatsapp.status === 'failed') whatsappStats.failed += 1;
       else whatsappStats.skipped += 1;
 
-      const { notification } = await getOrCreateOwnerNotification({
-        supabaseUrl: config.values.supabaseUrl,
-        serviceRoleKey: config.values.serviceRoleKey,
-        ...buildDueReminderNotification(task),
-      });
+      let notification = { id: null, title: 'Ra7etBal', body: task.description, target_url: `/updates?tab=needs-you&task=${encodeURIComponent(task.id)}` };
+      try {
+        ({ notification } = await getOrCreateOwnerNotification({
+          supabaseUrl: config.values.supabaseUrl,
+          serviceRoleKey: config.values.serviceRoleKey,
+          ...buildDueReminderNotification(task),
+        }));
+      } catch (error) {
+        console.error('[safety-net] inbox persistence failed; preserving reminder push', getErrorMessage(error));
+      }
 
       const subscriptions = subscriptionsByUser.get(task.user_id) ?? [];
       if (subscriptions.length === 0) {
@@ -447,7 +452,7 @@ async function sendTaskReminder(task, notification, subscriptions, config, attem
     const payload = JSON.stringify({
       title: notification.title,
       body: notification.body,
-      notificationId: notification.id,
+      ...(notification.id ? { notificationId: notification.id } : {}),
       url: notification.target_url,
       receipt: {
         url: '/api/qstash-reminder',

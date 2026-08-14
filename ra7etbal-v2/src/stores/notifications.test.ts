@@ -5,17 +5,20 @@ import {
   listOwnerNotifications,
   markAllOwnerNotificationsRead,
   markOwnerNotificationRead,
+  dismissOwnerNotification,
 } from "../lib/notifications";
 
 vi.mock("../lib/notifications", () => ({
   listOwnerNotifications: vi.fn(),
   markAllOwnerNotificationsRead: vi.fn(),
   markOwnerNotificationRead: vi.fn(),
+  dismissOwnerNotification: vi.fn(),
 }));
 
 const listMock = vi.mocked(listOwnerNotifications);
 const markOneMock = vi.mocked(markOwnerNotificationRead);
 const markAllMock = vi.mocked(markAllOwnerNotificationsRead);
+const dismissMock = vi.mocked(dismissOwnerNotification);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -52,6 +55,18 @@ describe("notifications inbox state", () => {
     ]);
     await useNotificationsStore.getState().loadFor("user-1", { force: true });
     expect(selectUnreadNotificationCount(useNotificationsStore.getState())).toBe(0);
+  });
+
+  it("dismisses one row immediately and it stays absent after a forced reload", async () => {
+    listMock.mockResolvedValueOnce([notification("one"), notification("two")]);
+    await useNotificationsStore.getState().loadFor("user-1");
+    await useNotificationsStore.getState().dismiss("one");
+    expect(dismissMock).toHaveBeenCalledWith("one", expect.any(String));
+    expect(useNotificationsStore.getState().items.map((item) => item.id)).toEqual(["two"]);
+
+    listMock.mockResolvedValueOnce([notification("two")]);
+    await useNotificationsStore.getState().loadFor("user-1", { force: true });
+    expect(useNotificationsStore.getState().items.map((item) => item.id)).toEqual(["two"]);
   });
 
   it("ignores a stale load when the authenticated account changes", async () => {
@@ -107,7 +122,7 @@ describe("notifications inbox state", () => {
 function notification(id: string, readAt: string | null = null, userId = "user-1"): OwnerNotification {
   return {
     id, user_id: userId, event_key: `reminder_due:${id}`, kind: "reminder_due",
-    title: "Ra7etBal", body: id, occurred_at: "2026-08-12T10:00:00Z", read_at: readAt,
+    title: "Ra7etBal", body: id, occurred_at: "2026-08-12T10:00:00Z", read_at: readAt, dismissed_at: null,
     target_type: "task", target_id: id, target_url: "/updates?tab=todo", metadata: {},
     created_at: "2026-08-12T10:00:00Z",
   };

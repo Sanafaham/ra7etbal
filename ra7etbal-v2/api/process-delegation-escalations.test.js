@@ -7,6 +7,14 @@ vi.mock('web-push', () => ({
   },
 }));
 
+const ownerNotificationMocks = vi.hoisted(() => ({
+  prepareOwnerPushNotification: vi.fn(async ({ fallback }) => fallback),
+}));
+vi.mock('./_owner-notifications.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  prepareOwnerPushNotification: ownerNotificationMocks.prepareOwnerPushNotification,
+}));
+
 import webpush from 'web-push';
 import {
   processAutomation,
@@ -18,6 +26,7 @@ import {
 beforeEach(() => {
   vi.stubEnv('CRON_SECRET', 'cron-secret');
   vi.mocked(webpush.sendNotification).mockResolvedValue(undefined);
+  ownerNotificationMocks.prepareOwnerPushNotification.mockClear();
 });
 
 afterEach(() => {
@@ -198,6 +207,14 @@ describe('processAutomation owner-only automations', () => {
     });
     expect(String(fetchMock.mock.calls[4][0])).toContain('/rest/v1/push_subscriptions');
     expect(webpush.sendNotification).toHaveBeenCalledTimes(1);
+    expect(ownerNotificationMocks.prepareOwnerPushNotification).toHaveBeenCalledTimes(1);
+    expect(ownerNotificationMocks.prepareOwnerPushNotification).toHaveBeenCalledWith(expect.objectContaining({
+      notification: expect.objectContaining({
+        eventKey: 'automation_run:run-1',
+        userId: 'user-1',
+        targetId: 'task-1',
+      }),
+    }));
     expect(webpush.sendNotification).toHaveBeenCalledWith(
       { endpoint: 'https://push.example/a', keys: { p256dh: 'p', auth: 'a' } },
       JSON.stringify({

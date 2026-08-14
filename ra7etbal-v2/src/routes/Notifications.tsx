@@ -10,7 +10,7 @@ import { markEveryOwnerNotificationRead, openOwnerNotification } from "../lib/no
 export default function Notifications() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { status, items, error, loadFor, markRead, markAllRead } = useNotificationsStore();
+  const { status, items, error, loadFor, markRead, markAllRead, dismiss } = useNotificationsStore();
   const unreadCount = useNotificationsStore(selectUnreadNotificationCount);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -33,6 +33,15 @@ export default function Notifications() {
       await markEveryOwnerNotificationRead(markAllRead);
     } catch (actionFailure) {
       setActionError(actionFailure instanceof Error ? actionFailure.message : "Could not mark notifications read.");
+    }
+  }
+
+  async function dismissNotification(id: string) {
+    try {
+      setActionError(null);
+      await dismiss(id);
+    } catch (actionFailure) {
+      setActionError(actionFailure instanceof Error ? actionFailure.message : "Could not dismiss this notification.");
     }
   }
 
@@ -80,11 +89,8 @@ export default function Notifications() {
       <ul className="space-y-3">
         {items.map((item) => (
           <li key={item.id}>
-            <button
-              type="button"
-              onClick={() => void openNotification(item)}
-              className={`w-full rounded-2xl border p-4 text-left shadow-sm transition active:scale-[0.99] ${item.read_at ? "border-sage/15 bg-white/65" : "border-sage/35 bg-white"}`}
-            >
+            <div className={`relative w-full rounded-2xl border p-4 shadow-sm ${item.read_at ? "border-sage/15 bg-white/65" : "border-sage/35 bg-white"}`}>
+            <button type="button" onClick={() => void openNotification(item)} className="w-full pr-10 text-left transition active:scale-[0.99]">
               <div className="flex items-start gap-3">
                 {!item.read_at && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-sage" aria-label="Unread" />}
                 <div className="min-w-0 flex-1">
@@ -94,6 +100,8 @@ export default function Notifications() {
                 </div>
               </div>
             </button>
+            <button type="button" aria-label={`Dismiss ${item.title}`} onClick={() => void dismissNotification(item.id)} className="absolute right-3 top-3 rounded-full px-2 py-1 text-lg leading-none text-ink/45 hover:bg-sage/10 hover:text-ink">×</button>
+            </div>
           </li>
         ))}
       </ul>

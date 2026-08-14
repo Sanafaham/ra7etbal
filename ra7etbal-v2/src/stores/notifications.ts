@@ -3,6 +3,7 @@ import {
   listOwnerNotifications,
   markAllOwnerNotificationsRead,
   markOwnerNotificationRead,
+  dismissOwnerNotification,
 } from "../lib/notifications";
 import type { OwnerNotification } from "../types/notification";
 
@@ -16,6 +17,7 @@ interface NotificationsState {
   loadFor: (userId: string, options?: { force?: boolean }) => Promise<void>;
   markRead: (id: string) => Promise<void>;
   markAllRead: () => Promise<void>;
+  dismiss: (id: string) => Promise<void>;
   reset: () => void;
 }
 
@@ -74,6 +76,15 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => {
       set((state) => ({
         items: state.items.map((row) => row.read_at ? row : { ...row, read_at: readAt }),
       }));
+    },
+
+    async dismiss(id) {
+      const item = get().items.find((row) => row.id === id);
+      if (!item) return;
+      const expectedSession = sessionGeneration;
+      await dismissOwnerNotification(id, new Date().toISOString());
+      if (expectedSession !== sessionGeneration) return;
+      set((state) => ({ items: state.items.filter((row) => row.id !== id) }));
     },
 
     reset: () => {

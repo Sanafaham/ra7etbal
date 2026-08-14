@@ -44,7 +44,7 @@ function notification(): OwnerNotification {
   return {
     id: "notification-1", user_id: "user-1", event_key: "reminder_due:task-1",
     kind: "reminder_due", title: "Ra7etBal", body: "Check", occurred_at: "2026-08-11T20:00:00Z",
-    read_at: null, target_type: "task", target_id: "task-1", target_url: "/updates?tab=todo",
+    read_at: null, dismissed_at: null, target_type: "task", target_id: "task-1", target_url: "/updates?tab=todo",
     metadata: {}, created_at: "2026-08-11T20:00:00Z",
   };
 }
