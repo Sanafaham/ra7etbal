@@ -16,6 +16,8 @@
     "validate:carson-registry": "node scripts/validate-carson-registry.mjs",
     "test:carson-impact-map": "TZ=UTC vitest run scripts/impact-map.test.mjs scripts/impact-map.counterfactual.test.mjs",
     "carson:impact-map": "node scripts/impact-map.mjs",
+    "test:carson-state-integrity": "TZ=UTC vitest run scripts/state-doc-integrity.test.mjs",
+    "carson:state-integrity": "node scripts/state-doc-integrity.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
     "carson:diagnose": "node scripts/carson-diagnose.mjs"

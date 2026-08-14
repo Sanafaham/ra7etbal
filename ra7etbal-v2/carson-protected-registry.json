@@ -510,22 +510,24 @@
     },
     {
       "id": "stale_state_doc_integrity",
-      "contract": "RA7ETBAL_STATE.md must never silently regress a CLOSED/PROTECTED/PRODUCTION VERIFIED status back to OPEN/PENDING without an explicit, evidence-backed Correction/Reopen note in the same change.",
-      "business_importance": "process-critical — root cause of Incident 6 (a direct, unreviewed push to main, not a stale-branch PR merge as originally assumed; corrected by Phase 0 investigation)",
+      "contract": "RA7ETBAL_STATE.md must never silently regress a previously CLOSED/PROTECTED/PRODUCTION VERIFIED (or otherwise closed-class, per scripts/state-doc-integrity.mjs's real-vocabulary classifier) section's status back to an open/neutral status without an explicit, genuinely new, dated \"**Correction (date): explanation**\" / \"**Update (date): explanation**\" / \"**Reopened\" marker in the same change — codifying a convention the file already used on its own before this was mechanically enforced. A previously closed-class section disappearing entirely has no such marker-based exception at all: the heading must be kept (even briefly, with an explicit correction paragraph) rather than deleted.",
+      "business_importance": "process-critical — root cause of the historical stale-state incident (commit 7b83a0089876ac784fbd3b9c98a0c5816581fb94, a normal PR whose branch was cut before an earlier closure had landed on main, not a direct push; corrected by Phase 0/5 investigation)",
       "production_entry_points": [],
-      "files_functions": ["../RA7ETBAL_STATE.md"],
+      "files_functions": ["../RA7ETBAL_STATE.md", "scripts/state-doc-integrity.mjs"],
       "shared_dependencies": [],
       "db": { "tables": [], "rpcs": [], "migrations": [] },
       "external_boundaries": [],
-      "focused_tests": [],
+      "focused_tests": ["scripts/state-doc-integrity.test.mjs"],
       "protected_suite": false,
       "golden_journey_required": false,
       "golden_journey_tests": [],
       "production_canary_required": false,
       "rollback_risk": "medium — engineering-time cost, not runtime risk",
-      "verification_status": "NOT YET PROTECTED — no CI check inspects RA7ETBAL_STATE.md content today; branch protection changes and the docs-integrity CI job are explicitly out of scope for Phase 1 per the user's instruction not to change GitHub branch-protection settings yet",
+      "verification_status": "Phase 5: a real CI check (.github/workflows/carson-state-doc-integrity.yml) now inspects every PR's proposed RA7ETBAL_STATE.md against its true PR base and fails on an unexplained status regression or disappearance of a closed-class section — proven against the actual historical regression commit as a counterfactual test, not a synthetic reproduction. This check is visible and green but is NOT YET a required branch-protection merge gate — that remains explicit Phase 6 scope, not decided here.",
       "unresolved": [
-        "This capability has no code-level test surface — it needs the docs-integrity CI job and branch-protection changes (enforce_admins, required review) proposed in Phase 0 §8/§9. Both are explicitly deferred past Phase 1 by the user's instructions. Included here only as a registry placeholder so Phase 2+ does not have to rediscover this capability."
+        "Branch-protection changes (making this check a required merge gate, enforce_admins, required review) are explicitly deferred to Phase 6 per the user's instructions — a green check today can still be bypassed by an admin merge.",
+        "Only closed-class-section regression/disappearance is detected. A previously OPEN/PENDING/neutral section disappearing, or a closed-class section's body being materially gutted or reverted to older prose while its status wording is left untouched, is not mechanically caught — deliberately, to avoid a brittle prose-diff system that would block harmless wording edits (see the module's own header comment).",
+        "Section identity is matched by normalized heading title text (whitespace/case-insensitive, exact otherwise). A heading rename that also drops its status is not currently distinguishable from a genuine disappearance-plus-new-unrelated-section; not encountered in this file's real history to date, but a known limitation."
       ]
     }
   ]
