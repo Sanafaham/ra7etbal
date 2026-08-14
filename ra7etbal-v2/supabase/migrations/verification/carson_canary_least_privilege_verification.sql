@@ -27,6 +27,10 @@ BEGIN
     RAISE EXCEPTION 'FAIL: function owner retained CREATE on public';
   END IF;
 
+  IF pg_has_role('postgres', 'carson_canary_function_owner', 'MEMBER') THEN
+    RAISE EXCEPTION 'FAIL: postgres retains canary function owner membership';
+  END IF;
+
   IF has_table_privilege('carson_canary_function_owner', 'public.whatsapp_health_state', 'INSERT,UPDATE,DELETE')
      OR has_table_privilege('carson_canary_function_owner', 'public.whatsapp_deliveries', 'INSERT,UPDATE,DELETE')
      OR has_table_privilege('carson_canary_function_owner', 'public.automation_runs', 'INSERT,UPDATE,DELETE')
