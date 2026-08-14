@@ -27,15 +27,20 @@ BEGIN
     RAISE EXCEPTION 'FAIL: function owner retained CREATE on public';
   END IF;
 
+  -- Supabase Postgres 17 can retain a platform-grantor-owned membership row
+  -- after REVOKE. It is acceptable only for the already-administrative
+  -- managed postgres role and only when it cannot inherit or SET ROLE.
   IF EXISTS (
     SELECT 1
       FROM pg_auth_members AS membership
       JOIN pg_roles AS granted_role ON granted_role.oid = membership.roleid
       JOIN pg_roles AS member_role ON member_role.oid = membership.member
      WHERE granted_role.rolname = 'carson_canary_function_owner'
-       AND member_role.rolname = 'postgres'
+       AND (member_role.rolname <> 'postgres'
+            OR membership.inherit_option
+            OR membership.set_option)
   ) THEN
-    RAISE EXCEPTION 'FAIL: postgres retains canary function owner membership';
+    RAISE EXCEPTION 'FAIL: canary function owner has an inheritable or settable membership';
   END IF;
 
   IF has_table_privilege('carson_canary_function_owner', 'public.whatsapp_health_state', 'INSERT,UPDATE,DELETE')

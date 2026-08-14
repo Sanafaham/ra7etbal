@@ -39,6 +39,14 @@ GitHub stores the plaintext token as `CANARY_RPC_TOKEN`; its Supabase
 publishable key and URL are non-secret repository variables. GitHub never
 receives `SUPABASE_SERVICE_ROLE_KEY`.
 
+Supabase's managed PostgreSQL 17 environment records the temporary owner
+transfer membership as granted by `supabase_admin`. The migration issues a
+final `REVOKE`, but that platform-owned row remains with `INHERIT=false` and
+`SET=false`; `postgres` therefore cannot inherit or assume the canary owner.
+Production verification requires those exact inert flags and forbids every
+other member. This does not expand the API caller or function owner's
+privileges.
+
 ### Rejected alternatives
 
 - A custom PostgreSQL login was rejected. Every login inherits PostgreSQL's
@@ -93,13 +101,22 @@ deployments API is the existing authoritative source for those facts. The
 token should be scoped to the relevant Vercel account/team and used only by
 this manually dispatched workflow.
 
-## Manual production configuration
+## Production configuration and verification
 
-After the migration is deployed, an operator generates a new high-entropy
-token outside chat and stores only its SHA-256 digest in
-`carson_canary_private.config`. The plaintext is added to GitHub as the
-`CANARY_RPC_TOKEN` secret. `VERCEL_TOKEN` is the other secret.
+Completed 2026-08-15. A cryptographically random token was generated outside
+chat, its SHA-256 digest was stored in `carson_canary_private.config`, and the
+plaintext was transferred directly into GitHub's `CANARY_RPC_TOKEN` secret.
+`VERCEL_TOKEN` is the only other workflow secret. Repository variables are
+`VERCEL_PROJECT_ID`, `VERCEL_TEAM_ID`, `SUPABASE_URL`, and
+`SUPABASE_PUBLISHABLE_KEY`. No service-role key is configured.
 
-Repository variables are `VERCEL_PROJECT_ID`, `SUPABASE_URL`, and
-`SUPABASE_PUBLISHABLE_KEY`; `VERCEL_TEAM_ID` is optional. No service-role key
-is configured.
+Live RPC verification proved a valid token returns exactly the five documented
+aggregate fields, both health booleans are true, and both violation counts are
+zero. A wrong token returns HTTP 403. GitHub Actions run `31846100188` passed
+deployment identity, canonical-binding ambiguity, and automation-runner
+person-id continuity against production SHA
+`bca4908cf78b5bd772f211bc1a37be2fce530934`; a plaintext-token scan of the
+complete log was negative. The earlier requested counterfactual dispatch
+`31846049083` used expected SHA `2fae00c51921f14009e3ca1028bdb54c83fc28f9`
+and correctly failed only because production had advanced to `bca4908...`;
+both Supabase invariants still passed.
