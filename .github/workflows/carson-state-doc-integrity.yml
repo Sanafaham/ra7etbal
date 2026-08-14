@@ -4,11 +4,12 @@ name: carson-state-doc-integrity
 #
 # Compares this PR's proposed RA7ETBAL_STATE.md against the correct base
 # version from main and fails when a previously CLOSED/PROTECTED/PRODUCTION
-# VERIFIED section either silently regresses to a non-closed status, or
-# disappears entirely, with no explicit "**Correction (date): ...**" /
-# "**Update (date): ...**" reopen marker in its body — see
-# ra7etbal-v2/scripts/state-doc-integrity.mjs for the full mechanism and its
-# real-history counterfactual test.
+# VERIFIED section either silently regresses to a non-closed status with no
+# explicit, genuinely new "**Correction (date): ...**" / "**Update
+# (date): ...**" reopen marker in its body, or disappears entirely (which
+# has no marker-based exception at all — a closed section must never simply
+# be deleted) — see ra7etbal-v2/scripts/state-doc-integrity.mjs for the
+# full mechanism and its real-history counterfactual test.
 #
 # This is visible and reliable but is NOT yet a required branch-protection
 # merge gate — that is explicit Phase 6 scope, not decided here.

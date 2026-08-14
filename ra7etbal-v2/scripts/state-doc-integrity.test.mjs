@@ -5,6 +5,7 @@ import {
   classifyStatus,
   parseSections,
   gitRoot,
+  repoRoot,
 } from "./state-doc-integrity.mjs";
 
 // Phase 5 of the Carson Engineering Hardening Project. These tests prove the
@@ -113,6 +114,46 @@ describe("checkStateDocIntegrity — synthetic counterfactual cases", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("a bare reopen-marker word with no date and no explanation must NOT suppress a regression", () => {
+    const base = md(["### Feature X — CLOSED, PRODUCTION VERIFIED, PROTECTED", "It works.", ""]);
+    const proposed = md([
+      "### Feature X — PENDING",
+      "**Update**",
+      "It works.",
+      "",
+    ]);
+    const result = checkStateDocIntegrity(base, proposed);
+    expect(result.ok).toBe(false);
+  });
+
+  it("a marker with a date but no real explanation after the colon must NOT suppress a regression", () => {
+    const base = md(["### Feature X — CLOSED, PRODUCTION VERIFIED, PROTECTED", "It works.", ""]);
+    const proposed = md([
+      "### Feature X — PENDING",
+      "**Correction (2026-08-15):**",
+      "It works.",
+      "",
+    ]);
+    const result = checkStateDocIntegrity(base, proposed);
+    expect(result.ok).toBe(false);
+  });
+
+  it("duplicate normalized headings in the proposed document are refused as ambiguous, never silently resolved to the last one", () => {
+    const base = md(["### Feature X — CLOSED, PRODUCTION VERIFIED, PROTECTED", "It works.", ""]);
+    const proposed = md([
+      "### Feature X — PENDING",
+      "First, regressed copy.",
+      "### Feature X — CLOSED, PRODUCTION VERIFIED, PROTECTED",
+      "Second, still-closed copy that would hide the first one behind it in a naive last-write-wins map.",
+      "",
+    ]);
+    const result = checkStateDocIntegrity(base, proposed);
+    expect(result.ok).toBe(false);
+    expect(result.findings).toEqual([
+      { type: "ambiguous", title: "Feature X", baseStatus: "CLOSED, PRODUCTION VERIFIED, PROTECTED" },
+    ]);
+  });
+
   it("C. normal wording/doc cleanup with status unchanged MUST pass", () => {
     const base = md(["### Feature X — CLOSED, PRODUCTION VERIFIED, PROTECTED", "It works great.", ""]);
     const proposed = md(["### Feature X — CLOSED, PRODUCTION VERIFIED, PROTECTED", "It works really well, rephrased for clarity.", ""]);
@@ -207,5 +248,32 @@ describe("checkStateDocIntegrity — F. real historical stale-state regression r
     const proposedContent = loadBlob("110a155");
     const result = checkStateDocIntegrity(base, proposedContent);
     expect(result.ok).toBe(true);
+  });
+});
+
+describe("CLI — invalid base ref must hard-fail, never silently pass", () => {
+  const cliPath = "scripts/state-doc-integrity.mjs";
+
+  it("exits non-zero and reports an error when --base does not resolve to a real commit", () => {
+    let threw = false;
+    try {
+      execFileSync("node", [cliPath, "--base=this-ref-does-not-exist-anywhere-12345"], {
+        cwd: repoRoot,
+        encoding: "utf8",
+      });
+    } catch (err) {
+      threw = true;
+      expect(err.status).not.toBe(0);
+      expect(String(err.stderr)).toMatch(/does not resolve/i);
+    }
+    expect(threw).toBe(true);
+  });
+
+  it("passes cleanly when comparing the current worktree state against its own base (no regression expected)", () => {
+    const out = execFileSync("node", [cliPath, "--base=origin/main"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+    });
+    expect(out).toMatch(/state-doc-integrity: OK/);
   });
 });

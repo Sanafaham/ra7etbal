@@ -510,7 +510,7 @@
     },
     {
       "id": "stale_state_doc_integrity",
-      "contract": "RA7ETBAL_STATE.md must never silently regress a previously CLOSED/PROTECTED/PRODUCTION VERIFIED (or otherwise closed-class, per scripts/state-doc-integrity.mjs's real-vocabulary classifier) section's status back to an open/neutral status, and a previously closed-class section must never disappear entirely, without an explicit, genuinely new \"**Correction (date): ...**\" / \"**Update (date): ...**\" / \"**Reopened\" marker in the same change — codifying a convention the file already used on its own before this was mechanically enforced.",
+      "contract": "RA7ETBAL_STATE.md must never silently regress a previously CLOSED/PROTECTED/PRODUCTION VERIFIED (or otherwise closed-class, per scripts/state-doc-integrity.mjs's real-vocabulary classifier) section's status back to an open/neutral status without an explicit, genuinely new, dated \"**Correction (date): explanation**\" / \"**Update (date): explanation**\" / \"**Reopened\" marker in the same change — codifying a convention the file already used on its own before this was mechanically enforced. A previously closed-class section disappearing entirely has no such marker-based exception at all: the heading must be kept (even briefly, with an explicit correction paragraph) rather than deleted.",
       "business_importance": "process-critical — root cause of the historical stale-state incident (commit 7b83a0089876ac784fbd3b9c98a0c5816581fb94, a normal PR whose branch was cut before an earlier closure had landed on main, not a direct push; corrected by Phase 0/5 investigation)",
       "production_entry_points": [],
       "files_functions": ["../RA7ETBAL_STATE.md", "scripts/state-doc-integrity.mjs"],

@@ -160,9 +160,18 @@ export function parseSections(markdown) {
 
 // An explicit, human-authored reopen/correction marker — the same
 // convention RA7ETBAL_STATE.md's real history already uses on its own
-// (e.g. "**Correction (2026-08-13): ...**", "**Update (2026-08-14): ...**").
-// Not new syntax; codifying an existing practice.
-const REOPEN_MARKER_RE = /^\*\*(Correction|Update|Reopened|Reopening)\b/i;
+// (e.g. "**Correction (2026-08-13): ...**", "**Update (2026-08-14): ...**",
+// "**Correction, found during the required production retest (2026-08-12):**
+// ..."). Not new syntax; codifying an existing practice.
+//
+// Deliberately requires the full documented shape, not just the bare marker
+// word: the marker word, an optional short clause, a parenthetical
+// containing a 4-digit year (the date), a closing ":**", and at least one
+// character of real explanation after it. A bare "**Update**" or
+// "**Correction**" with no date and no explanation must NOT satisfy this —
+// that would let a stale-state regression be waved through with a marker
+// that documents nothing.
+const REOPEN_MARKER_RE = /^\*\*(Correction|Update|Reopened|Reopening)\b[^*(]*\([^)]*\d{4}[^)]*\)\s*:\*\*\s+\S/i;
 
 /**
  * True if `proposedSection`'s body contains a reopen/correction marker
@@ -189,32 +198,61 @@ function sectionHasGenuineReopenMarker(proposedSection, baseContent) {
  * Compares a base (main) and proposed (PR head) version of RA7ETBAL_STATE.md
  * and returns every detected stale-state regression.
  *
- * Two finding types:
+ * Three finding types:
  *   - "disappeared": a section that was 'closed'-class in base is entirely
  *     absent from proposed (matched by normalized heading title). Covers
- *     the "deleted the whole item" half of the historical incident.
+ *     the "deleted the whole item" half of the historical incident. There
+ *     is NO marker-based escape hatch for this finding — if the heading is
+ *     gone, there is no body left to carry a marker, so the only fix is to
+ *     keep the heading (even a very short one) and mark it explicitly, not
+ *     to delete it silently.
+ *   - "ambiguous": a base section's title matches more than one heading in
+ *     the proposed document — refused rather than guessed, since silently
+ *     picking one (e.g. the last one, as a naive Map would) could hide a
+ *     regression on whichever section wasn't picked.
  *   - "regression": a section that was 'closed'-class in base still exists
- *     in proposed under the same title, but its status suffix is no longer
- *     'closed'-class, and no genuine reopen/correction marker was added to
- *     its body. Covers the "reverted CLOSED -> PENDING" half.
- *
- * A regression finding is suppressed (not returned) when the proposed
- * section's body contains a genuine (not carried-over) "**Correction" /
- * "**Update" / "**Reopened" / "**Reopening" marker line — the file's own
- * existing convention for documenting an intentional status change. A
- * "disappeared" finding has no such escape hatch: if the heading is gone,
- * there is no body left to carry a marker, so the fix is to keep the
- * heading (even a very short one) and mark it explicitly, not to delete it
- * silently.
+ *     in proposed under the same, uniquely-matching title, but its status
+ *     suffix is no longer 'closed'-class, and no genuine reopen/correction
+ *     marker was added to its body. Covers the "reverted CLOSED -> PENDING"
+ *     half. This is the only finding type with an escape hatch: it is
+ *     suppressed when the proposed section's body contains a genuine (not
+ *     carried-over) "**Correction (date): ...**" / "**Update (date): ...**"
+ *     / "**Reopened" / "**Reopening" marker line — the file's own existing
+ *     convention for documenting an intentional status change.
  */
 export function checkStateDocIntegrity(baseContent, proposedContent) {
   const baseSections = parseSections(baseContent);
   const proposedSections = parseSections(proposedContent);
-  const proposedByAnchor = new Map(proposedSections.map((s) => [s.anchor, s]));
+
+  // A Map built from [anchor, section] pairs would silently keep only the
+  // LAST section for any anchor that occurs more than once, which could
+  // hide a regression on an earlier same-titled section behind a later
+  // one that still looks closed. Track every occurrence per anchor instead,
+  // and treat an anchor appearing more than once in the proposed document
+  // as inherently ambiguous — matched sections must be uniquely
+  // identifiable, not guessed at.
+  const proposedByAnchor = new Map();
+  const ambiguousAnchors = new Set();
+  for (const section of proposedSections) {
+    if (proposedByAnchor.has(section.anchor)) {
+      ambiguousAnchors.add(section.anchor);
+    } else {
+      proposedByAnchor.set(section.anchor, section);
+    }
+  }
 
   const findings = [];
   for (const baseSection of baseSections) {
     if (classifyStatus(baseSection.statusSuffix) !== "closed") continue;
+
+    if (ambiguousAnchors.has(baseSection.anchor)) {
+      findings.push({
+        type: "ambiguous",
+        title: baseSection.title,
+        baseStatus: baseSection.statusSuffix,
+      });
+      continue;
+    }
 
     const proposedSection = proposedByAnchor.get(baseSection.anchor);
     if (!proposedSection) {
@@ -244,11 +282,44 @@ export function checkStateDocIntegrity(baseContent, proposedContent) {
 
 // --- CLI ----------------------------------------------------------------
 
+function refResolves(ref) {
+  try {
+    execFileSync("git", ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], {
+      cwd: gitRoot,
+      encoding: "utf8",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Loads relativePath's content at ref. Distinguishes two very different
+ * failure shapes, which matter for CI safety:
+ *   - ref itself does not resolve (typo'd SHA, unfetched history, shallow
+ *     checkout, wrong argument) — a configuration error. This must be a
+ *     hard failure, never silently treated as "nothing to compare, OK":
+ *     an unresolvable base is exactly the shape of failure that would let
+ *     a real regression through unnoticed.
+ *   - ref resolves fine, but the file genuinely does not exist in that
+ *     tree — the legitimate "RA7ETBAL_STATE.md didn't exist yet at this
+ *     point in history" bootstrap case. Returns null so the caller can
+ *     treat it as "nothing to compare against" without masking a
+ *     configuration error as the same thing.
+ */
 function loadRef(ref, relativePath) {
-  return execFileSync("git", ["show", `${ref}:${relativePath}`], {
-    cwd: gitRoot,
-    encoding: "utf8",
-  });
+  if (!refResolves(ref)) {
+    throw new Error(`base revision "${ref}" does not resolve to a commit (invalid ref, or history not fetched)`);
+  }
+  try {
+    return execFileSync("git", ["show", `${ref}:${relativePath}`], {
+      cwd: gitRoot,
+      encoding: "utf8",
+    });
+  } catch {
+    return null;
+  }
 }
 
 function loadWorkingTree(absolutePath) {
@@ -266,9 +337,12 @@ function parseArgs(argv) {
 
 function formatFinding(f) {
   if (f.type === "disappeared") {
-    return `DISAPPEARED: "${f.title}" was ${JSON.stringify(f.baseStatus)} on the base branch and no longer has a matching heading at all — if this is an intentional rename/removal, keep the heading and add an explicit "**Correction (date): ...**" or "**Update (date): ...**" paragraph explaining why, per RA7ETBAL_STATE.md's own existing convention.`;
+    return `DISAPPEARED: "${f.title}" was ${JSON.stringify(f.baseStatus)} on the base branch and no longer has a matching heading at all — a closed/protected section must never simply disappear (there is no marker-based exception for this); keep the heading, even briefly, and add an explicit "**Correction (date): ...**" or "**Update (date): ...**" paragraph explaining the intentional change instead.`;
   }
-  return `REGRESSION: "${f.title}" was ${JSON.stringify(f.baseStatus)} on the base branch and is now ${JSON.stringify(f.proposedStatus)} with no explicit, new "**Correction (date): ...**" / "**Update (date): ...**" / "**Reopened" marker in its body — add one explaining the reason, or restore the closed status if this was unintentional.`;
+  if (f.type === "ambiguous") {
+    return `AMBIGUOUS: "${f.title}" was ${JSON.stringify(f.baseStatus)} on the base branch, but the proposed document now has more than one heading with this same normalized title — this checker refuses to guess which one corresponds to the original closed section; rename one of them to be distinct.`;
+  }
+  return `REGRESSION: "${f.title}" was ${JSON.stringify(f.baseStatus)} on the base branch and is now ${JSON.stringify(f.proposedStatus)} with no explicit, new "**Correction (date): ...**" / "**Update (date): ...**" / "**Reopened" marker in its body — add one explaining the reason (with a date and a real explanation, not just the bare marker word), or restore the closed status if this was unintentional.`;
 }
 
 function main() {
@@ -279,15 +353,33 @@ function main() {
   try {
     baseContent = loadRef(base, STATE_DOC_RELATIVE_PATH);
   } catch (err) {
+    // The base ref itself is bad (bad SHA, unfetched history, wrong arg) —
+    // a configuration error, not "nothing to compare." Must fail loudly,
+    // not be swallowed as OK.
+    console.error(`state-doc-integrity: ${err.message}`);
+    process.exit(1);
+  }
+  if (baseContent === null) {
     console.log(
-      `state-doc-integrity: ${STATE_DOC_RELATIVE_PATH} does not exist at ${base} (or ${base} is unresolvable) — nothing to compare against, treating as OK. (${err.message})`
+      `state-doc-integrity: ${STATE_DOC_RELATIVE_PATH} does not exist at ${base} (resolved fine, file just isn't there yet) — nothing to compare against, treating as OK.`
     );
     process.exit(0);
   }
 
   let proposedContent;
   if (args.head) {
-    proposedContent = loadRef(args.head, STATE_DOC_RELATIVE_PATH);
+    try {
+      proposedContent = loadRef(args.head, STATE_DOC_RELATIVE_PATH);
+    } catch (err) {
+      console.error(`state-doc-integrity: ${err.message}`);
+      process.exit(1);
+    }
+    if (proposedContent === null) {
+      console.error(
+        `state-doc-integrity: ${STATE_DOC_RELATIVE_PATH} does not exist at --head=${args.head} — cannot check a document that isn't there.`
+      );
+      process.exit(1);
+    }
   } else {
     proposedContent = loadWorkingTree(resolve(gitRoot, STATE_DOC_RELATIVE_PATH));
   }
