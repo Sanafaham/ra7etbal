@@ -25,11 +25,18 @@ BEGIN
     CREATE ROLE carson_canary_function_owner
       NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
+
+  IF EXISTS (
+    SELECT 1
+      FROM pg_roles
+     WHERE rolname = 'carson_canary_function_owner'
+       AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole OR
+            rolinherit OR rolreplication OR rolbypassrls)
+  ) THEN
+    RAISE EXCEPTION 'carson_canary_function_owner has unsafe role attributes';
+  END IF;
 END
 $roles$;
-
-ALTER ROLE carson_canary_function_owner
-  NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
 
 GRANT USAGE ON SCHEMA carson_canary_private, public TO carson_canary_function_owner;
 GRANT SELECT (singleton, token_sha256) ON carson_canary_private.config TO carson_canary_function_owner;
