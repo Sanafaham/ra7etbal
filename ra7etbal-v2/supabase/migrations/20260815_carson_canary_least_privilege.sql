@@ -61,6 +61,10 @@ CREATE POLICY "automations: canary aggregate select"
 -- A function owner needs CREATE briefly to receive ownership. Remove it
 -- immediately afterward so the NOLOGIN owner cannot create other objects.
 GRANT CREATE ON SCHEMA public TO carson_canary_function_owner;
+-- Supabase's managed `postgres` role is intentionally not a superuser and
+-- therefore needs temporary membership to transfer function ownership.
+-- Remove the membership immediately after the transfer.
+GRANT carson_canary_function_owner TO postgres;
 
 CREATE OR REPLACE FUNCTION public.carson_production_canary_health(p_token text)
 RETURNS TABLE (
@@ -128,6 +132,7 @@ $function$;
 
 ALTER FUNCTION public.carson_production_canary_health(text)
   OWNER TO carson_canary_function_owner;
+REVOKE carson_canary_function_owner FROM postgres;
 REVOKE CREATE ON SCHEMA public FROM carson_canary_function_owner;
 
 REVOKE ALL ON FUNCTION public.carson_production_canary_health(text)

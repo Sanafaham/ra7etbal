@@ -1,4 +1,5 @@
 DROP FUNCTION IF EXISTS public.carson_production_canary_health(text);
+REVOKE carson_canary_function_owner FROM postgres;
 
 DROP POLICY IF EXISTS "whatsapp_health_state: canary aggregate select" ON public.whatsapp_health_state;
 DROP POLICY IF EXISTS "whatsapp_deliveries: canary aggregate select" ON public.whatsapp_deliveries;
