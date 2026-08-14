@@ -141,7 +141,8 @@
         "src/lib/delegation-fast-path.test.ts",
         "src/lib/carson-protected-behaviors.test.ts",
         "src/components/home/ElevenLabsAgentWidget.typed-delegation-execution.test.ts",
-        "src/components/home/ElevenLabsAgentWidget.delegation-duplicate-guard.test.ts"
+        "src/components/home/ElevenLabsAgentWidget.delegation-duplicate-guard.test.ts",
+        "api/send-whatsapp-task.test.js"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
@@ -149,9 +150,7 @@
       "production_canary_required": false,
       "rollback_risk": "medium",
       "verification_status": "PRODUCTION VERIFIED — PR #49/#50/#52/#53 (communication-vs-delegation contract), PERMANENTLY LOCKED per RA7ETBAL_STATE.md",
-      "unresolved": [
-        "api/send-whatsapp-task.test.js (worker WhatsApp send / photo attachment pipeline) is not currently in the required protected suite. Not added in Phase 1 — Phase 1 scope was limited to the four categories the user explicitly named (automation execution, daily-brief/Needs-You, Communication History, push lifecycle). Flagged for Phase 2 consideration, not silently added."
-      ]
+      "unresolved": []
     },
     {
       "id": "direct_staff_communication",
@@ -288,7 +287,9 @@
         "api/_reminder-delivery.test.js",
         "public/sw.test.js",
         "src/components/home/ElevenLabsAgentWidget.reminder-replacement.test.ts",
-        "src/lib/parse-voice-time.test.ts"
+        "src/lib/parse-voice-time.test.ts",
+        "api/reminder-writer-authority.test.js",
+        "api/server-authoritative-reminder-migration.test.js"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
@@ -297,7 +298,7 @@
       "rollback_risk": "medium",
       "verification_status": "PRODUCTION VERIFIED per RA7ETBAL_STATE.md",
       "unresolved": [
-        "api/reminder-writer-authority.test.js and api/server-authoritative-reminder-migration.test.js exist and pass, but were not identified as belonging to the four categories the user named for Phase 1 CI-membership closure; not added in this phase. A separate real-Postgres CI workflow (server-authoritative-reminder-rls-verification.yml) already covers part of this capability but is not a required check — flagged, not changed, per the explicit Phase 1 instruction not to touch branch protection."
+        "A separate real-Postgres CI workflow (server-authoritative-reminder-rls-verification.yml) covers part of this capability but is not a required branch-protection check — flagged, not changed, per the explicit Phase 1 instruction not to touch branch protection outside Phase 6's scope."
       ]
     },
     {
