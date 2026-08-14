@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-14
+Last updated: 2026-08-14 (Phase 5)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -42,7 +42,7 @@ Two stale documentation corrections found and fixed in this same pass (no code i
 
 **Zero genuine B (open, needs new implementation) items were found.** The Carson Engineering Hardening Project may begin once Sana's morning-brief check above is resolved, or on her explicit decision to proceed without waiting for it.
 
-**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–4 are complete and merged (PR #257, #258, #259, #260) — see "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)" below for the current phase's evidence. Phase 5 has not been authorized.
+**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–5 are complete and merged (PR #257, #258, #259, #260, #261, #262) — see "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)" and "— Phase 5 (stale-state / engineering-record protection)" below for the current phases' evidence. Phase 6 has not been authorized.
 
 ### Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing) — CLOSED, MERGED
 
@@ -56,7 +56,19 @@ CodeRabbit's initial review returned 5 legitimate findings (workflow path-filter
 
 Honest gaps, not silently covered: `messages`' own real `CREATE TABLE`/RLS DDL predates this repo's tracked migration history, so Section 3 of the suite does not assert RLS for `messages` at all, and the bootstrap's `task_id ON DELETE SET NULL` is a documented fixture choice, not a fact independently verified against production DDL. No test currently proves every *future* writer into `whatsapp_health_state` stays scoped correctly — only the current shape is covered. `carson-tier1-db-contracts.yml` is visible and green but is **not yet a required branch-protection merge gate** — that remains explicitly out of scope until a later phase authorizes it.
 
-Phase 5 scope has not been authorized — do not begin without Sana's explicit go-ahead.
+### Carson Engineering Hardening Project — Phase 5 (stale-state / engineering-record protection) — CLOSED, MERGED
+
+PR #262, squash-merged to `main` at `062da41b52908f57ed972f43dc6ea9fd984bc621`. Replaces the Phase 1 `stale_state_doc_integrity` registry placeholder with a real, working mechanism: a script (`scripts/state-doc-integrity.mjs`) that compares a PR's proposed `RA7ETBAL_STATE.md` against the correct base version from `main` and fails when a previously CLOSED/PROTECTED/PRODUCTION VERIFIED (or otherwise closed-class, per the file's own real observed vocabulary — no invented terminology) section either silently regresses to a non-closed status with no genuinely new, dated `**Correction (date): ...**` / `**Update (date): ...**` marker in its body, or disappears entirely (no marker-based exception for disappearance — a closed section must never simply be deleted).
+
+Counterfactual proof is not synthetic: the checker's test suite loads the actual two git blobs of `RA7ETBAL_STATE.md` from the real historical stale-state incident (commit `7b83a0089876ac784fbd3b9c98a0c5816581fb94`, whose diff silently reverted "Notifications Inbox V1" from `CLOSED, PRODUCTION VERIFIED, PROTECTED` back to `PRODUCTION CORRECTION PENDING VERIFICATION` and deleted an unrelated recorded item) and proves the checker rejects it, while the real follow-up fix commit (`110a155`) that restored the closure passes cleanly.
+
+New CI workflow `.github/workflows/carson-state-doc-integrity.yml` runs on `RA7ETBAL_STATE.md` or its integrity tooling changing. Visible and green, but **explicitly not a required branch-protection merge gate** — that remains Phase 6 scope.
+
+CodeRabbit's initial review returned 4 legitimate findings (a doc/code mismatch implying a marker could excuse a disappearing section when the checker has no such escape hatch; a duplicate-heading anchor collision that could silently hide a regression behind a later same-titled section; a reopen-marker regex loose enough to accept a bare `**Update**` with no date or explanation; and `loadRef` treating an unresolvable base ref the same as a legitimately-missing file, which could mask a CI misconfiguration as "OK") — all fixed in a follow-up commit (`58d4feb`), with new regression tests for each, re-verified end-to-end (22/22 state-doc-integrity tests, registry validation, impact-map tests, full protected suite, typecheck, build). CodeRabbit was rate-limited on the re-review request; merge proceeded on the strength of the independent re-verification plus all required CI checks passing green.
+
+Known limitations, not silently covered: only closed-class-section regression/disappearance is detected — an OPEN/PENDING section disappearing, or a closed section's body being materially gutted while its status wording stays untouched, is not mechanically caught (deliberately, to avoid a brittle prose-diff system that would block harmless wording edits). Section identity is matched by normalized heading title text; a heading rename that also drops its status is not distinguishable from a genuine disappearance-plus-new-section.
+
+Phase 6 scope has not been authorized — do not begin without Sana's explicit go-ahead.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
