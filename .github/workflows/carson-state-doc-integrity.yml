@@ -1,0 +1,55 @@
+name: carson-state-doc-integrity
+
+# Phase 5 of the Carson Engineering Hardening Project.
+#
+# Compares this PR's proposed RA7ETBAL_STATE.md against the correct base
+# version from main and fails when a previously CLOSED/PROTECTED/PRODUCTION
+# VERIFIED section either silently regresses to a non-closed status, or
+# disappears entirely, with no explicit "**Correction (date): ...**" /
+# "**Update (date): ...**" reopen marker in its body — see
+# ra7etbal-v2/scripts/state-doc-integrity.mjs for the full mechanism and its
+# real-history counterfactual test.
+#
+# This is visible and reliable but is NOT yet a required branch-protection
+# merge gate — that is explicit Phase 6 scope, not decided here.
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - "RA7ETBAL_STATE.md"
+      - "ra7etbal-v2/scripts/state-doc-integrity.mjs"
+      - "ra7etbal-v2/scripts/state-doc-integrity.test.mjs"
+      - ".github/workflows/carson-state-doc-integrity.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  carson-state-doc-integrity:
+    name: carson-state-doc-integrity
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ra7etbal-v2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history is required so `git show <base_sha>:RA7ETBAL_STATE.md`
+          # can resolve the PR's true base version, not just a shallow slice.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ra7etbal-v2/package-lock.json
+      - run: npm ci
+
+      - name: Run the state-doc integrity checker's own test suite (includes the real historical regression counterfactual)
+        run: npm run test:carson-state-integrity
+
+      - name: Check this PR's RA7ETBAL_STATE.md against the PR base for stale-state regressions
+        run: |
+          node scripts/state-doc-integrity.mjs \
+            --base="${{ github.event.pull_request.base.sha }}" \
+            --head="${{ github.event.pull_request.head.sha }}"
