@@ -175,6 +175,10 @@ New `api/whatsapp-health-state-writer-authority.test.js` (added to the required 
 
 No production runtime, schema, or WhatsApp routing behavior changed — only a new regression test and its registry/CI wiring.
 
+### Registry stale-status correction — deployment_identity_verification — CLOSED
+
+`deployment_identity_verification`'s registry entry still said the canary workflow "cannot run for real until the least-privilege migration is deployed and Sana configures secrets" and its `verification_status` said that work was "pending protected merge, migration deployment, and Sana's manual GitHub configuration." That work finished in PRs #276–#280 (see "Carson production canary least-privilege hardening" above) and was independently re-verified during this same reconciliation: `CANARY_RPC_TOKEN`/`VERCEL_TOKEN` and `VERCEL_PROJECT_ID`/`VERCEL_TEAM_ID`/`SUPABASE_URL`/`SUPABASE_PUBLISHABLE_KEY` are configured, `SUPABASE_SERVICE_ROLE_KEY` is absent, workflow run `31846329887` passed against current production, and a live `curl` with a wrong token against the production RPC returned HTTP 403. `verification_status` and the stale `unresolved` note were corrected to state this as done; the only remaining note is the deliberate, already-documented `workflow_dispatch`-only design (Phase 7's own choice — this read-only probe must never become a PR merge gate). No code, workflow, or credential changed.
+
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
 Sana's own master-plan tracking (kept outside this repo) numbers the Unified/Immutable Communication History capability as Workstream 4, Phase 1 — this file has never carried that numbering, so this entry documents the durability fix on its own terms; do not mark Workstream 4 complete based on this entry alone — that decision belongs to Sana's own tracking, and is explicitly gated on the production test below.
