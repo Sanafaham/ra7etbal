@@ -1,12 +1,19 @@
 name: server-authoritative-reminder-rls-verification
 
+# Final gap-closure pass (Carson Engineering Hardening Project): no longer
+# path-filtered at the workflow-trigger level, for the same reason Phase 6
+# removed carson-tier1-db-contracts.yml's filter — a required check that
+# never runs on an unrelated PR deadlocks it forever. Triggers on every PR
+# to main; an internal "Determine relevance" step (git diff against the
+# PR base) gates the expensive Postgres steps, not the job itself, so an
+# unrelated PR still gets a genuine, fast success. This is also the exact
+# migration (20260812190000_server_authoritative_reminder_inserts.sql)
+# Phase 8's migration classifier independently flagged class 4
+# (destructive/rollback-sensitive — a new RESTRICTIVE RLS policy) — real,
+# material justification for finally making this a required check.
 "on":
   pull_request:
     branches: [main]
-    paths:
-      - "ra7etbal-v2/supabase/migrations/20260812190000_server_authoritative_reminder_inserts.sql"
-      - "ra7etbal-v2/supabase/migrations/verification/server_authoritative_reminder_*.sql"
-      - ".github/workflows/server-authoritative-reminder-rls-verification.yml"
   push:
     branches: [fix/authoritative-one-time-routing]
   workflow_dispatch: {}
@@ -41,19 +48,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
 
+      - name: Determine relevance
+        id: relevance
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
+          echo "$CHANGED"
+          PATTERN='^ra7etbal-v2/supabase/migrations/(20260812190000_server_authoritative_reminder_inserts\.sql|verification/server_authoritative_reminder_.*\.sql)$|^\.github/workflows/server-authoritative-reminder-rls-verification\.yml$'
+          if echo "$CHANGED" | grep -Eq "$PATTERN"; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Wait for PostgreSQL 16
+        if: steps.relevance.outputs.relevant == 'true'
         run: pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
 
       - name: Bootstrap the production-relevant tasks schema and owner policies
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/server_authoritative_reminder_rls_bootstrap.sql"
 
       - name: Insert pre-migration reminder fixtures
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/server_authoritative_reminder_rls_fixture.sql"
 
       - name: Apply the exact forward migration
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260812190000_server_authoritative_reminder_inserts.sql"
 
       - name: Prove RLS composition, role behavior, isolation, and legacy-row safety
+        if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/server_authoritative_reminder_rls_verification.sql"

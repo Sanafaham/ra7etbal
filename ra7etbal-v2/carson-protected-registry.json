@@ -97,7 +97,7 @@
         "api/staff-decision-golden-contract.test.js",
         "api/_staff-decision-message.test.js"
       ],
-      "protected_suite": false,
+      "protected_suite": true,
       "golden_journey_required": true,
       "golden_journey_tests": ["api/golden-journey-owner-alternative-approval.test.js"],
       "db_contract_tests": [
@@ -107,10 +107,9 @@
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
       "production_canary_required": false,
       "rollback_risk": "high — root cause history shows this contract has two independently-implemented legs (owner-notify vs. worker-notify) that can regress independently",
-      "verification_status": "PRODUCTION VERIFIED — PR #237 (owner-notify leg), PR #243 (worker-notify leg). Phase 4: real-PostgreSQL contract proof added for the task-based RPC chain (claim_substitute_decision -> reserve_custom_instruction, person_id threading into messages/whatsapp_deliveries, durability across task deletion; claim_task_escalation_owner_decision's own claim/duplicate/cross-account/unauthorized-execution contracts) — carson-tier1-db-contracts.yml, not yet a required check.",
+      "verification_status": "PRODUCTION VERIFIED — PR #237 (owner-notify leg), PR #243 (worker-notify leg). Phase 4: real-PostgreSQL contract proof added for the task-based RPC chain (claim_substitute_decision -> reserve_custom_instruction, person_id threading into messages/whatsapp_deliveries, durability across task deletion; claim_task_escalation_owner_decision's own claim/duplicate/cross-account/unauthorized-execution contracts) — carson-tier1-db-contracts.yml, not yet a required check. Final gap-closure pass: api/_escalation-notify.test.js added to the required test:carson-protected suite, closing the last gap between this capability's focused_tests and the actual required CI gate — protected_suite flipped true.",
       "unresolved": [
-        "protected_suite is false, not true, because one of this capability's own focused tests — api/_escalation-notify.test.js, which covers the owner-notify leg fixed by PR #237 — is not present in package.json's required test:carson-protected/pretest:carson-protected script list. Every other focused test listed here IS in the required gate. This gap was caught by the registry's own validator (npm run validate:carson-registry) after CodeRabbit review flagged that protected_suite:true was not being cross-checked against the actual required CI file list. Adding api/_escalation-notify.test.js to the required suite was judged out of the Phase 1 authorization (which named only automation execution, daily-brief/Needs-You, Communication History, and push-lifecycle tests for CI-membership closure) — left as an explicit, truthfully-flagged item rather than silently expanding scope.",
-        "No standing CI check yet proves every RPC writing into messages/whatsapp_deliveries/staff_escalation_owner_decisions threads person_id — the PR #243 guard is a one-off test, not a generic rule (see Phase 0 §1 Incident 3, future gate). Not built in Phase 1; deferred to a future phase."
+        "No standing CI check yet proves every RPC writing into messages/whatsapp_deliveries/staff_escalation_owner_decisions threads person_id — the PR #243 guard is a one-off test, not a generic rule (see Phase 0 §1 Incident 3). Investigated during the final gap-closure pass: a generic single-writer RPC gatekeeper for whatsapp_deliveries would require changing every current writer's call shape (a real, established production writer contract, not a test gap) — classified as PRODUCT/ROADMAP work requiring its own design review and Sana's decision, not implemented here. See safe_release_rollback_contract's sibling note and RA7ETBAL_STATE.md's final gap-closure pass entry for the full investigation."
       ]
     },
     {
@@ -243,7 +242,7 @@
       "rollback_risk": "high — prior failure mode (Incident 4) was silent (structurally unreachable evidence, no error) until manual production forensics",
       "verification_status": "PRODUCTION VERIFIED for automation_delegation (PR #254, live test with real contact); automation_message shares the same fixed code path but was NOT independently exercised live per PR #254's own follow-up commit — this distinction is preserved here, not collapsed",
       "unresolved": [
-        "whatsapp_deliveries has no single-writer RPC gatekeeper (contrast: staff_escalation_owner_decisions is RPC-gated and did not have this bug class). This structural gap is not closed by Phase 1 — flagged for future-phase consideration.",
+        "whatsapp_deliveries has no single-writer RPC gatekeeper (contrast: staff_escalation_owner_decisions is RPC-gated and did not have this bug class). Investigated during the final gap-closure pass: at least 3 genuinely distinct writer paths exist today (api/_whatsapp-delivery.js:beginWhatsappDelivery and api/_owner-reminder-whatsapp.js:claimOwnerReminderDelivery, both raw REST inserts, plus SQL-embedded INSERTs inside 3+ separate RPC functions across different migrations). Converting this into a single-writer RPC gatekeeper would mean rewriting every current writer's established call shape — a real production writer-contract change, not a test gap — classified as PRODUCT/ROADMAP work requiring its own design review and Sana's decision, not implemented here.",
         "api/_owner-reminder-whatsapp.js:claimOwnerReminderDelivery does a raw REST insert into whatsapp_deliveries that still never sets person_id — found during Phase 0 investigation, out of scope for this capability (it's an owner-facing reminder, not a per-person communication event) but recorded here as known current-state evidence of a third writer into the same table."
       ]
     },
@@ -382,7 +381,7 @@
       ],
       "protected_suite": true,
       "golden_journey_required": true,
-      "golden_journey_tests": ["api/golden-journey-owner-alternative-approval.test.js", "api/golden-journey-one-time-scheduled-delegation.test.js", "api/golden-journey-direct-staff-communication.test.js", "api/golden-journey-communication-history-durability.test.js"],
+      "golden_journey_tests": ["api/golden-journey-owner-alternative-approval.test.js", "api/golden-journey-one-time-scheduled-delegation.test.js", "api/golden-journey-direct-staff-communication.test.js", "api/golden-journey-communication-history-durability.test.js", "api/golden-journey-communication-history-cross-writer.test.js"],
       "db_contract_tests": [
         "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
         "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql"
@@ -394,12 +393,12 @@
         "script": "scripts/carson-production-canary.mjs (evaluatePersonIdContinuity)",
         "workflow": ".github/workflows/carson-production-canary.yml",
         "proves": "The exact Incident 4 shape (automation-runner-linked whatsapp_deliveries silently missing person_id) is not currently reproducing in live production, read-only, for recent (30-day) rows.",
-        "does_not_prove": "Golden Journey #6's full cross-writer integration gap (this capability's own existing 'unresolved' note below) — the canary only checks one writer path (automation-runner), not every known writer in one combined check, and does not verify get_communication_history's actual output shape/timestamps against a live query."
+        "does_not_prove": "get_communication_history's actual output shape/timestamps against a live production query — the canary only checks the underlying person_id-continuity invariant, read-only. The cross-writer combination question this note used to raise is now closed at the CI/regression-test layer instead — see golden-journey-communication-history-cross-writer.test.js — which is the correct place for it (pre-merge, deterministic), not something a live canary needs to duplicate."
       },
       "rollback_risk": "high — prior failure mode (Incident 4) was a structurally unreachable event with zero error surface, only found via manual production forensics",
       "verification_status": "PRODUCTION VERIFIED — PR #229 (original), PR #250 (timestamps), PR #253/#254 (automation-runner linkage). Phase 4: real-PostgreSQL proof that person_id survives the real ON DELETE SET NULL task-deletion transformation on both whatsapp_deliveries and messages — carson-tier1-db-contracts.yml, not yet a required check.",
       "unresolved": [
-        "No test anywhere in the repository exercises buildCommunicationHistory against a real writer's actual insert payload for every known writer (live-conversation, automation-runner, and the owner-reminder writer noted under automation_execution_confirmation) in one integration test — this is exactly the Golden Journey #6 gap identified in Phase 0 and is not built in Phase 1 (Golden Journeys are explicitly out of scope this phase)."
+        "CLOSED in the final gap-closure pass: golden-journey-communication-history-cross-writer.test.js builds two real rows via the actual beginWhatsappDelivery write path (one live-conversation shape, one automation-runner shape) for the same person and proves buildCommunicationHistory surfaces and orders both correctly in one call. The third writer named in the original Phase 0 note — the owner-facing reminder path (api/_owner-reminder-whatsapp.js:claimOwnerReminderDelivery) — was investigated and confirmed to never set person_id at all, by design (an owner-facing reminder is not a per-person communication event, per automation_execution_confirmation's own note), so it structurally cannot appear in buildCommunicationHistory — correctly excluded, not a remaining gap."
       ]
     },
     {
@@ -426,7 +425,7 @@
         "src/lib/whatsapp-delivery-context.test.ts",
         "api/_whatsapp-inbound-observability.test.js"
       ],
-      "protected_suite": false,
+      "protected_suite": true,
       "golden_journey_required": false,
       "golden_journey_tests": ["api/golden-journey-immediate-staff-delegation.test.js", "api/golden-journey-owner-alternative-approval.test.js", "api/golden-journey-one-time-scheduled-delegation.test.js", "api/golden-journey-communication-history-durability.test.js"],
       "db_contract_tests": [
@@ -445,8 +444,7 @@
       "rollback_risk": "high — this is exactly the shared dependency identified in Phase 0's Impact-Aware CI design as needing broad fan-out mapping (a change here can silently break owner_decision_lifecycle, automation_execution_confirmation, and communication_history simultaneously)",
       "verification_status": "PARTIALLY VERIFIED — the live-conversation writer path is fully covered; the automation-runner and owner-reminder writer paths were the exact subject of Incidents 3/4 and are fixed only where explicitly investigated. Phase 4: real-PostgreSQL proof of person_id/task_id/automation_run_id linkage acceptance, durability across task deletion, and RLS owner isolation (read-only, cross-account write rejection, same-account write also rejected by design) on whatsapp_deliveries — carson-tier1-db-contracts.yml, not yet a required check.",
       "unresolved": [
-        "protected_suite is false, not true, because one of this capability's own focused tests — src/lib/whatsapp-delivery-context.test.ts — is not present in package.json's required test:carson-protected/pretest:carson-protected script list. The other three focused tests listed here ARE in the required gate. Same reasoning as owner_decision_lifecycle's equivalent note: caught by the registry's own validator after CodeRabbit review, and left as an explicit flagged gap rather than silently expanding the Phase 1-authorized CI-membership scope.",
-        "No single-writer RPC gatekeeper exists for whatsapp_deliveries (unlike staff_escalation_owner_decisions, which is RPC-gated). This is flagged as an open structural risk, not resolved in Phase 1."
+        "No single-writer RPC gatekeeper exists for whatsapp_deliveries (unlike staff_escalation_owner_decisions, which is RPC-gated). Investigated during the final gap-closure pass: a generic gatekeeper would require changing every current writer's call shape — an established production writer contract, not a test gap — classified as PRODUCT/ROADMAP work requiring its own design review and Sana's decision, not implemented here."
       ]
     },
     {
@@ -476,9 +474,11 @@
         "reason": "Evaluated in Phase 7. Exercising RLS live in production would require authenticating as a second real account against real data, which is a materially riskier and more invasive check than a canary should be — Phase 4's carson-tier1-db-contracts.yml already proves RLS with real roles/real SET ROLE authenticated/cross-account rejection pre-merge for the tables it covers, which is the stronger and safer place for this class of proof. This does not close this capability's own 'unresolved' gap below (only 4 of 76 migrations have real RLS verification at all) — that is a Phase 4/8 scope question, not something a production canary can retroactively fix."
       },
       "rollback_risk": "unresolved — see below",
-      "verification_status": "PARTIALLY VERIFIED — real-Postgres RLS verification exists for exactly 4 of 76 migrations (server-authoritative reminders, staff escalation, push-subscription installation identity, owner-reminder-WhatsApp claim), each via its own dedicated GitHub Actions workflow; none of these are required status checks",
+      "verification_status": "PARTIALLY VERIFIED — real-Postgres RLS verification exists for exactly 4 of 76 migrations (server-authoritative reminders, staff escalation, push-subscription installation identity, owner-reminder-WhatsApp claim). Final gap-closure pass: all 4 workflows made deadlock-safe (path filters removed, internal git-diff relevance gating added — same pattern Phase 6 used for carson-tier1-db-contracts.yml) and proven to still trigger and pass correctly. Branch-protection required-check status for these 4 is a separate, explicit follow-up step (see RA7ETBAL_STATE.md's final gap-closure pass entry for current status), not silently claimed here before it's actually done.",
       "unresolved": [
-        "There is no vitest-level RLS test at all — the only real-Postgres proof is the 4 path-filtered, non-required workflows named above. Phase 0 explicitly scoped extending this to a required check as Phase 4 work (real DB contract testing), which this Phase 1 does not touch per the user's explicit instruction not to expand database-contract testing yet. This entry is intentionally left with protected_suite: false and no focused_tests — fabricating a mapping here would violate the 'do not invent mappings' instruction."
+        "There is no vitest-level RLS test at all — the only real-Postgres proof is the 4 workflows named above. This entry is intentionally left with protected_suite: false and no focused_tests — fabricating a mapping here would violate the 'do not invent mappings' instruction.",
+        "20260812190000_server_authoritative_reminder_inserts.sql is the single most material untested-as-required DB boundary among these 4 — Phase 8's migration classifier independently flagged it class 4 (destructive/rollback-sensitive: a new RESTRICTIVE RLS policy). Its workflow (server-authoritative-reminder-rls-verification.yml) is the highest-priority candidate for required-check status.",
+        "72 of 76 migrations still have no real-Postgres verification at all — only spot-checked, high-risk ones (these 4 plus Phase 4's Tier 1 chain) have been prioritized. Testing all 76 was explicitly out of scope for Phase 4 and remains out of scope here — this entry does not claim broader coverage than exists."
       ]
     },
     {
@@ -524,7 +524,7 @@
       "rollback_risk": "medium",
       "verification_status": "PRODUCTION VERIFIED per RA7ETBAL_STATE.md (Push Subscription Installation Management / Orphan Resolution)",
       "unresolved": [
-        "A dedicated real-Postgres verification workflow (push-subscription-installation-identity-verification.yml) exists for the installation-identity migration but is not a required status check — flagged, not changed, per the explicit Phase 1 instruction not to touch branch protection or database-contract expansion."
+        "A dedicated real-Postgres verification workflow (push-subscription-installation-identity-verification.yml) exists for the installation-identity migration. Final gap-closure pass: made deadlock-safe (path filter removed, internal relevance gating added) and proven to still trigger and pass correctly. Branch-protection required-check status is a separate, explicit follow-up step, not silently claimed here before it's actually done — see RA7ETBAL_STATE.md's final gap-closure pass entry."
       ]
     },
     {
