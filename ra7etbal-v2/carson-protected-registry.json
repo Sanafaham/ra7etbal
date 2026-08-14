@@ -608,9 +608,9 @@
         "does_not_prove": "Nothing about application behavior itself — this is purely a deployment-identity gate other checks' results should be read through, not a substitute for them."
       },
       "rollback_risk": "low — a failure here means 'stop trusting the rest of this canary run,' not a production incident by itself",
-      "verification_status": "Phase 7: implemented and manually verified against real production (see above). 2026-08-15 least-privilege correction: workflow updated to use a token-gated aggregate RPC instead of SUPABASE_SERVICE_ROLE_KEY; pending protected merge, migration deployment, and Sana's manual GitHub configuration.",
+      "verification_status": "Phase 7: implemented and manually verified against real production (see above). 2026-08-15 least-privilege correction: workflow updated to use a token-gated aggregate RPC instead of SUPABASE_SERVICE_ROLE_KEY, merged via PR #276 with production permission corrections in PRs #277-#280 (see 'Carson production canary least-privilege hardening' in RA7ETBAL_STATE.md). Secrets CANARY_RPC_TOKEN/VERCEL_TOKEN and variables VERCEL_PROJECT_ID/VERCEL_TEAM_ID/SUPABASE_URL/SUPABASE_PUBLISHABLE_KEY are configured; SUPABASE_SERVICE_ROLE_KEY confirmed absent. Independently re-verified 2026-08-15 during post-handover reconciliation: workflow run 31846329887 passed with headSha matching current production; a live curl with a wrong token against the production RPC returned HTTP 403.",
       "unresolved": [
-        "The GitHub Actions workflow cannot run for real until the least-privilege migration is deployed and Sana configures secrets VERCEL_TOKEN/CANARY_RPC_TOKEN plus variables VERCEL_PROJECT_ID/SUPABASE_URL/SUPABASE_PUBLISHABLE_KEY. SUPABASE_SERVICE_ROLE_KEY is deliberately forbidden. Until then, this check can only be run by hand (or by an agent with equivalent access), not automatically."
+        "The workflow remains workflow_dispatch-only by design (Phase 7's deliberate choice — a read-only production probe must never become a PR merge gate), so it still only runs when manually triggered, not automatically after every deploy. That is a scope decision, not a blocker: manual triggering by Sana or an agent with equivalent access was always the intended operating mode."
       ]
     },
     {
