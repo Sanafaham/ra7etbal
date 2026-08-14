@@ -16,7 +16,8 @@
         "api/whatsapp-webhook.js:recordWebhookHeartbeat",
         "api/whatsapp-webhook.js:upsertHealthState",
         "api/whatsapp-webhook.js:updateMatchedHealthState",
-        "api/_owner-whatsapp-routing.js:resolveCanonicalOwner"
+        "api/_owner-whatsapp-routing.js:resolveCanonicalOwner",
+        "api/_owner-command-executor.js"
       ],
       "shared_dependencies": ["api/_owner-whatsapp-routing.js"],
       "db": {
@@ -37,7 +38,8 @@
       "rollback_risk": "high — prior failure mode was silent (zero error surface) for a full day",
       "verification_status": "PRODUCTION VERIFIED — PR #244, migration 20260813_whatsapp_health_state_phone_number_unique.sql adds UNIQUE(phone_number_id)",
       "unresolved": [
-        "No test or CI check currently proves that every future writer into whatsapp_health_state is scoped to phone_number_id + caller-verified user_id — only recordWebhookHeartbeat's current shape is covered. Flagged as an open design gap, not fabricated as already-covered."
+        "No test or CI check currently proves that every future writer into whatsapp_health_state is scoped to phone_number_id + caller-verified user_id — only recordWebhookHeartbeat's current shape is covered. Flagged as an open design gap, not fabricated as already-covered.",
+        "api/_owner-command-executor.js was found unreferenced by any Phase 1 capability during Phase 2's impact-mapper build, even though its tests (api/_owner-command-executor.test.js, api/_owner-command-executor.execution.test.js) were already in the required CI suite since Phase 1. It classifies inbound owner WhatsApp instructions (personal-response vs. delegation-shaped) — placed here as the closest existing capability (downstream of canonical-owner resolution), a judgment call rather than a proven mapping; may belong more precisely under a future owner-command-execution capability if one is registered."
       ]
     },
     {
@@ -52,7 +54,8 @@
         "api/task-confirm.js:handleOwnerDecision",
         "api/task-confirm.js:findAssigneePerson",
         "api/_escalation-notify.js:notifyOwnerOfTaskReview",
-        "api/_escalation-notify.js:resolveAssigneePersonId"
+        "api/_escalation-notify.js:resolveAssigneePersonId",
+        "api/_staff-decision-message.js"
       ],
       "shared_dependencies": ["api/_whatsapp-delivery.js"],
       "db": {
@@ -77,7 +80,8 @@
         "api/task-owner-whatsapp-substitute-review.test.js",
         "api/recipient-bound-owner-decisions.test.js",
         "api/owner-whatsapp-decision-golden-contract.test.js",
-        "api/staff-decision-golden-contract.test.js"
+        "api/staff-decision-golden-contract.test.js",
+        "api/_staff-decision-message.test.js"
       ],
       "protected_suite": false,
       "golden_journey_required": true,
@@ -139,7 +143,10 @@
       "files_functions": [
         "src/lib/communication-vs-delegation.ts:isCommunicationStyleTaskText",
         "src/lib/direct-message-fast-path.ts:parseSimpleDirectMessage / executeDirectMessageFastPath",
-        "src/lib/direct-messages.ts:createAndSendDirectMessage"
+        "src/lib/direct-messages.ts:createAndSendDirectMessage",
+        "src/lib/direct-message-reply-intent.ts",
+        "api/_staff-comms-engine.js",
+        "src/lib/staff-messages.ts"
       ],
       "shared_dependencies": ["api/_whatsapp-delivery.js"],
       "db": {
@@ -177,7 +184,12 @@
         "api/process-delegation-escalations.js:processMessageAutomation",
         "api/process-delegation-escalations.js:runAutomationsCore",
         "api/send-whatsapp-task.js",
-        "api/_whatsapp-delivery.js:beginWhatsappDelivery / resolveDeliveryContext"
+        "api/_whatsapp-delivery.js:beginWhatsappDelivery / resolveDeliveryContext",
+        "api/automations.js",
+        "src/lib/automation-context.ts",
+        "src/lib/automation-support.ts",
+        "src/lib/one-time-automation-routing.ts",
+        "api/_automation-run-confirmation-sync.js"
       ],
       "shared_dependencies": ["api/_whatsapp-delivery.js", "api/send-whatsapp-task.js"],
       "db": {
@@ -218,7 +230,9 @@
         "api/qstash-reminder.js:handleNotificationReceipt",
         "api/_reminder-delivery.js:recordDeliveryEvent / signReminderReceipt / verifyReminderReceipt",
         "src/lib/reminders.ts",
-        "src/lib/reminder-time.ts"
+        "src/lib/reminder-time.ts",
+        "src/lib/qstash-reminder.ts",
+        "src/lib/parse-voice-time.ts"
       ],
       "shared_dependencies": ["api/_owner-reminder-whatsapp.js", "public/sw.js"],
       "db": {
@@ -260,7 +274,8 @@
       "production_entry_points": ["api/task-confirm.js (completion push send)", "api/qstash-reminder.js (notification-receipt handler)"],
       "files_functions": [
         "api/task-confirm.js:sendOwnerPush",
-        "api/qstash-reminder.js:handleNotificationReceipt"
+        "api/qstash-reminder.js:handleNotificationReceipt",
+        "public/sw.js"
       ],
       "shared_dependencies": ["api/_reminder-delivery.js"],
       "db": {
@@ -288,7 +303,8 @@
       "production_entry_points": ["src/routes/Home.tsx", "src/routes/Updates.tsx"],
       "files_functions": [
         "src/lib/daily-brief.ts:buildDailyBrief / isNeedsYouTask / isWaitingInterventionTask",
-        "src/lib/needs-you-timestamp.ts:getNeedsYouTimestampLabel"
+        "src/lib/needs-you-timestamp.ts:getNeedsYouTimestampLabel",
+        "src/lib/needs-you-staff-escalations.ts"
       ],
       "shared_dependencies": [],
       "db": {
@@ -351,7 +367,9 @@
       "production_entry_points": ["api/send-whatsapp-task.js", "api/_whatsapp-delivery.js"],
       "files_functions": [
         "api/_whatsapp-delivery.js:beginWhatsappDelivery / resolveDeliveryContext",
-        "api/whatsapp-webhook.js:updateWhatsappDeliveryStatus"
+        "api/whatsapp-webhook.js:updateWhatsappDeliveryStatus",
+        "src/lib/whatsapp-delivery-context.ts",
+        "api/_whatsapp-inbound-observability.js"
       ],
       "shared_dependencies": [],
       "db": {
@@ -412,7 +430,8 @@
       "production_entry_points": ["public/sw.js", "api/send-push-for-task.js", "api/send-due-reminder-pushes.js"],
       "files_functions": [
         "src/lib/push-notifications.ts",
-        "public/sw.js"
+        "public/sw.js",
+        "src/lib/push-subscription-rotation.ts"
       ],
       "shared_dependencies": ["api/_reminder-delivery.js"],
       "db": {

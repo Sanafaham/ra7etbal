@@ -1,0 +1,80 @@
+name: carson-impact-aware-ci
+
+# Phase 2 of the Carson Engineering Hardening Project. Additive to (never a
+# replacement for) carson-protected-behaviors.yml, which keeps running
+# unconditionally on every PR to main regardless of what changed.
+#
+# This workflow maps the PR's changed files against
+# ra7etbal-v2/carson-protected-registry.json (the Phase 1 Protected Behavior
+# Registry) to determine which protected Carson capabilities may be
+# affected, then runs exactly the union of their existing focused/golden
+# tests — so a shared-infrastructure change fans out to every dependent
+# capability automatically, instead of relying on a developer to remember
+# which suites matter.
+#
+# Fails closed: if a changed file under api/, src/lib/, or
+# supabase/migrations/ maps to zero registered capabilities and isn't
+# explicitly (and narrowly) excluded in carson-impact-exclusions.json, this
+# check fails — the registry is treated as incomplete, not the change as
+# unimportant. See scripts/impact-map.mjs for the full mapping logic.
+"on":
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  carson-impact-aware-ci:
+    name: carson-impact-aware-ci
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ra7etbal-v2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history is required so `git diff --relative <base>...HEAD`
+          # can resolve the PR's true merge-base against main, not just the
+          # shallow slice a default checkout would provide.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ra7etbal-v2/package-lock.json
+      - run: npm ci
+
+      - name: Validate the Protected Behavior Registry
+        run: npm run validate:carson-registry
+
+      - name: Run the impact mapper's own test suite
+        run: npm run test:carson-impact-map
+
+      - name: Map changed files to affected protected capabilities
+        run: |
+          npm run carson:impact-map -- \
+            --base="${{ github.event.pull_request.base.sha }}" \
+            --tests-out=/tmp/carson-impact-tests.txt \
+            --summary-out=/tmp/carson-impact-summary.json
+
+      - name: Show the selected capabilities and tests
+        if: always()
+        run: |
+          echo "## Carson Impact-Aware CI" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f /tmp/carson-impact-summary.json ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat /tmp/carson-impact-summary.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Run the selected impact-aware regression tests
+        run: |
+          if [ -s /tmp/carson-impact-tests.txt ]; then
+            echo "Running $(wc -l < /tmp/carson-impact-tests.txt) selected test file(s):"
+            cat /tmp/carson-impact-tests.txt
+            TZ=UTC npx vitest run $(tr '\n' ' ' < /tmp/carson-impact-tests.txt)
+          else
+            echo "No registered protected capability was affected by this change — nothing to run."
+          fi
