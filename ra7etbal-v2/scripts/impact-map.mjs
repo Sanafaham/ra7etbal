@@ -71,7 +71,10 @@ export function loadExclusions(exclusionsPath = EXCLUSIONS_PATH) {
 /**
  * Builds a Map from normalized relative path -> Set of capability ids that
  * reference that path anywhere in files_functions, production_entry_points,
- * shared_dependencies, db.migrations, or db.data_repairs.
+ * shared_dependencies, db.migrations, db.data_repairs, db_contract_tests, or
+ * db_contract_workflow. db_contract_workflow entries are repo-root-relative
+ * (e.g. ".github/workflows/...") — the same layout impact-map's CLI diff
+ * output uses — so they are added to the index unmodified.
  */
 export function buildPathIndex(registry) {
   const index = new Map();
@@ -87,6 +90,8 @@ export function buildPathIndex(registry) {
     }
     for (const relPath of (cap.db && cap.db.migrations) || []) add(relPath, cap.id);
     for (const relPath of (cap.db && cap.db.data_repairs) || []) add(relPath, cap.id);
+    for (const relPath of cap.db_contract_tests || []) add(relPath, cap.id);
+    if (cap.db_contract_workflow) add(cap.db_contract_workflow, cap.id);
   }
   return index;
 }

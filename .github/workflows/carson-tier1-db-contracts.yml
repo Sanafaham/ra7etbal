@@ -35,11 +35,11 @@ name: carson-tier1-db-contracts
       - "ra7etbal-v2/supabase/migrations/20260726_staff_escalation_owner_decisions.sql"
       - "ra7etbal-v2/supabase/migrations/20260801_task_based_escalation_owner_decisions.sql"
       - "ra7etbal-v2/supabase/migrations/20260812_durable_person_id_communication_history.sql"
-      - "ra7etbal-v2/supabase/migrations/20260812_durable_person_id_communication_history.rollback.sql"
       - "ra7etbal-v2/supabase/migrations/20260812_task_review_owner_decision_person_id.sql"
       - "ra7etbal-v2/supabase/migrations/20260812_worker_notification_person_id.sql"
       - "ra7etbal-v2/supabase/migrations/20260813_whatsapp_health_state_phone_number_unique.sql"
       - "ra7etbal-v2/supabase/migrations/20260813_whatsapp_health_state_phone_number_unique.rollback.sql"
+      - "ra7etbal-v2/supabase/migrations/verification/00_bootstrap_minimal_auth.sql"
       - "ra7etbal-v2/supabase/migrations/verification/carson_tier1_*.sql"
       - ".github/workflows/carson-tier1-db-contracts.yml"
   workflow_dispatch: {}

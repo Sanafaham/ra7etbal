@@ -282,6 +282,14 @@ BEGIN
   END IF;
   RAISE NOTICE 'PASS: 3b. reserve_custom_instruction genuinely threads canonical person_id into both messages and whatsapp_deliveries at the real database layer';
 
+  -- Capture task_id BEFORE deletion so the durability assertion below is
+  -- not vacuously true (i.e. the column was never linked in the first
+  -- place, so "IS NULL after delete" would trivially pass either way).
+  SELECT task_id INTO v_task_id FROM public.messages WHERE id = v_reserve.message_id;
+  IF v_task_id IS DISTINCT FROM 'a6000000-0000-4000-8000-000000000001'::uuid THEN
+    RAISE EXCEPTION 'FAIL: messages.task_id must actually be linked to the task before deletion, or the durability assertion below proves nothing (got %)', v_task_id;
+  END IF;
+
   -- Durability: task deletion nulls messages.task_id (ON DELETE SET NULL,
   -- proven from carson_tier1_bootstrap_extension.sql's DDL) but person_id
   -- survives — the same durable-identity contract as section 2b, now also

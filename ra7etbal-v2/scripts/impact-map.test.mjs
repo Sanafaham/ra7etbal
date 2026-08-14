@@ -86,6 +86,22 @@ describe("mapChangedFiles — Phase 4 DB contract surfacing", () => {
     expect(result.affectedDbContractTests).toEqual([]);
     expect(result.affectedDbContractWorkflows).toEqual([]);
   });
+
+  it("a direct change to a db_contract_tests SQL file itself (not the migration) also selects the owning capability", () => {
+    const registry = fixtureRegistry();
+    const result = mapChangedFiles(["supabase/migrations/verification/a_contract.sql"], registry, new Set());
+    expect(result.affectedCapabilities).toEqual(["cap_a"]);
+    expect(result.affectedDbContractTests).toEqual(["supabase/migrations/verification/a_contract.sql"]);
+    expect(result.affectedDbContractWorkflows).toEqual([".github/workflows/a-contract.yml"]);
+  });
+
+  it("a direct change to the db_contract_workflow file itself also selects the owning capability", () => {
+    const registry = fixtureRegistry();
+    const result = mapChangedFiles([".github/workflows/a-contract.yml"], registry, new Set());
+    expect(result.affectedCapabilities).toEqual(["cap_a"]);
+    expect(result.affectedDbContractTests).toEqual(["supabase/migrations/verification/a_contract.sql"]);
+    expect(result.affectedDbContractWorkflows).toEqual([".github/workflows/a-contract.yml"]);
+  });
 });
 
 describe("mapChangedFiles — shared dependency fan-out", () => {

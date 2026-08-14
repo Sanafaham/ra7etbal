@@ -22,6 +22,17 @@
  * would prove nothing about production. Contract tests in this suite only
  * assert what is independently provable: that person_id survives writes
  * made by the real, tracked RPCs.
+ *
+ * One column is NOT independently verified against real DDL: task_id's
+ * `ON DELETE SET NULL` foreign-key action. No tracked migration creates
+ * this column or states its delete behavior, so this is a fixture CHOICE
+ * — chosen because it's consistent with this codebase's pattern elsewhere
+ * (e.g. whatsapp_deliveries.task_id) and with production's own observed
+ * behavior (task deletion does not orphan/delete messages) — not a proven
+ * production fact. Section 3's durability assertions below prove that
+ * person_id survives task deletion; they do not, and cannot, prove that
+ * production's real FK action is ON DELETE SET NULL rather than some
+ * other mechanism producing the same observed effect.
  */
 
 CREATE TABLE IF NOT EXISTS public.messages (

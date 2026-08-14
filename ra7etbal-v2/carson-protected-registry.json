@@ -36,6 +36,7 @@
       "golden_journey_required": false,
       "golden_journey_tests": [],
       "db_contract_tests": [
+        "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
         "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql",
         "supabase/migrations/verification/carson_tier1_whatsapp_health_state_post_rollback_verification.sql"
       ],
@@ -93,6 +94,7 @@
       "golden_journey_required": true,
       "golden_journey_tests": ["api/golden-journey-owner-alternative-approval.test.js"],
       "db_contract_tests": [
+        "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
         "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
@@ -364,6 +366,7 @@
       "golden_journey_required": true,
       "golden_journey_tests": ["api/golden-journey-owner-alternative-approval.test.js", "api/golden-journey-one-time-scheduled-delegation.test.js", "api/golden-journey-direct-staff-communication.test.js", "api/golden-journey-communication-history-durability.test.js"],
       "db_contract_tests": [
+        "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
         "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
@@ -402,6 +405,7 @@
       "golden_journey_required": false,
       "golden_journey_tests": ["api/golden-journey-immediate-staff-delegation.test.js", "api/golden-journey-owner-alternative-approval.test.js", "api/golden-journey-one-time-scheduled-delegation.test.js", "api/golden-journey-communication-history-durability.test.js"],
       "db_contract_tests": [
+        "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
         "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
