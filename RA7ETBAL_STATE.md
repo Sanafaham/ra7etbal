@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-13
+Last updated: 2026-08-14
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -41,6 +41,22 @@ Notifications Inbox V1 is no longer the current next task — see below.
 Two stale documentation corrections found and fixed in this same pass (no code involved): the "WhatsApp owner decision template" section incorrectly still read "pending Meta approval" despite 24 real production sends since 2026-07-13 (now corrected to CLOSED, PRODUCTION VERIFIED, PROTECTED); the Historical Lookup Phase 1 section had a leftover pre-closure "remaining work" paragraph contradicting its own PERMANENTLY CLOSED header (removed).
 
 **Zero genuine B (open, needs new implementation) items were found.** The Carson Engineering Hardening Project may begin once Sana's morning-brief check above is resolved, or on her explicit decision to proceed without waiting for it.
+
+**Update (2026-08-14):** the Carson Engineering Hardening Project proceeded (Sana's explicit per-phase authorization). Phases 0–4 are complete and merged (PR #257, #258, #259, #260) — see "Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing)" below for the current phase's evidence. Phase 5 has not been authorized.
+
+### Carson Engineering Hardening Project — Phase 4 (real-PostgreSQL / RLS contract testing) — CLOSED, MERGED
+
+PR #260, squash-merged to `main` at `e41cbe4c26f4f1e8990d1f75248d785d28fbbcf0`. Built real-PostgreSQL contract protection (constraints, RLS, RPC behavior, ownership/isolation, migration/rollback) for four Tier 1 tables — `whatsapp_health_state`, `whatsapp_deliveries`, `messages`, `staff_escalation_owner_decisions` — reusing the existing real-Postgres GitHub Actions verification architecture (service container → bootstrap → fixture → forward migration → verification → rollback → post-rollback verify → reapply → re-verify), not a new framework.
+
+New/changed files: `supabase/migrations/verification/carson_tier1_bootstrap_extension.sql`, `carson_tier1_db_contracts_verification.sql`, `carson_tier1_whatsapp_health_state_post_rollback_verification.sql`; `.github/workflows/carson-tier1-db-contracts.yml`; `carson-protected-registry.json` extended with `db_contract_tests`/`db_contract_workflow` on 4 capabilities (`owner_whatsapp_canonical_routing`, `owner_decision_lifecycle`, `communication_history`, `whatsapp_delivery_person_identity_continuity`); `scripts/validate-carson-registry.mjs` and `scripts/impact-map.mjs`/`impact-map.test.mjs` extended to validate and surface those new fields. No production runtime code or schema/migration changed — protection infrastructure and tests only.
+
+Proven (real Postgres 17, real roles/RLS, not mocked): `whatsapp_health_state`'s `UNIQUE(phone_number_id)` canonical-owner binding rejects a second account; owner-isolation RLS (correct account reads own row, different account reads none, different account cannot write, same-account authenticated cannot write — service-role-only write is deliberate); `whatsapp_deliveries`' nullable-`person_id`/`task_id`/`automation_run_id` linkage shapes are all accepted as production writes them (no new NOT NULL invented); real `ON DELETE SET NULL` durability (task deletion nulls `task_id`, `person_id` survives) for both `whatsapp_deliveries` and `messages`; `staff_escalation_owner_decisions`' `claim_task_escalation_owner_decision` RPC persists `person_id`, reuses the row on a duplicate claim (no double-escalation), rejects cross-account claims (`SQLSTATE 28000`), and rejects direct `authenticated`/`anon` execution (service_role-only `EXECUTE`).
+
+CodeRabbit's initial review returned 5 legitimate findings (workflow path-filter gap, an unregistered bootstrap file, `impact-map.mjs` not indexing the new registry fields, an unverifiable epistemic claim about an FK's delete action, and a section-3c assertion that could pass vacuously) — all fixed in a follow-up commit (`21ba1dd`), re-verified end-to-end against a fresh local Postgres 17 instance plus the full test/typecheck/build suite, and included in the same PR before merge. CodeRabbit was rate-limited on the re-review request and explicitly declined a second incremental pass; merge proceeded on the strength of the independent local re-verification plus all 4 required CI checks passing green.
+
+Honest gaps, not silently covered: `messages`' own real `CREATE TABLE`/RLS DDL predates this repo's tracked migration history, so Section 3 of the suite does not assert RLS for `messages` at all, and the bootstrap's `task_id ON DELETE SET NULL` is a documented fixture choice, not a fact independently verified against production DDL. No test currently proves every *future* writer into `whatsapp_health_state` stays scoped correctly — only the current shape is covered. `carson-tier1-db-contracts.yml` is visible and green but is **not yet a required branch-protection merge gate** — that remains explicitly out of scope until a later phase authorizes it.
+
+Phase 5 scope has not been authorized — do not begin without Sana's explicit go-ahead.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
