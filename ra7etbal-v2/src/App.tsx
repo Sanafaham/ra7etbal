@@ -562,7 +562,7 @@ export default function App() {
           <Route path="/confirm" element={<ConfirmRouter />} />
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/terms" element={<Terms />} />
-          <Route path="/debug" element={<Debug />} />
+          <Route path="/debug" element={<ProtectedRoute><Debug /></ProtectedRoute>} />
           <Route
             path="*"
             element={
