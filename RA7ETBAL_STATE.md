@@ -179,7 +179,7 @@ No production runtime, schema, or WhatsApp routing behavior changed — only a n
 
 `deployment_identity_verification`'s registry entry still said the canary workflow "cannot run for real until the least-privilege migration is deployed and Sana configures secrets" and its `verification_status` said that work was "pending protected merge, migration deployment, and Sana's manual GitHub configuration." That work finished in PRs #276–#280 (see "Carson production canary least-privilege hardening" above) and was independently re-verified during this same reconciliation: `CANARY_RPC_TOKEN`/`VERCEL_TOKEN` and `VERCEL_PROJECT_ID`/`VERCEL_TEAM_ID`/`SUPABASE_URL`/`SUPABASE_PUBLISHABLE_KEY` are configured, `SUPABASE_SERVICE_ROLE_KEY` is absent, workflow run `31846329887` passed against current production, and a live `curl` with a wrong token against the production RPC returned HTTP 403. `verification_status` and the stale `unresolved` note were corrected to state this as done; the only remaining note is the deliberate, already-documented `workflow_dispatch`-only design (Phase 7's own choice — this read-only probe must never become a PR merge gate). No code, workflow, or credential changed.
 
-### Carson Engineering Hardening Project — Phase 9 (mechanical PROTECTED definition) — investigation + first mechanical gate, IN PROGRESS
+### Carson Engineering Hardening Project — Phase 9 kickoff (mechanical PROTECTED definition) — investigation + first mechanical gate, IN PROGRESS
 
 Sana authorized Phase 9 directly (2026-08-15): make the word PROTECTED in this file and in `carson-protected-registry.json` mechanically meaningful — a capability may not be labelled protected on documentation/convention/human-memory/optional-CI alone. Started from a fresh, independently re-fetched `origin/main` (confirmed via both `git rev-parse HEAD` in a clean clone and a separate `gh api repos/Sanafaham/ra7etbal/git/refs/heads/main` call — both returned `6752bd4a195ac1d04dedff4773e515d4cbd151e2`, matching the PR #282–#284 reconciliation exactly; no undisclosed prior Phase 9 work exists anywhere in this file, the registry, or git history).
 
@@ -216,6 +216,20 @@ Closing Phase 9 against its own Definition of Done, checked item by item:
 - **Merged through the normal protected-PR process:** PRs #285 (rule 10 + traceability fixes), #286 (proof matrix), and this PR (rule 11 + closure) — no branch-protection weakening, no `--no-verify`, no direct pushes to `main`.
 
 No gate was weakened to make Phase 9 pass. No unrelated Carson product behavior changed. Strix was not started.
+
+### Release-Candidate Stabilization — rollback readiness re-verified, known-good ledger advanced
+
+Froze `bcff0b752920d62ddd6a4c5e3eb88c55203b5f38` (Phase 9's own merge) as the release candidate and independently confirmed it live: Vercel deployment `dpl_7Nt44BN2eVSuMrZirR9DMK4kAfvV`, `readyState: READY`, `target: production`, `aliasError: null`, `githubCommitSha` matching exactly, canonical `www.ra7etbal.com` aliased.
+
+**VERCEL_TOKEN credential incident (2026-08-15):** the production canary's Vercel API call started returning HTTP 403. Investigated without touching the credential: team/project IDs were confirmed correct against Claude's own authenticated Vercel session (identical team, identical API call succeeded independently); GitHub run history showed the token worked for ~20 minutes right after being configured the previous evening, then failed identically ~14 hours later — the signature of a short-lived/expiring token, not a wrong value or wrong scope. Per the standing credential rule, Claude did not create, rotate, or handle the token itself — Sana was given exact manual steps and replaced it herself (new token `ra7etbal-canary-ci`, scoped to the `ra7etbal-v2` project, no expiration). `CANARY_RPC_TOKEN` and `CRON_SECRET` were never touched.
+
+**Re-verification after the replacement:** GitHub Actions run `31887313570` (workflow_dispatch, `main`) passed cleanly — all 3 automated checks `ok: true` (`deployment_identity`, `whatsapp_canonical_binding_ambiguity`, `automation_runner_person_id_continuity`), `failures: []`, `deploymentSha` matching current `main` exactly, the Notifications Inbox human-only boundary honestly reported (never silently marked pass). The full run log was scanned for plaintext credential leakage — none found; both secrets remained redacted (`***`) throughout.
+
+**Known-good release ledger advanced:** `carson-known-good-release.json` updated from the Phase 8 bootstrap entry (SHA `2dd6aad`) to this release candidate, chaining `previous_known_good_sha`. The one production migration introduced in between, `20260815_carson_canary_least_privilege.sql` (the canary least-privilege redesign), was classified live by `scripts/carson-migration-classifier.mjs` as **class 2 (tested-rollback)**. `evaluateKnownGoodEligibility()` was run against the real, freshly-gathered manifest (not fabricated) and returned `eligible: true, reasons: []`. `scripts/carson-rollback-dry-run.mjs` confirmed both application-only and application-plus-database rollback paths are currently safe (trivially, since current == known-good).
+
+**Incidental fix:** found and fixed a latent heading-title collision in `RA7ETBAL_STATE.md` from PR #287 — two Phase 9 headings normalized to the identical title, which `scripts/state-doc-integrity.mjs` could not disambiguate for any future PR touching this file (its own documented behavior: "this checker refuses to guess which one corresponds to the original closed section"). Renamed the earlier, now-historical heading to "Phase 9 kickoff" — text-only, no status claim changed.
+
+No production runtime or schema changed. No credential created, rotated, or handled by Claude.
 
 No production runtime, schema, or test behavior changed — a new documentation artifact plus this state entry.
 

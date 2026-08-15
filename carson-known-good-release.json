@@ -1,22 +1,28 @@
 {
   "$schema_note": "Carson Engineering Hardening Project — Phase 8. The durable known-good release ledger. Updated only through a normal protected PR, after carson-release-manifest.mjs's evaluateKnownGoodEligibility() reports eligible:true against real, freshly-gathered evidence (never fabricated or carried forward from an earlier release without re-verification). See scripts/carson-rollback-dry-run.mjs for how this file is used to compute a rollback target when no explicit --target is given.",
-  "sha": "2dd6aad8e0fdc7b00048a088ef7377cd1d81c273",
-  "vercel_deployment_id": "dpl_DU4TKkLoo43YT84FfrWPBfZiJ1bj",
+  "sha": "bcff0b752920d62ddd6a4c5e3eb88c55203b5f38",
+  "vercel_deployment_id": "dpl_7Nt44BN2eVSuMrZirR9DMK4kAfvV",
   "vercel_project_id": "prj_f32jTzGmYS5m8pc2XU6E0Apw6Y1K",
   "production_alias": "www.ra7etbal.com",
-  "verified_at": "2026-08-14T19:15:09.278Z",
-  "previous_known_good_sha": "e3218bbcdfdd2fa695f5545b175c1b2420f04154",
-  "migrations_since_previous": [],
+  "verified_at": "2026-08-15T13:29:01.398Z",
+  "previous_known_good_sha": "2dd6aad8e0fdc7b00048a088ef7377cd1d81c273",
+  "migrations_since_previous": [
+    {
+      "path": "20260815_carson_canary_least_privilege.sql",
+      "classification": 2,
+      "reason": "rollback SQL exists and is exercised by a real CI workflow (20260815_carson_canary_least_privilege.rollback.sql)"
+    }
+  ],
   "canary_report": {
-    "deploymentSha": "2dd6aad8e0fdc7b00048a088ef7377cd1d81c273",
+    "deploymentSha": "bcff0b752920d62ddd6a4c5e3eb88c55203b5f38",
     "ok": true,
     "checks": [
-      { "name": "deployment_identity", "capability": "deployment_identity_verification", "ok": true },
+      { "name": "deployment_identity", "capability": "hosting_operations", "ok": true },
       { "name": "whatsapp_canonical_binding_ambiguity", "capability": "owner_whatsapp_canonical_routing", "ok": true },
       { "name": "automation_runner_person_id_continuity", "capability": "whatsapp_delivery_person_identity_continuity", "ok": true }
     ]
   },
   "human_acceptance_required": [],
   "human_acceptance_note": "Empty because no capability with a genuine human-only acceptance boundary (see scripts/carson-production-canary.mjs's HUMAN_ONLY_BOUNDARIES) changed behavior in the releases folded into this SHA. A future release that DOES change one of those capabilities must list it here with completed:false until a real human/device acceptance test is recorded, and evaluateKnownGoodEligibility() will correctly refuse to mark that release known-good until then.",
-  "notes": "Second ledger entry — advanced from the Phase 8 bootstrap SHA to Phase 8's own merged PR #270 (the safe-release-rollback tooling itself), chaining previous_known_good_sha. migrations_since_previous is empty because PR #270 introduced no new production migration (only new scripts/registry/workflow files). All evidence above was gathered live against real production (Vercel deployment dpl_DU4TKkLoo43YT84FfrWPBfZiJ1bj, Supabase project ggarvhgqzpooloacjgcj), not fabricated or assumed."
+  "notes": "Third ledger entry — Release-Candidate Stabilization (2026-08-15), advanced from PR #270 (Phase 8 tooling) to PR #287 (Phase 9 closure), chaining previous_known_good_sha. Every commit in between is registry/script/docs-only except one production migration: 20260815_carson_canary_least_privilege.sql (the canary least-privilege redesign, PRs #276-#281), classified class 2 (tested-rollback) by scripts/carson-migration-classifier.mjs. All evidence above was gathered live against real production (Vercel deployment dpl_7Nt44BN2eVSuMrZirR9DMK4kAfvV, project prj_f32jTzGmYS5m8pc2XU6E0Apw6Y1K, GitHub Actions run 31887313570) after the GitHub VERCEL_TOKEN secret was replaced by Sana with a new, project-scoped, non-expiring token (the previous token began failing with HTTP 403 roughly 14 hours after configuration — investigated and traced to short-lived-token behavior, not a wrong value or wrong scope; Claude never created, held, or entered the replacement token itself, per the standing credential-handling rule). Run log scanned for plaintext credential leakage — none found; CANARY_RPC_TOKEN and CRON_SECRET were not touched. evaluateKnownGoodEligibility() confirmed eligible:true against this manifest."
 }
