@@ -42,6 +42,11 @@
  *       workflow that would not actually block a bad merge. This is Phase 9's
  *       mechanical answer to "does this depend only on optional CI, or a
  *       non-required test" for the DB-contract dimension specifically.
+ *   11. (Phase 9) production_canary_required: true must be backed by an
+ *       actual production_canary object with a valid classification (A,
+ *       "A (partial)", B, or C) and a non-empty "proves" statement — the
+ *       same mechanical-not-documentary bar, for the production-canary
+ *       dimension.
  *
  * Deliberately NOT enforced here (left for a future phase, not guessed at):
  *   - Whether a focused test file's assertions actually exercise the named
@@ -285,6 +290,24 @@ for (const [index, cap] of registry.capabilities.entries()) {
       fail(
         `${label}: db_contract_workflow "${workflowPath}" resolves to job "${jobName}", which is not in REQUIRED_MERGE_GATE_CHECKS — this capability claims DB-contract protection through a workflow that would not actually block a bad merge`
       );
+    }
+  }
+
+  // --- 11. (Phase 9) production_canary_required: true must be backed by an
+  // actual, classified production_canary object — a capability cannot claim
+  // "a production canary is required for this" while leaving the object
+  // that would describe what it proves entirely absent, which would be
+  // exactly the "documentation says it is protected" failure Phase 9 exists
+  // to catch, just for the canary dimension instead of the DB-contract one.
+  if (cap.production_canary_required === true) {
+    const pc = cap.production_canary;
+    const validClassifications = new Set(["A", "A (partial)", "B", "C"]);
+    if (typeof pc !== "object" || pc === null) {
+      fail(`${label}: production_canary_required is true but production_canary is missing`);
+    } else if (!validClassifications.has(pc.classification)) {
+      fail(`${label}: production_canary.classification "${pc.classification}" is not one of A / A (partial) / B / C`);
+    } else if (typeof pc.proves !== "string" || pc.proves.length === 0) {
+      fail(`${label}: production_canary is missing a non-empty "proves" statement`);
     }
   }
 
