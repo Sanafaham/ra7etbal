@@ -272,6 +272,10 @@ The one required real-Postgres check with no registry capability mapping (honest
 
 No production runtime, schema, or test behavior changed — a new documentation artifact plus this state entry.
 
+### Registry stale-notes correction — safe_release_rollback_contract
+
+Two of this capability's `unresolved` notes described the state of `carson-known-good-release.json` and the canary secrets as they were during Phase 8's original bootstrap, not current reality. `previous_known_good_sha` has not been `null` since Release-Candidate Stabilization advanced the ledger (chained twice now: bootstrap → PR #270 → PR #288) — that note is removed, fully superseded. The other note's "pending repository secrets" caveat is also stale: the canary secrets/variables have been fully configured and re-verified live multiple times this session — corrected to describe only the still-accurate part (the ledger genuinely still requires a human/agent to update it by hand after each deploy; that operational gap is real and unchanged). No code or workflow changed.
+
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
 Sana's own master-plan tracking (kept outside this repo) numbers the Unified/Immutable Communication History capability as Workstream 4, Phase 1 — this file has never carried that numbering, so this entry documents the durability fix on its own terms; do not mark Workstream 4 complete based on this entry alone — that decision belongs to Sana's own tracking, and is explicitly gated on the production test below.

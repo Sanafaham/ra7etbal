@@ -659,8 +659,7 @@
       "unresolved": [
         "The migration classifier is a text-pattern heuristic, not a real DDL parser — PL/pgSQL function bodies (CREATE FUNCTION ... AS $$ ... $$) are not statement-parsed and always fall back to class 5 (unknown), even when a human would judge them safe. This is a deliberate fail-closed default, not a bug, but it means several real migrations that ARE probably additive are conservatively blocked from automated rollback eligibility rather than confirmed safe.",
       "Only migrations from the current release window were exercised against real CI-verification evidence during Phase 8; the classifier itself runs over all 77+ real migration files, but no attempt was made to hand-verify every historical classification beyond spot-checks.",
-        "carson-known-good-release.json currently has no PREVIOUS entry to chain against (previous_known_good_sha is null, the Phase 8 bootstrap) — the ledger's cross-release history starts here, not retroactively reconstructed for earlier phases.",
-        "No automatic mechanism updates carson-known-good-release.json after a real deploy today — it must be updated by hand (or by an agent) through a normal protected PR after re-running the canary + eligibility check, the same operational gap Phase 7's own canary CI has (pending repository secrets).",
+        "No automatic mechanism updates carson-known-good-release.json after a real deploy today — it must be updated by hand (or by an agent) through a normal protected PR after re-running the canary + eligibility check.",
         "Executing an actual rollback (redeploying an old Vercel deployment, and/or applying rollback SQL to production) is explicitly NOT automated by this capability — it remains a deliberate human/operator action, per this repository's standing safety rules on destructive operations."
       ]
     }
