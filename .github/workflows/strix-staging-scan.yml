@@ -53,6 +53,19 @@ name: strix-staging-scan
 # extended-thinking budget the model gets per turn — coverage and scope
 # are governed entirely by scan_mode and the quick.md skill prompt,
 # neither of which this touches.
+#
+# DIAGNOSTIC FIX + BUDGET CAP (2026-08-15): the prior reasoning-effort
+# diagnostic imported strix as a Python module, but Strix installs as a
+# self-contained PyInstaller binary, not a pip package -- the import
+# always failed, which correctly (fail-closed) skipped the scan step
+# rather than running unverified. Replaced with a plain shell assertion
+# against the literal env value, which needs no credentials and cannot
+# import-fail. Also added --max-budget-usd 19 (a native Strix flag,
+# verified in strix/core/runner.py: applies to cumulative LLM cost and
+# stops the scan cleanly with graduated agent wrap-up warnings as the
+# cap is approached, rather than crashing on Anthropic billing
+# rejection) -- this only bounds spend/runtime, not vulnerability
+# coverage, agents, or scope, all of which remain unchanged.
 
 on:
   workflow_dispatch:
@@ -108,13 +121,15 @@ jobs:
       - name: Install Strix
         run: curl -sSL https://strix.ai/install | bash
 
-      - name: Verify resolved reasoning effort before scanning
+      - name: Verify STRIX_REASONING_EFFORT is set to medium before scanning
         env:
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-          STRIX_LLM: anthropic/claude-sonnet-4-6
           STRIX_REASONING_EFFORT: medium
         run: |
-          python3 -c "from strix.config.settings import Settings; print('resolved reasoning_effort:', Settings().llm.reasoning_effort)"
+          if [ "$STRIX_REASONING_EFFORT" != "medium" ]; then
+            echo "::error::STRIX_REASONING_EFFORT is not exactly 'medium' (got: '$STRIX_REASONING_EFFORT'). Refusing to run."
+            exit 1
+          fi
+          echo "STRIX_REASONING_EFFORT confirmed: medium"
 
       - name: Run Strix against staging only
         env:
@@ -125,6 +140,7 @@ jobs:
           strix \
             --target "$STAGING_TARGET_URL" \
             --scan-mode "${{ inputs.scan_mode || 'quick' }}" \
+            --max-budget-usd 19 \
             --non-interactive \
             --instruction "Scope is strictly limited to $STAGING_TARGET_URL. Never attempt to reach any other host, including any *.ra7etbal.com production domain. Do not attempt destructive testing, do not attempt to exhaust rate limits or quotas, and do not attempt any action intended to trigger a real external message send (WhatsApp, SMS, push, or email) — this staging environment has no WhatsApp/Meta credentials configured and any such attempt will fail closed, but do not deliberately try to work around that. All accounts and data on this target are synthetic staging fixtures; treat findings as leads to be reported, not as license to modify data destructively."
 
