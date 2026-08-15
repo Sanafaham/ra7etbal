@@ -201,6 +201,22 @@ New `ra7etbal-v2/docs/carson-final-hardening-proof-matrix.md`: for every regress
 
 **Honestly scoped, not oversold:** the matrix explicitly states what it does not claim — 72 of 76 migrations remain without real-Postgres verification (Phase 4/8's deliberate scope), the Notifications Inbox device-tap lifecycle remains a human-only boundary by design, `owner-reminder-whatsapp-claim-verification.yml` still has no registry capability mapping, and the impact-map counterfactual tests only prove the mapper *selects* the right test file, not that every selected test's own assertions are airtight (verified per-row separately instead).
 
+### Carson Engineering Hardening Project — Phase 9 (mechanical PROTECTED definition) — CLOSED, MERGED
+
+Closing Phase 9 against its own Definition of Done, checked item by item:
+
+- **PROTECTED has a precise mechanical definition, encoded and validated:** rules 1–9 (Phases 1–8) already covered file-existence, test-required-CI membership, and golden-journey enforcement mechanically — confirmed by a fresh counterfactual during this phase (temporarily pointing `staff_delegation`'s `golden_journey_tests` at a nonexistent file correctly failed 2 separate existing rules, then reverted). The two genuinely missing dimensions — "is the DB-contract workflow an actual required merge gate" and "does a required production canary actually have a classified object" — are now rules 10 and 11 in `scripts/validate-carson-registry.mjs`.
+- **Falsely claiming PROTECTED without the required evidence fails CI:** proven live three separate times this phase, each as a real counterfactual mutation followed by a clean revert — (1) a capability's `db_contract_workflow` pointed at the non-required `carson-production-canary.yml` → rejected; (2) `production_canary_required: true` with the `production_canary` object removed → rejected; (3) `golden_journey_tests` pointed at a nonexistent file → rejected by the pre-existing rules.
+- **All currently-PROTECTED capabilities audited against the definition:** all 16 registry entries were read against every `db_contract_workflow`/`db_contract_workflows`/`production_canary_required` field; two real traceability gaps were found and closed (`owner_decision_lifecycle`, `reminders` — see the entry above), one is honestly flagged as still-unmapped (`owner-reminder-whatsapp-claim-verification.yml`) rather than force-mapped.
+- **Stale/overstated labels corrected honestly:** `staff_delegation`, `reminders` (twice — CI-membership and required-check status), `deployment_identity_verification` — four separate stale-registry-note corrections this reconciliation, all documentation-accuracy-only, zero behavior change.
+- **Safely closeable gaps fixed, not hidden:** `api/whatsapp-health-state-writer-authority.test.js` closed a real, previously-open gap with 4 counterfactual-proven invariants.
+- **Genuine product/design gaps remain explicitly unresolved:** the `whatsapp_deliveries` single-writer RPC gatekeeper and `hosting_operations` Tier classification remain untouched, per Sana's explicit instruction, and remain honestly marked in the registry as requiring her decision.
+- **The counterfactual matrix demonstrates which gate blocks each regression:** `ra7etbal-v2/docs/carson-final-hardening-proof-matrix.md`, 12 rows, built entirely from existing evidence, all citations re-verified passing before writing.
+- **Full protected suite, registry validation, Impact-Aware CI, state-integrity, real-Postgres workflows, typecheck, production build all pass:** `npm run test:carson-protected` 86 files/1395 tests, `node scripts/validate-carson-registry.mjs` OK (16 capabilities), `npm run test:carson-impact-map` 35/35, `node scripts/state-doc-integrity.mjs --base origin/main --head HEAD` OK, all 8 required GitHub checks green on every PR in this phase, `npx tsc -b` clean, `npm run build` succeeded cleanly (only pre-existing, unrelated chunk-size/CSS warnings).
+- **Merged through the normal protected-PR process:** PRs #285 (rule 10 + traceability fixes), #286 (proof matrix), and this PR (rule 11 + closure) — no branch-protection weakening, no `--no-verify`, no direct pushes to `main`.
+
+No gate was weakened to make Phase 9 pass. No unrelated Carson product behavior changed. Strix was not started.
+
 No production runtime, schema, or test behavior changed — a new documentation artifact plus this state entry.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
