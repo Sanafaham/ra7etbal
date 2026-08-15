@@ -75,7 +75,7 @@
       ],
       "shared_dependencies": ["api/_whatsapp-delivery.js"],
       "db": {
-        "tables": ["staff_escalation_owner_decisions", "messages", "whatsapp_deliveries"],
+        "tables": ["staff_escalation_owner_decisions", "quality_substitute_decisions", "messages", "whatsapp_deliveries"],
         "rpcs": [
           "claim_task_escalation_owner_decision",
           "reserve_custom_instruction",
@@ -505,7 +505,7 @@
       "unresolved": [
         "There is no vitest-level RLS test at all — the only real-Postgres proof is the 4 workflows named above. This entry is intentionally left with protected_suite: false and no focused_tests — fabricating a mapping here would violate the 'do not invent mappings' instruction.",
         "20260812190000_server_authoritative_reminder_inserts.sql is the single most material untested-as-required DB boundary among these 4 — Phase 8's migration classifier independently flagged it class 4 (destructive/rollback-sensitive: a new RESTRICTIVE RLS policy). Its workflow (server-authoritative-reminder-rls-verification.yml) is the highest-priority candidate for required-check status.",
-        "72 of 76 migrations still have no real-Postgres verification at all — only spot-checked, high-risk ones (these 4 plus Phase 4's Tier 1 chain) have been prioritized. Testing all 76 was explicitly out of scope for Phase 4 and remains out of scope here — this entry does not claim broader coverage than exists."
+        "Risk-based triage completed 2026-08-15 (see RA7ETBAL_STATE.md's 'Migration coverage risk triage' entry for the full breakdown), replacing the earlier vague '72 of 76' framing: of 53 current non-rollback migrations, scripts/carson-migration-classifier.mjs flags 21 as class 4 (destructive-pattern) or class 5 (unparseable, fails closed to unknown) — not testing-priority signals on their own. Of those 21, most touch tables already exercised by the broad carson-tier1-db-contracts.yml chain (whatsapp_deliveries, whatsapp_health_state, staff_escalation_owner_decisions, automation_runs, automations, staff_messages) or the dedicated per-migration workflows; most class-4 flags are the same benign DROP+ADD CONSTRAINT enum-widening idiom, not independent risk; most class-5 flags are the classifier's documented PL/pgSQL-trigger-body blind spot, not evidence of danger. Two tables (routines, owner_whatsapp_reply_receipts) are not yet registered under any capability's db.tables at all and were not force-mapped without a clearer single product-level owner — flagged honestly, not fixed here. No new real-Postgres CI workflow was manufactured for coverage's own sake; that remains genuinely out of scope unless a specific migration is later identified as both uncovered and materially risky."
       ]
     },
     {
