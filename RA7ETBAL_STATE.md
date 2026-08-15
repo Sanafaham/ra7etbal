@@ -254,6 +254,22 @@ No production runtime or schema changed. The RPC gatekeeper remains legitimate f
 
 The one required real-Postgres check with no registry capability mapping (honestly flagged, not force-mapped, in an earlier PR this session) is resolved with evidence: `20260811_owner_reminder_whatsapp_delivery.sql` adds `whatsapp_deliveries_owner_reminder_task_uidx`, the partial unique index (`ON whatsapp_deliveries(task_id) WHERE source_type = 'owner_reminder'`) that is literally `api/_owner-reminder-whatsapp.js:claimOwnerReminderDelivery`'s durable claim/dedup mechanism — already `reminders`' own documented shared dependency and WhatsApp delivery boundary. `reminders`' registry entry now lists `whatsapp_deliveries` in `db.tables`, the migration in `db.migrations`, both verification SQL files in `db_contract_tests`, and the workflow in the new `db_contract_workflows` array (additive, Phase 9's schema extension) alongside the existing `server-authoritative-reminder-rls-verification.yml`. `reminders`' `unresolved` array is now empty. No code, test, or CI behavior changed — this was a real, evidence-backed mapping, not a guess.
 
+### Migration coverage risk triage — accurate breakdown replaces the vague "72 of 76" framing
+
+`auth_rls`'s `unresolved` note said "72 of 76 migrations still have no real-Postgres verification at all." That number was stale and imprecise — never verified against the current, actual migration count or classified by real risk. Ran `scripts/carson-migration-classifier.mjs` against every current non-rollback migration (53 total, not 76) and cross-referenced the results against the registry.
+
+**Breakdown:** class 1 (backward-compatible) 14, class 2 (tested-rollback, already CI-verified) 5, class 3 (rollback asset exists, not CI-exercised) 13, class 4 (destructive-pattern match) 10, class 5 (unparseable, fails closed to unknown) 11.
+
+**The 21 class-4/5 migrations are not 21 independent risks.** Most class-4 flags are the identical `DROP CONSTRAINT ... ADD CONSTRAINT` idiom used throughout this codebase to widen a CHECK constraint's allowed-values list (e.g. adding a new `source_type` enum value) — a generally safe, additive-in-practice pattern the classifier conservatively can't distinguish from a genuinely narrowing, data-loss-risking change. Most class-5 flags are the classifier's own documented limitation (`safe_release_rollback_contract`'s existing note): PL/pgSQL trigger-function bodies aren't statement-parsed, so any migration creating a table with a `RETURN NEW`-style trigger defaults to "unknown" regardless of actual risk. Neither pattern is, by itself, evidence of danger.
+
+**Real coverage overlap:** most of the 21 touch tables already exercised by the broad `carson-tier1-db-contracts.yml` chain (`whatsapp_deliveries`, `whatsapp_health_state`, `staff_escalation_owner_decisions`, `automation_runs`, `automations`, `staff_messages`) or one of the 4 dedicated per-migration workflows — real-Postgres RLS/contract proof exists for those tables even though the individual migration file itself was never separately re-verified.
+
+**One real, small registry-completeness gap found and closed:** `quality_substitute_decisions` — the table `reserve_custom_instruction`/`reserve_rejected_alternative` actually operate on — was never listed in `owner_decision_lifecycle`'s `db.tables`, even though those RPCs were already registered. Added.
+
+**Two tables genuinely not tracked anywhere, honestly flagged rather than force-mapped:** `routines` and `owner_whatsapp_reply_receipts` don't appear in any capability's `db.tables`. Neither has an obvious single owning capability without a deeper product-level read this triage didn't attempt — recorded as a known gap, not silently ignored and not guessed at.
+
+**No new real-Postgres CI workflow was built.** Building one is substantial engineering work (bootstrap + fixture + verification SQL + a new required GitHub Actions check, matching Phase 4/6's per-migration pattern) that should not be manufactured just to produce a lower "unverified" count — this triage found no specific migration that is both uncovered by the above and independently high-risk enough to justify that cost right now. If one is identified later, it should get its own focused PR, not a mechanically-generated batch.
+
 No production runtime, schema, or test behavior changed — a new documentation artifact plus this state entry.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
