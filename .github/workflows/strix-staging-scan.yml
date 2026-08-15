@@ -37,6 +37,22 @@ name: strix-staging-scan
 # infrastructure has been built at all — there is nothing there to
 # reach, which is what makes it safe to scan today, not a claim that
 # those surfaces have been actively tested and found safe.
+#
+# REASONING-EFFORT CORRECTION (2026-08-15): Strix's own original design
+# (PR usestrix/strix#244) states quick scan mode is intended to
+# automatically use STRIX_REASONING_EFFORT=medium (default is high for
+# other modes). That automatic behavior does not exist anywhere in the
+# currently installed Strix version's code (verified directly against
+# strix/config/settings.py, strix/core/runner.py, and the quick.md scan
+# skill, which is prompt text only and carries no effort configuration)
+# — an upstream implementation gap against Strix's own documented intent,
+# not a deliberate design choice we are overriding. Setting it explicitly
+# below restores quick mode to its intended configuration; it does not
+# change scan_mode, target, agents, vulnerability classes, testing scope,
+# or staging isolation. Reasoning effort controls only how much
+# extended-thinking budget the model gets per turn — coverage and scope
+# are governed entirely by scan_mode and the quick.md skill prompt,
+# neither of which this touches.
 
 on:
   workflow_dispatch:
@@ -92,10 +108,19 @@ jobs:
       - name: Install Strix
         run: curl -sSL https://strix.ai/install | bash
 
+      - name: Verify resolved reasoning effort before scanning
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          STRIX_LLM: anthropic/claude-sonnet-4-6
+          STRIX_REASONING_EFFORT: medium
+        run: |
+          python3 -c "from strix.config.settings import Settings; print('resolved reasoning_effort:', Settings().llm.reasoning_effort)"
+
       - name: Run Strix against staging only
         env:
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           STRIX_LLM: anthropic/claude-sonnet-4-6
+          STRIX_REASONING_EFFORT: medium
         run: |
           strix \
             --target "$STAGING_TARGET_URL" \
