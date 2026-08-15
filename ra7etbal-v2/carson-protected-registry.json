@@ -274,12 +274,13 @@
       ],
       "shared_dependencies": ["api/_owner-reminder-whatsapp.js", "public/sw.js"],
       "db": {
-        "tables": ["tasks", "reminder_delivery_events"],
+        "tables": ["tasks", "reminder_delivery_events", "whatsapp_deliveries"],
         "rpcs": [],
         "migrations": [
           "supabase/migrations/20260730_reminder_delivery_observability.sql",
           "supabase/migrations/20260812_reminder_delivery_events_survive_task_deletion.sql",
-          "supabase/migrations/20260812190000_server_authoritative_reminder_inserts.sql"
+          "supabase/migrations/20260812190000_server_authoritative_reminder_inserts.sql",
+          "supabase/migrations/20260811_owner_reminder_whatsapp_delivery.sql"
         ]
       },
       "external_boundaries": ["Upstash QStash", "Web Push/VAPID", "WhatsApp/Meta send"],
@@ -304,15 +305,16 @@
       "db_contract_tests": [
         "supabase/migrations/verification/server_authoritative_reminder_rls_bootstrap.sql",
         "supabase/migrations/verification/server_authoritative_reminder_rls_fixture.sql",
-        "supabase/migrations/verification/server_authoritative_reminder_rls_verification.sql"
+        "supabase/migrations/verification/server_authoritative_reminder_rls_verification.sql",
+        "supabase/migrations/verification/owner_reminder_whatsapp_bootstrap.sql",
+        "supabase/migrations/verification/owner_reminder_whatsapp_claim_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/server-authoritative-reminder-rls-verification.yml",
+      "db_contract_workflows": [".github/workflows/owner-reminder-whatsapp-claim-verification.yml"],
       "production_canary_required": false,
       "rollback_risk": "medium",
       "verification_status": "PRODUCTION VERIFIED per RA7ETBAL_STATE.md",
-      "unresolved": [
-        "The WhatsApp-claim leg of this capability (api/_owner-reminder-whatsapp.js, migration 20260811_owner_reminder_whatsapp_delivery.sql) has its own required real-Postgres check (owner-reminder-whatsapp-claim-verification.yml, job owner-reminder-whatsapp-claim-verification) but is not yet recorded in this capability's db_contract_tests/db_contract_workflows fields — found during Phase 9's mechanical-protection audit (2026-08-15), flagged honestly rather than force-mapped without re-reading the migration's exact scope against this capability's own contract."
-      ]
+      "unresolved": []
     },
     {
       "id": "owner_completion_push",
