@@ -250,6 +250,10 @@ Full design and blast-radius investigation (2026-08-15), not a re-flag of the ea
 
 No production runtime or schema changed. The RPC gatekeeper remains legitimate future work if a new, ungoverned writer is ever added — this investigation found no evidence it's needed for the writers that exist today.
 
+### owner-reminder-whatsapp-claim-verification.yml capability mapping — CLOSED
+
+The one required real-Postgres check with no registry capability mapping (honestly flagged, not force-mapped, in an earlier PR this session) is resolved with evidence: `20260811_owner_reminder_whatsapp_delivery.sql` adds `whatsapp_deliveries_owner_reminder_task_uidx`, the partial unique index (`ON whatsapp_deliveries(task_id) WHERE source_type = 'owner_reminder'`) that is literally `api/_owner-reminder-whatsapp.js:claimOwnerReminderDelivery`'s durable claim/dedup mechanism — already `reminders`' own documented shared dependency and WhatsApp delivery boundary. `reminders`' registry entry now lists `whatsapp_deliveries` in `db.tables`, the migration in `db.migrations`, both verification SQL files in `db_contract_tests`, and the workflow in the new `db_contract_workflows` array (additive, Phase 9's schema extension) alongside the existing `server-authoritative-reminder-rls-verification.yml`. `reminders`' `unresolved` array is now empty. No code, test, or CI behavior changed — this was a real, evidence-backed mapping, not a guess.
+
 No production runtime, schema, or test behavior changed — a new documentation artifact plus this state entry.
 
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
