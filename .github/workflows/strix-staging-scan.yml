@@ -1,0 +1,113 @@
+name: strix-staging-scan
+
+# Carson Engineering Hardening Project — Strix pre-launch security gate,
+# Phase C (execution). See ra7etbal-v2/docs/strix-staging-architecture.md
+# (Phase A design) and ra7etbal-v2/docs/strix-staging-isolation-proof.md
+# (Phase B isolation evidence + the standing rules governing this workflow)
+# for the full context. Do not modify this workflow's target or the
+# staging-only scope without re-running and re-recording the isolation
+# proof in that document first.
+#
+# workflow_dispatch ONLY — mirrors carson-production-canary.yml's pattern.
+# This must never run on pull_request/push; it is a manual, monitored,
+# staging-only security scan, never a merge gate and never automatic.
+#
+# HARD-LOCKED TARGET: the scan target is the staging deployment URL,
+# hard-coded below, not an input. This is deliberate — accepting an
+# arbitrary URL as a workflow_dispatch input would let any invocation
+# point Strix at production merely by supplying a different value. Any
+# change to the target requires a reviewed, protected-PR change to this
+# file itself, not a runtime input.
+#
+# CREDENTIAL ISOLATION: LLM_API_KEY (Strix's own reasoning-model
+# credential — see LLM_API_KEY, an Anthropic key, created and stored by
+# Sana directly as a GitHub Actions repository secret, temporary,
+# expires automatically in 14 days) is used only inside this job's env,
+# never echoed, never written to a file, never placed in Vercel or
+# Supabase. It has nothing to do with any Ra7etBal application secret.
+#
+# SCOPE-ISOLATION EVIDENCE (see the isolation proof doc's "Strix
+# scope-isolation proof" section for the full writeup): the staging
+# Vercel project has never been given WHATSAPP_ACCESS_TOKEN,
+# WHATSAPP_PHONE_NUMBER_ID, SUPABASE_SERVICE_ROLE_KEY, or CRON_SECRET —
+# any attempted real WhatsApp send or cron-gated action fails closed
+# before reaching any external provider. Rows 9-10 of the isolation gate
+# (production cron reachability, real WhatsApp send blocking) remain
+# DEFERRED / UNPROVEN in the sense that no staging cron/WhatsApp
+# infrastructure has been built at all — there is nothing there to
+# reach, which is what makes it safe to scan today, not a claim that
+# those surfaces have been actively tested and found safe.
+
+on:
+  workflow_dispatch:
+    inputs:
+      scan_mode:
+        description: "Strix scan mode"
+        required: false
+        type: choice
+        default: "quick"
+        options:
+          - quick
+          - standard
+
+permissions:
+  contents: read
+
+env:
+  STAGING_TARGET_URL: https://ra7etbal-staging.vercel.app
+
+jobs:
+  strix-staging-scan:
+    name: strix-staging-scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Confirm required secret is configured
+        env:
+          HAS_LLM_API_KEY: ${{ secrets.LLM_API_KEY != '' }}
+        run: |
+          if [ "$HAS_LLM_API_KEY" != "true" ]; then
+            echo "::error::strix-staging-scan requires the LLM_API_KEY repository secret, which is not configured. Stopping — not attempting a scan without Strix's own reasoning-model credential."
+            exit 1
+          fi
+          echo "LLM_API_KEY is configured (value not checked/printed)."
+
+      - name: Confirm target is the staging deployment, never production
+        run: |
+          echo "Target: $STAGING_TARGET_URL"
+          case "$STAGING_TARGET_URL" in
+            https://ra7etbal-staging.vercel.app|https://ra7etbal-staging.vercel.app/*)
+              echo "Target confirmed staging-only."
+              ;;
+            *)
+              echo "::error::STAGING_TARGET_URL does not match the expected staging origin. Refusing to run."
+              exit 1
+              ;;
+          esac
+
+      - name: Install Strix
+        run: curl -sSL https://strix.ai/install | bash
+
+      - name: Run Strix against staging only
+        env:
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          STRIX_LLM: anthropic/claude-sonnet-4-6
+        run: |
+          strix \
+            --target "$STAGING_TARGET_URL" \
+            --scan-mode "${{ inputs.scan_mode || 'quick' }}" \
+            --non-interactive \
+            --instruction "Scope is strictly limited to $STAGING_TARGET_URL. Never attempt to reach any other host, including any *.ra7etbal.com production domain. Do not attempt destructive testing, do not attempt to exhaust rate limits or quotas, and do not attempt any action intended to trigger a real external message send (WhatsApp, SMS, push, or email) — this staging environment has no WhatsApp/Meta credentials configured and any such attempt will fail closed, but do not deliberately try to work around that. All accounts and data on this target are synthetic staging fixtures; treat findings as leads to be reported, not as license to modify data destructively."
+
+      - name: Upload Strix run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: strix-staging-run-${{ github.run_id }}
+          path: strix_runs/
+          retention-days: 14
+          if-no-files-found: ignore
