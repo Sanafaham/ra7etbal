@@ -35,6 +35,13 @@
  *      protected_suite: true.
  *   9. (Phase 4) A registered db_contract_tests entry does not exist on
  *      disk, or a db_contract_workflow entry does not exist on disk.
+ *   10. (Phase 9) A capability's db_contract_workflow / db_contract_workflows
+ *       entries must each resolve to a job whose name is an actual required
+ *       branch-protection status check on `main` — see REQUIRED_MERGE_GATE_CHECKS
+ *       below. A capability cannot claim DB-contract protection through a
+ *       workflow that would not actually block a bad merge. This is Phase 9's
+ *       mechanical answer to "does this depend only on optional CI, or a
+ *       non-required test" for the DB-contract dimension specifically.
  *
  * Deliberately NOT enforced here (left for a future phase, not guessed at):
  *   - Whether a focused test file's assertions actually exercise the named
@@ -65,6 +72,50 @@ const packageJsonPath = resolve(repoRoot, "package.json");
 function extractFilePath(entry) {
   const withoutParenthetical = String(entry).replace(/\s*\([^)]*\)\s*$/, "");
   return withoutParenthetical.split(":")[0].trim();
+}
+
+/**
+ * Phase 9 — the fixed set of GitHub branch-protection required_status_checks
+ * contexts on `main`, as of the date below. This is a maintained constant,
+ * not a live lookup: CI has no network access to the GitHub API, and a
+ * registry validator must be deterministic. Last verified against
+ * `gh api repos/Sanafaham/ra7etbal/branches/main/protection/required_status_checks`
+ * on 2026-08-15 (8 checks, all present). If branch protection changes, this
+ * list must be updated in the same PR — a stale list here would silently
+ * stop catching the exact failure class Phase 9 exists to catch.
+ */
+const REQUIRED_MERGE_GATE_CHECKS = new Set([
+  "carson-protected-behaviors",
+  "carson-impact-aware-ci",
+  "carson-tier1-db-contracts",
+  "carson-state-doc-integrity",
+  "push-subscription-installation-identity-verification",
+  "staff-escalation-migration-verification",
+  "real-postgres-rls-proof",
+  "owner-reminder-whatsapp-claim-verification",
+]);
+
+/**
+ * Extracts the `name:` of the (first, top-level) job in a GitHub Actions
+ * workflow file — this is the string that appears as the check's context
+ * in branch protection, which is not always the same as the workflow's own
+ * top-level `name:` (e.g. server-authoritative-reminder-rls-verification.yml's
+ * job is named `real-postgres-rls-proof`). Returns null if not found.
+ */
+function extractWorkflowJobName(workflowSource) {
+  const jobsIndex = workflowSource.indexOf("\njobs:");
+  if (jobsIndex === -1) return null;
+  const afterJobs = workflowSource.slice(jobsIndex);
+  const match = afterJobs.match(/\n {4}name:\s*(.+)/);
+  return match ? match[1].trim() : null;
+}
+
+/** Every db_contract_workflow path a capability declares, singular + plural fields combined. */
+function dbContractWorkflowPaths(cap) {
+  const paths = [];
+  if (typeof cap.db_contract_workflow === "string") paths.push(cap.db_contract_workflow);
+  if (Array.isArray(cap.db_contract_workflows)) paths.push(...cap.db_contract_workflows);
+  return paths;
 }
 
 /**
@@ -186,6 +237,9 @@ for (const [index, cap] of registry.capabilities.entries()) {
   if (cap.db_contract_workflow !== undefined && typeof cap.db_contract_workflow !== "string") {
     fail(`${label}: db_contract_workflow, if present, must be a string`);
   }
+  if (cap.db_contract_workflows !== undefined && !Array.isArray(cap.db_contract_workflows)) {
+    fail(`${label}: db_contract_workflows, if present, must be an array`);
+  }
 
   // --- 3. Duplicate ids ---------------------------------------------
   if (typeof cap.id === "string") {
@@ -212,13 +266,25 @@ for (const [index, cap] of registry.capabilities.entries()) {
       }
     }
   }
-  if (typeof cap.db_contract_workflow === "string") {
-    // db_contract_workflow paths are relative to the actual git repo root
+  for (const workflowPath of dbContractWorkflowPaths(cap)) {
+    // db_contract_workflow(s) paths are relative to the actual git repo root
     // (one directory above repoRoot — see impact-map.mjs's identical note
     // on this layout), not repoRoot itself, since .github/ lives there.
-    const abs = resolve(repoRoot, "..", cap.db_contract_workflow);
+    const abs = resolve(repoRoot, "..", workflowPath);
     if (!existsSync(abs)) {
-      fail(`${label}: db_contract_workflow references nonexistent path "${cap.db_contract_workflow}"`);
+      fail(`${label}: db_contract_workflow references nonexistent path "${workflowPath}"`);
+      continue;
+    }
+
+    // --- 10. A claimed DB-contract protection must be an actual required
+    // merge gate, not merely an existing-and-passing-but-optional workflow.
+    const jobName = extractWorkflowJobName(readFileSync(abs, "utf8"));
+    if (!jobName) {
+      fail(`${label}: could not determine the job name of db_contract_workflow "${workflowPath}" (expected a 4-space-indented "name:" under jobs:)`);
+    } else if (!REQUIRED_MERGE_GATE_CHECKS.has(jobName)) {
+      fail(
+        `${label}: db_contract_workflow "${workflowPath}" resolves to job "${jobName}", which is not in REQUIRED_MERGE_GATE_CHECKS — this capability claims DB-contract protection through a workflow that would not actually block a bad merge`
+      );
     }
   }
 

@@ -104,9 +104,16 @@
       "golden_journey_tests": ["api/golden-journey-owner-alternative-approval.test.js"],
       "db_contract_tests": [
         "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
-        "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql"
+        "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql",
+        "supabase/migrations/verification/00_bootstrap_minimal_auth.sql",
+        "supabase/migrations/verification/01_preexisting_data_fixture.sql",
+        "supabase/migrations/verification/02_lifecycle_verification.sql",
+        "supabase/migrations/verification/03_post_rollback_verification.sql",
+        "supabase/migrations/verification/04_owner_notification_lease_verification.sql",
+        "supabase/migrations/verification/05_owner_notification_lease_post_rollback_verification.sql"
       ],
       "db_contract_workflow": ".github/workflows/carson-tier1-db-contracts.yml",
+      "db_contract_workflows": [".github/workflows/staff-escalation-migration-verification.yml"],
       "production_canary_required": false,
       "rollback_risk": "high — root cause history shows this contract has two independently-implemented legs (owner-notify vs. worker-notify) that can regress independently",
       "verification_status": "PRODUCTION VERIFIED — PR #237 (owner-notify leg), PR #243 (worker-notify leg). Phase 4: real-PostgreSQL contract proof added for the task-based RPC chain (claim_substitute_decision -> reserve_custom_instruction, person_id threading into messages/whatsapp_deliveries, durability across task deletion; claim_task_escalation_owner_decision's own claim/duplicate/cross-account/unauthorized-execution contracts) — carson-tier1-db-contracts.yml, not yet a required check. Final gap-closure pass: api/_escalation-notify.test.js added to the required test:carson-protected suite, closing the last gap between this capability's focused_tests and the actual required CI gate — protected_suite flipped true.",
@@ -271,7 +278,8 @@
         "rpcs": [],
         "migrations": [
           "supabase/migrations/20260730_reminder_delivery_observability.sql",
-          "supabase/migrations/20260812_reminder_delivery_events_survive_task_deletion.sql"
+          "supabase/migrations/20260812_reminder_delivery_events_survive_task_deletion.sql",
+          "supabase/migrations/20260812190000_server_authoritative_reminder_inserts.sql"
         ]
       },
       "external_boundaries": ["Upstash QStash", "Web Push/VAPID", "WhatsApp/Meta send"],
@@ -293,11 +301,17 @@
       "protected_suite": true,
       "golden_journey_required": true,
       "golden_journey_tests": ["api/golden-journey-reminder-lifecycle.test.js"],
+      "db_contract_tests": [
+        "supabase/migrations/verification/server_authoritative_reminder_rls_bootstrap.sql",
+        "supabase/migrations/verification/server_authoritative_reminder_rls_fixture.sql",
+        "supabase/migrations/verification/server_authoritative_reminder_rls_verification.sql"
+      ],
+      "db_contract_workflow": ".github/workflows/server-authoritative-reminder-rls-verification.yml",
       "production_canary_required": false,
       "rollback_risk": "medium",
       "verification_status": "PRODUCTION VERIFIED per RA7ETBAL_STATE.md",
       "unresolved": [
-        "A separate real-Postgres CI workflow (server-authoritative-reminder-rls-verification.yml) covers part of this capability but is not a required branch-protection check — flagged, not changed, per the explicit Phase 1 instruction not to touch branch protection outside Phase 6's scope."
+        "The WhatsApp-claim leg of this capability (api/_owner-reminder-whatsapp.js, migration 20260811_owner_reminder_whatsapp_delivery.sql) has its own required real-Postgres check (owner-reminder-whatsapp-claim-verification.yml, job owner-reminder-whatsapp-claim-verification) but is not yet recorded in this capability's db_contract_tests/db_contract_workflows fields — found during Phase 9's mechanical-protection audit (2026-08-15), flagged honestly rather than force-mapped without re-reading the migration's exact scope against this capability's own contract."
       ]
     },
     {
