@@ -556,29 +556,35 @@
     },
     {
       "id": "hosting_operations",
-      "contract": "Carson's deterministic hosting-recall fast-path correctly distinguishes yes/no confirmation-recall questions from confirmation-timing questions (which must fall through to the model + get_communication_history), and correctly tracks multi-person hosting/guest-arrival operation state.",
-      "business_importance": "UNRESOLVED — the locked engineering plan's own Phase 0 mandate describes hosting as included 'only if still launch-critical,' and the Phase 0 investigation could not find the literal phrase 'launch-critical' anywhere in RA7ETBAL_STATE.md, AGENTS.md, SKILL.md, or CLAUDE.md to confirm or deny current Tier classification. RA7ETBAL_STATE.md does list hosting among protected systems with LOCKED, PRODUCTION VERIFIED sections, which is circumstantial evidence of continued importance but not a confirmed Tier 1 classification. This entry is included per the locked order's minimum coverage list but its tier is explicitly marked unresolved pending Sana's decision.",
-      "production_entry_points": ["src/components/home/ElevenLabsAgentWidget.tsx (hosting recall pre-LLM interception)"],
+      "contract": "A hosting/guest-arrival instruction is planned into one owner-approved proposal with correct per-worker responsibilities; exactly one approval executes the plan exactly once (idempotent — a repeated approval or a leading-confirmation-language reply with no active plan never re-sends or misreads as a fresh request); each recipient's WhatsApp delivery result is reported truthfully and individually (a missing phone number or missing consent is reported as NOT messaged, never implied as sent); Carson never claims an action succeeded that `executeProposedPlan` did not actually perform; a stored completed operation can be recalled without re-sending or re-creating anything.",
+      "business_importance": "critical — Tier 1. Classified 2026-08-15 from direct evidence, not from the capability's name or prior documentation: `executeProposedPlan` sends real WhatsApp messages to real staff and creates real task/message rows (`src/lib/save.ts:savePending`, `src/lib/delivery.ts:deliverTaskMessage`, `src/lib/direct-messages.ts:sendDirectMessageRecord`) — the identical blast-radius shape as `staff_delegation`/`automation_execution_confirmation`, both already Tier 1. A real production incident (PRs #68/#69, documented in RA7ETBAL_STATE.md's 'Hosting plan integrity guards' entry) had Carson orally claim a two-recipient hosting proposal was sent when `execute_instruction` was never called to persist it, then falsely tell the owner both recipients received instructions — the exact 'silently fail while Carson claims success' failure class this entire hardening project exists to catch, on this capability specifically. `RA7ETBAL_STATE.md`'s own 'Type to Carson is advisory-only' product decision (2026-07-25) already groups 'hosting plans' with reminders/delegations/staff messages/calendar events as voice-only, state-changing execution; its 'protected systems' list separately names hosting alongside delegations and owner decisions. 216+ pre-existing tests in ops-intelligence.test.ts already cover idempotency, truthful per-recipient delivery, and worker-role correctness — this capability has been protected in engineering practice all along, just never formalized in this registry or the required CI gate.",
+      "production_entry_points": ["src/components/home/ElevenLabsAgentWidget.tsx (hosting recall pre-LLM interception; handlePendingPlanTurn/executeProposedPlan call sites)"],
       "files_functions": [
-        "src/lib/ops-intelligence.ts:resolveHostingOperationRecall / answerHostingOperationRecall / loadLatestCompletedHostingOperation"
+        "src/lib/ops-intelligence.ts:resolveHostingOperationRecall / answerHostingOperationRecall / loadLatestCompletedHostingOperation",
+        "src/lib/ops-intelligence.ts:handleOperationalHostingTurn / prepareOperationalPlanTurn / buildOperationalPlanFromOutcome",
+        "src/lib/ops-intelligence.ts:executeProposedPlan / rejectProposedPlan / handlePendingPlanTurn",
+        "src/lib/ops-intelligence.ts:buildDeterministicGuestPreparationTasks / hasLeadingConfirmationLanguage"
       ],
-      "shared_dependencies": [],
+      "shared_dependencies": ["src/lib/save.ts", "src/lib/delivery.ts", "src/lib/direct-messages.ts", "src/lib/delegation-message.ts"],
       "db": {
-        "tables": ["carson_pending_operations", "tasks"],
+        "tables": ["carson_pending_operations", "tasks", "messages"],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["ElevenLabs voice model"],
-      "focused_tests": ["src/lib/ops-intelligence.test.ts"],
-      "protected_suite": false,
+      "external_boundaries": ["ElevenLabs voice model", "WhatsApp/Meta send"],
+      "focused_tests": [
+        "src/lib/ops-intelligence.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.hosting-plan-integrity.test.ts"
+      ],
+      "protected_suite": true,
       "golden_journey_required": false,
       "golden_journey_tests": [],
       "production_canary_required": false,
       "rollback_risk": "medium",
-      "verification_status": "PRODUCTION VERIFIED for the specific confirmation-timing fix (PR #251); overall Tier classification unresolved",
+      "verification_status": "PRODUCTION VERIFIED — PR #251 (confirmation-timing fast-path fix), PRs #68/#69 (Guard C/D false-success and duplicate-execution fix, real production incident), 'Verified hosting loop' and 'Hosting plan integrity guards' entries in RA7ETBAL_STATE.md. Tier 1 classification made 2026-08-15 from direct evidence; both focused test files (231 tests total) confirmed passing before being added to the required test:carson-protected suite.",
       "unresolved": [
-        "Tier classification (Tier 1 vs. lower) requires an explicit product decision from Sana — not guessed here.",
-        "src/lib/ops-intelligence.test.ts is not currently in the required protected suite. Not added in Phase 1 since hosting's Tier 1 status itself is unresolved — adding it would be guessing at a priority decision that belongs to Sana, not this registry."
+        "No golden-journey test exists proving the full multi-file hosting flow end to end (ElevenLabsAgentWidget dispatch -> ops-intelligence planning -> savePending/deliverTaskMessage -> recall) the way other Tier 1 capabilities have — the 231 existing tests cover ops-intelligence.ts and the widget's integrity guards individually and thoroughly, but not as one cross-module journey. Flagged as a real, scoped follow-up, not implemented here to keep this classification PR focused.",
+        "No real-Postgres contract test exists for carson_pending_operations — this capability was never part of Phase 4's Tier 1 chain. A future PR could add it; not manufactured here without first confirming what invariant would actually need proving."
       ]
     },
     {
