@@ -295,6 +295,20 @@ Investigated from scratch per Sana's explicit instruction not to classify from t
 
 No production runtime or schema changed — this PR only adds two already-passing test files to the required CI gate and corrects the registry's documentation.
 
+### Pre-launch security gate — Strix Phase A (staging architecture investigation) — DESIGN COMPLETE, BLOCKED ON CREDENTIALS
+
+Full read-only investigation and design for the isolated staging environment required before any Strix (open-source AI penetration testing, `github.com/usestrix/strix`, confirmed live via web search — not from stale memory) run. Full document: `ra7etbal-v2/docs/strix-staging-architecture.md`.
+
+**What exists today, confirmed by direct inspection, not assumption:** zero isolated staging infrastructure at every layer. One Supabase project (`ggarvhgqzpooloacjgcj`), one branch (`main`). Preview and production Vercel deployments share that same production database — confirmed both directly and against this repo's own prior documented finding. No staging GitHub environment. No staging WhatsApp/Meta App (already documented as "target architecture, not yet built" since Workstream 5). No staging ElevenLabs agent.
+
+**Design produced:** a dedicated Supabase project (schema applied from this repo's existing migrations — no new migration authoring needed), a dedicated Vercel project/branch, a dedicated staging WhatsApp Business Account + Meta App, synthetic test accounts/data (≥2 owner accounts, staff with mixed WhatsApp consent, tasks/reminders/automations in various states), explicit staging safety invariants (cannot send real WhatsApp, cannot mutate production Supabase, cannot fire production cron, cannot push to real devices, no credential ever shared between environments), a 14-row threat model (attack surface → staging target → production consequence → existing protection → Strix test needed) covering every category the locked plan named, a findings-handling process (scanner output is a lead, not a finding — reproduce, fix one at a time, regression test, required CI, re-run the specific Strix test, normal protected PR process for any production change), and rollback/cleanup for the staging infrastructure itself. Voice/ElevenLabs surface testing deliberately deferred to a later phase — the highest-effort piece to isolate safely, and HTTP/API-level coverage already reaches the large majority of the named attack surface without it.
+
+**Blocked on credentials Claude will not create itself, per the standing rule.** Two independent credential needs found:
+1. **Strix's own operating credential** — an `LLM_API_KEY` (Anthropic/OpenAI/etc.) plus `STRIX_LLM` model spec. Strix cannot run at all without this; it is Strix's own reasoning-model access, entirely separate from any Ra7etBal secret.
+2. **The staging environment's own credentials** — a new Supabase project's keys, a new Vercel project's environment variables, and (for webhook/WhatsApp-surface testing specifically) a new Meta App's app secret and WhatsApp Business Account. None of these exist yet at any layer.
+
+Not started: any actual staging provisioning, any Strix installation, any Strix run (staging or production). This document is design and investigation only.
+
 ### Communication History durable person attribution — CLOSED, PRODUCTION VERIFIED PASS
 
 Sana's own master-plan tracking (kept outside this repo) numbers the Unified/Immutable Communication History capability as Workstream 4, Phase 1 — this file has never carried that numbering, so this entry documents the durability fix on its own terms; do not mark Workstream 4 complete based on this entry alone — that decision belongs to Sana's own tracking, and is explicitly gated on the production test below.
