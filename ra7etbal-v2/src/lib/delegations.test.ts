@@ -11,6 +11,15 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./tasks", () => ({ createTask: mocks.createTask }));
 vi.mock("./messages", () => ({ createMessage: mocks.createMessage }));
 vi.mock("./qstash-escalation", () => ({ scheduleEscalationMessages: mocks.scheduleEscalationMessages }));
+// delegations.ts imports composeMergedMessage, which (via the authenticated
+// callAnthropicProxy helper) transitively imports the real Supabase client
+// at module load time. None of these tests exercise the personalNote/
+// compose-message path (composeMergedMessage's own behavior has its own
+// call sites and belongs to its own tests), so this mock exists purely to
+// keep that unrelated real-Supabase-client import out of this test file's
+// module graph -- it preserves the default fallback (null -> the existing
+// injectPersonalNote path), not a new behavior.
+vi.mock("./ai/compose-message", () => ({ composeMergedMessage: vi.fn().mockResolvedValue(null) }));
 
 import { createDelegationTaskAndMessage } from "./delegations";
 

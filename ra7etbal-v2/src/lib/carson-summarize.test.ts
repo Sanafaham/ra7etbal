@@ -1,4 +1,16 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+
+// carson-summarize.ts calls the Anthropic model through the shared,
+// authenticated callAnthropicProxy() helper (src/lib/anthropic-client.ts),
+// not a raw fetch("/api/anthropic") anymore. These tests exercise
+// carson-summarize.ts's own recap/summarization logic, not the proxy's auth
+// contract (covered separately in anthropic-client.test.ts and
+// api/anthropic.test.js), so the mock boundary is the helper itself.
+const callAnthropicProxyMock = vi.fn();
+vi.mock("./anthropic-client", () => ({
+  callAnthropicProxy: (...args: unknown[]) => callAnthropicProxyMock(...args),
+}));
+
 import {
   buildSessionRecapWithActions,
   formatSessionActionsForRecap,
@@ -10,17 +22,15 @@ import {
 } from "./carson-summarize";
 
 function mockAnthropic(text: string) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ content: [{ type: "text", text }] }),
-    })) as unknown as typeof fetch,
-  );
+  callAnthropicProxyMock.mockResolvedValue({
+    ok: true,
+    json: async () => ({ content: [{ type: "text", text }] }),
+  });
 }
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  callAnthropicProxyMock.mockReset();
 });
 
 describe("session recap threshold (the bug that bit us)", () => {
@@ -40,10 +50,7 @@ describe("session recap threshold (the bug that bit us)", () => {
   });
 
   it("falls back to the first user utterance when the LLM call fails", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: false, json: async () => ({}) })) as unknown as typeof fetch,
-    );
+    callAnthropicProxyMock.mockResolvedValue({ ok: false, json: async () => ({}) });
     const recap = await summarizeSessionRecap(oneTurn);
     expect(recap).toBe("test memory recall");
   });

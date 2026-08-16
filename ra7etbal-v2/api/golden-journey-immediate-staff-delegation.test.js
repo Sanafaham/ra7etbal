@@ -39,6 +39,13 @@ vi.mock("@/lib/qstash-escalation", () => ({ scheduleEscalationMessages: mocks.sc
 vi.mock("web-push", () => ({
   default: { setVapidDetails: vi.fn(), sendNotification: mocks.sendNotification },
 }));
+// delegations.ts imports composeMergedMessage, which (via the authenticated
+// callAnthropicProxy helper) transitively imports the real Supabase client
+// at module load time. This journey never exercises the personalNote/
+// compose-message path, so this mock keeps that unrelated real-Supabase-
+// client import out of this test's module graph, matching the same fix
+// applied in src/lib/delegations.test.ts.
+vi.mock("@/lib/ai/compose-message", () => ({ composeMergedMessage: vi.fn().mockResolvedValue(null) }));
 
 const { createDelegationTaskAndMessage } = await import("@/lib/delegations");
 const { beginWhatsappDelivery } = await import("./_whatsapp-delivery.js");

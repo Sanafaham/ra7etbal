@@ -4,9 +4,20 @@ import type { ExtractedItem } from "../types/extraction";
 const extractItemsMock = vi.fn();
 const savePendingMock = vi.fn();
 const deliverTaskMessageMock = vi.fn();
+const callAnthropicProxyMock = vi.fn();
 
 vi.mock("./ai/extract", () => ({
   extractItems: extractItemsMock,
+}));
+
+// describeImageForTextCarson (text-carson.ts) now calls the Anthropic model
+// through the shared, authenticated callAnthropicProxy() helper
+// (src/lib/anthropic-client.ts), not a raw fetch("/api/anthropic") anymore.
+// These tests exercise text-carson.ts's own prompt-construction logic, not
+// the proxy's auth contract (covered separately in anthropic-client.test.ts
+// and api/anthropic.test.js), so the mock boundary is the helper itself.
+vi.mock("./anthropic-client", () => ({
+  callAnthropicProxy: (...args: unknown[]) => callAnthropicProxyMock(...args),
 }));
 
 vi.mock("./save", () => ({
@@ -963,36 +974,34 @@ describe("executeDelegationFromText image pipeline", () => {
   // downstream.
   describe("describeImageForTextCarson — exact brand/product text preservation", () => {
     it("sends a prompt requiring exact, character-for-character transcription of visible text", async () => {
-      const fetchMock = vi.fn().mockResolvedValue({
+      callAnthropicProxyMock.mockResolvedValue({
         ok: true,
         json: async () => ({ content: [{ text: "A pack of TEREA Silver cigarettes." }] }),
       });
-      vi.stubGlobal("fetch", fetchMock);
 
       const { describeImageForTextCarson } = await import("./text-carson");
       const file = new File(["bytes"], "photo.jpg", { type: "image/jpeg" });
       const result = await describeImageForTextCarson(file);
 
       expect(result).toBe("A pack of TEREA Silver cigarettes.");
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const promptText = body.messages[0].content.find((c: { type: string }) => c.type === "text").text;
+      const body = callAnthropicProxyMock.mock.calls[0][0] as { messages: { content: { type: string; text: string }[] }[] };
+      const promptText = body.messages[0].content.find((c) => c.type === "text")!.text;
       expect(promptText).toMatch(/transcribe it exactly as printed, character-for-character/i);
       expect(promptText).toMatch(/never invent characters, correct spelling, or substitute/i);
       expect(promptText).toMatch(/this description is the only thing the task-extraction step will ever see/i);
     });
 
     it("still asks for one concise sentence — the fix does not change output format or length expectations", async () => {
-      const fetchMock = vi.fn().mockResolvedValue({
+      callAnthropicProxyMock.mockResolvedValue({
         ok: true,
         json: async () => ({ content: [{ text: "A bowl of soup." }] }),
       });
-      vi.stubGlobal("fetch", fetchMock);
 
       const { describeImageForTextCarson } = await import("./text-carson");
       await describeImageForTextCarson(new File(["bytes"], "photo.jpg", { type: "image/jpeg" }));
 
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const promptText = body.messages[0].content.find((c: { type: string }) => c.type === "text").text;
+      const body = callAnthropicProxyMock.mock.calls[0][0] as { messages: { content: { type: string; text: string }[] }[]; max_tokens: number; model: string };
+      const promptText = body.messages[0].content.find((c) => c.type === "text")!.text;
       expect(promptText).toMatch(/describe this image in one sentence/i);
       expect(promptText).toMatch(/be concise/i);
       expect(body.max_tokens).toBe(120);
@@ -1000,22 +1009,21 @@ describe("executeDelegationFromText image pipeline", () => {
     });
 
     it("directs unclear reads to be flagged rather than guessed", async () => {
-      const fetchMock = vi.fn().mockResolvedValue({
+      callAnthropicProxyMock.mockResolvedValue({
         ok: true,
         json: async () => ({ content: [{ text: "text" }] }),
       });
-      vi.stubGlobal("fetch", fetchMock);
 
       const { describeImageForTextCarson } = await import("./text-carson");
       await describeImageForTextCarson(new File(["bytes"], "photo.jpg", { type: "image/jpeg" }));
 
-      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-      const promptText = body.messages[0].content.find((c: { type: string }) => c.type === "text").text;
+      const body = callAnthropicProxyMock.mock.calls[0][0] as { messages: { content: { type: string; text: string }[] }[] };
+      const promptText = body.messages[0].content.find((c) => c.type === "text")!.text;
       expect(promptText).toMatch(/too unclear to read with confidence.*say so plainly.*rather than guessing/is);
     });
 
     it("unchanged: returns null on a failed request, unaffected by the prompt change", async () => {
-      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false }));
+      callAnthropicProxyMock.mockResolvedValue({ ok: false });
       const { describeImageForTextCarson } = await import("./text-carson");
       const result = await describeImageForTextCarson(new File(["bytes"], "photo.jpg", { type: "image/jpeg" }));
       expect(result).toBeNull();
