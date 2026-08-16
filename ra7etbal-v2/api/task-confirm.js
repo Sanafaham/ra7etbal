@@ -2178,7 +2178,7 @@ async function sendCorrectionRequest({ req, supabaseUrl, serviceKey, userId, tas
 
   const response = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-ra7etbal-internal-secret': process.env.CRON_SECRET },
     body: JSON.stringify({
       to: person.phone,
       messageText,

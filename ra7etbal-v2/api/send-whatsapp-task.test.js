@@ -1056,7 +1056,14 @@ describe('photo attachment pipeline', () => {
   });
 });
 
-function createReq(body, headers = {}) {
+// Defaults to a valid internal-caller header so these existing tests keep
+// exercising template/payload/delivery-evidence behavior exactly as before
+// Remediation 4 added the authentication boundary -- none of these tests
+// were designed to prove anything about auth itself (that boundary now has
+// its own dedicated coverage in send-whatsapp-task.auth-boundary.test.js).
+// Pass an explicit headers override (e.g. {}) to exercise the unauthenticated
+// path instead.
+function createReq(body, headers = { 'x-ra7etbal-internal-secret': 'cron-secret' }) {
   return {
     method: 'POST',
     headers,

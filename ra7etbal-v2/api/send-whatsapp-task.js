@@ -35,6 +35,51 @@ const TEMPLATE_SPECS = {
   },
 };
 
+/**
+ * Verifies the caller's Supabase JWT and returns the verified user id, or
+ * null if missing/invalid. Same auth/v1/user pattern already proven in
+ * api/anthropic.js, api/automations.js, api/google-calendar.js — reused
+ * deliberately, not reinvented.
+ */
+async function verifySupabaseUser(authHeader) {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const jwt = authHeader.slice(7);
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) return null;
+  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { apikey: anonKey, Authorization: `Bearer ${jwt}` },
+  });
+  if (!userRes.ok) return null;
+  const user = await userRes.json().catch(() => null);
+  return user?.id ?? null;
+}
+
+/** Constant-shape internal-secret check — the existing, unmodified CRON_SECRET/x-ra7etbal-internal-secret contract, now checkable for every send mode instead of only 'routine_message'. */
+function isValidInternalSecret(req) {
+  const expectedSecret = process.env.CRON_SECRET;
+  const providedSecret = req.headers?.['x-ra7etbal-internal-secret'];
+  return Boolean(expectedSecret) && providedSecret === expectedSecret;
+}
+
+/**
+ * Confirms a resource id (task/person/message) is owned by the verified
+ * uid before a browser-originated call is allowed to trigger a WhatsApp
+ * send or evidence write referencing it. Internal callers never go through
+ * this check — they already resolve these ids from trusted server-side
+ * state (DB rows they themselves loaded), not from a browser request body.
+ */
+async function verifyOwnedResource({ supabaseUrl, serviceKey, table, id, uid }) {
+  if (!id) return true; // nothing supplied for this field — nothing to check
+  const response = await fetch(
+    `${supabaseUrl}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(uid)}&select=id&limit=1`,
+    { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+  );
+  if (!response.ok) return false;
+  const rows = await response.json().catch(() => []);
+  return Array.isArray(rows) && rows.length === 1;
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ success: false, error: 'Method not allowed' });
@@ -67,19 +112,37 @@ export default async function handler(req, res) {
     personId,
   } = req.body || {};
 
+  // ── Authentication boundary (Remediation 4, Carson Engineering Hardening
+  // Project) ─────────────────────────────────────────────────────────────
+  // Exactly two trusted caller classes. Anything satisfying neither fails
+  // closed here — before beginWhatsappDelivery, before any evidence write,
+  // before any Meta/Twilio call. This replaces the old routine_message-only
+  // gate; every send mode now requires one of these two proofs.
+  const internalCallerAuthorized = isValidInternalSecret(req);
+  let verifiedUid = null;
+  if (!internalCallerAuthorized) {
+    verifiedUid = await verifySupabaseUser(req.headers?.['authorization'] ?? req.headers?.['Authorization']);
+    if (!verifiedUid) {
+      return res.status(401).json({ success: false, error: 'Unauthorized.' });
+    }
+
+    // Browser callers must own every resource they reference — never trust
+    // a client-supplied id alone. Internal callers skip this: they already
+    // derive taskId/personId/messageRecordId from trusted server-side state
+    // (DB rows they loaded themselves), never from an external request.
+    const [ownsTask, ownsPerson, ownsMessage] = await Promise.all([
+      verifyOwnedResource({ supabaseUrl, serviceKey, table: 'tasks', id: taskId, uid: verifiedUid }),
+      verifyOwnedResource({ supabaseUrl, serviceKey, table: 'people', id: personId, uid: verifiedUid }),
+      verifyOwnedResource({ supabaseUrl, serviceKey, table: 'messages', id: messageRecordId, uid: verifiedUid }),
+    ]);
+    if (!ownsTask || !ownsPerson || !ownsMessage) {
+      return res.status(403).json({ success: false, error: 'Forbidden.' });
+    }
+  }
+
   const isRoutineMessage = sendMode === 'routine_message';
   const isDirectMessage = sendMode === 'direct_message';
   const usesPlainMessageTemplate = isRoutineMessage || isDirectMessage;
-  if (isRoutineMessage) {
-    const expectedSecret = process.env.CRON_SECRET;
-    const providedSecret = req.headers?.['x-ra7etbal-internal-secret'];
-    if (!expectedSecret || providedSecret !== expectedSecret) {
-      return res.status(401).json({
-        success: false,
-        error: 'Unauthorized routine message request.',
-      });
-    }
-  }
 
   // Task templates are approved in 'en'. Routine messages preserve their
   // existing independently-approved language configuration. Direct messages
