@@ -25,6 +25,7 @@
 import type { CalendarEvent } from "./calendar";
 import { createCalendarEvent, fetchCalendarEvents } from "./calendar";
 import { supabase } from "./supabase";
+import { callAnthropicProxy } from "./anthropic-client";
 
 // ── Intent detection ─────────────────────────────────────────────────────────
 
@@ -302,14 +303,10 @@ export async function buildWeekPlan(ctx: WeekPlanContext): Promise<WeekPlanBuild
 
   let res: Response;
   try {
-    res = await fetch("/api/anthropic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 900,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    res = await callAnthropicProxy({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 900,
+      messages: [{ role: "user", content: prompt }],
     });
   } catch {
     return { status: "no_plan", reason: "Network issue reaching the planning model." };
