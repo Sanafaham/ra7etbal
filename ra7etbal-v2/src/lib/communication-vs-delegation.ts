@@ -4,15 +4,6 @@
  * PROTECTED BEHAVIORS" in AGENTS.md and the carson-protected-behaviors test
  * suite (a mandatory CI gate — see .github/workflows).
  *
- * The distinction is whether Ra7etBal needs to track completed work, never
- * merely whether the sentence contains an action verb. The same verb can be
- * either: "call the mechanic" is trackable delegated work; "call me" is not
- * — the owner is the target, not a third party or a physical task object.
- * This function is deliberately verb-agnostic and keyed on the *target* of
- * the action, not a fixed phrase list, so it generalizes beyond the exact
- * wording seen in production (never hardcode only "call me" or "wait for
- * me" — see the regression this replaces).
- *
  * Used at the one place both channels' delegation-creation paths converge:
  * sendDelegation() in ElevenLabsAgentWidget.tsx — the shared handler behind
  * BOTH Talk to Carson's send_delegation clientTool and Type to Carson's
@@ -21,51 +12,119 @@
  * regardless of how each one decided to attempt a delegation.
  * direct-message-fast-path.ts's own parsing logic (COMMAND_PREFIX,
  * DELEGATION_BODY_START, isUnsafeBody) is unrelated and unchanged by this
- * module — it already resolved the confirmed regression's "wait for me"
- * case correctly before this fix existed.
+ * module.
+ *
+ * ARCHITECTURE (2026-08-16 rewrite) — the classification axis is:
+ *
+ *   Does Carson need to track an outcome after the message is delivered?
+ *
+ *   COMMUNICATION: Carson's responsibility ends once the message reaches
+ *   the recipient — a location/positional instruction, a personal request
+ *   of the owner, or plain information, with nothing to verify afterward.
+ *
+ *   DELEGATION: Carson must keep the item open, expect a confirmation, and
+ *   follow up if the recipient doesn't respond — the recipient owes a
+ *   verifiable outcome, not just receipt of a message.
+ *
+ * This is a genuinely semantic distinction, not a syntactic one — it does
+ * NOT hold for any single deterministic signal: not imperative mood, not
+ * "[command] + [person] + 'to' + [verb]", not whether the owner is named
+ * as the target, not any fixed verb list, not any specific phrase. Prior
+ * versions of this module used exactly that kind of regex (a fixed
+ * "owner-target verb" list: call/contact/text/wait-for-me/let-me-know) and
+ * it silently missed every case where the same axis applied to a
+ * *third party* with no owner-target marker at all — e.g. "Christopher,
+ * come to the kitchen now." (a location instruction to Christopher, not
+ * about the owner) was misclassified as delegation because no verb in the
+ * old fixed list matched. A larger verb list only defers the same failure
+ * to the next unlisted verb — see RA7ETBAL_STATE.md for the confirmed
+ * production incident this rewrite fixes.
+ *
+ * The fix delegates the actual judgment to a small, focused model call
+ * (claude-haiku-4-5, via the existing authenticated /api/anthropic proxy —
+ * see src/lib/anthropic-client.ts, src/lib/ai/compose-message.ts for the
+ * established pattern) rather than growing the regex indefinitely. The
+ * classifier is injectable (`classifyFn`) so callers/tests can supply a
+ * deterministic implementation without hitting the network — every
+ * existing and new protected phrase in carson-protected-behaviors.test.ts
+ * is tested this way; classifyStaffInstructionViaModel's own prompt
+ * construction, response parsing, and fail-safe default are tested
+ * separately in communication-vs-delegation.model.test.ts, against a
+ * mocked Anthropic response, not the real model.
+ *
+ * FAIL-SAFE DEFAULT: on any network error, non-OK response, or
+ * unparseable/ambiguous model output, this defaults to "delegation" (task
+ * tracked), never "communication". Silently dropping a real delegation
+ * (task never created, never followed up) is the worse failure mode than
+ * over-tracking a plain message (visible in Waiting, correctable) — the
+ * same fail-closed reasoning used throughout this project's security work.
  */
-// "wait" allows one short location clause between "wait" and "for me/us" —
-// "wait IN THE KITCHEN for me" is still communication, not a different
-// instruction. "in"/"at"/"by"/"near" require 1-3 following words (they
-// can't stand alone — "wait in for me" isn't a location); "outside"/
-// "inside" allow 0-3 (they're adverbs that can stand alone — "wait outside
-// for me" is valid on its own, or "wait outside the door for me"). Each
-// following word is checked with a negative lookahead rejecting
-// coordinating conjunctions ("and", "then", "or", "but", "to") — so a
-// compound instruction like "wait AT THE STORE AND BUY MILK for me" cannot
-// have its trailing real task ("buy milk") swallowed into the location
-// clause: the conjunction breaks the qualifier match before it ever reaches
-// "for me", so the whole alternative fails to match.
-// The "wait until TIME" alternative is anchored to BOTH the start and end
-// of the string (only leading/trailing whitespace and a trailing period
-// allowed) so it cannot match as a fragment of a longer compound
-// instruction in either direction — neither a trailing "wait until 8, THEN
-// CLEAN THE KITCHEN" nor a leading "CLEAN THE KITCHEN, then wait until 8".
-const OWNER_TARGET_COMMUNICATION =
-  /\b(?:call|contact|text|message|whatsapp|ring|phone|reach)\s+(?:me|us)\b|\bgive\s+(?:me|us)\s+a\s+(?:call|ring)\b|\bwait\b(?:\s+(?:in|at|by|near)(?:\s+(?!(?:and|then|or|but|to)\b)[a-z']+){1,3}|\s+(?:outside|inside)(?:\s+(?!(?:and|then|or|but|to)\b)[a-z']+){0,3})?\s+(?:for|here\s+for)\s+(?:me|us)\b|^\s*wait\s+(?:until|till)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\.?\s*$|\blet\s+(?:me|us)\s+know\b/i;
+import { callAnthropicProxy } from "./anthropic-client";
 
-// KNOWN, DOCUMENTED LIMITATION — flagged by review, not yet fixed. This is a
-// "contains" match, not "the whole text is only communication": a compound
-// instruction pairing real trackable work with a communication clause is
-// misclassified as fully communication-style, so sendDelegation() reroutes
-// the ENTIRE instruction to a plain message and the trackable work item is
-// never created. This applies in BOTH directions:
-//   - trailing communication clause after real work: "clean the kitchen
-//     and let me know when done"
-//   - trailing real work after a location-qualified "wait ... for me"
-//     communication clause: "wait in the kitchen for me and then clean the
-//     garage" (raised by CodeRabbit on PR #50, alongside the now-fixed
-//     leading/trailing "wait until TIME" anchoring)
-// A full `^...$` anchor isn't viable for the "wait ... for me" alternative
-// either — the confirmed regression case "wait for me in the kitchen. I'm
-// on my way." must still classify as communication despite trailing
-// content. A safe fix needs to distinguish "communication phrase with
-// descriptive trailing content" from "actionable clause + conjunction +
-// communication phrase" (e.g. detect a coordinating conjunction joining an
-// action-verb clause on either side of the communication phrase) —
-// genuinely new logic, not a small extension of this regex, and not proven
-// by any confirmed production incident. See the it.todo entries in
-// carson-protected-behaviors.test.ts and RA7ETBAL_STATE.md.
-export function isCommunicationStyleTaskText(taskText: string): boolean {
-  return OWNER_TARGET_COMMUNICATION.test(taskText.trim());
+export type StaffInstructionClassification = "communication" | "delegation";
+
+const MODEL = "claude-haiku-4-5";
+const MAX_TOKENS = 10;
+
+function buildClassificationPrompt(taskText: string): string {
+  return `A household owner gave this instruction to be relayed to a staff member:
+
+"${taskText}"
+
+Decide whether, once this message is delivered to the staff member, the owner needs an assistant (Carson) to keep tracking the matter and follow up if the staff member doesn't respond or confirm — or whether Carson's job is done the moment the message is delivered.
+
+COMMUNICATION: the staff member only needs to receive this — come somewhere, wait somewhere, meet someone, receive information, or respond personally. There is nothing for the staff member to complete or produce that needs verifying afterward.
+
+DELEGATION: the staff member is being asked to complete, produce, or verify something. The owner needs to know whether it actually got done, and Carson should follow up if it doesn't.
+
+Respond with exactly one word: COMMUNICATION or DELEGATION.`;
+}
+
+/**
+ * The real, production classifier. Calls the authenticated Anthropic proxy.
+ * Never throws — every failure path (network error, non-OK response,
+ * malformed/ambiguous model output) resolves to "delegation" (see the
+ * module-level fail-safe note above).
+ */
+export async function classifyStaffInstructionViaModel(
+  taskText: string,
+): Promise<StaffInstructionClassification> {
+  const text = taskText.trim();
+  if (!text) return "delegation";
+
+  try {
+    const res = await callAnthropicProxy({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      messages: [{ role: "user", content: buildClassificationPrompt(text) }],
+    });
+    if (!res.ok) return "delegation";
+
+    const body = (await res.json()) as {
+      content?: Array<{ type?: string; text?: string }>;
+      error?: unknown;
+    };
+    if (body.error) return "delegation";
+
+    const raw = body.content?.[0]?.text?.trim().toUpperCase();
+    return raw === "COMMUNICATION" ? "communication" : "delegation";
+  } catch {
+    return "delegation";
+  }
+}
+
+/**
+ * The shared entry point both channels call. Accepts an injectable
+ * classifier function (defaults to the real model-backed one) so tests can
+ * supply a deterministic mapping without hitting the network — see
+ * carson-protected-behaviors.test.ts's `fakeClassify` fixture, which covers
+ * every confirmed protected phrase plus the new grammatical forms this
+ * rewrite adds coverage for.
+ */
+export async function isCommunicationStyleTaskText(
+  taskText: string,
+  classifyFn: (text: string) => Promise<StaffInstructionClassification> = classifyStaffInstructionViaModel,
+): Promise<boolean> {
+  const classification = await classifyFn(taskText);
+  return classification === "communication";
 }

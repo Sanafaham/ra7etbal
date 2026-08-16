@@ -2123,12 +2123,12 @@ export default function ElevenLabsAgentWidget({
       // send_delegation tool, or Type to Carson's delegation fast path — this
       // is the one shared guard both rely on, since this function is the
       // single place their delegation-creation paths converge. The
-      // distinction is whether Ra7etBal needs to track completed work, not
-      // whether the sentence contains a verb: "call the mechanic" is
-      // trackable work, "call me" is not. See
-      // src/lib/communication-vs-delegation.ts and the
-      // carson-protected-behaviors test suite (mandatory CI gate).
-      if (isCommunicationStyleTaskText(taskText)) {
+      // distinction is whether Carson needs to track an outcome after
+      // delivery, not whether the sentence is imperative, contains "to" plus
+      // a verb, names the owner, or matches any fixed verb/phrase list — see
+      // src/lib/communication-vs-delegation.ts (model-backed classifier) and
+      // the carson-protected-behaviors test suite (mandatory CI gate).
+      if (await isCommunicationStyleTaskText(taskText)) {
         if (person.whatsapp_opted_in !== true) {
           return `WhatsApp consent is not recorded for ${person.name}.`;
         }

@@ -161,29 +161,31 @@
     },
     {
       "id": "direct_staff_communication",
-      "contract": "A communication-style instruction targeting the owner personally (e.g. 'call me', 'wait for me') is classified as plain communication, never delegation: no task is created, no confirmation link is sent, and acknowledgement wording is communication-style, never task-style. Typed and voice Carson behave identically because both route through the same classifier and the same sendDelegation()/createAndSendDirectMessage() convergence points.",
-      "business_importance": "critical — PERMANENTLY LOCKED contract per RA7ETBAL_STATE.md, with a documented history of narrow-classifier regressions (PR #49/#50/#52/#53)",
+      "contract": "An instruction to staff is classified as plain communication — never delegation — whenever Carson's responsibility ends once the message is delivered (the recipient only needs to receive information, come/wait/meet somewhere, or respond personally, with no outcome to verify afterward). It is classified as delegation whenever the recipient owes a verifiable outcome Carson must keep tracking and follow up on. This is a semantic axis, not a syntactic one: it does NOT depend on imperative mood, a '[command] + person + \"to\" + verb' construction, whether the owner is named as the target, any fixed verb list, or any specific phrase — a vocative/direct-address instruction ('Christopher, come to the kitchen now.') is classified identically to an equivalent 'Tell/Ask/Have/Get' construction, and an owner-target phrase ('call me') is classified on the same axis as a third-party-target one ('come to the kitchen'). Classification: no task is created, no confirmation link is sent, and acknowledgement wording is communication-style, never task-style. Typed and voice Carson behave identically because both route through the same classifier and the same sendDelegation()/createAndSendDirectMessage() convergence points.",
+      "business_importance": "critical — PERMANENTLY LOCKED contract per RA7ETBAL_STATE.md, with a documented history of narrow-classifier regressions (PR #49/#50/#52/#53, and the 2026-08-16 vocative-construction incident this entry's rewrite fixes)",
       "production_entry_points": [
         "src/components/home/ElevenLabsAgentWidget.tsx:sendTypedMessage",
         "src/components/home/ElevenLabsAgentWidget.tsx:sendDelegation (communication reroute)"
       ],
       "files_functions": [
-        "src/lib/communication-vs-delegation.ts:isCommunicationStyleTaskText",
+        "src/lib/communication-vs-delegation.ts:isCommunicationStyleTaskText / classifyStaffInstructionViaModel",
+        "src/lib/anthropic-client.ts:callAnthropicProxy (shared, authenticated Anthropic proxy client)",
         "src/lib/direct-message-fast-path.ts:parseSimpleDirectMessage / executeDirectMessageFastPath",
         "src/lib/direct-messages.ts:createAndSendDirectMessage",
         "src/lib/direct-message-reply-intent.ts",
         "api/_staff-comms-engine.js",
         "src/lib/staff-messages.ts"
       ],
-      "shared_dependencies": ["api/_whatsapp-delivery.js"],
+      "shared_dependencies": ["api/_whatsapp-delivery.js", "api/anthropic.js"],
       "db": {
         "tables": ["messages", "whatsapp_deliveries"],
         "rpcs": [],
         "migrations": []
       },
-      "external_boundaries": ["WhatsApp/Meta send"],
+      "external_boundaries": ["WhatsApp/Meta send", "Anthropic API (via the authenticated /api/anthropic proxy — classification judgment)"],
       "focused_tests": [
         "src/lib/carson-protected-behaviors.test.ts",
+        "src/lib/communication-vs-delegation.model.test.ts",
         "src/lib/direct-message-fast-path.test.ts",
         "src/lib/direct-message-reply-intent.test.ts",
         "src/lib/direct-messages.test.ts",
@@ -197,9 +199,12 @@
       "golden_journey_required": true,
       "golden_journey_tests": ["api/golden-journey-direct-staff-communication.test.js"],
       "production_canary_required": false,
-      "rollback_risk": "high — documented history of narrow-classifier regressions across four PRs (#49/#50/#52/#53)",
-      "verification_status": "PRODUCTION VERIFIED — PERMANENTLY LOCKED per RA7ETBAL_STATE.md",
-      "unresolved": []
+      "rollback_risk": "high — documented history of narrow-classifier regressions across four PRs (#49/#50/#52/#53) plus this rewrite's own incident; the classification judgment now depends on a live model call with a fail-safe default (see unresolved)",
+      "verification_status": "PRODUCTION VERIFIED for the pre-2026-08-16 owner-target-phrase contract (PERMANENTLY LOCKED per RA7ETBAL_STATE.md). The 2026-08-16 architecture rewrite (model-backed semantic classifier, replacing the fixed owner-target regex) is implemented and test-verified against every previously-protected phrase plus new grammatical-form coverage, but NOT YET merged/production-verified — pending owner review.",
+      "unresolved": [
+        "classifyStaffInstructionViaModel's own judgment accuracy is not, and cannot be, proven by a mocked unit test — carson-protected-behaviors.test.ts and this capability's focused tests validate the WIRING (that the correct classification leads to the correct code path) via an injected deterministic classifier, not the real model's semantic accuracy for arbitrary novel phrasing. Real-world accuracy must be validated by production observation, not CI.",
+        "On any classification failure (network error, non-OK proxy response, unparseable/ambiguous model output), the classifier fails safe to 'delegation' — a real plain communication could occasionally be over-tracked as a task during a failure window. This is a deliberate trade-off (visible/correctable over-tracking is safer than silently dropping real delegated work) but is a live-traffic-dependent cost, not a zero-cost fix."
+      ]
     },
     {
       "id": "automation_execution_confirmation",

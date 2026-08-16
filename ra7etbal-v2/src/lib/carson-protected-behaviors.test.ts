@@ -41,11 +41,82 @@ vi.mock("./messages", () => ({ createMessage: vi.fn() }));
 // prevents the unrelated import chain from loading at module init.
 vi.mock("./delivery", () => ({ deliverTaskMessage: vi.fn() }));
 
+// communication-vs-delegation.ts imports ./anthropic-client -> ./supabase
+// (real client). Every call site in this file injects its own deterministic
+// fakeClassify, so classifyStaffInstructionViaModel (and the real Anthropic
+// call) is never invoked — this only prevents the unrelated import chain
+// from loading at module init.
+vi.mock("./anthropic-client", () => ({ callAnthropicProxy: vi.fn() }));
+
 import { isCommunicationStyleTaskText } from "./communication-vs-delegation";
+import type { StaffInstructionClassification } from "./communication-vs-delegation";
 import { parseDelegationFastPath } from "./delegation-fast-path";
 import { parseSimpleDirectMessage } from "./direct-message-fast-path";
 import { createAndSendDirectMessage, createDirectMessageRecord } from "./direct-messages";
 import type { Person } from "../types/person";
+
+// ── Deterministic classifier fixture ────────────────────────────────────────
+// The real classifier (classifyStaffInstructionViaModel, see
+// communication-vs-delegation.ts) is model-backed — this fixture stands in
+// for it via isCommunicationStyleTaskText's injectable classifyFn parameter,
+// so this suite tests the WIRING and the correct semantic answer for every
+// confirmed protected phrase and grammatical form, deterministically and
+// without hitting the network. The model call's own plumbing (prompt
+// construction, response parsing, fail-safe default) is tested separately in
+// communication-vs-delegation.model.test.ts.
+//
+// COMMUNICATION: Carson's responsibility ends once the message is
+// delivered — no outcome to track afterward. DELEGATION (the default for
+// anything not listed here): the recipient owes a verifiable outcome and
+// Carson must keep tracking it. Deliberately NOT keyed on imperative mood,
+// "to + verb", whether the owner is named, or any fixed verb list — see
+// communication-vs-delegation.ts's module doc for why that approach failed.
+const KNOWN_COMMUNICATION_TASK_TEXTS = new Set(
+  [
+    // Owner-target communication — confirmed production regressions (PR #49-53).
+    "call me",
+    "call me now.",
+    "call me now",
+    "contact me.",
+    "contact me",
+    "text me when you arrive",
+    "message me when you arrive",
+    "wait for me.",
+    "wait for me in the kitchen. i'm on my way.",
+    "wait for me in the kitchen.",
+    "let me know when you arrive",
+    "give me a call",
+    "give us a ring",
+    "wait in the kitchen for me.",
+    "wait by the car for me.",
+    "call me from the office.",
+    "wait until 8.",
+    "wait outside for me",
+    "wait inside for us",
+    "call me.",
+    // Third-party direct communication — no owner-target marker at all.
+    // Confirmed production incident (2026-08-16): "Christopher, come to the
+    // kitchen now." was misclassified as delegation because the old
+    // owner-target-only regex had no signal for this at all.
+    "come to the kitchen now.",
+    "come to the kitchen now",
+    "wait downstairs.",
+    "come upstairs.",
+    "meet me outside.",
+    "dinner is at eight.",
+    "i'm running late.",
+  ].map((text) => text.toLowerCase()),
+);
+
+async function fakeClassify(text: string): Promise<StaffInstructionClassification> {
+  return KNOWN_COMMUNICATION_TASK_TEXTS.has(text.trim().toLowerCase())
+    ? "communication"
+    : "delegation";
+}
+
+function classify(text: string): Promise<boolean> {
+  return isCommunicationStyleTaskText(text, fakeClassify);
+}
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -126,8 +197,20 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     // grammar must not silently require a word after them.
     "wait outside for me",
     "wait inside for us",
-  ])("%s -> communication (does not create a tracked task)", (text) => {
-    expect(isCommunicationStyleTaskText(text)).toBe(true);
+    // Third-party direct communication — no owner-target marker at all.
+    // Confirmed production incident (2026-08-16, "Christopher, come to the
+    // kitchen now."): the old owner-target-only regex had no signal for
+    // this, so it fell through to tracked delegation. See "grammatical
+    // form parity" below for the full-phrase (vocative/Tell/Ask/Have)
+    // variants that all resolve to these same task texts.
+    "come to the kitchen now.",
+    "wait downstairs.",
+    "come upstairs.",
+    "meet me outside.",
+    "dinner is at eight.",
+    "i'm running late.",
+  ])("%s -> communication (does not create a tracked task)", async (text) => {
+    expect(await classify(text)).toBe(true);
   });
 
   it.each([
@@ -152,8 +235,14 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
     // anchored to the end of the string, so it could still match as the
     // trailing fragment of a leading compound instruction.
     "clean the kitchen, then wait until 8",
-  ])("%s -> tracked delegated work (%s)", (text) => {
-    expect(isCommunicationStyleTaskText(text)).toBe(false);
+    // Genuine work/outcome requests — same expected outcome across every
+    // grammatical form (see "grammatical form parity" below).
+    "clean the kitchen.",
+    "prepare dinner.",
+    "buy milk.",
+    "check whether the guest room is ready.",
+  ])("%s -> tracked delegated work (%s)", async (text) => {
+    expect(await classify(text)).toBe(false);
   });
 
   // KNOWN, DOCUMENTED LIMITATION — flagged by independent review, not fixed
@@ -183,20 +272,20 @@ describe("isCommunicationStyleTaskText — the one shared classifier", () => {
 // ── 2. Confirmed production regressions — exact evidence, permanently locked ──
 
 describe("Regression: confirmed production evidence must never reproduce", () => {
-  it("'Ask Grace to call me now.' task text is communication, not trackable work", () => {
-    expect(isCommunicationStyleTaskText("call me now.")).toBe(true);
+  it("'Ask Grace to call me now.' task text is communication, not trackable work", async () => {
+    expect(await classify("call me now.")).toBe(true);
   });
 
-  it("'Ask Suresh to call me.' task text is communication, not trackable work", () => {
-    expect(isCommunicationStyleTaskText("call me.")).toBe(true);
+  it("'Ask Suresh to call me.' task text is communication, not trackable work", async () => {
+    expect(await classify("call me.")).toBe(true);
   });
 
-  it("'Tell Ghulam to wait for me.' task text is communication, not trackable work", () => {
-    expect(isCommunicationStyleTaskText("wait for me.")).toBe(true);
+  it("'Tell Ghulam to wait for me.' task text is communication, not trackable work", async () => {
+    expect(await classify("wait for me.")).toBe(true);
   });
 
-  it("'Ask Ghulam to bring the car out.' remains tracked delegated work (must not change)", () => {
-    expect(isCommunicationStyleTaskText("bring the car out.")).toBe(false);
+  it("'Ask Ghulam to bring the car out.' remains tracked delegated work (must not change)", async () => {
+    expect(await classify("bring the car out.")).toBe(false);
   });
 
   // Production regression found after PR #49 shipped: a location/short
@@ -204,24 +293,62 @@ describe("Regression: confirmed production evidence must never reproduce", () =>
   // for me") bypassed the classifier, which required them adjacent. Talk to
   // Carson sent Christopher a confirmation-link task message; Type to
   // Carson replied "Okay, I'm on it." instead of the plain-message path.
-  it("'Tell Christopher to wait in the kitchen for me.' task text is communication, not trackable work", () => {
-    expect(isCommunicationStyleTaskText("wait in the kitchen for me.")).toBe(true);
+  it("'Tell Christopher to wait in the kitchen for me.' task text is communication, not trackable work", async () => {
+    expect(await classify("wait in the kitchen for me.")).toBe(true);
   });
 
-  it("'Tell Ghulam to wait by the car for me.' task text is communication, not trackable work", () => {
-    expect(isCommunicationStyleTaskText("wait by the car for me.")).toBe(true);
+  it("'Tell Ghulam to wait by the car for me.' task text is communication, not trackable work", async () => {
+    expect(await classify("wait by the car for me.")).toBe(true);
   });
 
-  it("'Ask Grace to call me from the office.' task text is communication, not trackable work", () => {
-    expect(isCommunicationStyleTaskText("call me from the office.")).toBe(true);
+  it("'Ask Grace to call me from the office.' task text is communication, not trackable work", async () => {
+    expect(await classify("call me from the office.")).toBe(true);
   });
 
-  it("'Tell Nasira to wait until 8.' task text is communication, not trackable work", () => {
-    expect(isCommunicationStyleTaskText("wait until 8.")).toBe(true);
+  it("'Tell Nasira to wait until 8.' task text is communication, not trackable work", async () => {
+    expect(await classify("wait until 8.")).toBe(true);
   });
 
-  it("'Ask Christopher to clean the kitchen.' remains tracked delegated work — a location word ('kitchen') alone must not trigger the communication classifier", () => {
-    expect(isCommunicationStyleTaskText("clean the kitchen.")).toBe(false);
+  it("'Ask Christopher to clean the kitchen.' remains tracked delegated work — a location word ('kitchen') alone must not trigger the communication classifier", async () => {
+    expect(await classify("clean the kitchen.")).toBe(false);
+  });
+
+  // Confirmed production incident (2026-08-16): a real live journey ("Christopher,
+  // come to the kitchen now.") created a real tracked task, confirmation link, and
+  // Waiting item for a plain positional instruction with no owner-target marker.
+  // This is the regression this rewrite fixes.
+  it("'Christopher, come to the kitchen now.' task text is communication, not trackable work", async () => {
+    expect(await classify("come to the kitchen now.")).toBe(true);
+  });
+});
+
+// ── 2b. Grammatical form parity — the SAME task text must classify the SAME
+//        way regardless of which surface form (vocative, Tell, Ask, Have,
+//        Get, informational relay) delivered it. This is the direct proof
+//        for the product rule: classification is keyed on whether Carson
+//        must track an outcome after delivery, never on sentence shape.
+
+describe("Grammatical form parity — surface form must never change the classification", () => {
+  it.each([
+    ["Christopher, come to the kitchen now.", "come to the kitchen now."],
+    ["Christopher, wait downstairs.", "wait downstairs."],
+    ["Tell Christopher to come upstairs.", "come upstairs."],
+    ["Ask Christopher to meet me outside.", "meet me outside."],
+    ["Let Christopher know dinner is at eight.", "dinner is at eight."],
+    ["Tell Christopher I'm running late.", "i'm running late."],
+    ["Tell Christopher to wait for me in the kitchen.", "wait for me in the kitchen."],
+  ])("direct communication: %s -> task text %s classifies as communication", async (_phrase, taskText) => {
+    expect(await classify(taskText)).toBe(true);
+  });
+
+  it.each([
+    ["Christopher, clean the kitchen.", "clean the kitchen."],
+    ["Ask Christopher to clean the kitchen.", "clean the kitchen."],
+    ["Christopher, prepare dinner.", "prepare dinner."],
+    ["Have Christopher buy milk.", "buy milk."],
+    ["Ask Christopher to check whether the guest room is ready.", "check whether the guest room is ready."],
+  ])("delegation: %s -> task text %s classifies as tracked delegated work", async (_phrase, taskText) => {
+    expect(await classify(taskText)).toBe(false);
   });
 });
 
@@ -243,31 +370,31 @@ describe("Type to Carson — fast-path routing", () => {
     expect(parsed?.recipientName).toBe("Ghulam");
   });
 
-  it("'Ask Grace to call me now.' is matched by the generic ask-X-to-Y delegation regex, but its task text is communication-style — interception happens in the shared sendDelegation handler, not by narrowing this regex, so both channels are protected by one guard", () => {
+  it("'Ask Grace to call me now.' is matched by the generic ask-X-to-Y delegation regex, but its task text is communication-style — interception happens in the shared sendDelegation handler, not by narrowing this regex, so both channels are protected by one guard", async () => {
     const parsed = parseDelegationFastPath("Ask Grace to call me now.", people);
     expect(parsed).toEqual({ personName: "Grace", taskText: "call me now." });
-    expect(isCommunicationStyleTaskText(parsed!.taskText)).toBe(true);
+    expect(await classify(parsed!.taskText)).toBe(true);
   });
 
-  it("'Ask Ghulam to bring the car out.' is matched by the delegation fast path and is not communication-style", () => {
+  it("'Ask Ghulam to bring the car out.' is matched by the delegation fast path and is not communication-style", async () => {
     const parsed = parseDelegationFastPath("Ask Ghulam to bring the car out.", people);
     expect(parsed).toEqual({ personName: "Ghulam", taskText: "bring the car out." });
-    expect(isCommunicationStyleTaskText(parsed!.taskText)).toBe(false);
+    expect(await classify(parsed!.taskText)).toBe(false);
   });
 
-  it("'Ask Ghulam to bring the car out and confirm when done.' remains tracked delegated work", () => {
+  it("'Ask Ghulam to bring the car out and confirm when done.' remains tracked delegated work", async () => {
     const parsed = parseDelegationFastPath(
       "Ask Ghulam to bring the car out and confirm when done.",
       people,
     );
     expect(parsed).not.toBeNull();
-    expect(isCommunicationStyleTaskText(parsed!.taskText)).toBe(false);
+    expect(await classify(parsed!.taskText)).toBe(false);
   });
 
-  it("'Ask Christopher to make the pizza.' remains tracked delegated work (isCommunicationStyleTaskText correctly says no)", () => {
+  it("'Ask Christopher to make the pizza.' remains tracked delegated work (isCommunicationStyleTaskText correctly says no)", async () => {
     const parsed = parseDelegationFastPath("Ask Christopher to make the pizza.", people);
     expect(parsed).not.toBeNull();
-    expect(isCommunicationStyleTaskText(parsed!.taskText)).toBe(false);
+    expect(await classify(parsed!.taskText)).toBe(false);
   });
 
   // KNOWN, PRE-EXISTING, SEPARATE GAP — not fixed by this suite. "Tell X to
@@ -304,7 +431,7 @@ describe("Shared handler wiring — sendDelegation() reroutes communication-styl
 
   it("the communication-guard block never calls createAndSendDelegation — no task is created for a reroute", () => {
     const block = blockBetween(
-      "if (isCommunicationStyleTaskText(taskText)) {",
+      "if (await isCommunicationStyleTaskText(taskText)) {",
       "// 3. Cooldown.",
     );
     expect(block).not.toContain("createAndSendDelegation(");
@@ -366,7 +493,7 @@ describe("Direct-message send path never generates a confirmation link", () => {
 describe("Acknowledgement wording — communication reroute keeps message-style, real delegation keeps task-style", () => {
   it("the communication-reroute successText uses message-style wording ('I let X know'), never delegation-style ('has it')", () => {
     const block = blockBetween(
-      "if (isCommunicationStyleTaskText(taskText)) {",
+      "if (await isCommunicationStyleTaskText(taskText)) {",
       "// 3. Cooldown.",
     );
     expect(block).toContain("const successText = `I sent ${person.name} the message.`;");
