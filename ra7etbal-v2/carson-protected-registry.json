@@ -272,7 +272,8 @@
         "api/send-whatsapp-task.js:verifySupabaseUser / isValidInternalSecret / verifyOwnedResource",
         "api/process-delegation-escalations.js:isAuthorized / isTestMode",
         "src/lib/whatsapp.ts:sendWhatsAppTask (attaches the browser session JWT)",
-        "api/task-confirm.js:sendCorrectionRequest (attaches the internal-secret header for its one send-whatsapp-task call)"
+        "api/task-confirm.js:sendCorrectionRequest (attaches the internal-secret header for its one send-whatsapp-task call)",
+        "api/_owner-command-executor.js:invokeSendWhatsappTask (in-process caller of the default-exported handler; attaches the internal-secret header)"
       ],
       "shared_dependencies": ["api/send-whatsapp-task.js"],
       "db": {
@@ -284,6 +285,7 @@
       "focused_tests": [
         "api/send-whatsapp-task.auth-boundary.test.js",
         "api/process-delegation-escalations.testmode-auth.test.js",
+        "api/_owner-command-executor.send-whatsapp-task-auth.test.js",
         "api/send-whatsapp-task.test.js"
       ],
       "protected_suite": true,
@@ -291,7 +293,7 @@
       "golden_journey_tests": [],
       "production_canary_required": false,
       "rollback_risk": "high — this is the auth gate in front of every real external WhatsApp send on this endpoint; a regression here reopens the exact unauthenticated-send vulnerability this capability was created to close",
-      "verification_status": "Implemented and test-verified 2026-08-16 (Remediation 4): dedicated PR opened, all focused tests passing, full suite/typecheck/build/impact-map/registry validation clean. NOT YET merged and NOT YET production-verified — pending owner review per this project's PR-approval scope rules.",
+      "verification_status": "Implemented and test-verified 2026-08-16 (Remediation 4): dedicated PR opened, all focused tests passing, full suite/typecheck/build/impact-map/registry validation clean. A pre-merge audit against fresh origin/main found one missed in-process caller (api/_owner-command-executor.js's invokeSendWhatsappTask, which calls the default-exported handler directly and was left without the internal-secret header) — fixed, with a dedicated regression test (api/_owner-command-executor.send-whatsapp-task-auth.test.js) that exercises the real handler and its real auth gate, not a mock. The complete caller map was rebuilt from scratch and every reference to send-whatsapp-task.js classified by call mechanism (HTTP request / in-process default-handler invocation / named-helper-only import / test-only); no other missed caller was found. NOT YET merged and NOT YET production-verified — pending owner review per this project's PR-approval scope rules.",
       "unresolved": [
         "Two read-only investigation gaps (hosting-path routing, task-confirm.js's taskId trust boundary) were closed before implementation and required no architecture change — see the Remediation 4 report for the conclusive findings — but are not re-proven by an automated test in this capability; they were traced by direct code reading.",
         "Ownership verification for browser callers checks task_id/person_id/message_record_id row ownership via a direct Supabase REST query with the service-role key, not RLS — this is an application-layer check, not a database-layer guarantee. No RLS gap is known, but this capability does not independently prove one doesn't exist."

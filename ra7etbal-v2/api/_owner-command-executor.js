@@ -388,7 +388,10 @@ async function invokeSendWhatsappTask(body) {
     status(code) { statusCode = code; return this; },
     json(value) { responseBody = value; return value; },
   };
-  await sendWhatsappTask({ method: 'POST', body, headers: {} }, res);
+  await sendWhatsappTask(
+    { method: 'POST', body, headers: { 'x-ra7etbal-internal-secret': process.env.CRON_SECRET } },
+    res,
+  );
   return { statusCode, body: responseBody };
 }
 
