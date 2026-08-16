@@ -565,7 +565,7 @@
         "src/lib/ops-intelligence.ts:executeProposedPlan / rejectProposedPlan / handlePendingPlanTurn",
         "src/lib/ops-intelligence.ts:buildDeterministicGuestPreparationTasks / hasLeadingConfirmationLanguage"
       ],
-      "shared_dependencies": ["src/lib/save.ts", "src/lib/delivery.ts", "src/lib/direct-messages.ts", "src/lib/delegation-message.ts"],
+      "shared_dependencies": ["src/lib/save.ts", "src/lib/delivery.ts", "src/lib/direct-messages.ts", "src/lib/delegation-message.ts", "api/anthropic.js", "src/lib/anthropic-client.ts"],
       "db": {
         "tables": ["carson_pending_operations", "tasks", "messages"],
         "rpcs": [],
@@ -584,7 +584,8 @@
       "verification_status": "PRODUCTION VERIFIED — PR #251 (confirmation-timing fast-path fix), PRs #68/#69 (Guard C/D false-success and duplicate-execution fix, real production incident), 'Verified hosting loop' and 'Hosting plan integrity guards' entries in RA7ETBAL_STATE.md. Tier 1 classification made 2026-08-15 from direct evidence; both focused test files (231 tests total) confirmed passing before being added to the required test:carson-protected suite.",
       "unresolved": [
         "No golden-journey test exists proving the full multi-file hosting flow end to end (ElevenLabsAgentWidget dispatch -> ops-intelligence planning -> savePending/deliverTaskMessage -> recall) the way other Tier 1 capabilities have — the 231 existing tests cover ops-intelligence.ts and the widget's integrity guards individually and thoroughly, but not as one cross-module journey. Flagged as a real, scoped follow-up, not implemented here to keep this classification PR focused.",
-        "No real-Postgres contract test exists for carson_pending_operations — this capability was never part of Phase 4's Tier 1 chain. A future PR could add it; not manufactured here without first confirming what invariant would actually need proving."
+        "No real-Postgres contract test exists for carson_pending_operations — this capability was never part of Phase 4's Tier 1 chain. A future PR could add it; not manufactured here without first confirming what invariant would actually need proving.",
+        "api/anthropic.js and src/lib/anthropic-client.ts added as shared_dependencies 2026-08-16 — ops-intelligence.ts's hosting-plan LLM call routes through this shared proxy (Strix QUICK scan remediation series). This capability's own focused tests already mock the network layer and need no new assertions for the auth change; api/anthropic.test.js and src/lib/anthropic-client.test.ts cover the proxy's own auth contract directly. Other files that also call this proxy (text-carson.ts, ai/extract.ts, carson-summarize.ts, carson-fact-extract.ts, weekly-planning.ts, people-behavior.ts) are not currently registry-protected capabilities at all — a pre-existing gap, not invented here to avoid over-mapping unrelated behavior into this entry."
       ]
     },
     {
