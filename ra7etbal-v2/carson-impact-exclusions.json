@@ -7,10 +7,6 @@
       "justification": "Weather widget backend (Open-Meteo passthrough). Produces a Carson-ready spoken sentence as a data source, but contains no decision routing, delegation, WhatsApp, automation, reminder, Communication History, push, or auth logic of its own."
     },
     {
-      "path": "api/anthropic.js",
-      "justification": "Generic passthrough proxy to the Anthropic API (forwards the request body, checks for an API key, returns the response). No Carson-specific business logic — used as raw infrastructure by higher-level modules that ARE registered."
-    },
-    {
       "path": "api/transcribe.js",
       "justification": "Generic passthrough proxy to OpenAI Whisper transcription (streams the multipart body through unchanged). No Carson-specific business logic."
     },
