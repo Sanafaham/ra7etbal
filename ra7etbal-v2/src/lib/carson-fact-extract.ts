@@ -6,6 +6,7 @@
  */
 
 import type { TranscriptMessage } from "./carson-summarize";
+import { callAnthropicProxy } from "./anthropic-client";
 
 export interface ExtractedCarsonFact {
   category: string;
@@ -88,14 +89,10 @@ ${userTurns.map((message) => `User: ${message}`).join("\n")}`;
 
   let res: Response;
   try {
-    res = await fetch("/api/anthropic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5",
-        max_tokens: 600,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    res = await callAnthropicProxy({
+      model: "claude-haiku-4-5",
+      max_tokens: 600,
+      messages: [{ role: "user", content: prompt }],
     });
   } catch {
     return [];
