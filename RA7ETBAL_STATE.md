@@ -1732,6 +1732,31 @@ A 2026-07-22 audit against this contract found exactly one gap (no test proved `
 
 Protect: everything in "Final verified production behavior" above, plus the specific defects in Regressions 1/2/2a/2b — any future change touching `sendDelegation()`, `executeDirectMessageFastPath`, `parseSimpleDirectMessage`, `sendTypedMessage`'s typed routing boundary, or `CARSON_VOICE_SESSION_GUARD` must preserve this contract and its full test suite. Do not reintroduce a per-channel or per-phrase patch. Do not let the two acknowledgement styles (communication vs. delegation) merge back into one. Do not remove the typed deterministic dispatch or the duplicate-send guard on it.
 
+### Carson communication vs. delegation — outcome-tracking classifier rewrite (PR #303) + ElevenLabs prompt reconciliation — CLOSED, MERGED, PROMPT LIVE
+
+Status: repo-side fix merged and deployed to production 2026-08-16 (PR #303, merge SHA `9c2d39020b69b500d875b95956c3adc1cb2af1be`). Corresponding ElevenLabs live system prompt update published by Sana on 2026-08-17.
+
+Confirmed production incident (2026-08-16, live owner journey): "Christopher, come to the kitchen now." — a plain positional instruction to a staff member, with no owner-target marker — was misclassified as tracked delegation. A real task, confirmation link, and Waiting item were created; Christopher had to confirm completion for an instruction that should have been a one-off message.
+
+**Root cause**: the classifier this repo shipped in PR #49/#50/#52/#53 above (`isCommunicationStyleTaskText`, `OWNER_TARGET_COMMUNICATION`) was scoped only to phrasing where the *owner* is the target of the action ("call me", "wait for me", "let me know"). It had no signal at all for a third-party-directed instruction with no owner-target marker. Separately, the live ElevenLabs prompt's own `ACTION ROUTING — REQUIRED` section told the model to *always* route any "[Tell/Ask/Have/Get] + person + 'to' + verb" construction to `send_delegation`, using "Tell Christopher to wait for me in the kitchen." as one of its own examples — directly contradicting the "Final verified production behavior" contract locked immediately above this entry.
+
+**The real classification axis was never "is the owner the target" or "does the sentence match a command-word-plus-'to'-plus-verb construction."** It is: does Carson need to track an outcome after the message is delivered?
+- **Direct communication**: Carson's job ends once the message is successfully delivered — no completion tracking is required.
+- **Tracked operational work**: the recipient owes a result Carson must track and follow up on.
+Sentence grammar ("Tell/Ask/Have/Get + person + to + verb") does NOT determine which one applies — the same construction can be either, depending only on the outcome-tracking question above.
+
+**Repo-side fix (PR #303)**: `src/lib/communication-vs-delegation.ts` rewritten — the fixed owner-target regex is replaced by a small, focused model call (`claude-haiku-4-5`, via the existing authenticated `/api/anthropic` proxy) asking exactly the outcome-tracking question above, with `isCommunicationStyleTaskText()` now async and accepting an injectable classifier so every existing and new protected phrase is tested deterministically without hitting the network. Fails safe to "delegation" (tracked) on any network error, non-OK response, or unparseable model output. Every phrase protected by PR #49/#50/#52/#53 above continues to pass unchanged, verified via `src/lib/carson-protected-behaviors.test.ts`'s injected deterministic fixture, plus new grammatical-form-parity coverage (vocative/direct-address, "Tell", "Ask", "Have" constructions on both sides of the boundary). `carson-protected-registry.json`'s `direct_staff_communication` contract was rewritten to describe the real outcome-tracking axis rather than only "owner-target phrases."
+
+**ElevenLabs prompt reconciliation (published live 2026-08-17)**: two changes to the live prompt, both approved by Sana in chat and verified via exact line-by-line diffs before publishing, per `carson_live_prompt.md` (Claude's memory-only backup, not stored in this repo):
+1. The contradictory `ACTION ROUTING — REQUIRED` section and the original `MESSAGE VERSUS TASK ROUTING` section were both removed and replaced by one unified `MESSAGE VERSUS TASK ROUTING — REQUIRED` section stating the outcome-tracking axis directly, with explicit vocative-form examples on both sides that neither prior section covered.
+2. `DETERMINISTIC TOOL PRECEDENCE` items 4 and 5 — found in a follow-up audit to independently restate the same contradiction (item 4 via "owner-directed communication" framing, item 5 via the literal "tell/ask/have/get [person] to [verb]" pattern) — were reworded to the smallest change that removes the restatement: both now point to `MESSAGE VERSUS TASK ROUTING` as the authority instead of asserting their own grammar-based rule.
+
+No other prompt section, tool definition, or precedence rule was touched. Type-to-Carson advisory-only status, Talk-to-Carson execution authority, reminder/hosting/calendar/memory precedence are all unchanged.
+
+**Not yet done**: a live re-test of the exact incident phrase ("Christopher, come to the kitchen now.") against the now-live prompt, confirming it produces a plain message with no task/Waiting item/confirmation link — and a paired re-test of a genuine delegation phrase ("Ask Christopher to clean the kitchen.") confirming the tracked-task/confirmation-link/follow-up behavior is unaffected. Not performed as part of this documentation update.
+
+Protect: the outcome-tracking axis as the sole classification authority, in both the repo-side classifier and the live prompt. Do not reintroduce a construction-based or owner-mention-based routing rule in either place. Do not let the prompt and the code-level classifier diverge again — if one changes, check the other.
+
 ### Morning brief does not proactively include reminders
 
 Current behavior: the focused fix is merged and deployed in PR #24. Carson now receives supported owner reminders scheduled in the next 24 hours through the existing morning brief automation slot, including when another automation status also needs to be spoken.
