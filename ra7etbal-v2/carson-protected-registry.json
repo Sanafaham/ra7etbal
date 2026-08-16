@@ -130,6 +130,7 @@
       ],
       "files_functions": [
         "src/lib/delegations.ts:createDelegationTaskAndMessage",
+        "src/lib/ai/compose-message.ts:composeMergedMessage",
         "src/lib/delegation-fast-path.ts:parseDelegationFastPath / executeDelegationFastPath",
         "src/lib/communication-vs-delegation.ts:isCommunicationStyleTaskText",
         "api/send-whatsapp-task.js",
@@ -585,7 +586,127 @@
       "unresolved": [
         "No golden-journey test exists proving the full multi-file hosting flow end to end (ElevenLabsAgentWidget dispatch -> ops-intelligence planning -> savePending/deliverTaskMessage -> recall) the way other Tier 1 capabilities have — the 231 existing tests cover ops-intelligence.ts and the widget's integrity guards individually and thoroughly, but not as one cross-module journey. Flagged as a real, scoped follow-up, not implemented here to keep this classification PR focused.",
         "No real-Postgres contract test exists for carson_pending_operations — this capability was never part of Phase 4's Tier 1 chain. A future PR could add it; not manufactured here without first confirming what invariant would actually need proving.",
-        "api/anthropic.js and src/lib/anthropic-client.ts added as shared_dependencies 2026-08-16 — ops-intelligence.ts's hosting-plan LLM call routes through this shared proxy (Strix QUICK scan remediation series). This capability's own focused tests already mock the network layer and need no new assertions for the auth change; api/anthropic.test.js and src/lib/anthropic-client.test.ts cover the proxy's own auth contract directly. Other files that also call this proxy (text-carson.ts, ai/extract.ts, carson-summarize.ts, carson-fact-extract.ts, weekly-planning.ts, people-behavior.ts) are not currently registry-protected capabilities at all — a pre-existing gap, not invented here to avoid over-mapping unrelated behavior into this entry."
+        "api/anthropic.js and src/lib/anthropic-client.ts added as shared_dependencies 2026-08-16 — ops-intelligence.ts's hosting-plan LLM call routes through this shared proxy (Strix QUICK scan remediation series). This capability's own focused tests already mock the network layer and need no new assertions for the auth change; api/anthropic.test.js and src/lib/anthropic-client.test.ts cover the proxy's own auth contract directly. The other 6 files that also call this proxy (text-carson.ts, ai/extract.ts, ai/compose-message.ts, carson-summarize.ts, carson-fact-extract.ts, weekly-planning.ts, people-behavior.ts) were a genuine pre-existing Protected Behavior Registry completeness gap, not invented by this change — Impact-Aware CI surfaced it on PR #299. Resolved 2026-08-16: ai/compose-message.ts is now mapped into this capability's sibling staff_delegation entry (confirmed dependency chain: delegations.ts -> ai/compose-message.ts, both already reachable from ElevenLabsAgentWidget.tsx); the remaining 6 files are now registered as their own genuinely distinct capabilities (talk_compound_instruction_execution, voice_session_memory, weekly_planning, people_behavioral_insights) rather than folded into hosting_operations, since none of them share this capability's contract. See those entries for their own honest protection status — several remain protected_suite:false pending dedicated hardening work, which is real, tracked debt, not resolved by registration alone."
+      ]
+    },
+    {
+      "id": "talk_compound_instruction_execution",
+      "contract": "Talk to Carson can execute compound, multi-item, ambiguous, personal-note, and other instructions routed through execute_instruction. The execution path may extract structured items and perform the authorized task/message operations through the existing savePending and WhatsApp delivery paths. Type to Carson must remain advisory-only. For typed input, guardCurrentToolInvocation(\"execute_instruction\") must block the invocation before the mutating execute_instruction implementation is reached. Therefore the protected contract includes BOTH sides of this boundary: 1. Authorized Talk-to-Carson execution reaches the compound instruction pipeline correctly. 2. Typed input cannot reach the mutating execution path through execute_instruction.",
+      "business_importance": "critical — Tier 1. Same blast-radius shape as staff_delegation/hosting_operations (real WhatsApp sends, real task/message rows), plus this is the one execution path with an explicit typed-vs-voice authorization boundary layered on top of it — a regression here is both a state-changing-behavior risk and an advisory-only-contract violation. Registered 2026-08-16 from Impact-Aware CI's PR #299 completeness gap, after reconciling against RA7ETBAL_STATE.md's 2026-07-25 'Type to Carson is advisory-only' contract. Engineering note: the underlying file is named text-carson.ts and its extraction helper lives at ai/extract.ts — historical names from an earlier, now-superseded design where this code was reachable from typed input. Tracing the actual current call graph shows executeDelegationFromText (in text-carson.ts) is called only from _runProductionExec inside executeInstruction (ElevenLabsAgentWidget.tsx), which is itself invoked only by the execute_instruction clientTool handler, whose first statement is guardCurrentToolInvocation(\"execute_instruction\") — one of the 16 tools that guard blocks unconditionally for typed callers. No other caller of executeDelegationFromText or extractItems exists anywhere in the codebase. The filenames are stale relative to current behavior and are NOT used as this capability's semantic definition; the file is not renamed here as that would be unrelated cleanup outside this PR's scope.",
+      "production_entry_points": [
+        "src/components/home/ElevenLabsAgentWidget.tsx (clientTools.execute_instruction entry; calls executeInstruction, which calls _runProductionExec, which calls executeDelegationFromText for the compound/ambiguous-instruction path)"
+      ],
+      "files_functions": [
+        "src/lib/text-carson.ts:executeDelegationFromText",
+        "src/lib/ai/extract.ts:extractItems",
+        "src/components/home/ElevenLabsAgentWidget.tsx:executeInstruction / clientTools.execute_instruction / guardCurrentToolInvocation"
+      ],
+      "shared_dependencies": [
+        "src/lib/save.ts",
+        "src/lib/direct-messages.ts",
+        "src/lib/delivery.ts",
+        "api/anthropic.js",
+        "src/lib/anthropic-client.ts"
+      ],
+      "db": {
+        "tables": ["tasks", "messages"],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": ["WhatsApp/Meta send", "Anthropic API (via api/anthropic.js)"],
+      "focused_tests": [
+        "src/components/home/ElevenLabsAgentWidget.typed-mode.test.ts"
+      ],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "high — real WhatsApp sends and real task/message persistence, with zero dedicated regression coverage of the execution path itself (see unresolved)",
+      "verification_status": "PARTIALLY VERIFIED, split across the capability's two explicit protection questions, deliberately not combined into one conclusion: (A) Typed-mutation-prevention IS proven by existing tests already wired into the required test:carson-protected gate — ElevenLabsAgentWidget.typed-mode.test.ts asserts execute_instruction is present in TYPED_BLOCKED_TOOL_MESSAGES, that the advisory-guard check runs unconditionally before the 'no active owner turn' fallback, and separately (a distinct test) that voice returns before the typed-advisory guard is ever reached — so typed callers structurally cannot reach the mutating executor, and voice is structurally exempt from the block. (B) Authorized-execution correctness is NOT covered by any existing test: text-carson.ts and ai/extract.ts have zero dedicated test files anywhere in the repo, and the one test that does exercise real tool executors (typed-mode.test.ts's 'keeps Talk to Carson's reminder, calendar, and delegation tools calling their real executors unconditionally') explicitly lists create_reminder/create_automation/calendar/send_delegation/send_followup — it does not mention execute_instruction or executeDelegationFromText at all. protected_suite is false because of (B), not (A); (A)'s existing coverage is genuine and should not be described as absent.",
+      "unresolved": [
+        "Component B (authorized Talk-to-Carson execution correctness for the compound instruction pipeline: extractItems' extraction accuracy, savePending persistence, WhatsApp delivery via direct-messages.ts/delivery.ts) has zero dedicated test coverage. This is the highest-priority follow-up hardening item among the four capabilities discovered by this registry-completeness pass, per explicit risk ordering: it sits directly in Talk to Carson's real-money-real-message execution path, unlike the other three (voice-session-memory, weekly-planning, people-behavioral-insights), which are lower-blast-radius, LLM-summary-shaped capabilities. Not written in PR #299 per the instruction to reuse existing tests first and avoid unrelated broad test suites merely to close this PR.",
+        "Do not conflate the (A) and (B) conclusions above in any future audit of this capability — they were deliberately kept separate because they have genuinely different coverage states."
+      ]
+    },
+    {
+      "id": "voice_session_memory",
+      "contract": "After a Talk to Carson voice session ends, the session is summarized into memory bullets (carson-summarize.ts) and durable facts are extracted (carson-fact-extract.ts) without fabricating content Carson did not actually say or hear, and without persisting low-value sessions (isSummaryWorthSaving gate, MIN_USER_TURNS threshold). This capability is read/summarize-only — it does not send messages, create tasks, or perform any WhatsApp/calendar/reminder state change; its blast radius is a memory-quality/privacy concern (wrong or fabricated memory shown back to the owner), not a delivery-integrity concern.",
+      "business_importance": "medium — incorrect or fabricated session memory degrades Carson's usefulness and trustworthiness, but causes no direct external side effect (no message sent, no task created) the way staff_delegation or talk_compound_instruction_execution would on a defect.",
+      "production_entry_points": [
+        "src/components/home/ElevenLabsAgentWidget.tsx (onDisconnect -> summarizeConversation -> isSummaryWorthSaving gate -> saveSessionMemory)"
+      ],
+      "files_functions": [
+        "src/lib/carson-summarize.ts",
+        "src/lib/carson-fact-extract.ts"
+      ],
+      "shared_dependencies": ["api/anthropic.js", "src/lib/anthropic-client.ts"],
+      "db": {
+        "tables": ["carson_memory", "carson_facts"],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": ["Anthropic API (via api/anthropic.js)"],
+      "focused_tests": ["src/lib/carson-summarize.test.ts"],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "low — read/summarize-only, no external delivery or task/message state change on a defect",
+      "verification_status": "PARTIALLY TESTED, UNPROTECTED — carson-summarize.test.ts exists and exercises carson-summarize.ts, but is not wired into the required test:carson-protected CI gate (confirmed by reading package.json's test:carson-protected script directly — it is absent from that file list). carson-fact-extract.ts has zero test coverage anywhere. Registered 2026-08-16 as a genuine current-state gap surfaced by Impact-Aware CI on PR #299; no coverage invented.",
+      "unresolved": [
+        "carson-summarize.test.ts exists but is not part of the required test:carson-protected gate — wiring it in is real follow-up work, not done here to avoid unrelated CI-configuration scope creep in PR #299.",
+        "carson-fact-extract.ts has no dedicated test file at all. Follow-up hardening should add one before (or as part of) wiring this capability into the protected gate.",
+        "No contract test proves isSummaryWorthSaving's quality gate or MIN_USER_TURNS threshold against the registered contract text above — only implied by carson-summarize.test.ts's existing assertions, not confirmed read here."
+      ]
+    },
+    {
+      "id": "weekly_planning",
+      "contract": "Weekly planning output (produced from carson_memory/task history via the Anthropic proxy) reflects the owner's actual data and does not fabricate tasks, people, or commitments that were not actually present in the underlying records.",
+      "business_importance": "medium — an incorrect weekly plan misleads the owner's planning but performs no WhatsApp send, task creation, or other external state change.",
+      "production_entry_points": ["src/lib/weekly-planning.ts (caller site not traced further in this pass — read-only registry-completeness work; call site verification is follow-up, not required to satisfy Impact-Aware CI's file-level mapping)"],
+      "files_functions": ["src/lib/weekly-planning.ts"],
+      "shared_dependencies": ["api/anthropic.js", "src/lib/anthropic-client.ts"],
+      "db": {
+        "tables": [],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": ["Anthropic API (via api/anthropic.js)"],
+      "focused_tests": ["src/lib/weekly-planning.test.ts"],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "low — no external delivery or task/message state change on a defect",
+      "verification_status": "PARTIALLY TESTED, UNPROTECTED — weekly-planning.test.ts exists but is not wired into the required test:carson-protected CI gate (confirmed absent from package.json's script). Registered 2026-08-16 as a genuine current-state gap surfaced by Impact-Aware CI on PR #299; no coverage invented, no caller-graph or contract depth claimed beyond what was actually verified.",
+      "unresolved": [
+        "The exact production caller(s) of weekly-planning.ts were not traced in this pass (only the file's existence, its test file, and its api/anthropic.js dependency were confirmed). Follow-up hardening should trace the real call chain before wiring this into the protected gate, the same way talk_compound_instruction_execution's call chain was traced.",
+        "weekly-planning.test.ts is not part of the required test:carson-protected gate — wiring it in is real follow-up work, not done here."
+      ]
+    },
+    {
+      "id": "people_behavioral_insights",
+      "contract": "Behavioral insights about staff/people (produced via the Anthropic proxy from historical task/communication data) reflect the owner's actual data and do not fabricate behavior patterns, incidents, or characterizations of a real named person that did not actually occur.",
+      "business_importance": "medium-high — a fabricated behavioral characterization of a real named staff member is a more sensitive failure mode than a generic wrong-fact bug (reputational/interpersonal risk to a real person), but still performs no WhatsApp send, task creation, or other external state change on its own.",
+      "production_entry_points": ["src/lib/people-behavior.ts (caller site not traced further in this pass — read-only registry-completeness work; call site verification is follow-up, not required to satisfy Impact-Aware CI's file-level mapping)"],
+      "files_functions": ["src/lib/people-behavior.ts"],
+      "shared_dependencies": ["api/anthropic.js", "src/lib/anthropic-client.ts"],
+      "db": {
+        "tables": ["people"],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": ["Anthropic API (via api/anthropic.js)"],
+      "focused_tests": [],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "low — no external delivery or task/message state change on a defect, though see business_importance for the reputational-risk nuance",
+      "verification_status": "UNTESTED, UNPROTECTED — people-behavior.ts has zero dedicated test coverage anywhere in the repository (confirmed by directory listing; no people-behavior.test.ts exists). Registered 2026-08-16 as a genuine current-state gap surfaced by Impact-Aware CI on PR #299. No coverage invented; this is the most honestly-uncovered of the four newly registered capabilities.",
+      "unresolved": [
+        "Zero test coverage of any kind. Given the reputational-risk nuance noted in business_importance (fabricated claims about a real named person), this is flagged as a candidate for earlier follow-up attention than its 'medium' external-blast-radius alone would suggest — but ranked below talk_compound_instruction_execution's Component B, which has a strictly larger blast radius (real message/task state change vs. read-only insight generation).",
+        "The exact production caller(s) of people-behavior.ts were not traced in this pass."
       ]
     },
     {
