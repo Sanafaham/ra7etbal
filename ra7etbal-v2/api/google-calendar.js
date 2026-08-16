@@ -3,12 +3,19 @@
  *
  * Routes (determined by query params / headers):
  *
- *   1. OAuth initiation  GET ?userId=<uid>
- *      Redirects user to Google consent screen.
+ *   1. OAuth initiation  GET ?action=init
+ *      Requires Authorization: Bearer <supabase-jwt> header. Verifies the
+ *      JWT, derives user_id exclusively from it (never from client input),
+ *      issues a random single-use state token bound to that user_id in
+ *      google_oauth_states, and returns { ok: true, redirectUrl } for the
+ *      browser to navigate to. See "OAuth CSRF-state binding" below.
  *
- *   2. OAuth callback    GET ?code=<code>&state=<uid>
- *      Exchanges code for tokens, stores refresh_token in profiles via
- *      Supabase REST API, redirects to /?calendar=connected|error.
+ *   2. OAuth callback    GET ?code=<code>&state=<random-token>
+ *      Atomically consumes the matching google_oauth_states row (single-use,
+ *      race-safe) to recover the bound user_id -- state is never trusted or
+ *      reused as an identity. Exchanges code for tokens, stores
+ *      refresh_token in profiles via Supabase REST API, redirects to
+ *      /?calendar=connected|error.
  *
  *   3. Search history    GET ?range=historical&start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
  *      Optional query and bounded limit. Authenticated, server-filtered, and
@@ -29,13 +36,28 @@
  * All Supabase access uses raw fetch against the REST / Auth v1 APIs.
  * No @supabase/supabase-js import.
  *
+ * OAuth CSRF-state binding (Remediation 3, Carson Engineering Hardening
+ * Project): initiation used to accept an unauthenticated, client-supplied
+ * ?userId= and pass it straight through as the OAuth `state`, which the
+ * callback then trusted verbatim to decide which profiles row received the
+ * Google refresh token -- a caller who knew (or guessed) any user id could
+ * link their own Google account to that user's Ra7etBal profile with no
+ * authentication of their own. Initiation now requires a verified session;
+ * the random state token is stored (hashed) server-side bound to the
+ * verified user_id, and the callback recovers identity only from that
+ * stored record, consumed exactly once.
+ *
  * Scope change note (Calendar Create V1):
  *   Upgraded from calendar.readonly → calendar.events so the server can
  *   insert events. Existing users who authorized under the old read-only
  *   scope must reconnect Google Calendar in Settings to grant write access.
  */
 
+import { randomBytes, createHash } from 'node:crypto';
+
 const SCOPES = "https://www.googleapis.com/auth/calendar.events";
+
+const OAUTH_STATE_TTL_MINUTES = 10;
 
 const HISTORY_MAX_RANGE_DAYS = 366;
 const HISTORY_DEFAULT_LIMIT = 10;
@@ -45,6 +67,30 @@ const HISTORY_MAX_PAGES = 4;
 const HISTORY_DESCRIPTION_EXCERPT_MAX = 240;
 const HISTORY_NO_MATCH_MESSAGE = "No matching calendar event was found in the searched period.";
 const HISTORY_INCOMPLETE_MESSAGE = "The calendar search was incomplete, so no definitive no-match conclusion can be made.";
+
+/** SHA-256 hex digest of the raw OAuth state token -- only this is ever stored. */
+function hashOauthState(rawToken) {
+  return createHash('sha256').update(rawToken, 'utf8').digest('hex');
+}
+
+/**
+ * Verifies a Supabase JWT against auth/v1/user and returns the verified
+ * user id, or null if the token is missing/invalid. Identical pattern to
+ * api/anthropic.js's requireUser() -- reused deliberately, not reinvented.
+ */
+async function verifySupabaseUser(authHeader) {
+  if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
+  const jwt = authHeader.slice(7);
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) return null;
+  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: { apikey: anonKey, Authorization: `Bearer ${jwt}` },
+  });
+  if (!userRes.ok) return null;
+  const user = await userRes.json().catch(() => null);
+  return user?.id ?? null;
+}
 
 function parseIsoDate(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -246,12 +292,55 @@ export function finalizeHistoricalSearch({ events, limit, truncated, searchStart
 }
 
 export default async function handler(req, res) {
-  const { code, state, userId, range } = req.query;
+  const { code, state, action, range } = req.query;
   const authHeader = req.headers["authorization"] ?? "";
 
   try {
-    // ── Route 1: OAuth initiation ─────────────────────────────────────────
-    if (userId && !code && !authHeader) {
+    // ── Route 1: OAuth initiation (authenticated) ──────────────────────────
+    if (req.method === "GET" && action === "init") {
+      const uid = await verifySupabaseUser(authHeader);
+      if (!uid) {
+        return res.status(401).json({ ok: false, error: "Unauthorized" });
+      }
+
+      const supabaseUrl = process.env.SUPABASE_URL;
+      const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+      // Best-effort sweep of this user's own abandoned/expired state rows.
+      // Never blocks initiation on failure -- garbage-collection hygiene
+      // only, not part of the security contract.
+      try {
+        await fetch(
+          `${supabaseUrl}/rest/v1/google_oauth_states?user_id=eq.${encodeURIComponent(uid)}&expires_at=lt.${encodeURIComponent(new Date().toISOString())}`,
+          {
+            method: "DELETE",
+            headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` },
+          },
+        );
+      } catch {
+        // Non-fatal -- proceed regardless.
+      }
+
+      const rawState = randomBytes(32).toString("hex");
+      const stateHash = hashOauthState(rawState);
+      const expiresAt = new Date(Date.now() + OAUTH_STATE_TTL_MINUTES * 60 * 1000).toISOString();
+
+      const insertRes = await fetch(`${supabaseUrl}/rest/v1/google_oauth_states`, {
+        method: "POST",
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify({ user_id: uid, state_hash: stateHash, expires_at: expiresAt }),
+      });
+
+      if (!insertRes.ok) {
+        console.error("[google-oauth] failed to store state:", await insertRes.text());
+        return res.status(500).json({ ok: false, error: "Could not start Google Calendar connection." });
+      }
+
       const params = new URLSearchParams({
         client_id: process.env.GOOGLE_CLIENT_ID,
         redirect_uri: process.env.GOOGLE_REDIRECT_URI,
@@ -259,17 +348,54 @@ export default async function handler(req, res) {
         scope: SCOPES,
         access_type: "offline",
         prompt: "consent",
-        state: userId,
+        state: rawState,
       });
-      return res.redirect(302, `https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+      return res.status(200).json({
+        ok: true,
+        redirectUrl: `https://accounts.google.com/o/oauth2/v2/auth?${params}`,
+      });
     }
 
     // ── Route 2: OAuth callback ───────────────────────────────────────────
     if (code && state) {
-      const uid = state;
       const redirectBase = process.env.VERCEL_PROJECT_PRODUCTION_URL
         ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
         : "http://localhost:5173";
+
+      // Atomically consume the state row: a single DELETE ... RETURNING is
+      // the entire missing/malformed/unknown/expired/already-consumed check
+      // AND the single-use/race-safety guarantee. Concurrent callbacks for
+      // the same state_hash serialize in Postgres -- only one can ever see
+      // a returned row; the loser sees zero rows, identical to any other
+      // invalid-state case. No code exchange or profile write happens
+      // unless exactly one row comes back.
+      const supabaseUrlForState = process.env.SUPABASE_URL;
+      const serviceKeyForState = process.env.SUPABASE_SERVICE_ROLE_KEY;
+      const stateHash = hashOauthState(state);
+      const consumeRes = await fetch(
+        `${supabaseUrlForState}/rest/v1/google_oauth_states?state_hash=eq.${encodeURIComponent(stateHash)}&expires_at=gt.${encodeURIComponent(new Date().toISOString())}`,
+        {
+          method: "DELETE",
+          headers: {
+            apikey: serviceKeyForState,
+            Authorization: `Bearer ${serviceKeyForState}`,
+            Prefer: "return=representation",
+          },
+        },
+      );
+
+      if (!consumeRes.ok) {
+        console.error("[google-oauth] state consumption request failed:", consumeRes.status);
+        return res.redirect(302, `${redirectBase}/?calendar=error`);
+      }
+
+      const consumedRows = await consumeRes.json().catch(() => []);
+      const consumed = Array.isArray(consumedRows) ? consumedRows[0] : null;
+      if (!consumed?.user_id) {
+        console.error("[google-oauth] invalid, expired, or already-used state");
+        return res.redirect(302, `${redirectBase}/?calendar=error`);
+      }
+      const uid = consumed.user_id;
 
       // Exchange code for tokens
       const tokenRes = await fetch("https://oauth2.googleapis.com/token", {

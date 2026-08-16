@@ -7,10 +7,6 @@
       "justification": "Weather widget backend (Open-Meteo passthrough). Produces a Carson-ready spoken sentence as a data source, but contains no decision routing, delegation, WhatsApp, automation, reminder, Communication History, push, or auth logic of its own."
     },
     {
-      "path": "api/google-calendar.js",
-      "justification": "Google Calendar OAuth + read integration. Listed as an in-progress/beta roadmap item (CLAUDE.md 'NEXT PRIORITY ORDER #2'), not yet a registered Tier 1 capability, and contains no logic touching any of the 14 registered capabilities' contracts."
-    },
-    {
       "path": "api/anthropic.js",
       "justification": "Generic passthrough proxy to the Anthropic API (forwards the request body, checks for an API key, returns the response). No Carson-specific business logic — used as raw infrastructure by higher-level modules that ARE registered."
     },
