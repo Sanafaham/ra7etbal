@@ -11,6 +11,7 @@
  */
 
 import { looksLikeUnverifiedOperationalNarrative } from "./carson-epistemic-gate";
+import { callAnthropicProxy } from "./anthropic-client";
 
 export interface TranscriptMessage {
   role: "user" | "agent";
@@ -131,14 +132,10 @@ ${transcriptText}`;
 
   let res: Response;
   try {
-    res = await fetch("/api/anthropic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5",
-        max_tokens: 60,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    res = await callAnthropicProxy({
+      model: "claude-haiku-4-5",
+      max_tokens: 60,
+      messages: [{ role: "user", content: prompt }],
     });
   } catch {
     return fallback;
@@ -251,14 +248,10 @@ ${transcriptText}`;
 
   let res: Response;
   try {
-    res = await fetch("/api/anthropic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5",
-        max_tokens: 300,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    res = await callAnthropicProxy({
+      model: "claude-haiku-4-5",
+      max_tokens: 300,
+      messages: [{ role: "user", content: prompt }],
     });
   } catch {
     return null; // network failure — non-fatal

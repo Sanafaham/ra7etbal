@@ -14,6 +14,8 @@
  * way." not "I'm on the way.").
  */
 
+import { callAnthropicProxy } from "../anthropic-client";
+
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 150;
 
@@ -56,14 +58,10 @@ Style rules:
 - Output ONLY the message text, nothing else`;
 
   try {
-    const res = await fetch("/api/anthropic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    const res = await callAnthropicProxy({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      messages: [{ role: "user", content: prompt }],
     });
 
     if (!res.ok) return null;

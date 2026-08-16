@@ -8,6 +8,7 @@ import { buildExtractionPrompt } from "./extract-prompt";
 import { applyRolePrecedence } from "./role-precedence";
 import { applyNoteRouting } from "./note-routing";
 import { applyTodoRouting } from "./todo-routing";
+import { callAnthropicProxy } from "../anthropic-client";
 
 /**
  * AI extraction
@@ -52,14 +53,10 @@ export async function extractItems(
 
   let res: Response;
   try {
-    res = await fetch("/api/anthropic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    res = await callAnthropicProxy({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      messages: [{ role: "user", content: prompt }],
     });
   } catch (err) {
     throw err instanceof TypeError

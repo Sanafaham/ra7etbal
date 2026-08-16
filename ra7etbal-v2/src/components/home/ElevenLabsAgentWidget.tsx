@@ -4,6 +4,7 @@ import CarsonTypedChat from "./CarsonTypedChat";
 import { getCarsonCallUrl, getCarsonWhatsAppUrl } from "../../lib/carson-channels";
 import { supabase } from "../../lib/supabase";
 import { resizeImage, uploadTaskImage } from "../../lib/image-upload";
+import { callAnthropicProxy } from "../../lib/anthropic-client";
 import { saveTaskAttachments } from "../../lib/save";
 import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
@@ -328,11 +329,7 @@ async function describeImageForCarson(file: File): Promise<string | null> {
     };
 
     console.log("[img-diag] POSTing to /api/anthropic for vision description");
-    const res = await fetch("/api/anthropic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const res = await callAnthropicProxy(payload);
 
     console.log("[img-diag] /api/anthropic response status:", res.status);
     if (!res.ok) {

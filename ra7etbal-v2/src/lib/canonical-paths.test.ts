@@ -129,8 +129,11 @@ function makeUpdateResult(table: TableName, patch: Record<string, unknown>) {
 vi.mock("./supabase", () => ({
   supabase: {
     auth: {
+      // access_token is required by callAnthropicProxy() (src/lib/anthropic-client.ts),
+      // which extractItems() now calls via the authenticated Anthropic proxy --
+      // this mock previously only anticipated the user id shape.
       getSession: vi.fn(async () => ({
-        data: { session: { user: { id: h.activeUserId } } },
+        data: { session: { access_token: "test-session-token", user: { id: h.activeUserId } } },
         error: null,
       })),
     },

@@ -18,6 +18,7 @@
 import type { Task } from "../types/task";
 import type { Person } from "../types/person";
 import { usePeopleStore } from "../stores/people";
+import { callAnthropicProxy } from "./anthropic-client";
 
 // ── Shared notes helpers (also imported by ElevenLabsAgentWidget) ─────────────
 
@@ -226,14 +227,10 @@ Return only the behavior line or NULL:`;
 
   let res: Response;
   try {
-    res = await fetch("/api/anthropic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5",
-        max_tokens: 80,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    res = await callAnthropicProxy({
+      model: "claude-haiku-4-5",
+      max_tokens: 80,
+      messages: [{ role: "user", content: prompt }],
     });
   } catch {
     return null;

@@ -41,6 +41,19 @@ vi.mock("./calendar", () => ({
   fetchCalendarEvents: (...args: unknown[]) => fetchCalendarEventsMock(...args),
 }));
 
+// weekly-planning.ts calls the Anthropic model through the shared,
+// authenticated callAnthropicProxy() helper (src/lib/anthropic-client.ts),
+// not a raw fetch("/api/anthropic") anymore. These tests exercise
+// weekly-planning.ts's own prompt-building/response-parsing logic, not the
+// proxy's auth contract (that boundary has its own dedicated tests in
+// anthropic-client.test.ts and api/anthropic.test.js) -- so the correct
+// mock boundary is the helper itself, matching what these tests actually
+// intend to prove.
+const callAnthropicProxyMock = vi.fn();
+vi.mock("./anthropic-client", () => ({
+  callAnthropicProxy: (...args: unknown[]) => callAnthropicProxyMock(...args),
+}));
+
 import {
   buildWeekPlan,
   detectWeeklyPlanningIntent,
@@ -305,19 +318,17 @@ describe("executeWeekPlan", () => {
 describe("buildWeekPlan", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    callAnthropicProxyMock.mockReset();
     insertMock.mockClear();
   });
 
   it("proposes a plan with zero clarification questions when there's enough context", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        mockAnthropicResponse({
-          needs_clarification: false,
-          events: [{ title: "Finish report", date: "2026-07-15", time: "10:00", duration_minutes: 90 }],
-          proposal_speech: "I'll block Tuesday morning for the report. Shall I add this plan to your calendar?",
-        }),
-      ),
+    callAnthropicProxyMock.mockResolvedValue(
+      mockAnthropicResponse({
+        needs_clarification: false,
+        events: [{ title: "Finish report", date: "2026-07-15", time: "10:00", duration_minutes: 90 }],
+        proposal_speech: "I'll block Tuesday morning for the report. Shall I add this plan to your calendar?",
+      }),
     );
 
     const result = await buildWeekPlan(
@@ -331,15 +342,12 @@ describe("buildWeekPlan", () => {
   });
 
   it("asks exactly one combined clarification question when essential context is missing", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        mockAnthropicResponse({
-          needs_clarification: true,
-          clarification_question:
-            "You don't have any to-dos or events yet this week — what would you like to focus on, and what are your usual working hours?",
-        }),
-      ),
+    callAnthropicProxyMock.mockResolvedValue(
+      mockAnthropicResponse({
+        needs_clarification: true,
+        clarification_question:
+          "You don't have any to-dos or events yet this week — what would you like to focus on, and what are your usual working hours?",
+      }),
     );
 
     const result = await buildWeekPlan(baseCtx());
@@ -360,18 +368,15 @@ describe("buildWeekPlan", () => {
         allDay: false,
       },
     ];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        mockAnthropicResponse({
-          needs_clarification: false,
-          events: [
-            { title: "Conflicts with dentist", date: "2026-07-15", time: "10:00", duration_minutes: 60 },
-            { title: "Deep work", date: "2026-07-15", time: "13:00", duration_minutes: 60 },
-          ],
-          proposal_speech: "Shall I add this plan to your calendar?",
-        }),
-      ),
+    callAnthropicProxyMock.mockResolvedValue(
+      mockAnthropicResponse({
+        needs_clarification: false,
+        events: [
+          { title: "Conflicts with dentist", date: "2026-07-15", time: "10:00", duration_minutes: 60 },
+          { title: "Deep work", date: "2026-07-15", time: "13:00", duration_minutes: 60 },
+        ],
+        proposal_speech: "Shall I add this plan to your calendar?",
+      }),
     );
 
     const result = await buildWeekPlan(baseCtx({ calendarEvents: existing }));
@@ -383,32 +388,28 @@ describe("buildWeekPlan", () => {
   });
 
   it("passes the caller's timezone into the planning prompt", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
+    callAnthropicProxyMock.mockResolvedValue(
       mockAnthropicResponse({
         needs_clarification: false,
         events: [{ title: "Focus block", date: "2026-07-15", time: "09:00" }],
         proposal_speech: "Shall I add this plan to your calendar?",
       }),
     );
-    vi.stubGlobal("fetch", fetchMock);
 
     await buildWeekPlan(baseCtx({ timezone: "America/New_York" }));
 
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    const promptText = body.messages[0].content as string;
+    const body = callAnthropicProxyMock.mock.calls[0][0] as { messages: { content: string }[] };
+    const promptText = body.messages[0].content;
     expect(promptText).toContain("America/New_York");
   });
 
   it("persists the proposed plan scoped to the signed-in user and type weekly_plan", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue(
-        mockAnthropicResponse({
-          needs_clarification: false,
-          events: [{ title: "Focus block", date: "2026-07-15", time: "09:00" }],
-          proposal_speech: "Shall I add this plan to your calendar?",
-        }),
-      ),
+    callAnthropicProxyMock.mockResolvedValue(
+      mockAnthropicResponse({
+        needs_clarification: false,
+        events: [{ title: "Focus block", date: "2026-07-15", time: "09:00" }],
+        proposal_speech: "Shall I add this plan to your calendar?",
+      }),
     );
 
     await buildWeekPlan(baseCtx());

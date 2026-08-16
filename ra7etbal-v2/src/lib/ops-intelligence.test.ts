@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
     data: { user: null },
   })),
   supabaseFrom: vi.fn(),
+  callAnthropicProxy: vi.fn(),
 }));
 
 function queryStub(result: { data: unknown; error: unknown } = { data: null, error: null }) {
@@ -49,6 +50,16 @@ vi.mock("./delivery", () => ({ deliverTaskMessage: mocks.deliverTaskMessage }));
 vi.mock("./direct-messages", () => ({ sendDirectMessageRecord: mocks.sendDirectMessageRecord }));
 vi.mock("./delegation-message", () => ({
   buildDelegationMessage: ({ taskText }: { taskText: string }) => taskText,
+}));
+
+// ops-intelligence.ts's hosting-plan LLM call now goes through the shared,
+// authenticated callAnthropicProxy() helper (src/lib/anthropic-client.ts),
+// not a raw fetch("/api/anthropic") anymore. These tests exercise the
+// hosting-plan brief/task-generation logic, not the proxy's own auth
+// contract (covered separately in anthropic-client.test.ts and
+// api/anthropic.test.js), so the mock boundary is the helper itself.
+vi.mock("./anthropic-client", () => ({
+  callAnthropicProxy: (...args: unknown[]) => mocks.callAnthropicProxy(...args),
 }));
 
 const {
@@ -1207,7 +1218,7 @@ describe("hosting planning gate", () => {
   });
 
   it("uses the unified operation lifecycle to create one stored plan from the complete brief", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({
+    mocks.callAnthropicProxy.mockResolvedValue({
       ok: true,
       json: async () => ({
         content: [{
@@ -1221,7 +1232,7 @@ describe("hosting planning gate", () => {
           }),
         }],
       }),
-    })));
+    });
 
     const turn = await prepareOperationalPlanTurn({
       message:
@@ -1242,7 +1253,7 @@ describe("hosting planning gate", () => {
   });
 
   it("proposes Carson-selected afternoon-tea menu and drinks after the final essential answer", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({
+    mocks.callAnthropicProxy.mockResolvedValue({
       ok: true,
       json: async () => ({
         content: [{
@@ -1256,7 +1267,7 @@ describe("hosting planning gate", () => {
           }),
         }],
       }),
-    })));
+    });
 
     const turn = await prepareOperationalPlanTurn({
       message:
@@ -1555,7 +1566,7 @@ describe("production baseline — verified afternoon-tea hosting loop", () => {
   );
 
   it("presents one complete proposal with correct worker responsibilities after the combined answer", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => ({
+    mocks.callAnthropicProxy.mockResolvedValue({
       ok: true,
       json: async () => ({
         content: [{
@@ -1569,7 +1580,7 @@ describe("production baseline — verified afternoon-tea hosting loop", () => {
           }),
         }],
       }),
-    })));
+    });
 
     const firstTurn = await prepareOperationalPlanTurn({ message: TRIGGER, people: [] });
     const turn = await prepareOperationalPlanTurn({

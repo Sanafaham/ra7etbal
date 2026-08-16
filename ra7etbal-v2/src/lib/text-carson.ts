@@ -17,6 +17,7 @@ import { extractDurableFacts } from "./carson-fact-extract";
 import { updatePeopleInsightsFromTasks } from "./people-behavior";
 import { sanitizeCarsonReplyText } from "./carson-social";
 import { parseMultiRecipientDelegation } from "./multi-recipient-delegation";
+import { callAnthropicProxy } from "./anthropic-client";
 
 /**
  * The highest-risk point in the extraction pipeline for altering visible
@@ -56,11 +57,7 @@ export async function describeImageForTextCarson(file: File): Promise<string | n
         },
       ],
     };
-    const res = await fetch("/api/anthropic", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    const res = await callAnthropicProxy(payload);
     if (!res.ok) return null;
     const data = (await res.json()) as { content?: Array<{ text?: string }> };
     return data?.content?.[0]?.text?.trim() || null;
