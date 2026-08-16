@@ -261,6 +261,43 @@
       ]
     },
     {
+      "id": "whatsapp_send_authentication_boundary",
+      "contract": "/api/send-whatsapp-task accepts exactly two trusted caller classes and rejects everything else before any WhatsApp send or delivery-evidence write: (1) a browser caller presenting a verified Supabase session JWT, whose derived identity must own every client-supplied resource id (taskId/personId/messageRecordId) that would influence the send; (2) an internal server caller presenting the correct x-ra7etbal-internal-secret header (CRON_SECRET). /api/process-delegation-escalations's testMode query parameter can never bypass its own isAuthorized() check — testMode changes timing thresholds and log labels only, never authentication.",
+      "business_importance": "critical — Remediation 4, Carson Engineering Hardening Project (Strix triage). Prior to this capability, every /api/send-whatsapp-task send mode except sendMode:'routine_message' had zero authentication: any unauthenticated caller could POST an arbitrary phone number and message text and trigger a real WhatsApp send through the business's own Meta credentials. Investigation also found /api/process-delegation-escalations?testMode=true skipped isAuthorized() entirely, letting an unauthenticated caller trigger the real escalation/followup sweep, which itself invokes several of the previously-unauthenticated send-whatsapp-task modes.",
+      "production_entry_points": [
+        "api/send-whatsapp-task.js (POST handler)",
+        "api/process-delegation-escalations.js (POST handler, testMode query parameter)"
+      ],
+      "files_functions": [
+        "api/send-whatsapp-task.js:verifySupabaseUser / isValidInternalSecret / verifyOwnedResource",
+        "api/process-delegation-escalations.js:isAuthorized / isTestMode",
+        "src/lib/whatsapp.ts:sendWhatsAppTask (attaches the browser session JWT)",
+        "api/task-confirm.js:sendCorrectionRequest (attaches the internal-secret header for its one send-whatsapp-task call)"
+      ],
+      "shared_dependencies": ["api/send-whatsapp-task.js"],
+      "db": {
+        "tables": ["tasks", "people", "messages"],
+        "rpcs": [],
+        "migrations": []
+      },
+      "external_boundaries": ["WhatsApp/Meta send", "Supabase Auth (JWT verification via /auth/v1/user)"],
+      "focused_tests": [
+        "api/send-whatsapp-task.auth-boundary.test.js",
+        "api/process-delegation-escalations.testmode-auth.test.js",
+        "api/send-whatsapp-task.test.js"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "high — this is the auth gate in front of every real external WhatsApp send on this endpoint; a regression here reopens the exact unauthenticated-send vulnerability this capability was created to close",
+      "verification_status": "Implemented and test-verified 2026-08-16 (Remediation 4): dedicated PR opened, all focused tests passing, full suite/typecheck/build/impact-map/registry validation clean. NOT YET merged and NOT YET production-verified — pending owner review per this project's PR-approval scope rules.",
+      "unresolved": [
+        "Two read-only investigation gaps (hosting-path routing, task-confirm.js's taskId trust boundary) were closed before implementation and required no architecture change — see the Remediation 4 report for the conclusive findings — but are not re-proven by an automated test in this capability; they were traced by direct code reading.",
+        "Ownership verification for browser callers checks task_id/person_id/message_record_id row ownership via a direct Supabase REST query with the service-role key, not RLS — this is an application-layer check, not a database-layer guarantee. No RLS gap is known, but this capability does not independently prove one doesn't exist."
+      ]
+    },
+    {
       "id": "reminders",
       "contract": "Owner reminders are created, scheduled via QStash, delivered on time via push and/or WhatsApp, and their completion is recorded truthfully with idempotent, non-duplicate delivery.",
       "business_importance": "critical — Tier 1 capability named explicitly in the locked hardening order",

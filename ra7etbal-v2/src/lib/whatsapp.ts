@@ -1,3 +1,5 @@
+import { supabase } from "./supabase";
+
 export interface WhatsAppPayload {
   content: string;
   confirmationUrl?: string | null;
@@ -61,9 +63,18 @@ export function openWhatsAppMessage(payload: WhatsAppPayload): boolean {
 export async function sendWhatsAppTask(
   payload: WhatsAppCloudTaskPayload,
 ): Promise<{ success: true; deliveryId?: string | null; messageId?: string | null; sendType?: string | null; channel?: 'whatsapp' | 'sms' }> {
+  // Server requires a verified session (Remediation 4, Carson Engineering
+  // Hardening Project) -- the JWT is attached per-request, never persisted
+  // or logged, and is not readable by anything else in this module.
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) {
+    throw new Error("Not signed in.");
+  }
+
   const res = await fetch("/api/send-whatsapp-task", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify({
       to: payload.to ?? null,
       messageText: payload.messageText,

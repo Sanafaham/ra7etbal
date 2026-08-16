@@ -35,6 +35,12 @@ import { join } from "node:path";
 // Same mock as direct-message-fast-path.test.ts — nothing here calls it.
 vi.mock("./messages", () => ({ createMessage: vi.fn() }));
 
+// direct-messages.ts imports ./delivery -> ./whatsapp -> ./supabase (real
+// client). Every call site below supplies its own deliverTaskMessageFn
+// override, so the real implementation is never invoked — this only
+// prevents the unrelated import chain from loading at module init.
+vi.mock("./delivery", () => ({ deliverTaskMessage: vi.fn() }));
+
 import { isCommunicationStyleTaskText } from "./communication-vs-delegation";
 import { parseDelegationFastPath } from "./delegation-fast-path";
 import { parseSimpleDirectMessage } from "./direct-message-fast-path";

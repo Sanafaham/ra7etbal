@@ -41,6 +41,7 @@ beforeEach(() => {
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-key');
   vi.stubEnv('ANTHROPIC_API_KEY', 'test-anthropic-key');
   vi.stubEnv('APP_BASE_URL', 'https://ra7etbal.com');
+  vi.stubEnv('CRON_SECRET', 'cron-secret');
 });
 
 afterEach(() => {
@@ -78,7 +79,7 @@ describe('Golden contract [A-server/G/J] — WhatsApp media-send payload', () =>
         attachmentCount: null,
         ownerName: 'Sana',
         recipientName: 'Christopher',
-      }),
+      }, { 'x-ra7etbal-internal-secret': 'cron-secret' }),
       res,
     );
 
@@ -128,7 +129,7 @@ describe('Golden contract [A-server/G/J] — WhatsApp media-send payload', () =>
         attachmentCount: 2,
         ownerName: 'Sana',
         recipientName: 'Christopher',
-      }),
+      }, { 'x-ra7etbal-internal-secret': 'cron-secret' }),
       res,
     );
 

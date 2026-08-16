@@ -84,13 +84,17 @@
  * process-delegation-escalations.timing-safety.test.js.
  *
  * ── testMode ──────────────────────────────────────────────────────────────
- * Append ?testMode=true when calling manually to collapse the thresholds:
+ * Append ?testMode=true when calling manually (WITH valid CRON_SECRET/QStash
+ * auth — testMode never bypasses authentication) to collapse the thresholds:
  *   follow-up threshold  : 1 minute  (production: 10 min)
  *   escalation threshold : 2 minutes (production: 20 min)
  *
  * testMode is detected from the query string only — the Vercel cron never
  * appends query params, so production is unaffected.
  * testMode does NOT change stored data or schema.
+ * testMode does NOT bypass isAuthorized() — Remediation 4 closed a real gap
+ * where ?testMode=true alone skipped the auth check entirely, letting an
+ * unauthenticated caller trigger the real escalation/followup sweep.
  */
 
 import webpush from 'web-push';
@@ -129,11 +133,14 @@ export default async function handler(req, res) {
   }
 
   // ── Auth ───────────────────────────────────────────────────────────────────
-  // testMode bypasses the CRON_SECRET check so developers can call the
-  // endpoint directly from a browser or curl without needing the secret.
+  // testMode ONLY collapses the follow-up/escalation thresholds below — it
+  // must never bypass authentication. A caller who wants testMode behavior
+  // still needs a valid CRON_SECRET or QStash signature, exactly like any
+  // other invocation (Remediation 4 closed a real unauthenticated-bypass gap
+  // here: ?testMode=true previously skipped isAuthorized() entirely).
   const testMode = isTestMode(req);
 
-  if (!testMode && !(await isAuthorized(req))) {
+  if (!(await isAuthorized(req))) {
     console.log('[escalation] job rejected: unauthorized', {
       hasCronSecret: Boolean(process.env.CRON_SECRET),
       hasAuthorizationHeader: Boolean(req.headers.authorization || req.headers.Authorization),
@@ -540,7 +547,7 @@ async function sendFollowupWhatsApp({ task, supabaseUrl, serviceKey, appBaseUrl,
   try {
     const res = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-ra7etbal-internal-secret': process.env.CRON_SECRET },
       body: JSON.stringify({
         to: personPhone,
         messageText,
@@ -1126,7 +1133,7 @@ async function executeDelegationRoutine({ routine, supabaseUrl, serviceKey, appB
   try {
     const msgRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-ra7etbal-internal-secret': process.env.CRON_SECRET },
       body: JSON.stringify({
         to: person.phone,
         messageText: message,
@@ -1776,7 +1783,7 @@ export async function processAutomation({ automation, supabaseUrl, serviceKey, a
     try {
       const msgRes = await fetch(`${appBaseUrl}/api/send-whatsapp-task`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-ra7etbal-internal-secret': process.env.CRON_SECRET },
         body: JSON.stringify({
           to:              assignee.phone,
           messageText:     automation.instruction,

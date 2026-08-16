@@ -1,4 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+
+// ./delivery (via ./whatsapp) now imports the real Supabase client to attach
+// a session JWT (Remediation 4, Carson Engineering Hardening Project). Every
+// test here always supplies its own deliverTaskMessageFn override, so the
+// real implementation is never actually invoked -- this mock exists only to
+// keep that unrelated real-Supabase-client import out of this file's module
+// graph, not to change any test's behavior.
+vi.mock("./delivery", () => ({ deliverTaskMessage: vi.fn() }));
+
 import {
   createAndSendDirectMessage,
   createDirectMessageRecord,
