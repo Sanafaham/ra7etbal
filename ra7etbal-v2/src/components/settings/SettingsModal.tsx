@@ -888,17 +888,45 @@ function GoogleCalendarRow({
     return () => { cancelled = true; };
   }, [userId]);
 
-  function handleConnect() {
+  const [connectError, setConnectError] = useState(false);
+
+  async function handleConnect() {
     if (!userId) return;
-    onReconnected?.();
-    // Full page redirect — OAuth flow requires browser navigation.
-    window.location.href = `/api/google-calendar?userId=${encodeURIComponent(userId)}`;
+    setConnectError(false);
+    // OAuth initiation now requires the caller's own verified session --
+    // the server derives identity from this JWT, never from a client-
+    // supplied id (Carson Engineering Hardening Project, Remediation 3).
+    // The actual OAuth hop still needs a full-page browser navigation, so
+    // this is a two-step flow: authenticate first, then navigate to the
+    // server-issued, CSRF-state-bound consent URL.
+    const { data: sessionData } = await supabase.auth.getSession();
+    const jwt = sessionData?.session?.access_token;
+    if (!jwt) {
+      setConnectError(true);
+      return;
+    }
+    try {
+      const res = await fetch("/api/google-calendar?action=init", {
+        headers: { Authorization: `Bearer ${jwt}` },
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body?.redirectUrl) {
+        setConnectError(true);
+        return;
+      }
+      onReconnected?.();
+      // Full page redirect — OAuth flow requires browser navigation.
+      window.location.href = body.redirectUrl;
+    } catch {
+      setConnectError(true);
+    }
   }
 
   const isRevoked = revoked && connected !== false;
 
-  const statusText =
-    connected === null
+  const statusText = connectError
+    ? "Something went wrong — tap to retry"
+    : connected === null
       ? "Checking…"
       : isRevoked
         ? "Disconnected — reconnect to restore calendar access"

@@ -78,7 +78,7 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
           echo "Changed files:"
           echo "$CHANGED"
-          PATTERN='^ra7etbal-v2/supabase/migrations/(20260613_routines\.sql|20260620_agent_automation_layer\.sql|20260622_whatsapp_health_state\.sql|20260622_whatsapp_deliveries\.sql|20260710_quality_substitute_review\.sql|20260712_approve_alternative_message_first\.sql|20260720_create_staff_messages\.sql|20260726_staff_escalation_owner_decisions\.sql|20260801_task_based_escalation_owner_decisions\.sql|20260812_durable_person_id_communication_history\.sql|20260812_task_review_owner_decision_person_id\.sql|20260812_worker_notification_person_id\.sql|20260813_whatsapp_health_state_phone_number_unique(\.rollback)?\.sql|20260815_carson_canary_least_privilege(\.rollback)?\.sql|verification/00_bootstrap_minimal_auth\.sql|verification/carson_(tier1|canary)_.*\.sql)$|^\.github/workflows/carson-tier1-db-contracts\.yml$'
+          PATTERN='^ra7etbal-v2/supabase/migrations/(20260613_routines\.sql|20260620_agent_automation_layer\.sql|20260622_whatsapp_health_state\.sql|20260622_whatsapp_deliveries\.sql|20260710_quality_substitute_review\.sql|20260712_approve_alternative_message_first\.sql|20260720_create_staff_messages\.sql|20260726_staff_escalation_owner_decisions\.sql|20260801_task_based_escalation_owner_decisions\.sql|20260812_durable_person_id_communication_history\.sql|20260812_task_review_owner_decision_person_id\.sql|20260812_worker_notification_person_id\.sql|20260813_whatsapp_health_state_phone_number_unique(\.rollback)?\.sql|20260815_carson_canary_least_privilege(\.rollback)?\.sql|20260816_google_oauth_states(\.rollback)?\.sql|verification/00_bootstrap_minimal_auth\.sql|verification/carson_(tier1|canary)_.*\.sql|verification/google_oauth_states_verification\.sql)$|^\.github/workflows/carson-tier1-db-contracts\.yml$'
           if echo "$CHANGED" | grep -Eq "$PATTERN"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "Relevant Tier 1 DB-contract path changed — running the full real-Postgres verification."
@@ -94,6 +94,37 @@ jobs:
       - name: Bootstrap minimal auth-compatible schema (reused from the staff-escalation suite)
         if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/00_bootstrap_minimal_auth.sql"
+
+      - name: Apply forward migration — google_oauth_states (Remediation 3, independent of the chain below — only depends on auth.users from the bootstrap)
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260816_google_oauth_states.sql"
+
+      - name: Verify google_oauth_states contract (constraints, RLS deny-all for anon/authenticated, service-role access, expiry, single-use, real two-connection race safety)
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/google_oauth_states_verification.sql"
+
+      - name: Roll back google_oauth_states
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260816_google_oauth_states.rollback.sql"
+
+      - name: Verify google_oauth_states rollback (table genuinely removed)
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "
+            DO \$\$
+            BEGIN
+              IF to_regclass('public.google_oauth_states') IS NOT NULL THEN
+                RAISE EXCEPTION 'FAIL: google_oauth_states still exists after rollback';
+              END IF;
+              RAISE NOTICE 'PASS: google_oauth_states removed by rollback';
+            END \$\$;
+          "
+
+      - name: Reapply and reverify google_oauth_states
+        if: steps.relevance.outputs.relevant == 'true'
+        run: |
+          psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260816_google_oauth_states.sql"
+          psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/google_oauth_states_verification.sql"
 
       - name: Apply prerequisite migration — routines
         if: steps.relevance.outputs.relevant == 'true'
