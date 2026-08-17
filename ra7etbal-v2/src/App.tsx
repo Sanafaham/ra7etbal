@@ -50,7 +50,7 @@ import {
   type WhatsappDeliveryFailureSummary,
 } from "./lib/whatsapp-delivery-context";
 import { buildMorningBriefSpoken } from "./lib/morning-brief";
-import { buildNightSweepSpoken, EVENING_HOUR } from "./lib/night-sweep";
+import { buildNightSweepSpoken, EVENING_HOUR, MORNING_START_HOUR } from "./lib/night-sweep";
 import {
   deriveMorningBriefMaterialItems,
   deriveNightSweepMaterialItems,
@@ -373,7 +373,7 @@ function PersistentCarsonWidget({
     () => buildCarsonContext({ tasks, people, email: user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock, calendarConnectionStatusBlock }),
     [tasks, people, user?.email, now, calendarEvents, notesBlock, todosBlock, householdRules, automationStatusBlock, whatsappDeliveryStatusBlock, calendarConnectionStatusBlock],
   );
-  const isEvening = now.getHours() >= EVENING_HOUR;
+  const isEvening = now.getHours() >= EVENING_HOUR || now.getHours() < MORNING_START_HOUR;
   const spokenBrief = useMemo(
     () =>
       isEvening
@@ -434,7 +434,7 @@ function PersistentCarsonWidget({
 
     const freshHouseholdRules = useHouseholdRulesStore.getState().rules;
 
-    const isNightSweep = freshNow.getHours() >= EVENING_HOUR;
+    const isNightSweep = freshNow.getHours() >= EVENING_HOUR || freshNow.getHours() < MORNING_START_HOUR;
     const materialItems: MaterialItem[] = isNightSweep
       ? deriveNightSweepMaterialItems(freshTasks, freshDigest ?? undefined, freshCalendarEvents, freshNow)
       : deriveMorningBriefMaterialItems(freshTasks, people, freshDigest ?? undefined, freshCalendarEvents, freshNow);

@@ -474,7 +474,7 @@ const LABEL_PATTERNS: Array<[RegExp, string]> = [
   [/\bcar\b|driver|pick.?up|drop.?off/, "car task"],
   [/\bdelivery|courier/,                "delivery task"],
   [/\bbill|electric|utilities|utility/, "bill task"],
-  [/\bgroceries|grocery|kitchen\b/,     "food task"],
+  [/\bgroceries|grocery\b/,             "food task"],
   [/\bfood\b/,                          "food task"],
 ];
 
@@ -486,7 +486,7 @@ const LEADING_VERB = /^(check and make sure|make sure|please|order|remind|ask|te
  * Tries keyword matching first; falls back to stripping leading verbs
  * and truncating to a clean noun phrase.
  */
-function taskLabel(raw: string): string {
+export function taskLabel(raw: string): string {
   const lower = raw.trim().toLowerCase();
 
   for (const [pattern, label] of LABEL_PATTERNS) {
