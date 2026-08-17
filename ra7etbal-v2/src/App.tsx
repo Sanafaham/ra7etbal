@@ -51,6 +51,11 @@ import {
 } from "./lib/whatsapp-delivery-context";
 import { buildMorningBriefSpoken } from "./lib/morning-brief";
 import { buildNightSweepSpoken, EVENING_HOUR } from "./lib/night-sweep";
+import {
+  deriveMorningBriefMaterialItems,
+  deriveNightSweepMaterialItems,
+  type MaterialItem,
+} from "./lib/carson-material-items";
 import { useCarsonStore } from "./stores/carson";
 import { useHouseholdRulesStore } from "./stores/household-rules";
 import { usePeopleStore } from "./stores/people";
@@ -429,12 +434,19 @@ function PersistentCarsonWidget({
 
     const freshHouseholdRules = useHouseholdRulesStore.getState().rules;
 
+    const isNightSweep = freshNow.getHours() >= EVENING_HOUR;
+    const materialItems: MaterialItem[] = isNightSweep
+      ? deriveNightSweepMaterialItems(freshTasks, freshDigest ?? undefined, freshCalendarEvents, freshNow)
+      : deriveMorningBriefMaterialItems(freshTasks, people, freshDigest ?? undefined, freshCalendarEvents, freshNow);
+
     return {
       briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock, whatsappDeliveryStatusBlock: freshWhatsappDeliveryStatusBlock, calendarConnectionStatusBlock: freshCalendarConnectionStatusBlock }),
-      spokenBrief:
-        freshNow.getHours() >= EVENING_HOUR
-          ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined)
-          : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined),
+      spokenBrief: isNightSweep
+        ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined)
+        : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined),
+      // Separate Morning Brief / Night Sweep delivery state — see carson-material-items.ts.
+      briefKind: (isNightSweep ? "night" : "morning") as "morning" | "night",
+      materialItems,
     };
   }, [userId, loadTasks, calendarEvents, calendarConnectionStatusBlock, people, user?.email, displayName, onCalendarRevokedChange]);
 

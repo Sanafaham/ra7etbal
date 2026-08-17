@@ -18,6 +18,7 @@ import type { AutomationDigest, AutomationRunSummary } from "./automation-contex
 
 function makeFailedRun(overrides: Partial<AutomationRunSummary> = {}): AutomationRunSummary {
   return {
+    id: "auto-failed-1",
     automationTitle: "Daily check-in",
     assignee: "Sana",
     sentAgoMs: 2 * 3_600_000,
@@ -59,7 +60,7 @@ describe("buildAutomationStatusBlock — Phase 9A failed-run visibility", () => 
   it("still renders pending/escalated sections alongside a failed section", () => {
     const digest = makeDigest({
       failed: [makeFailedRun()],
-      escalated: [{ automationTitle: "Trash day", assignee: "Christopher", sentAgoMs: 0, isFollowupSent: false, escalatedAgoMs: 3_600_000 }],
+      escalated: [{ id: "auto-trash", automationTitle: "Trash day", assignee: "Christopher", sentAgoMs: 0, isFollowupSent: false, escalatedAgoMs: 3_600_000 }],
     });
     const block = buildAutomationStatusBlock(digest);
     expect(block).toContain("Escalated:");
@@ -120,7 +121,7 @@ describe("formatAutomationForMorning — failed takes priority over escalated/pe
 
   it("falls through to escalated when there are no failures", () => {
     const digest = makeDigest({
-      escalated: [{ automationTitle: "Trash day", assignee: "Christopher", sentAgoMs: 0, isFollowupSent: false, escalatedAgoMs: 3_600_000 }],
+      escalated: [{ id: "auto-trash", automationTitle: "Trash day", assignee: "Christopher", sentAgoMs: 0, isFollowupSent: false, escalatedAgoMs: 3_600_000 }],
     });
     expect(formatAutomationForMorning(digest)).toMatch(/escalated/i);
   });
@@ -130,6 +131,7 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
   it("names a single owner reminder before it fires", () => {
     const digest = makeDigest({
       firingToday: [{
+        id: "auto-skill-check",
         title: "Daily Claude skill files check",
         assignee: null,
         nextRunAt: "2026-07-18T06:00:00.000Z",
@@ -144,8 +146,8 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
   it("summarizes multiple owner reminders and names the first", () => {
     const digest = makeDigest({
       firingToday: [
-        { title: "Check Meta template approval", assignee: null, nextRunAt: "2026-07-18T06:00:00.000Z" },
-        { title: "Call the dentist", assignee: null, nextRunAt: "2026-07-18T08:00:00.000Z" },
+        { id: "auto-meta-template", title: "Check Meta template approval", assignee: null, nextRunAt: "2026-07-18T06:00:00.000Z" },
+        { id: "auto-dentist", title: "Call the dentist", assignee: null, nextRunAt: "2026-07-18T08:00:00.000Z" },
       ],
     });
 
@@ -158,6 +160,7 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
   it("does not present a staff automation as the owner's personal reminder", () => {
     const digest = makeDigest({
       firingToday: [{
+        id: "auto-grace-kitchen",
         title: "Grace kitchen check",
         assignee: "Grace",
         nextRunAt: "2026-07-18T06:00:00.000Z",
@@ -171,6 +174,7 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
     const digest = makeDigest({
       failed: [makeFailedRun()],
       firingToday: [{
+        id: "auto-dentist-2",
         title: "Call the dentist",
         assignee: null,
         nextRunAt: "2026-07-18T08:00:00.000Z",
@@ -184,8 +188,9 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
 
   it("includes the owner reminder alongside a pending automation", () => {
     const digest = makeDigest({
-      pending: [{ automationTitle: "Kitchen check", assignee: "Grace", sentAgoMs: 60_000, isFollowupSent: false }],
+      pending: [{ id: "auto-kitchen-check", automationTitle: "Kitchen check", assignee: "Grace", sentAgoMs: 60_000, isFollowupSent: false }],
       firingToday: [{
+        id: "auto-meta-template-2",
         title: "Check Meta template approval",
         assignee: null,
         nextRunAt: "2026-07-18T08:00:00.000Z",
@@ -202,7 +207,7 @@ describe("formatAutomationForNight — failed takes priority", () => {
   it("speaks a single failed automation before escalated/pending", () => {
     const digest = makeDigest({
       failed: [makeFailedRun()],
-      escalated: [{ automationTitle: "Trash day", assignee: "Christopher", sentAgoMs: 0, isFollowupSent: false, escalatedAgoMs: 3_600_000 }],
+      escalated: [{ id: "auto-trash", automationTitle: "Trash day", assignee: "Christopher", sentAgoMs: 0, isFollowupSent: false, escalatedAgoMs: 3_600_000 }],
     });
     expect(formatAutomationForNight(digest)).toMatch(/failed to send/i);
   });

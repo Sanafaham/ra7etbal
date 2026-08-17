@@ -874,6 +874,41 @@
         "No automatic mechanism updates carson-known-good-release.json after a real deploy today — it must be updated by hand (or by an agent) through a normal protected PR after re-running the canary + eligibility check.",
         "Executing an actual rollback (redeploying an old Vercel deployment, and/or applying rollback SQL to production) is explicitly NOT automated by this capability — it remains a deliberate human/operator action, per this repository's standing safety rules on destructive operations."
       ]
+    },
+    {
+      "id": "proactive_opening_brief",
+      "contract": "Carson's spoken opening line (opening_line dynamic variable, spoken verbatim by the ElevenLabs dashboard's configured first message) must give the full Morning Brief or Night Sweep on the first session of that kind each day, and on every later session that same day must never repeat an unchanged actionable item while never silently suppressing a genuinely new or changed one (a new/newly-firing reminder, a newly escalated or failed automation, a new Needs You item, a materially changed calendar event). Morning Brief and Night Sweep track their own first-session and already-surfaced-material state completely separately, so an earlier Morning Brief session can never suppress the day's first legitimate Night Sweep, and vice versa.",
+      "business_importance": "high — this is the deterministic mechanism behind Carson's entire proactive-briefing promise (PR #24 reminder inclusion plus every other Morning Brief/Night Sweep actionable signal). A defect here silently drops real, actionable information from the owner's very first interaction with Carson each session, with no error surfaced anywhere — exactly the class of failure a controlled live acceptance test (2026-08-17) caught for PR #24's own reminder-inclusion feature.",
+      "production_entry_points": [
+        "src/components/home/ElevenLabsAgentWidget.tsx (session-start flow, opening_line dynamic variable)",
+        "src/App.tsx (handleBeforeCallStart — computes materialItems/briefKind from live tasks/automationDigest/calendarEvents each session)"
+      ],
+      "files_functions": [
+        "src/lib/carson-opening.ts:buildCarsonOpeningLine",
+        "src/lib/carson-material-items.ts:diffMaterialItems / deriveMorningBriefMaterialItems / deriveNightSweepMaterialItems / resolveOpeningMaterialState",
+        "src/lib/morning-brief.ts:buildMorningBrief / buildMorningBriefSpoken",
+        "src/lib/night-sweep.ts:buildNightSweepSpoken",
+        "src/lib/automation-context.ts:fetchAutomationDigest / formatAutomationForMorning / formatAutomationForNight"
+      ],
+      "shared_dependencies": [],
+      "db": { "tables": ["tasks", "automations", "automation_runs"], "rpcs": [], "migrations": [] },
+      "external_boundaries": ["ElevenLabs dashboard first-message template ({{opening_line}}) — confirmed via commit 7cc9c6e9 (2026-06-12) to speak this variable verbatim, not a model paraphrase; not independently re-verified against the live dashboard this session (no ElevenLabs API key available)."],
+      "focused_tests": [
+        "src/lib/carson-opening.test.ts",
+        "src/lib/carson-material-items.test.ts",
+        "src/lib/automation-context.test.ts"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "db_contract_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "low — client-side/localStorage-only state, no schema/migration, no external send; worst-case failure mode is either the pre-fix behavior (an item silently not spoken) or an item being re-spoken once more than strictly necessary, never a duplicate action or incorrect delivery.",
+      "verification_status": "Registered 2026-08-17 as a genuine, previously-missing capability — morning-brief.ts and night-sweep.ts had zero dedicated test files before this change, and carson-opening.ts's existing test file was never wired into test:carson-protected. Fixed and covered by this same change (PR pending merge).",
+      "unresolved": [
+        "morning-brief.ts and night-sweep.ts still have no dedicated test files of their own for buildMorningBrief/buildMorningBriefSpoken/buildNightSweepSpoken directly — this capability's tests cover the material-item derivation and opening-line construction built on top of them, and automation-context.test.ts covers the automation digest/formatter layer, but the two spoken-brief builder functions themselves remain untested in isolation. Real follow-up work, out of scope for this fix.",
+        "opening_line being spoken verbatim by the ElevenLabs dashboard (rather than paraphrased) is established from a 2026-06-12 commit message, not independently re-verified against the current live dashboard configuration this session — no ElevenLabs API key was available."
+      ]
     }
   ]
 }
