@@ -4,6 +4,12 @@ interface BuildCarsonOpeningLineInput {
   spokenBrief?: string | null;
   now?: Date;
   variantIndex?: number;
+  /**
+   * Short, standalone clauses (each ending with a period) for material
+   * items that are new or changed since they were last surfaced — only
+   * consulted on non-first sessions. Never repeats an unchanged item.
+   */
+  newOrChangedMaterialText?: string[];
 }
 
 const FOLLOW_UP_OPENINGS_WITH_NAME = [
@@ -28,6 +34,7 @@ export function buildCarsonOpeningLine({
   spokenBrief,
   now = new Date(),
   variantIndex = 0,
+  newOrChangedMaterialText = [],
 }: BuildCarsonOpeningLineInput): string {
   const greeting = getTimeGreeting(now);
   const name = displayName?.trim() || "";
@@ -35,7 +42,15 @@ export function buildCarsonOpeningLine({
   if (!isFirstSessionToday) {
     const variants = name ? FOLLOW_UP_OPENINGS_WITH_NAME : FOLLOW_UP_OPENINGS_WITHOUT_NAME;
     const variant = variants[positiveModulo(variantIndex, variants.length)];
-    return name ? variant(greeting, name) : variant(greeting, "");
+    const base = name ? variant(greeting, name) : variant(greeting, "");
+
+    if (newOrChangedMaterialText.length === 0) return base;
+
+    const MAX_ITEMS = 3;
+    const shown = newOrChangedMaterialText.slice(0, MAX_ITEMS);
+    const extra = newOrChangedMaterialText.length - shown.length;
+    const extraClause = extra > 0 ? ` And ${extra} more thing${extra === 1 ? "" : "s"} to cover.` : "";
+    return `${base} ${shown.join(" ")}${extraClause}`;
   }
 
   const prefix = name ? `${greeting}, ${name}.` : `${greeting}.`;

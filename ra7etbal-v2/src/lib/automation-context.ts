@@ -19,6 +19,8 @@ import { filterSupportedOperationalAutomations, isSupportedOperationalAutomation
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface AutomationRunSummary {
+  /** automations.id — stable across runs of the same automation, used for material-item tracking. */
+  id: string;
   automationTitle: string;
   assignee: string | null;
   /** ms elapsed since sent_at */
@@ -31,6 +33,8 @@ export interface AutomationRunSummary {
 }
 
 export interface AutomationScheduleSummary {
+  /** automations.id — used for material-item tracking. */
+  id: string;
   title: string;
   assignee: string | null;
   nextRunAt: string;
@@ -183,6 +187,7 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     const confirmedAt = r.confirmed_at as string | null;
     const escalatedAt = r.escalated_at as string | null;
     return {
+      id: automationId,
       automationTitle: auto?.title ?? "Automation",
       assignee: assigneeMap[automationId] ?? null,
       sentAgoMs: sentAt ? nowMs - new Date(sentAt).getTime() : 0,
@@ -214,12 +219,14 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
   const confirmedToday = confirmedRunsTyped.map((r) => toRunSummary(r, true));
 
   const firingToday = firingTodayRowsTyped.map((a) => ({
+    id: a.id as string,
     title: a.title as string,
     assignee: assigneeMap[a.id as string] ?? null,
     nextRunAt: a.next_run_at as string,
   }));
 
   const firingTomorrow = firingTomorrowRowsTyped.map((a) => ({
+    id: a.id as string,
     title: a.title as string,
     assignee: assigneeMap[a.id as string] ?? null,
     nextRunAt: a.next_run_at as string,

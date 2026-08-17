@@ -67,6 +67,7 @@ import {
   resolveRecurringFirstRunTextForParsing,
 } from "../../lib/parse-voice-time";
 import { buildCarsonOpeningLine } from "../../lib/carson-opening";
+import { resolveOpeningMaterialState, type MaterialItem } from "../../lib/carson-material-items";
 import { createReminderTask } from "../../lib/reminders";
 import {
   buildOneTimeRoutingEvidence,
@@ -922,7 +923,14 @@ export default function ElevenLabsAgentWidget({
    * daily_brief (spokenBrief) would still contain stale waiting-on data even
    * after a task is confirmed in Supabase.
    */
-  onBeforeCallStart?: () => Promise<{ briefStateText: string; spokenBrief: string }>;
+  onBeforeCallStart?: () => Promise<{
+    briefStateText: string;
+    spokenBrief: string;
+    /** Which proactive-brief mode this session's spokenBrief/materialItems belong to. */
+    briefKind?: "morning" | "night";
+    /** Item-level material state for this session — see carson-material-items.ts. */
+    materialItems?: MaterialItem[];
+  }>;
   /** Called whenever the call status changes — lets the parent track connected state. */
   onCallStatusChange?: (status: CallStatus) => void;
   /** Reports which single production Carson channel owns the active session. */
@@ -5636,19 +5644,30 @@ export default function ElevenLabsAgentWidget({
     if (!isCurrentSession()) return;
     const liveBriefStateText = freshVars?.briefStateText ?? briefStateText;
     const liveSpokenBrief = freshVars?.spokenBrief ?? (spokenBrief ?? "");
+    // Defaults to "morning" only for the no-onBeforeCallStart fallback path —
+    // that path also has no materialItems, so the key choice is inert there.
+    const liveBriefKind = freshVars?.briefKind ?? "morning";
+    const liveMaterialItems = freshVars?.materialItems ?? [];
 
     // Compute opening_line — proactive brief on first session of the day,
-    // short status line on subsequent sessions.
-    // Uses localStorage key "carson_brief_date" (YYYY-MM-DD) to track.
+    // short status line plus any new/changed material item on subsequent
+    // sessions. Morning Brief and Night Sweep track "first session today"
+    // and "already-surfaced material" completely separately, so an earlier
+    // Morning Brief can never suppress the day's first real Night Sweep.
+    // Uses localStorage keys "carson_brief_date_<kind>" and
+    // "carson_material_<kind>" (YYYY-MM-DD / JSON signature map).
     const nowForOpening = new Date();
     const todayStr = (() => {
       const d = nowForOpening;
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     })();
-    const isFirstSessionToday = localStorage.getItem("carson_brief_date") !== todayStr;
-    if (isFirstSessionToday) {
-      localStorage.setItem("carson_brief_date", todayStr);
-    }
+    const { isFirstSessionToday, changed } = resolveOpeningMaterialState(
+      liveBriefKind,
+      todayStr,
+      liveMaterialItems,
+      localStorage,
+    );
+
     const openingVariantIndex = Number(localStorage.getItem("carson_opening_variant") ?? "0");
     localStorage.setItem("carson_opening_variant", String(openingVariantIndex + 1));
     const hasTypedHistory = requestedChannel === "text" && restoredTypedMessages.length > 0;
@@ -5660,6 +5679,7 @@ export default function ElevenLabsAgentWidget({
           spokenBrief: liveSpokenBrief,
           now: nowForOpening,
           variantIndex: openingVariantIndex,
+          newOrChangedMaterialText: changed.map((item) => item.text),
         });
 
     // Await the photo descriptions now — they have been running concurrently with

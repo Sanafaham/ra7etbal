@@ -70,4 +70,52 @@ describe("buildCarsonOpeningLine", () => {
 
     expect(line).toBe("Good evening, Sana. I'm ready.");
   });
+
+  it("follow-up session with no new material stays short (regression — the original PR #24 acceptance failure)", () => {
+    const line = buildCarsonOpeningLine({
+      isFirstSessionToday: false,
+      displayName: "Sana",
+      now: new Date("2026-08-17T17:41:00"),
+      variantIndex: 0,
+      newOrChangedMaterialText: [],
+    });
+
+    expect(line).toBe("Good evening, Sana.");
+  });
+
+  it("follow-up session with a new/changed material item appends it — this is the actual fix", () => {
+    const line = buildCarsonOpeningLine({
+      isFirstSessionToday: false,
+      displayName: "Sana",
+      now: new Date("2026-08-17T17:41:00"),
+      variantIndex: 0,
+      newOrChangedMaterialText: ["You have a reminder scheduled — Daily reminder test."],
+    });
+
+    expect(line).toBe("Good evening, Sana. You have a reminder scheduled — Daily reminder test.");
+  });
+
+  it("follow-up session caps appended material items and summarizes the rest", () => {
+    const line = buildCarsonOpeningLine({
+      isFirstSessionToday: false,
+      displayName: "Sana",
+      now: new Date("2026-08-17T17:41:00"),
+      variantIndex: 0,
+      newOrChangedMaterialText: ["Item one.", "Item two.", "Item three.", "Item four."],
+    });
+
+    expect(line).toBe("Good evening, Sana. Item one. Item two. Item three. And 1 more thing to cover.");
+  });
+
+  it("first-session opening ignores newOrChangedMaterialText — the full brief already covers everything", () => {
+    const line = buildCarsonOpeningLine({
+      isFirstSessionToday: true,
+      displayName: "Sana",
+      spokenBrief: "Good evening, Sana. Nothing urgent needs your attention.",
+      now: new Date("2026-08-17T17:41:00"),
+      newOrChangedMaterialText: ["Should never appear."],
+    });
+
+    expect(line).not.toContain("Should never appear.");
+  });
 });
