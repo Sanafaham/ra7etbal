@@ -10,6 +10,7 @@ const {
   diffMaterialItems,
   resolveOpeningMaterialState,
   deriveMorningBriefMaterialItems,
+  resolveBriefAnchorDateStr,
 } = await import("./carson-material-items");
 
 import type { MaterialItem, KeyValueStore } from "./carson-material-items";
@@ -160,5 +161,41 @@ describe("resolveOpeningMaterialState", () => {
     );
     expect(second.isFirstSessionToday).toBe(false);
     expect(second.changed.map((c) => c.id)).toEqual(["automation:auto-2"]);
+  });
+});
+
+describe("resolveBriefAnchorDateStr", () => {
+  // Production incident (2026-08-18): a session at 01:01 local was
+  // classified as the day's first Morning Brief, discarding all
+  // dedup state from the Night Sweep session a couple hours earlier.
+  it("morning kind always anchors to the current calendar date, regardless of hour", () => {
+    expect(resolveBriefAnchorDateStr("morning", new Date("2026-08-18T01:01:00"))).toBe("2026-08-18");
+    expect(resolveBriefAnchorDateStr("morning", new Date("2026-08-18T14:00:00"))).toBe("2026-08-18");
+  });
+
+  it("night kind at or after MORNING_START_HOUR anchors to the current calendar date", () => {
+    expect(resolveBriefAnchorDateStr("night", new Date("2026-08-17T21:00:00"))).toBe("2026-08-17");
+  });
+
+  it("night kind before MORNING_START_HOUR anchors to the PREVIOUS calendar date — same 'night' as the evening before", () => {
+    expect(resolveBriefAnchorDateStr("night", new Date("2026-08-18T01:01:00"))).toBe("2026-08-17");
+    expect(resolveBriefAnchorDateStr("night", new Date("2026-08-18T05:59:00"))).toBe("2026-08-17");
+  });
+
+  it("night kind exactly at MORNING_START_HOUR anchors to the current calendar date (boundary is inclusive of morning)", () => {
+    expect(resolveBriefAnchorDateStr("night", new Date("2026-08-18T06:00:00"))).toBe("2026-08-18");
+  });
+
+  it("a Night Sweep session at 11 PM followed by a continuation session at 1 AM share the same anchor date, so the 1 AM session is correctly a follow-up, not a fresh first session", () => {
+    const s = new FakeStorage();
+    const elevenPmAnchor = resolveBriefAnchorDateStr("night", new Date("2026-08-17T23:00:00"));
+    const items: MaterialItem[] = [{ id: "t1", signature: "waiting:open", text: "Waiting item." }];
+    const first = resolveOpeningMaterialState("night", elevenPmAnchor, items, s);
+    expect(first.isFirstSessionToday).toBe(true);
+
+    const oneAmAnchor = resolveBriefAnchorDateStr("night", new Date("2026-08-18T01:01:00"));
+    const second = resolveOpeningMaterialState("night", oneAmAnchor, items, s);
+    expect(second.isFirstSessionToday).toBe(false);
+    expect(second.changed).toEqual([]); // unchanged item is not replayed
   });
 });

@@ -23,6 +23,7 @@ import type { CalendarEvent } from "./calendar";
 import type { AutomationDigest } from "./automation-context";
 import { isReminderOverdue } from "./reminder-time";
 import { buildMorningBrief } from "./morning-brief";
+import { MORNING_START_HOUR } from "./night-sweep";
 
 export interface MaterialItem {
   /** Stable identifier — task id, `automation:<id>`, or `calendar:<id>`. */
@@ -47,6 +48,22 @@ export interface KeyValueStore {
 }
 
 export type BriefKind = "morning" | "night";
+
+/**
+ * Local YYYY-MM-DD anchor date for a brief-kind's "first session today" key.
+ *
+ * Night Sweep now stays eligible past midnight, up to MORNING_START_HOUR
+ * (see night-sweep.ts) — a 1 AM session is still the same "night" as the
+ * 11 PM session before it. Without this, the plain calendar-date flip at
+ * midnight would make that 1 AM session look like a brand-new first
+ * session and replay the full Night Sweep. Morning Brief is unaffected —
+ * it always anchors to the current calendar date.
+ */
+export function resolveBriefAnchorDateStr(kind: BriefKind, now: Date): string {
+  const isLateNightContinuation = kind === "night" && now.getHours() < MORNING_START_HOUR;
+  const anchor = isLateNightContinuation ? new Date(now.getTime() - 86_400_000) : now;
+  return `${anchor.getFullYear()}-${String(anchor.getMonth() + 1).padStart(2, "0")}-${String(anchor.getDate()).padStart(2, "0")}`;
+}
 
 /**
  * Compares this session's material items against what was last surfaced.

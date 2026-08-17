@@ -10,6 +10,16 @@ import { formatAutomationForNight } from "./automation-context";
 /** Hour (0–23) at which Night Sweep replaces Today's Snapshot. */
 export const EVENING_HOUR = 20;
 
+/**
+ * Hour (0–23) before which a new calendar day is still treated as a
+ * continuation of the prior Night Sweep for Carson's spoken opening line —
+ * Morning Brief does not become eligible until this hour. Prevents a
+ * post-midnight session (e.g. 1 AM) from being classified as the day's
+ * first Morning Brief. Consumed by App.tsx's isNightSweep classification
+ * and carson-material-items.ts's resolveBriefAnchorDateStr.
+ */
+export const MORNING_START_HOUR = 6;
+
 export interface NightSweepItem {
   id: string;
   text: string;

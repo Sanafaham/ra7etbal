@@ -67,7 +67,7 @@ import {
   resolveRecurringFirstRunTextForParsing,
 } from "../../lib/parse-voice-time";
 import { buildCarsonOpeningLine } from "../../lib/carson-opening";
-import { resolveOpeningMaterialState, type MaterialItem } from "../../lib/carson-material-items";
+import { resolveOpeningMaterialState, resolveBriefAnchorDateStr, type MaterialItem } from "../../lib/carson-material-items";
 import { createReminderTask } from "../../lib/reminders";
 import {
   buildOneTimeRoutingEvidence,
@@ -5657,10 +5657,7 @@ export default function ElevenLabsAgentWidget({
     // Uses localStorage keys "carson_brief_date_<kind>" and
     // "carson_material_<kind>" (YYYY-MM-DD / JSON signature map).
     const nowForOpening = new Date();
-    const todayStr = (() => {
-      const d = nowForOpening;
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    })();
+    const todayStr = resolveBriefAnchorDateStr(liveBriefKind, nowForOpening);
     const { isFirstSessionToday, changed } = resolveOpeningMaterialState(
       liveBriefKind,
       todayStr,
