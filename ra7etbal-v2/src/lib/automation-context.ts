@@ -71,6 +71,25 @@ export function isOperationalAutomationRunRow(row: AutomationRunRowWithJoin): bo
   return Boolean(row.automations && isSupportedOperationalAutomation(row.automations));
 }
 
+/**
+ * Keeps only the first row seen per automation_id — callers must pass rows
+ * already ordered by recency descending (both source queries are), so this
+ * keeps the latest relevant run per recurring automation and drops older
+ * unconfirmed runs from owner-facing counting/selection. The dropped rows
+ * remain untouched in the database; this is a read-side selection only.
+ */
+export function dedupeLatestPerAutomation(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const seen = new Set<string>();
+  const result: Record<string, unknown>[] = [];
+  for (const r of rows) {
+    const automationId = r.automation_id as string;
+    if (seen.has(automationId)) continue;
+    seen.add(automationId);
+    result.push(r);
+  }
+  return result;
+}
+
 const EMPTY_DIGEST: AutomationDigest = {
   pending: [],
   escalated: [],
@@ -141,11 +160,23 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     .limit(5);
 
   // ── Resolve assignee names for all relevant automation IDs ────────────────
-  const openRunsTyped = ((openRuns ?? []) as Record<string, unknown>[]).filter((r) =>
-    isOperationalAutomationRunRow(r as AutomationRunRowWithJoin),
+  // Dedup to the latest relevant run per automation_id — a recurring automation
+  // with multiple unconfirmed runs inside the lookback window (e.g. yesterday's
+  // and today's, both still "sent") must reason as ONE current obligation, not
+  // stack as separate owner-facing items. Both source queries are already
+  // ordered by recency descending, so keeping the first occurrence per
+  // automation_id keeps the latest run. Historical automation_runs rows
+  // themselves are untouched — this only affects what's selected for
+  // Morning Brief / Night Sweep owner-facing reasoning.
+  const openRunsTyped = dedupeLatestPerAutomation(
+    ((openRuns ?? []) as Record<string, unknown>[]).filter((r) =>
+      isOperationalAutomationRunRow(r as AutomationRunRowWithJoin),
+    ),
   );
-  const confirmedRunsTyped = ((confirmedRuns ?? []) as Record<string, unknown>[]).filter((r) =>
-    isOperationalAutomationRunRow(r as AutomationRunRowWithJoin),
+  const confirmedRunsTyped = dedupeLatestPerAutomation(
+    ((confirmedRuns ?? []) as Record<string, unknown>[]).filter((r) =>
+      isOperationalAutomationRunRow(r as AutomationRunRowWithJoin),
+    ),
   );
   const firingTodayRowsTyped = filterSupportedOperationalAutomations(
     (firingTodayRows ?? []) as (Record<string, unknown> & AutomationJoinFields)[],
@@ -320,6 +351,24 @@ export function buildAutomationStatusBlock(digest: AutomationDigest): string {
 // Spoken sentence formatters — brief integrations
 // ─────────────────────────────────────────────────────────────────────────────
 
+function joinTitles(titles: string[]): string {
+  if (titles.length === 1) return titles[0];
+  if (titles.length === 2) return `${titles[0]} and ${titles[1]}`;
+  return `${titles.slice(0, -1).join(", ")}, and ${titles[titles.length - 1]}`;
+}
+
+/**
+ * Owner-facing list of automation/reminder titles, capped so the sentence
+ * stays short even when several are open at once. Never a bare count alone —
+ * the owner should be able to tell what Carson means without opening the app.
+ */
+function describeAutomations(items: { automationTitle: string }[], max = 3): string {
+  const titles = items.map((r) => lc(r.automationTitle));
+  if (titles.length <= max) return joinTitles(titles);
+  const shown = titles.slice(0, max);
+  return `${joinTitles(shown)}, and ${titles.length - shown.length} more`;
+}
+
 /**
  * Returns one spoken automation sentence for the Morning Brief.
  *
@@ -334,19 +383,19 @@ export function formatAutomationForMorning(digest: AutomationDigest): string {
     const who = r.assignee ? ` to ${cap(r.assignee)}` : "";
     statusClause = `One automation failed to send${who} and needs your attention`;
   } else if (digest.failed.length > 1) {
-    statusClause = `${digest.failed.length} automations failed to send and need your attention`;
+    statusClause = `The ${describeAutomations(digest.failed)} reminders failed to send and need your attention`;
   } else if (digest.escalated.length === 1) {
     const r = digest.escalated[0];
     const who = r.assignee ? ` because ${cap(r.assignee)} hasn't responded` : " because there is no response yet";
     statusClause = `One automation has been escalated${who}`;
   } else if (digest.escalated.length > 1) {
-    statusClause = `${digest.escalated.length} automations have been escalated and need attention`;
+    statusClause = `The ${describeAutomations(digest.escalated)} reminders have been escalated and need attention`;
   } else if (digest.pending.length === 1) {
     const r = digest.pending[0];
     const who = r.assignee ? ` from ${cap(r.assignee)}` : "";
     statusClause = `One automation is waiting for confirmation${who}`;
   } else if (digest.pending.length > 1) {
-    statusClause = `${digest.pending.length} automations are waiting for confirmation`;
+    statusClause = `The ${describeAutomations(digest.pending)} reminders are waiting for confirmation`;
   } else if (digest.confirmedToday.length === 1) {
     const r = digest.confirmedToday[0];
     statusClause = r.assignee
@@ -357,7 +406,7 @@ export function formatAutomationForMorning(digest: AutomationDigest): string {
     const rest = digest.confirmedToday.length - 1;
     statusClause = r.assignee
       ? `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} automation, and ${rest} other${rest === 1 ? "" : "s"} were confirmed too`
-      : `${digest.confirmedToday.length} automations were confirmed today`;
+      : `The ${describeAutomations(digest.confirmedToday)} reminders were confirmed today`;
   }
 
   // Owner-only reminders have no assignee. Before they fire they exist only in
@@ -394,42 +443,43 @@ export function formatAutomationForNight(digest: AutomationDigest): string {
     return `The ${lc(r.automationTitle)} automation failed to send${who} — worth a look before tomorrow.`;
   }
   if (digest.failed.length > 1) {
-    return `${digest.failed.length} automations failed to send today and need a look.`;
+    return `The ${describeAutomations(digest.failed)} reminders failed to send today and need a look.`;
   }
 
   // Still waiting / escalated
   if (digest.escalated.length === 1) {
     const r = digest.escalated[0];
     const who = r.assignee ? ` from ${cap(r.assignee)}` : "";
-    return `The ${lc(r.automationTitle)} loop is still waiting for confirmation${who}.`;
+    return `The ${lc(r.automationTitle)} reminder is still waiting for confirmation${who}.`;
   }
   if (stillOpen === 1 && digest.pending.length === 1) {
     const r = digest.pending[0];
     const who = r.assignee ? ` from ${cap(r.assignee)}` : "";
-    return `The ${lc(r.automationTitle)} loop is still waiting for confirmation${who}.`;
+    return `The ${lc(r.automationTitle)} reminder is still waiting for confirmation${who}.`;
   }
   if (stillOpen > 1) {
-    return `${stillOpen} automation loops are still waiting for confirmation tonight.`;
+    const openItems = [...digest.escalated, ...digest.pending];
+    return `The ${describeAutomations(openItems)} reminders are still waiting for confirmation tonight.`;
   }
 
   // Firing tomorrow — preview
   if (digest.firingTomorrow.length === 1) {
     const a = digest.firingTomorrow[0];
     const who = a.assignee ? ` for ${cap(a.assignee)}` : "";
-    return `The ${lc(a.title)} loop fires tomorrow${who}.`;
+    return `The ${lc(a.title)} reminder fires tomorrow${who}.`;
   }
   if (digest.firingTomorrow.length > 1) {
-    return `${digest.firingTomorrow.length} automation loops fire tomorrow.`;
+    return `The ${describeAutomations(digest.firingTomorrow.map((a) => ({ automationTitle: a.title })))} reminders fire tomorrow.`;
   }
 
   // Confirmed — positive close
   if (digest.confirmedToday.length === 1) {
     const r = digest.confirmedToday[0];
-    if (r.assignee) return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} loop today.`;
-    return `The ${lc(r.automationTitle)} loop was confirmed today.`;
+    if (r.assignee) return `${cap(r.assignee)} confirmed the ${lc(r.automationTitle)} reminder today.`;
+    return `The ${lc(r.automationTitle)} reminder was confirmed today.`;
   }
   if (digest.confirmedToday.length > 1) {
-    return `${digest.confirmedToday.length} automation loops were confirmed today.`;
+    return `The ${describeAutomations(digest.confirmedToday)} reminders were confirmed today.`;
   }
 
   return "";

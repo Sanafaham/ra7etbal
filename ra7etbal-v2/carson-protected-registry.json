@@ -896,17 +896,18 @@
       "focused_tests": [
         "src/lib/carson-opening.test.ts",
         "src/lib/carson-material-items.test.ts",
-        "src/lib/automation-context.test.ts"
+        "src/lib/automation-context.test.ts",
+        "src/lib/morning-brief.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": false,
       "golden_journey_tests": [],
       "db_contract_tests": [],
       "production_canary_required": false,
-      "rollback_risk": "low — client-side/localStorage-only state, no schema/migration, no external send; worst-case failure mode is either the pre-fix behavior (an item silently not spoken) or an item being re-spoken once more than strictly necessary, never a duplicate action or incorrect delivery.",
-      "verification_status": "Registered 2026-08-17 as a genuine, previously-missing capability — morning-brief.ts and night-sweep.ts had zero dedicated test files before this change, and carson-opening.ts's existing test file was never wired into test:carson-protected. Fixed and covered by this same change (PR pending merge).",
+      "rollback_risk": "low — client-side/localStorage-only state plus a read-side digest-selection change (dedup by automation_id, no query/schema change); no schema/migration, no external send, no historical automation_runs rows touched; worst-case failure mode is a wording/count regression in the spoken sentence, never a duplicate action or incorrect delivery.",
+      "verification_status": "Registered 2026-08-17. Updated 2026-08-18: fixed two live-acceptance defects found after PR #308 deployed — (1) fetchAutomationDigest() counted every unconfirmed automation_runs row inside its 48h lookback window as a separate owner-facing item, so a recurring automation with two backlogged unconfirmed runs (yesterday's + today's) double-counted; now deduped to the latest relevant run per automation_id via dedupeLatestPerAutomation(). (2) formatAutomationForNight/formatAutomationForMorning's multi-item branches said an internal-jargon bare count (\"8 automation loops\") instead of naming the actual reminders; now name up to 3 titles via describeAutomations()/joinTitles(), and \"loop\" wording is removed entirely from owner-facing text. (3) carson-opening.ts's getTimeGreeting() independently re-derived Good morning/afternoon/evening from the raw clock hour with no awareness of the already-resolved Night Sweep classification, so a post-midnight Night Sweep continuation (e.g. 1 AM) said \"Good morning\" while the rest of the sentence was correctly Night-Sweep content; getTimeGreeting() now accepts the already-resolved briefKind and always greets \"Good evening\" for briefKind===\"night\", with the raw-hour fallback preserved only for the pre-existing no-briefKind edge case. night-sweep.ts's own internal S1 greeting (previously an independent, and now provably dead, hour<12 check) is simplified to a hardcoded \"Good evening\" since buildNightSweepSpoken is only ever invoked for Night-Sweep-kind sessions.",
       "unresolved": [
-        "morning-brief.ts and night-sweep.ts still have no dedicated test files of their own for buildMorningBrief/buildMorningBriefSpoken/buildNightSweepSpoken directly — this capability's tests cover the material-item derivation and opening-line construction built on top of them, and automation-context.test.ts covers the automation digest/formatter layer, but the two spoken-brief builder functions themselves remain untested in isolation. Real follow-up work, out of scope for this fix.",
+        "morning-brief.ts now has a dedicated test file (morning-brief.test.ts, added PR #308) covering taskLabel()'s categorization, but buildMorningBrief/buildMorningBriefSpoken themselves remain untested in isolation. night-sweep.ts still has no dedicated test file at all — buildNightSweepSpoken/buildBadgeLabel are exercised only indirectly through carson-material-items.test.ts and this capability's other tests. Real follow-up work, out of scope for this fix.",
         "opening_line being spoken verbatim by the ElevenLabs dashboard (rather than paraphrased) is established from a 2026-06-12 commit message, not independently re-verified against the current live dashboard configuration this session — no ElevenLabs API key was available."
       ]
     }

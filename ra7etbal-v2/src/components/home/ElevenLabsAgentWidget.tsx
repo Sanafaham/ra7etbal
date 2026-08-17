@@ -5677,6 +5677,7 @@ export default function ElevenLabsAgentWidget({
           now: nowForOpening,
           variantIndex: openingVariantIndex,
           newOrChangedMaterialText: changed.map((item) => item.text),
+          briefKind: liveBriefKind,
         });
 
     // Await the photo descriptions now — they have been running concurrently with

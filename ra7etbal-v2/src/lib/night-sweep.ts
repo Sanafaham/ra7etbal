@@ -529,8 +529,14 @@ export function buildNightSweepSpoken(
   const MS_72H   = 72 * 60 * 60 * 1000;
   const _calEvs  = calendarEvents ?? [];
   const name     = displayName?.trim() || null;
-  const hour     = _now.getHours();
-  const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  // This builder only ever runs for Night Sweep-kind sessions (App.tsx's
+  // isNightSweep, spanning 20:00-05:59 per MORNING_START_HOUR) — the
+  // greeting is always evening-appropriate, never re-derived from the raw
+  // clock hour, which would otherwise say "Good morning" for a post-
+  // midnight continuation. (This text is stripped and replaced by
+  // carson-opening.ts's own briefKind-aware greeting before Carson speaks
+  // it, but must not itself model a contradictory definition of "night".)
+  const greeting = "Good evening";
 
   // ── S1: GREETING ────────────────────────────────────────────────────────────
   const section1 = name ? `${greeting} ${name}.` : `${greeting}.`;

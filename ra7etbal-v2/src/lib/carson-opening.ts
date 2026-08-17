@@ -10,6 +10,16 @@ interface BuildCarsonOpeningLineInput {
    * consulted on non-first sessions. Never repeats an unchanged item.
    */
   newOrChangedMaterialText?: string[];
+  /**
+   * The already-resolved brief kind for this session (see App.tsx's
+   * isNightSweep / night-sweep.ts's MORNING_START_HOUR). When provided,
+   * this is the single source of truth for the greeting word — "night"
+   * always greets "Good evening", regardless of the raw clock hour, so a
+   * post-midnight Night Sweep continuation (e.g. 1 AM) never independently
+   * re-derives "Good morning" from an hour<12 check that knows nothing
+   * about the Night Sweep classification already decided upstream.
+   */
+  briefKind?: "morning" | "night";
 }
 
 const FOLLOW_UP_OPENINGS_WITH_NAME = [
@@ -35,8 +45,9 @@ export function buildCarsonOpeningLine({
   now = new Date(),
   variantIndex = 0,
   newOrChangedMaterialText = [],
+  briefKind,
 }: BuildCarsonOpeningLineInput): string {
-  const greeting = getTimeGreeting(now);
+  const greeting = getTimeGreeting(now, briefKind);
   const name = displayName?.trim() || "";
 
   if (!isFirstSessionToday) {
@@ -59,7 +70,15 @@ export function buildCarsonOpeningLine({
   return `${prefix} ${brief}`;
 }
 
-function getTimeGreeting(now: Date): "Good morning" | "Good afternoon" | "Good evening" {
+function getTimeGreeting(
+  now: Date,
+  briefKind?: "morning" | "night",
+): "Good morning" | "Good afternoon" | "Good evening" {
+  // Night Sweep owns 20:00 through 05:59 (see night-sweep.ts's
+  // MORNING_START_HOUR) — a Night Sweep session is always "evening" for
+  // greeting purposes, never re-derived from the raw clock hour, which
+  // would otherwise say "Good morning" for the 00:00-05:59 continuation.
+  if (briefKind === "night") return "Good evening";
   const hour = now.getHours();
   if (hour < 12) return "Good morning";
   if (hour < 17) return "Good afternoon";

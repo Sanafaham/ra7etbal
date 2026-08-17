@@ -118,4 +118,61 @@ describe("buildCarsonOpeningLine", () => {
 
     expect(line).not.toContain("Should never appear.");
   });
+
+  // Production incident (2026-08-18, 01:58 local): a post-midnight Night
+  // Sweep continuation session correctly spoke Night Sweep content ("You
+  // can close the day", "tonight") but still opened with "Good morning" —
+  // the greeting was independently re-derived from a raw hour<12 check with
+  // no awareness of the already-resolved Night Sweep classification.
+  // briefKind is now the single source of truth for the greeting word.
+  describe("briefKind consolidates the greeting — no independent hour<12 re-derivation", () => {
+    it("at 01:58 with briefKind='night', a first-session opening says 'Good evening', never 'Good morning'", () => {
+      const line = buildCarsonOpeningLine({
+        isFirstSessionToday: true,
+        displayName: "Sana",
+        spokenBrief: "You can close the day. 4 reminders are still waiting for confirmation tonight.",
+        now: new Date("2026-08-18T01:58:00"),
+        briefKind: "night",
+      });
+
+      expect(line).toMatch(/^Good evening, Sana\./);
+      expect(line).not.toContain("Good morning");
+    });
+
+    it("at 01:58 with briefKind='night', a follow-up-session opening says 'Good evening', never 'Good morning'", () => {
+      const line = buildCarsonOpeningLine({
+        isFirstSessionToday: false,
+        displayName: "Sana",
+        now: new Date("2026-08-18T01:58:00"),
+        variantIndex: 0,
+        briefKind: "night",
+      });
+
+      expect(line).toBe("Good evening, Sana.");
+      expect(line).not.toContain("Good morning");
+    });
+
+    it("at 06:00 (Morning Brief eligible) with briefKind='morning', the greeting is unaffected — still 'Good morning'", () => {
+      const line = buildCarsonOpeningLine({
+        isFirstSessionToday: true,
+        displayName: "Sana",
+        spokenBrief: "Nothing urgent needs your attention.",
+        now: new Date("2026-08-18T06:00:00"),
+        briefKind: "morning",
+      });
+
+      expect(line).toMatch(/^Good morning, Sana\./);
+    });
+
+    it("with no briefKind supplied (legacy fallback path), raw-hour behavior is unchanged", () => {
+      const line = buildCarsonOpeningLine({
+        isFirstSessionToday: false,
+        displayName: "Sana",
+        now: new Date("2026-06-29T19:00:00"),
+        variantIndex: 1,
+      });
+
+      expect(line).toBe("Welcome back, Sana.");
+    });
+  });
 });
