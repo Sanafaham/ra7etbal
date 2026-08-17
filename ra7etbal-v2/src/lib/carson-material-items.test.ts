@@ -10,41 +10,12 @@ const {
   diffMaterialItems,
   resolveOpeningMaterialState,
   deriveMorningBriefMaterialItems,
-  deriveNightSweepMaterialItems,
 } = await import("./carson-material-items");
 
 import type { MaterialItem, KeyValueStore } from "./carson-material-items";
-import type { Task } from "../types/task";
 import type { AutomationDigest, AutomationScheduleSummary } from "./automation-context";
 
 const NOW = new Date("2026-08-17T14:41:00.000Z");
-
-function makeTask(overrides: Partial<Task> = {}): Task {
-  return {
-    id: "task-1",
-    user_id: "user-1",
-    description: "buy Coca-Cola Zero",
-    type: "reminder",
-    assigned_to: null,
-    status: "pending",
-    needs_follow_up: false,
-    confirmation_url: null,
-    confirmed_at: null,
-    due_at: null,
-    archived_at: null,
-    created_at: "2026-08-17T10:00:00.000Z",
-    qstash_message_id: null,
-    followup_sent_at: null,
-    escalated_at: null,
-    image_path: null,
-    proof_image_path: null,
-    quality_review_status: null,
-    quality_review_note: null,
-    quality_reviewed_at: null,
-    worker_reply: null,
-    ...overrides,
-  };
-}
 
 function emptyDigest(overrides: Partial<AutomationDigest> = {}): AutomationDigest {
   return { pending: [], escalated: [], failed: [], confirmedToday: [], firingToday: [], firingTomorrow: [], ...overrides };
