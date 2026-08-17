@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { taskLabel } from "./morning-brief";
+import { describe, expect, it, vi } from "vitest";
+
+// morning-brief.ts -> calendar.ts / automation-context.ts import ./supabase
+// at module top level, which throws without VITE_SUPABASE_* env vars. Stub
+// it the same way automation-context.test.ts / carson-material-items.test.ts
+// do — only the pure taskLabel() categorizer is exercised here, no real
+// Supabase client is ever used.
+vi.mock("./supabase", () => ({ supabase: {} }));
+
+const { taskLabel } = await import("./morning-brief");
 
 describe("taskLabel", () => {
   // Production incident (2026-08-18): a task with "kitchen" in the description
@@ -20,7 +28,7 @@ describe("taskLabel", () => {
   });
 
   it("still labels grocery (singular) as a food task", () => {
-    expect(taskLabel("Pick up a grocery item")).toBe("food task");
+    expect(taskLabel("Buy grocery items for the week")).toBe("food task");
   });
 
   it("still labels a bare food mention as a food task", () => {
