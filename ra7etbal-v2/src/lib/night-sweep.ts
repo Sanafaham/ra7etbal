@@ -6,6 +6,8 @@ import { formatReminderDue, isReminderOverdue } from "./reminder-time";
 import type { Task } from "../types/task";
 import type { AutomationDigest } from "./automation-context";
 import { formatAutomationForNight } from "./automation-context";
+import { taskLabel, buildCompletionPhrase } from "./morning-brief";
+import type { OpenStaffEscalation } from "../types/staff-message";
 
 /** Hour (0–23) at which Night Sweep replaces Today's Snapshot. */
 export const EVENING_HOUR = 20;
@@ -429,32 +431,11 @@ function capitalize(str: string): string {
 // label patterns change.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const NS_LABEL_PATTERNS: Array<[RegExp, string]> = [
-  [/\bcat food\b/,                      "cat food task"],
-  [/\bflower|bouquet/,                  "flowers request"],
-  [/\bcar\b|driver|pick.?up|drop.?off/, "car task"],
-  [/\bdelivery|courier/,                "delivery task"],
-  [/\bbill|electric|utilities|utility/, "bill task"],
-  [/\bgroceries|grocery|kitchen\b/,     "food task"],
-  [/\bfood\b/,                          "food task"],
-];
-
-const NS_LEADING_VERB =
-  /^(check and make sure|make sure|please|order|remind|ask|tell|confirm|have|message|send|check|follow up on|follow up|get)\s+/i;
-
-function nsTaskLabel(raw: string): string {
-  const lower = raw.trim().toLowerCase();
-  for (const [pattern, label] of NS_LABEL_PATTERNS) {
-    if (pattern.test(lower)) return label;
-  }
-  let s = raw.trim().replace(/[.!?]+$/, "").trim();
-  s = s.replace(NS_LEADING_VERB, "").trim();
-  s = s.charAt(0).toLowerCase() + s.slice(1);
-  if (s.length <= 35) return s;
-  const cut = s.slice(0, 35);
-  const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
-}
+// Task-label categorization is canonical in morning-brief.ts (taskLabel()) —
+// no longer duplicated here. This is the fix for the "Clean the kitchen"
+// bug that a duplicated, independently-drifting copy of these patterns
+// allowed to slip through: Night Sweep now shares the exact same
+// implementation Morning Brief uses, so a fix to one is a fix to both.
 
 function nsCap(value: string | null | undefined): string {
   if (!value) return "";
@@ -478,13 +459,15 @@ function nsSpokenCount(n: number): string {
 function nsNightCompletionSentence(t: Task): string {
   const assignee = t.assigned_to?.trim() ?? "";
   const isSelfOrEmpty = !assignee || ["me", "myself", "self"].includes(assignee.toLowerCase());
-  const what = nsTaskLabel(t.description);
+  const phrase = buildCompletionPhrase(t.description);
   if (!isSelfOrEmpty) {
-    return what
-      ? `${nsCap(assignee)} confirmed the ${what}.`
-      : `${nsCap(assignee)} confirmed an open item.`;
+    if (!phrase.text) return `${nsCap(assignee)} confirmed an open item.`;
+    return phrase.isGerund
+      ? `${nsCap(assignee)} finished ${phrase.text}.`
+      : `${nsCap(assignee)} confirmed the ${phrase.text}.`;
   }
-  return what ? `The ${what} is done.` : "One item was completed.";
+  if (!phrase.text) return "One item was completed.";
+  return phrase.isGerund ? `You finished ${phrase.text}.` : `The ${phrase.text} is done.`;
 }
 
 function nsEvLocalDate(ev: CalendarEvent): Date | null {
@@ -522,6 +505,7 @@ export function buildNightSweepSpoken(
   now?: Date,
   calendarEvents?: CalendarEvent[],
   automationDigest?: AutomationDigest,
+  needsYou?: OpenStaffEscalation[],
 ): string {
   const _now     = now ?? new Date();
   const nowMs    = _now.getTime();
@@ -570,8 +554,8 @@ export function buildNightSweepSpoken(
         (t.type === "delegation" || t.type === "followup");
     });
     const countWord = nsSpokenCount(recentDone.length);
-    if (notable && nsCap(notable.assigned_to) && nsTaskLabel(notable.description)) {
-      section2 = `${nsCapFirst(countWord)} items were handled in the last 24 hours, including ${nsCap(notable.assigned_to)}'s ${nsTaskLabel(notable.description)}.`;
+    if (notable && nsCap(notable.assigned_to) && taskLabel(notable.description)) {
+      section2 = `${nsCapFirst(countWord)} items were handled in the last 24 hours, including ${nsCap(notable.assigned_to)}'s ${taskLabel(notable.description)}.`;
     } else {
       section2 = `${nsCapFirst(countWord)} items were handled in the last 24 hours.`;
     }
@@ -593,33 +577,38 @@ export function buildNightSweepSpoken(
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
 
-  const totalWaiting   = waitingOn.length;
+  // Only briefing-worthy when there's a reason to care tonight: escalated,
+  // or stale beyond the existing 3-day risk threshold. A routine, fresh
+  // waiting item is not spoken merely because it's technically still open
+  // (Chief-of-Staff contract — "do not list routine pending items merely
+  // because they remain technically open").
   const escalatedItem  = waitingOn.find(t => t.escalated_at != null);
   const stale72Item    = waitingOn.find(t => nowMs - new Date(t.created_at).getTime() >= MS_72H);
   const riskItem       = escalatedItem ?? stale72Item ?? null;
-  const topWaiter      = riskItem ?? waitingOn[0] ?? null;
 
   let section3 = "";
-  if (topWaiter) {
-    const who  = nsCap(topWaiter.assigned_to);
-    const what = nsTaskLabel(topWaiter.description);
-    const days = Math.floor((nowMs - new Date(topWaiter.created_at).getTime()) / MS_DAY);
+  if (riskItem) {
+    const who  = nsCap(riskItem.assigned_to);
+    const what = taskLabel(riskItem.description);
+    const days = Math.floor((nowMs - new Date(riskItem.created_at).getTime()) / MS_DAY);
 
-    if (topWaiter.escalated_at != null) {
+    if (riskItem.escalated_at != null) {
       section3 = who && what
         ? `${who} still hasn't confirmed the ${what}.`
         : who ? `${who} hasn't responded to an open item.` : "One item hasn't received a response.";
-    } else if (days >= 3) {
+    } else {
       section3 = who && what
         ? `${who} hasn't confirmed the ${what} in ${days} day${days === 1 ? "" : "s"}.`
         : who ? `${who} has had an open item for ${days} days.` : `One item has been waiting for ${days} days.`;
-    } else if (totalWaiting === 1) {
-      section3 = who && what
-        ? `${who} is still waiting on the ${what}.`
-        : who ? `${who} still has an open item.` : "One item is awaiting confirmation.";
-    } else {
-      section3 = `${nsCapFirst(nsSpokenCount(totalWaiting))} items are still waiting on others.`;
     }
+  }
+
+  // ── NEEDS YOU — genuine owner decisions (distinct from Waiting On Others) ─
+  let sectionNeedsYou = "";
+  if (needsYou && needsYou.length === 1) {
+    sectionNeedsYou = `One decision needs you — ${nsCap(needsYou[0].staffName)} is waiting on an answer.`;
+  } else if (needsYou && needsYou.length > 1) {
+    sectionNeedsYou = `${nsCapFirst(nsSpokenCount(needsYou.length))} decisions need you — starting with ${nsCap(needsYou[0].staffName)}.`;
   }
 
   // ── S4: TOMORROW SIGNAL ────────────────────────────────────────────────────
@@ -641,7 +630,7 @@ export function buildNightSweepSpoken(
   const riskAlreadyNamed = riskItem != null && section3.length > 0;
   if (!riskAlreadyNamed && riskItem && tomorrowEvs.length > 0) {
     const ev   = tomorrowEvs[0];
-    const what = nsTaskLabel(riskItem.description);
+    const what = taskLabel(riskItem.description);
     section4 = what
       ? `${ev.title} is tomorrow and the ${what} is still open.`
       : `${ev.title} is tomorrow and one item is still unconfirmed.`;
@@ -653,9 +642,12 @@ export function buildNightSweepSpoken(
 
   // ── S5: CLOSE ──────────────────────────────────────────────────────────────
   const riskFusedInS4 = !riskAlreadyNamed && riskItem != null && section4.length > 0;
+  const totalWaiting = waitingOn.length;
 
   let section5: string;
-  if (totalWaiting === 0) {
+  if (sectionNeedsYou) {
+    section5 = "That decision is the main thing before you're done for tonight.";
+  } else if (totalWaiting === 0) {
     section5 = "You can close the day.";
   } else if (riskFusedInS4) {
     section5 = "That is the main thing to check before tomorrow.";
@@ -670,18 +662,24 @@ export function buildNightSweepSpoken(
   }
 
   // ── Automation signal (appended only when there is room) ──────────────────
-  // Automation loops are low-priority relative to task-level open loops.
-  // Only surfaces when the main body has fewer than 5 sentences.
+  // Not a guaranteed slot — formatAutomationForNight() returns "" for
+  // routine automation state (a recurring reminder simply having been sent
+  // but not yet confirmed is not, by itself, briefing-worthy). Only
+  // surfaces when the main body has room.
   const automationSentence = automationDigest
     ? formatAutomationForNight(automationDigest)
     : "";
 
   // ── ASSEMBLE ───────────────────────────────────────────────────────────────
-  const coreSentences = [section1, section2, section3, section4, section5].filter(Boolean);
+  // A genuine owner-decision item is never silently cut for space — the
+  // ceiling flexes by one only when Needs You is present, matching every
+  // other tested case (no Needs You) byte-for-byte.
+  const maxCore = sectionNeedsYou ? 6 : 5;
+  const coreSentences = [section1, sectionNeedsYou, section2, section3, section4, section5].filter(Boolean);
   const allSentences =
-    automationSentence && coreSentences.length < 5
+    automationSentence && coreSentences.length < maxCore
       ? [...coreSentences, automationSentence]
       : coreSentences;
 
-  return allSentences.slice(0, 5).join(" ");
+  return allSentences.slice(0, maxCore).join(" ");
 }

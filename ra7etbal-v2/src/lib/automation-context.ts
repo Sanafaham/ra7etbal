@@ -374,6 +374,13 @@ function describeAutomations(items: { automationTitle: string }[], max = 3): str
  *
  * The highest-priority automation status remains first, but a scheduled owner
  * reminder is appended to the same sentence so another signal cannot hide it.
+ *
+ * digest.pending (a recurring automation sent but not yet confirmed) is
+ * deliberately never spoken here — "unconfirmed" alone is not sufficient
+ * relevance for a Chief-of-Staff briefing. Only failed/escalated status
+ * (genuine consequence) and confirmedToday (a real accomplishment) qualify.
+ * pending remains available in buildAutomationStatusBlock()'s text context
+ * for direct conversational reasoning, just not in the proactive sentence.
  */
 export function formatAutomationForMorning(digest: AutomationDigest): string {
   let statusClause = "";
@@ -390,12 +397,6 @@ export function formatAutomationForMorning(digest: AutomationDigest): string {
     statusClause = `One automation has been escalated${who}`;
   } else if (digest.escalated.length > 1) {
     statusClause = `The ${describeAutomations(digest.escalated)} reminders have been escalated and need attention`;
-  } else if (digest.pending.length === 1) {
-    const r = digest.pending[0];
-    const who = r.assignee ? ` from ${cap(r.assignee)}` : "";
-    statusClause = `One automation is waiting for confirmation${who}`;
-  } else if (digest.pending.length > 1) {
-    statusClause = `The ${describeAutomations(digest.pending)} reminders are waiting for confirmation`;
   } else if (digest.confirmedToday.length === 1) {
     const r = digest.confirmedToday[0];
     statusClause = r.assignee
@@ -431,11 +432,14 @@ export function formatAutomationForMorning(digest: AutomationDigest): string {
 /**
  * Returns ≤1 spoken sentence for the Night Sweep.
  *
- * Priority: escalated/pending still open → firing tomorrow → confirmed today → "" (silence)
+ * Priority: failed → escalated → firing tomorrow → confirmed today → "" (silence)
+ *
+ * digest.pending (a recurring automation sent but not yet confirmed) is
+ * deliberately never spoken here — "unconfirmed" alone is not sufficient
+ * relevance for a Chief-of-Staff briefing; see formatAutomationForMorning's
+ * doc comment for the full rationale (identical here).
  */
 export function formatAutomationForNight(digest: AutomationDigest): string {
-  const stillOpen = digest.escalated.length + digest.pending.length;
-
   // Failed — highest urgency, surfaced before anything else tonight
   if (digest.failed.length === 1) {
     const r = digest.failed[0];
@@ -446,20 +450,14 @@ export function formatAutomationForNight(digest: AutomationDigest): string {
     return `The ${describeAutomations(digest.failed)} reminders failed to send today and need a look.`;
   }
 
-  // Still waiting / escalated
+  // Escalated
   if (digest.escalated.length === 1) {
     const r = digest.escalated[0];
     const who = r.assignee ? ` from ${cap(r.assignee)}` : "";
     return `The ${lc(r.automationTitle)} reminder is still waiting for confirmation${who}.`;
   }
-  if (stillOpen === 1 && digest.pending.length === 1) {
-    const r = digest.pending[0];
-    const who = r.assignee ? ` from ${cap(r.assignee)}` : "";
-    return `The ${lc(r.automationTitle)} reminder is still waiting for confirmation${who}.`;
-  }
-  if (stillOpen > 1) {
-    const openItems = [...digest.escalated, ...digest.pending];
-    return `The ${describeAutomations(openItems)} reminders are still waiting for confirmation tonight.`;
+  if (digest.escalated.length > 1) {
+    return `The ${describeAutomations(digest.escalated)} reminders are still waiting for confirmation tonight.`;
   }
 
   // Firing tomorrow — preview

@@ -190,7 +190,11 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
     expect(spoken).toContain("call the dentist");
   });
 
-  it("includes the owner reminder alongside a pending automation", () => {
+  // Chief-of-Staff contract (2026-08-18): a recurring automation merely
+  // having been sent but not yet confirmed is not, by itself, briefing-
+  // worthy — "pending" produces no status clause. Only the owner-reminder
+  // clause (a genuinely forward-looking "you have X today" signal) speaks.
+  it("does not mention a routine pending automation, but still includes the owner reminder", () => {
     const digest = makeDigest({
       pending: [{ id: "auto-kitchen-check", automationTitle: "Kitchen check", assignee: "Grace", sentAgoMs: 60_000, isFollowupSent: false }],
       firingToday: [{
@@ -202,7 +206,7 @@ describe("formatAutomationForMorning — owner reminders scheduled today", () =>
     });
 
     const spoken = formatAutomationForMorning(digest);
-    expect(spoken).toMatch(/waiting for confirmation/i);
+    expect(spoken).not.toMatch(/waiting for confirmation/i);
     expect(spoken).toContain("check Meta template approval");
   });
 });
@@ -261,42 +265,72 @@ describe("dedupeLatestPerAutomation", () => {
   });
 });
 
-describe("formatAutomationForNight — owner-facing wording for multiple open items", () => {
-  const openItems = [
+// Chief-of-Staff contract (2026-08-18): "unconfirmed" alone is not
+// sufficient relevance. A recurring automation merely sitting in "pending"
+// (sent, not yet confirmed/escalated/failed) must stay silent in the
+// spoken brief, no matter how many there are — this directly reproduces
+// and closes the original "8 automation loops" production incident, this
+// time by not speaking about routine pending automations at all rather
+// than just naming them more clearly.
+describe("formatAutomationForNight — routine pending automations are excluded entirely", () => {
+  const routineItems = [
     { id: "a1", automationTitle: "Daily Claude skill files check", assignee: null, sentAgoMs: 0, isFollowupSent: false },
     { id: "a2", automationTitle: "Morning phone charge reminder", assignee: null, sentAgoMs: 0, isFollowupSent: false },
     { id: "a3", automationTitle: "Daily reminder test", assignee: null, sentAgoMs: 0, isFollowupSent: false },
     { id: "a4", automationTitle: "Update Rahet Bal master plan", assignee: null, sentAgoMs: 0, isFollowupSent: false },
   ];
 
+  it("the exact reported production case (4 routine pending automations) produces silence, not a count or a named list", () => {
+    const digest = makeDigest({ pending: routineItems });
+    expect(formatAutomationForNight(digest)).toBe("");
+  });
+
+  it("a single routine pending automation also produces silence", () => {
+    const digest = makeDigest({ pending: [routineItems[0]] });
+    expect(formatAutomationForNight(digest)).toBe("");
+  });
+});
+
+describe("formatAutomationForNight — owner-facing wording for multiple escalated items", () => {
+  const escalatedItems = [
+    { id: "a1", automationTitle: "Daily Claude skill files check", assignee: null, sentAgoMs: 0, isFollowupSent: false },
+    { id: "a2", automationTitle: "Morning phone charge reminder", assignee: null, sentAgoMs: 0, isFollowupSent: false },
+  ];
+
   it("never says 'automation loops' or 'automation loop'", () => {
-    const digest = makeDigest({ pending: openItems });
+    const digest = makeDigest({ escalated: escalatedItems });
     const spoken = formatAutomationForNight(digest);
     expect(spoken.toLowerCase()).not.toContain("loop");
   });
 
-  it("names the actual reminders instead of a bare count for 4 open items (the reported production case)", () => {
-    const digest = makeDigest({ pending: openItems });
+  it("names both escalated items instead of a bare count", () => {
+    const digest = makeDigest({ escalated: escalatedItems });
     const spoken = formatAutomationForNight(digest);
     expect(spoken).not.toMatch(/^\d+ automation/i);
-    expect(spoken.toLowerCase()).toContain("daily claude skill files check");
-    expect(spoken.toLowerCase()).toContain("morning phone charge reminder");
-    expect(spoken.toLowerCase()).toContain("daily reminder test");
-  });
-
-  it("names both items for exactly 2 open items", () => {
-    const digest = makeDigest({ pending: openItems.slice(0, 2) });
-    const spoken = formatAutomationForNight(digest);
     expect(spoken.toLowerCase()).toContain("daily claude skill files check");
     expect(spoken.toLowerCase()).toContain("morning phone charge reminder");
     expect(spoken).toContain("and");
   });
 });
 
-describe("formatAutomationForMorning — owner-facing wording for multiple open items", () => {
-  it("never says 'automation loops'", () => {
+describe("formatAutomationForMorning — routine pending automations are excluded entirely", () => {
+  it("4 routine pending automations produce silence, not a count or a named list", () => {
     const digest = makeDigest({
       pending: [
+        { id: "a1", automationTitle: "Daily Claude skill files check", assignee: null, sentAgoMs: 0, isFollowupSent: false },
+        { id: "a2", automationTitle: "Morning phone charge reminder", assignee: null, sentAgoMs: 0, isFollowupSent: false },
+        { id: "a3", automationTitle: "Daily reminder test", assignee: null, sentAgoMs: 0, isFollowupSent: false },
+        { id: "a4", automationTitle: "Update Rahet Bal master plan", assignee: null, sentAgoMs: 0, isFollowupSent: false },
+      ],
+    });
+    expect(formatAutomationForMorning(digest)).toBe("");
+  });
+});
+
+describe("formatAutomationForMorning — owner-facing wording for multiple escalated items", () => {
+  it("never says 'automation loops'", () => {
+    const digest = makeDigest({
+      escalated: [
         { id: "a1", automationTitle: "Daily Claude skill files check", assignee: null, sentAgoMs: 0, isFollowupSent: false },
         { id: "a2", automationTitle: "Morning phone charge reminder", assignee: null, sentAgoMs: 0, isFollowupSent: false },
       ],
@@ -305,9 +339,9 @@ describe("formatAutomationForMorning — owner-facing wording for multiple open 
     expect(spoken.toLowerCase()).not.toContain("loop");
   });
 
-  it("names multiple pending automations instead of a bare count", () => {
+  it("names multiple escalated automations instead of a bare count", () => {
     const digest = makeDigest({
-      pending: [
+      escalated: [
         { id: "a1", automationTitle: "Daily Claude skill files check", assignee: null, sentAgoMs: 0, isFollowupSent: false },
         { id: "a2", automationTitle: "Morning phone charge reminder", assignee: null, sentAgoMs: 0, isFollowupSent: false },
       ],

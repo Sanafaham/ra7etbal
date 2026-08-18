@@ -21,6 +21,7 @@ import type { Task } from "../types/task";
 import type { Person } from "../types/person";
 import type { CalendarEvent } from "./calendar";
 import type { AutomationDigest } from "./automation-context";
+import type { OpenStaffEscalation } from "../types/staff-message";
 import { isReminderOverdue } from "./reminder-time";
 import { buildMorningBrief } from "./morning-brief";
 import { MORNING_START_HOUR } from "./night-sweep";
@@ -154,12 +155,15 @@ function cap(s: string | null | undefined): string {
 
 // ── Morning Brief ────────────────────────────────────────────────────────
 
+const WAITING_RISK_MS = 72 * 60 * 60 * 1000;
+
 export function deriveMorningBriefMaterialItems(
   tasks: Task[],
   people: Person[],
   automationDigest: AutomationDigest | undefined,
   calendarEvents: CalendarEvent[] | undefined,
   now = new Date(),
+  needsYou: OpenStaffEscalation[] = [],
 ): MaterialItem[] {
   const items: MaterialItem[] = [];
   const brief = buildMorningBrief(tasks, people, now);
@@ -188,22 +192,30 @@ export function deriveMorningBriefMaterialItems(
     }
   }
 
+  // Only briefing-worthy waiting items become material — a routine, fresh
+  // waiting item is never spoken (see morning-brief.ts's slotWaiting), so it
+  // must not leak into follow-up sessions via this "new/changed" path either.
   for (const t of brief.waitingOn) {
+    const isRisk = t.escalated_at != null || now.getTime() - new Date(t.created_at).getTime() >= WAITING_RISK_MS;
+    if (!isRisk) continue;
     const who = cap(t.assigned_to);
     items.push({
       id: t.id,
-      signature: `waiting:${t.escalated_at ?? "open"}`,
+      signature: `waiting:${t.escalated_at ?? "stale"}`,
       text: t.escalated_at
         ? who
           ? `${who} still hasn't confirmed — ${shortDesc(t.description)}.`
           : `One item hasn't received a response — ${shortDesc(t.description)}.`
         : who
-          ? `${who} hasn't confirmed yet — ${shortDesc(t.description)}.`
-          : `One item is awaiting confirmation — ${shortDesc(t.description)}.`,
+          ? `${who} still hasn't confirmed after several days — ${shortDesc(t.description)}.`
+          : `One item has been waiting for several days — ${shortDesc(t.description)}.`,
     });
   }
 
   if (automationDigest) {
+    // "pending" (sent, not yet confirmed) is deliberately excluded — see
+    // formatAutomationForMorning's doc comment for the full rationale.
+    // Only failed/escalated (genuine consequence) become material.
     for (const r of automationDigest.failed) {
       items.push({
         id: `automation:${r.id}`,
@@ -218,13 +230,6 @@ export function deriveMorningBriefMaterialItems(
         text: `The ${r.automationTitle} automation has been escalated.`,
       });
     }
-    for (const r of automationDigest.pending) {
-      items.push({
-        id: `automation:${r.id}`,
-        signature: "run:pending",
-        text: `The ${r.automationTitle} automation is waiting for confirmation.`,
-      });
-    }
     // Owner-only reminders — mirrors formatAutomationForMorning's own filter.
     for (const a of automationDigest.firingToday) {
       if (a.assignee) continue;
@@ -234,6 +239,15 @@ export function deriveMorningBriefMaterialItems(
         text: `You have a reminder scheduled — ${a.title}.`,
       });
     }
+  }
+
+  // Needs You — genuine owner decisions, distinct from Waiting On Others.
+  for (const e of needsYou) {
+    items.push({
+      id: `needs_you:${e.decisionId}`,
+      signature: "open",
+      text: `One decision needs you — ${cap(e.staffName)} is waiting on an answer.`,
+    });
   }
 
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -261,6 +275,7 @@ export function deriveNightSweepMaterialItems(
   automationDigest: AutomationDigest | undefined,
   calendarEvents: CalendarEvent[] | undefined,
   now = new Date(),
+  needsYou: OpenStaffEscalation[] = [],
 ): MaterialItem[] {
   const items: MaterialItem[] = [];
   const active = tasks.filter((t) => t.archived_at == null && t.status === "pending");
@@ -271,18 +286,23 @@ export function deriveNightSweepMaterialItems(
     if (t.needs_follow_up && t.assigned_to) return true;
     return false;
   });
+  // Only briefing-worthy waiting items become material — a routine, fresh
+  // waiting item is never spoken (see night-sweep.ts's section3 gating), so
+  // it must not leak into follow-up sessions via this "new/changed" path.
   for (const t of waitingOn) {
+    const isRisk = t.escalated_at != null || now.getTime() - new Date(t.created_at).getTime() >= WAITING_RISK_MS;
+    if (!isRisk) continue;
     const who = cap(t.assigned_to);
     items.push({
       id: t.id,
-      signature: `waiting:${t.escalated_at ?? "open"}`,
+      signature: `waiting:${t.escalated_at ?? "stale"}`,
       text: t.escalated_at
         ? who
           ? `${who} still hasn't confirmed — ${shortDesc(t.description)}.`
           : `One item hasn't received a response — ${shortDesc(t.description)}.`
         : who
-          ? `${who} is still waiting on — ${shortDesc(t.description)}.`
-          : `One item is still waiting — ${shortDesc(t.description)}.`,
+          ? `${who} still hasn't confirmed after several days — ${shortDesc(t.description)}.`
+          : `One item has been waiting for several days — ${shortDesc(t.description)}.`,
     });
   }
 
@@ -297,6 +317,8 @@ export function deriveNightSweepMaterialItems(
   }
 
   if (automationDigest) {
+    // "pending" is deliberately excluded — see formatAutomationForNight's
+    // doc comment. Only failed/escalated become material.
     for (const r of automationDigest.failed) {
       items.push({
         id: `automation:${r.id}`,
@@ -311,13 +333,15 @@ export function deriveNightSweepMaterialItems(
         text: `The ${r.automationTitle} automation has been escalated.`,
       });
     }
-    for (const r of automationDigest.pending) {
-      items.push({
-        id: `automation:${r.id}`,
-        signature: "run:pending",
-        text: `The ${r.automationTitle} automation is waiting for confirmation.`,
-      });
-    }
+  }
+
+  // Needs You — genuine owner decisions, distinct from Waiting On Others.
+  for (const e of needsYou) {
+    items.push({
+      id: `needs_you:${e.decisionId}`,
+      signature: "open",
+      text: `One decision needs you — ${cap(e.staffName)} is waiting on an answer.`,
+    });
   }
 
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());

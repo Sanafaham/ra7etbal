@@ -10,6 +10,7 @@ const {
   diffMaterialItems,
   resolveOpeningMaterialState,
   deriveMorningBriefMaterialItems,
+  deriveNightSweepMaterialItems,
   resolveBriefAnchorDateStr,
 } = await import("./carson-material-items");
 
@@ -197,5 +198,71 @@ describe("resolveBriefAnchorDateStr", () => {
     const second = resolveOpeningMaterialState("night", oneAmAnchor, items, s);
     expect(second.isFirstSessionToday).toBe(false);
     expect(second.changed).toEqual([]); // unchanged item is not replayed
+  });
+});
+
+// Chief-of-Staff contract (2026-08-18): routine pending automation runs must
+// not leak into follow-up sessions as "new/changed material" even though the
+// main brief text no longer speaks about them — both paths share the same
+// underlying digest, so both must exclude routine "unconfirmed" state.
+describe("deriveMorningBriefMaterialItems / deriveNightSweepMaterialItems — routine automation exclusion", () => {
+  it("a routine pending automation run does not become material (Morning)", () => {
+    const digest = emptyDigest({
+      pending: [{ id: "auto-1", automationTitle: "Daily reminder test", assignee: null, sentAgoMs: 0, isFollowupSent: false }],
+    });
+    const items = deriveMorningBriefMaterialItems([], [], digest, [], NOW);
+    expect(items.find((i) => i.id === "automation:auto-1")).toBeUndefined();
+  });
+
+  it("a routine pending automation run does not become material (Night)", () => {
+    const digest = emptyDigest({
+      pending: [{ id: "auto-1", automationTitle: "Daily reminder test", assignee: null, sentAgoMs: 0, isFollowupSent: false }],
+    });
+    const items = deriveNightSweepMaterialItems([], digest, [], NOW);
+    expect(items.find((i) => i.id === "automation:auto-1")).toBeUndefined();
+  });
+
+  it("an escalated automation run still becomes material", () => {
+    const digest = emptyDigest({
+      escalated: [{ id: "auto-1", automationTitle: "Daily reminder test", assignee: null, sentAgoMs: 0, isFollowupSent: false }],
+    });
+    const items = deriveMorningBriefMaterialItems([], [], digest, [], NOW);
+    expect(items.find((i) => i.id === "automation:auto-1")).toBeDefined();
+  });
+});
+
+describe("deriveMorningBriefMaterialItems / deriveNightSweepMaterialItems — Needs You", () => {
+  const escalation = {
+    id: "esc-1",
+    staffName: "Christopher",
+    inboundText: "done?",
+    escalationReason: null,
+    receivedAt: NOW.toISOString(),
+    taskId: null,
+    decisionId: "dec-1",
+    deepLinkToken: "tok",
+  };
+
+  it("a genuine owner decision becomes a material item (Morning)", () => {
+    const items = deriveMorningBriefMaterialItems([], [], undefined, [], NOW, [escalation]);
+    const item = items.find((i) => i.id === "needs_you:dec-1");
+    expect(item).toBeDefined();
+    expect(item!.text).toContain("Christopher is waiting on an answer");
+  });
+
+  it("a genuine owner decision becomes a material item (Night)", () => {
+    const items = deriveNightSweepMaterialItems([], undefined, [], NOW, [escalation]);
+    expect(items.find((i) => i.id === "needs_you:dec-1")).toBeDefined();
+  });
+
+  it("an unchanged Needs You item is suppressed on a follow-up session", () => {
+    const s = new FakeStorage();
+    const items = deriveMorningBriefMaterialItems([], [], undefined, [], NOW, [escalation]);
+    const first = resolveOpeningMaterialState("morning", "2026-08-17", items, s);
+    expect(first.isFirstSessionToday).toBe(true);
+
+    const second = resolveOpeningMaterialState("morning", "2026-08-17", items, s);
+    expect(second.isFirstSessionToday).toBe(false);
+    expect(second.changed).toEqual([]);
   });
 });
