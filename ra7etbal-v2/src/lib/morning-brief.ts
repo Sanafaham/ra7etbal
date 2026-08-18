@@ -24,6 +24,41 @@ import type { CalendarEvent } from "./calendar";
 import { classifyCalendarEvent, formatEventEndTime } from "./calendar";
 import type { AutomationDigest } from "./automation-context";
 import { formatAutomationForMorning } from "./automation-context";
+import type { OpenStaffEscalation } from "../types/staff-message";
+import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
+
+/**
+ * Whether a Waiting On Others item (delegation/followup) is materially
+ * useful for the owner to hear about right now — NOT "has it existed for
+ * N hours." Age alone is never sufficient relevance (Chief-of-Staff
+ * contract, 2026-08-18): a routine, low-consequence delegation must not
+ * become briefing-worthy merely because time passed.
+ *
+ * Uses only signals the data model actually and reliably represents:
+ *   - escalated_at: the app's own existing 20-minute escalation signal.
+ *   - quality_review_status in {uncertain, substitute_review}: the same
+ *     signal daily-brief.ts's isWaitingInterventionTask() already uses to
+ *     pull a task OUT of Waiting and into Needs You — a genuine,
+ *     pre-existing "requires owner decision" fact, not invented here.
+ *   - due_at, when present and overdue or due today: the extraction
+ *     pipeline can populate a due date on a delegation/followup (not only
+ *     reminders), and an overdue/due-today deadline is a real consequence
+ *     signal already used elsewhere for reminders.
+ *
+ * Deliberately does NOT use elapsed time since creation — no substitute
+ * threshold was invented for the removed 3-day rule.
+ */
+export function isMaterialWaitingItem(task: Task, now: Date): boolean {
+  if (task.escalated_at != null) return true;
+  if (isQualityOwnerReviewStatus(task.quality_review_status)) return true;
+  if (task.due_at) {
+    const due = new Date(task.due_at);
+    if (!Number.isNaN(due.getTime()) && (due.getTime() <= now.getTime() || isSameLocalDay(due, now))) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -203,13 +238,12 @@ export function buildMorningBriefSpoken(
   now = new Date(),
   calendarEvents?: CalendarEvent[],
   automationDigest?: AutomationDigest,
+  needsYou?: OpenStaffEscalation[],
 ): string {
   const brief  = buildMorningBrief(tasks, people, now);
   const name   = displayName?.trim() || null;
   const hour   = now.getHours();
   const nowMs  = now.getTime();
-  const MS_DAY = 24 * 60 * 60 * 1000;
-  const MS_72H = 72 * 60 * 60 * 1000;
   const greeting =
     hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
@@ -317,19 +351,19 @@ export function buildMorningBriefSpoken(
   }
 
   // ── WAITING ON OTHERS ─────────────────────────────────────────────────────
+  // Only briefing-worthy when it's materially useful right now — escalated,
+  // requires an owner decision, or has an overdue/due-today deadline. Age
+  // alone is never sufficient (Chief-of-Staff contract — a routine, fresh
+  // waiting item is not spoken merely because it exists, and a routine item
+  // that has simply sat for a while is not spoken merely because time
+  // passed either). See isMaterialWaitingItem()'s doc comment for the exact
+  // signals used.
   let slotWaiting = "";
-  const totalWaiting  = brief.waitingOn.length;
-  const escalatedItem = brief.waitingOn.find(t => t.escalated_at != null);
-  const stale72Item   = brief.waitingOn.find(
-    t => nowMs - new Date(t.created_at).getTime() >= MS_72H,
-  );
-  const topWaiter = escalatedItem ?? stale72Item ?? brief.waitingOn[0] ?? null;
+  const topWaiter = brief.waitingOn.find(t => isMaterialWaitingItem(t, now)) ?? null;
 
   if (topWaiter) {
-    const who   = cap(topWaiter.assigned_to);
-    const what  = cleanDesc(topWaiter.description);
-    const ageMs = nowMs - new Date(topWaiter.created_at).getTime();
-    const days  = Math.floor(ageMs / MS_DAY);
+    const who  = cap(topWaiter.assigned_to);
+    const what = cleanDesc(topWaiter.description);
 
     if (topWaiter.escalated_at != null) {
       slotWaiting = who && what
@@ -337,31 +371,23 @@ export function buildMorningBriefSpoken(
         : who
           ? `${who} hasn't responded to an open item.`
           : "One item hasn't received a response.";
-    } else if (days >= 3) {
+    } else if (isQualityOwnerReviewStatus(topWaiter.quality_review_status)) {
       slotWaiting = who && what
-        ? `${who} hasn't confirmed the ${what} in ${days} day${days === 1 ? "" : "s"}.`
-        : who
-          ? `${who} has had an open item for ${days} days.`
-          : `One item has been waiting for ${days} days.`;
-    } else if (totalWaiting === 1) {
-      const hoursAgo = Math.round(ageMs / 3_600_000);
-      const ageSuffix = hoursAgo < 1 ? " — sent recently" : hoursAgo === 1 ? " — sent about an hour ago" : hoursAgo < 24 ? ` — sent about ${hoursAgo} hours ago` : "";
-      slotWaiting = who && what
-        ? `${who} hasn't confirmed the ${what}${ageSuffix}.`
-        : who
-          ? `${who} still has an open item${ageSuffix}.`
-          : "One item is awaiting confirmation.";
+        ? `${who}'s ${what} needs your review.`
+        : "One item needs your review.";
     } else {
-      const top2  = brief.waitingOn.slice(0, 2);
-      const names = top2.map(t => cap(t.assigned_to)).filter(Boolean);
-      if (names.length === 2 && totalWaiting === 2) {
-        slotWaiting = `Two items are waiting: ${names[0]} on ${cleanDesc(top2[0].description)} and ${names[1]} on ${cleanDesc(top2[1].description)}.`;
-      } else if (names.length === 2 && totalWaiting > 2) {
-        slotWaiting = `${names[0]} and ${names[1]} are still waiting — and ${totalWaiting - 2} other${totalWaiting - 2 === 1 ? "" : "s"}.`;
-      } else {
-        slotWaiting = `${spokenCount(totalWaiting)} items are waiting on others.`;
-      }
+      slotWaiting = who && what
+        ? `${who} needs to confirm the ${what} today.`
+        : "One item needs confirmation today.";
     }
+  }
+
+  // ── NEEDS YOU — genuine owner decisions (distinct from Waiting On Others) ─
+  let slotNeedsYou = "";
+  if (needsYou && needsYou.length === 1) {
+    slotNeedsYou = `One decision needs you — ${cap(needsYou[0].staffName)} is waiting on an answer.`;
+  } else if (needsYou && needsYou.length > 1) {
+    slotNeedsYou = `${spokenCount(needsYou.length)} decisions need you — starting with ${cap(needsYou[0].staffName)}.`;
   }
 
   // ── CALENDAR (today's events only — reminders/deadlines live in urgent) ───
@@ -384,46 +410,62 @@ export function buildMorningBriefSpoken(
     slotCalendar = `You also have ${spokenCount(todayEvs.length)} events on the calendar today.`;
   }
 
-  // ── AUTOMATION STATUS (guaranteed slot) ───────────────────────────────────
+  // ── AUTOMATION STATUS ──────────────────────────────────────────────────────
+  // Not a guaranteed slot — formatAutomationForMorning() returns "" for
+  // routine automation state (a recurring reminder simply having been sent
+  // but not yet confirmed is not, by itself, briefing-worthy).
   const slotAutomation = automationDigest
     ? formatAutomationForMorning(automationDigest)
     : "";
 
   // ── GREETING (built last so it can reference what's open) ────────────────
-  const hasAnything = !!(slotUrgent || slotWaiting || slotAutomation);
+  const hasAnything = !!(slotUrgent || slotWaiting || slotAutomation || slotNeedsYou);
   const frame = hasAnything ? " Here's what needs attention." : "";
   const slotGreeting = name ? `${greeting} ${name}.${frame}` : `${greeting}.${frame}`;
 
   // ── CLOSE ─────────────────────────────────────────────────────────────────
-  const hasOpen = brief.waitingOn.length > 0 || brief.needsAttention.length > 0 || brief.overdueItems.length > 0;
+  const hasOpen =
+    brief.waitingOn.length > 0 ||
+    brief.needsAttention.length > 0 ||
+    brief.overdueItems.length > 0 ||
+    !!(needsYou && needsYou.length > 0);
   const slotClose = hasOpen
     ? "Everything else is on track."
     : "You're clear for the rest of the day.";
 
   // ── PRIORITY SLOT SELECTION ───────────────────────────────────────────────
   // Collect all candidate sentences with priority and speech-order weights.
-  // Select top 6 by priority, then re-sort by speech order for natural delivery.
+  // Select top-priority candidates (max is a ceiling, not a target — an item
+  // with nothing to say simply contributes no candidate), then re-sort by
+  // speech order for natural delivery.
   //
   // Priority (lower = must include):
-  //   0 greeting  1 urgent  2 waiting  3 automation  4 calendar  5 close  6 completions
+  //   0 greeting  1 urgent  1 needsYou  2 waiting  3 automation  4 calendar
+  //   5 close  6 completions
   //
   // Speech order (lower = spoken first):
-  //   greeting(0) urgent(1) completions(2) waiting(3) calendar(4) automation(5) close(6)
+  //   greeting(0) needsYou(1) urgent(2) completions(3) waiting(4) calendar(5)
+  //   automation(6) close(7)
 
   interface PriSlot { s: string; pri: number; ord: number; }
   const candidates: PriSlot[] = [
     { s: slotGreeting,    pri: 0, ord: 0 },
-    { s: slotUrgent,      pri: 1, ord: 1 },
-    { s: slotWaiting,     pri: 2, ord: 3 },
-    { s: slotAutomation,  pri: 3, ord: 5 },
-    { s: slotCalendar,    pri: 4, ord: 4 },
-    { s: slotClose,       pri: 5, ord: 6 },
-    { s: slotCompletions, pri: 6, ord: 2 },
+    { s: slotNeedsYou,    pri: 1, ord: 1 },
+    { s: slotUrgent,      pri: 1, ord: 2 },
+    { s: slotWaiting,     pri: 2, ord: 4 },
+    { s: slotAutomation,  pri: 3, ord: 6 },
+    { s: slotCalendar,    pri: 4, ord: 5 },
+    { s: slotClose,       pri: 5, ord: 7 },
+    { s: slotCompletions, pri: 6, ord: 3 },
   ].filter(c => c.s);
 
+  // A genuine owner-decision item is never silently cut for space — the
+  // ceiling flexes by one only when Needs You is present, matching every
+  // other tested case (no Needs You) byte-for-byte.
+  const maxSlots = slotNeedsYou ? 7 : 6;
   const selected = candidates
     .sort((a, b) => a.pri - b.pri)
-    .slice(0, 6)
+    .slice(0, maxSlots)
     .sort((a, b) => a.ord - b.ord);
 
   return selected.map(c => c.s).join(" ");
@@ -558,17 +600,53 @@ function spokenDaysUntil(dueAt: string, now: Date): string {
   return `in ${spokenCount(days)} day${days === 1 ? "" : "s"}`;
 }
 
+// Common household action verbs, mapped to their gerund form, so a
+// completion can be spoken as a natural outcome ("finished cleaning the
+// kitchen") instead of a raw database-lifecycle event ("confirmed clean the
+// kitchen" / a mislabeled category). Deliberately small and additive — any
+// description not starting with one of these falls back to taskLabel()'s
+// existing keyword/noun categorization, unchanged.
+const GERUND_VERBS: Record<string, string> = {
+  clean: "cleaning", wash: "washing", fix: "fixing", prepare: "preparing",
+  organize: "organizing", tidy: "tidying", water: "watering", walk: "walking",
+  feed: "feeding", call: "calling", empty: "emptying", finish: "finishing",
+  cook: "cooking", pack: "packing", vacuum: "vacuuming",
+};
+
+export interface CompletionPhrase {
+  text: string;
+  /** true when text is a gerund verb phrase ("cleaning the kitchen"); false when it's a taskLabel() noun/category. */
+  isGerund: boolean;
+}
+
+/**
+ * Canonical completion-outcome phrase, shared by Morning Brief and Night
+ * Sweep so a completed task is described the same way in both.
+ */
+export function buildCompletionPhrase(rawDescription: string): CompletionPhrase {
+  const trimmed = rawDescription.trim().replace(/[.!?]+$/, "").trim();
+  const firstWord = trimmed.split(/\s+/)[0]?.toLowerCase() ?? "";
+  const gerund = GERUND_VERBS[firstWord];
+  if (gerund) {
+    const rest = trimmed.slice(firstWord.length).trim();
+    return { text: rest ? `${gerund} ${rest}` : gerund, isGerund: true };
+  }
+  return { text: taskLabel(rawDescription), isGerund: false };
+}
+
 function buildCompletionSentenceV3(t: Task): string {
   const assignee = t.assigned_to?.trim() ?? "";
   const isDelegated =
     t.type === "delegation" ||
     t.type === "followup" ||
     (!!assignee && assignee.toLowerCase() !== "me");
-  const what = cleanDesc(t.description);
+  const phrase = buildCompletionPhrase(t.description);
   if (isDelegated && assignee) {
-    return what
-      ? `${cap(assignee)} confirmed ${what}.`
-      : `${cap(assignee)} confirmed an open item.`;
+    if (!phrase.text) return `${cap(assignee)} confirmed an open item.`;
+    return phrase.isGerund
+      ? `${cap(assignee)} finished ${phrase.text}.`
+      : `${cap(assignee)} confirmed ${phrase.text}.`;
   }
-  return what ? `You completed ${what}.` : "One item was completed.";
+  if (!phrase.text) return "One item was completed.";
+  return phrase.isGerund ? `You finished ${phrase.text}.` : `You completed ${phrase.text}.`;
 }

@@ -49,6 +49,8 @@ import {
   buildWhatsappDeliveryStatusBlock,
   type WhatsappDeliveryFailureSummary,
 } from "./lib/whatsapp-delivery-context";
+import { listOpenStaffEscalationsForNeedsYou } from "./lib/staff-messages";
+import type { OpenStaffEscalation } from "./types/staff-message";
 import { buildMorningBriefSpoken } from "./lib/morning-brief";
 import { buildNightSweepSpoken, EVENING_HOUR, MORNING_START_HOUR } from "./lib/night-sweep";
 import {
@@ -288,6 +290,7 @@ function PersistentCarsonWidget({
   const [notesBlock, setNotesBlock] = useState("");
   const [todosBlock, setTodosBlock] = useState("");
   const [automationDigest, setAutomationDigest] = useState<AutomationDigest | null>(null);
+  const [needsYou, setNeedsYou] = useState<OpenStaffEscalation[]>([]);
   const [whatsappFailures, setWhatsappFailures] = useState<WhatsappDeliveryFailureSummary[]>([]);
   const [calendarConnectionStatus, setCalendarConnectionStatus] = useState<CalendarConnectionStatus>("unknown");
 
@@ -343,6 +346,13 @@ function PersistentCarsonWidget({
   }, [userId]);
 
   useEffect(() => {
+    if (!userId) { setNeedsYou([]); return; }
+    listOpenStaffEscalationsForNeedsYou()
+      .then((escalations) => setNeedsYou(escalations))
+      .catch(() => setNeedsYou([]));
+  }, [userId]);
+
+  useEffect(() => {
     if (!userId) { setWhatsappFailures([]); return; }
     fetchWhatsappDeliveryFailures()
       .then((failures) => setWhatsappFailures(failures))
@@ -377,10 +387,10 @@ function PersistentCarsonWidget({
   const spokenBrief = useMemo(
     () =>
       isEvening
-        ? buildNightSweepSpoken(tasks, displayName, now, calendarEvents, automationDigest ?? undefined)
-        : buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents, automationDigest ?? undefined),
+        ? buildNightSweepSpoken(tasks, displayName, now, calendarEvents, automationDigest ?? undefined, needsYou)
+        : buildMorningBriefSpoken(tasks, people, displayName, now, calendarEvents, automationDigest ?? undefined, needsYou),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tasks, people, displayName, now, calendarEvents, isEvening, automationDigest],
+    [tasks, people, displayName, now, calendarEvents, isEvening, automationDigest, needsYou],
   );
 
   const handleBeforeCallStart = useCallback(async () => {
@@ -434,16 +444,21 @@ function PersistentCarsonWidget({
 
     const freshHouseholdRules = useHouseholdRulesStore.getState().rules;
 
+    const freshNeedsYou = userId
+      ? await listOpenStaffEscalationsForNeedsYou().catch(() => [])
+      : [];
+    setNeedsYou(freshNeedsYou);
+
     const isNightSweep = freshNow.getHours() >= EVENING_HOUR || freshNow.getHours() < MORNING_START_HOUR;
     const materialItems: MaterialItem[] = isNightSweep
-      ? deriveNightSweepMaterialItems(freshTasks, freshDigest ?? undefined, freshCalendarEvents, freshNow)
-      : deriveMorningBriefMaterialItems(freshTasks, people, freshDigest ?? undefined, freshCalendarEvents, freshNow);
+      ? deriveNightSweepMaterialItems(freshTasks, freshDigest ?? undefined, freshCalendarEvents, freshNow, freshNeedsYou)
+      : deriveMorningBriefMaterialItems(freshTasks, people, freshDigest ?? undefined, freshCalendarEvents, freshNow, freshNeedsYou);
 
     return {
       briefStateText: buildCarsonContext({ tasks: freshTasks, people, email: user?.email, now: freshNow, calendarEvents: freshCalendarEvents, notesBlock: freshNotesBlock, todosBlock: freshTodosBlock, householdRules: freshHouseholdRules, automationStatusBlock: freshAutomationStatusBlock, whatsappDeliveryStatusBlock: freshWhatsappDeliveryStatusBlock, calendarConnectionStatusBlock: freshCalendarConnectionStatusBlock }),
       spokenBrief: isNightSweep
-        ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined)
-        : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined),
+        ? buildNightSweepSpoken(freshTasks, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined, freshNeedsYou)
+        : buildMorningBriefSpoken(freshTasks, people, displayName, freshNow, freshCalendarEvents, freshDigest ?? undefined, freshNeedsYou),
       // Separate Morning Brief / Night Sweep delivery state — see carson-material-items.ts.
       briefKind: (isNightSweep ? "night" : "morning") as "morning" | "night",
       materialItems,
