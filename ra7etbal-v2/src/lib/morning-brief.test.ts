@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 // Supabase client is ever used.
 vi.mock("./supabase", () => ({ supabase: {} }));
 
-const { taskLabel, buildCompletionPhrase, buildMorningBriefSpoken, isMaterialWaitingItem } = await import("./morning-brief");
+const { taskLabel, buildCompletionPhrase, buildMorningBriefSpoken, buildMorningBrief, isMaterialWaitingItem } = await import("./morning-brief");
 
 import type { Task } from "../types/task";
 import type { AutomationDigest } from "./automation-context";
@@ -40,7 +40,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 function emptyDigest(overrides: Partial<AutomationDigest> = {}): AutomationDigest {
-  return { pending: [], escalated: [], failed: [], confirmedToday: [], firingToday: [], firingTomorrow: [], ...overrides };
+  return { pending: [], escalated: [], failed: [], confirmedToday: [], firingToday: [], firingTomorrow: [], routineAutomationTaskIds: new Set(), ...overrides };
 }
 
 const NOW = new Date("2026-08-18T09:00:00.000Z");
@@ -264,6 +264,97 @@ describe("buildMorningBriefSpoken — routine automation status is excluded enti
     });
     const spoken = buildMorningBriefSpoken([], [], "Sana", NOW, [], digest);
     expect(spoken).not.toMatch(/waiting for confirmation|automation/i);
+  });
+});
+
+// Production incident (2026-08-18, live acceptance round 2): a recurring
+// automation's routine (unconfirmed, non-escalated) run creates a linked
+// `tasks` row (automation_runs.task_id). That task row bypassed the
+// automation relevance contract entirely — buildMorningBrief's
+// needsAttention filter has no relevance gate for non-reminder task types,
+// so Carson said "One task needs your attention — Update the Ra7etBal
+// master plan. ... Charge your phone. ... And 4 more things to cover."
+// even though the automation-status sentence itself was correctly silent.
+// buildMorningBrief now accepts routineAutomationTaskIds (from
+// AutomationDigest) and excludes any task whose id is in that set from
+// both needsAttention and overdueItems — the task inherits its linked
+// automation run's relevance decision rather than being treated as an
+// ordinary owner task.
+describe("buildMorningBrief / buildMorningBriefSpoken — automation-linked task inherits automation relevance (Chief-of-Staff contract)", () => {
+  it("A: a task linked to a routine automation run is excluded from needsAttention", () => {
+    const task = makeTask({ id: "task-linked-1", type: "action", description: "Update the Rahet Bal master plan." });
+    const routineAutomationTaskIds = new Set(["task-linked-1"]);
+    const brief = buildMorningBrief([task], [], NOW, routineAutomationTaskIds);
+    expect(brief.needsAttention.find((t) => t.id === "task-linked-1")).toBeUndefined();
+  });
+
+  it("A (spoken): the same routine automation-linked task never reaches the spoken brief", () => {
+    const task = makeTask({ id: "task-linked-1", type: "action", description: "Update the Rahet Bal master plan." });
+    const digest = emptyDigest({ routineAutomationTaskIds: new Set(["task-linked-1"]) });
+    const spoken = buildMorningBriefSpoken([task], [], "Sana", NOW, [], digest);
+    expect(spoken).not.toContain("Update the Rahet Bal master plan");
+    expect(spoken).not.toMatch(/needs your attention/i);
+  });
+
+  it("B: an ordinary action task with no automation link is NOT accidentally suppressed", () => {
+    const task = makeTask({ id: "task-ordinary-1", type: "action", description: "Book the vet appointment." });
+    const routineAutomationTaskIds = new Set(["some-other-task-id"]);
+    const brief = buildMorningBrief([task], [], NOW, routineAutomationTaskIds);
+    expect(brief.needsAttention.find((t) => t.id === "task-ordinary-1")).toBeDefined();
+  });
+
+  it("B (spoken): an ordinary, non-automation-linked action task still surfaces", () => {
+    const task = makeTask({ id: "task-ordinary-1", type: "action", description: "Book the vet appointment." });
+    const digest = emptyDigest({ routineAutomationTaskIds: new Set() });
+    const spoken = buildMorningBriefSpoken([task], [], "Sana", NOW, [], digest);
+    expect(spoken).toContain("Book the vet appointment");
+  });
+
+  it("C: a task is not excluded merely because SOME OTHER task is automation-linked", () => {
+    const linkedTask = makeTask({ id: "task-linked-1", type: "action", description: "Update the Rahet Bal master plan." });
+    const ordinaryTask = makeTask({ id: "task-ordinary-1", type: "action", description: "Book the vet appointment." });
+    const routineAutomationTaskIds = new Set(["task-linked-1"]);
+    const brief = buildMorningBrief([linkedTask, ordinaryTask], [], NOW, routineAutomationTaskIds);
+    expect(brief.needsAttention.map((t) => t.id)).not.toContain("task-linked-1");
+    expect(brief.needsAttention.map((t) => t.id)).toContain("task-ordinary-1");
+  });
+
+  it("C: a task linked to a FAILED automation run still surfaces (only routine-state runs are excluded)", () => {
+    const task = makeTask({ id: "task-failed-1", type: "action", description: "Update the Rahet Bal master plan." });
+    // routineAutomationTaskIds only ever contains sent/followup_sent-linked
+    // task ids (see automation-context.ts) — a failed run's task is never
+    // added to it, so it is untouched here, exactly as for an ordinary task.
+    const routineAutomationTaskIds = new Set<string>();
+    const brief = buildMorningBrief([task], [], NOW, routineAutomationTaskIds);
+    expect(brief.needsAttention.find((t) => t.id === "task-failed-1")).toBeDefined();
+  });
+
+  it("D: a task linked to an ESCALATED automation run still surfaces (only routine-state runs are excluded)", () => {
+    const task = makeTask({ id: "task-escalated-1", type: "action", description: "check on Claude skill files" });
+    const routineAutomationTaskIds = new Set<string>();
+    const brief = buildMorningBrief([task], [], NOW, routineAutomationTaskIds);
+    expect(brief.needsAttention.find((t) => t.id === "task-escalated-1")).toBeDefined();
+  });
+
+  it("F: hidden routine automation-linked tasks are excluded from the material-item follow-up count, not just the first-session brief", () => {
+    const routineTask = makeTask({ id: "task-linked-1", type: "action", description: "Update the Rahet Bal master plan." });
+    const digest = emptyDigest({ routineAutomationTaskIds: new Set(["task-linked-1"]) });
+    // The full first-session brief must not mention it either — this is the
+    // upstream guarantee that carson-material-items.ts's follow-up "N more"
+    // count (built from the same buildMorningBrief() call) inherits.
+    const spoken = buildMorningBriefSpoken([routineTask], [], "Sana", NOW, [], digest);
+    expect(spoken).not.toMatch(/Update the Rahet Bal master plan|needs your attention/i);
+  });
+
+  it("G: multiple task rows linked to routine runs (repeat firings of the same automation) are all excluded", () => {
+    const tasks = [
+      makeTask({ id: "run-aug12", type: "action", description: "Charge your phone", created_at: "2026-08-12T22:36:01.000Z" }),
+      makeTask({ id: "run-aug17", type: "action", description: "Charge your phone", created_at: "2026-08-17T22:36:01.000Z" }),
+      makeTask({ id: "run-aug18", type: "action", description: "Charge your phone", created_at: "2026-08-18T08:36:01.000Z" }),
+    ];
+    const routineAutomationTaskIds = new Set(["run-aug12", "run-aug17", "run-aug18"]);
+    const brief = buildMorningBrief(tasks, [], NOW, routineAutomationTaskIds);
+    expect(brief.needsAttention).toEqual([]);
   });
 });
 

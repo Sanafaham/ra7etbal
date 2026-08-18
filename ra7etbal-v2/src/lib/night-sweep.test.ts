@@ -39,7 +39,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 }
 
 function emptyDigest(overrides: Partial<AutomationDigest> = {}): AutomationDigest {
-  return { pending: [], escalated: [], failed: [], confirmedToday: [], firingToday: [], firingTomorrow: [], ...overrides };
+  return { pending: [], escalated: [], failed: [], confirmedToday: [], firingToday: [], firingTomorrow: [], routineAutomationTaskIds: new Set(), ...overrides };
 }
 
 const NOW = new Date("2026-08-18T21:00:00.000Z");

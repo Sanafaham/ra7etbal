@@ -164,7 +164,7 @@ export function deriveMorningBriefMaterialItems(
   needsYou: OpenStaffEscalation[] = [],
 ): MaterialItem[] {
   const items: MaterialItem[] = [];
-  const brief = buildMorningBrief(tasks, people, now);
+  const brief = buildMorningBrief(tasks, people, now, automationDigest?.routineAutomationTaskIds);
 
   for (const t of brief.overdueItems) {
     items.push({

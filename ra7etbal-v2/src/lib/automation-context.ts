@@ -53,6 +53,19 @@ export interface AutomationDigest {
   firingToday: AutomationScheduleSummary[];
   /** Scheduled to fire between 24 h and 48 h from now (tomorrow) */
   firingTomorrow: AutomationScheduleSummary[];
+  /**
+   * task ids linked (via automation_runs.task_id) to a routine — sent or
+   * followup_sent, not escalated/failed — automation run, in ANY state age
+   * (not limited to the 48h window above). A task representing the exact
+   * same obligation as a routine automation run must inherit that run's
+   * "not briefing-worthy" status; see morning-brief.ts's needsAttention/
+   * overdueItems filters, which exclude any task whose id appears here.
+   * Deliberately unbounded by age: the 48h window above exists only for the
+   * owner-facing SPOKEN automation-status summary's recency, not for how
+   * long a still-open automation obligation's task representation should
+   * stay suppressed.
+   */
+  routineAutomationTaskIds: Set<string>;
 }
 
 interface AutomationJoinFields {
@@ -97,6 +110,7 @@ const EMPTY_DIGEST: AutomationDigest = {
   confirmedToday: [],
   firingToday: [],
   firingTomorrow: [],
+  routineAutomationTaskIds: new Set(),
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,6 +143,18 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     .gte("sent_at", window48hAgo)
     .order("sent_at", { ascending: false })
     .limit(20);
+
+  // ── Task ids linked to a routine (sent/followup_sent) automation run, any
+  // age — powers routineAutomationTaskIds. Deliberately a separate,
+  // unwindowed query: a task representing a still-open routine automation
+  // obligation must stay suppressed for as long as that run remains
+  // unresolved, not just within the 48h window the SPOKEN summary above
+  // uses. Runs without a linked task (task_id null) are irrelevant here.
+  const { data: routineLinkedRuns } = await supabase
+    .from("automation_runs")
+    .select("task_id, automations!inner(automation_type, assignee_id, cadence_type, status)")
+    .in("current_state", ["sent", "followup_sent"])
+    .not("task_id", "is", null);
 
   // ── Confirmed runs (last 24 h) ────────────────────────────────────────────
   const { data: confirmedRuns } = await supabase
@@ -263,7 +289,18 @@ export async function fetchAutomationDigest(): Promise<AutomationDigest> {
     nextRunAt: a.next_run_at as string,
   }));
 
-  return { pending, escalated, failed, confirmedToday, firingToday, firingTomorrow };
+  const routineAutomationTaskIds = new Set<string>(
+    ((routineLinkedRuns ?? []) as Record<string, unknown>[])
+      .filter((r) => isOperationalAutomationRunRow(r as AutomationRunRowWithJoin))
+      .filter((r) => {
+        const automation = r.automations as { automation_type?: string } | null;
+        return automation?.automation_type !== "message";
+      })
+      .map((r) => r.task_id as string)
+      .filter(Boolean),
+  );
+
+  return { pending, escalated, failed, confirmedToday, firingToday, firingTomorrow, routineAutomationTaskIds };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
