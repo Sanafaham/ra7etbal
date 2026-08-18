@@ -1164,8 +1164,29 @@ const TRANSPORT_TRIGGER_RE =
 // role — can never be selected for any domain.
 const ASSISTANT_RECIPIENT_RE = /^\s*(?:carson|the assistant|assistant)\s*$/i;
 
+// People is a mixed directory: staff, family, friends, and the owner can all
+// be present. Autonomous household execution therefore requires both an
+// explicit non-family classification and an operational staff role (or an
+// explicit staff relationship). Notes, communication history, reachability,
+// and WhatsApp consent are deliberately not eligibility signals.
+const OPERATIONAL_STAFF_ROLE_RE =
+  /\b(cook|chef|kitchen|housekeeper|house\s*keeper|maid|cleaner|hospitality|decorator|florist|driver|chauffeur|coordinator|coordination|house\s*manager|household\s*manager|estate\s*manager|personal\s*assistant|executive\s*assistant|household\s*assistant|\bpa\b|\bea\b|nanny|gardener|helper|tutor|butler|security|bodyguard)\b/i;
+const OPERATIONAL_STAFF_RELATIONSHIP_RE =
+  /\b(household\s+staff|staff\s+member|employee|domestic\s+staff|household\s+team)\b/i;
+
 export function isAssistantRecipientName(name: string | null | undefined): boolean {
   return ASSISTANT_RECIPIENT_RE.test((name ?? "").trim());
+}
+
+export function isAutonomousHouseholdAssigneeEligible(
+  person: Person,
+  expectedUserId?: string,
+): boolean {
+  if (person.is_family !== false) return false;
+  if (expectedUserId !== undefined && person.user_id !== expectedUserId) return false;
+  if (isAssistantRecipientName(person.name)) return false;
+  return OPERATIONAL_STAFF_ROLE_RE.test(person.role ?? "")
+    || OPERATIONAL_STAFF_RELATIONSHIP_RE.test(person.relationship ?? "");
 }
 
 function personText(person: Person): string {
@@ -1227,8 +1248,9 @@ export function buildDeterministicGuestPreparationTasks(
   sourceText = "",
 ): ProposedTask[] {
   const brief = buildHostingEventBrief(sourceText);
-  // Carson can never be a recipient — filter before any selection.
-  const usable = people.filter((person) => !isAssistantRecipientName(person.name));
+  // People includes family and personal contacts. Only explicitly operational
+  // non-family staff may enter autonomous hosting selection.
+  const usable = people.filter((person) => isAutonomousHouseholdAssigneeEligible(person));
   const used = new Set<string>();
   const owners: GuestPrepOwner[] = [];
 
@@ -1515,9 +1537,10 @@ export async function buildOperationalPlanFromOutcome(
   people: Person[],
   operationId: string | null = null,
 ): Promise<ProposedPlan | null> {
-  if (people.length === 0) return null;
+  const eligiblePeople = people.filter((person) => isAutonomousHouseholdAssigneeEligible(person));
+  if (eligiblePeople.length === 0) return null;
 
-  const peopleBlock = people
+  const peopleBlock = eligiblePeople
     .map((p) => `- ${p.name} (${p.role || "staff"})${p.notes ? `: ${p.notes}` : ""}`)
     .join("\n");
 
@@ -1572,7 +1595,7 @@ Return ONLY valid JSON, no markdown:
   // Resolve person IDs (case-insensitive match).
   const proposedTasks: ProposedTask[] = [];
   for (const t of parsed.tasks) {
-    const person = people.find(
+    const person = eligiblePeople.find(
       (p) => p.name.trim().toLowerCase() === t.person_name.trim().toLowerCase(),
     );
     if (!person || !t.message?.trim()) continue;
@@ -1585,10 +1608,12 @@ Return ONLY valid JSON, no markdown:
     outcomeType: "guest_arrival",
     tasks: proposedTasks,
     brief: buildHostingEventBrief(text),
-    proposalSpeech: parsed.proposal_speech,
+    proposalSpeech: proposedTasks.length === parsed.tasks.length
+      ? parsed.proposal_speech
+      : buildHostingProposalSpeech(buildHostingEventBrief(text), proposedTasks),
     sourceText: text,
     createdAt: Date.now(),
-  }, people);
+  }, eligiblePeople);
 
   // Persist before returning — survives disconnect.
   const dbId = await persistPlan(plan, operationId).catch(() => null);
@@ -1617,6 +1642,14 @@ function planIdempotencyKey(plan: ProposedPlan): string {
   if (plan.dbId) return `db:${plan.dbId}`;
   const taskSignature = plan.tasks.map((t) => `${t.personId}:${t.message}`).join("|");
   return `text:${plan.sourceText}::${taskSignature}`;
+}
+
+function stripRecipientGreeting(message: string, personName: string): string {
+  const escapedName = personName.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return message
+    .trim()
+    .replace(new RegExp(`^(?:hi|hello|hey)\\s+${escapedName}\\s*[,!:.—-]*\\s*`, "i"), "")
+    .trim();
 }
 
 /** Test-only: clears the idempotency registry between cases. */
@@ -1659,6 +1692,26 @@ export async function executeProposedPlan(
 ): Promise<string> {
   const { displayName, userId, people } = opts;
 
+  // Consequential execution boundary: resolve the exact durable person id,
+  // verify the same-account identity/name pair, then require autonomous
+  // household eligibility. Reject the whole approved plan before persistence
+  // or delivery if any proposed assignment fails closed. Never substitute.
+  const resolvedTasks = plan.tasks.map((task) => {
+    const person = people.find((candidate) => candidate.id === task.personId);
+    const identityMatches = person
+      && person.name.trim().toLowerCase() === task.personName.trim().toLowerCase();
+    return {
+      task,
+      person: identityMatches ? person : null,
+    };
+  });
+  const ineligibleTask = resolvedTasks.find(({ person }) =>
+    !person || !isAutonomousHouseholdAssigneeEligible(person, userId),
+  );
+  if (ineligibleTask) {
+    return `I didn't send the hosting plan because ${ineligibleTask.task.personName} is not eligible for autonomous household delegation.`;
+  }
+
   // Idempotency — claim the plan synchronously before any await.
   const idempotencyKey = planIdempotencyKey(plan);
   if (executedPlanKeys.has(idempotencyKey)) {
@@ -1666,11 +1719,14 @@ export async function executeProposedPlan(
   }
   executedPlanKeys.add(idempotencyKey);
 
-  // Carson can never be a recipient at execution time either.
-  const deliverableTasks = plan.tasks.filter((task) => !isAssistantRecipientName(task.personName));
+  const deliverableTasks = resolvedTasks.map(({ task }) => ({
+    ...task,
+    message: stripRecipientGreeting(task.message, task.personName),
+  }));
   if (deliverableTasks.length === 0) {
     return "There's no one to send this to. Tell me who should handle it.";
   }
+  plan.tasks = deliverableTasks;
 
   // Build ExtractedItem[] directly — no AI needed; we already have all info.
   const extractedItems: ExtractedItem[] = deliverableTasks.map((task) => ({
