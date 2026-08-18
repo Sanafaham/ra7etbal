@@ -94,6 +94,16 @@ export function buildMorningBrief(
   tasks: Task[],
   _people: Person[],
   now = new Date(),
+  /**
+   * task ids that represent a routine (not escalated/failed) automation
+   * run — see automation-context.ts's AutomationDigest.routineAutomationTaskIds.
+   * A task linked to a routine automation obligation inherits that
+   * automation's relevance decision, so it's excluded here rather than
+   * treated as an ordinary owner task — the same underlying obligation
+   * must not bypass the automation relevance contract merely because it
+   * also has a task-table representation.
+   */
+  routineAutomationTaskIds?: Set<string>,
 ): MorningBriefData {
   const active = tasks.filter((t) => t.archived_at == null);
   const nowMs = now.getTime();
@@ -103,6 +113,7 @@ export function buildMorningBrief(
   // are visible to the spoken brief sections that read waitingOn.
   const overdueItems = active.filter((t) => {
     if (t.status !== "pending") return false;
+    if (routineAutomationTaskIds?.has(t.id)) return false;
     if (t.type === "reminder" && isReminderOverdue(t.due_at, now)) return true;
     return false;
   });
@@ -135,6 +146,11 @@ export function buildMorningBrief(
     if (t.status !== "pending") return false;
     if (overdueIds.has(t.id)) return false;
     if (waitingIds.has(t.id)) return false;
+    // Automation-linked, routine state — the same obligation already got
+    // the automation relevance decision; a task representation must not
+    // bypass it. Failed/escalated-linked tasks are NOT in this set, so
+    // they remain eligible below as normal.
+    if (routineAutomationTaskIds?.has(t.id)) return false;
 
     // Reminder due today (not yet overdue)
     if (t.type === "reminder" && t.due_at) {
@@ -240,7 +256,7 @@ export function buildMorningBriefSpoken(
   automationDigest?: AutomationDigest,
   needsYou?: OpenStaffEscalation[],
 ): string {
-  const brief  = buildMorningBrief(tasks, people, now);
+  const brief  = buildMorningBrief(tasks, people, now, automationDigest?.routineAutomationTaskIds);
   const name   = displayName?.trim() || null;
   const hour   = now.getHours();
   const nowMs  = now.getTime();

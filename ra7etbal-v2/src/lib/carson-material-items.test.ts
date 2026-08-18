@@ -16,11 +16,39 @@ const {
 
 import type { MaterialItem, KeyValueStore } from "./carson-material-items";
 import type { AutomationDigest, AutomationScheduleSummary } from "./automation-context";
+import type { Task } from "../types/task";
 
 const NOW = new Date("2026-08-17T14:41:00.000Z");
 
+function makeTask(overrides: Partial<Task> = {}): Task {
+  return {
+    id: "task-1",
+    user_id: "user-1",
+    description: "Buy milk",
+    type: "action",
+    assigned_to: null,
+    status: "pending",
+    needs_follow_up: false,
+    confirmation_url: null,
+    confirmed_at: null,
+    due_at: null,
+    archived_at: null,
+    created_at: "2026-08-17T10:00:00.000Z",
+    qstash_message_id: null,
+    followup_sent_at: null,
+    escalated_at: null,
+    image_path: null,
+    proof_image_path: null,
+    quality_review_status: null,
+    quality_review_note: null,
+    quality_reviewed_at: null,
+    worker_reply: null,
+    ...overrides,
+  };
+}
+
 function emptyDigest(overrides: Partial<AutomationDigest> = {}): AutomationDigest {
-  return { pending: [], escalated: [], failed: [], confirmedToday: [], firingToday: [], firingTomorrow: [], ...overrides };
+  return { pending: [], escalated: [], failed: [], confirmedToday: [], firingToday: [], firingTomorrow: [], routineAutomationTaskIds: new Set(), ...overrides };
 }
 
 function makeFiringToday(overrides: Partial<AutomationScheduleSummary> = {}): AutomationScheduleSummary {
@@ -264,5 +292,31 @@ describe("deriveMorningBriefMaterialItems / deriveNightSweepMaterialItems — Ne
     const second = resolveOpeningMaterialState("morning", "2026-08-17", items, s);
     expect(second.isFirstSessionToday).toBe(false);
     expect(second.changed).toEqual([]);
+  });
+});
+
+// Production incident (2026-08-18, live acceptance round 2): the automation
+// relevance contract was correctly enforced in the first-session spoken
+// brief, but the SAME routine automation-linked task bypassed suppression
+// through the follow-up material-item path — Carson still said "One task
+// needs your attention — ..." on a non-first session because
+// deriveMorningBriefMaterialItems iterates brief.needsAttention, and
+// buildMorningBrief's own gate is the single, canonical place this is now
+// fixed (see morning-brief.test.ts's parallel coverage for the underlying
+// gate itself). This proves the fix reaches this path too, not just the
+// first-session brief.
+describe("deriveMorningBriefMaterialItems — automation-linked task inherits automation relevance (E)", () => {
+  it("a task linked to a routine automation run does not become a material item, so it cannot resurface via the follow-up 'changed' path either", () => {
+    const task = makeTask({ id: "task-linked-1", type: "action", description: "Update the Rahet Bal master plan." });
+    const digest = emptyDigest({ routineAutomationTaskIds: new Set(["task-linked-1"]) });
+    const items = deriveMorningBriefMaterialItems([task], [], digest, [], NOW);
+    expect(items.find((i) => i.id === "task-linked-1")).toBeUndefined();
+  });
+
+  it("an ordinary, non-automation-linked task still becomes a material item as before", () => {
+    const task = makeTask({ id: "task-ordinary-1", type: "action", description: "Book the vet appointment." });
+    const digest = emptyDigest({ routineAutomationTaskIds: new Set() });
+    const items = deriveMorningBriefMaterialItems([task], [], digest, [], NOW);
+    expect(items.find((i) => i.id === "task-ordinary-1")).toBeDefined();
   });
 });

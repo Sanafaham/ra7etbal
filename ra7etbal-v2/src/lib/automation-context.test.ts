@@ -37,6 +37,7 @@ function makeDigest(overrides: Partial<AutomationDigest> = {}): AutomationDigest
     confirmedToday: [],
     firingToday: [],
     firingTomorrow: [],
+    routineAutomationTaskIds: new Set(),
     ...overrides,
   };
 }
