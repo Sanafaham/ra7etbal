@@ -192,6 +192,41 @@ describe("Voice Carson direct message fast path", () => {
     });
   });
 
+  it("preserves explicit owner-named direct communication with a family member", async () => {
+    const saeed = person({ id: "saeed", name: "Saeed", role: "Brother", is_family: true });
+    const createMessageFn = vi.fn().mockResolvedValue(messageRow({
+      recipient: "Saeed",
+      person_id: "saeed",
+      content: "dinner is at eight",
+    }));
+    const deliverTaskMessageFn = vi.fn().mockResolvedValue({
+      success: true,
+      channel: "whatsapp",
+      deliveryId: "delivery-saeed",
+      messageId: "wamid.saeed",
+    });
+
+    const result = await executeDirectMessageFastPath(
+      "Tell Saeed dinner is at eight",
+      { userId: "user-1", displayName: "Sana", people: [saeed] },
+      { createMessageFn, deliverTaskMessageFn },
+    );
+
+    expect(result).toMatchObject({
+      handled: true,
+      status: "sent",
+      recipientName: "Saeed",
+      messageText: "dinner is at eight",
+    });
+    expect(createMessageFn).toHaveBeenCalledWith(expect.objectContaining({
+      user_id: "user-1",
+      recipient: "Saeed",
+      task_id: null,
+      person_id: "saeed",
+    }));
+    expect(deliverTaskMessageFn).toHaveBeenCalledTimes(1);
+  });
+
   it("blocks non-consented recipients before message creation or send", async () => {
     const createMessageFn = vi.fn();
     const deliverTaskMessageFn = vi.fn();

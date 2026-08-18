@@ -66,6 +66,7 @@ const {
   answerHostingOperationRecall,
   buildDeterministicGuestPreparationTasks,
   buildHostingEventBrief,
+  buildOperationalPlanFromOutcome,
   detectHouseholdOutcome,
   evaluateHostingPlanningGate,
   executeProposedPlan,
@@ -73,6 +74,7 @@ const {
   hasLeadingConfirmationLanguage,
   hasOperatingAuthority,
   isConfirmation,
+  isAutonomousHouseholdAssigneeEligible,
   isRejection,
   isStatusQuestion,
   isVerifiedWorkerConfirmation,
@@ -660,6 +662,153 @@ describe("guest event planning — safety rules", () => {
       expect(bundlesEverything).toBe(false);
     }
     expect(new Set(tasks.map((t) => t.personName)).size).toBe(tasks.length);
+  });
+});
+
+describe("autonomous hosting person eligibility — Saeed production regression", () => {
+  const HOSTING = "I have four guests coming for afternoon tea tomorrow, handle it.";
+  const visiblePeople = () => [
+    person({ id: "christopher", name: "Christopher", role: "Cook" }),
+    person({
+      id: "saeed",
+      name: "Saeed",
+      role: "Brother",
+      relationship: "Sana's brother",
+      is_family: true,
+      notes: "Respectful direct communication. Previously discussed household matters.",
+    }),
+    person({ id: "loulya", name: "Loulya", role: "Daughter", is_family: true }),
+    person({ id: "jewel", name: "Jewel", role: "Niece", is_family: true }),
+    person({ id: "eren", name: "Eren", role: "Family Friend" }),
+    person({ id: "sana", name: "Sana", role: "Boss" }),
+  ];
+
+  it("exposes only eligible staff to planning and ignores a model-proposed family member", async () => {
+    mocks.callAnthropicProxy.mockResolvedValueOnce(new Response(JSON.stringify({
+      content: [{
+        type: "text",
+        text: JSON.stringify({
+          tasks: [
+            { person_name: "Christopher", message: "Prepare afternoon tea." },
+            { person_name: "Saeed", message: "Coordinate the household team." },
+          ],
+          proposal_speech: "Christopher will prepare tea and Saeed will coordinate. Shall I send it?",
+        }),
+      }],
+    }), { status: 200 }));
+
+    const plan = await buildOperationalPlanFromOutcome(HOSTING, visiblePeople());
+
+    const prompt = String(mocks.callAnthropicProxy.mock.calls[0][0].messages[0].content);
+    expect(prompt).toContain("Christopher (Cook)");
+    expect(prompt).not.toMatch(/Saeed|Brother|Loulya|Jewel|Eren|Family Friend|Sana \(Boss\)/);
+    expect(plan?.tasks.map((task) => task.personName)).toEqual(["Christopher"]);
+    expect(plan?.proposalSpeech).not.toMatch(/Saeed|brother/i);
+  });
+
+  it("does not turn communication history or notes into staff eligibility", () => {
+    const saeed = visiblePeople().find((candidate) => candidate.name === "Saeed")!;
+    expect(saeed.notes).toMatch(/communication|household/i);
+    expect(isAutonomousHouseholdAssigneeEligible(saeed)).toBe(false);
+  });
+
+  it("rejects a planner-proposed family assignment before persistence or external delivery", async () => {
+    const plan = {
+      outcomeType: "guest_arrival" as const,
+      sourceText: HOSTING,
+      createdAt: Date.now(),
+      proposalSpeech: "Plan.",
+      tasks: [
+        { personId: "christopher", personName: "Christopher", message: "Prepare afternoon tea." },
+        { personId: "saeed", personName: "Saeed", message: "Coordinate the household team." },
+      ],
+    };
+
+    const result = await executeProposedPlan(plan, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: visiblePeople(),
+    });
+
+    expect(result).toMatch(/didn't send.*Saeed.*not eligible/i);
+    expect(mocks.savePending).not.toHaveBeenCalled();
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+    expect(mocks.sendDirectMessageRecord).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the proposed person belongs to another account", async () => {
+    const crossAccountChristopher = person({
+      id: "christopher",
+      name: "Christopher",
+      role: "Cook",
+      user_id: "user-2",
+    });
+    const result = await executeProposedPlan({
+      outcomeType: "guest_arrival",
+      sourceText: HOSTING,
+      createdAt: Date.now(),
+      proposalSpeech: "Plan.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Prepare tea." }],
+    }, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: [crossAccountChristopher],
+    });
+
+    expect(result).toMatch(/not eligible/i);
+    expect(mocks.savePending).not.toHaveBeenCalled();
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps phone-less staff planning-eligible while leaving WhatsApp reachability separate", () => {
+    const grace = person({
+      id: "grace",
+      name: "Grace",
+      role: "Household Coordinator",
+      relationship: "Household staff",
+      phone: null,
+      whatsapp_opted_in: false,
+    });
+    expect(isAutonomousHouseholdAssigneeEligible(grace, "user-1")).toBe(true);
+  });
+
+  it("removes a model-supplied greeting before the shared formatter can add the recipient greeting", async () => {
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item) => ({ id: "task-1", assigned_to: item.assignedTo })),
+      messages: items.map((item) => ({
+        id: "message-1",
+        task_id: "task-1",
+        recipient: item.assignedTo,
+        content: item.suggestedMessage,
+        confirmation_url: "https://ra7etbal.test/confirm?task=task-1",
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+    mocks.deliverTaskMessage.mockResolvedValueOnce({ success: true, channel: "whatsapp" });
+
+    await executeProposedPlan({
+      outcomeType: "guest_arrival",
+      sourceText: HOSTING,
+      createdAt: Date.now(),
+      proposalSpeech: "Plan.",
+      tasks: [{
+        personId: "christopher",
+        personName: "Christopher",
+        message: "Hi Christopher, Sana is hosting afternoon tea tomorrow. Please prepare the food.",
+      }],
+    }, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: [person({ id: "christopher", name: "Christopher", role: "Cook" })],
+    });
+
+    const saved = mocks.savePending.mock.calls[0][0] as ExtractedItem[];
+    expect(saved[0].description).toBe("Sana is hosting afternoon tea tomorrow. Please prepare the food.");
+    expect(saved[0].suggestedMessage).not.toMatch(/^Hi Christopher,\s*Hi Christopher/i);
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(1);
   });
 });
 
