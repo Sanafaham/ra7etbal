@@ -1,20 +1,20 @@
 {
   "$schema_note": "Carson Engineering Hardening Project — Phase 8. The durable known-good release ledger. Updated only through a normal protected PR, after carson-release-manifest.mjs's evaluateKnownGoodEligibility() reports eligible:true against real, freshly-gathered evidence (never fabricated or carried forward from an earlier release without re-verification). See scripts/carson-rollback-dry-run.mjs for how this file is used to compute a rollback target when no explicit --target is given.",
-  "sha": "bcff0b752920d62ddd6a4c5e3eb88c55203b5f38",
-  "vercel_deployment_id": "dpl_7Nt44BN2eVSuMrZirR9DMK4kAfvV",
+  "sha": "529ffe830b37dc1a4a5320ae278763b08bed9b76",
+  "vercel_deployment_id": "dpl_Fq9pfFL9Y4DoqthQEX9TbmRGqgMC",
   "vercel_project_id": "prj_f32jTzGmYS5m8pc2XU6E0Apw6Y1K",
   "production_alias": "www.ra7etbal.com",
-  "verified_at": "2026-08-15T13:29:01.398Z",
-  "previous_known_good_sha": "2dd6aad8e0fdc7b00048a088ef7377cd1d81c273",
+  "verified_at": "2026-08-18T21:59:41.064Z",
+  "previous_known_good_sha": "bcff0b752920d62ddd6a4c5e3eb88c55203b5f38",
   "migrations_since_previous": [
     {
-      "path": "20260815_carson_canary_least_privilege.sql",
+      "path": "20260816_google_oauth_states.sql",
       "classification": 2,
-      "reason": "rollback SQL exists and is exercised by a real CI workflow (20260815_carson_canary_least_privilege.rollback.sql)"
+      "reason": "rollback SQL exists and is exercised by a real CI workflow (20260816_google_oauth_states.rollback.sql)"
     }
   ],
   "canary_report": {
-    "deploymentSha": "bcff0b752920d62ddd6a4c5e3eb88c55203b5f38",
+    "deploymentSha": "529ffe830b37dc1a4a5320ae278763b08bed9b76",
     "ok": true,
     "checks": [
       { "name": "deployment_identity", "capability": "hosting_operations", "ok": true },
@@ -23,6 +23,6 @@
     ]
   },
   "human_acceptance_required": [],
-  "human_acceptance_note": "Empty because no capability with a genuine human-only acceptance boundary (see scripts/carson-production-canary.mjs's HUMAN_ONLY_BOUNDARIES) changed behavior in the releases folded into this SHA. A future release that DOES change one of those capabilities must list it here with completed:false until a real human/device acceptance test is recorded, and evaluateKnownGoodEligibility() will correctly refuse to mark that release known-good until then.",
-  "notes": "Third ledger entry — Release-Candidate Stabilization (2026-08-15), advanced from PR #270 (Phase 8 tooling) to PR #287 (Phase 9 closure), chaining previous_known_good_sha. Every commit in between is registry/script/docs-only except one production migration: 20260815_carson_canary_least_privilege.sql (the canary least-privilege redesign, PRs #276-#281), classified class 2 (tested-rollback) by scripts/carson-migration-classifier.mjs. All evidence above was gathered live against real production (Vercel deployment dpl_7Nt44BN2eVSuMrZirR9DMK4kAfvV, project prj_f32jTzGmYS5m8pc2XU6E0Apw6Y1K, GitHub Actions run 31887313570) after the GitHub VERCEL_TOKEN secret was replaced by Sana with a new, project-scoped, non-expiring token (the previous token began failing with HTTP 403 roughly 14 hours after configuration — investigated and traced to short-lived-token behavior, not a wrong value or wrong scope; Claude never created, held, or entered the replacement token itself, per the standing credential-handling rule). Run log scanned for plaintext credential leakage — none found; CANARY_RPC_TOKEN and CRON_SECRET were not touched. evaluateKnownGoodEligibility() confirmed eligible:true against this manifest."
+  "human_acceptance_note": "Empty because the only capability with a genuine human-only acceptance boundary (notifications_inbox_durable_lifecycle, see scripts/carson-production-canary.mjs's HUMAN_ONLY_BOUNDARIES) did not change behavior in any of the releases folded into this SHA. The Morning Brief / Night Sweep proactive-briefing changes (PRs #307-#310) are NOT a HUMAN_ONLY_BOUNDARIES entry in the existing eligibility contract — they are covered by automated protected-behavior tests, Impact-Aware CI, and RLS/golden-journey proof, all of which passed. Sana's separate genuine live acceptance of the Morning Brief and Night Sweep proactive opening remains outstanding on its own track and is tracked in RA7ETBAL_STATE.md — it is a product-acceptance question, distinct from this ledger's rollback-safety question, and this entry does not represent or imply that acceptance has occurred.",
+  "notes": "Fourth ledger entry — Rollback-baseline restoration (2026-08-18), advanced from PR #287 (Phase 9 closure) to PR #310 (automation-linked task relevance fix), chaining previous_known_good_sha. Advanced specifically because the prior entry (SHA bcff0b752920..., 2026-08-15) predated two closed PR series that must be part of the default rollback target: the Strix QUICK-scan security remediation series (PRs #298-#303 — /debug route auth, /api/anthropic auth, Google Calendar OAuth CSRF fix, stale CI-exclusion cleanup, /api/send-whatsapp-task auth + testMode bypass close, communication-vs-delegation outcome-tracking classifier) and the Chief-of-Staff Morning Brief / Night Sweep relevance-contract remediation (PRs #307-#310). Every commit between the two SHAs was reviewed; the only production migration in that range is 20260816_google_oauth_states.sql (PR #300), classified class 2 (tested-rollback) by scripts/carson-migration-classifier.mjs, confirmed live via that script's own CLI. Fresh canary evidence gathered by dispatching the existing carson-production-canary GitHub Actions workflow (workflow_dispatch, read-only by design) against this exact SHA — GitHub Actions run 32190533441, all 3 checks ok:true, canary_report.deploymentSha matches this entry's sha exactly. evaluateKnownGoodEligibility() confirmed eligible:true against this manifest (verified locally against the real, unmodified function — no eligibility rule weakened or bypassed). Run log scanned; no credential values reproduced in this file. This entry deliberately does NOT wait for Sana's pending Morning Brief / Night Sweep live acceptance — see human_acceptance_note above for why that is correct under the existing, unmodified eligibility contract."
 }
