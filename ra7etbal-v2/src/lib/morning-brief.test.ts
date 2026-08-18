@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 // Supabase client is ever used.
 vi.mock("./supabase", () => ({ supabase: {} }));
 
-const { taskLabel, buildCompletionPhrase, buildMorningBriefSpoken } = await import("./morning-brief");
+const { taskLabel, buildCompletionPhrase, buildMorningBriefSpoken, isMaterialWaitingItem } = await import("./morning-brief");
 
 import type { Task } from "../types/task";
 import type { AutomationDigest } from "./automation-context";
@@ -92,6 +92,58 @@ describe("taskLabel", () => {
   });
 });
 
+describe("isMaterialWaitingItem — consequence-based, not age-based", () => {
+  it("age alone does not qualify a waiting item, no matter how stale", () => {
+    const task = makeTask({
+      type: "delegation",
+      assigned_to: "Grace",
+      status: "pending",
+      created_at: "2020-01-01T00:00:00.000Z",
+    });
+    expect(isMaterialWaitingItem(task, NOW)).toBe(false);
+  });
+
+  it("escalation qualifies", () => {
+    const task = makeTask({ escalated_at: NOW.toISOString() });
+    expect(isMaterialWaitingItem(task, NOW)).toBe(true);
+  });
+
+  it("an overdue due_at qualifies", () => {
+    const task = makeTask({ due_at: new Date(NOW.getTime() - 1000).toISOString() });
+    expect(isMaterialWaitingItem(task, NOW)).toBe(true);
+  });
+
+  it("a due_at later today qualifies", () => {
+    const task = makeTask({ due_at: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString() });
+    expect(isMaterialWaitingItem(task, NOW)).toBe(true);
+  });
+
+  it("a due_at tomorrow does not qualify", () => {
+    const task = makeTask({ due_at: new Date(NOW.getTime() + 25 * 60 * 60 * 1000).toISOString() });
+    expect(isMaterialWaitingItem(task, NOW)).toBe(false);
+  });
+
+  it("quality_review_status 'uncertain' qualifies (owner decision required)", () => {
+    const task = makeTask({ quality_review_status: "uncertain" });
+    expect(isMaterialWaitingItem(task, NOW)).toBe(true);
+  });
+
+  it("quality_review_status 'substitute_review' qualifies (owner decision required)", () => {
+    const task = makeTask({ quality_review_status: "substitute_review" });
+    expect(isMaterialWaitingItem(task, NOW)).toBe(true);
+  });
+
+  it("quality_review_status 'correction_required' does not by itself qualify (operational, not an owner decision)", () => {
+    const task = makeTask({ quality_review_status: "correction_required" });
+    expect(isMaterialWaitingItem(task, NOW)).toBe(false);
+  });
+
+  it("no signal at all does not qualify", () => {
+    const task = makeTask({});
+    expect(isMaterialWaitingItem(task, NOW)).toBe(false);
+  });
+});
+
 describe("buildCompletionPhrase — natural outcome language", () => {
   it("'Clean the kitchen.' becomes a gerund outcome phrase, not a mislabeled category", () => {
     expect(buildCompletionPhrase("Clean the kitchen.")).toEqual({ text: "cleaning the kitchen", isGerund: true });
@@ -146,6 +198,57 @@ describe("buildMorningBriefSpoken — routine waiting items are excluded (Chief-
     });
     const spoken = buildMorningBriefSpoken([task], [], "Sana", NOW);
     expect(spoken).toContain("Grace still hasn't confirmed");
+  });
+
+  // Chief-of-Staff contract (2026-08-18, second pass): age alone is never
+  // sufficient relevance — a routine delegation that has simply sat for a
+  // while, with no escalation, deadline, or owner-decision signal, is not
+  // spoken merely because time passed.
+  it("a waiting item stale for many days with no other signal is NOT spoken", () => {
+    const task = makeTask({
+      type: "delegation",
+      assigned_to: "Grace",
+      status: "pending",
+      created_at: new Date(NOW.getTime() - 10 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+    const spoken = buildMorningBriefSpoken([task], [], "Sana", NOW);
+    expect(spoken).not.toMatch(/Grace/);
+  });
+
+  it("a waiting item that is overdue (due_at in the past) is spoken, regardless of age", () => {
+    const task = makeTask({
+      type: "delegation",
+      assigned_to: "Grace",
+      status: "pending",
+      created_at: new Date(NOW.getTime() - 60 * 60 * 1000).toISOString(),
+      due_at: new Date(NOW.getTime() - 30 * 60 * 1000).toISOString(),
+    });
+    const spoken = buildMorningBriefSpoken([task], [], "Sana", NOW);
+    expect(spoken).toContain("Grace needs to confirm");
+  });
+
+  it("a waiting item due later today is spoken", () => {
+    const task = makeTask({
+      type: "delegation",
+      assigned_to: "Grace",
+      status: "pending",
+      created_at: new Date(NOW.getTime() - 60 * 60 * 1000).toISOString(),
+      due_at: new Date(NOW.getTime() + 60 * 60 * 1000).toISOString(),
+    });
+    const spoken = buildMorningBriefSpoken([task], [], "Sana", NOW);
+    expect(spoken).toContain("Grace needs to confirm");
+  });
+
+  it("a waiting item flagged for owner review (quality_review_status) is spoken", () => {
+    const task = makeTask({
+      type: "delegation",
+      assigned_to: "Grace",
+      status: "pending",
+      created_at: new Date(NOW.getTime() - 60 * 60 * 1000).toISOString(),
+      quality_review_status: "substitute_review",
+    });
+    const spoken = buildMorningBriefSpoken([task], [], "Sana", NOW);
+    expect(spoken).toContain("needs your review");
   });
 });
 

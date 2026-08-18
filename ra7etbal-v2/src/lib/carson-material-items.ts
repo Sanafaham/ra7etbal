@@ -23,7 +23,7 @@ import type { CalendarEvent } from "./calendar";
 import type { AutomationDigest } from "./automation-context";
 import type { OpenStaffEscalation } from "../types/staff-message";
 import { isReminderOverdue } from "./reminder-time";
-import { buildMorningBrief } from "./morning-brief";
+import { buildMorningBrief, isMaterialWaitingItem } from "./morning-brief";
 import { MORNING_START_HOUR } from "./night-sweep";
 
 export interface MaterialItem {
@@ -155,8 +155,6 @@ function cap(s: string | null | undefined): string {
 
 // ── Morning Brief ────────────────────────────────────────────────────────
 
-const WAITING_RISK_MS = 72 * 60 * 60 * 1000;
-
 export function deriveMorningBriefMaterialItems(
   tasks: Task[],
   people: Person[],
@@ -196,8 +194,7 @@ export function deriveMorningBriefMaterialItems(
   // waiting item is never spoken (see morning-brief.ts's slotWaiting), so it
   // must not leak into follow-up sessions via this "new/changed" path either.
   for (const t of brief.waitingOn) {
-    const isRisk = t.escalated_at != null || now.getTime() - new Date(t.created_at).getTime() >= WAITING_RISK_MS;
-    if (!isRisk) continue;
+    if (!isMaterialWaitingItem(t, now)) continue;
     const who = cap(t.assigned_to);
     items.push({
       id: t.id,
@@ -290,8 +287,7 @@ export function deriveNightSweepMaterialItems(
   // waiting item is never spoken (see night-sweep.ts's section3 gating), so
   // it must not leak into follow-up sessions via this "new/changed" path.
   for (const t of waitingOn) {
-    const isRisk = t.escalated_at != null || now.getTime() - new Date(t.created_at).getTime() >= WAITING_RISK_MS;
-    if (!isRisk) continue;
+    if (!isMaterialWaitingItem(t, now)) continue;
     const who = cap(t.assigned_to);
     items.push({
       id: t.id,

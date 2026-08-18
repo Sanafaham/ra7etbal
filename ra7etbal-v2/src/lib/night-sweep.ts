@@ -6,8 +6,9 @@ import { formatReminderDue, isReminderOverdue } from "./reminder-time";
 import type { Task } from "../types/task";
 import type { AutomationDigest } from "./automation-context";
 import { formatAutomationForNight } from "./automation-context";
-import { taskLabel, buildCompletionPhrase } from "./morning-brief";
+import { taskLabel, buildCompletionPhrase, isMaterialWaitingItem } from "./morning-brief";
 import type { OpenStaffEscalation } from "../types/staff-message";
+import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
 
 /** Hour (0–23) at which Night Sweep replaces Today's Snapshot. */
 export const EVENING_HOUR = 20;
@@ -510,7 +511,6 @@ export function buildNightSweepSpoken(
   const _now     = now ?? new Date();
   const nowMs    = _now.getTime();
   const MS_DAY   = 24 * 60 * 60 * 1000;
-  const MS_72H   = 72 * 60 * 60 * 1000;
   const _calEvs  = calendarEvents ?? [];
   const name     = displayName?.trim() || null;
   // This builder only ever runs for Night Sweep-kind sessions (App.tsx's
@@ -577,29 +577,30 @@ export function buildNightSweepSpoken(
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
 
-  // Only briefing-worthy when there's a reason to care tonight: escalated,
-  // or stale beyond the existing 3-day risk threshold. A routine, fresh
-  // waiting item is not spoken merely because it's technically still open
-  // (Chief-of-Staff contract — "do not list routine pending items merely
-  // because they remain technically open").
-  const escalatedItem  = waitingOn.find(t => t.escalated_at != null);
-  const stale72Item    = waitingOn.find(t => nowMs - new Date(t.created_at).getTime() >= MS_72H);
-  const riskItem       = escalatedItem ?? stale72Item ?? null;
+  // Only briefing-worthy when it's materially useful right now — escalated,
+  // requires an owner decision, or has an overdue/due-today deadline. Age
+  // alone is never sufficient (Chief-of-Staff contract). See
+  // isMaterialWaitingItem()'s doc comment (morning-brief.ts) for the exact
+  // signals used — shared with Morning Brief so both agree on what matters.
+  const riskItem = waitingOn.find(t => isMaterialWaitingItem(t, _now)) ?? null;
 
   let section3 = "";
   if (riskItem) {
     const who  = nsCap(riskItem.assigned_to);
     const what = taskLabel(riskItem.description);
-    const days = Math.floor((nowMs - new Date(riskItem.created_at).getTime()) / MS_DAY);
 
     if (riskItem.escalated_at != null) {
       section3 = who && what
         ? `${who} still hasn't confirmed the ${what}.`
         : who ? `${who} hasn't responded to an open item.` : "One item hasn't received a response.";
+    } else if (isQualityOwnerReviewStatus(riskItem.quality_review_status)) {
+      section3 = who && what
+        ? `${who}'s ${what} needs your review.`
+        : "One item needs your review.";
     } else {
       section3 = who && what
-        ? `${who} hasn't confirmed the ${what} in ${days} day${days === 1 ? "" : "s"}.`
-        : who ? `${who} has had an open item for ${days} days.` : `One item has been waiting for ${days} days.`;
+        ? `${who} needs to confirm the ${what} today.`
+        : "One item needs confirmation today.";
     }
   }
 

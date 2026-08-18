@@ -102,15 +102,47 @@ describe("buildNightSweepSpoken — routine waiting items are excluded (Chief-of
     expect(spoken).toContain("Grace still hasn't confirmed");
   });
 
-  it("a waiting item stale beyond 3 days is spoken even without escalation", () => {
+  // Chief-of-Staff contract (2026-08-18, second pass): age alone is never
+  // sufficient relevance — a routine delegation that has simply sat for a
+  // while, with no escalation, deadline, or owner-decision signal, is not
+  // spoken merely because time passed. (This replaces an earlier version
+  // of this contract that used a 3-day-age gate as a stand-in for
+  // importance — explicitly rejected as still age-based, not
+  // consequence-based.)
+  it("a waiting item stale for many days with no other signal is NOT spoken", () => {
     const task = makeTask({
       type: "delegation",
       assigned_to: "Grace",
       status: "pending",
-      created_at: new Date(NOW.getTime() - 4 * 24 * 60 * 60 * 1000).toISOString(),
+      created_at: new Date(NOW.getTime() - 10 * 24 * 60 * 60 * 1000).toISOString(),
     });
     const spoken = buildNightSweepSpoken([task], "Sana", NOW);
-    expect(spoken).toMatch(/Grace hasn't confirmed .* in 4 days/);
+    expect(spoken).not.toMatch(/Grace/);
+    expect(spoken).toContain("Everything else is set.");
+  });
+
+  it("a waiting item that is overdue (due_at in the past) is spoken, regardless of age", () => {
+    const task = makeTask({
+      type: "delegation",
+      assigned_to: "Grace",
+      status: "pending",
+      created_at: new Date(NOW.getTime() - 60 * 60 * 1000).toISOString(),
+      due_at: new Date(NOW.getTime() - 30 * 60 * 1000).toISOString(),
+    });
+    const spoken = buildNightSweepSpoken([task], "Sana", NOW);
+    expect(spoken).toContain("Grace needs to confirm");
+  });
+
+  it("a waiting item flagged for owner review (quality_review_status) is spoken", () => {
+    const task = makeTask({
+      type: "delegation",
+      assigned_to: "Grace",
+      status: "pending",
+      created_at: new Date(NOW.getTime() - 60 * 60 * 1000).toISOString(),
+      quality_review_status: "uncertain",
+    });
+    const spoken = buildNightSweepSpoken([task], "Sana", NOW);
+    expect(spoken).toContain("needs your review");
   });
 });
 

@@ -25,6 +25,40 @@ import { classifyCalendarEvent, formatEventEndTime } from "./calendar";
 import type { AutomationDigest } from "./automation-context";
 import { formatAutomationForMorning } from "./automation-context";
 import type { OpenStaffEscalation } from "../types/staff-message";
+import { isQualityOwnerReviewStatus } from "./quality-lifecycle";
+
+/**
+ * Whether a Waiting On Others item (delegation/followup) is materially
+ * useful for the owner to hear about right now — NOT "has it existed for
+ * N hours." Age alone is never sufficient relevance (Chief-of-Staff
+ * contract, 2026-08-18): a routine, low-consequence delegation must not
+ * become briefing-worthy merely because time passed.
+ *
+ * Uses only signals the data model actually and reliably represents:
+ *   - escalated_at: the app's own existing 20-minute escalation signal.
+ *   - quality_review_status in {uncertain, substitute_review}: the same
+ *     signal daily-brief.ts's isWaitingInterventionTask() already uses to
+ *     pull a task OUT of Waiting and into Needs You — a genuine,
+ *     pre-existing "requires owner decision" fact, not invented here.
+ *   - due_at, when present and overdue or due today: the extraction
+ *     pipeline can populate a due date on a delegation/followup (not only
+ *     reminders), and an overdue/due-today deadline is a real consequence
+ *     signal already used elsewhere for reminders.
+ *
+ * Deliberately does NOT use elapsed time since creation — no substitute
+ * threshold was invented for the removed 3-day rule.
+ */
+export function isMaterialWaitingItem(task: Task, now: Date): boolean {
+  if (task.escalated_at != null) return true;
+  if (isQualityOwnerReviewStatus(task.quality_review_status)) return true;
+  if (task.due_at) {
+    const due = new Date(task.due_at);
+    if (!Number.isNaN(due.getTime()) && (due.getTime() <= now.getTime() || isSameLocalDay(due, now))) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -210,8 +244,6 @@ export function buildMorningBriefSpoken(
   const name   = displayName?.trim() || null;
   const hour   = now.getHours();
   const nowMs  = now.getTime();
-  const MS_DAY = 24 * 60 * 60 * 1000;
-  const MS_72H = 72 * 60 * 60 * 1000;
   const greeting =
     hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
@@ -319,22 +351,19 @@ export function buildMorningBriefSpoken(
   }
 
   // ── WAITING ON OTHERS ─────────────────────────────────────────────────────
-  // Only briefing-worthy when there's a reason to care today: escalated, or
-  // stale beyond the existing 3-day risk threshold. A routine, fresh waiting
-  // item is not spoken merely because it exists (Chief-of-Staff contract —
-  // "do not recite routine waiting items simply because they exist").
+  // Only briefing-worthy when it's materially useful right now — escalated,
+  // requires an owner decision, or has an overdue/due-today deadline. Age
+  // alone is never sufficient (Chief-of-Staff contract — a routine, fresh
+  // waiting item is not spoken merely because it exists, and a routine item
+  // that has simply sat for a while is not spoken merely because time
+  // passed either). See isMaterialWaitingItem()'s doc comment for the exact
+  // signals used.
   let slotWaiting = "";
-  const escalatedItem = brief.waitingOn.find(t => t.escalated_at != null);
-  const stale72Item   = brief.waitingOn.find(
-    t => nowMs - new Date(t.created_at).getTime() >= MS_72H,
-  );
-  const topWaiter = escalatedItem ?? stale72Item ?? null;
+  const topWaiter = brief.waitingOn.find(t => isMaterialWaitingItem(t, now)) ?? null;
 
   if (topWaiter) {
-    const who   = cap(topWaiter.assigned_to);
-    const what  = cleanDesc(topWaiter.description);
-    const ageMs = nowMs - new Date(topWaiter.created_at).getTime();
-    const days  = Math.floor(ageMs / MS_DAY);
+    const who  = cap(topWaiter.assigned_to);
+    const what = cleanDesc(topWaiter.description);
 
     if (topWaiter.escalated_at != null) {
       slotWaiting = who && what
@@ -342,12 +371,14 @@ export function buildMorningBriefSpoken(
         : who
           ? `${who} hasn't responded to an open item.`
           : "One item hasn't received a response.";
+    } else if (isQualityOwnerReviewStatus(topWaiter.quality_review_status)) {
+      slotWaiting = who && what
+        ? `${who}'s ${what} needs your review.`
+        : "One item needs your review.";
     } else {
       slotWaiting = who && what
-        ? `${who} hasn't confirmed the ${what} in ${days} day${days === 1 ? "" : "s"}.`
-        : who
-          ? `${who} has had an open item for ${days} days.`
-          : `One item has been waiting for ${days} days.`;
+        ? `${who} needs to confirm the ${what} today.`
+        : "One item needs confirmation today.";
     }
   }
 
