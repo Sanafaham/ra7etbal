@@ -109,6 +109,31 @@ describe("deriveMorningBriefMaterialItems — PR #24 recurring-reminder inclusio
   });
 });
 
+describe("opening waiting-state presentation", () => {
+  it("reports the real outstanding recipient without reciting the stored staff instruction", () => {
+    const hostingTask = makeTask({
+      assigned_to: "Christopher",
+      type: "delegation",
+      needs_follow_up: true,
+      escalated_at: "2026-08-17T13:00:00.000Z",
+      description:
+        "Christopher, we have 6 guests for dinner tomorrow at 8:00 PM. Please plan and prepare a full dinner menu with NO shellfish.",
+    });
+
+    const morning = deriveMorningBriefMaterialItems([hostingTask], [], emptyDigest(), [], NOW);
+    const night = deriveNightSweepMaterialItems([hostingTask], emptyDigest(), [], NOW);
+
+    expect(morning.find((item) => item.id === hostingTask.id)?.text).toBe(
+      "Christopher still hasn't confirmed.",
+    );
+    expect(night.find((item) => item.id === hostingTask.id)?.text).toBe(
+      "Christopher still hasn't confirmed.",
+    );
+    expect(JSON.stringify([...morning, ...night])).not.toContain("6 guests");
+    expect(JSON.stringify([...morning, ...night])).not.toContain("NO shellfish");
+  });
+});
+
 describe("resolveOpeningMaterialState", () => {
   const storage = () => new FakeStorage();
   const todayStr = "2026-08-17";

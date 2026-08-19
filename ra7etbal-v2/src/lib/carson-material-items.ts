@@ -201,11 +201,11 @@ export function deriveMorningBriefMaterialItems(
       signature: `waiting:${t.escalated_at ?? "stale"}`,
       text: t.escalated_at
         ? who
-          ? `${who} still hasn't confirmed — ${shortDesc(t.description)}.`
-          : `One item hasn't received a response — ${shortDesc(t.description)}.`
+          ? `${who} still hasn't confirmed.`
+          : "One item hasn't received a response."
         : who
-          ? `${who} still hasn't confirmed after several days — ${shortDesc(t.description)}.`
-          : `One item has been waiting for several days — ${shortDesc(t.description)}.`,
+          ? `${who} still hasn't confirmed after several days.`
+          : "One item has been waiting for several days.",
     });
   }
 
@@ -294,11 +294,11 @@ export function deriveNightSweepMaterialItems(
       signature: `waiting:${t.escalated_at ?? "stale"}`,
       text: t.escalated_at
         ? who
-          ? `${who} still hasn't confirmed — ${shortDesc(t.description)}.`
-          : `One item hasn't received a response — ${shortDesc(t.description)}.`
+          ? `${who} still hasn't confirmed.`
+          : "One item hasn't received a response."
         : who
-          ? `${who} still hasn't confirmed after several days — ${shortDesc(t.description)}.`
-          : `One item has been waiting for several days — ${shortDesc(t.description)}.`,
+          ? `${who} still hasn't confirmed after several days.`
+          : "One item has been waiting for several days.",
     });
   }
 
