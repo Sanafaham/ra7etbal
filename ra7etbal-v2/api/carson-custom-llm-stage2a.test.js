@@ -82,6 +82,20 @@ describe("Stage 2A Custom LLM boundary", () => {
     expect(res.chunks).toEqual([]);
   });
 
+  it("fails a malformed request with no owner turn without streaming or claiming success", async () => {
+    configure();
+    const { token } = createSessionBinding({ accountId: "account-a" });
+    const res = response();
+    await createStage2aHandler()(request({
+      stream: true,
+      messages: [{ role: "system", content: "no owner turn" }],
+      elevenlabs_extra_body: { carson_stage2a_binding: token },
+    }), res);
+    expect(res.statusCode).toBe(400);
+    expect(res.payload).toEqual({ error: "No authoritative owner turn" });
+    expect(res.chunks).toEqual([]);
+  });
+
   it("streams exactly one fixed OpenAI-compatible answer with no model or tool call", async () => {
     vi.useFakeTimers();
     configure();
