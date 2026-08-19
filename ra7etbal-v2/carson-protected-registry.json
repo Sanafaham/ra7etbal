@@ -933,11 +933,11 @@
       ],
       "files_functions": [
         "api/carson-turn.js:createCarsonTurnHandler / interpretReadIntentWithClaude / readCalendarThroughExistingHandler",
-        "api/_carson-read-turn.js:createReadOnlyTurnCoordinator / validateStructuredIntent / buildCanonicalCalendarResult",
+        "api/_carson-read-turn.js:createReadOnlyTurnCoordinator / validateStructuredIntent / normalizeCalendarEvidence / renderCalendarOwnerResult",
         "src/lib/carson-turn-client.ts:dispatchCarsonReadTurn"
       ],
       "shared_dependencies": [
-        "api/google-calendar.js (existing account-authenticated read handler; unchanged)"
+        "api/google-calendar.js (existing account-authenticated read handler; normal callers remain functionally unchanged, while Stage 1 passes suppressCredentialCleanup=true so its read-only proof cannot clear revoked credentials)"
       ],
       "db": { "tables": [], "rpcs": [], "migrations": [] },
       "external_boundaries": [
@@ -958,7 +958,7 @@
       "db_contract_tests": [],
       "production_canary_required": false,
       "rollback_risk": "low — this Stage 1 path is read-only, additive, and not yet wired into the live ElevenLabs widget; removing its new route/helper/client module restores the prior behavior without data rollback",
-      "verification_status": "Stage 1 code-only proof registered 2026-08-19. It exercises the composed API boundary with injected auth, strict intent, and the unchanged existing Calendar read handler adapter. No database migration, live voice cutover, write capability, deployment, or production acceptance is part of this PR.",
+      "verification_status": "Stage 1 code-only proof registered 2026-08-19. Its highest test exercises the composed API boundary through the real Supabase-authentication code, strict Claude intent code, Calendar adapter, and real existing googleCalendarHandler, with only external Supabase/Anthropic/Google HTTP responses mocked. The Calendar adapter supplies the real GET path's status/json/setHeader response contract. No database migration, live voice cutover, write capability, deployment, or production acceptance is part of this PR.",
       "unresolved": [
         "The live ElevenLabs widget is deliberately not wired to this route in Stage 1, so production voice traffic remains on the existing path until a separately approved cutover.",
         "Deduplication is bounded and process-local because Stage 1 is read-only. It prevents duplicate calls within one warm instance, including concurrent duplicate events, but is not durable across instances and is explicitly insufficient for future consequential actions.",

@@ -63,7 +63,7 @@ export async function readCalendarThroughExistingHandler({ authorization, range 
   const res = {
     status(code) { statusCode = code; return this; },
     json(value) { payload = value; return this; },
-    redirect() { throw new Error("Calendar read unexpectedly redirected."); },
+    setHeader() { return this; },
   };
   await handler(req, res);
   if (statusCode < 200 || statusCode >= 300) throw new Error("Calendar read failed.");

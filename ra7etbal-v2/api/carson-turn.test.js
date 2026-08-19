@@ -5,11 +5,13 @@ import {
   readCalendarThroughExistingHandler,
 } from "./carson-turn.js";
 import { shouldClearRevokedCalendarCredentials } from "./google-calendar.js";
+import googleCalendarHandler from "./google-calendar.js";
 
 const ORIGINAL_ENV = { ...process.env };
 afterEach(() => {
   process.env = { ...ORIGINAL_ENV };
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function req(body = {}, headers = { authorization: "Bearer session-a" }) {
@@ -23,6 +25,47 @@ function res() {
     status(code) { this.statusCode = code; return this; },
     json(value) { this.payload = value; return this; },
   };
+}
+
+function httpResponse(status, payload) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  };
+}
+
+function configureRealBoundaryFetch({ profileToken = "refresh-token", tokenStatus = 200, events = [] } = {}) {
+  process.env.ANTHROPIC_API_KEY = "test-anthropic-key";
+  process.env.SUPABASE_URL = "https://supabase.test";
+  process.env.SUPABASE_ANON_KEY = "anon-key";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = "service-key";
+  process.env.GOOGLE_CLIENT_ID = "google-client";
+  process.env.GOOGLE_CLIENT_SECRET = "google-secret";
+  const requests = [];
+  const fetchMock = vi.fn(async (url, options = {}) => {
+    const href = String(url);
+    const method = options.method ?? "GET";
+    requests.push({ href, method });
+    if (href === "https://api.anthropic.com/v1/messages") {
+      return httpResponse(200, { content: [{ type: "tool_use", name: "select_read_capability", input: { capability: "calendar_read", range: "tomorrow" } }] });
+    }
+    if (href === "https://supabase.test/auth/v1/user") return httpResponse(200, { id: "account-a" });
+    if (href.startsWith("https://supabase.test/rest/v1/profiles") && method === "GET") {
+      return httpResponse(200, profileToken ? [{ google_refresh_token: profileToken }] : [{}]);
+    }
+    if (href === "https://oauth2.googleapis.com/token") {
+      return tokenStatus === 200 ? httpResponse(200, { access_token: "access-token" }) : httpResponse(tokenStatus, { error: "invalid_grant" });
+    }
+    if (href.startsWith("https://www.googleapis.com/calendar/v3/calendars/primary/events?")) {
+      return httpResponse(200, { items: events });
+    }
+    if (href.startsWith("https://supabase.test/rest/v1/profiles") && method === "PATCH") return httpResponse(204, null);
+    throw new Error(`Unexpected external request: ${method} ${href}`);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { fetchMock, requests };
 }
 
 const TURN = {
@@ -166,5 +209,82 @@ describe("production-shaped Carson read turn", () => {
     expect(response.payload).toMatchObject({ handled: false, code: "ownership_collision" });
     expect(interpretIntent).not.toHaveBeenCalled();
     expect(readCalendar).not.toHaveBeenCalled();
+  });
+});
+
+describe("production-shaped Carson turn through the real Calendar handler", () => {
+  it("returns canonical evidence for a connected calendar without any write boundary", async () => {
+    const { requests } = configureRealBoundaryFetch({
+      events: [{
+        id: "evt-1",
+        summary: "Dentist",
+        start: { dateTime: "2026-08-20T10:00:00+03:00" },
+        end: { dateTime: "2026-08-20T11:00:00+03:00" },
+      }],
+    });
+    const handler = createCarsonTurnHandler({ dedupStore: new Map() });
+    const response = res();
+
+    await handler(req(TURN), response);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.payload).toMatchObject({
+      handled: true,
+      capability: "calendar_read",
+      ownerResult: "Tomorrow: Dentist.",
+      evidence: {
+        code: "calendar_read_succeeded",
+        events: [{ id: "evt-1", title: "Dentist" }],
+      },
+    });
+    expect(requests.filter(({ href }) => href === "https://supabase.test/auth/v1/user")).toHaveLength(2);
+    expect(requests.some(({ href }) => href.startsWith("https://www.googleapis.com/calendar/v3/calendars/primary/events?"))).toBe(true);
+    expect(requests.every(({ method }) => method === "GET" || method === "POST")).toBe(true);
+  });
+
+  it("returns the canonical disconnected result through the real Calendar handler without mutation", async () => {
+    const { requests } = configureRealBoundaryFetch({ profileToken: null });
+    const handler = createCarsonTurnHandler({ dedupStore: new Map() });
+    const response = res();
+
+    await handler(req({ ...TURN, providerEventId: "eleven-event-disconnected" }), response);
+
+    expect(response.statusCode).toBe(502);
+    expect(response.payload).toMatchObject({
+      handled: true,
+      code: "calendar_not_connected",
+      ownerResult: "I couldn't read your calendar. Please reconnect it in Settings.",
+      evidence: { connected: false, events: [] },
+    });
+    expect(requests.some(({ method }) => method === "PATCH")).toBe(false);
+  });
+
+  it("runs the real revoked-token path without Stage 1 credential cleanup, while preserving ordinary cleanup", async () => {
+    const stageOne = configureRealBoundaryFetch({ tokenStatus: 401 });
+    const handler = createCarsonTurnHandler({ dedupStore: new Map() });
+    const response = res();
+
+    await handler(req({ ...TURN, providerEventId: "eleven-event-revoked" }), response);
+
+    expect(response.statusCode).toBe(502);
+    expect(response.payload).toMatchObject({
+      handled: true,
+      code: "calendar_reconnect_required",
+      ownerResult: "I couldn't read your calendar. Please reconnect it in Settings.",
+    });
+    expect(stageOne.requests.some(({ method }) => method === "PATCH")).toBe(false);
+
+    const ordinary = configureRealBoundaryFetch({ tokenStatus: 401 });
+    const calendarResponse = {
+      statusCode: 200,
+      payload: null,
+      headers: {},
+      status(code) { this.statusCode = code; return this; },
+      json(value) { this.payload = value; return this; },
+      setHeader(name, value) { this.headers[name] = value; return this; },
+    };
+    await googleCalendarHandler({ method: "GET", query: { range: "tomorrow" }, headers: { authorization: "Bearer session-a" } }, calendarResponse);
+    expect(ordinary.requests.filter(({ method }) => method === "PATCH")).toHaveLength(1);
+    expect(calendarResponse.payload).toMatchObject({ connected: false, revoked: true });
   });
 });
