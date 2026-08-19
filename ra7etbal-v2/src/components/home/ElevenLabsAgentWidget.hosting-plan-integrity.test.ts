@@ -136,3 +136,40 @@ describe("ElevenLabsAgentWidget — hosting plan execution truthfulness (Guard D
     expect(block).not.toMatch(/outcome:\s*"failure"/);
   });
 });
+
+describe("ElevenLabsAgentWidget — canonical consequential owner result", () => {
+  it("binds each fresh owner transcript to a new operation and clears the prior result", () => {
+    expect(SOURCE).toContain("const turnOperationId = crypto.randomUUID();");
+    expect(SOURCE).toContain("currentOwnerTurnOperationIdRef.current = turnOperationId;");
+    expect(SOURCE).toContain("canonicalConsequentialResultRef.current = null;");
+  });
+
+  it("renders the bound canonical result ahead of the independent agent reply", () => {
+    const agentBlock = blockBetween(
+      '} else if (role === "agent") {',
+      "if (requestedChannel === \"text\") {",
+    );
+    expect(agentBlock).toContain("resolveConsequentialOwnerMessage(");
+    expect(agentBlock).toContain("? consequentialDisplayMessage");
+    expect(agentBlock.indexOf("resolveConsequentialOwnerMessage(")).toBeLessThan(
+      agentBlock.indexOf("setLastCarsonMessage(finalDisplayMessage)"),
+    );
+  });
+
+  it("records hosting clarification, proposal, execution, and cancellation with the hosting operation id", () => {
+    expect(SOURCE).toContain('kind: "clarification"');
+    expect(SOURCE).toContain('kind: "proposal"');
+    expect(SOURCE).toContain('kind: "executed"');
+    expect(SOURCE).toContain('kind: "cancelled"');
+    expect(SOURCE).toContain("domainOperationId: operationTurn.draft.operationId");
+    expect(SOURCE).toContain("domainOperationId: plan.dbId ?? null");
+    expect(SOURCE).toContain("domainOperationId: activePlan.dbId ?? null");
+  });
+
+  it("has no transcript-inferred or shutdown-time dinner execution authority", () => {
+    expect(SOURCE).not.toContain("maybeSendImpliedDinnerDelegation");
+    expect(SOURCE).not.toContain("extractDinnerPreparationRequest");
+    expect(SOURCE).not.toContain("findDinnerOwner");
+    expect(SOURCE).not.toContain("hasDinnerPreparationDelegation");
+  });
+});

@@ -74,7 +74,7 @@ describe("ElevenLabsAgentWidget — iPhone PWA audio diagnostics", () => {
   it("copies a support packet with the versions and commits already tried", () => {
     const copyBlock = blockBetween(
       "const copyAudioDiagnosticsPacket = useCallback(async () => {",
-      "const maybeSendImpliedDinnerDelegation = useCallback(",
+      "const savePeopleMemoryFromTranscript = useCallback(",
     );
     expect(copyBlock).toContain('productionUrl: "https://www.ra7etbal.com"');
     expect(copyBlock).toContain('"@elevenlabs/react": "1.9.0"');

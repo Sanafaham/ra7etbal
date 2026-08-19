@@ -123,6 +123,12 @@ import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
+import {
+  createCanonicalConsequentialResult,
+  resolveConsequentialOwnerMessage,
+  type CanonicalConsequentialKind,
+  type CanonicalConsequentialResult,
+} from "../../lib/carson-consequential-result";
 import { classifyTypedExecutionRequest } from "../../lib/typed-advisory-redirect";
 import { shouldForwardAttachedImage } from "../../lib/image-forwarding-guard";
 import {
@@ -801,42 +807,6 @@ function extractDurablePersonMemories(
 
 // mergePersonNotes is imported from ../../lib/people-behavior
 
-function extractDinnerPreparationRequest(sourceText: string): { timeLabel: string; taskText: string; messageText: string } | null {
-  const match = /\bdinner\s+(?:is|starts|will be|begins)\s+(?:at\s+)?(?<time>(?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:am|pm|a\.m\.|p\.m\.)?)\b/i.exec(
-    sourceText,
-  );
-  const rawTime = match?.groups?.time?.trim();
-  if (!rawTime) return null;
-
-  const timeLabel = rawTime
-    .replace(/\s+/g, " ")
-    .replace(/\ba\.m\.\b/i, "AM")
-    .replace(/\bp\.m\.\b/i, "PM")
-    .replace(/\bam\b/i, "AM")
-    .replace(/\bpm\b/i, "PM")
-    .trim();
-
-  return {
-    timeLabel,
-    taskText: `Prepare dinner by ${timeLabel}.`,
-    messageText: `Can you please prepare dinner by ${timeLabel}?`,
-  };
-}
-
-function hasDinnerPreparationDelegation(records: SentDelegationRecord[]): boolean {
-  return records.some((record) => {
-    const haystack = `${record.taskText} ${record.messageText}`.toLowerCase();
-    return (
-      /\bdinner\b/.test(haystack) &&
-      /\b(prepare|prep|cook|make|ready|serve|have)\b/.test(haystack)
-    );
-  });
-}
-
-function findDinnerOwner(people: Person[]): Person | null {
-  return people.find((person) => /\b(cook|chef|kitchen)\b/i.test(person.role)) ?? null;
-}
-
 // ---------------------------------------------------------------------------
 // Smart follow-up helpers
 // ---------------------------------------------------------------------------
@@ -1410,6 +1380,32 @@ export default function ElevenLabsAgentWidget({
    *  onMessage prefer the tool's own result over a contradictory agent message. */
   const lastDirectToolSuccessRef = useRef<DirectToolSuccessResult | null>(null);
 
+  /** The current owner turn remains stable until the next user transcript.
+   *  Unlike activeUserRoutingContextRef it is not cleared when an agent event
+   *  arrives, because that event is exactly where the canonical result is
+   *  rendered. */
+  const currentOwnerTurnOperationIdRef = useRef<string | null>(null);
+  const canonicalConsequentialResultRef = useRef<CanonicalConsequentialResult | null>(null);
+
+  const recordCanonicalConsequentialResult = useCallback((input: {
+    toolName: CanonicalConsequentialResult["toolName"];
+    kind: CanonicalConsequentialKind;
+    resultText: string;
+    outcome?: "success" | "failure";
+    domainOperationId?: string | null;
+  }): void => {
+    const turnOperationId = currentOwnerTurnOperationIdRef.current;
+    if (!turnOperationId) return;
+    canonicalConsequentialResultRef.current = createCanonicalConsequentialResult({
+      turnOperationId,
+      domainOperationId: input.domainOperationId,
+      toolName: input.toolName,
+      kind: input.kind,
+      resultText: input.resultText,
+      outcome: input.outcome ?? "success",
+    });
+  }, []);
+
   /**
    * save_note's outcome for the CURRENT user turn only — reset to null the
    * moment a new turn starts (a fresh voice transcript arrives, or a typed
@@ -1682,50 +1678,6 @@ export default function ElevenLabsAgentWidget({
     setAudioDiagLastReport(text);
   }, [mode, status]);
 
-  const maybeSendImpliedDinnerDelegation = useCallback(
-    async (userId: string): Promise<void> => {
-      if (hasDinnerPreparationDelegation(sentDelegationsRef.current)) return;
-
-      const sourceText = sessionTranscriptRef.current
-        .filter((entry) => entry.role === "user")
-        .map((entry) => entry.message)
-        .join("\n");
-      const dinner = extractDinnerPreparationRequest(sourceText);
-      if (!dinner) return;
-
-      const peopleState = usePeopleStore.getState();
-      if (peopleState.status === "idle" || peopleState.items.length === 0) {
-        await usePeopleStore.getState().loadFor(userId);
-      }
-
-      const owner = findDinnerOwner(usePeopleStore.getState().items);
-      if (!owner?.phone) return;
-
-      if (hasDinnerPreparationDelegation(sentDelegationsRef.current)) return;
-
-      try {
-        const result = await createAndSendDelegation({
-          userId,
-          person: owner,
-          taskText: dinner.taskText,
-          message: dinner.messageText,
-          ownerName: displayName,
-        });
-        sentDelegationsRef.current.push({
-          personName: owner.name,
-          taskText: dinner.taskText,
-          messageText: result.messageText,
-        });
-        currentTaskContextRef.current = result.taskContext;
-        useTasksStore.getState().loadFor(userId, { force: true }).catch(() => {});
-        sessionActionsRef.current.push(`Delegated to ${owner.name}: ${dinner.taskText}`);
-      } catch (err) {
-        console.error("[send_delegation] implied dinner delegation failed", err);
-      }
-    },
-    [displayName],
-  );
-
   const savePeopleMemoryFromTranscript = useCallback(
     async (userId: string, transcript: TranscriptMessage[]): Promise<void> => {
       const peopleState = usePeopleStore.getState();
@@ -1970,7 +1922,14 @@ export default function ElevenLabsAgentWidget({
         if (operationTurn.status === "needs_clarification") {
           pendingHostingClarificationRef.current = operationTurn.draft;
           pendingPlanRef.current = null;
-          return operationTurn.question ?? "I need a few details before I message anyone.";
+          const resultText = operationTurn.question ?? "I need a few details before I message anyone.";
+          recordCanonicalConsequentialResult({
+            toolName: "send_delegation",
+            kind: "clarification",
+            resultText,
+            domainOperationId: operationTurn.draft.operationId,
+          });
+          return resultText;
         }
         pendingHostingClarificationRef.current = null;
         if (operationTurn.status === "ready") {
@@ -1989,6 +1948,12 @@ export default function ElevenLabsAgentWidget({
               at: new Date().toISOString(),
               inputSummary: { kind: "guest_operation_execute", instruction: plan.sourceText },
             };
+            recordCanonicalConsequentialResult({
+              toolName: "send_delegation",
+              kind: "executed",
+              resultText: execSummary,
+              domainOperationId: plan.dbId ?? null,
+            });
             return execSummary;
           }
           pendingPlanRef.current = plan;
@@ -1998,6 +1963,12 @@ export default function ElevenLabsAgentWidget({
             at: new Date().toISOString(),
             inputSummary: { kind: "guest_operation_reroute", instruction: plan.sourceText },
           };
+          recordCanonicalConsequentialResult({
+            toolName: "send_delegation",
+            kind: "proposal",
+            resultText: plan.proposalSpeech,
+            domainOperationId: plan.dbId ?? null,
+          });
           return plan.proposalSpeech;
         }
         return "Let me put the full plan together for that. One moment, then say yes to send it.";
@@ -2185,6 +2156,11 @@ export default function ElevenLabsAgentWidget({
             at: new Date().toISOString(),
             inputSummary: { name: person.name, task: directMessageText },
           };
+          recordCanonicalConsequentialResult({
+            toolName: "send_delegation",
+            kind: "direct_message",
+            resultText: successText,
+          });
           return successText;
         } catch (err) {
           console.error("[send_delegation_reroute_failed]", {
@@ -2259,8 +2235,6 @@ export default function ElevenLabsAgentWidget({
       useTasksStore.getState().loadFor(userId, { force: true }).catch(() => {});
       sessionActionsRef.current.push(`Delegated to ${person.name}: ${taskText}`);
 
-      await maybeSendImpliedDinnerDelegation(userId);
-
       const successText = `Done. I asked ${person.name} to ${taskText}.`;
       // Record success so the override mechanism can replace any contradictory
       // failure language Carson's LLM generates from its own separate reply.
@@ -2270,6 +2244,11 @@ export default function ElevenLabsAgentWidget({
         at: new Date().toISOString(),
         inputSummary: { name: person.name, task: taskText },
       };
+      recordCanonicalConsequentialResult({
+        toolName: "send_delegation",
+        kind: "delegation",
+        resultText: successText,
+      });
 
       // Inject a contextual update into EL's conversation so that status
       // questions later in the session ("Did you send it?", "Did it go through?")
@@ -2289,10 +2268,10 @@ export default function ElevenLabsAgentWidget({
     },
     [
       displayName,
-      maybeSendImpliedDinnerDelegation,
       clearPendingImages,
       findRecentDuplicateDelegation,
       recordDelegationSent,
+      recordCanonicalConsequentialResult,
     ],
   );
 
@@ -4413,6 +4392,12 @@ export default function ElevenLabsAgentWidget({
               at: new Date().toISOString(),
               inputSummary: { kind: "guest_plan_execute", instruction: activePlan.sourceText.slice(0, 80) },
             };
+            recordCanonicalConsequentialResult({
+              toolName: "execute_instruction",
+              kind: "executed",
+              resultText: turn.summary ?? "",
+              domainOperationId: activePlan.dbId ?? null,
+            });
             return turn.summary ?? "";
           }
           if (turn.action === "cancelled") {
@@ -4422,6 +4407,12 @@ export default function ElevenLabsAgentWidget({
               at: new Date().toISOString(),
               inputSummary: { kind: "guest_plan_cancelled", instruction: activePlan.sourceText.slice(0, 80) },
             };
+            recordCanonicalConsequentialResult({
+              toolName: "execute_instruction",
+              kind: "cancelled",
+              resultText: turn.summary ?? "",
+              domainOperationId: activePlan.dbId ?? null,
+            });
             return turn.summary ?? "";
           }
           // held: plan preserved for a later turn (or discarded on expiry).
@@ -4519,6 +4510,12 @@ export default function ElevenLabsAgentWidget({
           if (operationTurn.status === "needs_clarification") {
             pendingHostingClarificationRef.current = operationTurn.draft;
             lastDirectToolSuccessRef.current = null;
+            recordCanonicalConsequentialResult({
+              toolName: "execute_instruction",
+              kind: "clarification",
+              resultText: operationTurn.question,
+              domainOperationId: operationTurn.draft.operationId,
+            });
             return operationTurn.question;
           }
 
@@ -4541,6 +4538,12 @@ export default function ElevenLabsAgentWidget({
                 at: new Date().toISOString(),
                 inputSummary: { kind: "guest_plan_execute", instruction: plan.sourceText.slice(0, 80) },
               };
+              recordCanonicalConsequentialResult({
+                toolName: "execute_instruction",
+                kind: "executed",
+                resultText: execSummary,
+                domainOperationId: plan.dbId ?? null,
+              });
               return execSummary;
             }
 
@@ -4551,6 +4554,12 @@ export default function ElevenLabsAgentWidget({
               at: new Date().toISOString(),
               inputSummary: { kind: "guest_plan_proposal", instruction: plan.sourceText.slice(0, 80) },
             };
+            recordCanonicalConsequentialResult({
+              toolName: "execute_instruction",
+              kind: "proposal",
+              resultText: plan.proposalSpeech,
+              domainOperationId: plan.dbId ?? null,
+            });
             return plan.proposalSpeech;
           }
 
@@ -4598,6 +4607,12 @@ export default function ElevenLabsAgentWidget({
           if (operationTurn.status === "needs_clarification") {
             pendingHostingClarificationRef.current = operationTurn.draft;
             lastDirectToolSuccessRef.current = null;
+            recordCanonicalConsequentialResult({
+              toolName: "execute_instruction",
+              kind: "clarification",
+              resultText: operationTurn.question,
+              domainOperationId: operationTurn.draft.operationId,
+            });
             return operationTurn.question;
           }
 
@@ -4622,6 +4637,12 @@ export default function ElevenLabsAgentWidget({
                   instruction: plan.sourceText.slice(0, 80),
                 },
               };
+              recordCanonicalConsequentialResult({
+                toolName: "execute_instruction",
+                kind: "executed",
+                resultText: execSummary,
+                domainOperationId: plan.dbId ?? null,
+              });
               return execSummary;
             }
             pendingPlanRef.current = plan;
@@ -4634,6 +4655,12 @@ export default function ElevenLabsAgentWidget({
                 instruction: plan.sourceText.slice(0, 80),
               },
             };
+            recordCanonicalConsequentialResult({
+              toolName: "execute_instruction",
+              kind: "proposal",
+              resultText: plan.proposalSpeech,
+              domainOperationId: plan.dbId ?? null,
+            });
             return plan.proposalSpeech;
           }
           return "I couldn't put that guest plan together right now. Please try again.";
@@ -4917,6 +4944,12 @@ export default function ElevenLabsAgentWidget({
                 normalizeOwnerReference: activeChannelRef.current === "text",
               });
         if (directMessageFastPath.handled) {
+          recordCanonicalConsequentialResult({
+            toolName: "execute_instruction",
+            kind: "direct_message",
+            resultText: directMessageFastPath.response,
+            outcome: directMessageFastPath.status === "sent" ? "success" : "failure",
+          });
           return directMessageFastPath.response;
         }
 
@@ -4939,6 +4972,12 @@ export default function ElevenLabsAgentWidget({
             );
             useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
           }
+          recordCanonicalConsequentialResult({
+            toolName: "execute_instruction",
+            kind: "delegation",
+            resultText: delegationFastPath.response,
+            outcome: delegationFastPath.status === "sent" ? "success" : "failure",
+          });
           return delegationFastPath.response;
         }
 
@@ -5015,6 +5054,12 @@ export default function ElevenLabsAgentWidget({
               })),
             },
           };
+          recordCanonicalConsequentialResult({
+            toolName: "execute_instruction",
+            kind: "delegation",
+            resultText: partialSuccessResponse,
+            outcome: "failure",
+          });
           console.warn("[carson-action-coverage] missing delegation candidate", {
             missing: delegationCoverage.missing.map((candidate) => ({
               personName: candidate.personName,
@@ -5049,6 +5094,13 @@ export default function ElevenLabsAgentWidget({
           at: new Date().toISOString(),
           inputSummary: { kind: "delegation", instruction: rawInstruction.slice(0, 80) },
         };
+        if (executedDelegationRecords.length > 0) {
+          recordCanonicalConsequentialResult({
+            toolName: "execute_instruction",
+            kind: "delegation",
+            resultText: summary,
+          });
+        }
 
         // Inject a contextual update so EL's LLM has current-session task state.
         // Without this, {{ra7etbal_state}} (set once at session start) never shows
@@ -5109,6 +5161,7 @@ export default function ElevenLabsAgentWidget({
       controlTaskTool,
       findRecentDuplicateDelegation,
       recordDelegationSent,
+      recordCanonicalConsequentialResult,
     ],
   );
 
@@ -5165,14 +5218,6 @@ export default function ElevenLabsAgentWidget({
       (async () => {
         if (userId) {
           try {
-            await maybeSendImpliedDinnerDelegation(userId);
-          } catch (err) {
-            console.error(
-              "[carson] maybeSendImpliedDinnerDelegation failed:",
-              err instanceof Error ? err.message : err,
-            );
-          }
-          try {
             await savePeopleMemoryFromTranscript(userId, transcript);
           } catch (err) {
             console.error(
@@ -5201,6 +5246,8 @@ export default function ElevenLabsAgentWidget({
         currentTaskContextRef.current = null;
         createdReminderKeysRef.current.clear();
         lastCreatedReminderRef.current = null;
+        currentOwnerTurnOperationIdRef.current = null;
+        canonicalConsequentialResultRef.current = null;
 
         let conversationSummary: string | null = null;
         try {
@@ -5216,7 +5263,7 @@ export default function ElevenLabsAgentWidget({
         }
       })();
     },
-    [maybeSendImpliedDinnerDelegation, savePeopleMemoryFromTranscript],
+    [savePeopleMemoryFromTranscript],
   );
 
   /** Stop and drop the warm-up mic stream. Safe to call repeatedly. */
@@ -5410,6 +5457,8 @@ export default function ElevenLabsAgentWidget({
         currentTaskContextRef.current = null;
         createdReminderKeysRef.current.clear();
         lastCreatedReminderRef.current = null;
+        currentOwnerTurnOperationIdRef.current = null;
+        canonicalConsequentialResultRef.current = null;
       }
     },
     [
@@ -5554,6 +5603,8 @@ export default function ElevenLabsAgentWidget({
     currentTaskContextRef.current = null;
     createdReminderKeysRef.current.clear();
     lastCreatedReminderRef.current = null;
+    currentOwnerTurnOperationIdRef.current = null;
+    canonicalConsequentialResultRef.current = null;
     recurringRawRef.current = null;
     invalidCaptureRef.current = null;
     sessionConnectedAtRef.current = null;
@@ -5913,9 +5964,19 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_delegation";
             try {
-              return await runDirectToolWithDiagnostic("send_delegation", params, () =>
+              const result = await runDirectToolWithDiagnostic("send_delegation", params, () =>
                 sendDelegation(params),
               );
+              const existing = canonicalConsequentialResultRef.current;
+              if (existing?.turnOperationId !== currentOwnerTurnOperationIdRef.current) {
+                recordCanonicalConsequentialResult({
+                  toolName: "send_delegation",
+                  kind: "delegation",
+                  resultText: result,
+                  outcome: /^(?:Done\.|I sent\b)/i.test(result) ? "success" : "failure",
+                });
+              }
+              return result;
             } finally {
               toolInFlightRef.current = null;
             }
@@ -6008,9 +6069,16 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_direct_whatsapp_message";
             try {
-              return await runDirectToolWithDiagnostic("send_direct_whatsapp_message", params, () =>
+              const result = await runDirectToolWithDiagnostic("send_direct_whatsapp_message", params, () =>
                 sendDirectWhatsAppMessage(params),
               );
+              recordCanonicalConsequentialResult({
+                toolName: "send_direct_whatsapp_message",
+                kind: "direct_message",
+                resultText: result,
+                outcome: /^I sent\b/i.test(result) ? "success" : "failure",
+              });
+              return result;
             } finally {
               toolInFlightRef.current = null;
             }
@@ -6237,12 +6305,15 @@ export default function ElevenLabsAgentWidget({
               sessionTranscriptRef.current.push({ role, message });
             }
             setLastUserTranscript(message);
+            const turnOperationId = crypto.randomUUID();
             activeUserRoutingContextRef.current = {
               eventId: event_id ?? null,
               message,
               claimed: false,
-              operationId: crypto.randomUUID(),
+              operationId: turnOperationId,
             };
+            currentOwnerTurnOperationIdRef.current = turnOperationId;
+            canonicalConsequentialResultRef.current = null;
             setTurnPhase("thinking");
             if (detectAllRecurringSchedules(message).length > 0) {
               recurringRawRef.current = message;
@@ -6318,12 +6389,15 @@ export default function ElevenLabsAgentWidget({
 
             invalidCaptureRef.current = null;
             sessionTranscriptRef.current.push({ role, message });
+            const turnOperationId = crypto.randomUUID();
             activeUserRoutingContextRef.current = {
               eventId: event_id ?? null,
               message,
               claimed: false,
-              operationId: crypto.randomUUID(),
+              operationId: turnOperationId,
             };
+            currentOwnerTurnOperationIdRef.current = turnOperationId;
+            canonicalConsequentialResultRef.current = null;
             setLastUserTranscript(message);
             if (userTranscriptTimerRef.current) {
               clearTimeout(userTranscriptTimerRef.current);
@@ -6404,15 +6478,24 @@ export default function ElevenLabsAgentWidget({
               lastSuccess: lastDirectToolSuccessRef.current,
               noteSaveOutcome: noteSaveOutcomeRef.current,
             });
+            const consequentialDisplayMessage = resolveConsequentialOwnerMessage(
+              displayMessage,
+              canonicalConsequentialResultRef.current,
+              currentOwnerTurnOperationIdRef.current,
+            );
             // Typed-only truthfulness guard: no state-changing tool call can
             // ever succeed for typed (every one is blocked before it runs —
             // see TYPED_BLOCKED_TOOL_MESSAGES), but the free-form typed model
             // still composes this reply independently and can fabricate a
             // false execution promise no tool was ever invoked for. Voice is
             // untouched — the identical wording is truthful there.
-            const finalDisplayMessage = requestedChannel === "text"
-              ? sanitizeTypedAdvisoryReply(displayMessage)
-              : displayMessage;
+            const finalDisplayMessage = canonicalConsequentialResultRef.current
+              ? consequentialDisplayMessage
+              : (
+              requestedChannel === "text"
+                ? sanitizeTypedAdvisoryReply(displayMessage)
+                : displayMessage
+              );
             if (!finalDisplayMessage || shouldSuppressCarsonIdlePrompt(message)) {
               sessionTranscriptRef.current.pop();
               console.log("[carson-idle] suppressed idle prompt", {
