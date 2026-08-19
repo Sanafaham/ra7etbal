@@ -53,6 +53,10 @@
  *   scope must reconnect Google Calendar in Settings to grant write access.
  */
 
+export function shouldClearRevokedCalendarCredentials(query = {}) {
+  return query.suppressCredentialCleanup !== "true";
+}
+
 import { randomBytes, createHash } from 'node:crypto';
 
 const SCOPES = "https://www.googleapis.com/auth/calendar.events";
@@ -624,22 +628,24 @@ export default async function handler(req, res) {
         const errText = await accessRes.text();
         // Revoked / expired token — clear from DB
         if (accessRes.status === 400 || accessRes.status === 401) {
-          await fetch(
-            `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}`,
-            {
-              method: "PATCH",
-              headers: {
-                apikey: serviceKey,
-                Authorization: `Bearer ${serviceKey}`,
-                "Content-Type": "application/json",
-                Prefer: "return=minimal",
+          if (shouldClearRevokedCalendarCredentials(req.query)) {
+            await fetch(
+              `${supabaseUrl}/rest/v1/profiles?id=eq.${encodeURIComponent(uid)}`,
+              {
+                method: "PATCH",
+                headers: {
+                  apikey: serviceKey,
+                  Authorization: `Bearer ${serviceKey}`,
+                  "Content-Type": "application/json",
+                  Prefer: "return=minimal",
+                },
+                body: JSON.stringify({
+                  google_refresh_token: null,
+                  google_calendar_connected_at: null,
+                }),
               },
-              body: JSON.stringify({
-                google_refresh_token: null,
-                google_calendar_connected_at: null,
-              }),
-            },
-          );
+            );
+          }
           res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
           res.setHeader("Pragma", "no-cache");
           res.setHeader("Expires", "0");

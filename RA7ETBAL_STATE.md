@@ -12,6 +12,12 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 ## Current next task
 
+### Corrected Path C — Stage 1 read-only boundary proof (2026-08-19) — CODE COMPLETE, PR PENDING
+
+Sana approved only the first bounded architecture proof: an additive, read-only Carson turn coordinator for Calendar lookup. The branch introduces one authoritative owner turn, Claude strict structured intent, an explicit read-only capability policy, reuse of the existing account-authenticated Calendar read handler, normalized evidence, and a deterministic canonical owner result. Unsupported intents remain on the legacy conversational path; a handled new-path turn cannot also be claimed by that path. The proof fails closed on malformed model output, preserves account isolation, and performs bounded process-local duplicate suppression suitable only for this read-only stage.
+
+No live ElevenLabs/widget cutover is included. No hosting, People, staff, reminder, delegation, messaging, WhatsApp, Calendar-write, Morning Brief, Night Sweep, schema, migration, deployment, or production-data change is included. Process-local deduplication is explicitly not sufficient for later consequential actions. Next step is protected CI and review of the Stage 1 PR; do not merge or deploy without separate owner authorization.
+
 Public launch remains deliberately closed. Do not start another roadmap task until Sana explicitly decides to reopen registration. Reopening requires both Supabase Auth's server-side **Allow new users to sign up** setting and `VITE_PUBLIC_SIGNUP_ENABLED=true`; never enable only the frontend control.
 
 **Scope clarification (2026-08-17):** "another roadmap task" above refers to the public-launch/growth roadmap (new-user registration, onboarding), not a freeze on all engineering. This has been Sana's actual practice throughout: the Carson Engineering Hardening Project (Phases 0–9), Historical Lookup Phases 1–2, the Strix QUICK-scan security remediation series (PRs #299–#302), and multiple documentation reconciliations have all proceeded since this note was written, each under Sana's own explicit per-task authorization. Read this note as gating public registration specifically, not as blanket permission to skip asking before starting new work.
