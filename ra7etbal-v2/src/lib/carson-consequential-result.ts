@@ -25,6 +25,32 @@ export interface CanonicalConsequentialResult {
   at: string;
 }
 
+/**
+ * Client-tool payload for a covered consequential voice turn. ElevenLabs
+ * receives this after the validated tool completes. The owner result remains a
+ * separate JSON value so the conversational model has no authority to
+ * reinterpret recipients, state, delivery, failures, or clarification facts.
+ */
+export function buildCanonicalConsequentialSpeechPayload(resultText: string): string {
+  return JSON.stringify({
+    response_contract: "speak_owner_result_exactly_without_additions_or_changes",
+    owner_result: resultText.trim(),
+  });
+}
+
+export function resolveConsequentialInstructionSource(input: {
+  capturedOwnerMessage: string | null | undefined;
+  lastUserMessage: string | null | undefined;
+  toolInstruction: string | null | undefined;
+  lastUserIsVague: boolean;
+  isHostingTurn: boolean;
+}): string {
+  const captured = input.capturedOwnerMessage?.trim() || input.lastUserMessage?.trim() || "";
+  if (input.isHostingTurn) return captured;
+  if (input.lastUserIsVague) return input.toolInstruction?.trim() || captured;
+  return captured;
+}
+
 export function createCanonicalConsequentialResult(
   input: Omit<CanonicalConsequentialResult, "at"> & { at?: string },
 ): CanonicalConsequentialResult {

@@ -240,11 +240,11 @@ const CLARIFICATION_LOCATION_RE =
   /\b((?:garden|dining\s+room|salon|majlis|terrace|patio|pool\s+area|living\s+room|kitchen)(?:\s+(?:under|by|near|beside|next to|around|with)\s+(?:the\s+)?(?:pavilion|pergola|gazebo|pool|fountain|terrace|patio|door|window|table|seating|sofa|fireplace))?)\b/i;
 const MENU_RE = /\b(?:serve|serving|with|menu|food|prepare)\s+([^.!?;]+)/i;
 const MENU_ITEM_RE =
-  /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/i;
+  /\b(?:sandwiches?|cakes?|scones?|steaks?|fries|tea|coffee|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/i;
 const MENU_ITEM_TOKEN_RE =
-  /\b(?:sandwiches?|cakes?|scones?|tea|coffee|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/ig;
+  /\b(?:sandwiches?|cakes?|scones?|steaks?|fries|tea|coffee|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|juice|water|drinks?|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/ig;
 const FOOD_ITEM_RE =
-  /\b(?:sandwiches?|cakes?|scones?|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/i;
+  /\b(?:sandwiches?|cakes?|scones?|steaks?|fries|canap[eé]s?|pastries|finger\s+food|food\s+finger|biscuits?|cookies?|fruit|snacks?|desserts?|salad|soup|dinner|lunch|breakfast|brunch)\b/i;
 const DRINK_ITEM_RE = /\b(?:tea|coffee|water|juice|cold drinks?|mocktails?|cocktails?|refreshments?)\b/i;
 const PERMISSION_TO_SUGGEST_MENU_RE =
   /\b(?:you choose|choose (?:the )?menu|suggest (?:a )?menu|carson chooses?|whatever you think|up to you|decide (?:the )?menu)\b/i;
@@ -467,15 +467,16 @@ export function buildHostingEventBrief(text: string): HostingEventBrief {
   };
 
   const missing: string[] = [];
+  const isHostingOperation = detectHouseholdOutcome(source) !== null || Boolean(brief.occasion);
+  if (isHostingOperation && !brief.occasion) missing.push("occasion");
+  if (isHostingOperation && !brief.date) missing.push("date");
   if (!brief.startTime) missing.push("start_time");
   if (!brief.menu && !authoritative) missing.push("menu");
-  if (
-    /\b(?:tea|dinner|lunch|brunch|breakfast|hosting|guests?)\b/i.test(source)
-    && (!brief.location || (!authoritative && brief.location === "home"))
-  ) {
-    missing.push("location");
-  }
-  if (authoritative && !brief.guestCount) missing.push("guest_count");
+  // Hosting completeness is factual, not an execution-authority decision.
+  // A proposal and an autonomous execution both need the same guest count,
+  // and an explicit "at home" is already a valid answered location.
+  if (isHostingOperation && !brief.location) missing.push("location");
+  if (isHostingOperation && !brief.guestCount) missing.push("guest_count");
   if (!brief.dietaryRequirements) missing.push("dietary_requirements");
   brief.unresolvedRequiredFields = missing;
   return brief;
@@ -496,6 +497,8 @@ export function evaluateHostingPlanningGate(text: string): HostingPlanningGateRe
 
   const authoritative = hasOperatingAuthority(normalizedSource);
   const asks: string[] = [];
+  if (brief.unresolvedRequiredFields.includes("occasion")) asks.push("what the occasion is");
+  if (brief.unresolvedRequiredFields.includes("date")) asks.push("what day it is for");
   if (brief.unresolvedRequiredFields.includes("start_time")) {
     asks.push(authoritative ? "what time should I plan for" : "what time should it begin");
   }
@@ -546,6 +549,14 @@ function clarificationNumber(value: string): number | null {
 
 function formatClarificationTime(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim().toLowerCase();
+  const wordWithMeridiem = normalized.match(
+    /^(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(am|pm|a\.m\.|p\.m\.)$/i,
+  );
+  if (wordWithMeridiem) {
+    const hour = clarificationNumber(wordWithMeridiem[1]);
+    const meridiem = wordWithMeridiem[2].replace(/\./g, "").toUpperCase();
+    if (hour != null) return `at ${hour}:00 ${meridiem}`;
+  }
   const wordValue = clarificationNumber(normalized);
   if (wordValue != null && wordValue >= 1 && wordValue <= 12) return `at ${wordValue} PM`;
   const match = normalized.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$/i);
@@ -576,7 +587,7 @@ export function normalizeHostingClarificationAnswer(
   let normalized = source;
   let timeMatched = false;
   const explicitTime = source.match(
-    /\b(?:at\s+)?((?:1[0-2]|0?[1-9])(?::[0-5]\d)?\s*(?:am|pm|a\.m\.|p\.m\.)|(?:[01]?\d|2[0-3]):[0-5]\d)\b/i,
+    /\b(?:at\s+)?((?:(?:1[0-2]|0?[1-9])(?::[0-5]\d)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(?:am|pm|a\.m\.|p\.m\.)|(?:[01]?\d|2[0-3]):[0-5]\d)\b/i,
   );
   if (explicitTime && needsTime) {
     const rawTime = explicitTime[1];
@@ -1691,6 +1702,18 @@ export async function executeProposedPlan(
   opts: ExecutePlanOptions,
 ): Promise<string> {
   const { displayName, userId, people } = opts;
+
+  // Independent consequential boundary: never trust an upstream planner,
+  // model, callback, or restored draft to have enforced hosting completeness.
+  // Re-derive the canonical brief from the operation source immediately before
+  // any idempotency claim, task/message persistence, Waiting state, follow-up
+  // scheduling, or external delivery. An incomplete operation stays a
+  // clarification and has zero side effects.
+  const completeness = evaluateHostingPlanningGate(plan.sourceText);
+  if (completeness.status === "needs_clarification") {
+    return completeness.question ?? "I need the remaining hosting details before I message anyone.";
+  }
+  plan.brief = completeness.brief;
 
   // Consequential execution boundary: resolve the exact durable person id,
   // verify the same-account identity/name pair, then require autonomous

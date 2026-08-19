@@ -245,7 +245,7 @@ describe("guest preparation operational planning", () => {
   it("repairs a collapsed single-owner guest plan before persistence or execution", () => {
     const collapsed = normalizeGuestPreparationPlan({
       outcomeType: "guest_arrival",
-      sourceText: "I have guests tomorrow at 6 PM in the dining room. Serve tea and sandwiches. Handle what you can.",
+      sourceText: "I have three guests tomorrow at 6 PM in the dining room. Serve tea and sandwiches. No dietary restrictions. Handle what you can.",
       createdAt: Date.now(),
       proposalSpeech: "I can ask Christopher to handle it. Should I send it?",
       tasks: [
@@ -291,7 +291,7 @@ describe("guest preparation operational planning", () => {
 
     const plan = normalizeGuestPreparationPlan({
       outcomeType: "guest_arrival",
-      sourceText: "I have guests tomorrow at 6 PM in the dining room. Serve tea and sandwiches. Handle what you can.",
+      sourceText: "I have three guests tomorrow at 6 PM in the dining room. Serve tea and sandwiches. No dietary restrictions. Handle what you can.",
       createdAt: Date.now(),
       proposalSpeech: "I can ask Christopher to handle it. Should I send it?",
       tasks: [
@@ -323,7 +323,7 @@ describe("guest preparation operational planning", () => {
       "Grace",
     ]);
     expect(result).toContain("Christopher, Nasira, Grace have the plan. I'll watch for confirmations.");
-    expect(result).toContain("Christopher: Sana is hosting tea tomorrow at 6 PM");
+    expect(result).toContain("Christopher: Sana is hosting tea for three guests tomorrow at 6 PM");
   });
 
   it("reports exactly who succeeded and failed when one multi-owner send fails", async () => {
@@ -353,7 +353,7 @@ describe("guest preparation operational planning", () => {
 
     const plan = normalizeGuestPreparationPlan({
       outcomeType: "guest_arrival",
-      sourceText: "I have guests tomorrow. Handle what you can.",
+      sourceText: "I have three guests tomorrow at 6 PM in the dining room. Serve tea and sandwiches. No dietary restrictions. Handle what you can.",
       createdAt: Date.now(),
       proposalSpeech: "I can ask Christopher to handle it. Should I send it?",
       tasks: [
@@ -394,7 +394,7 @@ describe("guest preparation operational planning", () => {
 // hosting without authority → propose; ordinary command → none".
 describe("operating authority executes immediately", () => {
   const AUTH_DINNER =
-    "we're having dinner at home tomorrow night. Handle what you can and make sure everything is ready.";
+    "we're having dinner at home tomorrow night at 8 PM for six guests. No dietary restrictions. Handle what you can and make sure everything is ready.";
 
   function stubSavePendingWithSeparateRowsAndLinks() {
     mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
@@ -666,7 +666,7 @@ describe("guest event planning — safety rules", () => {
 });
 
 describe("autonomous hosting person eligibility — Saeed production regression", () => {
-  const HOSTING = "I have four guests coming for afternoon tea tomorrow, handle it.";
+  const HOSTING = "I have four guests coming for afternoon tea tomorrow at 4 PM. No dietary restrictions. Handle it.";
   const visiblePeople = () => [
     person({ id: "christopher", name: "Christopher", role: "Cook" }),
     person({
@@ -731,6 +731,27 @@ describe("autonomous hosting person eligibility — Saeed production regression"
     });
 
     expect(result).toMatch(/didn't send.*Saeed.*not eligible/i);
+    expect(mocks.savePending).not.toHaveBeenCalled();
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+    expect(mocks.sendDirectMessageRecord).not.toHaveBeenCalled();
+  });
+
+  it("rejects an incomplete hosting plan before persistence, Waiting state, or delivery", async () => {
+    const result = await executeProposedPlan({
+      outcomeType: "guest_arrival",
+      sourceText:
+        "I have dinner tomorrow at home. Handle it.\n\n" +
+        "Clarification details: Eight PM, steaks and fries, no shellfish.",
+      createdAt: Date.now(),
+      proposalSpeech: "Plan.",
+      tasks: [{ personId: "christopher", personName: "Christopher", message: "Prepare dinner." }],
+    }, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: [person({ id: "christopher", name: "Christopher", role: "Cook" })],
+    });
+
+    expect(result).toBe("How many guests are coming?");
     expect(mocks.savePending).not.toHaveBeenCalled();
     expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
     expect(mocks.sendDirectMessageRecord).not.toHaveBeenCalled();
@@ -994,7 +1015,7 @@ describe("hosting planning gate", () => {
 
     expect(gate.status).toBe("needs_clarification");
     expect(gate.brief.unresolvedRequiredFields).toEqual(["guest_count"]);
-    expect(gate.question).toBe("How many guests are coming?");
+    expect(gate.question).toMatch(/how many guests are coming/i);
   });
 
   it("uses supplied guest count and restrictions without reopening known fields", () => {
@@ -1048,7 +1069,7 @@ describe("hosting planning gate", () => {
     expect(gate.brief.dietaryRequirements).toBe(dietary);
     expect(gate.brief.dietaryRequirements).not.toMatch(/guests?|people|four|six|eight/i);
   });
-  it("blocks the exact afternoon-tea failure when time, menu, and specific location are missing", () => {
+  it("accepts home as the hosting location while still asking for other missing facts", () => {
     const gate = evaluateHostingPlanningGate("Handle afternoon tea at home today for me and three guests.");
 
     expect(gate.status).toBe("needs_clarification");
@@ -1056,9 +1077,9 @@ describe("hosting planning gate", () => {
     expect(gate.brief.date).toBe("today");
     expect(gate.brief.guestCount).toBe("three guests");
     expect(gate.brief.location).toBe("home");
-    expect(gate.brief.unresolvedRequiredFields).toEqual(["start_time", "menu", "location", "dietary_requirements"]);
+    expect(gate.brief.unresolvedRequiredFields).toEqual(["start_time", "menu", "dietary_requirements"]);
     expect(gate.question).toMatch(/what time/i);
-    expect(gate.question).toMatch(/where at home/i);
+    expect(gate.question).not.toMatch(/where at home/i);
     expect(gate.question).toMatch(/what you would like served/i);
     expect(gate.question).toMatch(/dietary restrictions/i);
     expect(gate.question).not.toMatch(/china or flowers/i);
@@ -1070,6 +1091,52 @@ describe("hosting planning gate", () => {
     expect(gate.status).toBe("needs_clarification");
     expect(gate.brief.unresolvedRequiredFields).toEqual(["menu", "dietary_requirements"]);
     expect(gate.question).toMatch(/what you would like served|suggest a menu/i);
+  });
+
+  it("protects the exact failed dinner journey with factual completeness independent of authority", () => {
+    const gate = evaluateHostingPlanningGate("I have dinner tomorrow at home. Handle it.");
+
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.brief).toMatchObject({
+      occasion: "dinner",
+      date: "tomorrow",
+      location: "home",
+      guestCount: null,
+    });
+    expect(gate.brief.unresolvedRequiredFields).toEqual([
+      "start_time",
+      "guest_count",
+      "dietary_requirements",
+    ]);
+    expect(gate.question).toBe(
+      "What time should I plan for, how many guests are coming, and are there any dietary restrictions?",
+    );
+    expect(gate.question).not.toMatch(/where at home|what you would like served/i);
+  });
+
+  it("requires guest count for non-authoritative hosting too", () => {
+    const gate = evaluateHostingPlanningGate(
+      "I have dinner tomorrow at 8 PM at home. Serve steaks and fries. No shellfish.",
+    );
+
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.brief.unresolvedRequiredFields).toEqual(["guest_count"]);
+    expect(gate.question).toMatch(/how many guests are coming/i);
+  });
+
+  it("keeps the dinner operation incomplete after time, menu, and dietary details", () => {
+    const gate = evaluateHostingPlanningGate(
+      "I have dinner tomorrow at home. Handle it.\n\n" +
+      "Clarification details: Eight PM, steaks and fries, no shellfish.",
+    );
+
+    expect(gate.status).toBe("needs_clarification");
+    expect(gate.brief.startTime).toMatch(/8(?::00)? PM/i);
+    expect(gate.brief.menu).toMatch(/steaks and fries/i);
+    expect(gate.brief.dietaryRequirements).toMatch(/no shellfish/i);
+    expect(gate.brief.guestCount).toBeNull();
+    expect(gate.brief.unresolvedRequiredFields).toEqual(["guest_count"]);
+    expect(gate.question).toBe("How many guests are coming?");
   });
 
   it("preserves supplied date, location, and guest count in the structured brief", () => {
@@ -1336,7 +1403,7 @@ describe("hosting planning gate", () => {
       pendingDraft: {
         operationId: "old-operation",
         operationType: "guest_arrival",
-        sourceText: "I have afternoon tea at 4:00 PM today. Handle everything.",
+        sourceText: "I have afternoon tea for six guests at 4:00 PM today. Handle everything.",
         askedAtClientMessageId: "old-message",
       },
       askedAtClientMessageId: "new-message",
@@ -1345,7 +1412,9 @@ describe("hosting planning gate", () => {
     expect(turn.status).toBe("needs_clarification");
     expect(turn.sourceText).toBe("I have dinner at home tomorrow. Handle it.");
     expect(turn.sourceText).not.toContain("afternoon tea");
+    expect(turn.sourceText).not.toContain("six guests");
     expect(turn.draft?.operationId).not.toBe("old-operation");
+    expect(turn.question).toContain("how many guests are coming");
   });
 
   it("keeps the same canonical operation ID across clarification turns", async () => {
@@ -1399,6 +1468,73 @@ describe("hosting planning gate", () => {
     expect(turn.plan?.brief?.menu).toBe("Finger sandwiches, cakes and tea");
     expect(turn.plan?.brief?.dietaryRequirements).toBe("No dietary restrictions");
     expect(turn.plan?.tasks.map((task) => task.personName)).toEqual(["Christopher", "Nasira", "Grace"]);
+  });
+
+  it("runs the exact failed dinner sentence through clarification to one complete execution", async () => {
+    const christopher = person({ id: "christopher", name: "Christopher", role: "Cook" });
+    mocks.callAnthropicProxy.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        content: [{
+          text: JSON.stringify({
+            tasks: [{ person_name: "Christopher", message: "Please prepare steaks and fries with no shellfish." }],
+            proposal_speech: "Christopher can prepare dinner.",
+          }),
+        }],
+      }),
+    });
+    mocks.savePending.mockImplementationOnce(async (items: ExtractedItem[]) => ({
+      tasks: items.map((item) => ({ id: "task-1", assigned_to: item.assignedTo })),
+      messages: items.map((item) => ({
+        id: "message-1",
+        task_id: "task-1",
+        recipient: item.assignedTo,
+        content: item.suggestedMessage ?? item.description,
+        confirmation_url: "https://ra7etbal.test/confirm?task=task-1",
+      })) as Message[],
+      todos: [],
+      notesSaved: 0,
+      skipped: 0,
+      imagePathsByTaskId: new Map(),
+    }));
+    mocks.deliverTaskMessage.mockResolvedValue({ success: true, channel: "whatsapp" });
+
+    const first = await prepareOperationalPlanTurn({
+      message: "I have dinner tomorrow at home. Handle it.",
+      people: [christopher],
+    });
+    expect(first.status).toBe("needs_clarification");
+    expect(first.question).toBe(
+      "What time should I plan for, how many guests are coming, and are there any dietary restrictions?",
+    );
+
+    const second = await prepareOperationalPlanTurn({
+      message: "Eight PM, steaks and fries, no shellfish.",
+      people: [christopher],
+      pendingDraft: first.draft,
+    });
+    expect(second.status).toBe("needs_clarification");
+    expect(second.question).toBe("How many guests are coming?");
+    expect(mocks.savePending).not.toHaveBeenCalled();
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+
+    const third = await prepareOperationalPlanTurn({
+      message: "Six guests.",
+      people: [christopher],
+      pendingDraft: second.draft,
+    });
+    expect(third.status).toBe("ready");
+    expect(third.action).toBe("execute");
+    expect(third.plan?.brief?.guestCount).toBe("six guests");
+
+    const summary = await executeProposedPlan(third.plan!, {
+      displayName: "Sana",
+      userId: "user-1",
+      people: [christopher],
+    });
+    expect(summary).toContain("Christopher has the plan");
+    expect(mocks.savePending).toHaveBeenCalledTimes(1);
+    expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(1);
   });
 
   it("proposes Carson-selected afternoon-tea menu and drinks after the final essential answer", async () => {
@@ -1464,7 +1600,7 @@ describe("guest plan confirm-before-send", () => {
     // The plan Carson proposes and stores when it asks "Should I send it?"
     return normalizeGuestPreparationPlan({
       outcomeType: "guest_arrival",
-      sourceText: "I have guests tomorrow for afternoon tea. Handle what you can.",
+      sourceText: "I have three guests tomorrow for afternoon tea at 4 PM at home. No dietary restrictions. Handle what you can.",
       createdAt: Date.now(),
       proposalSpeech: "I can split this between the team. Should I send it?",
       tasks: [
@@ -1584,7 +1720,7 @@ describe("guest plan confirm-before-send", () => {
     ];
     const plan = {
       outcomeType: "guest_arrival" as const,
-      sourceText: "Afternoon tea today at 4 PM in the garden for three guests.",
+      sourceText: "Afternoon tea today at 4 PM in the garden for three guests. Serve tea and sandwiches. No dietary restrictions.",
       createdAt: Date.now(),
       proposalSpeech: "Plan.",
       tasks: [

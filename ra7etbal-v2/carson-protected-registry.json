@@ -601,13 +601,14 @@
     },
     {
       "id": "hosting_operations",
-      "contract": "A hosting/guest-arrival instruction is planned into one owner-approved proposal with correct per-worker responsibilities. A known person is not automatically an eligible assignee: autonomous hosting selection may use only an explicitly non-family person with an operational staff role or staff relationship, and the execution boundary must resolve the exact person id/name within the authenticated owner account and re-check that eligibility before any task/message persistence or external delivery; notes, communication history, phone reachability, and WhatsApp consent never confer staff eligibility. An ineligible assignment fails the whole plan closed without substitution or partial send, while explicit owner-named direct communication remains a separate permitted path. Exactly one approval executes an eligible plan exactly once (idempotent — a repeated approval or a leading-confirmation-language reply with no active plan never re-sends or misreads as a fresh request); each recipient's WhatsApp delivery result is reported truthfully and individually (a missing phone number or missing consent is reported as NOT messaged, never implied as sent); Carson never claims an action succeeded that `executeProposedPlan` did not actually perform; a stored completed operation can be recalled without re-sending or re-creating anything.",
+      "contract": "A fresh hosting/guest-arrival instruction uses the captured owner transcript as its authoritative source and supersedes older hosting state. Hosting completeness is independent of proposal/execution authority: occasion, date, time, location, guest count, and an explicit dietary-restriction state must be resolved; explicit 'at home' is a valid location and no guest count may be defaulted or inherited. `executeProposedPlan` independently re-derives completeness immediately before any idempotency claim, task/message persistence, Waiting/follow-up state, or external delivery and fails closed with the canonical clarification when anything is missing. A known person is not automatically an eligible assignee: autonomous hosting selection may use only an explicitly non-family person with an operational staff role or staff relationship, and the execution boundary must resolve the exact person id/name within the authenticated owner account and re-check that eligibility before any task/message persistence or external delivery; notes, communication history, phone reachability, and WhatsApp consent never confer staff eligibility. An ineligible assignment fails the whole plan closed without substitution or partial send, while explicit owner-named direct communication remains a separate permitted path. Exactly one complete plan executes exactly once; delivery results are truthful; late callbacks, reconnects, and session shutdown cannot restore or execute an older operation.",
       "business_importance": "critical — Tier 1. Classified 2026-08-15 from direct evidence, not from the capability's name or prior documentation: `executeProposedPlan` sends real WhatsApp messages to real staff and creates real task/message rows (`src/lib/save.ts:savePending`, `src/lib/delivery.ts:deliverTaskMessage`, `src/lib/direct-messages.ts:sendDirectMessageRecord`) — the identical blast-radius shape as `staff_delegation`/`automation_execution_confirmation`, both already Tier 1. A real production incident (PRs #68/#69, documented in RA7ETBAL_STATE.md's 'Hosting plan integrity guards' entry) had Carson orally claim a two-recipient hosting proposal was sent when `execute_instruction` was never called to persist it, then falsely tell the owner both recipients received instructions — the exact 'silently fail while Carson claims success' failure class this entire hardening project exists to catch, on this capability specifically. `RA7ETBAL_STATE.md`'s own 'Type to Carson is advisory-only' product decision (2026-07-25) already groups 'hosting plans' with reminders/delegations/staff messages/calendar events as voice-only, state-changing execution; its 'protected systems' list separately names hosting alongside delegations and owner decisions. 216+ pre-existing tests in ops-intelligence.test.ts already cover idempotency, truthful per-recipient delivery, and worker-role correctness — this capability has been protected in engineering practice all along, just never formalized in this registry or the required CI gate.",
       "production_entry_points": ["src/components/home/ElevenLabsAgentWidget.tsx (hosting recall pre-LLM interception; handlePendingPlanTurn/executeProposedPlan call sites; legacy maybeSendImpliedDinnerDelegation authority removed)"],
       "files_functions": [
         "src/lib/ops-intelligence.ts:resolveHostingOperationRecall / answerHostingOperationRecall / loadLatestCompletedHostingOperation",
+        "src/lib/ops-intelligence.ts:buildHostingEventBrief / evaluateHostingPlanningGate / normalizeHostingClarificationAnswer",
         "src/lib/ops-intelligence.ts:handleOperationalHostingTurn / prepareOperationalPlanTurn / buildOperationalPlanFromOutcome",
-        "src/lib/ops-intelligence.ts:executeProposedPlan / rejectProposedPlan / handlePendingPlanTurn",
+        "src/lib/ops-intelligence.ts:executeProposedPlan completeness and person-eligibility boundaries / rejectProposedPlan / handlePendingPlanTurn",
         "src/lib/ops-intelligence.ts:buildDeterministicGuestPreparationTasks / hasLeadingConfirmationLanguage"
       ],
       "shared_dependencies": ["src/lib/save.ts", "src/lib/delivery.ts", "src/lib/direct-messages.ts", "src/lib/delegation-message.ts", "src/lib/carson-consequential-result.ts", "api/anthropic.js", "src/lib/anthropic-client.ts"],
@@ -622,26 +623,29 @@
         "src/components/home/ElevenLabsAgentWidget.hosting-plan-integrity.test.ts"
       ],
       "protected_suite": true,
-      "golden_journey_required": false,
-      "golden_journey_tests": [],
+      "golden_journey_required": true,
+      "golden_journey_tests": [
+        "src/lib/ops-intelligence.test.ts",
+        "src/lib/carson-consequential-result.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.hosting-plan-integrity.test.ts"
+      ],
       "production_canary_required": false,
       "rollback_risk": "medium",
-      "verification_status": "PRODUCTION VERIFIED — PR #251 (confirmation-timing fast-path fix), PRs #68/#69 (Guard C/D false-success and duplicate-execution fix, real production incident), 'Verified hosting loop' and 'Hosting plan integrity guards' entries in RA7ETBAL_STATE.md. Tier 1 classification made 2026-08-15 from direct evidence; both focused test files (231 tests total) confirmed passing before being added to the required test:carson-protected suite.",
+      "verification_status": "OWNER LIVE ACCEPTANCE FAILED after PR #313: production proceeded without guest count. Repair branch now includes the exact dinner sentence golden journey, authority-independent completeness, pre-execution fail-closed coverage, operation isolation, eligibility, idempotency, and canonical owner-result propagation. Pending PR CI, deployment, canary, and owner live acceptance.",
       "unresolved": [
-        "No golden-journey test exists proving the full multi-file hosting flow end to end (ElevenLabsAgentWidget dispatch -> ops-intelligence planning -> savePending/deliverTaskMessage -> recall) the way other Tier 1 capabilities have — the 231 existing tests cover ops-intelligence.ts and the widget's integrity guards individually and thoroughly, but not as one cross-module journey. Flagged as a real, scoped follow-up, not implemented here to keep this classification PR focused.",
         "No real-Postgres contract test exists for carson_pending_operations — this capability was never part of Phase 4's Tier 1 chain. A future PR could add it; not manufactured here without first confirming what invariant would actually need proving.",
         "api/anthropic.js and src/lib/anthropic-client.ts added as shared_dependencies 2026-08-16 — ops-intelligence.ts's hosting-plan LLM call routes through this shared proxy (Strix QUICK scan remediation series). This capability's own focused tests already mock the network layer and need no new assertions for the auth change; api/anthropic.test.js and src/lib/anthropic-client.test.ts cover the proxy's own auth contract directly. The other 6 files that also call this proxy (text-carson.ts, ai/extract.ts, ai/compose-message.ts, carson-summarize.ts, carson-fact-extract.ts, weekly-planning.ts, people-behavior.ts) were a genuine pre-existing Protected Behavior Registry completeness gap, not invented by this change — Impact-Aware CI surfaced it on PR #299. Resolved 2026-08-16: ai/compose-message.ts is now mapped into this capability's sibling staff_delegation entry (confirmed dependency chain: delegations.ts -> ai/compose-message.ts, both already reachable from ElevenLabsAgentWidget.tsx); the remaining 6 files are now registered as their own genuinely distinct capabilities (talk_compound_instruction_execution, voice_session_memory, weekly_planning, people_behavioral_insights) rather than folded into hosting_operations, since none of them share this capability's contract. See those entries for their own honest protection status — several remain protected_suite:false pending dedicated hardening work, which is real, tracked debt, not resolved by registration alone."
       ]
     },
     {
       "id": "canonical_consequential_owner_results",
-      "contract": "For covered consequential owner turns, the displayed and stored Carson action result is derived unconditionally from the validated tool result bound to the current owner-turn operation id. ElevenLabs may remain conversational on ordinary turns, but it cannot add or remove recipients, hide failures, invent persistence or delivery, change clarification/proposal/execution state, or replace a covered canonical result with an independent claim. Hosting additionally binds the result to its durable hosting operation id. Late prior-operation results cannot render, and transcript inference or session shutdown cannot independently create dinner work.",
+      "contract": "For covered consequential owner turns, the validated tool result is the single owner truth. Displayed and stored Carson text is derived unconditionally from the result bound to the current owner-turn operation id. Covered hosting client-tool responses additionally carry a machine-marked speech contract whose owner_result is the identical canonical text and must be spoken verbatim without additions or changes. ElevenLabs remains conversational on ordinary turns but cannot add/remove recipients, hide failures, invent persistence/delivery, change clarification/proposal/execution state, or contradict a covered canonical result. Hosting uses the captured owner transcript for intent/authority, binds results to the current turn and durable operation where available, and rejects late prior-operation results; transcript inference and session shutdown have no hosting execution authority.",
       "business_importance": "critical — Tier 1 required closure work for PR #312 after owner live acceptance proved that an ineligible model recipient could reappear in the final owner-facing claim despite deterministic eligibility rejection",
       "production_entry_points": [
         "src/components/home/ElevenLabsAgentWidget.tsx (covered client-tool returns through onMessage displayed/stored transcript result)"
       ],
       "files_functions": [
-        "src/lib/carson-consequential-result.ts:createCanonicalConsequentialResult / resolveCanonicalConsequentialResult",
+        "src/lib/carson-consequential-result.ts:resolveConsequentialInstructionSource / createCanonicalConsequentialResult / buildCanonicalConsequentialSpeechPayload / resolveCanonicalConsequentialResult",
         "src/components/home/ElevenLabsAgentWidget.tsx:recordCanonicalConsequentialResult / executeInstruction / sendDelegation / sendDirectWhatsAppMessage / onMessage"
       ],
       "shared_dependencies": [
@@ -664,11 +668,15 @@
         "src/components/home/ElevenLabsAgentWidget.direct-whatsapp-duplicate.test.ts"
       ],
       "protected_suite": true,
-      "golden_journey_required": false,
-      "golden_journey_tests": [],
+      "golden_journey_required": true,
+      "golden_journey_tests": [
+        "src/lib/ops-intelligence.test.ts",
+        "src/lib/carson-consequential-result.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.hosting-plan-integrity.test.ts"
+      ],
       "production_canary_required": false,
       "rollback_risk": "high — a regression can make the owner believe an unvalidated recipient was assigned or an action succeeded when persistence/delivery rejected it",
-      "verification_status": "PRE-MERGE VERIFIED IN REPAIR BRANCH — focused tests, TypeScript, production build, registry validation, impact-map tests, and the full protected suite pass. Pending PR CI, merge, deployment verification, no-message canary, and owner live acceptance. Historical row-level evidence for the failed dinner incident remains permanently UNKNOWN by owner authorization.",
+      "verification_status": "OWNER LIVE ACCEPTANCE FAILED after PR #313 because the hosting journey proceeded without guest count and the spoken boundary remained independently composed. Repair branch binds captured hosting authority, canonical completeness, pre-execution validation, and an exact speech payload into the protected golden matrix. Pending PR CI, deployment, canary, and owner live acceptance.",
       "unresolved": [
         "Phase 1 covers hosting clarification/proposal/execution/cancellation, ordinary delegation, and direct staff communication. Calendar, reminders, automations, task control, owner decisions, and other consequential tools remain on their existing result handling until a separately approved migration.",
         "Durable redacted consequential-event observability and its database migration are explicitly deferred to owner-approved Phase 2."
