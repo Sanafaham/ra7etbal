@@ -1554,6 +1554,61 @@ describe("hosting planning gate", () => {
     expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps 'Plan it for 8:00 p.m.' on the same hosting operation instead of restarting it", async () => {
+    const christopher = person({ id: "christopher", name: "Christopher", role: "Cook" });
+    const writeLog: string[] = [];
+    mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } } });
+    mocks.supabaseFrom.mockImplementation((table: string) => queryStubWithWriteTracking(
+      table,
+      { data: { id: "same-dinner-operation" }, error: null },
+      writeLog,
+    ));
+    mocks.callAnthropicProxy.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        content: [{
+          text: JSON.stringify({
+            tasks: [{ person_name: "Christopher", message: "Please plan dinner with no shellfish." }],
+            proposal_speech: "Christopher can plan dinner.",
+          }),
+        }],
+      }),
+    });
+
+    const first = await prepareOperationalPlanTurn({
+      message: "I have dinner tomorrow at home. Handle it.",
+      people: [christopher],
+    });
+    expect(first.status).toBe("needs_clarification");
+    expect(first.draft).not.toBeNull();
+    expect(first.draft?.operationId).toBe("same-dinner-operation");
+
+    const second = await prepareOperationalPlanTurn({
+      message: "Plan it for 8:00 p.m., six guests and no shellfish.",
+      people: [christopher],
+      pendingDraft: first.draft,
+    });
+
+    expect(second.status).toBe("ready");
+    expect(second.action).toBe("execute");
+    expect(second.sourceText).toContain("I have dinner tomorrow at home. Handle it.");
+    expect(second.sourceText).toContain("Clarification details: Plan it for 8:00 PM, six guests and no shellfish.");
+    expect(second.plan?.dbId).toBe("same-dinner-operation");
+    expect(second.plan?.brief).toMatchObject({
+      occasion: "dinner",
+      date: "tomorrow",
+      startTime: "8:00 PM",
+      location: "home",
+      guestCount: "six guests",
+      dietaryRequirements: "no shellfish",
+      unresolvedRequiredFields: [],
+    });
+    expect(second.question).toBeNull();
+    expect(writeLog.filter((entry) => entry === "insert:carson_pending_operations")).toHaveLength(1);
+    expect(mocks.savePending).not.toHaveBeenCalled();
+    expect(mocks.deliverTaskMessage).not.toHaveBeenCalled();
+  });
+
   it("proposes Carson-selected afternoon-tea menu and drinks after the final essential answer", async () => {
     mocks.callAnthropicProxy.mockResolvedValue({
       ok: true,

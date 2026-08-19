@@ -587,11 +587,16 @@ export function normalizeHostingClarificationAnswer(
   let normalized = source;
   let timeMatched = false;
   const explicitTime = source.match(
-    /\b(?:at\s+)?((?:(?:1[0-2]|0?[1-9])(?::[0-5]\d)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(?:am|pm|a\.m\.|p\.m\.)|(?:[01]?\d|2[0-3]):[0-5]\d)\b/i,
+    /\b(?:at\s+)?((?:(?:1[0-2]|0?[1-9])(?::[0-5]\d)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(?:am|pm|a\.m\.|p\.m\.)|(?:[01]?\d|2[0-3]):[0-5]\d)(?=\s|[,.;!?]|$)/i,
   );
   if (explicitTime && needsTime) {
     const rawTime = explicitTime[1];
-    normalized = normalized.replace(explicitTime[0], formatClarificationTime(rawTime));
+    const beforeTime = source.slice(0, explicitTime.index ?? 0);
+    const formattedTime = formatClarificationTime(rawTime);
+    normalized = normalized.replace(
+      explicitTime[0],
+      /\bfor\s*$/i.test(beforeTime) ? formattedTime.replace(/^at\s+/i, "") : formattedTime,
+    );
     timeMatched = true;
   } else if (needsTime) {
     const wordTime = source.match(/\bat\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b/i);
@@ -661,6 +666,19 @@ export function createPendingOperationDraft(
   };
 }
 
+/**
+ * A pending hosting operation owns short/contextual replies. Only an explicit
+ * new event introduction may supersede it. Action-like clarification wording
+ * such as "Plan it for 8 PM" refers to the existing operation; treating the
+ * word "plan" as a new request discards its date, location, and authority.
+ */
+function isExplicitFreshHostingRequest(message: string): boolean {
+  if (!detectHouseholdOutcome(message)) return false;
+  return /\b(?:i|we)(?:'m|'re|\s+am|\s+are)?\s+(?:having|hosting|planning)\b|\b(?:i|we)\s+have\b|\bguests?\s+(?:are\s+)?coming\b|^\s*(?:handle|plan|organize)\s+(?:(?:a|the|my)\s+)?(?:breakfast|brunch|lunch|dinner|tea|party|reception|hosting)\b/i.test(
+    message,
+  );
+}
+
 async function persistHostingDraft(
   draft: PendingOperationDraft,
   question: string,
@@ -726,7 +744,9 @@ export async function prepareOperationalPlanTurn(input: {
 }): Promise<OperationalPlanningResult> {
   const currentMessage = input.message.trim();
   const currentAction = resolveGuestOutcomeAction(currentMessage);
-  const isFreshHostingRequest = currentAction !== "none";
+  const isFreshHostingRequest = Boolean(
+    input.pendingDraft && isExplicitFreshHostingRequest(currentMessage),
+  ) || (!input.pendingDraft && currentAction !== "none");
   const activeDraft = isFreshHostingRequest ? null : input.pendingDraft;
   const clarificationMessage = activeDraft
     ? normalizeHostingClarificationAnswer(currentMessage, activeDraft.sourceText)
