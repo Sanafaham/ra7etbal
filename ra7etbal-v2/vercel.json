@@ -33,6 +33,10 @@
   ],
   "rewrites": [
     {
+      "source": "/chat/completions",
+      "destination": "/api/carson-custom-llm-stage2a"
+    },
+    {
       "source": "/((?!api/|assets/|robots\\.txt$|sitemap\\.xml$|sw\\.js$|manifest\\.webmanifest$|icons/).*)",
       "destination": "/index.html"
     }

@@ -972,11 +972,13 @@
       "production_entry_points": [
         "api/carson-custom-llm-stage2a.js",
         "src/main.tsx (exact-path selection for the isolated preview proof only)",
-        "src/routes/CarsonBoundaryProof.tsx"
+        "src/routes/CarsonBoundaryProof.tsx",
+        "vercel.json (single additive rewrite mapping the fixed ElevenLabs Chat Completions path /chat/completions to the existing Stage 2A handler; no other route touched)"
       ],
       "files_functions": [
         "api/carson-custom-llm-stage2a.js:createStage2aHandler / createSessionBinding / verifySessionBinding / extractLatestOwnerMessage",
-        "src/routes/CarsonBoundaryProof.tsx:CarsonBoundaryProof / isCarsonBoundaryProofPath"
+        "src/routes/CarsonBoundaryProof.tsx:CarsonBoundaryProof / isCarsonBoundaryProofPath",
+        "vercel.json:rewrites[/chat/completions -> /api/carson-custom-llm-stage2a]"
       ],
       "shared_dependencies": [],
       "db": { "tables": [], "rpcs": [], "migrations": [] },
@@ -997,7 +999,7 @@
       "db_contract_tests": [],
       "production_canary_required": false,
       "rollback_risk": "low — additive, non-production, fixed-response, no persistence and no tool surface; removing the isolated route, endpoint, and preview agent restores the prior state without data rollback",
-      "verification_status": "Stage 2A implementation in progress. Automated auth, signed-binding, exact-SSE, retry-identity, and route-isolation contracts exist; the real non-production ElevenLabs provider, interruption, retry, spoken/displayed ownership, and preview deployment gates must all pass before a PR may be opened.",
+      "verification_status": "Stage 2A implementation in progress. Automated auth, signed-binding, exact-SSE, retry-identity, and route-isolation contracts exist. A single additive vercel.json rewrite (/chat/completions -> /api/carson-custom-llm-stage2a) was added so ElevenLabs' fixed Chat Completions path reaches the existing handler unchanged; no other route was touched. The real non-production ElevenLabs provider, interruption, retry, spoken/displayed ownership, and preview deployment gates must all pass before a PR may be opened.",
       "unresolved": [
         "This proof intentionally does not connect /api/carson-turn, Stage 1 Calendar read, or any other Ra7etBal capability.",
         "The process-local retry evidence store is sufficient only for this harmless fixed-response provider proof and is explicitly not durable idempotency for consequential actions.",
