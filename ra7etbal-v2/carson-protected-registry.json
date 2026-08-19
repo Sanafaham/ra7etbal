@@ -925,6 +925,47 @@
       ]
     },
     {
+      "id": "carson_read_only_turn_coordinator",
+      "contract": "A supported read-only Carson turn has one account-bound authoritative owner transcript, one strict structured intent, one policy decision, one invocation of an existing read capability, one evidence object, and one canonical owner result. Unsupported intents remain owned by the legacy conversational path. Once this coordinator handles a turn, no legacy/model response may independently claim or contradict its result. The Stage 1 capability is limited to calendar reads and cannot perform writes or consequential actions.",
+      "business_importance": "high — this is the first bounded proof of the Corrected Path C brain boundary and prevents split ownership, malformed model output, cross-account reuse, duplicate provider events, and unsupported-intent leakage before any consequential capability is admitted",
+      "production_entry_points": [
+        "api/carson-turn.js"
+      ],
+      "files_functions": [
+        "api/carson-turn.js:createCarsonTurnHandler / interpretReadIntentWithClaude / readCalendarThroughExistingHandler",
+        "api/_carson-read-turn.js:createReadOnlyTurnCoordinator / validateStructuredIntent / normalizeCalendarEvidence / renderCalendarOwnerResult",
+        "src/lib/carson-turn-client.ts:dispatchCarsonReadTurn"
+      ],
+      "shared_dependencies": [
+        "api/google-calendar.js (existing account-authenticated read handler; normal callers remain functionally unchanged, while Stage 1 passes suppressCredentialCleanup=true so its read-only proof cannot clear revoked credentials)"
+      ],
+      "db": { "tables": [], "rpcs": [], "migrations": [] },
+      "external_boundaries": [
+        "Anthropic Messages API strict tool output",
+        "Supabase Auth /auth/v1/user",
+        "Google Calendar API through the existing google-calendar handler"
+      ],
+      "focused_tests": [
+        "api/_carson-read-turn.test.js",
+        "api/carson-turn.test.js",
+        "src/lib/carson-turn-client.test.ts"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": true,
+      "golden_journey_tests": [
+        "api/carson-turn.test.js"
+      ],
+      "db_contract_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "low — this Stage 1 path is read-only, additive, and not yet wired into the live ElevenLabs widget; removing its new route/helper/client module restores the prior behavior without data rollback",
+      "verification_status": "Stage 1 code-only proof registered 2026-08-19. Its highest test exercises the composed API boundary through the real Supabase-authentication code, strict Claude intent code, Calendar adapter, and real existing googleCalendarHandler, with only external Supabase/Anthropic/Google HTTP responses mocked. The Calendar adapter supplies the real GET path's status/json/setHeader response contract. No database migration, live voice cutover, write capability, deployment, or production acceptance is part of this PR.",
+      "unresolved": [
+        "The live ElevenLabs widget is deliberately not wired to this route in Stage 1, so production voice traffic remains on the existing path until a separately approved cutover.",
+        "Deduplication is bounded and process-local because Stage 1 is read-only. It prevents duplicate calls within one warm instance, including concurrent duplicate events, but is not durable across instances and is explicitly insufficient for future consequential actions.",
+        "Only Calendar read is admitted. Every other intent is classified unsupported and remains with the existing conversational system; no inference should be made that writes, hosting, delegation, reminders, or messaging are ready for this boundary."
+      ]
+    },
+    {
       "id": "proactive_opening_brief",
       "contract": "Carson's spoken opening line (opening_line dynamic variable, spoken verbatim by the ElevenLabs dashboard's configured first message) is a Chief-of-Staff briefing, not a database/app-state summary. It must apply relevance judgment before information reaches speech: only critical/action-needed items (urgent decisions, overdue commitments, escalations, failures), today/tonight-relevant items, and genuine accomplishments are spoken — routine background state (e.g. a recurring automation merely sent-but-unconfirmed) is deliberately silent. A truthful Waiting statement may identify the responsible person and confirmation status, but must not recite the stored staff instruction or message body; detailed instructions remain available in durable execution evidence and Communication History. On the first session of a kind (morning/night) each day, the full brief is given; on every later session that same day, an unchanged actionable item is never repeated, but a genuinely new or materially changed one (new/newly-firing reminder, newly escalated/failed automation, new Needs You owner-decision, materially changed calendar event) always surfaces. Morning Brief and Night Sweep track their own first-session and already-surfaced-material state completely separately, so an earlier Morning Brief session can never suppress the day's first legitimate Night Sweep, and vice versa. Task-label categorization (e.g. distinguishing a food/grocery task from an unrelated chore) is canonical and shared — Morning Brief and Night Sweep must never independently drift on the same description.",
       "business_importance": "high — this is the deterministic mechanism behind Carson's entire proactive-briefing promise (PR #24 reminder inclusion plus every other Morning Brief/Night Sweep actionable signal). A defect here either silently drops real, actionable information from the owner's very first interaction with Carson each session (PR #24's original failure mode), or floods it with low-value noise that erodes trust in the briefing (the \"8 automation loops\"/\"food task\" incidents) — both are product-contract failures, not just technical bugs.",
