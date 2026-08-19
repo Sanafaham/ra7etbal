@@ -1026,7 +1026,7 @@ export async function loadLatestCompletedHostingOperation(): Promise<ProposedPla
 }
 
 const HOSTING_OPERATION_RECALL_RE =
-  /\b(?:what did you ask|what (?:did|was) .{0,30}(?:prepare|do)|what time did you tell|when did you tell|who (?:received|got|has) the plan|who did you (?:send|message)|what was sent)\b/i;
+  /\b(?:what did you ask|what (?:exactly )?did you send|what (?:did|was) .{0,30}(?:prepare|do)|what time did you tell|when did you tell|who (?:received|got|has) the plan|who did you (?:send|message)|what was sent)\b/i;
 const HOSTING_CONFIRMATION_RECALL_RE =
   /\b(?:who|has|have|did|is|are).{0,40}\bconfirm(?:ed|ation)?\b/i;
 // The confirmation-recall branch below can only ever answer yes/no ("X has
@@ -1690,6 +1690,33 @@ function buildHostingExecutionSummary(plan: ProposedPlan, sentNames: string[], f
 }
 
 /**
+ * The concise, canonical result shown and spoken to the owner.
+ *
+ * `buildHostingExecutionSummary` deliberately remains the detailed durable
+ * execution evidence stored with the operation. Staff instructions, event
+ * detail, entity IDs, and delivery evidence must not be reused as conversational
+ * copy merely because they are canonical. This formatter derives the owner's
+ * result from the same verified delivery outcomes while exposing only what the
+ * owner needs to know and preserving every partial/failure fact.
+ */
+function buildHostingOwnerExecutionResult(
+  sentNames: string[],
+  failedSends: Array<{ recipient: string; reason: string }>,
+): string {
+  const parts: string[] = [];
+  if (sentNames.length > 0) {
+    parts.push(
+      `${sentNames.join(", ")} ${sentNames.length === 1 ? "has" : "have"} the plan. ` +
+      `I'll watch for ${sentNames.length === 1 ? "their confirmation" : "confirmations"}.`,
+    );
+  }
+  for (const failure of failedSends) {
+    parts.push(`${failure.recipient} was NOT messaged — ${failure.reason}.`);
+  }
+  return parts.length > 0 ? parts.join(" ") : "No messages were delivered.";
+}
+
+/**
  * Executes the confirmed plan without any AI re-extraction.
  *
  * Builds ExtractedItem[] directly from ProposedTask data, saves all items
@@ -1897,18 +1924,7 @@ export async function executeProposedPlan(
     await markPlanCompleted(plan.dbId, plan.tasks, plan.executionSummary).catch(() => {});
   }
 
-  if (failedSends.length === 0) {
-    return plan.executionSummary;
-  }
-
-  const parts: string[] = [];
-  if (sentNames.length > 0) {
-    parts.push(`${sentNames.join(", ")} ${sentNames.length === 1 ? "has" : "have"} the plan`);
-  }
-  for (const failure of failedSends) {
-    parts.push(`${failure.recipient} was NOT messaged — ${failure.reason}`);
-  }
-  return `${plan.executionSummary} ${parts.join(". ")}.`;
+  return buildHostingOwnerExecutionResult(sentNames, failedSends);
 }
 
 /** Call when the user rejects a proposed plan. */
