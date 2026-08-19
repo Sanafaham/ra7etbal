@@ -322,8 +322,13 @@ describe("guest preparation operational planning", () => {
       "Nasira",
       "Grace",
     ]);
-    expect(result).toContain("Christopher, Nasira, Grace have the plan. I'll watch for confirmations.");
-    expect(result).toContain("Christopher: Sana is hosting tea for three guests tomorrow at 6 PM");
+    expect(result).toBe("Christopher, Nasira, Grace have the plan. I'll watch for confirmations.");
+    expect(result).not.toContain("Hosting operation:");
+    expect(result).not.toContain("Christopher: Sana is hosting tea for three guests tomorrow at 6 PM");
+    // Detailed canonical execution evidence remains durable on the operation;
+    // only the owner presentation is concise.
+    expect(plan.executionSummary).toContain("Hosting operation:");
+    expect(plan.executionSummary).toContain("Christopher: Sana is hosting tea for three guests tomorrow at 6 PM");
   });
 
   it("reports exactly who succeeded and failed when one multi-owner send fails", async () => {
@@ -372,8 +377,13 @@ describe("guest preparation operational planning", () => {
     });
 
     expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(3);
-    expect(result).toContain("Christopher, Grace have the plan");
-    expect(result).toContain("Nasira was NOT messaged — Meta rejected the message");
+    expect(result).toBe(
+      "Christopher, Grace have the plan. I'll watch for confirmations. " +
+      "Nasira was NOT messaged — Meta rejected the message.",
+    );
+    expect(result).not.toContain("Hosting operation:");
+    expect(result).not.toContain("Christopher:");
+    expect(plan.executionSummary).toContain("Hosting operation:");
   });
 });
 
@@ -903,6 +913,9 @@ describe("hosting planning gate", () => {
     };
 
     expect(answerHostingOperationRecall("What did you ask Christopher to prepare?", operation)).toContain("finger sandwiches, scones, mini cakes, and tea");
+    expect(answerHostingOperationRecall("What exactly did you send Christopher?", operation)).toBe(
+      "Christopher was told: Prepare finger sandwiches, scones, mini cakes, and tea with no shellfish. Have everything ready by 3:45 PM.",
+    );
     expect(answerHostingOperationRecall("What did you ask Grace to do?", operation)).toContain("Coordinate the table setup");
     expect(answerHostingOperationRecall("What time did you tell them to be ready?", operation)).toBe("I told them to be ready by 3:45 PM.");
     expect(answerHostingOperationRecall("Who received the plan?", operation)).toBe("Christopher and Grace received the plan.");
@@ -1532,7 +1545,11 @@ describe("hosting planning gate", () => {
       userId: "user-1",
       people: [christopher],
     });
-    expect(summary).toContain("Christopher has the plan");
+    expect(summary).toBe("Christopher has the plan. I'll watch for their confirmation.");
+    expect(summary).not.toContain("Hosting operation:");
+    expect(summary).not.toContain("Please plan and prepare");
+    expect(third.plan?.executionSummary).toContain("Hosting operation: dinner");
+    expect(third.plan?.executionSummary).toContain("Christopher: Please prepare steaks and fries with no shellfish.");
     expect(mocks.savePending).toHaveBeenCalledTimes(1);
     expect(mocks.deliverTaskMessage).toHaveBeenCalledTimes(1);
   });
