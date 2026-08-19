@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App";
+import CarsonBoundaryProof, { isCarsonBoundaryProofPath } from "./routes/CarsonBoundaryProof";
 import "./styles/globals.css";
 // Side-effect import: installs the Supabase auth listener BEFORE React mounts.
 // Order matters — do not move below `createRoot`.
@@ -13,10 +14,14 @@ import "./stores/sync";
 const rootEl = document.getElementById("root");
 if (!rootEl) throw new Error("Root element #root not found");
 
+const RootView = isCarsonBoundaryProofPath(window.location.pathname)
+  ? CarsonBoundaryProof
+  : App;
+
 createRoot(rootEl).render(
   <StrictMode>
     <BrowserRouter>
-      <App />
+      <RootView />
     </BrowserRouter>
   </StrictMode>,
 );

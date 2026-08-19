@@ -966,6 +966,45 @@
       ]
     },
     {
+      "id": "carson_stage2a_custom_llm_boundary_proof",
+      "contract": "The isolated, non-production Stage 2A voice proof accepts only an ElevenLabs Custom LLM request authenticated with its dedicated provider secret and carrying a server-issued, short-lived, cryptographically signed Ra7etBal account binding. It extracts the latest owner turn from the real OpenAI-compatible message history and streams exactly one fixed canonical sentence — 'Boundary proof successful.' — without invoking a model, tool, database write, legacy Carson path, or consequential capability. The proof route is exact-path isolated and cannot replace or modify the production Talk-to-Carson widget.",
+      "business_importance": "high — this is the first real provider-boundary gate for Corrected Path C; it must prove that Ra7etBal can own the spoken answer before any Stage 1 read or future consequential capability is connected",
+      "production_entry_points": [
+        "api/carson-custom-llm-stage2a.js",
+        "src/main.tsx (exact-path selection for the isolated preview proof only)",
+        "src/routes/CarsonBoundaryProof.tsx"
+      ],
+      "files_functions": [
+        "api/carson-custom-llm-stage2a.js:createStage2aHandler / createSessionBinding / verifySessionBinding / extractLatestOwnerMessage",
+        "src/routes/CarsonBoundaryProof.tsx:CarsonBoundaryProof / isCarsonBoundaryProofPath"
+      ],
+      "shared_dependencies": [],
+      "db": { "tables": [], "rpcs": [], "migrations": [] },
+      "external_boundaries": [
+        "Supabase Auth /auth/v1/user (binding issuance only)",
+        "ElevenLabs Custom LLM OpenAI-compatible Chat Completions request/SSE response",
+        "ElevenLabs browser voice transport and TTS through a separate non-production agent"
+      ],
+      "focused_tests": [
+        "api/carson-custom-llm-stage2a.test.js",
+        "src/routes/CarsonBoundaryProof.test.tsx"
+      ],
+      "protected_suite": true,
+      "golden_journey_required": true,
+      "golden_journey_tests": [
+        "api/carson-custom-llm-stage2a.test.js"
+      ],
+      "db_contract_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "low — additive, non-production, fixed-response, no persistence and no tool surface; removing the isolated route, endpoint, and preview agent restores the prior state without data rollback",
+      "verification_status": "Stage 2A implementation in progress. Automated auth, signed-binding, exact-SSE, retry-identity, and route-isolation contracts exist; the real non-production ElevenLabs provider, interruption, retry, spoken/displayed ownership, and preview deployment gates must all pass before a PR may be opened.",
+      "unresolved": [
+        "This proof intentionally does not connect /api/carson-turn, Stage 1 Calendar read, or any other Ra7etBal capability.",
+        "The process-local retry evidence store is sufficient only for this harmless fixed-response provider proof and is explicitly not durable idempotency for consequential actions.",
+        "No production voice cutover or production agent/configuration change is authorized by this capability."
+      ]
+    },
+    {
       "id": "proactive_opening_brief",
       "contract": "Carson's spoken opening line (opening_line dynamic variable, spoken verbatim by the ElevenLabs dashboard's configured first message) is a Chief-of-Staff briefing, not a database/app-state summary. It must apply relevance judgment before information reaches speech: only critical/action-needed items (urgent decisions, overdue commitments, escalations, failures), today/tonight-relevant items, and genuine accomplishments are spoken — routine background state (e.g. a recurring automation merely sent-but-unconfirmed) is deliberately silent. A truthful Waiting statement may identify the responsible person and confirmation status, but must not recite the stored staff instruction or message body; detailed instructions remain available in durable execution evidence and Communication History. On the first session of a kind (morning/night) each day, the full brief is given; on every later session that same day, an unchanged actionable item is never repeated, but a genuinely new or materially changed one (new/newly-firing reminder, newly escalated/failed automation, new Needs You owner-decision, materially changed calendar event) always surfaces. Morning Brief and Night Sweep track their own first-session and already-surfaced-material state completely separately, so an earlier Morning Brief session can never suppress the day's first legitimate Night Sweep, and vice versa. Task-label categorization (e.g. distinguishing a food/grocery task from an unrelated chore) is canonical and shared — Morning Brief and Night Sweep must never independently drift on the same description.",
       "business_importance": "high — this is the deterministic mechanism behind Carson's entire proactive-briefing promise (PR #24 reminder inclusion plus every other Morning Brief/Night Sweep actionable signal). A defect here either silently drops real, actionable information from the owner's very first interaction with Carson each session (PR #24's original failure mode), or floods it with low-value noise that erodes trust in the briefing (the \"8 automation loops\"/\"food task\" incidents) — both are product-contract failures, not just technical bugs.",
