@@ -102,6 +102,7 @@ import {
 import { buildCarsonDirectToolDiagnosticEvent } from "../../lib/carson-direct-tool-diagnostics";
 import { detectAllRecurringSchedules, buildVoiceAutomationInput, createReminderRoutineFromInstruction, findPersonInInstruction, normalizeCadenceText, resolveRecurringAutomationPerson } from "../../lib/routine-detection";
 import {
+  detectHouseholdOutcome,
   handleOperationalHostingTurn,
   resolveGuestOutcomeAction,
   executeProposedPlan,
@@ -124,7 +125,9 @@ import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
 import {
+  buildCanonicalConsequentialSpeechPayload,
   createCanonicalConsequentialResult,
+  resolveConsequentialInstructionSource,
   resolveConsequentialOwnerMessage,
   type CanonicalConsequentialKind,
   type CanonicalConsequentialResult,
@@ -4120,17 +4123,24 @@ export default function ElevenLabsAgentWidget({
       const lastUserMessage = [...sessionTranscriptRef.current]
         .reverse()
         .find((m) => m.role === "user")?.message?.trim();
+      const capturedOwnerMessage = activeUserRoutingContextRef.current?.message.trim() || lastUserMessage;
       const lastUserWordCount = lastUserMessage ? lastUserMessage.split(/\s+/).length : 0;
       const lastUserIsVague =
         !lastUserMessage ||
         isConfirmation(lastUserMessage) ||
         isRejection(lastUserMessage) ||
         lastUserWordCount <= 5;
-      const rawInstruction = (
-        lastUserIsVague
-          ? (instruction?.trim() || lastUserMessage || "")
-          : lastUserMessage
-      ).trim();
+      const capturedHostingTurn = Boolean(
+        capturedOwnerMessage
+        && (pendingHostingClarificationRef.current || detectHouseholdOutcome(capturedOwnerMessage)),
+      );
+      const rawInstruction = resolveConsequentialInstructionSource({
+        capturedOwnerMessage,
+        lastUserMessage,
+        toolInstruction: instruction,
+        lastUserIsVague,
+        isHostingTurn: capturedHostingTurn,
+      });
 
       // ── Routing trace — emitted before any branching ──────────────────
       console.log("[routine:TRACE] instruction_param=", (instruction?.trim() ?? "null").slice(0, 120));
@@ -5746,7 +5756,7 @@ export default function ElevenLabsAgentWidget({
     const carsonStateText = requestedChannel === "voice" && sessionPhotoContextRef.current
       ? `${baseStateText}\n\nAttached photos context (use this for the conversation):\n${sessionPhotoContextRef.current}`
       : baseStateText;
-    const hostingToolPolicy = `For every new hosting request or hosting clarification, call execute_instruction with the user's full verbatim utterance. Never answer hosting from conversation history or ra7etbal_state alone. Never claim a worker confirmed unless execute_instruction returns verified confirmation evidence.${activeHostingDraft ? " An active hosting clarification is in progress. Do not greet or start a new topic; wait for the owner's clarification answer and pass it to execute_instruction." : ""}`;
+    const hostingToolPolicy = `For every new hosting request or hosting clarification, call execute_instruction with the user's full verbatim utterance. Never answer hosting from conversation history or ra7etbal_state alone. Never claim a worker confirmed unless execute_instruction returns verified confirmation evidence. When execute_instruction returns a response_contract of speak_owner_result_exactly_without_additions_or_changes, speak only owner_result verbatim; do not paraphrase, preface, summarize, or add any consequential fact.${activeHostingDraft ? " An active hosting clarification is in progress. Do not greet or start a new topic; wait for the owner's clarification answer and pass it to execute_instruction." : ""}`;
     const channelInstructions = requestedChannel === "voice"
       ? [CARSON_STATUS_POLICY, CARSON_VOICE_SESSION_GUARD, hostingToolPolicy, persistentInstructions]
       : [
@@ -5922,7 +5932,16 @@ export default function ElevenLabsAgentWidget({
             try {
               const result = await executeInstruction(params);
               trace.outcome = "success";
-              return result;
+              const canonicalResult = canonicalConsequentialResultRef.current;
+              const isCurrentHostingResult = canonicalResult
+                && canonicalResult.toolName === "execute_instruction"
+                && canonicalResult.turnOperationId === currentOwnerTurnOperationIdRef.current
+                && ["clarification", "proposal", "executed", "cancelled", "rejected"].includes(
+                  canonicalResult.kind,
+                );
+              return isCurrentHostingResult
+                ? buildCanonicalConsequentialSpeechPayload(canonicalResult.resultText)
+                : result;
             } catch (err) {
               trace.outcome = "error";
               console.error("[executeInstruction:catch]", err);

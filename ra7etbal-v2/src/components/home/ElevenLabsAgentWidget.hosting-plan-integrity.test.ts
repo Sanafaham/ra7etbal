@@ -138,6 +138,29 @@ describe("ElevenLabsAgentWidget — hosting plan execution truthfulness (Guard D
 });
 
 describe("ElevenLabsAgentWidget — canonical consequential owner result", () => {
+  it("uses the captured owner utterance for fresh hosting and clarification turns", () => {
+    expect(SOURCE).toContain("const capturedOwnerMessage = activeUserRoutingContextRef.current?.message.trim() || lastUserMessage;");
+    expect(SOURCE).toContain("pendingHostingClarificationRef.current || detectHouseholdOutcome(capturedOwnerMessage)");
+    expect(SOURCE).toContain("const rawInstruction = resolveConsequentialInstructionSource({");
+    expect(SOURCE).toContain("isHostingTurn: capturedHostingTurn");
+  });
+
+  it("returns a canonical speech contract for the current hosting tool result", () => {
+    const toolBlock = blockBetween(
+      "execute_instruction: async (params: ExecuteInstructionParams)",
+      "// ── Legacy/simple fallbacks",
+    );
+    expect(toolBlock).toContain("buildCanonicalConsequentialSpeechPayload(canonicalResult.resultText)");
+    expect(toolBlock).toContain('canonicalResult.toolName === "execute_instruction"');
+    expect(toolBlock).toContain("canonicalResult.turnOperationId === currentOwnerTurnOperationIdRef.current");
+  });
+
+  it("requires ElevenLabs to relay marked hosting results without changing consequential facts", () => {
+    expect(SOURCE).toContain(
+      "speak only owner_result verbatim; do not paraphrase, preface, summarize, or add any consequential fact",
+    );
+  });
+
   it("binds each fresh owner transcript to a new operation and clears the prior result", () => {
     expect(SOURCE).toContain("const turnOperationId = crypto.randomUUID();");
     expect(SOURCE).toContain("currentOwnerTurnOperationIdRef.current = turnOperationId;");
