@@ -8,6 +8,13 @@ type TranscriptLine = { role: "user" | "agent"; message: string };
 
 const agentId = import.meta.env.VITE_CARSON_STAGE2A_AGENT_ID;
 
+/**
+ * Fixed opening line for the isolated proof. The cloned agent's first message is
+ * "{{opening_line}}", so ElevenLabs requires this dynamic variable at session
+ * start. It is a constant literal — this proof never computes a Carson brief.
+ */
+export const STAGE2A_OPENING_LINE = "Boundary proof session.";
+
 export function isCarsonBoundaryProofPath(pathname: string) {
   return pathname === "/non-production/carson-boundary-proof";
 }
@@ -41,6 +48,11 @@ export default function CarsonBoundaryProof() {
       const binding = await bindingResponse.json();
       const conversation = await Conversation.startSession({
         agentId,
+        // The non-production agent is cloned from Carson, whose first message is
+        // just "{{opening_line}}". ElevenLabs refuses the session (close 1008,
+        // agent_configuration_error) unless that variable is supplied. This proof
+        // deliberately sends a fixed literal — no brief, no Carson reasoning.
+        dynamicVariables: { opening_line: STAGE2A_OPENING_LINE },
         customLlmExtraBody: { carson_stage2a_binding: binding.binding },
         connectionDelay: { default: 0, android: 3_000, ios: 500 },
         onConnect: ({ conversationId: id }) => { setConversationId(id); setConnection("connected"); },
