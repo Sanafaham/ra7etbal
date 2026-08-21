@@ -356,7 +356,7 @@ export function buildMorningBriefSpoken(
       return !!a && a !== "me" && (t.type === "delegation" || t.type === "followup");
     });
     const rest = recentDone.length - 1;
-    if (notable && cap(notable.assigned_to) && cleanDesc(notable.description)) {
+    if (notable && cap(notable.assigned_to) && cleanDesc(notable.description, notable.assigned_to)) {
       const lead = buildCompletionSentenceV3(notable);
       slotCompletions = rest > 0
         ? `${lead} ${capFirst(spokenCount(rest))} other item${rest === 1 ? " was" : "s were"} also completed.`
@@ -379,7 +379,7 @@ export function buildMorningBriefSpoken(
 
   if (topWaiter) {
     const who  = cap(topWaiter.assigned_to);
-    const what = cleanDesc(topWaiter.description);
+    const what = cleanDesc(topWaiter.description, topWaiter.assigned_to);
 
     if (topWaiter.escalated_at != null) {
       slotWaiting = who && what
@@ -540,31 +540,56 @@ const LABEL_PATTERNS: Array<[RegExp, string]> = [
 const LEADING_VERB = /^(check and make sure|make sure|please|order|remind|ask|tell|confirm|have|message|send|check|follow up on|follow up|get)\s+/i;
 
 /**
- * Returns a short spoken label for a task description.
- * Tries keyword matching first; falls back to stripping leading verbs
- * and truncating to a clean noun phrase.
+ * Strips a leading vocative address that matches the task's own known
+ * assignee ("Christopher, we have 6 guests…" on a task assigned to
+ * Christopher). Deliberately not a generic name-detection heuristic — a
+ * capitalized-word-plus-comma pattern would also match ordinary sentence
+ * openers ("Please,", "Also,", "Note,") that are not names at all, and
+ * would miss real multi-word/hyphenated/apostrophe names ("Mary Jane,",
+ * "Anne-Marie,", "O'Connor,") that don't fit a single-token shape. The
+ * assignee is already a known, trusted value on the task record — matching
+ * it exactly needs no guessing and can never misfire on either front.
  */
-export function taskLabel(raw: string): string {
+function stripLeadingVocative(s: string, assigneeName?: string | null): string {
+  const name = assigneeName?.trim();
+  if (!name) return s;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(new RegExp(`^${escaped},\\s+`, "i"), "");
+}
+
+/**
+ * Returns a short spoken label for a task description.
+ * Tries keyword matching first; falls back to stripping a leading vocative
+ * address to the known assignee and/or leading verb, then truncating to a
+ * clean noun phrase.
+ */
+export function taskLabel(raw: string, assigneeName?: string | null): string {
   const lower = raw.trim().toLowerCase();
 
   for (const [pattern, label] of LABEL_PATTERNS) {
     if (pattern.test(lower)) return label;
   }
 
-  // Fallback: strip leading verbs, lowercase, truncate.
+  // Fallback: strip a leading vocative address to the known assignee, then
+  // a leading verb, lowercase, truncate.
   let s = raw.trim().replace(/[.!?]+$/, "").trim();
+  s = stripLeadingVocative(s, assigneeName);
   s = s.replace(LEADING_VERB, "").trim();
   s = s.charAt(0).toLowerCase() + s.slice(1);
 
   if (s.length <= 35) return s;
   const cut = s.slice(0, 35);
   const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+  // No ellipsis here — every caller appends its own sentence-final
+  // punctuation (e.g. "confirmed the ${what}."), and appending one here
+  // too produced "….", a doubled-punctuation artifact with no functional
+  // purpose in a spoken sentence (2026-08-21 incident).
+  return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd();
 }
 
 // Alias so callers that used cleanDesc still work during migration.
-function cleanDesc(raw: string): string {
-  return taskLabel(raw);
+function cleanDesc(raw: string, assigneeName?: string | null): string {
+  return taskLabel(raw, assigneeName);
 }
 
 function spokenCount(n: number): string {
@@ -639,7 +664,7 @@ export interface CompletionPhrase {
  * Canonical completion-outcome phrase, shared by Morning Brief and Night
  * Sweep so a completed task is described the same way in both.
  */
-export function buildCompletionPhrase(rawDescription: string): CompletionPhrase {
+export function buildCompletionPhrase(rawDescription: string, assigneeName?: string | null): CompletionPhrase {
   const trimmed = rawDescription.trim().replace(/[.!?]+$/, "").trim();
   const firstWord = trimmed.split(/\s+/)[0]?.toLowerCase() ?? "";
   const gerund = GERUND_VERBS[firstWord];
@@ -647,7 +672,7 @@ export function buildCompletionPhrase(rawDescription: string): CompletionPhrase 
     const rest = trimmed.slice(firstWord.length).trim();
     return { text: rest ? `${gerund} ${rest}` : gerund, isGerund: true };
   }
-  return { text: taskLabel(rawDescription), isGerund: false };
+  return { text: taskLabel(rawDescription, assigneeName), isGerund: false };
 }
 
 function buildCompletionSentenceV3(t: Task): string {
@@ -656,7 +681,7 @@ function buildCompletionSentenceV3(t: Task): string {
     t.type === "delegation" ||
     t.type === "followup" ||
     (!!assignee && assignee.toLowerCase() !== "me");
-  const phrase = buildCompletionPhrase(t.description);
+  const phrase = buildCompletionPhrase(t.description, t.assigned_to);
   if (isDelegated && assignee) {
     if (!phrase.text) return `${cap(assignee)} confirmed an open item.`;
     return phrase.isGerund
