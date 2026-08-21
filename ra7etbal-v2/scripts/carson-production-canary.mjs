@@ -183,7 +183,7 @@ export function evaluateDerivedDatabaseHealth(row) {
  * reason why — reported truthfully every run, never silently omitted, and
  * never counted as a PASS.
  */
-export function buildCanaryReport({ deploymentSha, checks, humanOnlyBoundaries }) {
+export function buildCanaryReport({ deploymentSha, checks, humanOnlyBoundaries, notRun }) {
   const failures = checks.filter((c) => !c.result.ok);
   return {
     timestamp: new Date().toISOString(),
@@ -192,7 +192,55 @@ export function buildCanaryReport({ deploymentSha, checks, humanOnlyBoundaries }
     checks: checks.map((c) => ({ name: c.name, capability: c.capability, ok: c.result.ok })),
     failures: failures.map((c) => ({ name: c.name, capability: c.capability, detail: c.result })),
     humanOnlyBoundaries: humanOnlyBoundaries || [],
+    // Checks that were configured-out for this run (e.g. an optional
+    // non-production boundary whose URL wasn't supplied). Reported
+    // explicitly so a skipped check can never be mistaken for a PASS,
+    // and never silently omitted.
+    notRun: notRun || [],
   };
+}
+
+/**
+ * Stage 2A (Corrected Path C) Custom LLM boundary — fail-closed probe.
+ *
+ * Pure evaluation of an UNAUTHENTICATED request to the deployed Stage 2A
+ * Custom LLM endpoint. A healthy deployment must reject it at the
+ * application's own provider-authentication gate.
+ *
+ * WHAT A PASS PROVES: the host resolves and serves HTTPS, the
+ * /chat/completions rewrite still routes to the Stage 2A handler, the
+ * function actually executes, and provider authentication fails closed.
+ * The 2026-08-20 investigation showed each of those can break
+ * independently of anything CI can see — a missing rewrite returned the
+ * SPA shell, and an edge 404 never invoked the function at all.
+ *
+ * WHAT A PASS DOES NOT PROVE — do not overstate this check:
+ *   - that a correctly authenticated request returns the canonical
+ *     sentence (that would require sending real provider credentials
+ *     from CI, which this canary must never do);
+ *   - that ElevenLabs actually dispatches an outbound request to the
+ *     endpoint. Only ElevenLabs' own infrastructure can prove that, and
+ *     the historical failure was precisely a pre-egress abort. The live
+ *     human acceptance (conv_7501m0gsp7v2e6mam5kbyrsrr405) is the
+ *     evidence for that half of the boundary.
+ *
+ * SAFETY: the caller sends no provider secret, no session secret, no
+ * owner binding, and starts no ElevenLabs conversation. Nothing is
+ * mutated; the endpoint has no database access or execution surface.
+ */
+export function evaluateStage2aBoundaryFailClosed({ status, body }) {
+  const text = typeof body === "string" ? body : JSON.stringify(body ?? "");
+  if (status !== 401) {
+    return { ok: false, reason: `expected HTTP 401 from unauthenticated Stage 2A request, got ${status}`, status };
+  }
+  if (!text.includes("Unauthorized provider")) {
+    return {
+      ok: false,
+      reason: "HTTP 401 did not come from the Stage 2A handler's provider gate (no \"Unauthorized provider\" body) — the request may have been stopped by an edge/protection layer before reaching the function",
+      status,
+    };
+  }
+  return { ok: true, status, failedClosedAt: "provider_authentication" };
 }
 
 // Genuinely classification-C boundaries only — a capability where no safe
@@ -273,6 +321,32 @@ async function fetchSupabaseCanaryHealth(supabaseUrl, publishableKey, canaryToke
   return Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
 }
 
+/**
+ * Sends ONE deliberately unauthenticated POST to the Stage 2A Custom LLM
+ * boundary and returns the raw { status, body } for the pure evaluator.
+ *
+ * Deliberately sends NO Authorization header, NO provider secret, NO
+ * session secret and NO owner binding — the whole point is that the
+ * request must be rejected. The body is a minimal, valid-shaped Chat
+ * Completions request so the rejection comes from the auth gate rather
+ * than from a parse error.
+ */
+async function fetchStage2aBoundaryUnauthenticated(baseUrl) {
+  const url = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messages: [{ role: "user", content: "canary" }],
+      model: "carson-stage2a-fixed",
+      stream: true,
+    }),
+  });
+  // Bounded read: the failure path returns a small JSON error, and an
+  // unexpected success path must not stream into CI unbounded.
+  return { status: res.status, body: (await res.text()).slice(0, 500) };
+}
+
 function requireEnv(name) {
   const value = process.env[name];
   if (!value) {
@@ -306,14 +380,38 @@ async function main() {
   const { binding: bindingCheck, continuity: continuityCheck } =
     evaluateDerivedDatabaseHealth(databaseHealth);
 
+  const checks = [
+    { name: "deployment_identity", capability: "hosting_operations", result: deploymentCheck },
+    { name: "whatsapp_canonical_binding_ambiguity", capability: "owner_whatsapp_canonical_routing", result: bindingCheck },
+    { name: "automation_runner_person_id_continuity", capability: "whatsapp_delivery_person_identity_continuity", result: continuityCheck },
+  ];
+  const notRun = [];
+
+  // Optional, opt-in: the Stage 2A Custom LLM boundary lives on its own
+  // non-production deployment and is not part of the production release,
+  // so it is only probed when its URL is explicitly supplied. Absent that,
+  // the check is reported as not-run rather than silently dropped.
+  const stage2aUrl = process.env.STAGE2A_BOUNDARY_URL || "";
+  if (stage2aUrl) {
+    const probe = await fetchStage2aBoundaryUnauthenticated(stage2aUrl);
+    checks.push({
+      name: "stage2a_custom_llm_boundary_fail_closed",
+      capability: "carson_stage2a_custom_llm_boundary_proof",
+      result: evaluateStage2aBoundaryFailClosed(probe),
+    });
+  } else {
+    notRun.push({
+      name: "stage2a_custom_llm_boundary_fail_closed",
+      capability: "carson_stage2a_custom_llm_boundary_proof",
+      reason: "STAGE2A_BOUNDARY_URL not supplied. Stage 2A is a non-production boundary on a separate deployment and is not part of the production release, so this probe is opt-in. Not run is not a pass.",
+    });
+  }
+
   const report = buildCanaryReport({
     deploymentSha: expectedSha,
-    checks: [
-      { name: "deployment_identity", capability: "hosting_operations", result: deploymentCheck },
-      { name: "whatsapp_canonical_binding_ambiguity", capability: "owner_whatsapp_canonical_routing", result: bindingCheck },
-      { name: "automation_runner_person_id_continuity", capability: "whatsapp_delivery_person_identity_continuity", result: continuityCheck },
-    ],
+    checks,
     humanOnlyBoundaries: HUMAN_ONLY_BOUNDARIES,
+    notRun,
   });
 
   console.log(JSON.stringify(report, null, 2));

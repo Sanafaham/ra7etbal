@@ -977,7 +977,11 @@
       ],
       "files_functions": [
         "api/carson-custom-llm-stage2a.js:createStage2aHandler / createSessionBinding / verifySessionBinding / extractLatestOwnerMessage",
+        "api/carson-custom-llm-stage2a.js:authenticateOwner (Supabase owner-JWT verification, the only gate that decides whose account a binding is issued to)",
+        "api/carson-custom-llm-stage2a.js:signingSecret / providerSecret (fail-closed secret loading; signingSecret refuses a secret shorter than 32 bytes, providerSecret's absence yields 503 rather than an open endpoint)",
+        "api/carson-custom-llm-stage2a.js:streamFixedCompletion (the server-owned canonical SSE — the single place the spoken sentence is decided)",
         "src/routes/CarsonBoundaryProof.tsx:CarsonBoundaryProof / isCarsonBoundaryProofPath",
+        "src/routes/CarsonBoundaryProof.tsx:STAGE2A_OPENING_LINE (supplied as the `opening_line` dynamic variable; the agent's first_message interpolates it and the session fails to start if it is absent)",
         "vercel.json:rewrites[/chat/completions -> /api/carson-custom-llm-stage2a]"
       ],
       "shared_dependencies": [],
@@ -985,21 +989,31 @@
       "external_boundaries": [
         "Supabase Auth /auth/v1/user (binding issuance only)",
         "ElevenLabs Custom LLM OpenAI-compatible Chat Completions request/SSE response",
-        "ElevenLabs browser voice transport and TTS through a separate non-production agent"
+        "ElevenLabs browser voice transport and TTS through a separate non-production agent",
+        "An isolated Vercel project, separate from the production project and from ra7etbal-staging, holding the Stage 2A deployment and its own CARSON_STAGE2A_PROVIDER_SECRET / CARSON_STAGE2A_SESSION_SECRET. Its ElevenLabs Server URL is configured as a BASE url — ElevenLabs itself appends /chat/completions — and the agent requires the custom_llm_extra_body override to be enabled in its Security settings, or the owner binding never reaches the server.",
+        "ElevenLabs workspace secret store (write-only: GET /v1/convai/secrets/{id} never returns a value, so the provider secret cannot be read back for comparison — only re-set on both sides)"
       ],
       "focused_tests": [
         "api/carson-custom-llm-stage2a.test.js",
+        "api/carson-custom-llm-stage2a.contract.test.js",
         "src/routes/CarsonBoundaryProof.test.tsx"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
       "golden_journey_tests": [
-        "api/carson-custom-llm-stage2a.test.js"
+        "api/golden-journey-stage2a-owner-boundary.test.js"
       ],
       "db_contract_tests": [],
-      "production_canary_required": false,
+      "production_canary_required": true,
+      "production_canary": {
+        "classification": "A",
+        "script": "scripts/carson-production-canary.mjs (evaluateStage2aBoundaryFailClosed)",
+        "workflow": ".github/workflows/carson-production-canary.yml (opt-in: runs only when STAGE2A_BOUNDARY_URL is supplied, since Stage 2A lives on a separate non-production deployment; when absent the check is reported under the report's `notRun` list and is never counted as a pass)",
+        "proves": "That the deployed Stage 2A boundary still resolves, still routes /chat/completions to the Stage 2A handler, still executes the function, and still fails closed on provider authentication — returning 401 with the handler's own 'Unauthorized provider' body. Each of those broke independently during the 2026-08-20 investigation (a missing rewrite served the SPA shell; an edge 404 never invoked the function at all), and none of them are visible to an in-process test.",
+        "does_not_prove": "That an authenticated request returns the canonical sentence — the canary deliberately sends no provider credential, no session secret and no owner binding, so it can only observe the rejection path. It does NOT prove that ElevenLabs actually dispatches an outbound request to the configured Custom LLM URL; only ElevenLabs' own infrastructure can prove that, and the historical failure was precisely a pre-egress abort. That half of the boundary is evidenced solely by the live human acceptance (conversation conv_7501m0gsp7v2e6mam5kbyrsrr405)."
+      },
       "rollback_risk": "low — additive, non-production, fixed-response, no persistence and no tool surface; removing the isolated route, endpoint, and preview agent restores the prior state without data rollback",
-      "verification_status": "Stage 2A implementation in progress. Automated auth, signed-binding, exact-SSE, retry-identity, and route-isolation contracts exist. A single additive vercel.json rewrite (/chat/completions -> /api/carson-custom-llm-stage2a) was added so ElevenLabs' fixed Chat Completions path reaches the existing handler unchanged; no other route was touched. The real non-production ElevenLabs provider, interruption, retry, spoken/displayed ownership, and preview deployment gates must all pass before a PR may be opened.",
+      "verification_status": "PROTECTED — Stage 2A ACCEPTANCE PASSED 2026-08-20. Live owner-authenticated acceptance: conversation conv_7501m0gsp7v2e6mam5kbyrsrr405 (2026-08-20T23:56:51Z) on the real proof page with a real signed-in owner and real voice — four owner turns; three agent responses were exactly 'Boundary proof successful.' and the fourth carried the same canonical sentence with a trailing ellipsis (recorded precisely, NOT as four exact responses). Repo-resident protection: api/carson-custom-llm-stage2a.test.js (auth, signed binding, exact SSE, retry identity, route isolation), api/carson-custom-llm-stage2a.contract.test.js (the ElevenLabs wire contract — full documented request body, OpenAI-compatible chunk shape, single [DONE], no tool surface, fail-closed before streaming), and api/golden-journey-stage2a-owner-boundary.test.js (the whole owner journey against the real handler through an injected Supabase authenticate seam). Three real ElevenLabs-side defects were found and fixed to reach acceptance: a missing `opening_line` dynamic variable, a disabled custom_llm_extra_body override, and the /chat/completions routing gap. The historical ElevenLabs custom_llm_error 1002 root cause remains CANNOT VERIFY — the original secret values are unrecoverable, so it must not be attributed to credentials, tools, MCP, Vercel Deployment Protection, or any other component as a proven cause.",
       "unresolved": [
         "This proof intentionally does not connect /api/carson-turn, Stage 1 Calendar read, or any other Ra7etBal capability.",
         "The process-local retry evidence store is sufficient only for this harmless fixed-response provider proof and is explicitly not durable idempotency for consequential actions.",

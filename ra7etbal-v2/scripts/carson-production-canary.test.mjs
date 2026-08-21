@@ -8,6 +8,7 @@ import {
   evaluateConstraintExists,
   evaluatePersonIdContinuity,
   evaluateDerivedDatabaseHealth,
+  evaluateStage2aBoundaryFailClosed,
   buildCanaryReport,
   HUMAN_ONLY_BOUNDARIES,
   redactAuthHeader,
@@ -276,11 +277,95 @@ describe("secrets are never printed", () => {
 });
 
 describe("cannot mutate protected business state — static source scan", () => {
-  it("the canary module has exactly one POST, to the fixed aggregate-only RPC, and no mutation method", () => {
+  it("the canary module has exactly two POSTs — the aggregate-only RPC and the read-only Stage 2A rejection probe — and no mutation method", () => {
     const source = readFileSync(resolve(__dirname, "carson-production-canary.mjs"), "utf8");
     expect(source).not.toMatch(/\.insert\(|\.update\(|\.delete\(|\.upsert\(|\.rpc\(/);
-    expect(source.match(/method:\s*["']POST["']/g)).toHaveLength(1);
+    // Both POSTs are pinned by identity below, so the count staying exact
+    // is what stops a third, unreviewed POST being added silently.
+    expect(source.match(/method:\s*["']POST["']/g)).toHaveLength(2);
     expect(source).toContain("/rest/v1/rpc/carson_production_canary_health");
+    expect(source).toContain("/chat/completions");
     expect(source).not.toMatch(/method:\s*["'](PATCH|PUT|DELETE)["']/i);
+  });
+});
+
+describe("Stage 2A boundary probe — fail-closed evaluation", () => {
+  it("passes only when the handler's own provider gate returns 401 Unauthorized provider", () => {
+    const result = evaluateStage2aBoundaryFailClosed({
+      status: 401,
+      body: JSON.stringify({ error: "Unauthorized provider" }),
+    });
+    expect(result.ok).toBe(true);
+    expect(result.failedClosedAt).toBe("provider_authentication");
+  });
+
+  it("FAILS when an unauthenticated request is answered 200 — the boundary would be open to anyone", () => {
+    const result = evaluateStage2aBoundaryFailClosed({
+      status: 200,
+      body: 'data: {"choices":[{"delta":{"content":"Boundary proof successful."}}]}\n\ndata: [DONE]\n\n',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("expected HTTP 401");
+  });
+
+  it("FAILS on a 404 — the rewrite is gone or the function was never invoked", () => {
+    expect(evaluateStage2aBoundaryFailClosed({ status: 404, body: "Not Found" }).ok).toBe(false);
+  });
+
+  it("FAILS on a 200 SPA shell — the /chat/completions rewrite fell through to index.html", () => {
+    const result = evaluateStage2aBoundaryFailClosed({ status: 200, body: "<!doctype html><title>Ra7etBal</title>" });
+    expect(result.ok).toBe(false);
+  });
+
+  it("FAILS on a 503 — the provider secret is unconfigured, which is not the same as failing closed on auth", () => {
+    const result = evaluateStage2aBoundaryFailClosed({
+      status: 503,
+      body: JSON.stringify({ error: "Provider authentication unavailable" }),
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("FAILS on a 401 that did NOT come from the Stage 2A handler, e.g. an edge protection layer", () => {
+    const result = evaluateStage2aBoundaryFailClosed({ status: 401, body: "Authentication Required" });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain("edge/protection layer");
+  });
+
+  it("accepts an already-parsed object body, not just a string", () => {
+    expect(evaluateStage2aBoundaryFailClosed({ status: 401, body: { error: "Unauthorized provider" } }).ok).toBe(true);
+  });
+});
+
+describe("Stage 2A boundary probe — stays read-only and credential-free", () => {
+  it("sends no Authorization header, no provider/session secret and no binding on the probe", () => {
+    const source = readFileSync(resolve(__dirname, "carson-production-canary.mjs"), "utf8");
+    const probe = source.slice(
+      source.indexOf("async function fetchStage2aBoundaryUnauthenticated"),
+      source.indexOf("function requireEnv"),
+    );
+    expect(probe.length).toBeGreaterThan(0);
+    expect(probe).not.toMatch(/Authorization|Bearer|apikey/i);
+    expect(probe).not.toMatch(/CARSON_STAGE2A_PROVIDER_SECRET|CARSON_STAGE2A_SESSION_SECRET/);
+    expect(probe).not.toMatch(/elevenlabs_extra_body|carson_stage2a_binding|createHmac/);
+  });
+
+  it("never opens an ElevenLabs conversation or mints a binding anywhere in the module", () => {
+    const source = readFileSync(resolve(__dirname, "carson-production-canary.mjs"), "utf8");
+    expect(source).not.toMatch(/elevenlabs\.io|WebSocket|issue_session_binding/i);
+  });
+
+  it("reports a configured-out Stage 2A check as notRun, never as a pass", () => {
+    const report = buildCanaryReport({
+      deploymentSha: "abc",
+      checks: [{ name: "deployment_identity", capability: "hosting_operations", result: { ok: true } }],
+      notRun: [{ name: "stage2a_custom_llm_boundary_fail_closed", capability: "carson_stage2a_custom_llm_boundary_proof", reason: "STAGE2A_BOUNDARY_URL not supplied" }],
+    });
+    expect(report.notRun).toHaveLength(1);
+    expect(report.checks.map((c) => c.name)).not.toContain("stage2a_custom_llm_boundary_fail_closed");
+  });
+
+  it("defaults notRun to an empty array so existing callers are unaffected", () => {
+    const report = buildCanaryReport({ deploymentSha: "abc", checks: [] });
+    expect(report.notRun).toEqual([]);
   });
 });
