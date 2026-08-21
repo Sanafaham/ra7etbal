@@ -570,7 +570,8 @@
         "rpcs": [],
         "migrations": [
           "supabase/migrations/20260810_push_subscription_installation_identity.sql",
-          "supabase/migrations/20260814180000_owner_notifications_soft_dismiss.sql"
+          "supabase/migrations/20260814180000_owner_notifications_soft_dismiss.sql",
+          "supabase/migrations/20260821_owner_notifications_task_completion_reconciliation.sql"
         ]
       },
       "external_boundaries": ["Web Push/VAPID"],
