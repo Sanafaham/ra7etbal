@@ -529,6 +529,8 @@ function spokenDesc(raw: string): string {
 const LABEL_PATTERNS: Array<[RegExp, string]> = [
   [/\bcat food\b/,                      "cat food task"],
   [/\bflower|bouquet/,                  "flowers request"],
+  [/\bdinner|\bmenu\b/,                 "dinner plan"],
+  [/\bguests?\b|\bhosting\b/,           "hosting task"],
   [/\bcar\b|driver|pick.?up|drop.?off/, "car task"],
   [/\bdelivery|courier/,                "delivery task"],
   [/\bbill|electric|utilities|utility/, "bill task"],
@@ -539,10 +541,23 @@ const LABEL_PATTERNS: Array<[RegExp, string]> = [
 // Strip leading imperative verbs that add no noun content.
 const LEADING_VERB = /^(check and make sure|make sure|please|order|remind|ask|tell|confirm|have|message|send|check|follow up on|follow up|get)\s+/i;
 
+// A capitalized word immediately followed by a comma at the very start of a
+// description is a vocative address ("Christopher, please water the
+// plants") — a delegation dictated directly to the assignee, not a leading
+// temporal or imperative clause. Day names are excluded so "Monday, water
+// the plants" keeps its day intact. Production incident (2026-08-21): an
+// unstripped vocative name fed straight into the unconditional first-char
+// lowercase below, then survived mid-thought truncation, producing
+// "Christopher still hasn't confirmed the christopher, we have 6 guests
+// for…" — the assignee's own name reappeared, lowercased, inside the
+// fragment meant to describe what they hadn't confirmed.
+const LEADING_VOCATIVE_NAME =
+  /^(?!Monday,|Tuesday,|Wednesday,|Thursday,|Friday,|Saturday,|Sunday,|Today,|Tomorrow,)[A-Z][a-z'-]+,\s+/;
+
 /**
  * Returns a short spoken label for a task description.
- * Tries keyword matching first; falls back to stripping leading verbs
- * and truncating to a clean noun phrase.
+ * Tries keyword matching first; falls back to stripping a leading vocative
+ * address and/or leading verb, then truncating to a clean noun phrase.
  */
 export function taskLabel(raw: string): string {
   const lower = raw.trim().toLowerCase();
@@ -551,15 +566,21 @@ export function taskLabel(raw: string): string {
     if (pattern.test(lower)) return label;
   }
 
-  // Fallback: strip leading verbs, lowercase, truncate.
+  // Fallback: strip a leading vocative address, then a leading verb,
+  // lowercase, truncate.
   let s = raw.trim().replace(/[.!?]+$/, "").trim();
+  s = s.replace(LEADING_VOCATIVE_NAME, "").trim();
   s = s.replace(LEADING_VERB, "").trim();
   s = s.charAt(0).toLowerCase() + s.slice(1);
 
   if (s.length <= 35) return s;
   const cut = s.slice(0, 35);
   const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
+  // No ellipsis here — every caller appends its own sentence-final
+  // punctuation (e.g. "confirmed the ${what}."), and appending one here
+  // too produced "….", a doubled-punctuation artifact with no functional
+  // purpose in a spoken sentence (2026-08-21 incident).
+  return (lastSpace > 10 ? cut.slice(0, lastSpace) : cut).trimEnd();
 }
 
 // Alias so callers that used cleanDesc still work during migration.

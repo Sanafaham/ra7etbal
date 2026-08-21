@@ -90,6 +90,74 @@ describe("taskLabel", () => {
   it("still labels a bill/utility task as a bill task", () => {
     expect(taskLabel("Pay the electric bill")).toBe("bill task");
   });
+
+  // Production incident (2026-08-21): a delegation dictated directly to the
+  // assignee ("Christopher, we have 6 guests for dinner tomorrow at 8:00
+  // PM. Please plan and prepare a full dinner menu with NO shellfish.
+  // Confirm your menu plan with me by end of day today so we can finalize
+  // any shopping needed. Let me know if you have questions on guest
+  // preferences.") was spoken back as "christopher, we have 6 guests for…"
+  // inside the Waiting sentence "Christopher still hasn't confirmed the
+  // [fragment]." — the assignee's own name was lowercased and reinserted,
+  // and the raw multi-sentence utterance was truncated mid-thought with a
+  // trailing "…." (ellipsis collided with the template's own period).
+  it("labels the real production Christopher/six-guest dinner description as a dinner plan, not a mangled name fragment", () => {
+    const label = taskLabel(
+      "Christopher, we have 6 guests for dinner tomorrow at 8:00 PM. Please plan and prepare a full dinner menu with NO shellfish. Confirm your menu plan with me by end of day today so we can finalize any shopping needed. Let me know if you have questions on guest preferences.",
+    );
+    expect(label).toBe("dinner plan");
+    expect(label).not.toContain("christopher");
+    expect(label).not.toContain("…");
+  });
+
+  it("the full owner-facing Waiting sentence for the real Christopher record is coherent, not malformed", () => {
+    const task = makeTask({
+      type: "delegation",
+      assigned_to: "Christopher",
+      description:
+        "Christopher, we have 6 guests for dinner tomorrow at 8:00 PM. Please plan and prepare a full dinner menu with NO shellfish. Confirm your menu plan with me by end of day today so we can finalize any shopping needed. Let me know if you have questions on guest preferences.",
+      escalated_at: "2026-08-19T13:55:35.443Z",
+    });
+    const spoken = buildMorningBriefSpoken([task], [], "Sana", NOW);
+    expect(spoken).toContain("Christopher still hasn't confirmed the dinner plan.");
+    expect(spoken).not.toContain("christopher");
+    expect(spoken).not.toContain("….");
+    expect(spoken).not.toContain("…");
+  });
+
+  // General coverage for the failure class, independent of the "dinner"
+  // keyword match above — an ordinary description beginning with a
+  // person's proper name and comma, with no food/dinner/guest vocabulary,
+  // must not have that name lowercased into the fallback label.
+  it("does not lowercase a leading proper-noun vocative address with no keyword match", () => {
+    const label = taskLabel("Grace, please water the plants on the balcony every morning before breakfast");
+    expect(label).not.toMatch(/^grace/);
+    expect(label).not.toContain("grace,");
+  });
+
+  // A day name directly followed by a comma is not a person's name and
+  // must be preserved, not treated as a vocative address.
+  it("does not strip a leading day name that happens to be followed by a comma", () => {
+    expect(taskLabel("Monday, water the plants")).toBe("monday, water the plants");
+  });
+
+  // General coverage: any description long enough to hit the truncation
+  // path must never end in an ellipsis, since every caller appends its own
+  // sentence-final period.
+  it("truncates a long description without a trailing ellipsis", () => {
+    const label = taskLabel(
+      "Reorganize the entire garage including all tools, boxes, seasonal decorations, and the old furniture that has been sitting there for months",
+    );
+    expect(label.length).toBeLessThanOrEqual(35);
+    expect(label).not.toMatch(/…$/);
+    expect(label).not.toMatch(/\.$/);
+  });
+
+  // Ordinary, already-passing Waiting/delegation case — confirms the fix
+  // does not change behavior for a ordinary short imperative description.
+  it("still produces the normal fallback phrase for an ordinary short delegation description", () => {
+    expect(taskLabel("Tidy the living room shelves")).toBe("tidy the living room shelves");
+  });
 });
 
 describe("isMaterialWaitingItem — consequence-based, not age-based", () => {
