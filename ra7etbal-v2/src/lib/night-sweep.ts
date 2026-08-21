@@ -554,8 +554,8 @@ export function buildNightSweepSpoken(
         (t.type === "delegation" || t.type === "followup");
     });
     const countWord = nsSpokenCount(recentDone.length);
-    if (notable && nsCap(notable.assigned_to) && taskLabel(notable.description)) {
-      section2 = `${nsCapFirst(countWord)} items were handled in the last 24 hours, including ${nsCap(notable.assigned_to)}'s ${taskLabel(notable.description)}.`;
+    if (notable && nsCap(notable.assigned_to) && taskLabel(notable.description, notable.assigned_to)) {
+      section2 = `${nsCapFirst(countWord)} items were handled in the last 24 hours, including ${nsCap(notable.assigned_to)}'s ${taskLabel(notable.description, notable.assigned_to)}.`;
     } else {
       section2 = `${nsCapFirst(countWord)} items were handled in the last 24 hours.`;
     }
@@ -587,7 +587,7 @@ export function buildNightSweepSpoken(
   let section3 = "";
   if (riskItem) {
     const who  = nsCap(riskItem.assigned_to);
-    const what = taskLabel(riskItem.description);
+    const what = taskLabel(riskItem.description, riskItem.assigned_to);
 
     if (riskItem.escalated_at != null) {
       section3 = who && what
@@ -631,7 +631,7 @@ export function buildNightSweepSpoken(
   const riskAlreadyNamed = riskItem != null && section3.length > 0;
   if (!riskAlreadyNamed && riskItem && tomorrowEvs.length > 0) {
     const ev   = tomorrowEvs[0];
-    const what = taskLabel(riskItem.description);
+    const what = taskLabel(riskItem.description, riskItem.assigned_to);
     section4 = what
       ? `${ev.title} is tomorrow and the ${what} is still open.`
       : `${ev.title} is tomorrow and one item is still unconfirmed.`;

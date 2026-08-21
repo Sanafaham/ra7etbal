@@ -356,7 +356,7 @@ export function buildMorningBriefSpoken(
       return !!a && a !== "me" && (t.type === "delegation" || t.type === "followup");
     });
     const rest = recentDone.length - 1;
-    if (notable && cap(notable.assigned_to) && cleanDesc(notable.description)) {
+    if (notable && cap(notable.assigned_to) && cleanDesc(notable.description, notable.assigned_to)) {
       const lead = buildCompletionSentenceV3(notable);
       slotCompletions = rest > 0
         ? `${lead} ${capFirst(spokenCount(rest))} other item${rest === 1 ? " was" : "s were"} also completed.`
@@ -379,7 +379,7 @@ export function buildMorningBriefSpoken(
 
   if (topWaiter) {
     const who  = cap(topWaiter.assigned_to);
-    const what = cleanDesc(topWaiter.description);
+    const what = cleanDesc(topWaiter.description, topWaiter.assigned_to);
 
     if (topWaiter.escalated_at != null) {
       slotWaiting = who && what
@@ -529,8 +529,6 @@ function spokenDesc(raw: string): string {
 const LABEL_PATTERNS: Array<[RegExp, string]> = [
   [/\bcat food\b/,                      "cat food task"],
   [/\bflower|bouquet/,                  "flowers request"],
-  [/\bdinner|\bmenu\b/,                 "dinner plan"],
-  [/\bguests?\b|\bhosting\b/,           "hosting task"],
   [/\bcar\b|driver|pick.?up|drop.?off/, "car task"],
   [/\bdelivery|courier/,                "delivery task"],
   [/\bbill|electric|utilities|utility/, "bill task"],
@@ -541,35 +539,41 @@ const LABEL_PATTERNS: Array<[RegExp, string]> = [
 // Strip leading imperative verbs that add no noun content.
 const LEADING_VERB = /^(check and make sure|make sure|please|order|remind|ask|tell|confirm|have|message|send|check|follow up on|follow up|get)\s+/i;
 
-// A capitalized word immediately followed by a comma at the very start of a
-// description is a vocative address ("Christopher, please water the
-// plants") — a delegation dictated directly to the assignee, not a leading
-// temporal or imperative clause. Day names are excluded so "Monday, water
-// the plants" keeps its day intact. Production incident (2026-08-21): an
-// unstripped vocative name fed straight into the unconditional first-char
-// lowercase below, then survived mid-thought truncation, producing
-// "Christopher still hasn't confirmed the christopher, we have 6 guests
-// for…" — the assignee's own name reappeared, lowercased, inside the
-// fragment meant to describe what they hadn't confirmed.
-const LEADING_VOCATIVE_NAME =
-  /^(?!Monday,|Tuesday,|Wednesday,|Thursday,|Friday,|Saturday,|Sunday,|Today,|Tomorrow,)[A-Z][a-z'-]+,\s+/;
+/**
+ * Strips a leading vocative address that matches the task's own known
+ * assignee ("Christopher, we have 6 guests…" on a task assigned to
+ * Christopher). Deliberately not a generic name-detection heuristic — a
+ * capitalized-word-plus-comma pattern would also match ordinary sentence
+ * openers ("Please,", "Also,", "Note,") that are not names at all, and
+ * would miss real multi-word/hyphenated/apostrophe names ("Mary Jane,",
+ * "Anne-Marie,", "O'Connor,") that don't fit a single-token shape. The
+ * assignee is already a known, trusted value on the task record — matching
+ * it exactly needs no guessing and can never misfire on either front.
+ */
+function stripLeadingVocative(s: string, assigneeName?: string | null): string {
+  const name = assigneeName?.trim();
+  if (!name) return s;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s.replace(new RegExp(`^${escaped},\\s+`, "i"), "");
+}
 
 /**
  * Returns a short spoken label for a task description.
  * Tries keyword matching first; falls back to stripping a leading vocative
- * address and/or leading verb, then truncating to a clean noun phrase.
+ * address to the known assignee and/or leading verb, then truncating to a
+ * clean noun phrase.
  */
-export function taskLabel(raw: string): string {
+export function taskLabel(raw: string, assigneeName?: string | null): string {
   const lower = raw.trim().toLowerCase();
 
   for (const [pattern, label] of LABEL_PATTERNS) {
     if (pattern.test(lower)) return label;
   }
 
-  // Fallback: strip a leading vocative address, then a leading verb,
-  // lowercase, truncate.
+  // Fallback: strip a leading vocative address to the known assignee, then
+  // a leading verb, lowercase, truncate.
   let s = raw.trim().replace(/[.!?]+$/, "").trim();
-  s = s.replace(LEADING_VOCATIVE_NAME, "").trim();
+  s = stripLeadingVocative(s, assigneeName);
   s = s.replace(LEADING_VERB, "").trim();
   s = s.charAt(0).toLowerCase() + s.slice(1);
 
@@ -584,8 +588,8 @@ export function taskLabel(raw: string): string {
 }
 
 // Alias so callers that used cleanDesc still work during migration.
-function cleanDesc(raw: string): string {
-  return taskLabel(raw);
+function cleanDesc(raw: string, assigneeName?: string | null): string {
+  return taskLabel(raw, assigneeName);
 }
 
 function spokenCount(n: number): string {
@@ -660,7 +664,7 @@ export interface CompletionPhrase {
  * Canonical completion-outcome phrase, shared by Morning Brief and Night
  * Sweep so a completed task is described the same way in both.
  */
-export function buildCompletionPhrase(rawDescription: string): CompletionPhrase {
+export function buildCompletionPhrase(rawDescription: string, assigneeName?: string | null): CompletionPhrase {
   const trimmed = rawDescription.trim().replace(/[.!?]+$/, "").trim();
   const firstWord = trimmed.split(/\s+/)[0]?.toLowerCase() ?? "";
   const gerund = GERUND_VERBS[firstWord];
@@ -668,7 +672,7 @@ export function buildCompletionPhrase(rawDescription: string): CompletionPhrase 
     const rest = trimmed.slice(firstWord.length).trim();
     return { text: rest ? `${gerund} ${rest}` : gerund, isGerund: true };
   }
-  return { text: taskLabel(rawDescription), isGerund: false };
+  return { text: taskLabel(rawDescription, assigneeName), isGerund: false };
 }
 
 function buildCompletionSentenceV3(t: Task): string {
@@ -677,7 +681,7 @@ function buildCompletionSentenceV3(t: Task): string {
     t.type === "delegation" ||
     t.type === "followup" ||
     (!!assignee && assignee.toLowerCase() !== "me");
-  const phrase = buildCompletionPhrase(t.description);
+  const phrase = buildCompletionPhrase(t.description, t.assigned_to);
   if (isDelegated && assignee) {
     if (!phrase.text) return `${cap(assignee)} confirmed an open item.`;
     return phrase.isGerund
