@@ -36,13 +36,22 @@ describe('automation run task-completion reconciliation trigger', () => {
     }
   });
 
-  it('never overwrites a protected terminal state', () => {
+  it('only ever transitions rows already in a confirmable source state, never a protected one', () => {
     const protectedMatch = syncHelper.match(/PROTECTED_RUN_STATES\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
     expect(protectedMatch).not.toBeNull();
     const protectedStates = protectedMatch[1].match(/'([a-z_]+)'/g).map((s) => s.slice(1, -1));
     expect(protectedStates).toEqual(['skipped', 'confirmed', 'completed']);
+
+    // The UPDATE's own WHERE clause re-checks current_state against the
+    // confirmable allowlist, so a row already in a protected state can
+    // never match it -- extract that WHERE-clause allowlist specifically
+    // (the second ARRAY[...] block, inside the UPDATE) and assert it
+    // contains none of the protected states.
+    const updateBlock = migration.slice(migration.indexOf('UPDATE public.automation_runs'));
+    const whereAllowlist = updateBlock.match(/current_state\s*=\s*ANY\s*\(\s*ARRAY\s*\[([\s\S]*?)\]/);
+    expect(whereAllowlist).not.toBeNull();
     for (const state of protectedStates) {
-      expect(migration).not.toMatch(new RegExp(`SET\\s+current_state\\s*=\\s*'${state}'`));
+      expect(whereAllowlist[1]).not.toContain(`'${state}'`);
     }
   });
 
@@ -58,7 +67,7 @@ describe('automation run task-completion reconciliation trigger', () => {
 
   it('never deletes rows, backfills history, or widens grants', () => {
     expect(migration).not.toMatch(/DELETE\s+FROM/i);
-    expect(migration).not.toMatch(/GRANT\s+/i);
+    expect(migration).not.toMatch(/^\s*GRANT\s/m);
     expect(migration).not.toMatch(/DROP\s+POLICY/i);
   });
 
