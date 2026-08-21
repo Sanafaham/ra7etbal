@@ -227,12 +227,13 @@
       "db": {
         "tables": ["automation_runs", "automations", "whatsapp_deliveries", "tasks"],
         "rpcs": ["carson_production_canary_health"],
-        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql", "supabase/migrations/20260815_carson_canary_least_privilege.sql"],
+        "migrations": ["supabase/migrations/20260812_durable_person_id_communication_history.sql", "supabase/migrations/20260815_carson_canary_least_privilege.sql", "supabase/migrations/20260822_automation_run_task_completion_reconciliation.sql"],
         "data_repairs": ["supabase/data-repairs/20260813_automation_delivery_person_id_backfill.sql"]
       },
       "external_boundaries": ["WhatsApp/Meta send", "Upstash QStash scheduler"],
       "focused_tests": [
         "api/automation-run-confirmation-sync.test.js",
+        "api/automation-run-task-completion-reconciliation.test.js",
         "api/process-delegation-escalations.test.js",
         "api/process-delegation-escalations.followup-guard.test.js",
         "api/process-delegation-escalations.timing-safety.test.js",
