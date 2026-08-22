@@ -1262,6 +1262,20 @@ Protect: normal delegations, proof upload, worker replies, routine templates, an
 
 ## Known current issues and near-term priorities
 
+### Morning Brief delivery-confirmation fix (2026-08-22) — CODE COMPLETE, PR PENDING AUTHORIZATION
+
+**Reproduced production incident:** 16:07 local, 2026-08-22. Home screen showed no open items ("Everything is under control," "Nothing needs you right now" — correct, matched production data). Sana then opened Talk to Carson and got a bare "Welcome back, Sana." with no brief content, despite `carson_memory` having zero rows logged that day (no session had genuinely completed before this one).
+
+**Root cause, established by code inspection:** `resolveOpeningMaterialState()` in `src/lib/carson-material-items.ts` persisted the day's "delivered" state (`carson_brief_date_<kind>` / `carson_material_<kind>` in `localStorage`) unconditionally at call-start, inside `ElevenLabsAgentWidget.tsx`'s `startCarsonSession`, well before `Conversation.startSession` was even attempted. Every real failure point (mic permission, network drop, 60s connect timeout, WebSocket handshake failure) happens strictly after that write, so an interrupted/failed/abandoned session attempt permanently and falsely marked the day's Morning Brief as delivered, silently suppressing it for every later, genuinely-first, session that day.
+
+**Fix:** `resolveOpeningMaterialState()` is now a pure read with zero side effects (also returns `nextMap` so a caller can defer persistence). A new `commitMorningBriefDelivery()` performs the same two writes as before, but is called exactly once, from `ElevenLabsAgentWidget.tsx`'s `onMessage` handler, at the first undropped agent-role transcript event of the session — after every existing suppression check (hosting-clarification, invalid-capture, idle-prompt) has already returned, so it fires only when the opening line genuinely reached the owner. No change to Morning Brief/Night Sweep content, prioritization, relevance selection, or greeting wording.
+
+**Verification:** `npm run test:carson-protected` — 103 files, 1870 passed, 4 skipped, 3 todo, exit 0. `npx tsc --noEmit` clean. `npm run build` clean. `npm run validate:carson-registry` — 25 capabilities OK. Two unrelated pre-existing failures (`morning-brief.test.ts`'s timezone-sensitive greeting assertion, `ElevenLabsAgentWidget.sdk-config.test.ts`'s missing `node_modules` dist file) reproduced identically on unmodified `main` before this change — confirmed not caused by this fix, left untouched (out of scope). New/updated focused tests in `src/lib/carson-material-items.test.ts` directly prove the invariant: a failed/aborted session before delivery does not consume eligibility; a genuinely delivered session does; a subsequent same-day session after real delivery gets normal follow-up behavior.
+
+**Not yet done:** PR not created/merged/deployed — awaiting Sana's authorization per the investigation's explicit stop condition. No production verification yet (requires a real owner session on a day this can be naturally observed).
+
+Protect: `resolveOpeningMaterialState()` staying a pure read — do not reintroduce a write inside it. `commitMorningBriefDelivery()` being called from the confirmed-delivery point only (first undropped agent-role message), never at call-start or on `Conversation.startSession` resolving alone (that was explicitly rejected — connection success is not proof of delivery).
+
 ### Historical Lookup — Phase 1, Q4 Commitment History
 
 Status: **PERMANENTLY CLOSED (2026-08-04) — reference implementation for

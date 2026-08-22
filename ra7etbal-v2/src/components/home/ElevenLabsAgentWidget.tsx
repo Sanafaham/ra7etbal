@@ -67,7 +67,7 @@ import {
   resolveRecurringFirstRunTextForParsing,
 } from "../../lib/parse-voice-time";
 import { buildCarsonOpeningLine } from "../../lib/carson-opening";
-import { resolveOpeningMaterialState, resolveBriefAnchorDateStr, type MaterialItem } from "../../lib/carson-material-items";
+import { resolveOpeningMaterialState, commitMorningBriefDelivery, resolveBriefAnchorDateStr, type MaterialItem } from "../../lib/carson-material-items";
 import { createReminderTask } from "../../lib/reminders";
 import {
   buildOneTimeRoutingEvidence,
@@ -5719,7 +5719,7 @@ export default function ElevenLabsAgentWidget({
     // "carson_material_<kind>" (YYYY-MM-DD / JSON signature map).
     const nowForOpening = new Date();
     const todayStr = resolveBriefAnchorDateStr(liveBriefKind, nowForOpening);
-    const { isFirstSessionToday, changed } = resolveOpeningMaterialState(
+    const { isFirstSessionToday, changed, nextMap } = resolveOpeningMaterialState(
       liveBriefKind,
       todayStr,
       liveMaterialItems,
@@ -5740,6 +5740,13 @@ export default function ElevenLabsAgentWidget({
           newOrChangedMaterialText: changed.map((item) => item.text),
           briefKind: liveBriefKind,
         });
+    // A genuine proactive opening was attempted this session (not skipped
+    // for an active hosting draft or restored typed history). Its "delivered
+    // today" state is committed later, from onMessage's first agent-role
+    // transcript event — see commitMorningBriefDelivery's doc comment for
+    // why persistence is deferred out of resolveOpeningMaterialState.
+    const attemptedProactiveOpening = openingLine !== "";
+    let openingDeliveryCommitted = false;
 
     // Await the photo descriptions now — they have been running concurrently with
     // the memory/weather loads above, so in most cases it is already resolved.
@@ -6532,6 +6539,17 @@ export default function ElevenLabsAgentWidget({
               });
             }
             console.log("[transcript] agent role confirmed, message len=%d", finalDisplayMessage.length);
+            // Commit the Morning/Night Sweep "delivered today" state exactly
+            // once, at the first genuine agent turn this session actually
+            // reaches the owner — not at call-start (see
+            // commitMorningBriefDelivery's doc comment). Every suppression
+            // path above (hosting-clarification, invalid-capture, idle
+            // prompt) already returned before this point, so reaching here
+            // means finalDisplayMessage is real, undropped agent speech.
+            if (attemptedProactiveOpening && !openingDeliveryCommitted) {
+              openingDeliveryCommitted = true;
+              commitMorningBriefDelivery(liveBriefKind, todayStr, nextMap, localStorage);
+            }
             setLastCarsonMessage(finalDisplayMessage);
 
             if (requestedChannel === "text") {
