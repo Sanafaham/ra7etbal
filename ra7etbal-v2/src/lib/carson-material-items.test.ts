@@ -9,6 +9,7 @@ vi.mock("./supabase", () => ({ supabase: {} }));
 const {
   diffMaterialItems,
   resolveOpeningMaterialState,
+  commitMorningBriefDelivery,
   deriveMorningBriefMaterialItems,
   deriveNightSweepMaterialItems,
   resolveBriefAnchorDateStr,
@@ -138,6 +139,15 @@ describe("resolveOpeningMaterialState", () => {
   const storage = () => new FakeStorage();
   const todayStr = "2026-08-17";
 
+  // Simulates one genuinely delivered session: peek, then commit — exactly
+  // what production now does from onMessage's first confirmed agent turn,
+  // never at call-start. See commitMorningBriefDelivery's doc comment.
+  function deliver(kind: "morning" | "night", items: MaterialItem[], s: FakeStorage) {
+    const result = resolveOpeningMaterialState(kind, todayStr, items, s);
+    commitMorningBriefDelivery(kind, todayStr, result.nextMap, s);
+    return result;
+  }
+
   it("first Morning Brief of the day: isFirstSessionToday=true, no changed items surfaced separately", () => {
     const s = storage();
     const items: MaterialItem[] = [{ id: "t1", signature: "sig1", text: "One thing." }];
@@ -146,10 +156,20 @@ describe("resolveOpeningMaterialState", () => {
     expect(result.changed).toEqual([]); // full brief already covers it
   });
 
+  it("resolveOpeningMaterialState is a pure read — it never persists anything on its own", () => {
+    const s = storage();
+    const items: MaterialItem[] = [{ id: "t1", signature: "sig1", text: "One thing." }];
+    resolveOpeningMaterialState("morning", todayStr, items, s);
+    // No commitMorningBriefDelivery call — a second peek must still see
+    // "first session today", proving the peek itself wrote nothing.
+    const second = resolveOpeningMaterialState("morning", todayStr, items, s);
+    expect(second.isFirstSessionToday).toBe(true);
+  });
+
   it("later same-day session, nothing materially new: changed is empty", () => {
     const s = storage();
     const items: MaterialItem[] = [{ id: "t1", signature: "sig1", text: "One thing." }];
-    resolveOpeningMaterialState("morning", todayStr, items, s); // session 1 (first)
+    deliver("morning", items, s); // session 1 (first, genuinely delivered)
     const result = resolveOpeningMaterialState("morning", todayStr, items, s); // session 2, unchanged
     expect(result.isFirstSessionToday).toBe(false);
     expect(result.changed).toEqual([]);
@@ -158,7 +178,7 @@ describe("resolveOpeningMaterialState", () => {
   it("later same-day session, a newly material item appears: it is surfaced", () => {
     const s = storage();
     const first: MaterialItem[] = [{ id: "t1", signature: "sig1", text: "One thing." }];
-    resolveOpeningMaterialState("morning", todayStr, first, s);
+    deliver("morning", first, s);
     const second: MaterialItem[] = [
       ...first,
       { id: "automation:auto-1", signature: "firing:15:00", text: "You have a reminder scheduled — Daily reminder test." },
@@ -170,7 +190,7 @@ describe("resolveOpeningMaterialState", () => {
   it("later same-day session, an existing item's state changed: it is surfaced", () => {
     const s = storage();
     const first: MaterialItem[] = [{ id: "t1", signature: "waiting:open", text: "Waiting on Christopher." }];
-    resolveOpeningMaterialState("morning", todayStr, first, s);
+    deliver("morning", first, s);
     const second: MaterialItem[] = [{ id: "t1", signature: "waiting:escalated", text: "Christopher still hasn't confirmed." }];
     const result = resolveOpeningMaterialState("morning", todayStr, second, s);
     expect(result.changed.map((c) => c.id)).toEqual(["t1"]);
@@ -182,7 +202,7 @@ describe("resolveOpeningMaterialState", () => {
       { id: "t1", signature: "sig1", text: "Item one." },
       { id: "t2", signature: "sig2", text: "Item two." },
     ];
-    resolveOpeningMaterialState("morning", todayStr, first, s);
+    deliver("morning", first, s);
     const second: MaterialItem[] = [{ id: "t1", signature: "sig1", text: "Item one." }]; // t2 gone, t1 unchanged
     const result = resolveOpeningMaterialState("morning", todayStr, second, s);
     expect(result.changed).toEqual([]);
@@ -190,7 +210,7 @@ describe("resolveOpeningMaterialState", () => {
 
   it("Morning Brief and Night Sweep use separate delivery state — a Morning session does not consume Night Sweep's first-session flag", () => {
     const s = storage();
-    resolveOpeningMaterialState("morning", todayStr, [], s); // morning session happens first
+    deliver("morning", [], s); // morning session happens first, genuinely delivered
     const nightResult = resolveOpeningMaterialState("night", todayStr, [], s); // first Night Sweep of the day
     expect(nightResult.isFirstSessionToday).toBe(true);
   });
@@ -198,7 +218,7 @@ describe("resolveOpeningMaterialState", () => {
   it("repeated same-day Night Sweep with nothing new: short greeting only (no repeat)", () => {
     const s = storage();
     const items: MaterialItem[] = [{ id: "t1", signature: "sig1", text: "Waiting item." }];
-    resolveOpeningMaterialState("night", todayStr, items, s); // first Night Sweep
+    deliver("night", items, s); // first Night Sweep, genuinely delivered
     const second = resolveOpeningMaterialState("night", todayStr, items, s); // later Night Sweep, unchanged
     expect(second.isFirstSessionToday).toBe(false);
     expect(second.changed).toEqual([]);
@@ -206,7 +226,7 @@ describe("resolveOpeningMaterialState", () => {
 
   it("new material after the first Night Sweep is surfaced on a later Night Sweep session", () => {
     const s = storage();
-    resolveOpeningMaterialState("night", todayStr, [], s); // first Night Sweep, nothing yet
+    deliver("night", [], s); // first Night Sweep, genuinely delivered, nothing yet
     const second = resolveOpeningMaterialState(
       "night",
       todayStr,
@@ -215,6 +235,59 @@ describe("resolveOpeningMaterialState", () => {
     );
     expect(second.isFirstSessionToday).toBe(false);
     expect(second.changed.map((c) => c.id)).toEqual(["automation:auto-2"]);
+  });
+
+  // ── Production incident, 2026-08-22 16:07: repeat-session suppression ──
+  // fired ("Welcome back, Sana.", no brief content) despite no session that
+  // day ever reaching a real agent turn. Root cause: the old
+  // resolveOpeningMaterialState persisted "delivered today" unconditionally
+  // at call-start, before the ElevenLabs connection was even attempted.
+  describe("delivery-confirmation invariant (2026-08-22 production incident)", () => {
+    it("a session that starts but fails/aborts before delivery does not consume today's Morning Brief eligibility", () => {
+      const s = storage();
+      const items: MaterialItem[] = [{ id: "t1", signature: "sig1", text: "One thing." }];
+      // Session 1 starts: the widget peeks eligibility to compute opening_line...
+      const attempt = resolveOpeningMaterialState("morning", todayStr, items, s);
+      expect(attempt.isFirstSessionToday).toBe(true);
+      // ...then Conversation.startSession fails (mic denied / network drop /
+      // connect timeout) before any agent-role transcript event ever fires,
+      // so commitMorningBriefDelivery is never called.
+
+      // Session 2, the next genuine attempt that day, must still see a
+      // fresh first session, not a false "already delivered" follow-up.
+      const nextAttempt = resolveOpeningMaterialState("morning", todayStr, items, s);
+      expect(nextAttempt.isFirstSessionToday).toBe(true);
+      expect(nextAttempt.changed).toEqual([]);
+    });
+
+    it("once a session is genuinely delivered (committed), it IS marked consumed for the day", () => {
+      const s = storage();
+      const items: MaterialItem[] = [{ id: "t1", signature: "sig1", text: "One thing." }];
+      const delivered = deliver("morning", items, s);
+      expect(delivered.isFirstSessionToday).toBe(true);
+
+      const after = resolveOpeningMaterialState("morning", todayStr, items, s);
+      expect(after.isFirstSessionToday).toBe(false);
+    });
+
+    it("a subsequent same-day session after genuine delivery gets normal follow-up/repeat-session behavior, not a repeated full brief", () => {
+      const s = storage();
+      const items: MaterialItem[] = [{ id: "t1", signature: "sig1", text: "One thing." }];
+      deliver("morning", items, s); // first, genuinely delivered
+      const followUp = resolveOpeningMaterialState("morning", todayStr, items, s); // nothing new
+      expect(followUp.isFirstSessionToday).toBe(false);
+      expect(followUp.changed).toEqual([]); // no repeated full-brief content
+    });
+
+    it("a failed attempt followed by a genuinely delivered attempt correctly consumes eligibility only after the delivered one", () => {
+      const s = storage();
+      const items: MaterialItem[] = [{ id: "t1", signature: "sig1", text: "One thing." }];
+      resolveOpeningMaterialState("morning", todayStr, items, s); // failed attempt, never committed
+      const delivered = deliver("morning", items, s); // second attempt, genuinely delivered
+      expect(delivered.isFirstSessionToday).toBe(true); // still the day's first REAL delivery
+      const after = resolveOpeningMaterialState("morning", todayStr, items, s);
+      expect(after.isFirstSessionToday).toBe(false); // now correctly consumed
+    });
   });
 });
 
@@ -246,6 +319,7 @@ describe("resolveBriefAnchorDateStr", () => {
     const items: MaterialItem[] = [{ id: "t1", signature: "waiting:open", text: "Waiting item." }];
     const first = resolveOpeningMaterialState("night", elevenPmAnchor, items, s);
     expect(first.isFirstSessionToday).toBe(true);
+    commitMorningBriefDelivery("night", elevenPmAnchor, first.nextMap, s); // genuinely delivered
 
     const oneAmAnchor = resolveBriefAnchorDateStr("night", new Date("2026-08-18T01:01:00"));
     const second = resolveOpeningMaterialState("night", oneAmAnchor, items, s);
@@ -313,6 +387,7 @@ describe("deriveMorningBriefMaterialItems / deriveNightSweepMaterialItems — Ne
     const items = deriveMorningBriefMaterialItems([], [], undefined, [], NOW, [escalation]);
     const first = resolveOpeningMaterialState("morning", "2026-08-17", items, s);
     expect(first.isFirstSessionToday).toBe(true);
+    commitMorningBriefDelivery("morning", "2026-08-17", first.nextMap, s); // genuinely delivered
 
     const second = resolveOpeningMaterialState("morning", "2026-08-17", items, s);
     expect(second.isFirstSessionToday).toBe(false);

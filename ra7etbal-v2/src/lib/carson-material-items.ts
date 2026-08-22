@@ -95,12 +95,21 @@ export interface OpeningMaterialStateResult {
    * isFirstSessionToday — the full brief already covers everything.
    */
   changed: MaterialItem[];
+  /**
+   * Signature map to persist via commitMorningBriefDelivery() once this
+   * session's proactive opening is confirmed delivered — never persisted
+   * by this function. See commitMorningBriefDelivery's doc comment.
+   */
+  nextMap: Record<string, string>;
 }
 
 /**
  * Resolves both "is this the first session today for this brief kind" and
  * "which material items are new/changed since they were last surfaced" —
- * reading and persisting state through the given key-value store.
+ * a pure read against the given key-value store. Does NOT persist anything;
+ * callers must call commitMorningBriefDelivery() once genuine owner-facing
+ * delivery of this session's opening is confirmed. See that function's doc
+ * comment for why persistence is deliberately deferred out of this read.
  *
  * Morning ("morning") and Night Sweep ("night") use entirely separate keys
  * (`carson_brief_date_<kind>`, `carson_material_<kind>`), so an earlier
@@ -117,9 +126,6 @@ export function resolveOpeningMaterialState(
   const materialKey = `carson_material_${kind}`;
 
   const isFirstSessionToday = storage.getItem(briefDateKey) !== todayStr;
-  if (isFirstSessionToday) {
-    storage.setItem(briefDateKey, todayStr);
-  }
 
   let lastMap: Record<string, string> | null = null;
   try {
@@ -130,14 +136,47 @@ export function resolveOpeningMaterialState(
   }
 
   const { changed, nextMap } = diffMaterialItems(materialItems, lastMap);
+
+  return { isFirstSessionToday, changed: isFirstSessionToday ? [] : changed, nextMap };
+}
+
+/**
+ * Persists this session's Morning/Night Sweep "delivered today" state — the
+ * brief date (so a later session that day is correctly treated as a
+ * follow-up, not a fresh first session) and the material-item signature map
+ * (so already-surfaced items are correctly not re-surfaced next time).
+ *
+ * MUST be called only once genuine owner-facing delivery of this session's
+ * proactive opening is confirmed (the first ElevenLabs agent-role transcript
+ * event actually reaching the owner) — never at call-start.
+ *
+ * resolveOpeningMaterialState() used to persist this same state
+ * unconditionally at call-start, before the ElevenLabs connection was even
+ * attempted. Every real failure point (mic permission denied, network drop,
+ * connect timeout, WebSocket handshake failure) happens strictly after that
+ * point, so an interrupted, failed, or abandoned session attempt permanently
+ * and falsely marked that day's brief as delivered — silently suppressing it
+ * for every later, genuinely-first, session that day (production incident,
+ * 2026-08-22 16:07: "Welcome back, Sana." with no brief content, despite no
+ * session that day ever having reached a real agent turn). Deferring
+ * persistence to confirmed delivery fixes this without weakening the
+ * intended repeat-session suppression once delivery genuinely happens.
+ */
+export function commitMorningBriefDelivery(
+  kind: BriefKind,
+  todayStr: string,
+  nextMap: Record<string, string>,
+  storage: KeyValueStore,
+): void {
+  const briefDateKey = `carson_brief_date_${kind}`;
+  const materialKey = `carson_material_${kind}`;
+  storage.setItem(briefDateKey, todayStr);
   try {
     storage.setItem(materialKey, JSON.stringify(nextMap));
   } catch {
     // Best-effort persistence — worst case, a later session re-surfaces an
     // already-heard item, never worse than the pre-fix "always suppressed" bug.
   }
-
-  return { isFirstSessionToday, changed: isFirstSessionToday ? [] : changed };
 }
 
 function shortDesc(raw: string): string {
