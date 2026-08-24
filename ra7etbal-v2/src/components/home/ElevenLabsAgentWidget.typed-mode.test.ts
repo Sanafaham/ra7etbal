@@ -869,10 +869,14 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
     expect(guardIndex).toBeGreaterThan(sanitizedIndex);
     expect(scrubberCallIndex).toBeGreaterThan(guardIndex);
     // resolveSanitizedCarsonDisplayMessage itself — the shared, voice-and-typed
-    // display-override call — is completely unchanged: same arguments, same
-    // call site, still runs for both channels exactly as before.
+    // display-override call — still runs for both channels exactly as before,
+    // its only change being that it now reads from attentionGuardedMessage
+    // (the deterministic attention-routing guard's output — see
+    // carson-attention-intent-guard.ts) instead of the raw agent message
+    // directly, so a corrected attention answer flows through the same
+    // downstream sanitization every other display-override result already does.
     expect(onMessageBlock).toContain(
-      "resolveSanitizedCarsonDisplayMessage({\n              agentMessage: message,\n              previousUserMessage,\n              lastSuccess: lastDirectToolSuccessRef.current,\n              noteSaveOutcome: noteSaveOutcomeRef.current,\n            });",
+      "resolveSanitizedCarsonDisplayMessage({\n              agentMessage: attentionGuardedMessage,\n              previousUserMessage,\n              lastSuccess: lastDirectToolSuccessRef.current,\n              noteSaveOutcome: noteSaveOutcomeRef.current,\n            });",
     );
   });
 
