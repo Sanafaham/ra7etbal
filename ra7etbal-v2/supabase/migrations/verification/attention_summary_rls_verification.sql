@@ -186,6 +186,144 @@ END $$;
 
 RESET ROLE;
 
+-- ── public.carson_notes (the exact table loadUnresolvedNotes()/
+--    fetchUnresolvedCaptureCandidates() queries) ─────────────────────────────
+
+SET ROLE authenticated;
+SET request.jwt.claim.sub = '11111111-1111-4111-8111-111111111111'; -- owner_a
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.carson_notes WHERE id = 'f0000000-0000-4000-8000-00000000f001'
+  ) THEN
+    RAISE EXCEPTION 'FAIL carson_notes: owner_a cannot see own note';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.carson_notes WHERE id = 'f0000000-0000-4000-8000-00000000f002'
+  ) THEN
+    RAISE EXCEPTION 'SECURITY DEFECT carson_notes: owner_a SELECT returned owner_b row';
+  END IF;
+  IF (SELECT count(*) FROM public.carson_notes) <> 1 THEN
+    RAISE EXCEPTION 'SECURITY DEFECT carson_notes: owner_a SELECT returned more than owner_a''s own row(s)';
+  END IF;
+END $$;
+
+RESET ROLE;
+SET ROLE authenticated;
+SET request.jwt.claim.sub = '22222222-2222-4222-8222-222222222222'; -- owner_b
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.carson_notes WHERE id = 'f0000000-0000-4000-8000-00000000f002'
+  ) THEN
+    RAISE EXCEPTION 'FAIL carson_notes: owner_b cannot see own note';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.carson_notes WHERE id = 'f0000000-0000-4000-8000-00000000f001'
+  ) THEN
+    RAISE EXCEPTION 'SECURITY DEFECT carson_notes: owner_b SELECT returned owner_a row';
+  END IF;
+END $$;
+
+RESET ROLE;
+
+-- ── carson_notes UPDATE policy (new in this PR — dismissed_at/
+--    last_surfaced_at writes) — owner can update own row; cannot update
+--    another owner's row. A UPDATE whose target row isn't visible affects
+--    zero rows (not an exception) — verified by row count and by
+--    confirming the value is genuinely unchanged, not by expecting a
+--    thrown error.
+--
+--    Verified locally (real Postgres, not asserted from documentation
+--    alone): Postgres enforces UPDATE row-visibility through the SELECT
+--    policy first (an UPDATE must "see" a row via SELECT-equivalent
+--    visibility before its own USING/WITH CHECK is even evaluated) — a
+--    negative control that weakened ONLY the new UPDATE policy to
+--    USING(true)/WITH CHECK(true) still correctly returned 0 rows
+--    affected against owner_b's note, proving the pre-existing SELECT
+--    policy (verified further up this file) already fully gates this
+--    too. This is defense in depth, not a redundant check: it directly
+--    proves the actual owner-scoped UPDATE behavior this migration adds,
+--    regardless of which specific policy is doing the enforcing. ─────────
+
+SET ROLE authenticated;
+SET request.jwt.claim.sub = '11111111-1111-4111-8111-111111111111'; -- owner_a
+
+DO $$
+BEGIN
+  UPDATE public.carson_notes SET dismissed_at = now()
+  WHERE id = 'f0000000-0000-4000-8000-00000000f001';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'FAIL carson_notes: owner_a could not update own note';
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  UPDATE public.carson_notes SET note = 'tampered by owner_a'
+  WHERE id = 'f0000000-0000-4000-8000-00000000f002';
+  IF FOUND THEN
+    RAISE EXCEPTION 'SECURITY DEFECT carson_notes: owner_a UPDATE affected owner_b''s row';
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.carson_notes
+    WHERE id = 'f0000000-0000-4000-8000-00000000f002' AND note = 'tampered by owner_a'
+  ) THEN
+    RAISE EXCEPTION 'SECURITY DEFECT carson_notes: owner_b''s note content was modified by owner_a';
+  END IF;
+END $$;
+
+RESET ROLE;
+
+-- ── public.carson_todos (the exact table listActiveTodosWithSurfaceState()
+--    queries) ─────────────────────────────────────────────────────────────
+
+SET ROLE authenticated;
+SET request.jwt.claim.sub = '11111111-1111-4111-8111-111111111111'; -- owner_a
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.carson_todos WHERE id = 'a1000000-0000-4000-8000-00000000a101'
+  ) THEN
+    RAISE EXCEPTION 'FAIL carson_todos: owner_a cannot see own todo';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.carson_todos WHERE id = 'a1000000-0000-4000-8000-00000000a102'
+  ) THEN
+    RAISE EXCEPTION 'SECURITY DEFECT carson_todos: owner_a SELECT returned owner_b row';
+  END IF;
+  IF (SELECT count(*) FROM public.carson_todos) <> 1 THEN
+    RAISE EXCEPTION 'SECURITY DEFECT carson_todos: owner_a SELECT returned more than owner_a''s own row(s)';
+  END IF;
+END $$;
+
+RESET ROLE;
+SET ROLE authenticated;
+SET request.jwt.claim.sub = '22222222-2222-4222-8222-222222222222'; -- owner_b
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.carson_todos WHERE id = 'a1000000-0000-4000-8000-00000000a102'
+  ) THEN
+    RAISE EXCEPTION 'FAIL carson_todos: owner_b cannot see own todo';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM public.carson_todos WHERE id = 'a1000000-0000-4000-8000-00000000a101'
+  ) THEN
+    RAISE EXCEPTION 'SECURITY DEFECT carson_todos: owner_b SELECT returned owner_a row';
+  END IF;
+END $$;
+
+RESET ROLE;
+
 -- ── No caller-supplied identifier can override authenticated identity ──────
 -- auth.uid() reads only request.jwt.claim.sub (the session's own JWT
 -- claim) — there is no column, parameter, or query filter through which a
@@ -194,4 +332,4 @@ RESET ROLE;
 -- auth.uid() directly, never a client-supplied column), not a separate
 -- runtime check to execute.
 
-SELECT 'attention_summary_rls verification passed — tasks, staff_messages, automations, automation_runs cross-owner SELECT isolation confirmed both directions' AS result;
+SELECT 'attention_summary_rls verification passed — tasks, staff_messages, automations, automation_runs, carson_notes, carson_todos cross-owner SELECT isolation confirmed both directions, plus carson_notes UPDATE policy' AS result;

@@ -63,18 +63,98 @@ describe("Inbox.tsx — Send to Carson (Note cards)", () => {
     expect(SOURCE).not.toMatch(/handleConvertToTodo/);
   });
 
-  it("the Send to Carson button is wired to the handler and disabled while another inline note action is in progress", () => {
+  it("the Discuss with Carson button (renamed from Send to Carson, Second Brain Phase 1) is wired to the handler and disabled while another inline note action is in progress", () => {
     const buttonBlock = blockBetween(
-      "{/* Send to Carson",
+      "{/* Discuss with Carson",
       "{/* Overflow",
     );
     expect(buttonBlock).toContain("onClick={() => onSendToCarson(note)}");
     expect(buttonBlock).toMatch(/disabled=\{busy \|\| reminding \|\| delegating \|\| addingToCalendar\}/);
-    expect(buttonBlock).toContain("Send to Carson");
+    expect(buttonBlock).toContain("Discuss with Carson");
+    expect(buttonBlock).not.toContain(">Send to Carson<");
   });
 
   it("NoteCard receives and forwards onSendToCarson from the parent's handleSendToCarson", () => {
     expect(SOURCE).toContain("onSendToCarson={handleSendToCarson}");
     expect(SOURCE).toMatch(/onSendToCarson: \(note: CarsonNote\) => void;/);
+  });
+});
+
+/**
+ * Second Brain Phase 1 deduplication: each of Inbox.tsx's four UI-side note
+ * conversion paths (Make Task, Delegate, Add to Calendar, Remind Me) must
+ * dismiss the source note only after its own downstream creation actually
+ * succeeded — never before, never on a failure path — so a duplicate
+ * unresolved representation (note + independently created task/reminder/
+ * delegation/event) never persists, and a failed conversion never loses the
+ * original note.
+ */
+describe("Inbox.tsx — dismissCarsonNote wiring on each conversion path", () => {
+  it("imports dismissCarsonNote", () => {
+    expect(SOURCE).toMatch(/import \{[\s\S]*dismissCarsonNote,?[\s\S]*\} from "\.\.\/lib\/carson-notes";/);
+  });
+
+  it("handleMakeTask dismisses the note strictly after createTask succeeds, before madeTaskIds is updated", () => {
+    const block = blockBetween("async function handleMakeTask(note: CarsonNote) {", "// ── Discuss with Carson");
+    const createIndex = block.indexOf("await createTask(");
+    const dismissIndex = block.indexOf("dismissCarsonNote(note.id)");
+    const markedIndex = block.indexOf("setMadeTaskIds(");
+    expect(createIndex).toBeGreaterThan(-1);
+    expect(dismissIndex).toBeGreaterThan(createIndex);
+    expect(markedIndex).toBeGreaterThan(dismissIndex);
+  });
+
+  it("handleDelegateSubmit dismisses the note strictly after the delegation is created and sent, before delegatedMap is updated", () => {
+    const block = blockBetween(
+      "async function handleDelegateSubmit(note: CarsonNote) {",
+      "// ── Calendar handlers",
+    );
+    const sendIndex = block.indexOf("await sendWhatsAppTask(");
+    const dismissIndex = block.indexOf("dismissCarsonNote(note.id)");
+    const markedIndex = block.indexOf("setDelegatedMap(");
+    expect(sendIndex).toBeGreaterThan(-1);
+    expect(dismissIndex).toBeGreaterThan(sendIndex);
+    expect(markedIndex).toBeGreaterThan(dismissIndex);
+  });
+
+  it("handleCalendarSubmit dismisses the note only after result.ok is confirmed true, before calendarAddedIds is updated", () => {
+    const block = blockBetween(
+      "async function handleCalendarSubmit(note: CarsonNote) {",
+      "// ── Remind Me handlers",
+    );
+    const okCheckIndex = block.indexOf("if (!result.ok)");
+    const dismissIndex = block.indexOf("dismissCarsonNote(note.id)");
+    const markedIndex = block.indexOf("setCalendarAddedIds(");
+    expect(okCheckIndex).toBeGreaterThan(-1);
+    expect(dismissIndex).toBeGreaterThan(okCheckIndex);
+    expect(markedIndex).toBeGreaterThan(dismissIndex);
+  });
+
+  it("handleRemindSubmit dismisses the note strictly after createReminderTask succeeds, before reminderSetIds is updated", () => {
+    const block = blockBetween(
+      "async function handleRemindSubmit(note: CarsonNote) {",
+      "return (\n    <section",
+    );
+    const createIndex = block.indexOf("await createReminderTask(");
+    const dismissIndex = block.indexOf("dismissCarsonNote(note.id)");
+    const markedIndex = block.indexOf("setReminderSetIds(");
+    expect(createIndex).toBeGreaterThan(-1);
+    expect(dismissIndex).toBeGreaterThan(createIndex);
+    expect(markedIndex).toBeGreaterThan(dismissIndex);
+  });
+
+  it("none of the four handlers call dismissCarsonNote inside a catch block", () => {
+    for (const [name, start, end] of [
+      ["handleMakeTask", "async function handleMakeTask(note: CarsonNote) {", "// ── Discuss with Carson"],
+      ["handleDelegateSubmit", "async function handleDelegateSubmit(note: CarsonNote) {", "// ── Calendar handlers"],
+      ["handleCalendarSubmit", "async function handleCalendarSubmit(note: CarsonNote) {", "// ── Remind Me handlers"],
+      ["handleRemindSubmit", "async function handleRemindSubmit(note: CarsonNote) {", "return (\n    <section"],
+    ] as const) {
+      const block = blockBetween(start, end);
+      const catchIndex = block.indexOf("} catch (err) {");
+      expect(catchIndex, `${name} should have a catch block`).toBeGreaterThan(-1);
+      const catchBody = block.slice(catchIndex);
+      expect(catchBody, `${name} must not dismiss the note in its catch block`).not.toContain("dismissCarsonNote");
+    }
   });
 });

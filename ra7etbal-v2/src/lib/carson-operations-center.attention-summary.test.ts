@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   listTasks: vi.fn(),
   listOpenStaffEscalationsForNeedsYou: vi.fn(),
   fetchAutomationDigest: vi.fn(),
+  fetchUnresolvedCaptureCandidates: vi.fn(),
+  classifyAttentionWorthyCaptures: vi.fn(),
+  markCarsonNotesSurfaced: vi.fn(),
+  markCarsonTodosSurfaced: vi.fn(),
 }));
 
 vi.mock("./supabase", () => ({
@@ -22,6 +26,16 @@ vi.mock("./staff-messages", () => ({
 }));
 vi.mock("./automation-context", () => ({
   fetchAutomationDigest: mocks.fetchAutomationDigest,
+}));
+vi.mock("./carson-unresolved-captures", () => ({
+  fetchUnresolvedCaptureCandidates: mocks.fetchUnresolvedCaptureCandidates,
+  classifyAttentionWorthyCaptures: mocks.classifyAttentionWorthyCaptures,
+}));
+vi.mock("./carson-notes", () => ({
+  markCarsonNotesSurfaced: mocks.markCarsonNotesSurfaced,
+}));
+vi.mock("./carson-todos", () => ({
+  markCarsonTodosSurfaced: mocks.markCarsonTodosSurfaced,
 }));
 
 const { fetchAttentionEvidence, fetchAttentionSummary, renderAttentionSummary } = await import(
@@ -72,6 +86,10 @@ beforeEach(() => {
   mocks.fetchAutomationDigest.mockResolvedValue(EMPTY_DIGEST);
   mocks.listTasks.mockResolvedValue([]);
   mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([]);
+  mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue([]);
+  mocks.classifyAttentionWorthyCaptures.mockImplementation((candidates: unknown[]) => candidates);
+  mocks.markCarsonNotesSurfaced.mockResolvedValue(undefined);
+  mocks.markCarsonTodosSurfaced.mockResolvedValue(undefined);
 });
 
 describe("fetchAttentionEvidence — auth", () => {
@@ -193,13 +211,91 @@ describe("fetchAttentionEvidence — partial retrieval", () => {
     expect(evidence.completeness).toBe("partial");
   });
 
-  it("never converts a partial failure of all sources into a confident empty answer", async () => {
+  it("stays partial (not total failure) when tasks and needsYou fail but unresolved-capture retrieval succeeds", async () => {
     mocks.listTasks.mockRejectedValue(new Error("db timeout"));
     mocks.listOpenStaffEscalationsForNeedsYou.mockRejectedValue(new Error("db timeout"));
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.ok).toBe(true);
+    expect(evidence.completeness).toBe("partial");
+  });
+
+  it("marks completeness partial when unresolved-capture retrieval fails but tasks/needsYou succeed", async () => {
+    mocks.fetchUnresolvedCaptureCandidates.mockRejectedValue(new Error("db timeout"));
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.ok).toBe(true);
+    expect(evidence.completeness).toBe("partial");
+  });
+
+  it("never converts a total failure of every source into a confident empty answer", async () => {
+    mocks.listTasks.mockRejectedValue(new Error("db timeout"));
+    mocks.listOpenStaffEscalationsForNeedsYou.mockRejectedValue(new Error("db timeout"));
+    mocks.fetchUnresolvedCaptureCandidates.mockRejectedValue(new Error("db timeout"));
     const evidence = await fetchAttentionEvidence();
     expect(evidence.ok).toBe(false);
     expect(evidence.code).toBe("attention_read_failed");
     expect(renderAttentionSummary(evidence)).not.toMatch(/nothing needs your attention right now\./i);
+  });
+});
+
+describe("fetchAttentionEvidence — unresolved Notes/To-dos (Second Brain Phase 1)", () => {
+  it("includes classifier-selected captures in evidence and the rendered response", async () => {
+    const candidates = [{ id: "n1", kind: "note" as const, text: "Check on Nimala's wedding invitation", ageDays: 60, neverSurfaced: true, actionable: true }];
+    mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue(candidates);
+    mocks.classifyAttentionWorthyCaptures.mockReturnValue(candidates);
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.unresolvedCaptures).toEqual([
+      { id: "n1", label: "Check on Nimala's wedding invitation", reason: "a note you made" },
+    ]);
+    expect(renderAttentionSummary(evidence)).toMatch(/Also on your mind.*Nimala/);
+  });
+
+  it("labels a to-do capture distinctly from a note capture", async () => {
+    const candidates = [{ id: "t1", kind: "todo" as const, text: "Review the Rahet Bal home screen", ageDays: 45, neverSurfaced: true, actionable: true }];
+    mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue(candidates);
+    mocks.classifyAttentionWorthyCaptures.mockReturnValue(candidates);
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.unresolvedCaptures[0].reason).toBe("on your to-do list");
+  });
+
+  it("never includes a capture the classifier excluded — no fabrication beyond what classification selected", async () => {
+    const noteCandidate = { id: "n1", kind: "note" as const, text: "Restaurant I liked in Paris", ageDays: 200, neverSurfaced: true, actionable: false };
+    mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue([noteCandidate]);
+    mocks.classifyAttentionWorthyCaptures.mockReturnValue([]); // classifier excludes it
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.unresolvedCaptures).toEqual([]);
+    expect(renderAttentionSummary(evidence)).not.toMatch(/Paris/);
+  });
+
+  it("marks surfaced only the notes/todos actually selected by classification — never merely-retrieved ones", async () => {
+    const selected = [
+      { id: "n1", kind: "note" as const, text: "Check on Nimala's wedding invitation", ageDays: 60, neverSurfaced: true, actionable: true },
+      { id: "t1", kind: "todo" as const, text: "Review the Rahet Bal home screen", ageDays: 45, neverSurfaced: true, actionable: true },
+    ];
+    mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue(selected);
+    mocks.classifyAttentionWorthyCaptures.mockReturnValue(selected);
+    await fetchAttentionEvidence();
+    expect(mocks.markCarsonNotesSurfaced).toHaveBeenCalledWith(["n1"]);
+    expect(mocks.markCarsonTodosSurfaced).toHaveBeenCalledWith(["t1"]);
+  });
+
+  it("does not mark anything surfaced when classification selects nothing", async () => {
+    mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue([
+      { id: "n1", kind: "note" as const, text: "Restaurant I liked in Paris", ageDays: 200, neverSurfaced: true, actionable: false },
+    ]);
+    mocks.classifyAttentionWorthyCaptures.mockReturnValue([]);
+    await fetchAttentionEvidence();
+    expect(mocks.markCarsonNotesSurfaced).not.toHaveBeenCalled();
+    expect(mocks.markCarsonTodosSurfaced).not.toHaveBeenCalled();
+  });
+
+  it("a failed mark-surfaced write does not fail the overall read the user is waiting on", async () => {
+    const selected = [{ id: "n1", kind: "note" as const, text: "Check on Nimala's wedding invitation", ageDays: 60, neverSurfaced: true, actionable: true }];
+    mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue(selected);
+    mocks.classifyAttentionWorthyCaptures.mockReturnValue(selected);
+    mocks.markCarsonNotesSurfaced.mockRejectedValue(new Error("write failed"));
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.ok).toBe(true);
+    expect(evidence.unresolvedCaptures).toHaveLength(1);
   });
 });
 

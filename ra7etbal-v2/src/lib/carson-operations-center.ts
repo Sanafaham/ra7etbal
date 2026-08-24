@@ -22,6 +22,13 @@ import { listTasks } from "./tasks";
 import { buildMorningBrief, taskLabel } from "./morning-brief";
 import { fetchAutomationDigest } from "./automation-context";
 import { listOpenStaffEscalationsForNeedsYou } from "./staff-messages";
+import {
+  fetchUnresolvedCaptureCandidates,
+  classifyAttentionWorthyCaptures,
+  type UnresolvedCapture,
+} from "./carson-unresolved-captures";
+import { markCarsonNotesSurfaced } from "./carson-notes";
+import { markCarsonTodosSurfaced } from "./carson-todos";
 import type { Task } from "../types/task";
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -270,11 +277,25 @@ export interface AttentionSummaryEvidence {
   waiting: AttentionItem[];
   carsonCanHandle: AttentionItem[];
   safeToIgnore: AttentionItem[];
+  /**
+   * Second Brain Phase 1 — unresolved Notes/To-dos the classifier judged
+   * worth mentioning (action-led wording + never surfaced before). See
+   * carson-unresolved-captures.ts for the retrieval/classification split.
+   * Distinct from needsAttention/waiting: these are self-owned captures,
+   * not tracked delegations or escalations awaiting someone else.
+   */
+  unresolvedCaptures: AttentionItem[];
 }
 
 export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence> {
   const generatedAt = new Date().toISOString();
-  const empty = { needsAttention: [] as AttentionItem[], waiting: [] as AttentionItem[], carsonCanHandle: [] as AttentionItem[], safeToIgnore: [] as AttentionItem[] };
+  const empty = {
+    needsAttention: [] as AttentionItem[],
+    waiting: [] as AttentionItem[],
+    carsonCanHandle: [] as AttentionItem[],
+    safeToIgnore: [] as AttentionItem[],
+    unresolvedCaptures: [] as AttentionItem[],
+  };
 
   const {
     data: { user },
@@ -301,17 +322,26 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
     needsYouFailed = true;
   }
 
+  let captureCandidates: UnresolvedCapture[] | null = null;
+  let capturesFailed = false;
+  try {
+    captureCandidates = await fetchUnresolvedCaptureCandidates(now);
+  } catch {
+    capturesFailed = true;
+  }
+
   // fetchAutomationDigest never throws — it returns an empty digest on
   // auth failure or query error, so routineAutomationTaskIds below is
   // always defined (possibly empty), never undefined-because-it-threw.
   const digest = await fetchAutomationDigest();
 
-  if (tasksFailed && needsYouFailed) {
+  if (tasksFailed && needsYouFailed && capturesFailed) {
     return { ok: false, code: "attention_read_failed", generatedAt, completeness: "none", ...empty };
   }
 
   const needsAttention: AttentionItem[] = [];
   const waiting: AttentionItem[] = [];
+  const unresolvedCaptures: AttentionItem[] = [];
 
   if (tasks) {
     const brief = buildMorningBrief(tasks, [], now, digest.routineAutomationTaskIds);
@@ -344,7 +374,29 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
     }
   }
 
-  const completeness: AttentionSummaryEvidence["completeness"] = tasksFailed || needsYouFailed ? "partial" : "full";
+  if (captureCandidates) {
+    const selected = classifyAttentionWorthyCaptures(captureCandidates);
+    for (const c of selected) {
+      unresolvedCaptures.push({
+        id: c.id,
+        label: c.text,
+        reason: c.kind === "todo" ? "on your to-do list" : "a note you made",
+      });
+    }
+    // last_surfaced_at must mean "actually included in this rendered
+    // response" — never "merely retrieved." Only the classifier's selected
+    // subset qualifies; anything filtered out above is never marked, so it
+    // remains eligible to be genuinely surfaced later instead of silently
+    // disappearing. Best-effort, non-blocking: a failed write here must
+    // not fail the read the user is waiting on.
+    const noteIds = selected.filter((c) => c.kind === "note").map((c) => c.id);
+    const todoIds = selected.filter((c) => c.kind === "todo").map((c) => c.id);
+    if (noteIds.length > 0) markCarsonNotesSurfaced(noteIds).catch(() => {});
+    if (todoIds.length > 0) markCarsonTodosSurfaced(todoIds).catch(() => {});
+  }
+
+  const completeness: AttentionSummaryEvidence["completeness"] =
+    tasksFailed || needsYouFailed || capturesFailed ? "partial" : "full";
 
   return {
     ok: true,
@@ -355,6 +407,7 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
     waiting,
     carsonCanHandle: [],
     safeToIgnore: [],
+    unresolvedCaptures,
   };
 }
 
@@ -371,7 +424,11 @@ export function renderAttentionSummary(evidence: AttentionSummaryEvidence): stri
       ? "I couldn't check everything just now, so this may be incomplete."
       : "";
 
-  if (evidence.needsAttention.length === 0 && evidence.waiting.length === 0) {
+  if (
+    evidence.needsAttention.length === 0 &&
+    evidence.waiting.length === 0 &&
+    evidence.unresolvedCaptures.length === 0
+  ) {
     return partialNote
       ? `Nothing needs your attention based on what I could check. ${partialNote}`
       : "Nothing needs your attention right now.";
@@ -383,6 +440,11 @@ export function renderAttentionSummary(evidence: AttentionSummaryEvidence): stri
   }
   if (evidence.waiting.length > 0) {
     lines.push(`Waiting: ${evidence.waiting.map((i) => `${i.label} (${i.reason})`).join("; ")}.`);
+  }
+  if (evidence.unresolvedCaptures.length > 0) {
+    lines.push(
+      `Also on your mind: ${evidence.unresolvedCaptures.map((i) => `${i.label} (${i.reason})`).join("; ")}.`,
+    );
   }
   if (partialNote) lines.push(partialNote);
 

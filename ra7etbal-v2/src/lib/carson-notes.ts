@@ -48,6 +48,8 @@ export interface CarsonNote {
   source: string;
   created_at: string;
   updated_at: string;
+  dismissed_at?: string | null;
+  last_surfaced_at?: string | null;
 }
 
 /**
@@ -67,6 +69,79 @@ export async function loadRecentNotes(limit = 20): Promise<CarsonNote[]> {
   }
 
   return (data ?? []) as CarsonNote[];
+}
+
+/**
+ * Unresolved notes for the currently signed-in user — dismissed_at IS NULL,
+ * i.e. not yet converted into another operational object (task, reminder,
+ * delegation, calendar event). Used by the Second Brain attention-retrieval
+ * layer (carson-unresolved-captures.ts), not by the Notes screen (which
+ * intentionally shows every note, dismissed or not — dismissal only removes
+ * a note from *unresolved operational consideration*, it stays visible and
+ * editable as historical data per product decision).
+ * Returns empty array on error — never throws.
+ */
+export async function loadUnresolvedNotes(limit = 50): Promise<CarsonNote[]> {
+  const { data, error } = await supabase
+    .from("carson_notes")
+    .select("id, note, category, source, created_at, updated_at, dismissed_at, last_surfaced_at")
+    .is("dismissed_at", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("[carson-notes] loadUnresolvedNotes failed:", error.message);
+    return [];
+  }
+
+  return (data ?? []) as CarsonNote[];
+}
+
+/**
+ * Marks a note dismissed — it has been converted into another operational
+ * object (task, reminder, delegation, calendar event) and should no longer
+ * be counted as an unresolved capture. Never deletes the row: the original
+ * user-authored text remains visible in the Notes screen as historical
+ * record. Swallows errors (logs only) — callers use this only after the
+ * downstream conversion already succeeded, so a failed dismiss write must
+ * not undo or fail that already-successful action; worst case the note is
+ * retrieved again next time and (per the classifier) may resurface once
+ * more, which is a safe failure mode, not data loss or a false success.
+ */
+export async function dismissCarsonNote(id: string): Promise<void> {
+  const trimmed = id.trim();
+  if (!trimmed) return;
+
+  const { error } = await supabase
+    .from("carson_notes")
+    .update({ dismissed_at: new Date().toISOString() })
+    .eq("id", trimmed);
+
+  if (error) {
+    console.error("[carson-notes] dismissCarsonNote failed:", error.message);
+  }
+}
+
+/**
+ * Marks a set of notes as surfaced — call this only for notes that actually
+ * appear in a rendered response handed back to the user (never for notes
+ * merely retrieved and then excluded by relevance classification; see
+ * carson-unresolved-captures.ts). Best-effort: swallows errors, since a
+ * failed write here only risks re-surfacing an already-seen note once more,
+ * not losing data or falsely claiming something was shown.
+ */
+export async function markCarsonNotesSurfaced(ids: string[]): Promise<void> {
+  const trimmed = ids.map((id) => id.trim()).filter(Boolean);
+  if (trimmed.length === 0) return;
+
+  const { error } = await supabase
+    .from("carson_notes")
+    .update({ last_surfaced_at: new Date().toISOString() })
+    .in("id", trimmed);
+
+  if (error) {
+    console.error("[carson-notes] markCarsonNotesSurfaced failed:", error.message);
+  }
 }
 
 /**

@@ -45,4 +45,13 @@ INSERT INTO public.automation_runs (id, automation_id, user_id, task_id, run_for
   ('e0000000-0000-4000-8000-00000000e002', 'd0000000-0000-4000-8000-00000000d002',
    '22222222-2222-4222-8222-222222222222', 'b0000000-0000-4000-8000-00000000b002', now(), 'sent', now());
 
+-- Second Brain Phase 1 — unresolved captures (carson_notes, carson_todos).
+INSERT INTO public.carson_notes (id, user_id, note) VALUES
+  ('f0000000-0000-4000-8000-00000000f001', '11111111-1111-4111-8111-111111111111', 'Owner A private note'),
+  ('f0000000-0000-4000-8000-00000000f002', '22222222-2222-4222-8222-222222222222', 'Owner B private note');
+
+INSERT INTO public.carson_todos (id, user_id, title) VALUES
+  ('a1000000-0000-4000-8000-00000000a101', '11111111-1111-4111-8111-111111111111', 'Owner A private todo'),
+  ('a1000000-0000-4000-8000-00000000a102', '22222222-2222-4222-8222-222222222222', 'Owner B private todo');
+
 SELECT 'attention_summary_rls fixture loaded' AS status;

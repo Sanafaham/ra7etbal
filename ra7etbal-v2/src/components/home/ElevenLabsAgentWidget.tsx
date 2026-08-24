@@ -10,7 +10,7 @@ import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
-import { saveCarsonNote, loadRecentNotes, type CarsonNote } from "../../lib/carson-notes";
+import { saveCarsonNote, loadRecentNotes, dismissCarsonNote, type CarsonNote } from "../../lib/carson-notes";
 import { createTodo, listActiveTodos, completeTodo, findTodoMatches, formatTodosForContext, type CarsonTodo } from "../../lib/carson-todos";
 import { getHouseholdRules } from "../../lib/household-rules";
 import { fetchAutomationDigest, buildAutomationStatusBlock } from "../../lib/automation-context";
@@ -3872,6 +3872,10 @@ export default function ElevenLabsAgentWidget({
           useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
           sessionActionsRef.current.push(`Turned note into task: ${note.note}`);
           console.log("[act_on_note] task created from note:", task.id);
+          // Dedup: the note now has a real operational representative (the
+          // task). Dismiss only after the task creation above succeeded —
+          // never before, so a failed conversion always leaves the note intact.
+          dismissCarsonNote(note.id).catch(() => {});
           return "I've got that on your list.";
         } catch (err) {
           return `Couldn't create the task. ${sanitizeCarsonErrorDetail(err)}`;
@@ -3914,6 +3918,7 @@ export default function ElevenLabsAgentWidget({
             ? "tomorrow"
             : d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
           console.log("[act_on_note] reminder created:", task.id, parsed.dueAt);
+          dismissCarsonNote(note.id).catch(() => {});
           return `I'll remind you ${dateLabel} at ${timeStr}.`;
         } catch (err) {
           return `Couldn't set the reminder. ${sanitizeCarsonErrorDetail(err)}`;
@@ -3954,6 +3959,7 @@ export default function ElevenLabsAgentWidget({
           currentTaskContextRef.current = result.taskContext;
           sessionActionsRef.current.push(`Delegated note to ${person.name}: ${note.note}`);
           console.log("[act_on_note] delegation sent:", result.taskId, "→", person.name);
+          dismissCarsonNote(note.id).catch(() => {});
           return `${person.name} has it. I'll follow up if needed.`;
         } catch (err) {
           return `Couldn't send the delegation. ${sanitizeCarsonErrorDetail(err)}`;
@@ -3973,12 +3979,21 @@ export default function ElevenLabsAgentWidget({
         const d = new Date(parsed.dueAt);
         const pad = (n: number) => String(n).padStart(2, "0");
         // Delegate to the existing createCalendarEvent callback which handles
-        // JWT auth, conflict detection, and cache update.
-        return createCalendarEvent({
+        // JWT auth, conflict detection, and cache update. It has no
+        // structured success/failure return (just a spoken string), so
+        // success is detected the same way the tool itself already signals
+        // it internally: a new entry lands in sessionActionsRef only on its
+        // real success path (see "Created calendar event:" push inside it).
+        const actionsBefore = sessionActionsRef.current.length;
+        const result = await createCalendarEvent({
           title: note.note,
           date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
           time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
         });
+        if (sessionActionsRef.current.length > actionsBefore) {
+          dismissCarsonNote(note.id).catch(() => {});
+        }
+        return result;
       }
 
       return "I don't know how to perform that action on a note. Ask the user to clarify.";
