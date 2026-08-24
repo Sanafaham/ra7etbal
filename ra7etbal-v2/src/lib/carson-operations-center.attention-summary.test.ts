@@ -1,0 +1,211 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Task } from "../types/task";
+
+const mocks = vi.hoisted(() => ({
+  supabaseGetUser: vi.fn(async (): Promise<{ data: { user: { id: string } | null }; error: null }> => ({
+    data: { user: { id: "user-1" } },
+    error: null,
+  })),
+  listTasks: vi.fn(),
+  listOpenStaffEscalationsForNeedsYou: vi.fn(),
+  fetchAutomationDigest: vi.fn(),
+}));
+
+vi.mock("./supabase", () => ({
+  supabase: { auth: { getUser: mocks.supabaseGetUser } },
+}));
+vi.mock("./tasks", () => ({ listTasks: mocks.listTasks }));
+vi.mock("./staff-messages", () => ({
+  listOpenStaffEscalationsForNeedsYou: mocks.listOpenStaffEscalationsForNeedsYou,
+}));
+vi.mock("./automation-context", () => ({
+  fetchAutomationDigest: mocks.fetchAutomationDigest,
+}));
+
+const { fetchAttentionEvidence, fetchAttentionSummary, renderAttentionSummary } = await import(
+  "./carson-operations-center"
+);
+
+const EMPTY_DIGEST = {
+  pending: [],
+  escalated: [],
+  failed: [],
+  confirmedToday: [],
+  firingToday: [],
+  firingTomorrow: [],
+  routineAutomationTaskIds: new Set<string>(),
+};
+
+function makeTask(overrides: Partial<Task> = {}): Task {
+  return {
+    id: "task-1",
+    user_id: "user-1",
+    description: "Do the thing",
+    type: "personal",
+    assigned_to: null,
+    status: "pending",
+    needs_follow_up: false,
+    confirmation_url: null,
+    confirmed_at: null,
+    due_at: null,
+    dismissed_at: null,
+    archived_at: null,
+    created_at: new Date().toISOString(),
+    qstash_message_id: null,
+    followup_sent_at: null,
+    escalated_at: null,
+    image_path: null,
+    proof_image_path: null,
+    quality_review_status: null,
+    quality_review_note: null,
+    quality_reviewed_at: null,
+    worker_reply: null,
+    ...overrides,
+  } as Task;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.supabaseGetUser.mockResolvedValue({ data: { user: { id: "user-1" } }, error: null });
+  mocks.fetchAutomationDigest.mockResolvedValue(EMPTY_DIGEST);
+  mocks.listTasks.mockResolvedValue([]);
+  mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([]);
+});
+
+describe("fetchAttentionEvidence — auth", () => {
+  it("returns no factual answer when signed out", async () => {
+    mocks.supabaseGetUser.mockResolvedValue({ data: { user: null }, error: null });
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.ok).toBe(false);
+    expect(evidence.code).toBe("attention_auth_failed");
+    expect(evidence.needsAttention).toEqual([]);
+    expect(evidence.waiting).toEqual([]);
+  });
+
+  it("returns no factual answer when the auth check itself errors", async () => {
+    mocks.supabaseGetUser.mockResolvedValue({ data: { user: null }, error: { message: "network" } });
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.ok).toBe(false);
+    expect(evidence.code).toBe("attention_auth_failed");
+  });
+});
+
+describe("fetchAttentionEvidence — tenant isolation", () => {
+  it("never accepts or forwards a caller-supplied account id — identity comes only from supabase.auth.getUser()", async () => {
+    await fetchAttentionEvidence();
+    // The only identity-bearing call is auth.getUser(); listTasks/needsYou
+    // take zero arguments in this codebase's existing RLS-scoped contract
+    // (see src/lib/tasks.ts, src/lib/staff-messages.ts) — asserting the
+    // zero-arg call shape here is a static proof this function has no
+    // parameter through which a different account id could be substituted.
+    expect(mocks.listTasks).toHaveBeenCalledWith();
+    expect(mocks.listOpenStaffEscalationsForNeedsYou).toHaveBeenCalledWith();
+    expect(mocks.supabaseGetUser).toHaveBeenCalled();
+  });
+});
+
+describe("fetchAttentionEvidence — empty verified state", () => {
+  it("reports nothing needing attention, without implying nothing exists to check", async () => {
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.ok).toBe(true);
+    expect(evidence.completeness).toBe("full");
+    expect(evidence.needsAttention).toEqual([]);
+    expect(evidence.waiting).toEqual([]);
+    expect(renderAttentionSummary(evidence)).toMatch(/nothing needs your attention/i);
+  });
+});
+
+describe("fetchAttentionEvidence — full retrieval, no fabrication", () => {
+  it("only includes items actually present in the retrieved tasks", async () => {
+    const owner = makeTask({ id: "t-owner", description: "Book the vet", assigned_to: null, type: "personal" });
+    const overdue = makeTask({
+      id: "t-overdue",
+      description: "Pay the internet bill",
+      type: "reminder",
+      due_at: new Date(Date.now() - 3600_000).toISOString(),
+    });
+    const waiting = makeTask({
+      id: "t-wait",
+      description: "Pick up dry cleaning",
+      type: "delegation",
+      assigned_to: "Ahmed",
+      needs_follow_up: true,
+    });
+    mocks.listTasks.mockResolvedValue([owner, overdue, waiting]);
+
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.ok).toBe(true);
+    expect(evidence.completeness).toBe("full");
+
+    const needsIds = evidence.needsAttention.map((i) => i.id);
+    const waitIds = evidence.waiting.map((i) => i.id);
+    expect(needsIds).toContain("t-overdue");
+    expect(waitIds).toContain("t-wait");
+    // No item id appears that wasn't in the retrieved task set.
+    for (const item of [...evidence.needsAttention, ...evidence.waiting]) {
+      expect(["t-owner", "t-overdue", "t-wait"]).toContain(item.id);
+    }
+  });
+
+  it("classifies open staff escalations as Waiting (Needs You source)", async () => {
+    mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([
+      {
+        id: "esc-1",
+        staffName: "Christopher",
+        inboundText: "not sure how many guests",
+        escalationReason: "needs a decision on guest count",
+        receivedAt: new Date().toISOString(),
+        taskId: null,
+        decisionId: "dec-1",
+        deepLinkToken: "tok-1",
+      },
+    ]);
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.waiting.some((i) => i.id === "esc-1" && i.label.includes("Christopher"))).toBe(true);
+  });
+
+  it("never manufactures urgency when nothing is actually escalated or overdue", async () => {
+    const routine = makeTask({ id: "t-routine", description: "Water the plants", type: "delegation", assigned_to: "Ahmed" });
+    mocks.listTasks.mockResolvedValue([routine]);
+    const evidence = await fetchAttentionEvidence();
+    // Routine, non-escalated delegation goes to waiting, not needsAttention.
+    expect(evidence.needsAttention).toEqual([]);
+    expect(evidence.waiting.map((i) => i.id)).toContain("t-routine");
+  });
+});
+
+describe("fetchAttentionEvidence — partial retrieval", () => {
+  it("marks completeness partial and never claims completeness when tasks fail", async () => {
+    mocks.listTasks.mockRejectedValue(new Error("db timeout"));
+    mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([]);
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.ok).toBe(true);
+    expect(evidence.completeness).toBe("partial");
+    expect(renderAttentionSummary(evidence)).toMatch(/couldn't check everything|may be incomplete/i);
+  });
+
+  it("marks completeness partial when the Needs You source fails but tasks succeed", async () => {
+    mocks.listTasks.mockResolvedValue([]);
+    mocks.listOpenStaffEscalationsForNeedsYou.mockRejectedValue(new Error("db timeout"));
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.completeness).toBe("partial");
+  });
+
+  it("never converts a partial failure of all sources into a confident empty answer", async () => {
+    mocks.listTasks.mockRejectedValue(new Error("db timeout"));
+    mocks.listOpenStaffEscalationsForNeedsYou.mockRejectedValue(new Error("db timeout"));
+    const evidence = await fetchAttentionEvidence();
+    expect(evidence.ok).toBe(false);
+    expect(evidence.code).toBe("attention_read_failed");
+    expect(renderAttentionSummary(evidence)).not.toMatch(/nothing needs your attention right now\./i);
+  });
+});
+
+describe("fetchAttentionSummary — outer failure safety net", () => {
+  it("never throws, even if an unexpected error occurs inside evidence gathering", async () => {
+    mocks.fetchAutomationDigest.mockRejectedValue(new Error("unexpected"));
+    const result = await fetchAttentionSummary();
+    expect(typeof result).toBe("string");
+    expect(result).toMatch(/couldn't check/i);
+  });
+});

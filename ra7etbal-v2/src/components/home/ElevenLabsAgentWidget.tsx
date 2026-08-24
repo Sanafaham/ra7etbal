@@ -47,7 +47,7 @@ import {
   extractAutomationInstructionParam,
 } from "../../lib/carson-tool-params";
 import { filterCalendarEventsByRange, searchCalendarHistory } from "../../lib/calendar";
-import { fetchTaskDeliveryStatus, fetchOperationsSummary } from "../../lib/carson-operations-center";
+import { fetchTaskDeliveryStatus, fetchOperationsSummary, fetchAttentionSummary } from "../../lib/carson-operations-center";
 import { lookupCommitmentHistory, lookupPersonHistory } from "../../lib/carson-commitment-history";
 import { lookupCommunicationHistory } from "../../lib/carson-communication-history";
 import type { CalendarEvent, CalendarRange } from "../../lib/calendar";
@@ -6165,6 +6165,22 @@ export default function ElevenLabsAgentWidget({
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("get_operations_summary", params, () =>
               fetchOperationsSummary(),
+            );
+          },
+          // Second Brain proof — grounded "what needs my attention" read.
+          // Structured evidence -> deterministic render happens inside
+          // fetchAttentionSummary(); this tool never lets the model
+          // supply or override the underlying data (see
+          // carson-operations-center.ts's fetchAttentionEvidence /
+          // renderAttentionSummary doc comment for the grounding
+          // contract). Tool OUTPUT is grounded (hard); whether the model
+          // calls this tool for a given question remains model-controlled
+          // (prompt-level) — this does not by itself force retrieval.
+          get_items_needing_attention: (params: Record<string, unknown>) => {
+            const captureBlock = guardCurrentToolInvocation("get_items_needing_attention");
+            if (captureBlock) return captureBlock;
+            return runDirectToolWithDiagnostic("get_items_needing_attention", params, () =>
+              fetchAttentionSummary(),
             );
           },
           // Historical Lookup — Phase 1, Q4 Commitment History. Read-only:

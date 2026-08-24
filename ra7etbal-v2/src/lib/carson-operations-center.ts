@@ -18,6 +18,11 @@
  */
 
 import { supabase } from "./supabase";
+import { listTasks } from "./tasks";
+import { buildMorningBrief, taskLabel } from "./morning-brief";
+import { fetchAutomationDigest } from "./automation-context";
+import { listOpenStaffEscalationsForNeedsYou } from "./staff-messages";
+import type { Task } from "../types/task";
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -221,5 +226,174 @@ export async function fetchOperationsSummary(): Promise<string> {
     return lines.join("\n");
   } catch {
     return "I couldn't load the operations summary right now — the live status check did not complete.";
+  }
+}
+
+// ── fetchAttentionSummary ─────────────────────────────────────────────────────
+
+/**
+ * get_items_needing_attention — the Second Brain grounded-attention proof.
+ *
+ * Structured-first: fetchAttentionEvidence() produces a narrow evidence
+ * object containing only fields the actually-retrieved data supports;
+ * renderAttentionSummary() is a pure, deterministic string builder with no
+ * LLM step. This split is the enforcement point — the render function can
+ * never state an item that isn't present in the evidence it was given.
+ *
+ * "needsAttention" and "waiting" deliberately reuse morning-brief.ts's
+ * buildMorningBrief() classification (the same relevance-tuned classifier
+ * that already powers the live spoken Morning Brief/Night Sweep) rather
+ * than daily-brief.ts's older, separately-tested isNeedsYouTask() —
+ * morning-brief.ts is the classifier actually answering this exact
+ * question today. "waiting" also folds in open staff escalations via
+ * listOpenStaffEscalationsForNeedsYou(), the same read-only source
+ * proactive_opening_brief already uses for its own Needs You slot.
+ *
+ * carsonCanHandle and safeToIgnore are intentionally always empty in this
+ * slice: no existing signal in the data model currently distinguishes
+ * "Carson could act on this" or "this is safe to ignore" from the other
+ * buckets, and inventing one here would fabricate a classification the
+ * retrieved data does not support. Documented, not silently omitted.
+ */
+export interface AttentionItem {
+  id: string;
+  label: string;
+  reason: string;
+}
+
+export interface AttentionSummaryEvidence {
+  ok: boolean;
+  code: "attention_read_succeeded" | "attention_read_partial" | "attention_auth_failed" | "attention_read_failed";
+  generatedAt: string;
+  completeness: "full" | "partial" | "none";
+  needsAttention: AttentionItem[];
+  waiting: AttentionItem[];
+  carsonCanHandle: AttentionItem[];
+  safeToIgnore: AttentionItem[];
+}
+
+export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence> {
+  const generatedAt = new Date().toISOString();
+  const empty = { needsAttention: [] as AttentionItem[], waiting: [] as AttentionItem[], carsonCanHandle: [] as AttentionItem[], safeToIgnore: [] as AttentionItem[] };
+
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return { ok: false, code: "attention_auth_failed", generatedAt, completeness: "none", ...empty };
+  }
+
+  const now = new Date();
+  let tasks: Task[] | null = null;
+  let tasksFailed = false;
+  try {
+    tasks = await listTasks();
+  } catch {
+    tasksFailed = true;
+  }
+
+  let needsYou: Awaited<ReturnType<typeof listOpenStaffEscalationsForNeedsYou>> | null = null;
+  let needsYouFailed = false;
+  try {
+    needsYou = await listOpenStaffEscalationsForNeedsYou();
+  } catch {
+    needsYouFailed = true;
+  }
+
+  // fetchAutomationDigest never throws — it returns an empty digest on
+  // auth failure or query error, so routineAutomationTaskIds below is
+  // always defined (possibly empty), never undefined-because-it-threw.
+  const digest = await fetchAutomationDigest();
+
+  if (tasksFailed && needsYouFailed) {
+    return { ok: false, code: "attention_read_failed", generatedAt, completeness: "none", ...empty };
+  }
+
+  const needsAttention: AttentionItem[] = [];
+  const waiting: AttentionItem[] = [];
+
+  if (tasks) {
+    const brief = buildMorningBrief(tasks, [], now, digest.routineAutomationTaskIds);
+    for (const t of brief.overdueItems) {
+      needsAttention.push({ id: t.id, label: taskLabel(t.description, t.assigned_to), reason: "overdue" });
+    }
+    for (const t of brief.needsAttention) {
+      needsAttention.push({
+        id: t.id,
+        label: taskLabel(t.description, t.assigned_to),
+        reason: t.type === "reminder" ? "reminder due today" : "owner task",
+      });
+    }
+    for (const t of brief.waitingOn) {
+      waiting.push({
+        id: t.id,
+        label: taskLabel(t.description, t.assigned_to),
+        reason: t.escalated_at ? "escalated — needs your attention" : "awaiting confirmation",
+      });
+    }
+  }
+
+  if (needsYou) {
+    for (const e of needsYou) {
+      waiting.push({
+        id: e.id,
+        label: `${e.staffName}: ${e.escalationReason ?? "needs your decision"}`,
+        reason: "needs your decision",
+      });
+    }
+  }
+
+  const completeness: AttentionSummaryEvidence["completeness"] = tasksFailed || needsYouFailed ? "partial" : "full";
+
+  return {
+    ok: true,
+    code: completeness === "partial" ? "attention_read_partial" : "attention_read_succeeded",
+    generatedAt,
+    completeness,
+    needsAttention,
+    waiting,
+    carsonCanHandle: [],
+    safeToIgnore: [],
+  };
+}
+
+export function renderAttentionSummary(evidence: AttentionSummaryEvidence): string {
+  if (!evidence.ok) {
+    if (evidence.code === "attention_auth_failed") {
+      return "I couldn't check what needs your attention right now — not signed in.";
+    }
+    return "I couldn't check what needs your attention right now — the live check didn't complete.";
+  }
+
+  const partialNote =
+    evidence.completeness === "partial"
+      ? "I couldn't check everything just now, so this may be incomplete."
+      : "";
+
+  if (evidence.needsAttention.length === 0 && evidence.waiting.length === 0) {
+    return partialNote
+      ? `Nothing needs your attention based on what I could check. ${partialNote}`
+      : "Nothing needs your attention right now.";
+  }
+
+  const lines: string[] = [];
+  if (evidence.needsAttention.length > 0) {
+    lines.push(`Needs your attention: ${evidence.needsAttention.map((i) => i.label).join("; ")}.`);
+  }
+  if (evidence.waiting.length > 0) {
+    lines.push(`Waiting: ${evidence.waiting.map((i) => `${i.label} (${i.reason})`).join("; ")}.`);
+  }
+  if (partialNote) lines.push(partialNote);
+
+  return lines.join(" ");
+}
+
+export async function fetchAttentionSummary(): Promise<string> {
+  try {
+    const evidence = await fetchAttentionEvidence();
+    return renderAttentionSummary(evidence);
+  } catch {
+    return "I couldn't check what needs your attention right now — the live check didn't complete.";
   }
 }

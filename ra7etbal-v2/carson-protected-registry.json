@@ -1007,6 +1007,48 @@
         "DATA-LIFECYCLE FOLLOW-UP (explicitly out of scope for this fix, per product decision): automation-generated tasks accumulate indefinitely — each firing creates a brand-new tasks row (via automation_runs.task_id) instead of updating/superseding the prior one, and none are ever archived or marked done automatically. Production evidence (read-only, 2026-08-18): 7 separate never-archived 'Update the Rahet Bal master plan.' task rows spanning Aug 12-18, 6 each for 'Charge your phone' and 'check on Claude skill files'. This remediation makes the ROUTINE ones correctly silent in the briefing regardless of this accumulation, but the underlying persistence/lifecycle question (why isn't the prior occurrence's task row closed when a new one is created?) is a separate architectural issue, not addressed here.",
         "opening_line being spoken verbatim by the ElevenLabs dashboard (rather than paraphrased) is established from a 2026-06-12 commit message, not independently re-verified against the current live dashboard configuration this session — no ElevenLabs API key was available."
       ]
+    },
+    {
+      "id": "attention_summary_read",
+      "contract": "get_items_needing_attention is a mid-session, owner-scoped read-only Second Brain proof for 'what needs my attention'. fetchAttentionEvidence() produces a narrow structured evidence object (ok, code, generatedAt, completeness, needsAttention, waiting, carsonCanHandle, safeToIgnore) from live, RLS-scoped reads only; renderAttentionSummary() is a pure, deterministic string builder with no LLM step, so the rendered result can never state an item absent from the evidence it was given. On auth failure or total retrieval failure, no factual attention answer is produced. On partial retrieval (one of two independent sources failing), completeness is marked partial and the rendered text explicitly discloses incompleteness — it never converts a partial or failed check into an implied-complete 'nothing urgent' answer. needsAttention/waiting classification deliberately reuses morning-brief.ts's buildMorningBrief() (the same relevance-tuned classifier already powering the live spoken Morning Brief/Night Sweep), not daily-brief.ts's separately-tested isNeedsYouTask() classifier used by needs_you_waiting_handled_state — two independently-defined 'what needs attention' classifiers pre-exist in this codebase; this capability deliberately aligns with the one that already answers this exact spoken question, and does not attempt to reconcile the two. carsonCanHandle and safeToIgnore are always empty arrays in this slice: no existing data signal supports either classification, and this capability does not fabricate one. GROUNDING SCOPE: this capability guarantees the tool's OUTPUT cannot be ungrounded (hard, code-enforced). It does NOT guarantee the model calls this tool before answering an operational question — that decision remains model/prompt-controlled (ElevenLabs dashboard, outside this repository), confirmed absent from code: toolRanForCurrentTranscriptRef (ElevenLabsAgentWidget.tsx) exists but is wired only to latency diagnostics, not to any content/grounding gate. Overall live-attention grounding is therefore PARTIAL, not HARD end-to-end — this must not be described as solving Carson's general hallucination/grounding problem.",
+      "business_importance": "high — first Second Brain vertical-slice proof that Production Carson can answer an operational question from live, structured, evidence-only retrieval rather than the frozen session-start ra7etbal_state/daily_brief snapshot or model inference; explicitly scoped read-only and additive, not a replacement for any existing briefing path",
+      "production_entry_points": [
+        "src/components/home/ElevenLabsAgentWidget.tsx (get_items_needing_attention clientTool)"
+      ],
+      "files_functions": [
+        "src/lib/carson-operations-center.ts:fetchAttentionEvidence / renderAttentionSummary / fetchAttentionSummary",
+        "src/components/home/ElevenLabsAgentWidget.tsx:get_items_needing_attention clientTool entry"
+      ],
+      "shared_dependencies": [
+        "src/lib/tasks.ts:listTasks (existing, owner-scoped via RLS)",
+        "src/lib/staff-messages.ts:listOpenStaffEscalationsForNeedsYou (existing, owner-scoped via RLS — same source proactive_opening_brief's Needs You slot already uses)",
+        "src/lib/automation-context.ts:fetchAutomationDigest (existing, owner-scoped via RLS)",
+        "src/lib/morning-brief.ts:buildMorningBrief / taskLabel (existing, canonical relevance classifier — reused, not reimplemented)"
+      ],
+      "db": { "tables": ["tasks", "staff_messages", "automations", "automation_runs"], "rpcs": [], "migrations": [] },
+      "external_boundaries": [
+        "ElevenLabs clientTools mechanism (tool name/description must be registered on the agent for the model to be able to call it — this repository has no ElevenLabs API access to perform or verify that registration; it is a prerequisite external action, not part of this capability's code)"
+      ],
+      "focused_tests": [
+        "src/lib/carson-operations-center.attention-summary.test.ts",
+        "src/lib/carson-operations-center.test.ts",
+        "src/lib/carson-operations-summary-reliability.test.ts",
+        "src/lib/morning-brief.test.ts"
+      ],
+      "protected_suite": false,
+      "golden_journey_required": false,
+      "golden_journey_tests": [],
+      "db_contract_tests": [],
+      "production_canary_required": false,
+      "rollback_risk": "low — additive-only clientTool and pure function; no existing clientTool, query shape, schema, or shared classifier is modified; two independent rollback levers exist (revert the code diff, or remove the tool's ElevenLabs registration alone with no redeploy) and neither disturbs any other registered clientTool.",
+      "verification_status": "Code-complete, not yet production-verified. focused_tests cover: auth failure (no factual answer), identity derived only from supabase.auth.getUser() with no caller-suppliable account id, empty verified state, full retrieval (no fabricated items — every returned item id traced back to retrieved source data), partial retrieval from either independent source (completeness marked partial, rendered text discloses incompleteness), total retrieval failure (no factual answer, not a false empty state), no manufactured urgency on routine/non-escalated data, and an outer safety net so the clientTool can never throw. Tenant isolation beyond this composition-level proof (i.e. a live cross-account Postgres RLS exercise) was not performed — see this capability's unresolved list. Production canary and live owner acceptance are pending; not claimed as passed.",
+      "unresolved": [
+        "PRE-EXISTING HARDING GAP DISCOVERED, NOT CAUSED BY THIS CHANGE: src/lib/carson-operations-center.ts already contained fetchOperationsSummary/fetchTaskDeliveryStatus (the get_operations_summary/get_task_delivery_status clientTools), both already required by package.json's test:carson-protected script via src/lib/carson-operations-summary-reliability.test.ts, but neither function nor this file had any Protected Behavior Registry entry before this change. Since src/lib is a fail-closed Impact-Aware CI surface (scripts/impact-map.mjs PROTECTED_SURFACE_PREFIXES), this file was silently ungoverned by the fail-closed gate. This registration closes the file-level gate as a side effect (the gate matches by file path, not function), but the two pre-existing functions' own contract, hardening, and tenant-isolation posture were not independently re-audited here — that remains open, separately-tracked debt, not resolved by this entry's existence.",
+      "Tenant isolation was verified only as a static/composition property (fetchAttentionEvidence takes no caller-suppliable identity parameter; the only identity source is supabase.auth.getUser(), same pattern as its two siblings) plus reliance on the existing, already-production-proven RLS policies on tasks/staff_messages/automation_runs (the same tables/policies fetchOperationsSummary and fetchTaskDeliveryStatus already depend on in production). No new live cross-account (User A cannot retrieve User B's rows) Postgres exercise was performed for this specific composition — the existing automated test environment does not have a safe multi-account fixture for this read path, and creating one was judged out of this slice's authorized scope (no schema/migration, no synthetic production accounts). This is reported as a real, named limitation, not claimed as a tenant-isolation PASS.",
+        "The residual grounding gap (tool invocation remains model-controlled, not application-enforced) is tracked here and in RA7ETBAL_STATE.md as an open follow-up: investigate whether the ElevenLabs platform offers a supported required-tool-invocation mechanism before considering any custom interception architecture.",
+        "carsonCanHandle and safeToIgnore evidence fields are always empty — no existing signal supports either classification yet; revisit only if a real data signal emerges, not by inventing heuristics.",
+        "No production canary and no live owner acceptance test have been performed as of this registration — both remain required before this capability can be marked PRODUCTION VERIFIED."
+      ]
     }
   ]
 }
