@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Task } from "../types/task";
 
 const mocks = vi.hoisted(() => ({
-  supabaseGetUser: vi.fn(async (): Promise<{ data: { user: { id: string } | null }; error: null }> => ({
-    data: { user: { id: "user-1" } },
-    error: null,
-  })),
+  supabaseGetUser: vi.fn(
+    async (): Promise<{ data: { user: { id: string } | null }; error: { message: string } | null }> => ({
+      data: { user: { id: "user-1" } },
+      error: null,
+    }),
+  ),
   listTasks: vi.fn(),
   listOpenStaffEscalationsForNeedsYou: vi.fn(),
   fetchAutomationDigest: vi.fn(),
