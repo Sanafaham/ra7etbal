@@ -85,9 +85,11 @@ function extractFilePath(entry) {
  * not a live lookup: CI has no network access to the GitHub API, and a
  * registry validator must be deterministic. Last verified against
  * `gh api repos/Sanafaham/ra7etbal/branches/main/protection/required_status_checks`
- * on 2026-08-15 (8 checks, all present). If branch protection changes, this
- * list must be updated in the same PR — a stale list here would silently
- * stop catching the exact failure class Phase 9 exists to catch.
+ * on 2026-08-24 (9 checks, all present — attention-summary-rls-proof added
+ * this date so its DB-contract proof cannot silently disappear later). If
+ * branch protection changes, this list must be updated in the same PR — a
+ * stale list here would silently stop catching the exact failure class
+ * Phase 9 exists to catch.
  */
 const REQUIRED_MERGE_GATE_CHECKS = new Set([
   "carson-protected-behaviors",
@@ -98,6 +100,7 @@ const REQUIRED_MERGE_GATE_CHECKS = new Set([
   "staff-escalation-migration-verification",
   "real-postgres-rls-proof",
   "owner-reminder-whatsapp-claim-verification",
+  "attention-summary-rls-proof",
 ]);
 
 /**

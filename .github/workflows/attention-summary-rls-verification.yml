@@ -1,0 +1,97 @@
+name: attention-summary-rls-verification
+
+# Real-Postgres cross-owner SELECT isolation proof for
+# get_items_needing_attention (attention_summary_read) — the Second Brain
+# grounded-attention proof. Reuses the exact same service-container +
+# bootstrap -> fixture -> forward-migration -> verify pattern already
+# established by server-authoritative-reminder-rls-verification.yml and
+# carson-tier1-db-contracts.yml. No new framework.
+#
+# Same reasoning as those two workflows for not path-filtering at the
+# trigger level: a required check that never runs on an unrelated PR
+# deadlocks it forever. Triggers on every PR to main; an internal
+# "Determine relevance" step gates the expensive Postgres steps (not the
+# job itself), so an unrelated PR still gets a genuine, fast success.
+"on":
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: attention-summary-rls-proof
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ci_verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: ci_verify
+      MIGRATIONS: ra7etbal-v2/supabase/migrations
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Determine relevance
+        id: relevance
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ]; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "No PR base SHA available (e.g. workflow_dispatch) — running the full check to be safe."
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+          PATTERN='^ra7etbal-v2/src/lib/carson-operations-center\.ts$|^ra7etbal-v2/src/lib/tasks\.ts$|^ra7etbal-v2/src/lib/staff-messages\.ts$|^ra7etbal-v2/src/lib/automation-context\.ts$|^ra7etbal-v2/supabase/migrations/(20260620_agent_automation_layer\.sql|20260720_create_staff_messages\.sql|verification/attention_summary_rls_.*\.sql)$|^\.github/workflows/attention-summary-rls-verification\.yml$'
+          if echo "$CHANGED" | grep -Eq "$PATTERN"; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "Relevant attention_summary_read isolation-boundary path changed — running the full real-Postgres verification."
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No attention_summary_read isolation-boundary path changed — skipping the expensive verification steps. This check still reports a genuine success, it is not required-but-silently-absent."
+          fi
+
+      - name: Wait for Postgres
+        if: steps.relevance.outputs.relevant == 'true'
+        run: pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"
+
+      - name: Bootstrap auth schema, roles, people, and real-RLS tasks
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/attention_summary_rls_bootstrap.sql"
+
+      - name: Apply the exact forward migration — agent automation layer (automations, automation_runs)
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260620_agent_automation_layer.sql"
+
+      - name: Apply the exact forward migration — staff messages
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260720_create_staff_messages.sql"
+
+      - name: Insert two-owner fixtures (tasks, staff_messages, automations, automation_runs)
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/attention_summary_rls_fixture.sql"
+
+      - name: Prove cross-owner SELECT isolation for every table attention_summary_read reads
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/attention_summary_rls_verification.sql"
