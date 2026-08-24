@@ -63,7 +63,7 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE_SHA" HEAD)
           echo "Changed files:"
           echo "$CHANGED"
-          PATTERN='^ra7etbal-v2/src/lib/carson-operations-center\.ts$|^ra7etbal-v2/src/lib/tasks\.ts$|^ra7etbal-v2/src/lib/staff-messages\.ts$|^ra7etbal-v2/src/lib/automation-context\.ts$|^ra7etbal-v2/supabase/migrations/(20260620_agent_automation_layer\.sql|20260720_create_staff_messages\.sql|verification/attention_summary_rls_.*\.sql)$|^\.github/workflows/attention-summary-rls-verification\.yml$'
+          PATTERN='^ra7etbal-v2/src/lib/carson-operations-center\.ts$|^ra7etbal-v2/src/lib/tasks\.ts$|^ra7etbal-v2/src/lib/staff-messages\.ts$|^ra7etbal-v2/src/lib/automation-context\.ts$|^ra7etbal-v2/src/lib/carson-notes\.ts$|^ra7etbal-v2/src/lib/carson-todos\.ts$|^ra7etbal-v2/src/lib/carson-unresolved-captures\.ts$|^ra7etbal-v2/supabase/migrations/(20260611_create_carson_notes\.sql|20260627_create_carson_todos\.sql|20260620_agent_automation_layer\.sql|20260720_create_staff_messages\.sql|20260824_carson_notes_todos_attention_lifecycle(\.rollback)?\.sql|verification/attention_summary_rls_.*\.sql)$|^\.github/workflows/attention-summary-rls-verification\.yml$'
           if echo "$CHANGED" | grep -Eq "$PATTERN"; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
             echo "Relevant attention_summary_read isolation-boundary path changed — running the full real-Postgres verification."
@@ -88,10 +88,22 @@ jobs:
         if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260720_create_staff_messages.sql"
 
-      - name: Insert two-owner fixtures (tasks, staff_messages, automations, automation_runs)
+      - name: Apply the exact forward migration — carson_notes
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260611_create_carson_notes.sql"
+
+      - name: Apply the exact forward migration — carson_todos
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260627_create_carson_todos.sql"
+
+      - name: Apply the exact forward migration — Second Brain Phase 1 unresolved-capture lifecycle (dismissed_at, last_surfaced_at, carson_notes UPDATE policy)
+        if: steps.relevance.outputs.relevant == 'true'
+        run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/20260824_carson_notes_todos_attention_lifecycle.sql"
+
+      - name: Insert two-owner fixtures (tasks, staff_messages, automations, automation_runs, carson_notes, carson_todos)
         if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/attention_summary_rls_fixture.sql"
 
-      - name: Prove cross-owner SELECT isolation for every table attention_summary_read reads
+      - name: Prove cross-owner SELECT isolation for every table attention_summary_read reads, plus the new carson_notes UPDATE policy
         if: steps.relevance.outputs.relevant == 'true'
         run: psql -v ON_ERROR_STOP=1 -f "$MIGRATIONS/verification/attention_summary_rls_verification.sql"

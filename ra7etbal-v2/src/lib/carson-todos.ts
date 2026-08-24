@@ -24,9 +24,11 @@ export interface CarsonTodo {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  last_surfaced_at?: string | null;
 }
 
 const COLUMNS = "id, title, description, status, source, created_at, updated_at, completed_at";
+const COLUMNS_WITH_SURFACED = `${COLUMNS}, last_surfaced_at`;
 
 /**
  * Create a to-do for the currently signed-in user.
@@ -80,6 +82,49 @@ export async function listActiveTodos(limit = 50): Promise<CarsonTodo[]> {
     return [];
   }
   return (data ?? []) as CarsonTodo[];
+}
+
+/**
+ * Same as listActiveTodos(), but also selects last_surfaced_at — used only
+ * by the Second Brain attention-retrieval layer (carson-unresolved-
+ * captures.ts), which needs the surface-state signal. Kept separate from
+ * listActiveTodos() so every existing caller's query shape is untouched.
+ * Returns empty array on error — never throws.
+ */
+export async function listActiveTodosWithSurfaceState(limit = 50): Promise<CarsonTodo[]> {
+  const { data, error } = await supabase
+    .from("carson_todos")
+    .select(COLUMNS_WITH_SURFACED)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("[carson-todos] listActiveTodosWithSurfaceState failed:", error.message);
+    return [];
+  }
+  return (data ?? []) as CarsonTodo[];
+}
+
+/**
+ * Marks a set of active to-dos as surfaced — call this only for to-dos that
+ * actually appear in a rendered response handed back to the user (never for
+ * items merely retrieved and then excluded by relevance classification).
+ * Best-effort: swallows errors, since a failed write here only risks
+ * re-surfacing an already-seen to-do once more, not losing data.
+ */
+export async function markCarsonTodosSurfaced(ids: string[]): Promise<void> {
+  const trimmed = ids.map((id) => id.trim()).filter(Boolean);
+  if (trimmed.length === 0) return;
+
+  const { error } = await supabase
+    .from("carson_todos")
+    .update({ last_surfaced_at: new Date().toISOString() })
+    .in("id", trimmed);
+
+  if (error) {
+    console.error("[carson-todos] markCarsonTodosSurfaced failed:", error.message);
+  }
 }
 
 /**

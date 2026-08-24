@@ -9,6 +9,7 @@ import Spinner from "../components/Spinner";
 import { useAuth } from "../hooks/useAuth";
 import {
   deleteCarsonNote,
+  dismissCarsonNote,
   loadRecentNotes,
   saveCarsonNote,
   type CarsonNote,
@@ -161,6 +162,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
     try {
       const task = await createTask({ user_id: authUserId, description: note.note, type: "action", assigned_to: null, status: "pending", needs_follow_up: false, confirmation_url: null, due_at: null });
       useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+      dismissCarsonNote(note.id).catch(() => {});
       setMadeTaskIds((prev) => new Set(prev).add(note.id));
       setOpenOverflowId(null);
       console.log("[inbox] task created from note:", task.id);
@@ -171,14 +173,19 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
     }
   }
 
-  // ── Send to Carson ────────────────────────────────────────────────────────
-  // Opens Talk to Carson in text mode with the note's exact text queued for
-  // the typed input (see pendingTypedDraft in stores/carson.ts and the
-  // insertion effect in ElevenLabsAgentWidget.tsx). Never sent automatically
-  // — the owner reviews and taps Send themselves, going through the exact
-  // same sendTypedMessage() path (and advisory-only boundary) as anything
-  // typed directly, so Carson can never execute a reminder, message,
-  // delegation, calendar change, or to-do from this without the normal
+  // ── Discuss with Carson (formerly "Send to Carson") ──────────────────────
+  // Renamed per Second Brain Phase 1: Carson now has grounded awareness of
+  // unresolved notes on his own (via get_items_needing_attention), so this
+  // button is no longer "informing" Carson of something he didn't know —
+  // it's a shortcut straight to discussing/acting on a note the user
+  // already knows Carson can see. Behavior is unchanged: opens Talk to
+  // Carson in text mode with the note's exact text queued for the typed
+  // input (see pendingTypedDraft in stores/carson.ts and the insertion
+  // effect in ElevenLabsAgentWidget.tsx). Never sent automatically — the
+  // owner reviews and taps Send themselves, going through the exact same
+  // sendTypedMessage() path (and advisory-only boundary) as anything typed
+  // directly, so Carson can never execute a reminder, message, delegation,
+  // calendar change, or to-do from this without the normal
   // clarification/approval flow. The note itself is never read from again
   // here — nothing about it is mutated.
   function handleSendToCarson(note: CarsonNote) {
@@ -232,6 +239,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
         ownerName: ownerName ?? null,
       });
       useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+      dismissCarsonNote(note.id).catch(() => {});
       setDelegatedMap((prev) => new Map(prev).set(note.id, person.name));
       setDelegatingNoteId(null);
       setDelegatePersonId("");
@@ -262,6 +270,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
     try {
       const result = await createCalendarEvent(note.note, date, time);
       if (!result.ok) { setCalendarError(result.code === "reconnect_required" ? "Google Calendar is not connected. Reconnect in Settings." : "Couldn't add the event."); return; }
+      dismissCarsonNote(note.id).catch(() => {});
       setCalendarAddedIds((prev) => new Set(prev).add(note.id));
       setCalendarNoteId(null);
       setCalendarTimeText("");
@@ -295,6 +304,7 @@ export default function Inbox({ headerless = false }: { headerless?: boolean } =
         source: "inbox",
       });
       useTasksStore.getState().loadFor(authUserId, { force: true }).catch(() => {});
+      dismissCarsonNote(note.id).catch(() => {});
       setReminderSetIds((prev) => new Set(prev).add(note.id));
       setRemindingNoteId(null);
       setRemindTimeText("");
@@ -586,13 +596,14 @@ function NoteCard({
           </button>
         ) : null}
 
-        {/* Send to Carson — opens Talk to Carson (text) with this note's
-            exact text queued for the typed input. Carson analyzes it and
-            proposes actions through the normal clarification/approval flow;
-            nothing here executes anything or changes the note. */}
+        {/* Discuss with Carson (formerly "Send to Carson") — opens Talk to
+            Carson (text) with this note's exact text queued for the typed
+            input. Carson analyzes it and proposes actions through the
+            normal clarification/approval flow; nothing here executes
+            anything or changes the note. */}
         <button type="button" onClick={() => onSendToCarson(note)} disabled={busy || reminding || delegating || addingToCalendar}
           className="inline-flex min-h-[32px] items-center gap-1.5 rounded-full border border-sage/25 bg-sage/8 px-3 py-1 text-xs font-medium text-sage transition hover:bg-sage/15 disabled:opacity-50">
-          Send to Carson
+          Discuss with Carson
         </button>
 
         {/* Overflow ··· */}
