@@ -41,7 +41,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     id: "task-1",
     user_id: "user-1",
     description: "Do the thing",
-    type: "personal",
+    type: "action",
     assigned_to: null,
     status: "pending",
     needs_follow_up: false,
@@ -117,7 +117,7 @@ describe("fetchAttentionEvidence — empty verified state", () => {
 
 describe("fetchAttentionEvidence — full retrieval, no fabrication", () => {
   it("only includes items actually present in the retrieved tasks", async () => {
-    const owner = makeTask({ id: "t-owner", description: "Book the vet", assigned_to: null, type: "personal" });
+    const owner = makeTask({ id: "t-owner", description: "Book the vet", assigned_to: null, type: "action" });
     const overdue = makeTask({
       id: "t-overdue",
       description: "Pay the internet bill",
