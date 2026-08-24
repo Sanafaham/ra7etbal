@@ -124,6 +124,7 @@ import { createTask } from "../../lib/tasks";
 import { sendWhatsAppTask } from "../../lib/whatsapp";
 import { getCarsonDiagnostics, recordCarsonDiagnostic } from "../../lib/carson-diagnostics";
 import { resolveSanitizedCarsonDisplayMessage, sanitizeTypedAdvisoryReply, type DirectToolSuccessResult, type NoteSaveOutcome } from "../../lib/carson-direct-tool-override";
+import { matchesAttentionIntent, matchesAttentionFollowUp, resolveAttentionGuardedMessage } from "../../lib/carson-attention-intent-guard";
 import {
   buildCanonicalConsequentialSpeechPayload,
   createCanonicalConsequentialResult,
@@ -1480,6 +1481,20 @@ export default function ElevenLabsAgentWidget({
   // current transcript (same call sites as setTurnPhase("acting")); reset
   // to false only when a fresh valid transcript arrives.
   const toolRanForCurrentTranscriptRef = useRef(false);
+
+  // Deterministic attention-routing guard (2026-08-25 production
+  // investigation — see carson-attention-intent-guard.ts's header for the
+  // root cause this exists for). Reset alongside toolRanForCurrentTranscriptRef
+  // at every one of its reset sites; attentionToolRanForCurrentTranscriptRef
+  // is set true only inside the get_items_needing_attention clientTool.
+  const attentionIntentForCurrentTranscriptRef = useRef(false);
+  const attentionToolRanForCurrentTranscriptRef = useRef(false);
+  const attentionGuardResultRef = useRef<string | null>(null);
+  // True only when the immediately preceding turn was itself answered from
+  // real evidence (tool ran, or this guard substituted a grounded result) —
+  // gates whether a bare "What else?"/"Anything else?"/"Is that everything?"
+  // this turn is treated as a continuation of that same attention exchange.
+  const lastAttentionTurnWasGroundedRef = useRef(false);
 
   const clearTurnPhaseThinkingTimeout = useCallback(() => {
     if (turnPhaseThinkingTimeoutRef.current) {
@@ -5438,6 +5453,10 @@ export default function ElevenLabsAgentWidget({
       setTurnPhase("idle");
       turnLatencyLoggedForEventIdRef.current = null;
       toolRanForCurrentTranscriptRef.current = false;
+      attentionIntentForCurrentTranscriptRef.current = false;
+      attentionToolRanForCurrentTranscriptRef.current = false;
+      attentionGuardResultRef.current = null;
+      lastAttentionTurnWasGroundedRef.current = false;
 
       if (conv) {
         if (activeChannelRef.current === "voice") {
@@ -6194,6 +6213,7 @@ export default function ElevenLabsAgentWidget({
           get_items_needing_attention: (params: Record<string, unknown>) => {
             const captureBlock = guardCurrentToolInvocation("get_items_needing_attention");
             if (captureBlock) return captureBlock;
+            attentionToolRanForCurrentTranscriptRef.current = true;
             return runDirectToolWithDiagnostic("get_items_needing_attention", params, () =>
               fetchAttentionSummary(),
             );
@@ -6468,6 +6488,8 @@ export default function ElevenLabsAgentWidget({
             // stale phase/timer from a previous turn is cleared first.
             turnLatencyLoggedForEventIdRef.current = null;
             toolRanForCurrentTranscriptRef.current = false;
+            attentionToolRanForCurrentTranscriptRef.current = false;
+            attentionGuardResultRef.current = null;
             clearTurnPhaseThinkingTimeout();
             setTurnPhase("heard");
             turnPhaseThinkingTimeoutRef.current = setTimeout(() => {
@@ -6483,6 +6505,29 @@ export default function ElevenLabsAgentWidget({
             if (detectAllRecurringSchedules(message).length > 0) {
               recurringRawRef.current = message;
               console.log("[routine:RAW_CAPTURE]", message);
+            }
+
+            // Deterministic attention-routing guard: detect this turn's intent
+            // from the raw utterance alone (before the model replies) and, if
+            // it matches, kick off a live get_items_needing_attention-equivalent
+            // fetch now so a grounded result is ready in case the model answers
+            // this turn without actually calling the tool. Never blocks or
+            // delays the reply — see carson-attention-intent-guard.ts.
+            const isAttentionFollowUpTurn =
+              matchesAttentionFollowUp(message) && lastAttentionTurnWasGroundedRef.current;
+            attentionIntentForCurrentTranscriptRef.current =
+              matchesAttentionIntent(message) || isAttentionFollowUpTurn;
+            if (attentionIntentForCurrentTranscriptRef.current) {
+              const requestGeneration = sessionGenerationRef.current;
+              fetchAttentionSummary()
+                .then((text) => {
+                  if (sessionGenerationRef.current !== requestGeneration) return;
+                  attentionGuardResultRef.current = text;
+                })
+                .catch(() => {
+                  // Best-effort only — no correction available is a real,
+                  // disclosed limitation, not a reason to surface an error.
+                });
             }
           } else if (role === "agent") {
             activeUserRoutingContextRef.current = null;
@@ -6525,12 +6570,29 @@ export default function ElevenLabsAgentWidget({
                 .slice(0, -1)
                 .reverse()
                 .find((entry) => entry.role === "user")?.message ?? "";
+            // Deterministic attention-routing guard: if this turn's utterance
+            // matched the general attention-intent question class and
+            // get_items_needing_attention did NOT actually run, substitute the
+            // model's own separately-generated (and therefore potentially
+            // ungrounded) reply with the live result already fetched the
+            // instant the utterance arrived — see carson-attention-intent-guard.ts.
+            // No-op when the tool did run, or when no fresh result is ready.
+            const attentionGuardedMessage = resolveAttentionGuardedMessage({
+              agentMessage: message,
+              attentionIntentDetected: attentionIntentForCurrentTranscriptRef.current,
+              attentionToolRan: attentionToolRanForCurrentTranscriptRef.current,
+              groundedResult: attentionGuardResultRef.current,
+            });
+            lastAttentionTurnWasGroundedRef.current =
+              attentionIntentForCurrentTranscriptRef.current &&
+              (attentionToolRanForCurrentTranscriptRef.current ||
+                attentionGuardedMessage !== message);
             // This onMessage callback delivers the agent's own separately-generated
             // reply — it can contradict a direct tool call that just succeeded
             // (create_todo P0). Prefer the tool's own success result when the
             // agent's message reads as a failure shortly after that tool ran.
             const displayMessage = resolveSanitizedCarsonDisplayMessage({
-              agentMessage: message,
+              agentMessage: attentionGuardedMessage,
               previousUserMessage,
               lastSuccess: lastDirectToolSuccessRef.current,
               noteSaveOutcome: noteSaveOutcomeRef.current,
@@ -6713,6 +6775,10 @@ export default function ElevenLabsAgentWidget({
           lastUserTranscriptTimingRef.current = null;
           turnLatencyLoggedForEventIdRef.current = null;
           toolRanForCurrentTranscriptRef.current = false;
+          attentionIntentForCurrentTranscriptRef.current = false;
+          attentionToolRanForCurrentTranscriptRef.current = false;
+          attentionGuardResultRef.current = null;
+          lastAttentionTurnWasGroundedRef.current = false;
           setSessionEndedMsg("Session ended.");
           setLastUserTranscript(null);
           if (requestedChannel === "voice") {
@@ -6770,6 +6836,10 @@ export default function ElevenLabsAgentWidget({
           lastUserTranscriptTimingRef.current = null;
           turnLatencyLoggedForEventIdRef.current = null;
           toolRanForCurrentTranscriptRef.current = false;
+          attentionIntentForCurrentTranscriptRef.current = false;
+          attentionToolRanForCurrentTranscriptRef.current = false;
+          attentionGuardResultRef.current = null;
+          lastAttentionTurnWasGroundedRef.current = false;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
           // Save whatever transcript we have so the session isn't lost.
