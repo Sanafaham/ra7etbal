@@ -71,9 +71,10 @@
         "api/task-confirm.js:findAssigneePerson",
         "api/_escalation-notify.js:notifyOwnerOfTaskReview",
         "api/_escalation-notify.js:resolveAssigneePersonId",
-        "api/_staff-decision-message.js"
+        "api/_staff-decision-message.js",
+        "api/whatsapp-webhook.js:handleInboundStaffMessage / resolveInboundStaffTask"
       ],
-      "shared_dependencies": ["api/_whatsapp-delivery.js", "api/_quality-review.js"],
+      "shared_dependencies": ["api/_whatsapp-delivery.js", "api/_quality-review.js", "api/_staff-substitution-intent.js"],
       "db": {
         "tables": ["staff_escalation_owner_decisions", "quality_substitute_decisions", "messages", "whatsapp_deliveries", "household_rules"],
         "rpcs": [
@@ -101,7 +102,9 @@
         "api/_staff-decision-message.test.js",
         "api/_quality-review.test.js",
         "api/alternative-review-golden-contract.test.js",
-        "api/photo-workflow-golden-contract.test.js"
+        "api/photo-workflow-golden-contract.test.js",
+        "api/whatsapp-webhook.test.js",
+        "api/_staff-substitution-intent.test.js"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
