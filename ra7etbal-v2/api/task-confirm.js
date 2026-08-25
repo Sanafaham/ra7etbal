@@ -54,7 +54,7 @@
 
 import webpush from 'web-push';
 import { ownerNotification, prepareOwnerPushNotification } from './_owner-notifications.js';
-import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
+import { downloadImageAsBase64, runQualityReview, fetchHouseholdRulesText } from './_quality-review.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 import { notifyOwnerOfTaskReview } from './_escalation-notify.js';
@@ -497,7 +497,7 @@ export async function handleTaskConfirmationPost(
         : task.attachment_count > 0
           ? await loadReferenceImagePaths({ supabaseUrl, headers, taskId, fallbackImagePath: task.image_path })
           : (task.image_path ? [task.image_path] : []);
-      const [delegationMessage, referenceImagesBase64, proofImagesBase64] = await Promise.all([
+      const [delegationMessage, referenceImagesBase64, proofImagesBase64, householdRulesText] = await Promise.all([
         reviewDelegationMessage
           ? Promise.resolve(reviewDelegationMessage)
           : fetchDelegationMessageContent({ supabaseUrl, serviceKey, taskId }),
@@ -507,11 +507,13 @@ export async function handleTaskConfirmationPost(
         Promise.all(
           proofImagePaths.map((imagePath) => downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath })),
         ),
+        fetchHouseholdRulesText({ supabaseUrl, serviceKey, userId: task.user_id }),
       ]);
 
       step = 'quality_review';
       review = await runQualityReview({
         apiKey,
+        householdRulesText,
         taskDescription: reviewTaskDescription,
         delegationMessage,
         referenceImagesBase64,

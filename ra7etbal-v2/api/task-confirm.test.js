@@ -8,12 +8,19 @@ import qstashReminderHandler from './qstash-reminder.js';
 
 const downloadImageAsBase64Mock = vi.fn();
 const runQualityReviewMock = vi.fn();
+// Christopher substitution / alternative-selection defect fix: mocked
+// separately (not left as the real function) specifically so it does NOT
+// consume a slot in the many existing tests' raw `fetch` mock queue below —
+// same reasoning as downloadImageAsBase64Mock/runQualityReviewMock already
+// being mocked here rather than real.
+const fetchHouseholdRulesTextMock = vi.fn();
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const TASK_CONFIRM_SOURCE = readFileSync(join(__dirname, 'task-confirm.js'), 'utf-8');
 
 vi.mock('./_quality-review.js', () => ({
   downloadImageAsBase64: downloadImageAsBase64Mock,
   runQualityReview: runQualityReviewMock,
+  fetchHouseholdRulesText: fetchHouseholdRulesTextMock,
 }));
 
 vi.mock('web-push', () => ({
@@ -42,6 +49,7 @@ beforeEach(async () => {
   // about the Quality Intelligence routing.
   downloadImageAsBase64Mock.mockReset().mockResolvedValue('base64-bytes');
   runQualityReviewMock.mockReset();
+  fetchHouseholdRulesTextMock.mockReset().mockResolvedValue(null);
 });
 
 describe('Quality Intelligence owner push copy source of truth', () => {
@@ -297,6 +305,40 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
     const patchBody = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(patchBody.proof_image_path).toBe('task-images/user-1/task-1/proof/0.jpg');
+  });
+
+  // Christopher substitution / alternative-selection defect fix: the
+  // household-rules text is the only recognized pre-existing authority for a
+  // same-category substitution (see _quality-review.js). Proves the wiring
+  // end to end — fetchHouseholdRulesText is called with the task's real
+  // owner and its result reaches runQualityReview unchanged.
+  it('passes fetchHouseholdRulesText\'s result through to runQualityReview as householdRulesText, scoped to the task owner', async () => {
+    runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Blueberries are an approved substitute.' });
+    fetchHouseholdRulesTextMock.mockResolvedValue('Blueberries are an approved substitute for strawberries in any recipe.');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'buy strawberries', assigned_to: 'Christopher', image_path: null }]))
+      .mockResolvedValueOnce(jsonResponse([{ content: 'Please buy strawberries.' }])) // messages lookup
+      .mockResolvedValueOnce(emptyResponse()) // PATCH tasks -> done
+      .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments (proof replace)
+      .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments (proof replace)
+      .mockResolvedValueOnce(emptyResponse()); // confirmations insert
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler(
+      createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof/0.jpg'] }),
+      res,
+    );
+
+    expect(fetchHouseholdRulesTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1' }),
+    );
+    expect(runQualityReviewMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        householdRulesText: 'Blueberries are an approved substitute for strawberries in any recipe.',
+      }),
+    );
   });
 
   it('approved review: marks the task done and records the review outcome', async () => {

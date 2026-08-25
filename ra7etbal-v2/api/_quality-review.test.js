@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { downloadImageAsBase64, runQualityReview } from './_quality-review.js';
+import { downloadImageAsBase64, runQualityReview, fetchHouseholdRulesText } from './_quality-review.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -861,7 +861,13 @@ describe('runQualityReview', () => {
 });
 
 describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
-  it('reasonable substitute with a worker note classifies as substitute_review', async () => {
+  // Superseded by the Christopher substitution / alternative-selection
+  // defect fix (owner product decision, this session): a worker's own note
+  // is never sufficient authorization on its own — only a pre-existing
+  // stored household rule is. This test now documents that corrected
+  // behavior instead of the old (proven-wrong) one; the deterministic
+  // downgrade lives in isSubstituteReviewUnauthorized in _quality-review.js.
+  it('a worker note alone (no stored household rule) is NOT authorization — deterministically downgraded to correction_required', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -878,16 +884,16 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       referenceImagesBase64: ['terea-silver-reference-base64'],
       proofImagesBase64: ['terea-turquoise-proof-base64'],
       workerReply: 'Could not find TEREA Silver, found Turquoise instead.',
+      householdRulesText: null,
     });
 
-    expect(result.status).toBe('substitute_review');
-    expect(result.note).toContain('TEREA Turquoise');
+    expect(result.status).toBe('correction_required');
   });
 
-  it('a clear substitute is classified even without a worker note — the note is evidence, not a requirement', async () => {
+  it('a same-category substitute with a covering household rule stays authorized (not blindly downgraded) even with no worker note', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       anthropicResponse(
-        '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"A different, equivalent brand was sent since the requested brand was unavailable."}',
+        '{"result":"APPROVED","correction_message":null,"reasoning":"The stored rule permits this flower substitution."}',
       ),
     );
     vi.stubGlobal('fetch', fetchMock);
@@ -898,9 +904,10 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       delegationMessage: null,
       referenceImagesBase64: ['flowers-reference-base64'],
       proofImagesBase64: ['different-flowers-proof-base64'],
+      householdRulesText: 'Any in-season flower is an approved substitute for the usual flower order.',
     });
 
-    expect(result.status).toBe('substitute_review');
+    expect(result.status).toBe('approved');
     // No workerReply was passed — must not appear as a note line in the prompt.
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
@@ -972,12 +979,16 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
     expect(result.status).not.toBe('substitute_review');
   });
 
-  it('regression (2026-08-02): white pen for blue pen task is substitute_review, not correction_required', async () => {
-    // Production bug: QI classified a white pen as CORRECTION_REQUIRED for a
-    // "Buy a blue pen" task because the old prompt listed "wrong color/variant
-    // when the exact variant matters" as a CORRECTION_REQUIRED trigger. A white
-    // pen is a plausible substitute (same product category, different attribute)
-    // and must go to the owner for a decision.
+  // Superseded (Christopher substitution / alternative-selection defect fix,
+  // this session): a same-category substitute with no prior owner
+  // authorization is CORRECTION_REQUIRED by product decision, not an
+  // automatic owner "Approve Alternative" decision — see the AUTHORIZATION
+  // section this test's fix added to the prompt. The original 2026-08-02
+  // fix this test protected (never silently reject a plausible substitute as
+  // an unrelated wrong item) still holds — see the IQOS-sticks test below,
+  // unaffected by this change — this test's own expected status is what
+  // changed.
+  it('regression (2026-08-02, superseded 2026-08-25): white pen for blue pen task with NO stored authorization is correction_required, not silently escalated as an owner decision', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -993,10 +1004,10 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       delegationMessage: 'Please buy a blue pen and send a photo.',
       referenceImagesBase64: [],
       proofImagesBase64: ['white-pen-proof-base64'],
+      householdRulesText: null,
     });
 
-    expect(result.status).toBe('substitute_review');
-    expect(result.note).toContain('white pen');
+    expect(result.status).toBe('correction_required');
   });
 
   it('regression (2026-08-02): IQOS sticks for blue pen task is correction_required (unrelated product category)', async () => {
@@ -1021,7 +1032,9 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
     expect(result.note).toContain('IQOS');
   });
 
-  it('regression (2026-08-02): Pepsi for Coke task is substitute_review', async () => {
+  // Superseded (Christopher substitution / alternative-selection defect fix,
+  // this session) — see comment on the white-pen test above.
+  it('regression (2026-08-02, superseded 2026-08-25): Pepsi for Coke task with NO stored authorization is correction_required', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -1037,12 +1050,13 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
       delegationMessage: 'Please buy a Coke and send a photo.',
       referenceImagesBase64: [],
       proofImagesBase64: ['pepsi-proof-base64'],
+      householdRulesText: null,
     });
 
-    expect(result.status).toBe('substitute_review');
+    expect(result.status).toBe('correction_required');
   });
 
-  it('prompt explicitly states same-category different-color/variant must go to SUBSTITUTE_REVIEW not CORRECTION_REQUIRED', async () => {
+  it('prompt explicitly states same-category different-color/variant defaults to CORRECTION_REQUIRED without stored authorization', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
     );
@@ -1058,11 +1072,12 @@ describe('Phase 8.1 — substitute_review (narrow additive branch)', () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
-    // New rule: same-category different-attribute → SUBSTITUTE_REVIEW
+    // Current rule: same-category different-attribute → CORRECTION_REQUIRED
+    // by default, unless a stored household rule explicitly authorizes it.
     expect(promptText).toMatch(/a white pen when a blue pen was requested/i);
     expect(promptText).toMatch(/Pepsi when Coke was requested/i);
-    // CORRECTION_REQUIRED must explicitly say same-category color/variant is NOT correction
-    expect(promptText).toMatch(/IMPORTANT: a different color, brand, size, or variant of the correct product category is SUBSTITUTE_REVIEW/i);
+    expect(promptText).toMatch(/mushroom pizza when pepperoni was requested/i);
+    expect(promptText).toMatch(/UNLESS stored household rules explicitly authorize that exact substitution/i);
   });
 
   it('prompt instructs the model on the exact 3-step decision order and narrow substitute_review boundary', async () => {
@@ -1142,5 +1157,299 @@ describe('downloadImageAsBase64', () => {
     });
 
     expect(result).toBeNull();
+  });
+});
+
+describe('fetchHouseholdRulesText', () => {
+  it('returns the stored rules text for the user', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [{ rules: 'Blueberries are an approved substitute for strawberries in any recipe.' }],
+      }),
+    );
+
+    const result = await fetchHouseholdRulesText({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      userId: 'user-1',
+    });
+
+    expect(result).toBe('Blueberries are an approved substitute for strawberries in any recipe.');
+  });
+
+  it('returns null (fails closed to "no authority") when no row exists', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => [] }));
+
+    const result = await fetchHouseholdRulesText({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      userId: 'user-1',
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null (fails closed) on a network/API error, never throws', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+
+    const result = await fetchHouseholdRulesText({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      userId: 'user-1',
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when userId is missing, without calling fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchHouseholdRulesText({
+      supabaseUrl: 'https://example.supabase.co',
+      serviceKey: 'service-key',
+      userId: null,
+    });
+
+    expect(result).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// Christopher substitution / alternative-selection defect (owner-reported,
+// traced to original July 15 product rule): a same-category/different-
+// attribute proof submitted with NO prior owner authorization must default
+// to CORRECTION_REQUIRED, not an owner "Approve Alternative" decision — the
+// assignee acting first and explaining/asking afterward does not
+// retroactively authorize it. The one recognized pre-existing authority is
+// an explicit household rule that already covers this exact substitution
+// (evaluated deterministically here — see `householdRulesText`), matching
+// the timing rule that authorization must exist BEFORE the assignee acts.
+// Per the owner's explicit architecture instruction, the classifier is not
+// trusted on wording alone: a deterministic safety net (this file's
+// established normalizeReviewResult pattern) downgrades a model-returned
+// SUBSTITUTE_REVIEW to CORRECTION_REQUIRED whenever no household rules text
+// exists at all for this user — in that case no authority could possibly
+// exist, so the check requires no semantic judgment.
+describe('Christopher substitution / alternative-selection defect — authorization-before-action', () => {
+  it('1. DEFAULT: no household rules at all, model still returns SUBSTITUTE_REVIEW for a same-category/different-attribute item — deterministically downgraded to CORRECTION_REQUIRED, no owner decision created', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"Mushroom pizza submitted instead of the requested pepperoni pizza."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to make a pepperoni pizza.',
+      delegationMessage: 'Christopher, please make a pepperoni pizza.',
+      referenceImagesBase64: [],
+      proofImagesBase64: ['mushroom-pizza-proof-base64'],
+      householdRulesText: null,
+    });
+
+    expect(result.status).toBe('correction_required');
+    expect(result.note).toBeTruthy();
+  });
+
+  it('2. same as case 1 but householdRulesText is an empty string (row exists, no rules set) — still downgraded, empty text is still "no authority"', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"Mushroom pizza submitted instead of pepperoni."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to make a pepperoni pizza.',
+      delegationMessage: 'Christopher, please make a pepperoni pizza.',
+      proofImagesBase64: ['mushroom-pizza-proof-base64'],
+      householdRulesText: '',
+    });
+
+    expect(result.status).toBe('correction_required');
+  });
+
+  it('3. EDGE CASE: assignee acted first and only asked afterward (workerReply carries the after-the-fact question) — still CORRECTION_REQUIRED; a later question never retroactively authorizes the earlier action', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"Mushroom pizza submitted; assignee asks afterward if it is acceptable."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to make a pepperoni pizza.',
+      delegationMessage: 'Christopher, please make a pepperoni pizza.',
+      proofImagesBase64: ['mushroom-pizza-proof-base64'],
+      workerReply: 'We were out of pepperoni so I made this instead — is mushroom okay?',
+      householdRulesText: null,
+    });
+
+    expect(result.status).toBe('correction_required');
+  });
+
+  it('4. AUTHORIZED EXCEPTION: household rules explicitly cover this exact substitution — the model may approve directly, no owner decision required', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"APPROVED","correction_message":null,"reasoning":"Blueberries are an approved substitute for strawberries per the stored household rule."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to buy strawberries for the fruit platter.',
+      delegationMessage: 'Christopher, please buy strawberries for the fruit platter.',
+      proofImagesBase64: ['blueberries-proof-base64'],
+      householdRulesText: 'Blueberries are an approved substitute for strawberries in any recipe.',
+    });
+
+    expect(result).toEqual({
+      status: 'approved',
+      note: 'Blueberries are an approved substitute for strawberries per the stored household rule.',
+    });
+  });
+
+  it('5. household rules text exists (covers unrelated items) but the model still judges this specific substitution as needing owner review — SUBSTITUTE_REVIEW is NOT blindly downgraded merely because some rules text exists', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"No stored rule covers pepperoni-to-mushroom; owner review needed."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to make a pepperoni pizza.',
+      delegationMessage: 'Christopher, please make a pepperoni pizza.',
+      proofImagesBase64: ['mushroom-pizza-proof-base64'],
+      householdRulesText: 'Blueberries are an approved substitute for strawberries in any recipe.',
+    });
+
+    expect(result.status).toBe('substitute_review');
+  });
+
+  it('6. household rules text is passed into the review prompt verbatim when present', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to buy strawberries.',
+      delegationMessage: 'Christopher, please buy strawberries.',
+      proofImagesBase64: ['proof-base64'],
+      householdRulesText: 'Blueberries are an approved substitute for strawberries in any recipe.',
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
+    expect(promptText).toContain('Blueberries are an approved substitute for strawberries in any recipe.');
+  });
+
+  it('7. the prompt explicitly forbids inferring authorization from mere similarity/plausibility/cost/convenience', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      anthropicResponse('{"result":"APPROVED","correction_message":null,"reasoning":"ok"}'),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to make a pepperoni pizza.',
+      delegationMessage: 'Christopher, please make a pepperoni pizza.',
+      proofImagesBase64: ['mushroom-pizza-proof-base64'],
+      householdRulesText: null,
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const promptText = body.messages[0].content.find((block) => block.type === 'text').text;
+    expect(promptText).toMatch(/never infer authorization/i);
+    expect(promptText).toMatch(/similarity|plausibility|convenience/i);
+  });
+
+  it('8. regression: an entirely different/mismatched item (wrong product category) still returns CORRECTION_REQUIRED as before, unaffected by the household-rules plumbing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"CORRECTION_REQUIRED","correction_message":"Christopher, this is a salad, not the pizza that was requested.","reasoning":"Wrong item."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to make this for lunch.',
+      delegationMessage: 'Christopher, please make this pizza for lunch.',
+      referenceImagesBase64: ['pizza-reference-base64'],
+      proofImagesBase64: ['salad-proof-base64'],
+      householdRulesText: null,
+    });
+
+    expect(result.status).toBe('correction_required');
+    expect(result.note).toContain('salad');
+  });
+
+  it('9. regression: ordinary matching proof with no household rules involved is still approved normally', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"APPROVED","correction_message":null,"reasoning":"The proof shows a pepperoni pizza matching the reference."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to make this for lunch.',
+      delegationMessage: 'Christopher, please make this pizza for lunch.',
+      referenceImagesBase64: ['pizza-reference-base64'],
+      proofImagesBase64: ['pepperoni-pizza-proof-base64'],
+      householdRulesText: null,
+    });
+
+    expect(result).toEqual({
+      status: 'approved',
+      note: 'The proof shows a pepperoni pizza matching the reference.',
+    });
+  });
+
+  it('10. omitting householdRulesText entirely (not just null) is treated the same as no authority — deterministic downgrade still applies', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        anthropicResponse(
+          '{"result":"SUBSTITUTE_REVIEW","correction_message":null,"reasoning":"Mushroom pizza submitted instead of pepperoni."}',
+        ),
+      ),
+    );
+
+    const result = await runQualityReview({
+      apiKey: 'test-key',
+      taskDescription: 'Ask Christopher to make a pepperoni pizza.',
+      delegationMessage: 'Christopher, please make a pepperoni pizza.',
+      proofImagesBase64: ['mushroom-pizza-proof-base64'],
+      // householdRulesText intentionally omitted
+    });
+
+    expect(result.status).toBe('correction_required');
   });
 });

@@ -86,6 +86,13 @@ describe('Golden contract [1] — substitute_review is the correct trigger state
       .mockResolvedValueOnce({ // proof image download
         ok: true, status: 200, arrayBuffer: vi.fn().mockResolvedValue(new ArrayBuffer(8)),
       })
+      // Christopher substitution / alternative-selection defect fix:
+      // household_rules lookup. A real SUBSTITUTE_REVIEW result is only
+      // faithfully preserved (not deterministically downgraded to
+      // correction_required) when stored household rules explicitly
+      // authorize this exact substitution — see
+      // isSubstituteReviewUnauthorized in _quality-review.js.
+      .mockResolvedValueOnce(jsonResponse([{ rules: 'TEREA Turquoise is an approved substitute for TEREA Silver when Silver is unavailable.' }]))
       .mockResolvedValueOnce(anthropicResponse(
         '{"result":"SUBSTITUTE_REVIEW","correction_message":"I could only find Turquoise, is that OK?","reasoning":"Different variant of the same product line."}',
       )) // real Anthropic call

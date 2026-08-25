@@ -73,9 +73,9 @@
         "api/_escalation-notify.js:resolveAssigneePersonId",
         "api/_staff-decision-message.js"
       ],
-      "shared_dependencies": ["api/_whatsapp-delivery.js"],
+      "shared_dependencies": ["api/_whatsapp-delivery.js", "api/_quality-review.js"],
       "db": {
-        "tables": ["staff_escalation_owner_decisions", "quality_substitute_decisions", "messages", "whatsapp_deliveries"],
+        "tables": ["staff_escalation_owner_decisions", "quality_substitute_decisions", "messages", "whatsapp_deliveries", "household_rules"],
         "rpcs": [
           "claim_task_escalation_owner_decision",
           "reserve_custom_instruction",
@@ -98,7 +98,10 @@
         "api/recipient-bound-owner-decisions.test.js",
         "api/owner-whatsapp-decision-golden-contract.test.js",
         "api/staff-decision-golden-contract.test.js",
-        "api/_staff-decision-message.test.js"
+        "api/_staff-decision-message.test.js",
+        "api/_quality-review.test.js",
+        "api/alternative-review-golden-contract.test.js",
+        "api/photo-workflow-golden-contract.test.js"
       ],
       "protected_suite": true,
       "golden_journey_required": true,

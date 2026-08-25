@@ -46,7 +46,37 @@ export async function downloadImageAsBase64({ supabaseUrl, serviceKey, imagePath
   }
 }
 
-function buildReviewPrompt({ taskDescription, delegationMessage, referenceImageCount, proofImageCount, workerReply }) {
+/**
+ * Christopher substitution / alternative-selection defect fix: the ONLY
+ * recognized pre-existing authority for a same-category/different-attribute
+ * substitution (see AUTHORIZATION FOR SUBSTITUTIONS in buildReviewPrompt and
+ * isSubstituteReviewUnauthorized below). Same table/query shape already used
+ * by api/_staff-comms-engine.js's loadStaffContext for the same purpose.
+ * Never throws — a failure here must fail closed to "no authority", not
+ * silently grant one, so any error returns null exactly like an empty rule.
+ */
+export async function fetchHouseholdRulesText({ supabaseUrl, serviceKey, userId }) {
+  if (!userId || !supabaseUrl || !serviceKey) return null;
+  try {
+    const response = await fetch(
+      `${supabaseUrl}/rest/v1/household_rules?user_id=eq.${encodeURIComponent(userId)}&select=rules&limit=1`,
+      {
+        headers: {
+          apikey: serviceKey,
+          Authorization: `Bearer ${serviceKey}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+    if (!response.ok) return null;
+    const rows = await response.json();
+    return Array.isArray(rows) && rows[0]?.rules ? rows[0].rules : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildReviewPrompt({ taskDescription, delegationMessage, referenceImageCount, proofImageCount, workerReply, householdRulesText }) {
   const proofLabel = proofImageCount === 1 ? 'a proof photo' : `${proofImageCount} proof photos`;
   const referenceLabel = referenceImageCount === 1 ? 'A reference image' : `${referenceImageCount} reference images`;
   return `You are Carson, a meticulous quality reviewer for household/work task proof photos.
@@ -54,6 +84,10 @@ function buildReviewPrompt({ taskDescription, delegationMessage, referenceImageC
 Task: "${taskDescription}"
 Delegation message sent to the assignee: "${delegationMessage || 'none'}"
 ${workerReply ? `The assignee added this note when submitting proof: "${workerReply}"\n` : ''}${
+  householdRulesText
+    ? `Stored household rules (the ONLY recognized pre-existing authority for a substitution — see AUTHORIZATION below): "${householdRulesText}"\n`
+    : ''
+}${
   referenceImageCount > 0
     ? `${referenceLabel} showing what the result should look like ${referenceImageCount === 1 ? 'is' : 'are'} attached first, followed by ${proofLabel} submitted by the assignee.${
         referenceImageCount > 1 || proofImageCount > 1
@@ -80,10 +114,16 @@ Item-vs-location judgment:
 - Examples that do NOT require location proof: "Find the perfume and send a photo", "Take a photo of the Cheirosa 68 mist", "Find this in the closet and send a photo." For these, approve a live photo of the correct item on a couch/table/fabric.
 - Examples that DO require location proof: "Show me the perfume inside the cabinet", "Verify it is in the cabinet", "Send proof that it is on the shelf." For these, reject if the correct item is visible but the required location is not shown.
 
+AUTHORIZATION FOR SUBSTITUTIONS — read carefully, this is the difference between SUBSTITUTE_REVIEW/APPROVED and CORRECTION_REQUIRED for a same-category/different-attribute item:
+- The default, for a same-category/different-attribute item (see SUBSTITUTE_REVIEW's definition below), is that it is NOT authorized. Authorization must have existed BEFORE the assignee acted — proof photo timing has no bearing on this, and an assignee's note asking "is this okay?" attached to the proof is asking AFTER acting, not before, and never counts as prior authorization.
+- The ONLY recognized pre-existing authority available to you here is the stored household rules text supplied above (when present). If it EXPLICITLY and unambiguously covers this exact substitution for this exact item, the substitution is authorized: treat the submitted item as if it were the originally requested item and judge APPROVED/CORRECTION_REQUIRED/etc. normally against it — do not use SUBSTITUTE_REVIEW in this case, since there is no decision left for the owner to make.
+- Never infer authorization merely because the substitute seems reasonable, low-stakes, same-category, cheaper, or more convenient, or because swapping it seems like an obviously normal thing to do — mere similarity, plausibility, or convenience is never authorization on its own. Only an explicit, on-point stored rule counts. "Blueberries are similar to strawberries" is never authorization; a stored rule that says "blueberries may substitute for strawberries" is.
+- If there is no household rules text, or the household rules text does not explicitly cover this exact substitution, there is no authorization — do not use SUBSTITUTE_REVIEW; use CORRECTION_REQUIRED instead, exactly as if it were an unauthorized mismatched item, because it is one.
+
 Decide exactly one outcome, in this order — check APPROVED first, then SUBSTITUTE_REVIEW, then CORRECTION_REQUIRED:
-- APPROVED: the requested item/outcome is clearly correct, materially matches the task, and is a reasonable fulfillment of the request. This applies regardless of the proof photo's style, polish, or resemblance to the reference.
-- SUBSTITUTE_REVIEW: use when the assignee sends the same type of item but with a different attribute (color, variant, brand, size, flavor, model) than what was requested, or an equivalent product that serves the same purpose. The key test: is it the same kind of thing, just not exactly what was specified? If yes, it is a substitute — escalate to the owner. Examples that are SUBSTITUTE_REVIEW: a white pen when a blue pen was requested, a black pen when a blue pen was requested, Pepsi when Coke was requested, a red notebook when a blue one was requested, TEREA Turquoise when TEREA Silver was requested, a different brand of milk, an A5 notebook when A4 was requested. The assignee's note is strong evidence but not required — the photo alone showing a same-category item with a different attribute is sufficient. Do NOT use SUBSTITUTE_REVIEW for normal variation of the SAME item — a different plate, background, lighting, angle, portion, or garnish is still the same item and is APPROVED. Do NOT use SUBSTITUTE_REVIEW for a completely wrong/unrelated item in a different product category — that is CORRECTION_REQUIRED. This outcome hands the decision to the task owner — it does not mean the proof failed.
-- CORRECTION_REQUIRED: the assignee sent an entirely different/mismatched item from a completely different product category, or an object with no plausible relationship to the task — wrong item entirely, missing item, visibly incomplete (e.g. shoes when a pen was requested, food when stationery was requested, IQOS sticks when a pen was requested, an empty shelf when an item was expected). Also use for wrong required placement/location. A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible, and never treat polish, studio quality, or resemblance to the reference as a problem. Do not reject the correct item merely because it is on a different neutral surface/background unless location proof was explicitly requested. IMPORTANT: a different color, brand, size, or variant of the correct product category is SUBSTITUTE_REVIEW, not CORRECTION_REQUIRED.
+- APPROVED: the requested item/outcome is clearly correct, materially matches the task, and is a reasonable fulfillment of the request. This applies regardless of the proof photo's style, polish, or resemblance to the reference. This also applies to a same-category/different-attribute item that the stored household rules explicitly authorize (see AUTHORIZATION above) — judge it as the approved substitute item, not the original.
+- SUBSTITUTE_REVIEW: reserved ONLY for a same-category/different-attribute item (different color, variant, brand, size, flavor, model, or an equivalent product serving the same purpose) that stored household rules explicitly authorize but where the specific terms still need owner confirmation. In practice this will be rare, since an explicit covering rule usually resolves straight to APPROVED. Do NOT use SUBSTITUTE_REVIEW merely because the item is a plausible, same-category, or similar substitute with no explicit prior authorization — see CORRECTION_REQUIRED below, that is the correct outcome for an unauthorized substitute regardless of how reasonable it looks. Do NOT use SUBSTITUTE_REVIEW for normal variation of the SAME item — a different plate, background, lighting, angle, portion, or garnish is still the same item and is APPROVED. Do NOT use SUBSTITUTE_REVIEW for a completely wrong/unrelated item in a different product category — that is CORRECTION_REQUIRED.
+- CORRECTION_REQUIRED: the assignee sent an entirely different/mismatched item from a completely different product category, or an object with no plausible relationship to the task — wrong item entirely, missing item, visibly incomplete (e.g. shoes when a pen was requested, food when stationery was requested, IQOS sticks when a pen was requested, an empty shelf when an item was expected). Also use for wrong required placement/location. A photo showing the WRONG item is still a clear, describable, fixable problem — it is CORRECTION_REQUIRED, not UNCERTAIN, as long as you can say what's wrong and what should be sent instead. Only flag a problem you can actually see in the photo — never invent or guess at issues that aren't visible, and never treat polish, studio quality, or resemblance to the reference as a problem. Do not reject the correct item merely because it is on a different neutral surface/background unless location proof was explicitly requested. IMPORTANT (see AUTHORIZATION above): a same-category/different-attribute item — a white pen when a blue pen was requested, Pepsi when Coke was requested, mushroom pizza when pepperoni was requested, TEREA Turquoise when TEREA Silver was requested, a different brand of milk, an A5 notebook when A4 was requested, and similar — is CORRECTION_REQUIRED, not SUBSTITUTE_REVIEW, UNLESS stored household rules explicitly authorize that exact substitution. The assignee's own note explaining the swap is never sufficient authorization on its own, whether it accompanies the proof or arrives afterward — only a pre-existing stored rule is. When writing the correction message for an unauthorized substitute, ask for the originally requested item and note that any substitution needs to be proposed and approved before acting, not after.
 - UNCERTAIN: reserve this only for genuine ambiguity where you cannot tell what's in the photo or whether it matches — for example the photo itself is blurry, too dark, or cropped so the relevant item isn't visible, the angle makes it impossible to judge, or there's no reference image and the task description is too vague to judge against. If you can clearly see the item and can clearly see that it does not match, that is CORRECTION_REQUIRED, never UNCERTAIN.
 - FRAUD_SUSPECTED: the proof photo itself is not genuine proof of the completed task — not just wrong or unclear, but not real evidence of the task at all. Use this ONLY when there is strong, concrete evidence that the image is not a photo of a real physical item or scene at all, such as the photo being a screenshot (product listing, marketplace page, menu, app UI, etc.). This is about strong evidence the image isn't a photo, NOT about how polished, professional, stock-like, AI-generated, similar to, or identical to the reference it looks — those are never sufficient evidence on their own, and identity or similarity to the reference is never grounds for FRAUD_SUSPECTED. A real photo of the wrong item is CORRECTION_REQUIRED; a correct, well-composed, professional-looking, or reference-identical photo of the right item is APPROVED.
 
@@ -268,7 +308,34 @@ function isLocationOnlyCorrection(note) {
   return !itemMismatch;
 }
 
+// Christopher substitution / alternative-selection defect (product rule
+// traced to July 15 work): the model is instructed not to use
+// SUBSTITUTE_REVIEW without an explicit covering household rule, but that
+// judgment is still a wording-dependent LLM decision. Per the owner's
+// explicit architecture instruction, add a deterministic safety net for the
+// one case that needs no semantic judgment at all — when NO household rules
+// text exists for this user, no authority could possibly exist, so a
+// model-returned SUBSTITUTE_REVIEW is always wrong and is downgraded here,
+// unconditionally, to CORRECTION_REQUIRED. When household rules text DOES
+// exist, whether it covers this specific substitution is a real judgment
+// call the prompt instructions govern — this safety net does not touch that
+// case, matching the regression requirement that SUBSTITUTE_REVIEW must not
+// be blindly downgraded merely because some (possibly unrelated) rules text
+// exists.
+function isSubstituteReviewUnauthorized(status, householdRulesText) {
+  return status === 'substitute_review' && !String(householdRulesText || '').trim();
+}
+
 function normalizeReviewResult(parsed) {
+  if (isSubstituteReviewUnauthorized(parsed.status, parsed.householdRulesText)) {
+    return {
+      status: 'correction_required',
+      note:
+        parsed.note ||
+        'This does not match what was requested. Please send the item originally asked for — any substitution needs to be proposed and approved before making a change, not after.',
+    };
+  }
+
   if (
     (parsed.status === 'correction_required' || parsed.status === 'fraud_suspected') &&
     isStyleOnlyRejectionReason(parsed.note)
@@ -317,6 +384,7 @@ export async function runQualityReview({
   referenceImagesBase64,
   proofImagesBase64,
   workerReply,
+  householdRulesText,
 }) {
   const fallback = { status: 'uncertain', note: 'Could not complete an automated review — please check manually.' };
 
@@ -338,6 +406,7 @@ export async function runQualityReview({
         referenceImageCount: referenceImages.length,
         proofImageCount: proofImages.length,
         workerReply,
+        householdRulesText,
       }),
     },
   ];
@@ -375,6 +444,7 @@ export async function runQualityReview({
     if (!parsed) return fallback;
     parsed.taskDescription = taskDescription;
     parsed.delegationMessage = delegationMessage;
+    parsed.householdRulesText = householdRulesText;
 
     // A CORRECTION_REQUIRED result with no usable message is not actionable
     // — fall back to uncertain rather than sending an empty WhatsApp message.
