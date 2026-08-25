@@ -27,9 +27,34 @@ export const config = {
   },
 };
 
+export async function requireUser(req) {
+  const authHeader = req.headers?.authorization ?? req.headers?.Authorization ?? "";
+  if (!authHeader.startsWith("Bearer ")) return { error: "Unauthorized" };
+
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) return { error: "Server configuration error." };
+
+  const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: {
+      apikey: anonKey,
+      Authorization: authHeader,
+    },
+  });
+  if (!userRes.ok) return { error: "Unauthorized" };
+
+  const user = await userRes.json().catch(() => null);
+  return user?.id ? { uid: user.id } : { error: "Unauthorized" };
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  const auth = await requireUser(req);
+  if (auth.error) {
+    return res.status(auth.error === "Unauthorized" ? 401 : 500).json({ error: auth.error });
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
@@ -79,10 +104,9 @@ export default async function handler(req, res) {
     const data = await upstream.json().catch(() => null);
 
     if (!upstream.ok) {
-      const message =
-        (data && data.error && data.error.message) ||
-        "Transcription failed. Please try again.";
-      return res.status(upstream.status).json({ error: message });
+      // Do not reflect provider payloads or implementation details to clients.
+      const status = upstream.status >= 400 && upstream.status < 500 ? 400 : 502;
+      return res.status(status).json({ error: "Transcription failed. Please try again." });
     }
 
     const text = (data && typeof data.text === "string") ? data.text.trim() : "";

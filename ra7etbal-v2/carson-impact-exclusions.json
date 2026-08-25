@@ -8,7 +8,11 @@
     },
     {
       "path": "api/transcribe.js",
-      "justification": "Generic passthrough proxy to OpenAI Whisper transcription (streams the multipart body through unchanged). No Carson-specific business logic."
+      "justification": "Authenticated generic passthrough proxy to OpenAI Whisper transcription (streams the multipart body through unchanged). No Carson-specific business logic."
+    },
+    {
+      "path": "src/lib/transcribe.ts",
+      "justification": "Browser audio-upload wrapper for the authenticated Whisper proxy. It attaches the active Supabase session but contains no Carson decision, routing, delivery, automation, reminder, or database business logic."
     },
     {
       "path": "src/lib/supabase.ts",
