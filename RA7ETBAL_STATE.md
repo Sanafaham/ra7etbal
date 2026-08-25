@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-25 (Christopher substitution / alternative-selection defect fix, PR #334 merged and deployed to production, canary verified)
+Last updated: 2026-08-26 (reconciled attention-routing/grounding arc — `get_items_needing_attention` registration/reachability CLOSED per live production evidence, PRs #326–#329; cat-food provenance/fabrication defect investigation opened)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -11,6 +11,28 @@ Ra7etBal is a personal Chief of Staff that reduces mental load. Carson is the AI
 Typed Carson and voice Carson are the same person, sharing the same memory, identity, and reasoning. Product decision (2026-07-25): Type to Carson is advisory-only — thinking, planning, drafting, research, and review only. Talk to Carson (voice) remains the sole execution channel for reminders, recurring reminders, push notifications, calendar events, staff messages, hosting plans, delegations, and any other state-changing action. See "Type to Carson is advisory-only" below.
 
 ## Current next task
+
+### `get_items_needing_attention` registration/reachability — RECONCILED, CLOSED (2026-08-26)
+
+**This section supersedes and corrects stale "ElevenLabs registration pending" / "no live acceptance test performed" language that previously appeared under the Second Brain Phase 1 and `attention_summary_read` entries below.** Those statements were accurate when written (2026-08-24) but were never updated as PRs #326–#329 landed the following day — RA7ETBAL_STATE.md was not touched by any of those merges (`git log af05fb2..badaf1d -- RA7ETBAL_STATE.md` shows zero doc updates across that range) even though real live-agent work happened in it.
+
+**Verified evidence (from the merged commit messages themselves, not inferred):** three separate rounds of live Production Carson acceptance testing of "What needs my attention?" occurred on 2026-08-24/25, each surfacing a real defect that was fixed and re-verified before the next round:
+- **PR #327** (`4ef79e2`): first production acceptance test showed Carson answering without calling `get_items_needing_attention` at all — root cause was a competing prompt source (`CARSON_STATUS_POLICY`, delivered via `persistent_instructions`) answering the question from its own worked example instead of routing to the tool. Fixed by rerouting `carson-status-policy.ts` and adding `carson-attention-intent-guard.ts` (new file, present in `src/lib/`).
+- **PR #328** (`13e873d`): next production acceptance test still fabricated a claim ("You're waiting on Nasira to confirm the call request.") for a real user. Root-caused to (a) 7 named-person worked examples in `CARSON_STATUS_POLICY` reproducible as fabricated fact, and (b) the guard trusting the model's own reply even when the tool genuinely ran. Both fixed; grounded tool evidence made authoritative whenever available.
+- **PR #329** (`05560c0`): next production acceptance test showed two more gaps — an ungrounded silent fallback when no evidence was available yet, and follow-up-turn ("what else?") grounding breaking after a failed-to-ground first turn. Both fixed; `fetchAttentionEvidence()`'s three Supabase calls also made concurrent with an 8s per-source timeout.
+
+A tool that isn't registered on the live agent cannot produce a routing conflict, a trust-the-model-reply gap, or a follow-up-grounding gap in live conversation — the existence of these three real, evidence-backed production bugs and fixes is itself proof the tool was reachable throughout. **Sana confirmed directly that the final live acceptance test for "What needs my attention?" passed Tool-First Grounding.**
+
+**Status: CLOSED.** `get_items_needing_attention` is registered on Production Carson and reachable by live conversation. Registration/reachability is not to be reopened, and Sana is not to be asked to register the tool again, without new *contradictory* production evidence (a fresh live test showing the tool not being called).
+
+**Genuinely still open, carried forward from the PR #329 commit message's own explicit "kept open per product decision" list — none fixed since, none previously recorded in this file:**
+1. **Cat-food provenance/fabrication defect** — named in both #327 and #329 as a separate, evidence-backed, unresolved fabrication investigation. **Next engineering item — investigation below.**
+2. **LLM Cascade Error exact provenance** — named in #329 as unresolved; the concurrent-timeout fix in #329 removed one *possible* contributing factor, not a confirmed cause.
+3. **`people-behavior.ts` unvalidated model-output risk** — named in both #328 and #329, unaddressed since.
+4. **Attention-intent rephrasing coverage** — the guard's detection (`carson-attention-intent-guard.ts`) is explicitly regex/pattern-based and partial, not full NLU coverage.
+5. **Task-linked pre-action `substitution_request` path (mandatory, carried from the Christopher substitution defect fix below):** `staff_messages.task_id` is NULL on all sampled production `substitution_request` rows — confirmed production evidence, not yet root-caused or fixed. Must remain in this file until fixed, regression-protected, deployed, and production-verified, or until Sana explicitly decides not to pursue it.
+
+**Parked, not reopened without a new explicit owner decision:** Corrected Path C Stage 1 (below), and by extension Stage 2A/2B — current product direction is Production Carson + Carson Second Brain under the current Engineering Master Plan, not the Corrected Path C architecture track.
 
 ### Christopher substitution / alternative-selection defect (2026-08-25) — MERGED, DEPLOYED, CANARY VERIFIED
 
@@ -48,9 +70,9 @@ Typed Carson and voice Carson are the same person, sharing the same memory, iden
 
 **Explicitly out of scope for this Phase 1, per product decision:** Morning Brief, Night Sweep, Needs You, Waiting, History, Automations, Notifications — all untouched. Proactive resurfacing through those surfaces is Phase 2, to be scoped only after live production evidence from this Phase 1 pull-based (`get_items_needing_attention` only) slice.
 
-**Still pending:** (1) ElevenLabs registration of `get_items_needing_attention` (per `docs/elevenlabs-prompt-patches/2026-08-24-attention-summary.md`) — not yet confirmed done by Sana; (2) live production acceptance — ask Production Carson "What needs my attention?" with genuine existing account state (including the real Nimala note and Rahet Bal to-dos) and verify: the tool actually ran, every factual claim matches real state, no fabrication, no manufactured urgency, no exhaustive recitation of every stored note, partial/incomplete results disclosed honestly; (3) Phase 2 scoping, gated on (2).
+**Still pending, as of 2026-08-26 (see the reconciliation section above for full evidence):** ElevenLabs registration and live production acceptance are **CLOSED** — three rounds of live acceptance testing occurred (PRs #327/#328/#329), and Sana confirmed the final test passed Tool-First Grounding. Phase 2 scoping remains genuinely not yet started.
 
-### Second Brain — attention_summary_read vertical-slice proof (2026-08-24) — CODE COMPLETE, PR PENDING AUTHORIZATION
+### Second Brain — attention_summary_read vertical-slice proof (2026-08-24) — MERGED, DEPLOYED, PRODUCTION VERIFIED (registration/reachability closed 2026-08-26, see reconciliation section above)
 
 First Second Brain proof, scoped by Sana to Production Carson only (voice + Type to Carson) after two rounds of pre-implementation review explicitly ruled out touching WhatsApp, the dormant `/api/carson-turn` architecture, and any orchestration-framework build-out. Adds one new ElevenLabs clientTool, `get_items_needing_attention`, so Carson can answer "what needs my attention" from a live, structured, owner-scoped read instead of only the frozen session-start `ra7etbal_state`/`daily_brief` snapshot.
 
@@ -71,7 +93,7 @@ First Second Brain proof, scoped by Sana to Production Carson only (voice + Type
 - Full `test:carson-protected` suite (TZ=UTC): 103 files / 1870 tests passed, 0 regressions.
 - `test:carson-impact-map`: 35/35 passed. Real `node scripts/impact-map.mjs --base=<last main commit>` run against the actual committed diff: exit 0, 0 unmapped protected-surface files, `attention_summary_read` correctly detected as an affected capability alongside `proactive_opening_brief` and others sharing `ElevenLabsAgentWidget.tsx`.
 - `npm run typecheck` (`tsc -b --noEmit`) and a scoped `tsc -p tsconfig.app.json --noEmit` could **not** be completed in this session's sandboxed environment — three attempts stalled (confirmed via process CPU/memory sampling: negligible progress over 10+ minute windows, not a fast pass silently succeeding). This is reported as an unverified check, not claimed as PASS. Partial substitute evidence: the full protected suite's esbuild-based transform succeeded with zero syntax/transform errors across all touched and new files, and a real type mismatch in the new test file (`type: "personal"`, not a valid `TaskType`) was caught and fixed by manual review — evidence that a real typecheck pass is expected to succeed, not proof that it will.
-- No production canary and no live owner acceptance test have been performed. `get_items_needing_attention` also cannot be called by Production Carson until its tool name/description is registered on the ElevenLabs dashboard — outside this repository and outside this session's access (no ElevenLabs API credential available, consistent with the standing limitation already tracked separately for this project). Until that registration happens, this capability is code-complete but not yet reachable by a live conversation.
+- **Superseded 2026-08-26:** this bullet previously read "no production canary and no live owner acceptance test have been performed... cannot be called by Production Carson until registered." That is now stale — see the reconciliation section above for the three rounds of live production acceptance testing (PRs #327/#328/#329) and Sana's confirmed Tool-First Grounding pass.
 
 **Rollback:** two independent levers — revert the code diff (additive-only; no existing clientTool, query, or shared classifier modified), or remove the ElevenLabs tool registration alone once made (no redeploy required, no code change).
 
@@ -79,7 +101,7 @@ First Second Brain proof, scoped by Sana to Production Carson only (voice + Type
 
 **Merged and deployed (2026-08-24).** PR #323 merged to `main` as `6db6164` (2026-08-24T18:52:20Z). Its automatic production deployment did not fire — investigated read-only: GitHub's own Deployments API showed zero `vercel[bot]` deployment records for this commit on any of the three linked projects (`ra7etbal-v2`, `ra7etbal-staging`, `ra7etbal-work`), versus 3 records within 2 seconds for the prior merge (`7049c0a`, PR #322). Project configuration confirmed correct throughout (`productionBranch: main`, `rootDirectory: ra7etbal-v2`, no `ignoreCommand`, no deploy hooks, `gitForkProtection` inapplicable) — the GitHub App itself was confirmed healthy (it processed every PR-preview push normally throughout this session). Root cause: a single missed/undelivered `push` webhook event for this one commit, not a project or code defect; GitHub App webhook delivery logs are visible only to Vercel (the app owner), not to the repo. Remedied via Vercel's own existing git-source deployment API (`POST /v13/deployments` with `gitSource: {sha: 6db6164, ref: main}`) — not a new mechanism, no project/Git/deploy-hook/env/domain settings changed. Resulting deployment `dpl_25d9VEEq5wiepf36iu2cT6wiN2zg`: `readyState: READY`, `aliasError: null`, aliased to `www.ra7etbal.com`/`ra7etbal.com`/`ra7etbal-v2.vercel.app`, `githubCommitSha` exact match. `www.ra7etbal.com` returns HTTP 200 with a fresh `x-vercel-id` post-deploy. The existing `carson-production-canary` GitHub Actions workflow (`workflow_dispatch`, read-only) was run against this exact deployment: run `32767195699`, `conclusion: success`, its own report shows `deploymentSha: "6db616479f7865c5adcd106a145a2c8fd4983800"` (exact match) and `ok: true` on every check.
 
-**Next required actions:** (1) Sana or an agent with ElevenLabs dashboard access registers the `get_items_needing_attention` tool per `docs/elevenlabs-prompt-patches/2026-08-24-attention-summary.md`; (2) live owner acceptance — ask Production Carson "what needs my attention" with genuine existing account state and cross-check against the Ra7etBal UI, plus a quiet-day check when genuine state permits; (3) decide whether the pre-existing `carson-operations-center.ts` hardening gap and the residual grounding-invocation gap warrant separate follow-up tasks.
+**Next required actions — superseded 2026-08-26:** items (1) registration and (2) live owner acceptance are CLOSED (see reconciliation section above). Item (3), the pre-existing `carson-operations-center.ts` hardening gap, remains genuinely open and unscoped — not yet picked up.
 
 ### Corrected Path C — Stage 1 read-only boundary proof (2026-08-19) — CODE COMPLETE, PR PENDING
 
