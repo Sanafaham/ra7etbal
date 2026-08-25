@@ -1485,15 +1485,22 @@ export default function ElevenLabsAgentWidget({
   // Deterministic attention-routing guard (2026-08-25 production
   // investigation — see carson-attention-intent-guard.ts's header for the
   // root cause this exists for). Reset alongside toolRanForCurrentTranscriptRef
-  // at every one of its reset sites; attentionToolRanForCurrentTranscriptRef
-  // is set true only inside the get_items_needing_attention clientTool.
+  // at every one of its reset sites.
   const attentionIntentForCurrentTranscriptRef = useRef(false);
+  // Diagnostic only as of the tool-ran-but-embellished gap fix — no longer
+  // read by resolveAttentionGuardedMessage's decision (grounded evidence is
+  // now authoritative whenever attentionGuardResultRef has it, independent
+  // of whether the model reports having called the tool). Still set true
+  // inside the get_items_needing_attention clientTool for observability.
   const attentionToolRanForCurrentTranscriptRef = useRef(false);
+  // The turn's live grounded result — populated either by the prefetch
+  // kicked off the instant a matching utterance arrives, or by
+  // get_items_needing_attention's own real return value if it runs.
   const attentionGuardResultRef = useRef<string | null>(null);
   // True only when the immediately preceding turn was itself answered from
-  // real evidence (tool ran, or this guard substituted a grounded result) —
-  // gates whether a bare "What else?"/"Anything else?"/"Is that everything?"
-  // this turn is treated as a continuation of that same attention exchange.
+  // real grounded evidence — gates whether a bare "What else?"/"Anything
+  // else?"/"Is that everything?" this turn is treated as a continuation of
+  // that same attention exchange.
   const lastAttentionTurnWasGroundedRef = useRef(false);
 
   const clearTurnPhaseThinkingTimeout = useCallback(() => {
@@ -6214,9 +6221,27 @@ export default function ElevenLabsAgentWidget({
             const captureBlock = guardCurrentToolInvocation("get_items_needing_attention");
             if (captureBlock) return captureBlock;
             attentionToolRanForCurrentTranscriptRef.current = true;
-            return runDirectToolWithDiagnostic("get_items_needing_attention", params, () =>
+            const requestTurnOperationId = currentOwnerTurnOperationIdRef.current;
+            const resultPromise = runDirectToolWithDiagnostic("get_items_needing_attention", params, () =>
               fetchAttentionSummary(),
             );
+            // Capture the tool's OWN real return value as this turn's
+            // grounded result too — not just the prefetch kicked off on the
+            // user-turn side. Both call the same read-only fetchAttentionSummary(),
+            // so either source is equally authoritative; this just ensures a
+            // genuine tool invocation always has a grounded result ready for
+            // resolveAttentionGuardedMessage, closing the gap where the tool
+            // ran but the model's own composed reply diverged from it.
+            // Turn-scoped (see the matching prefetch guard above) so a
+            // late-resolving call from an earlier turn can never overwrite a
+            // later turn's already-cleared grounded result.
+            resultPromise
+              .then((text) => {
+                if (currentOwnerTurnOperationIdRef.current !== requestTurnOperationId) return;
+                if (typeof text === "string") attentionGuardResultRef.current = text;
+              })
+              .catch(() => {});
+            return resultPromise;
           },
           // Historical Lookup — Phase 1, Q4 Commitment History. Read-only:
           // resolves one commitment by keyword and answers with its full,
@@ -6519,9 +6544,19 @@ export default function ElevenLabsAgentWidget({
               matchesAttentionIntent(message) || isAttentionFollowUpTurn;
             if (attentionIntentForCurrentTranscriptRef.current) {
               const requestGeneration = sessionGenerationRef.current;
+              // Turn-scoped, not just session-scoped: sessionGenerationRef only
+              // changes across a full session teardown/reconnect, so without
+              // this a late-resolving fetch from an EARLIER turn in the same
+              // session could overwrite a LATER turn's already-cleared
+              // attentionGuardResultRef with stale data — the same class of
+              // bug currentOwnerTurnOperationIdRef already guards against
+              // elsewhere in this file (see canonicalConsequentialResultRef's
+              // own turnOperationId check).
+              const requestTurnOperationId = turnOperationId;
               fetchAttentionSummary()
                 .then((text) => {
                   if (sessionGenerationRef.current !== requestGeneration) return;
+                  if (currentOwnerTurnOperationIdRef.current !== requestTurnOperationId) return;
                   attentionGuardResultRef.current = text;
                 })
                 .catch(() => {
@@ -6571,22 +6606,24 @@ export default function ElevenLabsAgentWidget({
                 .reverse()
                 .find((entry) => entry.role === "user")?.message ?? "";
             // Deterministic attention-routing guard: if this turn's utterance
-            // matched the general attention-intent question class and
-            // get_items_needing_attention did NOT actually run, substitute the
-            // model's own separately-generated (and therefore potentially
-            // ungrounded) reply with the live result already fetched the
-            // instant the utterance arrived — see carson-attention-intent-guard.ts.
-            // No-op when the tool did run, or when no fresh result is ready.
+            // matched the general attention-intent question class and a live
+            // grounded result exists for this turn — from the tool's own
+            // return value if it ran, or from the prefetch kicked off the
+            // instant the utterance arrived — that grounded result is
+            // AUTHORITATIVE and replaces the model's own separately-generated
+            // reply outright, regardless of whether the model reports having
+            // called the tool. Closes the confirmed 2026-08-25 gap where a
+            // real tool call still let the model blend in unrelated,
+            // ungrounded content. No-op only when no grounded result is
+            // available yet (safe failure) — see carson-attention-intent-guard.ts.
             const attentionGuardedMessage = resolveAttentionGuardedMessage({
               agentMessage: message,
               attentionIntentDetected: attentionIntentForCurrentTranscriptRef.current,
-              attentionToolRan: attentionToolRanForCurrentTranscriptRef.current,
               groundedResult: attentionGuardResultRef.current,
             });
             lastAttentionTurnWasGroundedRef.current =
               attentionIntentForCurrentTranscriptRef.current &&
-              (attentionToolRanForCurrentTranscriptRef.current ||
-                attentionGuardedMessage !== message);
+              attentionGuardResultRef.current != null;
             // This onMessage callback delivers the agent's own separately-generated
             // reply — it can contradict a direct tool call that just succeeded
             // (create_todo P0). Prefer the tool's own success result when the
