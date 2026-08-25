@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-24 (Second Brain Phase 1 — grounded Notes/To-do attention awareness, PR #325 merged and deployed to production, canary verified; ElevenLabs registration + live owner acceptance for the full attention_summary_read capability still pending)
+Last updated: 2026-08-25 (Christopher substitution / alternative-selection defect fix, PR #334 merged and deployed to production, canary verified)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -11,6 +11,22 @@ Ra7etBal is a personal Chief of Staff that reduces mental load. Carson is the AI
 Typed Carson and voice Carson are the same person, sharing the same memory, identity, and reasoning. Product decision (2026-07-25): Type to Carson is advisory-only — thinking, planning, drafting, research, and review only. Talk to Carson (voice) remains the sole execution channel for reminders, recurring reminders, push notifications, calendar events, staff messages, hosting plans, delegations, and any other state-changing action. See "Type to Carson is advisory-only" below.
 
 ## Current next task
+
+### Christopher substitution / alternative-selection defect (2026-08-25) — MERGED, DEPLOYED, CANARY VERIFIED
+
+**Root cause, traced to the original July 15 product rule:** `api/_quality-review.js`'s photo-proof classifier (`runQualityReview`) had zero check for prior authorization. A same-category/different-attribute proof submitted by an assignee (e.g. mushroom pizza when pepperoni was requested) was unconditionally eligible for `SUBSTITUTE_REVIEW`, which creates an owner "Approve Alternative" decision — even when the assignee never asked before acting. This let post-action mismatched proof masquerade as a legitimate pre-action substitution proposal, contrary to the original product rule: proposing an alternative BEFORE acting is a legitimate substitution_request; acting first and asking (or not asking) after is CORRECTION_REQUIRED, always, with the original task kept open.
+
+**Product decision enforced:** authorization must exist BEFORE the assignee acts. The only recognized pre-existing authority is an explicit stored `household_rules` row that actually covers the specific substitution — never mere similarity, plausibility, or convenience ("blueberries are similar to strawberries" is not authorization; an explicit rule permitting that exact substitution is).
+
+**Fix (two-layer, deterministic-evidence-over-prompt-wording):** (1) `api/task-confirm.js` now fetches the owner's `household_rules` text (new `fetchHouseholdRulesText()` export in `_quality-review.js`, fail-closed to `null`) and passes it into `runQualityReview`. (2) Prompt-level: `buildReviewPrompt()` gained a new "AUTHORIZATION FOR SUBSTITUTIONS" section — default NOT authorized, timing rule (asking after acting never counts), SUBSTITUTE_REVIEW requires an explicit covering rule. (3) Deterministic safety net: new `isSubstituteReviewUnauthorized(status, householdRulesText)` runs first inside the existing `normalizeReviewResult()` post-hoc-correction pattern — any `substitute_review` classification with no household rules text at all is unconditionally downgraded to `correction_required`, regardless of what the LLM concluded.
+
+**Scope boundary, deliberately not solved this round:** task-specific pre-action `substitution_request` text messages (a separate classifier in `_staff-comms-engine.js`) are NOT currently linked to their task — production evidence showed `staff_messages.task_id` is NULL on all sampled `substitution_request` rows, even correctly-escalated ones. Full support for "asked before acting on this specific task, owner approved, now evaluate proof against the approved substitution" (regression case 2 in the product decision) requires that linkage and was assessed as bigger than the smallest-safe-delta for this fix — tracked as a real, separate, still-open follow-up, not silently claimed as solved.
+
+**Tests:** 4 new tests for `fetchHouseholdRulesText`; 10 new tests in `api/_quality-review.test.js` covering the full product-decision scenario matrix (pepperoni/mushroom asked-before vs. not-asked vs. asked-after; strawberries/blueberries with and without a covering rule; locked substitute_review/owner-decision lifecycle untouched; correction message preserves the task continuation link; ordinary matching proof unaffected; tenant isolation/RLS unaffected). 5 pre-existing tests updated to the corrected default (old tests had encoded the bug's behavior as expected). Full `test:carson-protected` and `carson:impact-map` clean; independent `review:security-auditor` agent against the real PR diff found no blocking defects (two non-blocking CONCERN notes: the "rules-exist-but-doesn't-cover-this" case still relies on LLM judgment only, no second deterministic check — accepted tradeoff; `householdRulesText` is prompt-interpolated without structural fencing — low-risk defense-in-depth suggestion, not required).
+
+**Merged and deployed.** PR #334 merged to `main` as `3e1b4c3`. Vercel production deployment `dpl_CisddqX8o7W6cmGhxUn1fJP2WZFr`: `readyState: READY`, `target: production`, `aliasError: null`, `githubCommitSha` exact match, aliased to `www.ra7etbal.com`. `carson-production-canary` run `32898267751`: success.
+
+**Follow-up not yet scoped:** task-linked pre-action substitution_request evaluation (regression case 2) — needs a `staff_messages.task_id` linkage fix before it can be implemented.
 
 ### Second Brain Phase 1 — grounded Notes/To-do attention awareness (2026-08-24) — MERGED, DEPLOYED, CANARY VERIFIED
 
