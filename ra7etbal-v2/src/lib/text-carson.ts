@@ -18,6 +18,10 @@ import { updatePeopleInsightsFromTasks } from "./people-behavior";
 import { sanitizeCarsonReplyText } from "./carson-social";
 import { parseMultiRecipientDelegation } from "./multi-recipient-delegation";
 import { callAnthropicProxy } from "./anthropic-client";
+import {
+  authorizeExtractedItems,
+  type OwnerAuthorizationEnvelope,
+} from "./carson-turn-authorization";
 
 /**
  * The highest-risk point in the extraction pipeline for altering visible
@@ -111,6 +115,13 @@ export interface TextCarsonContext {
   /** Called once per message actually delivered, so the caller's duplicate
    *  guard above learns about sends that happened through this path. */
   onDelegationSent?: (recipientName: string, taskText: string) => void;
+  /**
+   * Immutable authorization derived from the authenticated owner's verbatim
+   * turn before any model/retrieval output existed. Required by Voice
+   * Carson's compound execution path so extracted items remain proposals,
+   * never self-authorizing instructions.
+   */
+  ownerAuthorizationEnvelope?: OwnerAuthorizationEnvelope | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +164,22 @@ export async function executeDelegationFromText(
   }
   if (allItems.length === 0) {
     throw new Error("Couldn't understand that. Try rephrasing.");
+  }
+
+  // External/model content is data, not authority. extractItems is useful
+  // for structure, but its result is an untrusted proposal. Every item must
+  // fit the immutable owner-derived envelope before savePending can write a
+  // row or any WhatsApp delivery can start.
+  if (
+    !context.ownerAuthorizationEnvelope ||
+    !authorizeExtractedItems({
+      envelope: context.ownerAuthorizationEnvelope,
+      items: allItems,
+    })
+  ) {
+    throw new Error(
+      "That proposed action was not authorized by your exact instruction. Please state the action, person, and details explicitly.",
+    );
   }
 
   // Resolve the canonical file list. allImageFiles takes precedence when

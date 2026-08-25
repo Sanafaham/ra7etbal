@@ -28,6 +28,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtractedItem } from "../types/extraction";
 import { shouldForwardAttachedImage } from "./image-forwarding-guard";
+import { deriveOwnerAuthorizationEnvelope } from "./carson-turn-authorization";
 
 const extractItemsMock = vi.fn();
 const savePendingMock = vi.fn();
@@ -195,6 +196,16 @@ function saveResultForItems(items: ExtractedItem[]) {
   };
 }
 
+function ownerEnvelope(transcript: string, people: ReturnType<typeof person>[]) {
+  return deriveOwnerAuthorizationEnvelope({
+    authenticatedUserId: "user-1",
+    turnOperationId: "photo-golden-turn",
+    ownerTranscript: transcript,
+    people,
+    now: Date.now(),
+  });
+}
+
 describe("Golden contract — protected photo workflow (client half, baseline 447a685)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -223,14 +234,17 @@ describe("Golden contract — protected photo workflow (client half, baseline 44
     savePendingMock.mockResolvedValue(saveResultForItems([groceriesItem]));
     deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
 
-    await executeDelegationFromText("Ask Christopher to buy groceries", {
+    const transcript = "Ask Christopher to buy groceries";
+    const people = [person("Christopher")];
+    await executeDelegationFromText(transcript, {
       displayName: "Sana",
       userId: "user-1",
       dailyBrief: "",
-      people: [person("Christopher")],
+      people,
       tasks: [],
       imageFile: new File(["note-bytes"], "note.jpg", { type: "image/jpeg" }),
       imageDescription: "A handwritten note with several personal items.",
+      ownerAuthorizationEnvelope: ownerEnvelope(transcript, people),
     });
 
     expect(savePendingMock.mock.calls[0][4]).toBeUndefined();
@@ -256,13 +270,16 @@ describe("Golden contract — protected photo workflow (client half, baseline 44
     savePendingMock.mockResolvedValue(saveResultForItems([item]));
     deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
 
-    await executeDelegationFromText("Send this photo to Christopher", {
+    const transcript = "Send this photo to Christopher";
+    const people = [person("Christopher")];
+    await executeDelegationFromText(transcript, {
       displayName: "Sana",
       userId: "user-1",
       dailyBrief: "",
-      people: [person("Christopher")],
+      people,
       tasks: [],
       imageFile: photo,
+      ownerAuthorizationEnvelope: ownerEnvelope(transcript, people),
     });
 
     const imageMap = savePendingMock.mock.calls[0][4] as Map<string, File>;
@@ -289,13 +306,16 @@ describe("Golden contract — protected photo workflow (client half, baseline 44
     savePendingMock.mockResolvedValue(saveResultForItems([item]));
     deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
 
-    await executeDelegationFromText("Tell Christopher to make this pizza", {
+    const transcript = "Tell Christopher to make this pizza";
+    const people = [person("Christopher")];
+    await executeDelegationFromText(transcript, {
       displayName: "Sana",
       userId: "user-1",
       dailyBrief: "",
-      people: [person("Christopher")],
+      people,
       tasks: [],
       imageFile: pizzaPhoto,
+      ownerAuthorizationEnvelope: ownerEnvelope(transcript, people),
     });
 
     const imageMap = savePendingMock.mock.calls[0][4] as Map<string, File>;
@@ -335,15 +355,18 @@ describe("Golden contract — protected photo workflow (client half, baseline 44
     savePendingMock.mockResolvedValue(saveResultForItems([groceriesItem, pizzaItem]));
     deliverTaskMessageMock.mockResolvedValue({ success: true, channel: "whatsapp" });
 
+    const transcript = "Ask Christopher to buy groceries, and ask Grace to make this pizza";
+    const people = [person("Christopher"), person("Grace")];
     await executeDelegationFromText(
-      "Ask Christopher to buy groceries, and ask Grace to make this pizza",
+      transcript,
       {
         displayName: "Sana",
         userId: "user-1",
         dailyBrief: "",
-        people: [person("Christopher"), person("Grace")],
+        people,
         tasks: [],
         imageFile: pizzaPhoto,
+        ownerAuthorizationEnvelope: ownerEnvelope(transcript, people),
       },
     );
 

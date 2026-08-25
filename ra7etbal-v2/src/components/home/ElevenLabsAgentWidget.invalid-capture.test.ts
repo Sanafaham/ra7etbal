@@ -58,7 +58,6 @@ describe("ElevenLabsAgentWidget — invalid voice capture guard", () => {
       "execute_instruction",
       "send_followup",
       "send_delegation",
-      "create_reminder",
       "create_automation",
       "send_direct_whatsapp_message",
       "save_city",
@@ -75,8 +74,23 @@ describe("ElevenLabsAgentWidget — invalid voice capture guard", () => {
     ];
 
     for (const toolName of toolNames) {
-      expect(sessionBlock).toContain(`guardCurrentToolInvocation("${toolName}")`);
+      expect(sessionBlock).toContain(`guardCurrentToolInvocation("${toolName}"`);
     }
+
+    // create_reminder can deterministically reroute to create_automation.
+    // Assert the current behavior: the resolved destination is guarded with
+    // the exact params before either executor is reachable, rather than
+    // pinning the test to the stale literal create_reminder source shape.
+    const reminderBlock = blockBetween(
+      'create_reminder: async (params: Parameters<typeof createReminder>[0]) => {',
+      '          create_automation:',
+    );
+    expect(reminderBlock).toContain("const routedToolName =");
+    expect(reminderBlock).toContain("guardCurrentToolInvocation(\n              routedToolName,");
+    expect(reminderBlock.indexOf("guardCurrentToolInvocation("))
+      .toBeLessThan(reminderBlock.indexOf("createAutomation({ ...routing.params, routingEvidence })"));
+    expect(reminderBlock.indexOf("guardCurrentToolInvocation("))
+      .toBeLessThan(reminderBlock.indexOf("createReminder({ ...params, routingEvidence })"));
   });
 
   it("execute_instruction rejects invalid instruction params even when no clean transcript arrived", () => {

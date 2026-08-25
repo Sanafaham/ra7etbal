@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-24 (Second Brain Phase 1 — grounded Notes/To-do attention awareness, PR #325 merged and deployed to production, canary verified; ElevenLabs registration + live owner acceptance for the full attention_summary_read capability still pending)
+Last updated: 2026-08-26 (External Content Authority boundary — code complete and locally verified; PR/CI/deployment gate pending)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -11,6 +11,18 @@ Ra7etBal is a personal Chief of Staff that reduces mental load. Carson is the AI
 Typed Carson and voice Carson are the same person, sharing the same memory, identity, and reasoning. Product decision (2026-07-25): Type to Carson is advisory-only — thinking, planning, drafting, research, and review only. Talk to Carson (voice) remains the sole execution channel for reminders, recurring reminders, push notifications, calendar events, staff messages, hosting plans, delegations, and any other state-changing action. See "Type to Carson is advisory-only" below.
 
 ## Current next task
+
+### External Content Is Data, Not Authority (2026-08-26) — CODE COMPLETE, LOCALLY VERIFIED, PR/CI/DEPLOYMENT PENDING
+
+The confirmed gap was that a fresh authenticated voice turn was treated as sufficient authority for any model-selected client tool and model-generated consequential parameters. The new boundary is enforced at the existing `ElevenLabsAgentWidget.tsx` client-tool gateway through `src/lib/carson-turn-authorization.ts`: mutation authority defaults to zero and is derived only from the authenticated owner's current transcript. Immutable grants bind user ID, turn operation ID, tool/operation family, recipient/resource, consequential content/date/time constraints, expiry, and bounded consumption. Research-only turns produce zero mutation grants. Unknown future client tools fail closed.
+
+Model/tool/retrieval output remains an untrusted proposal. When deterministic owner intent cannot bind an ordinary proposed action, Carson records a frozen exact tool/parameter proposal and requires a later explicit authenticated-owner confirmation; wrong-user, expired, changed-parameter/hash, wrong-turn, replay, and over-consumption attempts are rejected. `execute_instruction` supports the same exact-proposal confirmation only for non-hosting compound work and then derives item-level grants from the exact confirmed proposal. Existing hosting detection is excluded from the generic proposal mechanism and retains its stronger persisted hosting plan approval/execution contract unchanged.
+
+Compound extraction is independently checked item-by-item in `text-carson.ts` before `savePending` or any delivery call. Extracted type, recipient, description, due text, outgoing suggested message, and personal note must fit a matching owner-authorized family grant; a generic compound grant cannot authorize a different extracted action family. Typed Carson's existing state-changing tool denial remains first and unconditional; its intentionally permitted lower-impact `save_note` path now also requires an owner-derived envelope.
+
+Protected Behavior registration: `external_content_authority_boundary` in `carson-protected-registry.json`, with `src/lib/carson-turn-authorization.test.ts` required by the protected-suite pre-hook. Local verification on the final diff: authorization/adversarial focused suite 34/34; affected focused set 205/205 before the final additions; final protected pre-hook 14 files / 108 tests passed; final protected suite 105 files / 1,890 passed, 4 skipped, 3 todo; Impact-Aware CI 35/35; registry validation 27 capabilities; `npm run typecheck` passed; production build passed (only pre-existing CSS/chunk-size warnings). No live external action was triggered. No schema, RLS, database function/grant, Supabase data, ElevenLabs configuration, Perplexity, Tavily, WhatsApp/Meta configuration, Google configuration, QStash/Upstash, Firewall, or Stage 2A change.
+
+Rollback boundary: revert this authorization module, the gateway/envelope wiring, the compound pre-persistence check, focused assertions, protected-suite mapping, registry entry, and this state entry together. Partial rollback is unsafe because it could either block valid owner actions or reopen model self-authorization.
 
 ### Second Brain Phase 1 — grounded Notes/To-do attention awareness (2026-08-24) — MERGED, DEPLOYED, CANARY VERIFIED
 

@@ -164,6 +164,18 @@ import {
   roundDuration,
   type ExecuteInstructionLatencyTrace,
 } from "../../lib/carson-latency";
+import {
+  OWNER_AUTHORITY_DENIAL,
+  authorizeToolInvocation,
+  createAuthorizationConsumptionLedger,
+  createPendingOwnerActionProposal,
+  deriveConfirmedProposalEnvelope,
+  deriveOwnerAuthorizationEnvelope,
+  describePendingOwnerActionProposal,
+  type AuthorizationConsumptionLedger,
+  type OwnerAuthorizationEnvelope,
+  type PendingOwnerActionProposal,
+} from "../../lib/carson-turn-authorization";
 import { useAuthStore } from "../../stores/auth";
 import type { Person } from "../../types/person";
 import { usePeopleStore } from "../../stores/people";
@@ -1458,6 +1470,17 @@ export default function ElevenLabsAgentWidget({
     claimed: boolean;
     operationId: string;
   } | null>(null);
+  /** Immutable, authenticated-owner-derived authority for the current turn.
+   * Agent messages, MCP results, tool output, and retrieved content never
+   * write this ref. Consumption lives separately so the envelope itself
+   * cannot be widened or replaced after creation. */
+  const ownerAuthorizationEnvelopeRef = useRef<OwnerAuthorizationEnvelope | null>(null);
+  const ownerAuthorizationLedgerRef = useRef<AuthorizationConsumptionLedger>(
+    createAuthorizationConsumptionLedger(),
+  );
+  /** A model proposal is inert until the authenticated owner explicitly
+   * confirms this exact frozen tool/parameter snapshot on the next turn. */
+  const pendingOwnerActionProposalRef = useRef<PendingOwnerActionProposal | null>(null);
   const invalidCaptureRef = useRef<{
     message: string;
     reason: CarsonTranscriptGuardReason;
@@ -5082,6 +5105,7 @@ export default function ElevenLabsAgentWidget({
           // through by reaching Carson through this path instead of the tool.
           isDuplicateDelegation: findRecentDuplicateDelegation,
           onDelegationSent: recordDelegationSent,
+          ownerAuthorizationEnvelope: ownerAuthorizationEnvelopeRef.current,
           onSavedExecution: (saved) => {
             executedDelegationRecords = saved.tasks
               .filter((task) => task.type === "delegation" || task.type === "followup")
@@ -5683,6 +5707,9 @@ export default function ElevenLabsAgentWidget({
     lastCreatedReminderRef.current = null;
     currentOwnerTurnOperationIdRef.current = null;
     canonicalConsequentialResultRef.current = null;
+    ownerAuthorizationEnvelopeRef.current = null;
+    ownerAuthorizationLedgerRef.current = createAuthorizationConsumptionLedger();
+    pendingOwnerActionProposalRef.current = null;
     recurringRawRef.current = null;
     invalidCaptureRef.current = null;
     sessionConnectedAtRef.current = null;
@@ -5895,9 +5922,41 @@ export default function ElevenLabsAgentWidget({
     // never authority to act. Only a durable, newly-submitted owner message
     // opens the typed action window. Keep it open through the agent's reply so
     // legitimate multi-action instructions can still call multiple tools.
-    const guardCurrentToolInvocation = (toolName: string): string | null => {
+    const guardCurrentToolInvocation = (
+      toolName: string,
+      params: unknown = {},
+      resourceLabel?: string | null,
+    ): string | null => {
       if (requestedChannel === "voice") {
-        return guardCurrentVoiceCapture(toolName);
+        const captureBlock = guardCurrentVoiceCapture(toolName);
+        if (captureBlock) return captureBlock;
+        const decision = authorizeToolInvocation({
+          envelope: ownerAuthorizationEnvelopeRef.current,
+          ledger: ownerAuthorizationLedgerRef.current,
+          authenticatedUserId: authenticatedUserId ?? useAuthStore.getState().user?.id,
+          turnOperationId: currentOwnerTurnOperationIdRef.current,
+          toolName,
+          params,
+          resourceLabel,
+        });
+        if (decision.allowed) return null;
+        console.warn("[carson-owner-authority] blocked protected tool", {
+          toolName,
+          reason: decision.reason,
+          turnOperationId: currentOwnerTurnOperationIdRef.current,
+          at: new Date().toISOString(),
+        });
+        const proposal = createPendingOwnerActionProposal({
+          authenticatedUserId: authenticatedUserId ?? useAuthStore.getState().user?.id ?? "",
+          toolName,
+          params,
+          resourceLabel,
+          allowCompound:
+            toolName === "execute_instruction" &&
+            !detectHouseholdOutcome(extractInstructionParam(params as ExecuteInstructionParams)),
+        });
+        pendingOwnerActionProposalRef.current = proposal;
+        return proposal ? describePendingOwnerActionProposal(proposal) : OWNER_AUTHORITY_DENIAL;
       }
       // Type to Carson is advisory-only — a typed request must never reach a
       // state-changing tool, even if the model attempts the call. Checked
@@ -5909,7 +5968,25 @@ export default function ElevenLabsAgentWidget({
         });
         return TYPED_BLOCKED_TOOL_MESSAGES[toolName];
       }
-      if (pendingTypedClientMessageIdRef.current) return null;
+      if (pendingTypedClientMessageIdRef.current) {
+        const decision = authorizeToolInvocation({
+          envelope: ownerAuthorizationEnvelopeRef.current,
+          ledger: ownerAuthorizationLedgerRef.current,
+          authenticatedUserId: authenticatedUserId ?? useAuthStore.getState().user?.id,
+          turnOperationId: currentOwnerTurnOperationIdRef.current,
+          toolName,
+          params,
+          resourceLabel,
+        });
+        if (decision.allowed) return null;
+        console.warn("[carson-owner-authority] blocked typed tool proposal", {
+          toolName,
+          reason: decision.reason,
+          turnOperationId: currentOwnerTurnOperationIdRef.current,
+          at: new Date().toISOString(),
+        });
+        return OWNER_AUTHORITY_DENIAL;
+      }
 
       console.warn("[carson-typed] blocked tool without an active owner turn", {
         toolName,
@@ -5984,7 +6061,7 @@ export default function ElevenLabsAgentWidget({
           // through the same shared Carson instruction pipeline. Use this for all
           // compound instructions, personal notes, and ambiguous cases.
           execute_instruction: async (params: ExecuteInstructionParams) => {
-            const captureBlock = guardCurrentToolInvocation("execute_instruction");
+            const captureBlock = guardCurrentToolInvocation("execute_instruction", params);
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "execute_instruction";
             setTurnPhase("acting");
@@ -6042,7 +6119,7 @@ export default function ElevenLabsAgentWidget({
           // Diagnostic wrappers only set/clear toolInFlightRef — behavior is
           // identical to calling sendFollowup / sendDelegation directly.
           send_followup: async (params: Parameters<typeof sendFollowup>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("send_followup");
+            const captureBlock = guardCurrentToolInvocation("send_followup", params);
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_followup";
             try {
@@ -6054,7 +6131,7 @@ export default function ElevenLabsAgentWidget({
             }
           },
           send_delegation: async (params: Parameters<typeof sendDelegation>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("send_delegation");
+            const captureBlock = guardCurrentToolInvocation("send_delegation", params);
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_delegation";
             try {
@@ -6115,7 +6192,10 @@ export default function ElevenLabsAgentWidget({
                   : [],
             });
             const routedToolName = routing.kind === "automation" ? "create_automation" : "create_reminder";
-            const captureBlock = guardCurrentToolInvocation(routedToolName);
+            const captureBlock = guardCurrentToolInvocation(
+              routedToolName,
+              routing.kind === "automation" ? routing.params : params,
+            );
             if (captureBlock) return captureBlock;
             if (routing.kind === "blocked") {
               lastDirectToolSuccessRef.current = {
@@ -6147,7 +6227,7 @@ export default function ElevenLabsAgentWidget({
             );
           },
           create_automation: (params: Parameters<typeof createAutomation>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_automation");
+            const captureBlock = guardCurrentToolInvocation("create_automation", params);
             if (captureBlock) return captureBlock;
             if (activeUserRoutingContextRef.current) {
               activeUserRoutingContextRef.current.claimed = true;
@@ -6159,7 +6239,7 @@ export default function ElevenLabsAgentWidget({
             });
           },
           send_direct_whatsapp_message: async (params: { recipient_name: string; message: string }) => {
-            const captureBlock = guardCurrentToolInvocation("send_direct_whatsapp_message");
+            const captureBlock = guardCurrentToolInvocation("send_direct_whatsapp_message", params);
             if (captureBlock) return captureBlock;
             toolInFlightRef.current = "send_direct_whatsapp_message";
             try {
@@ -6178,32 +6258,35 @@ export default function ElevenLabsAgentWidget({
             }
           },
           save_city: (params: Parameters<typeof saveCity>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("save_city");
+            const captureBlock = guardCurrentToolInvocation("save_city", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("save_city", params, () => saveCity(params));
           },
           save_note: (params: Parameters<typeof saveNote>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("save_note");
+            const captureBlock = guardCurrentToolInvocation("save_note", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("save_note", params, () => saveNote(params));
           },
           act_on_note: (params: Parameters<typeof actOnNote>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("act_on_note");
+            const captureBlock = guardCurrentToolInvocation("act_on_note", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("act_on_note", params, () => actOnNote(params));
           },
           create_todo: (params: Parameters<typeof createTodoTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_todo");
+            const captureBlock = guardCurrentToolInvocation("create_todo", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_todo", params, () => createTodoTool(params));
           },
           complete_todo: (params: Parameters<typeof completeTodoTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("complete_todo");
+            const captureBlock = guardCurrentToolInvocation("complete_todo", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("complete_todo", params, () => completeTodoTool(params));
           },
           control_task: (params: Parameters<typeof controlTaskTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("control_task");
+            const taskResourceLabel = params?.task_id
+              ? useTasksStore.getState().items.find((task) => task.id === params.task_id)?.description ?? null
+              : null;
+            const captureBlock = guardCurrentToolInvocation("control_task", params, taskResourceLabel);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("control_task", params, () => controlTaskTool(params));
           },
@@ -6306,21 +6389,27 @@ export default function ElevenLabsAgentWidget({
             );
           },
           create_calendar_event: (params: Parameters<typeof createCalendarEvent>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("create_calendar_event");
+            const captureBlock = guardCurrentToolInvocation("create_calendar_event", params);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("create_calendar_event", params, () =>
               createCalendarEvent(params),
             );
           },
           update_calendar_event: (params: Parameters<typeof updateCalendarEventTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("update_calendar_event");
+            const resourceLabel = planningCalendarEventsRef.current.find(
+              (event) => event.id === extractEventIdParam(params).trim(),
+            )?.title ?? null;
+            const captureBlock = guardCurrentToolInvocation("update_calendar_event", params, resourceLabel);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("update_calendar_event", params, () =>
               updateCalendarEventTool(params),
             );
           },
           delete_calendar_event: (params: Parameters<typeof deleteCalendarEventTool>[0]) => {
-            const captureBlock = guardCurrentToolInvocation("delete_calendar_event");
+            const resourceLabel = planningCalendarEventsRef.current.find(
+              (event) => event.id === extractEventIdParam(params).trim(),
+            )?.title ?? null;
+            const captureBlock = guardCurrentToolInvocation("delete_calendar_event", params, resourceLabel);
             if (captureBlock) return captureBlock;
             return runDirectToolWithDiagnostic("delete_calendar_event", params, () =>
               deleteCalendarEventTool(params),
@@ -6334,7 +6423,7 @@ export default function ElevenLabsAgentWidget({
             category?: string;
           }) =>
             {
-              const captureBlock = guardCurrentToolInvocation("save_instruction");
+              const captureBlock = guardCurrentToolInvocation("save_instruction", { instruction, category });
               if (captureBlock) return captureBlock;
               return runDirectToolWithDiagnostic(
                 "save_instruction",
@@ -6458,6 +6547,22 @@ export default function ElevenLabsAgentWidget({
             };
             currentOwnerTurnOperationIdRef.current = turnOperationId;
             canonicalConsequentialResultRef.current = null;
+            const ownerId = authenticatedUserId ?? useAuthStore.getState().user?.id ?? "";
+            const confirmedProposalEnvelope = deriveConfirmedProposalEnvelope({
+              authenticatedUserId: ownerId,
+              turnOperationId,
+              ownerTranscript: message,
+              proposal: pendingOwnerActionProposalRef.current,
+              people: usePeopleStore.getState().items,
+            });
+            pendingOwnerActionProposalRef.current = null;
+            ownerAuthorizationEnvelopeRef.current = confirmedProposalEnvelope ?? deriveOwnerAuthorizationEnvelope({
+              authenticatedUserId: ownerId,
+              turnOperationId,
+              ownerTranscript: message,
+              people: usePeopleStore.getState().items,
+            });
+            ownerAuthorizationLedgerRef.current = createAuthorizationConsumptionLedger();
             setTurnPhase("thinking");
             if (detectAllRecurringSchedules(message).length > 0) {
               recurringRawRef.current = message;
@@ -6542,6 +6647,22 @@ export default function ElevenLabsAgentWidget({
             };
             currentOwnerTurnOperationIdRef.current = turnOperationId;
             canonicalConsequentialResultRef.current = null;
+            const ownerId = authenticatedUserId ?? useAuthStore.getState().user?.id ?? "";
+            const confirmedProposalEnvelope = deriveConfirmedProposalEnvelope({
+              authenticatedUserId: ownerId,
+              turnOperationId,
+              ownerTranscript: message,
+              proposal: pendingOwnerActionProposalRef.current,
+              people: usePeopleStore.getState().items,
+            });
+            pendingOwnerActionProposalRef.current = null;
+            ownerAuthorizationEnvelopeRef.current = confirmedProposalEnvelope ?? deriveOwnerAuthorizationEnvelope({
+              authenticatedUserId: ownerId,
+              turnOperationId,
+              ownerTranscript: message,
+              people: usePeopleStore.getState().items,
+            });
+            ownerAuthorizationLedgerRef.current = createAuthorizationConsumptionLedger();
             setLastUserTranscript(message);
             if (userTranscriptTimerRef.current) {
               clearTimeout(userTranscriptTimerRef.current);

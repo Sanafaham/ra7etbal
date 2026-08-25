@@ -52,7 +52,7 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
 
   it("authorizes typed tools only during a fresh durable owner turn and retains every voice guard", () => {
     const guardBlock = blockBetween(
-      "const guardCurrentToolInvocation = (toolName: string): string | null => {",
+      "const guardCurrentToolInvocation = (",
       "    try {",
     );
     expect(guardBlock).toContain('requestedChannel === "voice"');
@@ -72,9 +72,9 @@ describe("ElevenLabsAgentWidget — Type to Carson single-agent architecture", (
     ]) {
       if (toolName === "create_reminder") {
         expect(toolBlock).toContain('const routedToolName = routing.kind === "automation" ? "create_automation" : "create_reminder";');
-        expect(toolBlock).toContain("guardCurrentToolInvocation(routedToolName)");
+        expect(toolBlock).toContain("guardCurrentToolInvocation(\n              routedToolName,");
       } else {
-        expect(toolBlock).toContain(`guardCurrentToolInvocation("${toolName}")`);
+        expect(toolBlock).toContain(`guardCurrentToolInvocation("${toolName}"`);
       }
     }
   });
@@ -482,20 +482,21 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
 
   it("blocks every state-changing client tool for typed mode via one shared, unconditional guard", () => {
     const guardBlock = blockBetween(
-      "const guardCurrentToolInvocation = (toolName: string): string | null => {",
+      "const guardCurrentToolInvocation = (",
       "    try {",
     );
     // Voice returns immediately, before the typed-advisory check ever runs —
     // Talk to Carson can never be affected by it (test below proves ordering).
-    expect(guardBlock.indexOf('return guardCurrentVoiceCapture(toolName);'))
+    expect(guardBlock.indexOf('if (requestedChannel === "voice") {'))
       .toBeLessThan(guardBlock.indexOf(TOOL_GUARD_BLOCK_MARKER));
+    expect(guardBlock).toContain("authorizeToolInvocation({");
     expect(guardBlock).toContain(TOOL_GUARD_BLOCK_MARKER);
     expect(guardBlock).toContain("return TYPED_BLOCKED_TOOL_MESSAGES[toolName];");
     // The typed-advisory check runs before the existing "no active owner
     // turn" fallback, so it applies unconditionally — a matched tool name is
     // blocked whether or not a typed owner turn is currently open.
     expect(guardBlock.indexOf(TOOL_GUARD_BLOCK_MARKER))
-      .toBeLessThan(guardBlock.indexOf("if (pendingTypedClientMessageIdRef.current) return null;"));
+      .toBeLessThan(guardBlock.indexOf("if (pendingTypedClientMessageIdRef.current) {"));
 
     const blockedToolMap = blockBetween(
       "const TYPED_BLOCKED_TOOL_MESSAGES: Record<string, string> = {",
@@ -539,7 +540,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
       "save_note: (params: Parameters<typeof saveNote>[0]) => {",
       "  },",
     );
-    const saveNoteGuardIndex = saveNoteBlock.indexOf('guardCurrentToolInvocation("save_note")');
+    const saveNoteGuardIndex = saveNoteBlock.indexOf('guardCurrentToolInvocation("save_note"');
     const saveNoteExecutorIndex = saveNoteBlock.indexOf("saveNote(params)");
     expect(saveNoteGuardIndex).toBeGreaterThan(-1);
     expect(saveNoteExecutorIndex).toBeGreaterThan(saveNoteGuardIndex);
@@ -548,7 +549,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
       "act_on_note: (params: Parameters<typeof actOnNote>[0]) => {",
       "  },",
     );
-    const guardIndex = actOnNoteBlock.indexOf('guardCurrentToolInvocation("act_on_note")');
+    const guardIndex = actOnNoteBlock.indexOf('guardCurrentToolInvocation("act_on_note"');
     const executorIndex = actOnNoteBlock.indexOf("actOnNote(params)");
     expect(guardIndex).toBeGreaterThan(-1);
     expect(executorIndex).toBeGreaterThan(guardIndex);
@@ -556,7 +557,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
 
   it("blocks a typed reminder request from creating a reminder or triggering push scheduling", () => {
     const toolBlock = blockBetween('create_reminder: async (params: Parameters<typeof createReminder>[0]) => {', "  },");
-    const guardIndex = toolBlock.indexOf("guardCurrentToolInvocation(routedToolName)");
+    const guardIndex = toolBlock.indexOf("guardCurrentToolInvocation(\n              routedToolName,");
     const executorIndex = toolBlock.indexOf("createReminder({ ...params, routingEvidence })");
     expect(guardIndex).toBeGreaterThan(-1);
     expect(executorIndex).toBeGreaterThan(guardIndex);
@@ -573,7 +574,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
       'create_automation: (params: Parameters<typeof createAutomation>[0]) => {',
       "  },",
     );
-    const guardIndex = toolBlock.indexOf('guardCurrentToolInvocation("create_automation")');
+    const guardIndex = toolBlock.indexOf('guardCurrentToolInvocation("create_automation"');
     const executorIndex = toolBlock.indexOf("createAutomation(params)");
     expect(guardIndex).toBeGreaterThan(-1);
     expect(executorIndex).toBeGreaterThan(guardIndex);
@@ -587,7 +588,7 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
       ["delete_calendar_event", "deleteCalendarEventTool(params)"],
     ] as const) {
       const toolBlock = blockBetween(`${toolName}: (params: Parameters<typeof `, "  },");
-      const guardIndex = toolBlock.indexOf(`guardCurrentToolInvocation("${toolName}")`);
+      const guardIndex = toolBlock.indexOf(`guardCurrentToolInvocation("${toolName}"`);
       const executorIndex = toolBlock.indexOf(executorCall);
       expect(guardIndex, toolName).toBeGreaterThan(-1);
       expect(executorIndex, toolName).toBeGreaterThan(guardIndex);
@@ -728,11 +729,11 @@ describe("Type to Carson — advisory-only, Talk to Carson unchanged", () => {
 
   it("never lets Talk to Carson reach the typed-advisory guard — voice returns before it is checked", () => {
     const guardBlock = blockBetween(
-      "const guardCurrentToolInvocation = (toolName: string): string | null => {",
+      "const guardCurrentToolInvocation = (",
       "    try {",
     );
     const voiceBranchIndex = guardBlock.indexOf('if (requestedChannel === "voice") {');
-    const voiceReturnIndex = guardBlock.indexOf("return guardCurrentVoiceCapture(toolName);");
+    const voiceReturnIndex = guardBlock.indexOf("if (decision.allowed) return null;");
     const advisoryIndex = guardBlock.indexOf(TOOL_GUARD_BLOCK_MARKER);
     expect(voiceBranchIndex).toBeGreaterThan(-1);
     expect(voiceReturnIndex).toBeGreaterThan(voiceBranchIndex);
@@ -908,10 +909,10 @@ describe("Type to Carson — immediate execution-request redirect, Talk to Carso
 
   it("never touches Talk to Carson's tool registration, routing, or execution — voice guard still returns before any typed-only check", () => {
     const guardBlock = blockBetween(
-      "const guardCurrentToolInvocation = (toolName: string): string | null => {",
+      "const guardCurrentToolInvocation = (",
       "    try {",
     );
-    const voiceReturnIndex = guardBlock.indexOf("return guardCurrentVoiceCapture(toolName);");
+    const voiceReturnIndex = guardBlock.indexOf("if (decision.allowed) return null;");
     const typedBlockIndex = guardBlock.indexOf("TYPED_BLOCKED_TOOL_MESSAGES[toolName]");
     expect(voiceReturnIndex).toBeGreaterThan(-1);
     expect(voiceReturnIndex).toBeLessThan(typedBlockIndex);

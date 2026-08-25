@@ -158,7 +158,7 @@ describe("ElevenLabsAgentWidget — reminder replacement on correction (2026-07-
   it("keeps genuine reminders behind the client-tool guard and diagnostic wrapper", () => {
     expect(SOURCE).toContain("create_reminder: async (params: Parameters<typeof createReminder>[0]) => {");
     expect(SOURCE).toContain('const routedToolName = routing.kind === "automation" ? "create_automation" : "create_reminder";');
-    expect(SOURCE).toContain("guardCurrentToolInvocation(routedToolName)");
+    expect(SOURCE).toMatch(/guardCurrentToolInvocation\(\s*routedToolName,\s*routing\.kind === "automation" \? routing\.params : params,\s*\)/);
     expect(SOURCE).toContain('runDirectToolWithDiagnostic("create_reminder", params');
   });
 
