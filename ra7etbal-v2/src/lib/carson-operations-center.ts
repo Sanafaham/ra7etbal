@@ -33,6 +33,33 @@ import type { Task } from "../types/task";
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
+// 2026-08-25 production investigation: fetchAttentionEvidence()'s per-source
+// calls had no timeout anywhere in the chain (confirmed: none of listTasks,
+// listOpenStaffEscalationsForNeedsYou, fetchUnresolvedCaptureCandidates, or
+// their own dependencies wrap in a timeout) — a stalled connection could
+// leave this hanging indefinitely rather than resolving or rejecting,
+// leaving both the ElevenLabs tool call and carson-attention-intent-guard.ts's
+// grounded-result check waiting with no bound. Bounded per-source, not
+// per-request, so one slow source degrades to that source's own existing
+// partial-failure handling instead of blocking the other two.
+const ATTENTION_SOURCE_TIMEOUT_MS = 8_000;
+
+function withTimeout<T>(promise: Promise<T>, ms = ATTENTION_SOURCE_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("attention evidence source timed out")), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 function msToAgo(ms: number): string {
   const h = Math.round(ms / 3_600_000);
   if (h < 1) return `${Math.round(ms / 60_000)}m ago`;
@@ -306,10 +333,26 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
   }
 
   const now = new Date();
+
+  // Kick off all three independent, fallible sources concurrently — each
+  // wrapped in its own bounded timeout — rather than awaiting them one at a
+  // time. Each promise is created (starting its underlying request) before
+  // any of them is awaited, so they genuinely run in parallel; each is then
+  // awaited with its own try/catch, preserving the exact same per-source
+  // failure semantics as before (a slow/failed source degrades only its own
+  // *Failed flag, never blocks or fails the other two).
+  const tasksPromise = withTimeout(listTasks());
+  const needsYouPromise = withTimeout(listOpenStaffEscalationsForNeedsYou());
+  const capturesPromise = withTimeout(fetchUnresolvedCaptureCandidates(now));
+  // fetchAutomationDigest never throws — it returns an empty digest on
+  // auth failure or query error, so routineAutomationTaskIds below is
+  // always defined (possibly empty), never undefined-because-it-threw.
+  const digestPromise = fetchAutomationDigest();
+
   let tasks: Task[] | null = null;
   let tasksFailed = false;
   try {
-    tasks = await listTasks();
+    tasks = await tasksPromise;
   } catch {
     tasksFailed = true;
   }
@@ -317,7 +360,7 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
   let needsYou: Awaited<ReturnType<typeof listOpenStaffEscalationsForNeedsYou>> | null = null;
   let needsYouFailed = false;
   try {
-    needsYou = await listOpenStaffEscalationsForNeedsYou();
+    needsYou = await needsYouPromise;
   } catch {
     needsYouFailed = true;
   }
@@ -325,15 +368,12 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
   let captureCandidates: UnresolvedCapture[] | null = null;
   let capturesFailed = false;
   try {
-    captureCandidates = await fetchUnresolvedCaptureCandidates(now);
+    captureCandidates = await capturesPromise;
   } catch {
     capturesFailed = true;
   }
 
-  // fetchAutomationDigest never throws — it returns an empty digest on
-  // auth failure or query error, so routineAutomationTaskIds below is
-  // always defined (possibly empty), never undefined-because-it-threw.
-  const digest = await fetchAutomationDigest();
+  const digest = await digestPromise;
 
   if (tasksFailed && needsYouFailed && capturesFailed) {
     return { ok: false, code: "attention_read_failed", generatedAt, completeness: "none", ...empty };

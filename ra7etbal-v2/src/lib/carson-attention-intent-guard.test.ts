@@ -3,6 +3,7 @@ import {
   matchesAttentionIntent,
   matchesAttentionFollowUp,
   resolveAttentionGuardedMessage,
+  ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE,
 } from "./carson-attention-intent-guard";
 
 describe("matchesAttentionIntent", () => {
@@ -49,8 +50,30 @@ describe("resolveAttentionGuardedMessage — grounded result is authoritative, n
     ).toBe(base.agentMessage);
   });
 
-  it("passes the agent message through untouched when no grounded result is available yet — safe failure, never fabricates one", () => {
-    expect(resolveAttentionGuardedMessage(base)).toBe(base.agentMessage);
+  it("2026-08-25 fix: returns the fixed, honest 'couldn't check' fallback — not the model's prose — when attention intent was detected but no grounded result is available yet. No evidence = no factual claim, unconditionally, not just when the tool happens to have run.", () => {
+    const result = resolveAttentionGuardedMessage(base);
+    expect(result).toBe(ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE);
+    expect(result).not.toBe(base.agentMessage);
+  });
+
+  it("the fallback message contains no banned process-narration language (CARSON_STATUS_POLICY bans 'One moment', 'Let me', 'checking', etc.)", () => {
+    const banned = [/one moment/i, /let me/i, /checking/i, /hold on/i, /just a second/i, /processing/i];
+    for (const pattern of banned) {
+      expect(ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE).not.toMatch(pattern);
+    }
+  });
+
+  it("reproduces the exact production shape: attention intent detected, tool never resolved in time, model composed a fabricated 'three overdue tasks' answer — the fallback wins, not the model's classification", () => {
+    const modelFabricatedClassification =
+      "You have three overdue tasks: checking on Claude skill files, charging your phone, and updating the Rahet Bal master plan. These need your immediate attention.";
+    const result = resolveAttentionGuardedMessage({
+      agentMessage: modelFabricatedClassification,
+      attentionIntentDetected: true,
+      groundedResult: null,
+    });
+    expect(result).toBe(ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE);
+    expect(result).not.toContain("overdue");
+    expect(result).not.toContain("waiting on confirmation");
   });
 
   it("unrelated Carson intents are unchanged — a stale/unrelated groundedResult is never applied when attention intent was not detected", () => {

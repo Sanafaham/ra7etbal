@@ -1498,10 +1498,18 @@ export default function ElevenLabsAgentWidget({
   // get_items_needing_attention's own real return value if it runs.
   const attentionGuardResultRef = useRef<string | null>(null);
   // True only when the immediately preceding turn was itself answered from
-  // real grounded evidence — gates whether a bare "What else?"/"Anything
-  // else?"/"Is that everything?" this turn is treated as a continuation of
-  // that same attention exchange.
+  // real grounded evidence. Currently informational only — see
+  // lastTurnWasAttentionIntentRef below for what actually gates follow-up
+  // recognition (2026-08-25 fix: gating on "was grounded" let an ungrounded
+  // first turn silently disable grounding for its own follow-up turn too).
   const lastAttentionTurnWasGroundedRef = useRef(false);
+  // True whenever the immediately preceding turn was attention-intent AT
+  // ALL, regardless of whether it successfully grounded — this is what
+  // gates whether a bare "What else?"/"Anything else?"/"Is that everything?"
+  // this turn is treated as a continuation of that exchange. A follow-up to
+  // a FAILED-to-ground first turn still gets its own fresh, independent
+  // grounding attempt, instead of inheriting the first turn's failure.
+  const lastTurnWasAttentionIntentRef = useRef(false);
 
   const clearTurnPhaseThinkingTimeout = useCallback(() => {
     if (turnPhaseThinkingTimeoutRef.current) {
@@ -5464,6 +5472,7 @@ export default function ElevenLabsAgentWidget({
       attentionToolRanForCurrentTranscriptRef.current = false;
       attentionGuardResultRef.current = null;
       lastAttentionTurnWasGroundedRef.current = false;
+      lastTurnWasAttentionIntentRef.current = false;
 
       if (conv) {
         if (activeChannelRef.current === "voice") {
@@ -6539,7 +6548,7 @@ export default function ElevenLabsAgentWidget({
             // this turn without actually calling the tool. Never blocks or
             // delays the reply — see carson-attention-intent-guard.ts.
             const isAttentionFollowUpTurn =
-              matchesAttentionFollowUp(message) && lastAttentionTurnWasGroundedRef.current;
+              matchesAttentionFollowUp(message) && lastTurnWasAttentionIntentRef.current;
             attentionIntentForCurrentTranscriptRef.current =
               matchesAttentionIntent(message) || isAttentionFollowUpTurn;
             if (attentionIntentForCurrentTranscriptRef.current) {
@@ -6624,6 +6633,10 @@ export default function ElevenLabsAgentWidget({
             lastAttentionTurnWasGroundedRef.current =
               attentionIntentForCurrentTranscriptRef.current &&
               attentionGuardResultRef.current != null;
+            // Set unconditionally (not gated on grounding success) — this is
+            // what allows a follow-up to a failed-to-ground turn to still get
+            // its own independent grounding attempt.
+            lastTurnWasAttentionIntentRef.current = attentionIntentForCurrentTranscriptRef.current;
             // This onMessage callback delivers the agent's own separately-generated
             // reply — it can contradict a direct tool call that just succeeded
             // (create_todo P0). Prefer the tool's own success result when the
@@ -6816,6 +6829,7 @@ export default function ElevenLabsAgentWidget({
           attentionToolRanForCurrentTranscriptRef.current = false;
           attentionGuardResultRef.current = null;
           lastAttentionTurnWasGroundedRef.current = false;
+          lastTurnWasAttentionIntentRef.current = false;
           setSessionEndedMsg("Session ended.");
           setLastUserTranscript(null);
           if (requestedChannel === "voice") {
@@ -6877,6 +6891,7 @@ export default function ElevenLabsAgentWidget({
           attentionToolRanForCurrentTranscriptRef.current = false;
           attentionGuardResultRef.current = null;
           lastAttentionTurnWasGroundedRef.current = false;
+          lastTurnWasAttentionIntentRef.current = false;
           setErrorMsg(sanitizeCarsonReplyText(msg || "Connection lost.") || "Connection lost.");
 
           // Save whatever transcript we have so the session isn't lost.
