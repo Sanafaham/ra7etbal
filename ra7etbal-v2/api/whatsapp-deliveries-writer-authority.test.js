@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import './reserve-function-execute-grants.test.js';
 
 const API_ROOT = new URL('.', import.meta.url).pathname;
 const MIGRATIONS_ROOT = new URL('../supabase/migrations/', import.meta.url).pathname;
