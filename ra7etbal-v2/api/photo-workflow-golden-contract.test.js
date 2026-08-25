@@ -195,9 +195,14 @@ describe('Golden contract [B/C/D/E/K] — task-confirm.js quality-review orchest
   beforeEach(async () => {
     downloadImageAsBase64Mock = vi.fn();
     runQualityReviewMock = vi.fn();
+    // Christopher substitution / alternative-selection defect fix: mocked
+    // (not left real) so it does not consume a slot in this file's raw
+    // `fetch` mock queues below — same reasoning as the other two mocks.
+    const fetchHouseholdRulesTextMock = vi.fn().mockResolvedValue(null);
     vi.doMock('./_quality-review.js', () => ({
       downloadImageAsBase64: downloadImageAsBase64Mock,
       runQualityReview: runQualityReviewMock,
+      fetchHouseholdRulesText: fetchHouseholdRulesTextMock,
     }));
     ({ default: handler } = await import('./task-confirm.js'));
   });
