@@ -84,7 +84,8 @@
         "migrations": [
           "supabase/migrations/20260812_durable_person_id_communication_history.sql",
           "supabase/migrations/20260812_task_review_owner_decision_person_id.sql",
-          "supabase/migrations/20260812_worker_notification_person_id.sql"
+          "supabase/migrations/20260812_worker_notification_person_id.sql",
+          "supabase/migrations/20260825170000_reserve_functions_service_role_only.sql"
         ],
         "data_repairs": ["supabase/data-repairs/20260812_worker_notification_person_id_backfill.sql"]
       },
@@ -105,6 +106,8 @@
       "db_contract_tests": [
         "supabase/migrations/verification/carson_tier1_bootstrap_extension.sql",
         "supabase/migrations/verification/carson_tier1_db_contracts_verification.sql",
+        "supabase/migrations/verification/reserve_functions_service_role_only_verification.sql",
+        "supabase/migrations/verification/reserve_functions_service_role_only_post_rollback_verification.sql",
         "supabase/migrations/verification/00_bootstrap_minimal_auth.sql",
         "supabase/migrations/verification/01_preexisting_data_fixture.sql",
         "supabase/migrations/verification/02_lifecycle_verification.sql",
