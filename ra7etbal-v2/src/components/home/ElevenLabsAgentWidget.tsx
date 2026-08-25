@@ -350,7 +350,7 @@ async function describeImageForCarson(file: File): Promise<string | null> {
     }
     const data = await res.json();
     const description: string | undefined = data?.content?.[0]?.text?.trim();
-    console.log("[img-diag] vision description:", description ?? "(null/empty)");
+    console.log("[img-diag] vision description received:", Boolean(description));
     return description || null;
   } catch (err) {
     console.error("[img-diag] describeImageForCarson threw:", err);

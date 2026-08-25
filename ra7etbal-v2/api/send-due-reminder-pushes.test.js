@@ -36,6 +36,21 @@ afterEach(() => {
 });
 
 describe('send-due-reminder-pushes authorization diagnostics', () => {
+  it('rejects test mode without the scheduler secret before any data access', async () => {
+    vi.stubEnv('CRON_SECRET', 'cron-secret');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = createRes();
+    await handler({ method: 'POST', query: { test: '1' }, headers: {}, url: '?test=1' }, res);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({ success: false, error: 'Unauthorized' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.deliverOwnerReminderWhatsapp).not.toHaveBeenCalled();
+    expect(mocks.sendNotification).not.toHaveBeenCalled();
+  });
+
   it('redacts unauthorized caller auth while preserving scheduler-identifying headers', () => {
     expect(
       getUnauthorizedCallerDiagnostic({
@@ -134,7 +149,12 @@ describe('send-due-reminder-pushes authorization diagnostics', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const res = createRes();
-    await handler({ method: 'POST', query: { test: '1' }, headers: {}, url: '?test=1' }, res);
+    await handler({
+      method: 'POST',
+      query: { test: '1' },
+      headers: { authorization: 'Bearer cron-secret' },
+      url: '?test=1',
+    }, res);
 
     expect(mocks.deliverOwnerReminderWhatsapp).toHaveBeenCalledTimes(1);
     expect(SAFETY_NET_TASK_SELECT.split(',')).toContain('type');

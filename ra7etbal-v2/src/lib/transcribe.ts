@@ -17,10 +17,15 @@ export async function transcribeAudio(blob: Blob): Promise<string> {
   form.append("file", blob, filename);
   form.append("model", "whisper-1");
 
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Not signed in.");
+
   let res: Response;
   try {
     res = await fetch("/api/transcribe", {
       method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
       body: form,
     });
   } catch (err) {
@@ -57,3 +62,4 @@ function filenameForBlob(blob: Blob): string {
   // most-common output and a common desktop fallback.
   return "voice.mp4";
 }
+import { supabase } from "./supabase";

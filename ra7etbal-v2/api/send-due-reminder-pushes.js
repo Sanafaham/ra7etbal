@@ -14,7 +14,9 @@ export default async function handler(req, res) {
 
   const testMode = isTestMode(req);
 
-  if (!testMode && !isAuthorized(req)) {
+  // Test mode is diagnostic output, not an authorization mechanism. Keep it
+  // behind the same scheduler secret as the production execution path.
+  if (!isAuthorized(req)) {
     console.warn('[safety-net] unauthorized scheduled caller', getUnauthorizedCallerDiagnostic(req));
     return res.status(401).json({ success: false, error: 'Unauthorized' });
   }
