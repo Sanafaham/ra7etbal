@@ -7,6 +7,7 @@ import { handleInboundOwnerMessage } from './_owner-whatsapp-routing.js';
 import { correlateReply, handleInboundPersonalContactReply } from './_personal-contact-reply.js';
 import { persistInboundStaffImage } from './_inbound-staff-evidence.js';
 import { persistWhatsappInboundEvidence } from './_whatsapp-inbound-observability.js';
+import { isLikelyPreActionSubstitutionRequest } from './_staff-substitution-intent.js';
 
 // One text-only Carson turn (WebSocket round trip to ElevenLabs) can run
 // longer than the platform default. Matches the maxDuration already used by
@@ -205,9 +206,16 @@ export async function handleInboundStaffMessage(
   if (!person.whatsapp_opted_in || !person.whatsapp_consent_at || !person.whatsapp_consent_method) {
     return { handled: false, reason: 'not_opted_in' };
   }
+  // A plain-text pre-action substitution ask ("Can I use mushroom instead?")
+  // has no media and typically no WhatsApp quoted-reply, so without this it
+  // would never reach the recent-pending-task fallback below and
+  // staff_messages.task_id would land NULL — the task-linkage gap traced in
+  // the Christopher substitution defect follow-up. Deliberately narrow, not
+  // "any text": see _staff-substitution-intent.js for why.
+  const textLooksLikeSubstitutionRequest = !msg.mediaId && isLikelyPreActionSubstitutionRequest(msg.body);
   let taskMatch = await resolveInboundStaffTask({
     supabaseUrl, serviceKey, userId, person, msg,
-    allowRecentDeliveryFallback: Boolean(msg.mediaId),
+    allowRecentDeliveryFallback: Boolean(msg.mediaId) || textLooksLikeSubstitutionRequest,
     allowRecentEvidenceContext: !msg.mediaId,
   });
   const taskId = taskMatch.task?.id || null;

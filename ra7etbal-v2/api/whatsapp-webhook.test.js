@@ -1680,6 +1680,300 @@ describe.skip('POST /api/whatsapp-webhook — Carson bridge PoC dispatch (read-o
   });
 });
 
+// staff_messages.task_id linkage gap, follow-up to the Christopher
+// substitution / alternative-selection defect (PR #334): a plain-text
+// pre-action substitution ask has no media and typically no WhatsApp
+// quoted-reply, so it never reached resolveInboundStaffTask's
+// recent-pending-task delivery fallback (previously gated to media only)
+// and staff_messages.task_id landed NULL in production. Fixed by widening
+// that fallback's eligibility to plain text that deterministically looks
+// like a pre-action substitution/permission request (see
+// _staff-substitution-intent.js) — never to arbitrary text.
+describe('task-linked pre-action substitution_request — recent-delivery fallback widened to text', () => {
+  it('links a plain-text pre-action substitution ask to the one matching recent pending task', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }])) // whatsapp_health_state
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+        whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+      }])) // people
+      .mockResolvedValueOnce(jsonResponse([])) // recent photo-evidence staff_messages (none)
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-pizza' }])) // recent messages delivered to Christopher
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'task-pizza', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Make pepperoni pizza',
+      }])) // loadValidatedStaffTask
+      .mockResolvedValueOnce(jsonResponse([])) // existing staff_messages (external_message_id) check
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-sub', claimed: true, claim_token: 'claim-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-sub' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.sub-request', body: 'We are out of pepperoni. Can I make mushroom instead?',
+        phoneNumberId: 'meta-phone-id', contextMessageId: null, timestamp: '1700000000', mediaId: null,
+      },
+    });
+
+    expect(result).toEqual({ handled: true, reason: 'delivered' });
+    expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: 'task-pizza' }),
+      expect.any(Object),
+    );
+    const deliveryLookupCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/messages?') && String(url).includes('recipient=eq.Christopher'));
+    expect(deliveryLookupCall).toBeTruthy();
+  });
+
+  it('never guesses when multiple pending tasks are plausible — task_ambiguous, no linkage', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+        whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([])) // recent photo-evidence (none)
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-a' }, { task_id: 'task-b' }])) // two recent deliveries
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-a', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy pepperoni pizza' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-b', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy TEREA Silver' }]))
+      .mockResolvedValueOnce(jsonResponse([])) // existing staff_messages check
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-ambiguous-sub', claimed: true, claim_token: 'claim-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-ambiguous-sub' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.sub-ambiguous', body: 'Can I substitute something instead?',
+        phoneNumberId: 'meta-phone-id', contextMessageId: null, timestamp: '1700000000', mediaId: null,
+      },
+    });
+
+    expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: null }),
+      expect.any(Object),
+    );
+  });
+
+  it('never fabricates a linkage when no pending task matches', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+        whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([])) // recent photo-evidence (none)
+      .mockResolvedValueOnce(jsonResponse([])) // no recent deliveries at all
+      .mockResolvedValueOnce(jsonResponse([])) // existing staff_messages check
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-no-task', claimed: true, claim_token: 'claim-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-no-task' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.sub-no-task', body: 'Can I use something else instead?',
+        phoneNumberId: 'meta-phone-id', contextMessageId: null, timestamp: '1700000000', mediaId: null,
+      },
+    });
+
+    expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: null }),
+      expect.any(Object),
+    );
+  });
+
+  it('never links a task assigned to a different staff member, even if it is the only recent delivery match', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+        whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-not-mine' }]))
+      // loadValidatedStaffTask's own query is scoped to this user_id, but the
+      // task itself is assigned to a different person — assigned_to mismatch
+      // must reject it exactly like the existing photo-fallback path does.
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-not-mine', user_id: 'user-1', status: 'pending', assigned_to: 'Grace', description: 'Buy flowers' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-wrong-assignee', claimed: true, claim_token: 'claim-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-wrong-assignee' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.sub-wrong-assignee', body: 'Should I use mushroom instead?',
+        phoneNumberId: 'meta-phone-id', contextMessageId: null, timestamp: '1700000000', mediaId: null,
+      },
+    });
+
+    expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: null }),
+      expect.any(Object),
+    );
+  });
+
+  it('never links a task belonging to a different owner — a cross-tenant task id cannot come back from the scoped query', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+        whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-other-owner' }]))
+      // The tasks lookup is scoped by both id AND user_id=eq.<this owner>, so
+      // a task actually owned by a different user_id simply never matches —
+      // simulated here as the DB correctly returning zero rows.
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-cross-tenant', claimed: true, claim_token: 'claim-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-cross-tenant' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.sub-cross-tenant', body: 'Can I substitute this instead?',
+        phoneNumberId: 'meta-phone-id', contextMessageId: null, timestamp: '1700000000', mediaId: null,
+      },
+    });
+
+    expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: null }),
+      expect.any(Object),
+    );
+    const tasksLookupCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/rest/v1/tasks?') && String(url).includes('id=eq.task-other-owner'));
+    expect(String(tasksLookupCall[0])).toContain('user_id=eq.user-1');
+  });
+
+  it('THE MAIN REVIEW CONDITION — an ordinary unrelated staff message never gets linked merely because a recent pending task exists', async () => {
+    stubBaseEnv();
+    // Only two fetches should ever happen: whatsapp_health_state and people.
+    // isLikelyPreActionSubstitutionRequest must reject this text before
+    // resolveInboundStaffTask ever reaches the recent-delivery fallback, so
+    // no /rest/v1/messages?recipient=eq... query (the fallback's own lookup)
+    // should fire at all — proving this is a gate, not a filter applied
+    // after an unsafe lookup already ran.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+        whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([])) // recent photo-evidence check (still runs; text messages always get this)
+      .mockResolvedValueOnce(jsonResponse([])) // existing staff_messages (external_message_id) check
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-ordinary', claimed: true, claim_token: 'claim-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-ordinary' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    for (const body of ['What time should I pick up the kids?', 'Thanks, will do!', 'Good morning', 'Can I leave early today?']) {
+      fetchMock.mockClear();
+      staffEngineMocks.processStaffMessage.mockClear();
+      fetchMock
+        .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+        .mockResolvedValueOnce(jsonResponse([{
+          id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+          whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+        }]))
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse([]))
+        .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-ordinary', claimed: true, claim_token: 'claim-1' }]))
+        .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-ordinary' }]));
+
+      await handleInboundStaffMessage({
+        supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+        msg: {
+          from: '971501234567', messageId: `wamid.ordinary-${body.length}`, body,
+          phoneNumberId: 'meta-phone-id', contextMessageId: null, timestamp: '1700000000', mediaId: null,
+        },
+      });
+
+      expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: null }),
+        expect.any(Object),
+      );
+      // No recent-delivery fallback lookup should ever have fired for this text.
+      expect(fetchMock.mock.calls.some(([url]) =>
+        String(url).includes('/rest/v1/messages?') && String(url).includes('recipient=eq.Christopher'),
+      )).toBe(false);
+    }
+  });
+
+  it('the existing quoted-reply context path takes priority and is unaffected by the new text eligibility gate', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+        whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-quoted' }])) // messages context lookup (whatsapp_message_id=eq...)
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-quoted', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy pepperoni pizza' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-quoted', claimed: true, claim_token: 'claim-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-quoted' }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.sub-quoted', body: 'Can I use mushroom instead?',
+        phoneNumberId: 'meta-phone-id', contextMessageId: 'wamid.owner-task', timestamp: '1700000000', mediaId: null,
+      },
+    });
+
+    expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: 'task-quoted' }),
+      expect.any(Object),
+    );
+    // Quoted-reply resolution never touches the recent-delivery fallback lookup.
+    expect(fetchMock.mock.calls.some(([url]) =>
+      String(url).includes('/rest/v1/messages?') && String(url).includes('recipient=eq.Christopher'),
+    )).toBe(false);
+  });
+
+  it('the existing photo/media fallback is unaffected — still gated on mediaId, not on this text gate', async () => {
+    stubBaseEnv();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse([{ user_id: 'user-1' }]))
+      .mockResolvedValueOnce(jsonResponse([{
+        id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+        whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+      }]))
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-photo' }])) // recent delivery fallback (media path, unchanged)
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-photo', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy pepperoni pizza', image_path: null, attachment_count: 0, quality_review_status: null }]))
+      .mockResolvedValueOnce(jsonResponse([])) // existing staff_messages (external_message_id) check
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-photo-unaffected', is_new: true, processing_status: 'claimed' }])) // claim_staff_message RPC
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo-unaffected' }])) // complete_staff_message RPC
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-photo-unaffected', claimed: true, claim_token: 'claim-1' }])) // claim_staff_response_delivery
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo-unaffected' }])); // complete_staff_response_delivery
+    vi.stubGlobal('fetch', fetchMock);
+    const persistInboundStaffImageImpl = vi.fn(async () => ({ ok: true, storagePath: 'task-images/user-1/task-photo/proof/1.jpg' }));
+
+    await handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.photo-unaffected', body: '', phoneNumberId: 'meta-phone-id',
+        contextMessageId: null, timestamp: '1700000000', mediaId: 'media-1', mediaType: 'image', mimeType: 'image/jpeg',
+      },
+    }, { persistInboundStaffImageImpl });
+
+    expect(persistInboundStaffImageImpl).toHaveBeenCalledOnce();
+    expect(taskConfirmMocks.handleTaskConfirmationPost).toHaveBeenCalledWith(
+      expect.objectContaining({ body: expect.objectContaining({ taskId: 'task-photo' }) }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+  });
+});
+
 describe('Personal Contact Reply Relay — dispatch isolation from staff paths', () => {
   it('dispatches a family sender to the relay handler and never touches any staff-only path', async () => {
     stubBaseEnv();
