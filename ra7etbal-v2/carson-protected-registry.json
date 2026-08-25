@@ -654,7 +654,8 @@
         "src/lib/carson-direct-tool-override.ts",
         "src/lib/ops-intelligence.ts",
         "src/lib/direct-messages.ts",
-        "src/lib/delegations.ts"
+        "src/lib/delegations.ts",
+        "src/lib/carson-transcript-turn-state.ts"
       ],
       "db": {
         "tables": ["carson_pending_operations", "tasks", "messages", "whatsapp_deliveries"],
@@ -667,7 +668,9 @@
         "src/components/home/ElevenLabsAgentWidget.hosting-plan-integrity.test.ts",
         "src/components/home/ElevenLabsAgentWidget.delegation-duplicate-guard.test.ts",
         "src/components/home/ElevenLabsAgentWidget.direct-message-parity.test.ts",
-        "src/components/home/ElevenLabsAgentWidget.direct-whatsapp-duplicate.test.ts"
+        "src/components/home/ElevenLabsAgentWidget.direct-whatsapp-duplicate.test.ts",
+        "src/lib/carson-transcript-turn-state.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.transcript-clear-on-new-turn.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
