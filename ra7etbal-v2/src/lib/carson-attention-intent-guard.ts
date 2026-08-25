@@ -39,9 +39,21 @@
  * ever used when one was already available for this exact turn (kicked off
  * the instant the matching user utterance arrived, or captured directly
  * from the tool's own return value) and resolved before the agent replied
- * — this module never blocks or delays the agent's reply waiting for one;
- * with no grounded result available, the model's reply passes through
- * unchanged (safe failure, never fabricates a substitute).
+ * — this module never blocks or delays the agent's reply waiting for one.
+ *
+ * 2026-08-25 production investigation, third incident: with no grounded
+ * result available, this module used to pass the model's reply through
+ * unchanged ("safe failure, never fabricates a substitute"). That was
+ * itself the hole — a production test showed the model, given no evidence,
+ * freely composing its own operational classification ("three overdue
+ * tasks... need your immediate attention", then contradictorily "waiting
+ * on confirmation..." on the very next turn) for records that were neither
+ * overdue nor waiting per the actual classifier. "No evidence" must mean
+ * "no factual claim," not "whatever the model says instead." With no
+ * grounded result available, this module now returns a fixed, honest,
+ * policy-compliant fallback (ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE) —
+ * reusing carson-operations-center.ts's own fetchAttentionSummary()
+ * total-failure phrasing for consistency — never the model's prose.
  */
 
 // Matches the exact trigger phrases ATTENTION SUMMARY / DAILY BRIEF AND
@@ -64,6 +76,19 @@ export function matchesAttentionIntent(utterance: string): boolean {
 export function matchesAttentionFollowUp(utterance: string): boolean {
   return ATTENTION_FOLLOWUP_PATTERN.test(utterance);
 }
+
+/**
+ * Returned in place of the model's own reply when attention intent was
+ * detected but no grounded evidence was available for this turn. Reuses
+ * fetchAttentionSummary()'s own total-failure phrasing (carson-operations-center.ts)
+ * for consistency — this is the same honest "couldn't check" contract the
+ * tool itself already uses, not new copy invented here. Contains no
+ * process-narration language (CARSON_STATUS_POLICY already bans "One
+ * moment", "Let me", "checking", etc. — this string was written to comply,
+ * not merely to avoid the literal banned words).
+ */
+export const ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE =
+  "I couldn't check what needs your attention right now — the live check didn't complete.";
 
 export interface ResolveAttentionGuardedMessageInput {
   /** The agent's own separately-generated reply for this turn. */
@@ -94,7 +119,9 @@ export interface ResolveAttentionGuardedMessageInput {
  * reports the tool's evidence. Whenever attention intent was detected and
  * live grounded evidence exists for this turn, that evidence wins
  * unconditionally — the model gets no opportunity to add, omit, or reword a
- * factual claim on top of it.
+ * factual claim on top of it. When no grounded evidence exists yet, returns
+ * ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE — never agentMessage — so "no
+ * evidence" can never become "whatever the model composed instead."
  */
 export function resolveAttentionGuardedMessage({
   agentMessage,
@@ -102,6 +129,6 @@ export function resolveAttentionGuardedMessage({
   groundedResult,
 }: ResolveAttentionGuardedMessageInput): string {
   if (!attentionIntentDetected) return agentMessage;
-  if (!groundedResult) return agentMessage;
+  if (!groundedResult) return ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE;
   return groundedResult;
 }

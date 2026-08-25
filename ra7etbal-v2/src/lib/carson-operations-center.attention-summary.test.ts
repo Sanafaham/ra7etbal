@@ -237,6 +237,64 @@ describe("fetchAttentionEvidence — partial retrieval", () => {
   });
 });
 
+describe("fetchAttentionEvidence — 2026-08-25 latency/timeout hardening", () => {
+  it("degrades a source that never resolves to that source's own partial-failure handling instead of hanging indefinitely — the confirmed LLM Cascade Error contributing risk (no timeout existed anywhere in this chain before this fix)", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.listTasks.mockImplementation(() => new Promise(() => {})); // never resolves
+      mocks.listOpenStaffEscalationsForNeedsYou.mockResolvedValue([]);
+      mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue([]);
+      const evidencePromise = fetchAttentionEvidence();
+      await vi.advanceTimersByTimeAsync(8_001);
+      const evidence = await evidencePromise;
+      expect(evidence.ok).toBe(true);
+      expect(evidence.completeness).toBe("partial");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("runs the three independent, fallible sources in parallel, not sequentially — each is invoked before any of them resolves", async () => {
+    const callOrder: string[] = [];
+    let resolveTasks!: (v: unknown[]) => void;
+    let resolveNeedsYou!: (v: unknown[]) => void;
+    let resolveCaptures!: (v: unknown[]) => void;
+    mocks.listTasks.mockImplementation(() => {
+      callOrder.push("tasks-called");
+      return new Promise((resolve) => {
+        resolveTasks = resolve;
+      });
+    });
+    mocks.listOpenStaffEscalationsForNeedsYou.mockImplementation(() => {
+      callOrder.push("needsYou-called");
+      return new Promise((resolve) => {
+        resolveNeedsYou = resolve;
+      });
+    });
+    mocks.fetchUnresolvedCaptureCandidates.mockImplementation(() => {
+      callOrder.push("captures-called");
+      return new Promise((resolve) => {
+        resolveCaptures = resolve;
+      });
+    });
+
+    const evidencePromise = fetchAttentionEvidence();
+    // Flush microtasks without resolving any source — if the implementation
+    // were still sequential, only "tasks-called" would appear here, since
+    // the second call wouldn't fire until the first await settles.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(callOrder).toEqual(["tasks-called", "needsYou-called", "captures-called"]);
+
+    resolveTasks([]);
+    resolveNeedsYou([]);
+    resolveCaptures([]);
+    const evidence = await evidencePromise;
+    expect(evidence.ok).toBe(true);
+    expect(evidence.completeness).toBe("full");
+  });
+});
+
 describe("fetchAttentionEvidence — unresolved Notes/To-dos (Second Brain Phase 1)", () => {
   it("includes classifier-selected captures in evidence and the rendered response", async () => {
     const candidates = [{ id: "n1", kind: "note" as const, text: "Check on Nimala's wedding invitation", ageDays: 60, neverSurfaced: true, actionable: true }];
