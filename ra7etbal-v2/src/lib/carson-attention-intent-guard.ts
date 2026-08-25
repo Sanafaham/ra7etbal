@@ -6,31 +6,42 @@
  * get_items_needing_attention). Whether the ElevenLabs model actually calls
  * that tool for a given turn remains model/prompt-controlled — this module
  * does not force the call. What it does: detect, from the raw transcript
- * alone, when that question class was asked and the tool did NOT run, and
- * (when a fresh get_items_needing_attention-equivalent result is already
- * available) substitute the agent's own separately-generated, ungrounded
- * reply with that live, evidence-only result before it is displayed —
- * exactly the same "prefer the tool's own result over a contradictory
- * agent-generated message" pattern already established and shipped in
- * carson-direct-tool-override.ts for other tools.
+ * alone, when that question class was asked, and — whenever a fresh
+ * get_items_needing_attention-equivalent result is available for this turn
+ * — make that live, evidence-only result AUTHORITATIVE, replacing the
+ * agent's own separately-generated reply outright. This is the same "prefer
+ * the tool's own result over a contradictory agent-generated message"
+ * pattern already shipped in carson-direct-tool-override.ts for other
+ * tools, but stronger: it applies regardless of whether the model reports
+ * having called the tool.
  *
- * Root cause this exists for (2026-08-25 production investigation): a
- * separate, code-injected instruction set (CARSON_STATUS_POLICY) and the
- * ElevenLabs dashboard prompt can each independently answer this question
- * class from injected context instead of the tool, and the two prompt
- * surfaces are not guaranteed to stay in sync. This guard is a second,
- * independent line of defense that does not depend on either prompt text
- * being correct.
+ * Root cause this exists for (2026-08-25 production investigation, two
+ * incidents): (1) a separate, code-injected instruction set
+ * (CARSON_STATUS_POLICY) and the ElevenLabs dashboard prompt can each
+ * independently answer this question class from injected context instead
+ * of the tool; (2) even when the tool DID run, the model's own composed
+ * reply is a separate generation that can still blend in unrelated,
+ * ungrounded content (e.g. a leftover CARSON_STATUS_POLICY worked example)
+ * alongside the tool's real evidence — the original version of this guard
+ * only substituted when the tool had NOT run, unconditionally trusting the
+ * model's reply whenever it had, which left this second path fully open.
+ * Grounded evidence is now authoritative whenever it exists, independent of
+ * that flag — the model gets no opportunity to add, omit, or reword a
+ * factual claim once real evidence has been retrieved for this question
+ * class.
  *
  * Known limitation, stated plainly rather than silently accepted: for
  * voice, this can only correct the persisted/displayed transcript, not
  * audio ElevenLabs has already spoken by the time onMessage delivers the
  * agent's turn — the same limitation carson-direct-tool-override.ts already
  * has for its own corrections. For typed, this is a complete fix (typed has
- * no already-spoken-audio problem). A live re-fetch is only ever used when
- * one was already in flight for this exact turn (kicked off the instant the
- * matching user utterance arrived) and resolved before the agent replied —
- * this module never blocks or delays the agent's reply waiting for one.
+ * no already-spoken-audio problem). A live re-fetch/tool result is only
+ * ever used when one was already available for this exact turn (kicked off
+ * the instant the matching user utterance arrived, or captured directly
+ * from the tool's own return value) and resolved before the agent replied
+ * — this module never blocks or delays the agent's reply waiting for one;
+ * with no grounded result available, the model's reply passes through
+ * unchanged (safe failure, never fabricates a substitute).
  */
 
 // Matches the exact trigger phrases ATTENTION SUMMARY / DAILY BRIEF AND
@@ -63,13 +74,12 @@ export interface ResolveAttentionGuardedMessageInput {
    * answer.
    */
   attentionIntentDetected: boolean;
-  /** True when get_items_needing_attention actually ran for this turn. */
-  attentionToolRan: boolean;
   /**
    * A fresh get_items_needing_attention-equivalent result for this exact
-   * turn, if one finished resolving before the agent replied. Null when
-   * none is available yet — this module never fabricates one and never
-   * delays the reply to wait for it.
+   * turn — from the tool's own real return value if it ran, or from the
+   * live prefetch kicked off the instant the matching utterance arrived,
+   * whichever resolved. Null when neither is available yet — this module
+   * never fabricates one and never delays the reply to wait for one.
    */
   groundedResult: string | null;
 }
@@ -78,17 +88,20 @@ export interface ResolveAttentionGuardedMessageInput {
  * Returns the message that should actually be displayed/persisted for this
  * turn. Only ever replaces agentMessage with groundedResult — never
  * modifies, truncates, or rephrases either string.
+ *
+ * Deliberately does NOT take whether the tool "ran" into account: a model
+ * self-report that it called the tool is not proof its reply faithfully
+ * reports the tool's evidence. Whenever attention intent was detected and
+ * live grounded evidence exists for this turn, that evidence wins
+ * unconditionally — the model gets no opportunity to add, omit, or reword a
+ * factual claim on top of it.
  */
 export function resolveAttentionGuardedMessage({
   agentMessage,
   attentionIntentDetected,
-  attentionToolRan,
   groundedResult,
 }: ResolveAttentionGuardedMessageInput): string {
   if (!attentionIntentDetected) return agentMessage;
-  // The tool ran for this turn — trust the model's reply; it had the real
-  // evidence available when it composed this message.
-  if (attentionToolRan) return agentMessage;
   if (!groundedResult) return agentMessage;
   return groundedResult;
 }

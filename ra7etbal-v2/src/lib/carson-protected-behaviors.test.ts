@@ -507,14 +507,17 @@ describe("Acknowledgement wording — communication reroute keeps message-style,
 
   it("CARSON_VOICE_SESSION_GUARD distinguishes plain-message wording from real-delegation wording for Talk to Carson", async () => {
     const { CARSON_VOICE_SESSION_GUARD } = await import("./carson-status-policy");
-    // Real delegation phrasing preserved verbatim (must not regress).
+    // Real delegation phrasing preserved (2026-08-25: genericized to a
+    // [Name] placeholder — see carson-attention-intent-guard.ts's sibling
+    // fix — the distinction being tested is task-style vs message-style
+    // wording, not the literal named example).
     expect(CARSON_VOICE_SESSION_GUARD).toContain(
-      "Christopher has it. I'll follow up if he doesn't confirm.",
+      "[Name] has it. I'll follow up if they don't confirm.",
     );
     // New plain-message phrasing, and an explicit instruction not to use
     // task-style wording for it.
     expect(CARSON_VOICE_SESSION_GUARD).toContain(
-      "I sent Christopher the message.",
+      "I sent [Name] the message.",
     );
     expect(CARSON_VOICE_SESSION_GUARD).toContain('Never say "[name] has it" for a plain message');
   });
