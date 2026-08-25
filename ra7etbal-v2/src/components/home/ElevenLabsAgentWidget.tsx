@@ -958,6 +958,20 @@ export default function ElevenLabsAgentWidget({
   }, [audioDiagnosticsEnabled]);
   /** Latest finalized spoken response from Carson. Cleared at session start, persists after disconnect. */
   const [lastCarsonMessage, setLastCarsonMessage] = useState<string | null>(null);
+  // 2026-08-25: ElevenLabs sends the "audio" event (which drives mode:
+  // "speaking") before the "agent_response" event (which drives onMessage
+  // -> setLastCarsonMessage) for every voice turn — confirmed from official
+  // ElevenLabs docs and the installed @elevenlabs/client SDK source
+  // (VoiceConversation.js's handleAudio calls updateMode("speaking")
+  // directly, independent of agent_response). Without this guard, the
+  // bubble kept showing the PREVIOUS turn's text while Carson was audibly
+  // speaking a new one. True whenever this turn's stale-transcript clear
+  // has already happened, so a turn with multiple speaking-mode
+  // transitions (multi-sentence TTS — same pattern already documented at
+  // turnLatencyLoggedForEventIdRef's call site) clears once, not
+  // repeatedly. Reset alongside toolRanForCurrentTranscriptRef at every one
+  // of its reset sites (new turn, teardown, disconnect, error).
+  const carsonTranscriptClearedForTurnRef = useRef(false);
   /** Latest finalized user transcript, shown briefly for local voice diagnostics only. */
   const [lastUserTranscript, setLastUserTranscript] = useState<string | null>(null);
   const userTranscriptTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -5468,6 +5482,7 @@ export default function ElevenLabsAgentWidget({
       setTurnPhase("idle");
       turnLatencyLoggedForEventIdRef.current = null;
       toolRanForCurrentTranscriptRef.current = false;
+      carsonTranscriptClearedForTurnRef.current = false;
       attentionIntentForCurrentTranscriptRef.current = false;
       attentionToolRanForCurrentTranscriptRef.current = false;
       attentionGuardResultRef.current = null;
@@ -6348,6 +6363,17 @@ export default function ElevenLabsAgentWidget({
           };
           recordCarsonDiagnostic("carson-audio-session", modeInfo);
           if (m === "speaking") {
+            // Clear the stale previous-turn transcript the instant this
+            // turn's audio starts — once per turn only (see
+            // carsonTranscriptClearedForTurnRef's declaration comment for
+            // why). Never replaced with placeholder/narration text: the
+            // real transcript arrives through the existing, unmodified
+            // onMessage -> setLastCarsonMessage(finalDisplayMessage) path
+            // once the agent_response event actually arrives.
+            if (!carsonTranscriptClearedForTurnRef.current) {
+              carsonTranscriptClearedForTurnRef.current = true;
+              setLastCarsonMessage(null);
+            }
             const active = activeExecuteLatencyRef.current;
             if (active?.toolCompletedPerf != null) {
               active.trace.first_response_at = new Date().toISOString();
@@ -6522,6 +6548,7 @@ export default function ElevenLabsAgentWidget({
             // stale phase/timer from a previous turn is cleared first.
             turnLatencyLoggedForEventIdRef.current = null;
             toolRanForCurrentTranscriptRef.current = false;
+            carsonTranscriptClearedForTurnRef.current = false;
             attentionToolRanForCurrentTranscriptRef.current = false;
             attentionGuardResultRef.current = null;
             clearTurnPhaseThinkingTimeout();
@@ -6825,6 +6852,7 @@ export default function ElevenLabsAgentWidget({
           lastUserTranscriptTimingRef.current = null;
           turnLatencyLoggedForEventIdRef.current = null;
           toolRanForCurrentTranscriptRef.current = false;
+          carsonTranscriptClearedForTurnRef.current = false;
           attentionIntentForCurrentTranscriptRef.current = false;
           attentionToolRanForCurrentTranscriptRef.current = false;
           attentionGuardResultRef.current = null;
@@ -6887,6 +6915,7 @@ export default function ElevenLabsAgentWidget({
           lastUserTranscriptTimingRef.current = null;
           turnLatencyLoggedForEventIdRef.current = null;
           toolRanForCurrentTranscriptRef.current = false;
+          carsonTranscriptClearedForTurnRef.current = false;
           attentionIntentForCurrentTranscriptRef.current = false;
           attentionToolRanForCurrentTranscriptRef.current = false;
           attentionGuardResultRef.current = null;
