@@ -1974,6 +1974,204 @@ describe('task-linked pre-action substitution_request — recent-delivery fallba
   });
 });
 
+// Substitute-approval production failure (2026-08-26, real controlled test:
+// Christopher, requested TEREA Silver, found only TEREA Turquoise, asked
+// "Is it ok?" with a photo BEFORE purchasing). Root cause: any media-
+// bearing WhatsApp message was routed unconditionally into the
+// completion-proof pipeline (processInboundStaffEvidence), so a genuine
+// pre-action substitution proposal illustrated with a photo could never
+// reach the existing substitution_request / owner-escalation machinery.
+// Fixed by gating that routing on the caption's deterministic intent
+// (isLikelyPreActionSubstitutionRequest), not on media presence alone.
+describe('substitute-approval production failure — pre-action photo proposal vs. completion evidence', () => {
+  function mockPersonAndHealth() {
+    return [
+      jsonResponse([{ user_id: 'user-1' }]), // whatsapp_health_state
+      jsonResponse([{
+        id: 'person-1', name: 'Christopher', phone: '+971501234567', is_family: false,
+        whatsapp_opted_in: true, whatsapp_consent_at: '2026-07-01T00:00:00Z', whatsapp_consent_method: 'owner_confirmed',
+      }]), // people
+    ];
+  }
+
+  for (const [label, caption] of [
+    ['the real production caption', 'I found only Turquoise. Is it ok?'],
+    ['"Can I get this one instead?" phrasing', 'Can I get this one instead?'],
+    ['"Should I buy this instead?" phrasing', 'Should I buy this instead?'],
+  ]) {
+    it(`routes photo + ${label} to the owner-escalation path, never the completion-proof pipeline — original delegation stays unresolved`, async () => {
+      stubBaseEnv();
+      const [health, people] = mockPersonAndHealth();
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(health)
+        .mockResolvedValueOnce(people)
+        .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-terea' }])) // recent delivery fallback (media always eligible)
+        .mockResolvedValueOnce(jsonResponse([{ id: 'task-terea', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy TEREA Silver' }]))
+        .mockResolvedValueOnce(jsonResponse([])) // existing staff_messages (external_message_id) check
+        .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-proposal', claimed: true, claim_token: 'claim-1' }])) // claim_staff_response_delivery
+        .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-proposal' }])); // complete_staff_response_delivery
+      vi.stubGlobal('fetch', fetchMock);
+      const persistInboundStaffImageImpl = vi.fn(async () => ({ ok: true, storagePath: 'task-images/user-1/task-terea/proposal/whatsapp-msg1.jpg' }));
+      const notifyOwnerOfEscalationImpl = vi.fn(async () => ({ attempted: true, status: 'sent', escalationId: 'esc-1', deepLinkToken: 'token-1' }));
+      staffEngineMocks.processStaffMessage.mockResolvedValueOnce({
+        ok: true, messageId: 'staff-message-proposal', response: "I'm checking with the owner. I'll come back to you.",
+        relatedTaskId: 'task-terea', userFacingState: 'Needs You', ownerAttentionRequired: true,
+        escalationReason: 'Christopher is asking whether to substitute TEREA Turquoise for TEREA Silver.',
+        nextActionOwner: 'owner',
+      });
+
+      const result = await handleInboundStaffMessage({
+        supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+        msg: {
+          from: '971501234567', messageId: 'wamid.proposal', body: caption, phoneNumberId: 'meta-phone-id',
+          contextMessageId: null, timestamp: '1700000000', mediaId: 'media-1', mediaType: 'image', mimeType: 'image/jpeg',
+        },
+      }, { persistInboundStaffImageImpl, notifyOwnerOfEscalationImpl });
+
+      expect(result).toEqual({ handled: true, reason: 'delivered' });
+      // Never the completion-proof pipeline: task-confirm.js's quality
+      // review must never see this — that pipeline would have concluded
+      // Christopher already purchased the wrong item.
+      expect(taskConfirmMocks.handleTaskConfirmationPost).not.toHaveBeenCalled();
+      // The text classifier (which recognizes the permission ask and
+      // escalates per its own HARD RULE) is the one that ran.
+      expect(staffEngineMocks.processStaffMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: 'task-terea', text: caption }),
+        expect.any(Object),
+      );
+      // Photo persisted under the distinct 'proposal' subfolder — never the
+      // 'proof' path a completion-review lookup would read.
+      expect(persistInboundStaffImageImpl).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: 'task-terea', kind: 'proposal' }),
+      );
+      // Owner decision created and the photo threaded through to it.
+      expect(notifyOwnerOfEscalationImpl).toHaveBeenCalledWith(
+        expect.objectContaining({
+          taskId: 'task-terea',
+          proposedPhotoPath: 'task-images/user-1/task-terea/proposal/whatsapp-msg1.jpg',
+        }),
+        expect.any(Object),
+      );
+    });
+  }
+
+  for (const [label, caption] of [
+    ['genuine completion evidence text', 'I bought Turquoise because Silver was unavailable.'],
+    ['an ordinary completion note', 'Done.'],
+    ['no caption at all (ambiguous media)', ''],
+  ]) {
+    it(`still routes photo + ${label} through the existing completion-proof pipeline unchanged`, async () => {
+      stubBaseEnv();
+      const [health, people] = mockPersonAndHealth();
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(health)
+        .mockResolvedValueOnce(people)
+        .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-terea' }])) // recent delivery fallback (media path, unchanged)
+        .mockResolvedValueOnce(jsonResponse([{ id: 'task-terea', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy TEREA Silver', image_path: null, attachment_count: 0, quality_review_status: null }]))
+        .mockResolvedValueOnce(jsonResponse([])) // existing staff_messages check
+        .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-completion', is_new: true, processing_status: 'claimed' }])) // claim_staff_message RPC
+        .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-completion' }])) // complete_staff_message RPC
+        .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-completion', claimed: true, claim_token: 'claim-2' }])) // claim_staff_response_delivery
+        .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-completion' }])); // complete_staff_response_delivery
+      vi.stubGlobal('fetch', fetchMock);
+      const persistInboundStaffImageImpl = vi.fn(async () => ({ ok: true, storagePath: 'task-images/user-1/task-terea/proof/whatsapp-msg2.jpg' }));
+      const notifyOwnerOfEscalationImpl = vi.fn();
+
+      await handleInboundStaffMessage({
+        supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+        msg: {
+          from: '971501234567', messageId: 'wamid.completion', body: caption, phoneNumberId: 'meta-phone-id',
+          contextMessageId: null, timestamp: '1700000000', mediaId: 'media-1', mediaType: 'image', mimeType: 'image/jpeg',
+        },
+      }, { persistInboundStaffImageImpl, notifyOwnerOfEscalationImpl, handleTaskConfirmationPostImpl: taskConfirmMocks.handleTaskConfirmationPost });
+
+      expect(taskConfirmMocks.handleTaskConfirmationPost).toHaveBeenCalled();
+      expect(staffEngineMocks.processStaffMessage).not.toHaveBeenCalled();
+      expect(notifyOwnerOfEscalationImpl).not.toHaveBeenCalled();
+      // Never routed through the 'proposal' kind for genuine completion
+      // evidence — this call is the unmodified existing completion-proof
+      // call site, which never passes `kind` (defaults to 'proof').
+      expect(persistInboundStaffImageImpl).toHaveBeenCalledWith(
+        expect.not.objectContaining({ kind: 'proposal' }),
+      );
+    });
+  }
+
+  it('never fabricates authorization or blocks the escalation when the task cannot be resolved (ambiguous) — photo simply is not attached', async () => {
+    stubBaseEnv();
+    const [health, people] = mockPersonAndHealth();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(health)
+      .mockResolvedValueOnce(people)
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-a' }, { task_id: 'task-b' }])) // two recent deliveries
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-a', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy TEREA Silver' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-b', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy flowers' }]))
+      .mockResolvedValueOnce(jsonResponse([])) // existing staff_messages check
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-ambiguous-proposal', claimed: true, claim_token: 'claim-4' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-ambiguous-proposal' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const persistInboundStaffImageImpl = vi.fn();
+    const notifyOwnerOfEscalationImpl = vi.fn(async () => ({ attempted: true, status: 'sent', escalationId: 'esc-2', deepLinkToken: 'token-2' }));
+    staffEngineMocks.processStaffMessage.mockResolvedValueOnce({
+      ok: true, messageId: 'staff-message-ambiguous-proposal', response: 'unclear which task',
+      relatedTaskId: null, userFacingState: 'Needs You', ownerAttentionRequired: true,
+      escalationReason: 'Christopher is asking whether to substitute an item.',
+    });
+
+    await handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.ambiguous-proposal', body: 'Can I get this instead?', phoneNumberId: 'meta-phone-id',
+        contextMessageId: null, timestamp: '1700000000', mediaId: 'media-1', mediaType: 'image', mimeType: 'image/jpeg',
+      },
+    }, { persistInboundStaffImageImpl, notifyOwnerOfEscalationImpl });
+
+    // No task resolved -> no photo persistence attempted at all (nowhere
+    // durable to attach it), but the escalation still proceeds text-only —
+    // never blocked, never fabricates a task association.
+    expect(persistInboundStaffImageImpl).not.toHaveBeenCalled();
+    expect(notifyOwnerOfEscalationImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: null, proposedPhotoPath: null }),
+      expect.any(Object),
+    );
+  });
+
+  it('proceeds with a text-only escalation when photo persistence fails — never blocks or fakes authorization', async () => {
+    stubBaseEnv();
+    const [health, people] = mockPersonAndHealth();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(health)
+      .mockResolvedValueOnce(people)
+      .mockResolvedValueOnce(jsonResponse([{ task_id: 'task-terea' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'task-terea', user_id: 'user-1', status: 'pending', assigned_to: 'Christopher', description: 'Buy TEREA Silver' }]))
+      .mockResolvedValueOnce(jsonResponse([]))
+      .mockResolvedValueOnce(jsonResponse([{ message_id: 'staff-message-photo-failed', claimed: true, claim_token: 'claim-3' }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'staff-message-photo-failed' }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const persistInboundStaffImageImpl = vi.fn(async () => ({ ok: false, reason: 'media_download_failed' }));
+    const notifyOwnerOfEscalationImpl = vi.fn(async () => ({ attempted: true, status: 'sent', escalationId: 'esc-3', deepLinkToken: 'token-3' }));
+    staffEngineMocks.processStaffMessage.mockResolvedValueOnce({
+      ok: true, messageId: 'staff-message-photo-failed', response: "I'm checking with the owner. I'll come back to you.",
+      relatedTaskId: 'task-terea', userFacingState: 'Needs You', ownerAttentionRequired: true,
+      escalationReason: 'Christopher is asking whether to substitute TEREA Turquoise for TEREA Silver.',
+    });
+
+    const result = await handleInboundStaffMessage({
+      supabaseUrl: 'https://x.supabase.co', serviceKey: 'service-key',
+      msg: {
+        from: '971501234567', messageId: 'wamid.photo-failed', body: 'I found only Turquoise. Is it ok?', phoneNumberId: 'meta-phone-id',
+        contextMessageId: null, timestamp: '1700000000', mediaId: 'media-1', mediaType: 'image', mimeType: 'image/jpeg',
+      },
+    }, { persistInboundStaffImageImpl, notifyOwnerOfEscalationImpl });
+
+    expect(result).toEqual({ handled: true, reason: 'delivered' });
+    expect(notifyOwnerOfEscalationImpl).toHaveBeenCalledWith(
+      expect.objectContaining({ taskId: 'task-terea', proposedPhotoPath: null }),
+      expect.any(Object),
+    );
+  });
+});
+
 describe('Personal Contact Reply Relay — dispatch isolation from staff paths', () => {
   it('dispatches a family sender to the relay handler and never touches any staff-only path', async () => {
     stubBaseEnv();

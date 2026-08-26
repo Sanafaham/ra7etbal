@@ -74,11 +74,12 @@
         "api/_staff-decision-message.js",
         "api/whatsapp-webhook.js:handleInboundStaffMessage / resolveInboundStaffTask"
       ],
-      "shared_dependencies": ["api/_whatsapp-delivery.js", "api/_quality-review.js", "api/_staff-substitution-intent.js"],
+      "shared_dependencies": ["api/_whatsapp-delivery.js", "api/_quality-review.js", "api/_staff-substitution-intent.js", "api/_inbound-staff-evidence.js"],
       "db": {
         "tables": ["staff_escalation_owner_decisions", "quality_substitute_decisions", "messages", "whatsapp_deliveries", "household_rules"],
         "rpcs": [
           "claim_task_escalation_owner_decision",
+          "claim_escalation_owner_decision",
           "reserve_custom_instruction",
           "reserve_rejected_alternative"
         ],
@@ -86,7 +87,8 @@
           "supabase/migrations/20260812_durable_person_id_communication_history.sql",
           "supabase/migrations/20260812_task_review_owner_decision_person_id.sql",
           "supabase/migrations/20260812_worker_notification_person_id.sql",
-          "supabase/migrations/20260825170000_reserve_functions_service_role_only.sql"
+          "supabase/migrations/20260825170000_reserve_functions_service_role_only.sql",
+          "supabase/migrations/20260826_staff_escalation_proposed_photo.sql"
         ],
         "data_repairs": ["supabase/data-repairs/20260812_worker_notification_person_id_backfill.sql"]
       },
@@ -104,7 +106,8 @@
         "api/alternative-review-golden-contract.test.js",
         "api/photo-workflow-golden-contract.test.js",
         "api/whatsapp-webhook.test.js",
-        "api/_staff-substitution-intent.test.js"
+        "api/_staff-substitution-intent.test.js",
+        "api/_inbound-staff-evidence.test.js"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
