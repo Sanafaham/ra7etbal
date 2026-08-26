@@ -540,7 +540,21 @@ export async function handleTaskConfirmationPost(
       // instead.") — that has no permission phrase and is correctly left as
       // whatever runQualityReview decided.
       if (review.status === 'correction_required' && isLikelyPreActionSubstitutionRequest(workerReply)) {
-        review = { ...review, status: 'substitute_review' };
+        // Defect 1 fix (2026-08-27): the status override alone is not
+        // enough — review.note from the correction_required outcome above
+        // is written under the premise the purchase already happened
+        // ("you've bought X instead"). Replace it with a deterministic,
+        // neutral note so neither the owner nor the assignee is ever told
+        // a purchase occurred that has not.
+        review = {
+          ...review,
+          status: 'substitute_review',
+          note: buildPreActionSubstituteReviewNote({
+            requestedItem: reviewTaskDescription,
+            workerReply,
+            assignedTo: task.assigned_to,
+          }),
+        };
       }
     }
 
@@ -2125,6 +2139,26 @@ function buildWorkerCorrectionNote(review) {
       : 'This proof does not look like a live completion photo. Please upload a new live proof photo.';
   }
   return note || 'This proof does not match the requested task. Please upload a new proof photo.';
+}
+
+/**
+ * Confirmation-page pre-action substitute proposal (2026-08-27 fix, Defect
+ * 1): review.note from a correction_required outcome is written under the
+ * premise "the assignee already acted" — phrasing like "you've bought X
+ * instead" or "before purchasing... rather than after". When that outcome
+ * is reinterpreted as substitute_review because the worker note itself
+ * deterministically reads as a pre-action permission request, the stale
+ * note text must never carry over: it would falsely tell the owner (and,
+ * on a page reload, the assignee) that a purchase already happened when
+ * the whole point is that it has not. Fully deterministic — no LLM output
+ * reused here — so it can never reproduce an accusatory phrase.
+ */
+function buildPreActionSubstituteReviewNote({ requestedItem, workerReply, assignedTo }) {
+  const staffLabel = String(assignedTo || '').trim() || 'The assignee';
+  const requested = String(requestedItem || '').trim() || 'the requested item';
+  const note = String(workerReply || '').trim();
+  const quoted = note ? ` Their note: "${note}"` : '';
+  return `${staffLabel} is asking for approval before buying a substitute for: ${requested}.${quoted} No purchase has been made yet — please review and approve or reject the alternative.`;
 }
 
 // ── Quality Intelligence V1 helpers ───────────────────────────────────────────

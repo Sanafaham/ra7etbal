@@ -1349,6 +1349,50 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       );
     });
 
+    // Defect 1 (2026-08-27 production evidence, task 399de707): the status
+    // override alone left review.note intact from the correction_required
+    // outcome -- exact real production text: "Hi Christopher, the
+    // requested item was TEREA Silver, but you've bought TEREA Turquoise
+    // instead. Please get the TEREA Silver variant. Also, for future
+    // reference, if you can't find the exact item, please check in for
+    // approval before purchasing a substitute rather than after." False
+    // pre-action accusation, reused here verbatim as the mocked
+    // runQualityReview output to prove the fix replaces it.
+    it('false pre-action language: the accusatory correction_required note never survives the substitute_review override', async () => {
+      runQualityReviewMock.mockResolvedValue({
+        status: 'correction_required',
+        note: "Hi Christopher, the requested item was TEREA Silver, but you've bought TEREA Turquoise instead. Please get the TEREA Silver variant. Also, for future reference, if you can't find the exact item, please check in for approval before purchasing a substitute rather than after. Thanks!",
+      });
+      vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+      vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+      vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+      const fetchMock = mockSubstituteProposalFetchSequence();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handleTaskConfirmationPost(
+        createReq({
+          taskId: 'task-1',
+          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          workerReply: 'I only found turquoise. Is it ok?',
+        }),
+        res,
+      );
+
+      const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+      const persistedNote = patchBody.quality_review_note;
+      const BANNED = [/you'?ve bought/i, /you bought/i, /purchased instead/i, /rather than after/i];
+      for (const pattern of BANNED) {
+        expect(persistedNote).not.toMatch(pattern);
+      }
+      // Original request and the assignee's own note remain preserved,
+      // neutrally, in the replacement text.
+      expect(persistedNote).toContain('TEREA Silver');
+      expect(persistedNote).toContain('I only found turquoise. Is it ok?');
+      expect(persistedNote).toMatch(/before buying|approval before/i);
+      expect(persistedNote).not.toMatch(/already (bought|purchased)/i);
+    });
+
     it('7/8 — owner substitute-review notification is invoked with the submitted photo, through the existing owner-decision push', async () => {
       runQualityReviewMock.mockResolvedValue({ status: 'correction_required', note: 'Different variant sent.' });
       vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');

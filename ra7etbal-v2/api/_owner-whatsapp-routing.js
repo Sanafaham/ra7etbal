@@ -1330,6 +1330,19 @@ async function fetchTaskDecisionContext({ supabaseUrl, serviceKey, userId, taskI
   const task = tasks[0];
   if (!task.assigned_to) return null;
 
+  // Stale owner-decision status fix (2026-08-27): staff_escalation_owner_
+  // decisions.status is never transitioned away from 'open' when a
+  // task-based decision is resolved via handleOwnerDecision() /
+  // claim_substitute_decision() in task-confirm.js — that code path writes
+  // to quality_substitute_decisions and tasks.quality_review_status only.
+  // Re-verifying the LIVE task status here, at match time, is what keeps an
+  // already-resolved decision from ever becoming a false candidate again —
+  // this also retroactively fixes any row already stuck at status='open'
+  // in production, with no data migration required.
+  if (task.quality_review_status !== 'substitute_review' && task.quality_review_status !== 'uncertain') {
+    return null;
+  }
+
   // Look up the assignee person to get phone and person_id
   const people = await restSelect(
     supabaseUrl,
