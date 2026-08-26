@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-26 (task-linked pre-action substitution_request path — PR #337 merged, deployed, canary verified; staff_messages.task_id linkage gap CLOSED for plain-text substitution asks)
+Last updated: 2026-08-26 (substitute-approval pre-action photo proposal defect — PR #340 merged, deployed, canary verified; CODE COMPLETE, NOT YET CLOSED — real Christopher production acceptance test still required)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -11,6 +11,30 @@ Ra7etBal is a personal Chief of Staff that reduces mental load. Carson is the AI
 Typed Carson and voice Carson are the same person, sharing the same memory, identity, and reasoning. Product decision (2026-07-25): Type to Carson is advisory-only — thinking, planning, drafting, research, and review only. Talk to Carson (voice) remains the sole execution channel for reminders, recurring reminders, push notifications, calendar events, staff messages, hosting plans, delegations, and any other state-changing action. See "Type to Carson is advisory-only" below.
 
 ## Current next task
+
+### Substitute-approval pre-action photo proposal defect — MERGED, DEPLOYED, CANARY VERIFIED — PRODUCTION ACCEPTANCE STILL PENDING (2026-08-26)
+
+**Real production test found a genuine defect (2026-08-26).** Christopher, requested TEREA Silver, found only TEREA Turquoise, sent a photo with "I found only Turquoise. Is it ok?" BEFORE purchasing — a pre-action substitute proposal. The system incorrectly told him he had already purchased the wrong item and should propose substitutions before purchasing (exactly what he had just done), and created no owner decision for Sana to see in Waiting/Needs You.
+
+**Root cause:** any WhatsApp message carrying media was routed unconditionally into the completion-proof pipeline (`processInboundStaffEvidence` → `task-confirm.js` → `_quality-review.js`), regardless of what the caption said. PR #334's unauthorized-substitution classification correctly treats a same-category substitute photo with no covering household rule as `CORRECTION_REQUIRED` — but that pipeline has no way to know the "purchase" never happened; it was fed an input it was never designed to receive. PR #337's text-only task-linkage gate never participates — explicitly disabled whenever media is present. **Neither protected fix (#334 or #337) was reopened or rewritten** — evidence during implementation confirmed both are functioning exactly as designed for the inputs they were built for.
+
+**Fix, PR #340:** media-bearing messages now route into the completion-proof pipeline only when the caption does NOT deterministically look like a pre-action ask (`isLikelyPreActionSubstitutionRequest`, `api/_staff-substitution-intent.js` — the same gate PR #337 added, **widened this session** after this real test proved its original patterns too narrow: "Is it ok?" with no trailing "if", and "found only X" with no "instead"/"substitute" word — purely additive, every prior positive/negative case still holds). A matching caption routes through the existing `substitution_request` / owner-escalation machinery (`_staff-comms-engine.js` + `staff_escalation_owner_decisions`), unchanged.
+
+**Schema (additive only, applied directly to production via Supabase MCP, 2026-08-26):** documented investigation performed first, per explicit authorization gate — `staff_escalation_owner_decisions` and `staff_messages` have no photo field; `tasks.proof_image_path` deliberately rejected as a destination (writing there would recreate this exact defect at the storage layer). New nullable `proposed_photo_path` column; `claim_escalation_owner_decision` RPC gained a backward-compatible optional 4th parameter (old 3-arg signature explicitly dropped so only one canonical overload exists). Verified post-migration: column present, correct type/nullability, single function overload, security advisors clean (no new findings).
+
+**Photo handling:** reuses existing proven mechanisms only — `persistInboundStaffImage` (new optional `kind` param, default `'proof'` unchanged for every existing caller; `'proposal'` writes to a distinct storage subfolder, never `tasks.proof_image_path`) and `sendProofImageMessage` (the exact same helper `notifyOwnerOfTaskReview` already uses — not a reinvented image-send path).
+
+**Tests:** 3 new RED→GREEN tests for the widened deterministic gate (using the real production phrasing); 8 new integration tests in `whatsapp-webhook.test.js` (photo + real caption/variant phrasings → escalation path never completion-proof; genuine completion evidence/ordinary note/no caption → completion path unchanged; ambiguous task → no photo fabricated, escalation still proceeds; photo-persist failure → never blocks escalation); 2 new tests in `_escalation-notify.test.js` (photo threaded into the RPC + sent via WhatsApp; text-only escalation unaffected). Full relevant suite (13 files/452 tests) and `test:carson-protected` (107 files/1987 tests) both pass, 0 regressions. Typecheck/build clean. `impact-map --base=origin/main`: exit 0. Independent `review:security-auditor` agent: no blocking defects.
+
+**CI trigger anomaly during this PR (resolved, not a code/config defect):** required Carson workflows did not register for ~15-20 minutes after the original push despite the workflow file having no path filter — confirmed via `gh api actions/runs?head_sha=...` returning zero entries while Vercel's own checks fired normally in the same window, then all 12 required checks registered and passed cleanly once GitHub's delivery caught up. Same class of "missed webhook" anomaly previously documented for Vercel deployments (PRs #323/#325), this time affecting GitHub Actions' own native trigger. No CI/workflow configuration was changed; no check was bypassed.
+
+**Merged and deployed.** PR #340 merged to `main` as `141476b`. Vercel production deployment `dpl_3z8Lq9NENrYap2KKrztLF4VrbXwY`: `readyState: READY`, `target: production`, `aliasError: null`, `githubCommitSha` exact match, aliased to `www.ra7etbal.com`. `carson-production-canary` run `32990931769`: success.
+
+**NOT YET CLOSED — mandatory production acceptance gate still required.** Per the product's explicit contract, this defect may only be marked CLOSED/PRODUCTION VERIFIED/PROTECTED after a real controlled test: Christopher proposes a substitute (text + photo) → Sana sees the decision, Christopher's note, and the photo in Ra7etBal → Sana approves or rejects → Christopher receives the decision → only actual completion afterward progresses the delegation. This has not yet been performed.
+
+**Two independent-review CONCERNs preserved as follow-ups, deliberately not fixed in this PR (not required for this release's correctness/safety):**
+1. A proposal photo can be persisted to storage even when the text classifier ultimately does not escalate (the outcome isn't known until after the upload) — an orphaned-storage/cost concern, not a security or correctness issue.
+2. The pre-existing retry/redelivery deduplication gap in the text-only `substitution_request` path (a WhatsApp webhook retry with the same `messageId` could theoretically create a second `staff_messages` row and a second escalation) now also applies to media+pre-action-caption messages, since both share the same dedup-skip condition. Pre-existing, not introduced by this PR; not tenant-isolation-breaking.
 
 ### Task-linked pre-action substitution_request path — `staff_messages.task_id` linkage gap — CLOSED for plain-text asks (2026-08-26)
 
