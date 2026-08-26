@@ -865,6 +865,131 @@ describe('natural owner decision matching and normalization', () => {
   });
 });
 
+// Stale owner-decision status / false ambiguity (2026-08-27 defect): a
+// task-based substitute_review decision (staff_message_id: null, task_id
+// set) can be resolved (approved/rejected) entirely through
+// handleOwnerDecision()/claim_substitute_decision() in task-confirm.js --
+// a code path that has never updated staff_escalation_owner_decisions.status
+// away from 'open'. Real production evidence: task 578e6216 was already
+// tasks.quality_review_status = 'approved', but its decision row
+// (38e8ec33) was still status: 'open', so it kept surfacing as a live
+// candidate here alongside a genuinely new decision (task 399de707) --
+// "Yes he can buy it" became ambiguous between an already-resolved
+// decision and the real one, and Carson correctly refused to guess.
+//
+// Fix (application-code only, no schema change): fetchTaskDecisionContext
+// now re-verifies the LIVE task.quality_review_status before treating a
+// task-based row as a candidate, so a stale 'open' row -- whether from
+// before this fix shipped or from any future code path -- can never
+// participate in matching again, without needing a data migration.
+describe('task-based substitute_review decision matching — stale status cannot cause false ambiguity', () => {
+  const staleApprovedDecision = {
+    id: 'aaaaaaaa-1111-4111-8111-111111111111',
+    user_id: 'user-1',
+    staff_message_id: null,
+    task_id: 'task-stale-approved',
+    status: 'open', // never transitioned when the task was approved -- the bug
+    owner_reply_text: null,
+    deep_link_token: 'aaaaaaaa-2222-4222-8222-222222222222',
+    created_at: '2026-08-25T14:26:00.000Z',
+    owner_notified_at: '2026-08-25T14:26:05.000Z',
+  };
+  const genuinelyOpenDecision = {
+    id: 'bbbbbbbb-1111-4111-8111-111111111111',
+    user_id: 'user-1',
+    staff_message_id: null,
+    task_id: 'task-genuinely-open',
+    status: 'open',
+    owner_reply_text: null,
+    deep_link_token: 'bbbbbbbb-2222-4222-8222-222222222222',
+    created_at: '2026-08-26T21:09:00.000Z',
+    owner_notified_at: '2026-08-26T21:09:05.000Z',
+  };
+  const christopherPerson = { id: 'person-christopher', name: 'Christopher', phone: '+971500000003', whatsapp_opted_in: true };
+
+  it('excludes an already-resolved task from matching — a stale open decision row never becomes a live candidate', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock
+      .mockResolvedValueOnce(response([staleApprovedDecision, genuinelyOpenDecision])) // decisions list
+      // fetchTaskDecisionContext(staleApprovedDecision): task already approved
+      .mockResolvedValueOnce(response([{
+        id: 'task-stale-approved', user_id: 'user-1', description: 'Buy TEREA Silver',
+        assigned_to: 'Christopher', quality_review_status: 'approved', quality_review_note: 'Owner approved the alternative.',
+      }]))
+      // fetchTaskDecisionContext(genuinelyOpenDecision): still awaiting a decision
+      .mockResolvedValueOnce(response([{
+        id: 'task-genuinely-open', user_id: 'user-1', description: 'Buy TEREA Silver',
+        assigned_to: 'Christopher', quality_review_status: 'substitute_review', quality_review_note: 'proposed substitute noted',
+      }]))
+      .mockResolvedValueOnce(response([christopherPerson])); // people lookup for the one surviving candidate
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+    mocks.resolve.mockResolvedValue({ kind: 'success', status: 'delivered', ownerReplyText: 'approved' });
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'Yes he can buy it' }),
+    });
+
+    // The stale decision never even reached a people lookup -- confirms it
+    // was excluded before becoming a candidate, not merely deprioritized.
+    expect(fetchMock.mock.calls).toHaveLength(6);
+    expect(result).toMatchObject({ handled: true, reason: 'resolved_escalation' });
+    expect(mocks.resolve).toHaveBeenCalledTimes(1);
+    // "Yes he can buy it" is a full sentence, not the bare "Yes"/"Approve
+    // it" the classifier maps straight to 'approved' — it correctly
+    // resolves as a custom_instruction carrying that exact text. What this
+    // test actually proves is the fix: exactly the genuinely-open
+    // escalation was matched, never the stale one.
+    expect(mocks.resolve).toHaveBeenCalledWith(expect.objectContaining({
+      escalation: expect.objectContaining({ id: genuinelyOpenDecision.id }),
+      decision: 'custom_instruction',
+      instructionText: 'Yes he can buy it',
+    }));
+  });
+
+  it('genuinely two still-open task-based decisions still produce ambiguity — the fix narrows eligibility, it does not disable the existing guard', async () => {
+    const secondOpenDecision = { ...genuinelyOpenDecision, id: 'cccccccc-1111-4111-8111-111111111111', task_id: 'task-also-open', deep_link_token: 'cccccccc-2222-4222-8222-222222222222' };
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock
+      .mockResolvedValueOnce(response([genuinelyOpenDecision, secondOpenDecision]))
+      .mockResolvedValueOnce(response([{
+        id: 'task-genuinely-open', user_id: 'user-1', description: 'Buy TEREA Silver',
+        assigned_to: 'Christopher', quality_review_status: 'substitute_review', quality_review_note: 'first proposal',
+      }]))
+      .mockResolvedValueOnce(response([christopherPerson]))
+      .mockResolvedValueOnce(response([{
+        id: 'task-also-open', user_id: 'user-1', description: 'Buy flowers',
+        assigned_to: 'Christopher', quality_review_status: 'substitute_review', quality_review_note: 'second proposal',
+      }]))
+      .mockResolvedValueOnce(response([christopherPerson]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+
+    const result = await handleInboundOwnerMessage({
+      supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'Yes' }),
+    });
+
+    expect(result).toMatchObject({ handled: true, reason: 'clarification_sent' });
+    expect(mocks.resolve).not.toHaveBeenCalled();
+  });
+
+  it('a decision row scoped to a different owner can never participate — the decisions list query stays user_id-scoped', async () => {
+    const fetchMock = vi.fn();
+    stubIdentity(fetchMock);
+    fetchMock.mockResolvedValueOnce(response([genuinelyOpenDecision]));
+    vi.stubGlobal('fetch', fetchMock);
+    stubClaim();
+
+    await handleInboundOwnerMessage({ supabaseUrl: SUPABASE, serviceKey: KEY, msg: msg({ body: 'Yes' }) });
+
+    const decisionsListCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/staff_escalation_owner_decisions?'));
+    expect(String(decisionsListCall[0])).toContain('user_id=eq.user-1');
+    expect(String(decisionsListCall[0])).toContain('status=eq.open');
+  });
+});
+
 describe('idempotency and identity', () => {
   it('duplicate completed webhook performs no side effects', async () => {
     const fetchMock = vi.fn();
