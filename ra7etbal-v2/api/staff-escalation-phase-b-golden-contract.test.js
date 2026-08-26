@@ -116,7 +116,7 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
 
     const claimEscalationCall = fetchMock.mock.calls[1];
     expect(claimEscalationCall[0]).toContain('/rpc/claim_escalation_owner_decision');
-    expect(JSON.parse(claimEscalationCall[1].body)).toEqual({ p_staff_message_id: MSG_A, p_user_id: USER_A, p_task_id: 'task-1' });
+    expect(JSON.parse(claimEscalationCall[1].body)).toEqual({ p_staff_message_id: MSG_A, p_user_id: USER_A, p_task_id: 'task-1', p_proposed_photo_path: null });
 
     // Audit-gap fix (2026-07-27): beginWhatsappDelivery must be called with
     // staffMessageId so it can resolve a trusted owner context for a
@@ -463,8 +463,12 @@ describe('notifyOwnerOfEscalation — real implementation, mocked I/O boundaries
     const claimEscalationBodies = fetchMock.mock.calls
       .filter(([url]) => String(url).includes('/rpc/claim_escalation_owner_decision'))
       .map(([, init]) => JSON.parse(init.body));
-    expect(claimEscalationBodies[0]).toEqual({ p_staff_message_id: 'staff-msg-a', p_user_id: 'owner-a', p_task_id: 'task-a' });
-    expect(claimEscalationBodies[1]).toEqual({ p_staff_message_id: 'staff-msg-b', p_user_id: 'owner-b', p_task_id: 'task-b' });
+    // p_proposed_photo_path added 2026-08-26 (substitute-approval production
+    // fix) — always null here since neither fixture attaches a proposal
+    // photo; asserted explicitly so a real regression (a leaked photo path
+    // on an ordinary text escalation) would still be caught.
+    expect(claimEscalationBodies[0]).toEqual({ p_staff_message_id: 'staff-msg-a', p_user_id: 'owner-a', p_task_id: 'task-a', p_proposed_photo_path: null });
+    expect(claimEscalationBodies[1]).toEqual({ p_staff_message_id: 'staff-msg-b', p_user_id: 'owner-b', p_task_id: 'task-b', p_proposed_photo_path: null });
   });
 
   it('[unresolved] a successful owner notification never answers, delivers, or resolves the escalation — Phase C/D territory', async () => {

@@ -206,13 +206,32 @@ export async function handleInboundStaffMessage(
   if (!person.whatsapp_opted_in || !person.whatsapp_consent_at || !person.whatsapp_consent_method) {
     return { handled: false, reason: 'not_opted_in' };
   }
+  // Deterministic classification of what a media-bearing message actually
+  // is, decided from the caption alone (task resolution and classification
+  // both happen later, so this cannot depend on either). A photo is not,
+  // by itself, evidence that an action has already occurred — only the
+  // caption's intent tells the difference between "reporting a completed
+  // action" and "asking before acting". This is the fix for the substitute-
+  // approval production failure (2026-08-26, Christopher/TEREA Silver ->
+  // Turquoise): a photo + "I found only Turquoise. Is it ok?" was
+  // previously routed unconditionally into the completion-proof pipeline
+  // below, regardless of the caption asking permission first. See
+  // _staff-substitution-intent.js for why this check is deliberately
+  // narrow (permission phrase AND substitution/scarcity signal both
+  // required), not "any text" and not "any media".
+  const captionLooksLikePreActionSubstitution = isLikelyPreActionSubstitutionRequest(msg.body);
   // A plain-text pre-action substitution ask ("Can I use mushroom instead?")
   // has no media and typically no WhatsApp quoted-reply, so without this it
   // would never reach the recent-pending-task fallback below and
   // staff_messages.task_id would land NULL — the task-linkage gap traced in
-  // the Christopher substitution defect follow-up. Deliberately narrow, not
-  // "any text": see _staff-substitution-intent.js for why.
-  const textLooksLikeSubstitutionRequest = !msg.mediaId && isLikelyPreActionSubstitutionRequest(msg.body);
+  // the Christopher substitution defect follow-up.
+  const textLooksLikeSubstitutionRequest = !msg.mediaId && captionLooksLikePreActionSubstitution;
+  // A media message routes into the completion-proof pipeline only when its
+  // caption does NOT deterministically look like a pre-action ask — this is
+  // the ONLY thing that changed about the media/text split; every existing
+  // photo-evidence behavior below is otherwise byte-for-byte unchanged, just
+  // reached through this narrower gate instead of raw `msg.mediaId`.
+  const routeAsProofEvidence = Boolean(msg.mediaId) && !captionLooksLikePreActionSubstitution;
   let taskMatch = await resolveInboundStaffTask({
     supabaseUrl, serviceKey, userId, person, msg,
     allowRecentDeliveryFallback: Boolean(msg.mediaId) || textLooksLikeSubstitutionRequest,
@@ -221,7 +240,7 @@ export async function handleInboundStaffMessage(
   const taskId = taskMatch.task?.id || null;
   const existing = await restSelect(supabaseUrl, serviceKey, 'staff_messages',
     `user_id=eq.${encodeURIComponent(userId)}&source=eq.whatsapp&external_message_id=eq.${encodeURIComponent(msg.messageId)}&select=*`);
-  if (msg.mediaId && existing[0]) {
+  if (routeAsProofEvidence && existing[0]) {
     if (existing[0].task_id) {
       const recoveryTask = taskMatch.task?.id === existing[0].task_id
         ? taskMatch.task
@@ -242,7 +261,7 @@ export async function handleInboundStaffMessage(
   }
   let reclaimedEvidenceMessageId = null;
   if (
-    msg.mediaId &&
+    routeAsProofEvidence &&
     existing[0] &&
     (
       existing[0].processing_status === 'failed' ||
@@ -260,7 +279,7 @@ export async function handleInboundStaffMessage(
     if (reclaim?.acquired) reclaimedEvidenceMessageId = reclaim.message_id;
   }
   if (
-    msg.mediaId &&
+    routeAsProofEvidence &&
     existing[0] &&
     existing[0].processing_status !== 'completed' &&
     !reclaimedEvidenceMessageId
@@ -287,7 +306,7 @@ export async function handleInboundStaffMessage(
       }
     : null;
 
-  if (!outcome && msg.mediaId) {
+  if (!outcome && routeAsProofEvidence) {
     outcome = await processInboundStaffEvidence({
       supabaseUrl,
       serviceKey,
@@ -302,6 +321,32 @@ export async function handleInboundStaffMessage(
       persistInboundStaffImageImpl,
       handleTaskConfirmationPostImpl,
     });
+  }
+
+  // A pre-action substitution proposal illustrated with a photo: the photo
+  // is preserved (smallest existing safe mechanism — persistInboundStaffImageImpl,
+  // reused with a distinct 'proposal' kind so it can never be confused with
+  // or overwrite the task's own completion-proof path) and threaded through
+  // to notifyOwnerOfEscalationImpl below, never written to the task record
+  // itself — this is what keeps the original delegation unresolved while
+  // the owner decides. Skipped when no task resolved (ambiguous/no match):
+  // the existing text-only substitution_request path already handles that
+  // safely without a task_id, and there is nowhere durable to attach a
+  // photo without one.
+  let proposalPhotoPath = null;
+  if (!outcome && msg.mediaId && captionLooksLikePreActionSubstitution && taskId) {
+    const media = await persistInboundStaffImageImpl({
+      mediaId: msg.mediaId,
+      mimeType: msg.mimeType,
+      userId,
+      taskId,
+      messageId: msg.messageId,
+      accessToken: process.env.WHATSAPP_ACCESS_TOKEN,
+      supabaseUrl,
+      serviceKey,
+      kind: 'proposal',
+    });
+    if (media.ok) proposalPhotoPath = media.storagePath;
   }
 
   if (!outcome) {
@@ -332,6 +377,7 @@ export async function handleInboundStaffMessage(
       taskId: outcome.relatedTaskId || null,
       escalationReason: outcome.escalationReason,
       staffName: person.name,
+      proposedPhotoPath: proposalPhotoPath,
     }, { supabaseUrl, serviceKey }).catch((err) => {
       console.error('[whatsapp-webhook] escalation notify threw (non-fatal, treated as failed)', {
         messageId: outcome.messageId, error: err?.message || String(err),

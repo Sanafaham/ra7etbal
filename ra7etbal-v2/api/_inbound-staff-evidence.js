@@ -20,11 +20,22 @@ function isJpeg(bytes) {
 
 /**
  * WhatsApp is only a transport here: resolve the Meta media object and
- * persist the original bytes in the existing task-images proof namespace.
+ * persist the original bytes in the existing task-images namespace.
  * Task state and Quality Intelligence remain owned by task-confirm.js.
+ *
+ * `kind` selects the storage subfolder — 'proof' (default, unchanged
+ * behavior for every existing caller) for completion-proof photos read by
+ * task-confirm.js/_quality-review.js, or 'proposal' for a photo attached
+ * to a pre-action substitution proposal (never completion proof — never
+ * written to tasks.proof_image_path, never read by the quality-review
+ * pipeline). Keeping these in distinct subfolders is deliberate: it is
+ * the storage-layer half of the fix for the substitute-approval
+ * production failure (2026-08-26) — a pre-action illustrative photo must
+ * never be reachable through the same path a completion-proof lookup
+ * would use.
  */
 export async function persistInboundStaffImage(
-  { mediaId, mimeType, userId, taskId, messageId, accessToken, supabaseUrl, serviceKey },
+  { mediaId, mimeType, userId, taskId, messageId, accessToken, supabaseUrl, serviceKey, kind = 'proof' },
   { fetchImpl = fetch } = {},
 ) {
   const claimedMimeType = String(mimeType || '').toLowerCase();
@@ -60,7 +71,8 @@ export async function persistInboundStaffImage(
   }
   if (!isJpeg(bytes)) return { ok: false, reason: 'media_signature_invalid' };
 
-  const objectPath = `${userId}/${taskId}/proof/whatsapp-${safeMessageKey(messageId)}${imageExtension()}`;
+  const subfolder = kind === 'proposal' ? 'proposal' : 'proof';
+  const objectPath = `${userId}/${taskId}/${subfolder}/whatsapp-${safeMessageKey(messageId)}${imageExtension()}`;
   const storagePath = `task-images/${objectPath}`;
   const uploadResponse = await fetchImpl(
     `${supabaseUrl}/storage/v1/object/task-images/${objectPath}`,

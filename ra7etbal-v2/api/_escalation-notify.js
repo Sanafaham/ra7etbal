@@ -58,6 +58,13 @@ const LEASE_SECONDS = 120;
  * @param {string|null} [input.taskId]
  * @param {string|null} [input.escalationReason]
  * @param {string|null} [input.staffName]
+ * @param {string|null} [input.proposedPhotoPath]  storage path of a photo the staff member
+ *   attached to a pre-action substitution proposal, when supplied. Persisted on the escalation
+ *   row via claim_escalation_owner_decision, then a second WhatsApp image message is sent
+ *   immediately after the text so the owner can see it without opening the app — mirrors
+ *   notifyOwnerOfTaskReview's existing proofImagePath handling. Non-fatal: a photo send failure
+ *   never blocks owner_notified_at being stamped, and never means "already purchased" — this is
+ *   an illustrative photo attached to a question, not completion proof.
  * @param {object} deps
  * @param {string} deps.supabaseUrl
  * @param {string} deps.serviceKey
@@ -67,7 +74,7 @@ const LEASE_SECONDS = 120;
 export async function notifyOwnerOfEscalation(input, deps) {
   const fetchImpl = deps.fetchImpl || fetch;
   const { supabaseUrl, serviceKey } = deps;
-  const { staffMessageId, userId, taskId, escalationReason, staffName } = input;
+  const { staffMessageId, userId, taskId, escalationReason, staffName, proposedPhotoPath } = input;
 
   let claim;
   try {
@@ -100,6 +107,7 @@ export async function notifyOwnerOfEscalation(input, deps) {
       p_staff_message_id: staffMessageId,
       p_user_id: userId,
       p_task_id: taskId || null,
+      p_proposed_photo_path: proposedPhotoPath || null,
     });
   } catch (err) {
     console.error('[escalation-notify] claim_escalation_owner_decision failed', { staffMessageId, error: err?.message || String(err) });
@@ -217,6 +225,65 @@ export async function notifyOwnerOfEscalation(input, deps) {
     console.warn('[escalation-notify] delivery acceptance bookkeeping failed (non-fatal, sent state already recorded)', {
       staffMessageId, deliveryId, error: err?.message || String(err),
     });
+  }
+
+  // Send the proposed-substitute photo immediately after the text, same
+  // pattern as notifyOwnerOfTaskReview's proofImagePath handling, so the
+  // owner can see it from WhatsApp alone. Non-fatal: a photo send failure
+  // never blocks owner_notified_at (already stamped above) and never
+  // implies the proposal is "already purchased" — it is an illustrative
+  // photo attached to a pre-action question, not completion proof.
+  if (proposedPhotoPath) {
+    const imageDeliveryMetadata = { escalation_id: escalationId, staff_message_id: staffMessageId };
+    const imageDeliveryId = await beginWhatsappDelivery({
+      supabaseUrl,
+      serviceKey,
+      staffMessageId,
+      taskId: taskId || null,
+      parentDeliveryId: deliveryId,
+      sourceType: 'image',
+      messageKind: 'image',
+      recipientPhone: normalizedPhone,
+      recipientName: 'Owner',
+      metadata: imageDeliveryMetadata,
+    });
+    try {
+      const photoResult = await sendProofImageMessage({
+        to: normalizedPhone,
+        accessToken,
+        phoneNumberId,
+        supabaseUrl,
+        serviceKey,
+        imagePath: proposedPhotoPath,
+      });
+      if (!photoResult.sent) {
+        await markWhatsappDeliveryFailed({
+          supabaseUrl, serviceKey, deliveryId: imageDeliveryId,
+          failureStage: 'meta_api', reason: photoResult.reason,
+          metadata: imageDeliveryMetadata,
+        }).catch(() => {});
+        console.warn('[escalation-notify] notifyOwnerOfEscalation: proposed-substitute photo not sent (non-fatal)', {
+          staffMessageId, reason: photoResult.reason,
+        });
+      } else {
+        await markWhatsappDeliveryAccepted({
+          supabaseUrl,
+          serviceKey,
+          deliveryId: imageDeliveryId,
+          metaMessageId: photoResult.messageId,
+          metadata: imageDeliveryMetadata,
+        }).catch(() => {});
+      }
+    } catch (err) {
+      await markWhatsappDeliveryFailed({
+        supabaseUrl, serviceKey, deliveryId: imageDeliveryId,
+        failureStage: 'network', reason: err instanceof Error ? err.message : String(err),
+        metadata: imageDeliveryMetadata,
+      }).catch(() => {});
+      console.warn('[escalation-notify] notifyOwnerOfEscalation: proposed-substitute photo threw (non-fatal)', {
+        staffMessageId, error: err?.message || String(err),
+      });
+    }
   }
 
   return { attempted: true, status: 'sent', escalationId, deepLinkToken, notifiedAt: completed.owner_notified_at };
