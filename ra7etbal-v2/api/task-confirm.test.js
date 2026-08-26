@@ -1278,6 +1278,163 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
     expect(pushPayload.body).toContain('sent an alternative for review');
   });
 
+  // Substitute-approval production failure follow-up (2026-08-26,
+  // confirmation-page entry): Christopher, requested TEREA Silver, opened
+  // the /confirm link, uploaded a Turquoise photo, and typed "I only found
+  // turquoise. Is it ok?" BEFORE the substitution was authorized — a
+  // pre-action proposal. runQualityReview correctly (per its own contract)
+  // returned correction_required for a same-category substitute with no
+  // covering household rule; task-confirm.js must reinterpret that as
+  // substitute_review when the worker note itself deterministically reads
+  // as a pre-action permission request, reusing the identical existing
+  // substitute_review lifecycle proven by the sibling test above.
+  describe('Confirmation-page pre-action substitute proposal — reinterprets correction_required as substitute_review', () => {
+    function mockSubstituteProposalFetchSequence() {
+      return vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse([{
+          id: 'task-1', user_id: 'user-1', status: 'pending', description: 'buy TEREA Silver',
+          assigned_to: 'Christopher', image_path: 'task-images/u/t/terea.jpg', quality_review_cycle_count: 0,
+        }]))
+        .mockResolvedValueOnce(jsonResponse([])) // no messages row
+        .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+        .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+        .mockResolvedValueOnce(emptyResponse()) // INSERT task_attachments
+        .mockResolvedValueOnce(jsonResponse([{ id: 'sub-1', endpoint: 'https://push.example/sub-1', p256dh: 'p', auth: 'a' }]));
+    }
+
+    it('1/2/3 — a pre-action worker note reinterprets correction_required as substitute_review, never the correction WhatsApp path, and runQualityReview cannot force the final override', async () => {
+      runQualityReviewMock.mockResolvedValue({
+        status: 'correction_required',
+        note: 'Please send TEREA Silver. Any substitution needs to be proposed and approved before making a change, not after.',
+      });
+      vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+      vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+      vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+      const fetchMock = mockSubstituteProposalFetchSequence();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handleTaskConfirmationPost(
+        createReq({
+          taskId: 'task-1',
+          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          workerReply: 'I only found turquoise. Is it ok?',
+        }),
+        res,
+      );
+
+      // 1. Final outcome is substitute_review, not correction_required.
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, outcome: 'substitute_review' }),
+      );
+      const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+      // 3. runQualityReview's own correction_required status did not survive.
+      expect(patchBody.quality_review_status).toBe('substitute_review');
+      // 4. Task stays pending — the PATCH targets ?status=eq.pending and
+      // never sets status:'done'.
+      expect(String(fetchMock.mock.calls[2][0])).toContain('status=eq.pending');
+      expect(patchBody.status).toBeUndefined();
+      // 5. worker_reply preserved verbatim.
+      expect(patchBody.worker_reply).toBe('I only found turquoise. Is it ok?');
+      // 6. proof_image_path preserved.
+      expect(patchBody.proof_image_path).toBe('task-images/u/t/proof/0.jpg');
+      // Never consumes the automated correction-attempt budget (same
+      // invariant as a genuine substitute_review from runQualityReview).
+      expect(patchBody.quality_review_cycle_count).toBe(0);
+      // 2. No correction-request WhatsApp send to the assignee.
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes('send-whatsapp-task'))).toBe(false);
+      expect(res.json).not.toHaveBeenCalledWith(
+        expect.objectContaining({ correctionNote: expect.any(String) }),
+      );
+    });
+
+    it('7/8 — owner substitute-review notification is invoked with the submitted photo, through the existing owner-decision push', async () => {
+      runQualityReviewMock.mockResolvedValue({ status: 'correction_required', note: 'Different variant sent.' });
+      vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+      vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+      vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+      const fetchMock = mockSubstituteProposalFetchSequence();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handleTaskConfirmationPost(
+        createReq({
+          taskId: 'task-1',
+          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          workerReply: 'Can I get this one instead?',
+        }),
+        res,
+      );
+
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'substitute_review' }));
+      // Same owner push copy the genuine substitute_review path uses —
+      // proves this reused the existing owner-decision machinery rather
+      // than inventing a parallel one.
+      const pushPayload = JSON.parse(vi.mocked(webpush.sendNotification).mock.calls[0][1]);
+      expect(pushPayload.body).toContain('sent an alternative for review');
+    });
+
+    it('11 — genuine post-action wording ("I bought Turquoise instead.") does NOT use the pre-action bypass and stays correction_required', async () => {
+      runQualityReviewMock.mockResolvedValue({
+        status: 'correction_required',
+        note: 'Please send TEREA Silver. Any substitution needs to be proposed and approved before making a change, not after.',
+      });
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse([{
+          id: 'task-1', user_id: 'user-1', status: 'pending', description: 'buy TEREA Silver',
+          assigned_to: 'Christopher', image_path: 'task-images/u/t/terea.jpg', quality_review_cycle_count: 0,
+        }]))
+        .mockResolvedValueOnce(jsonResponse([])) // no messages row
+        .mockResolvedValueOnce(emptyResponse()) // PATCH tasks
+        .mockResolvedValueOnce(emptyResponse()) // DELETE task_attachments
+        .mockResolvedValueOnce(emptyResponse()); // INSERT task_attachments
+      vi.stubGlobal('fetch', fetchMock);
+      // sendCorrectionRequest is the real function — it needs Twilio/Meta
+      // env plus a few more fetch calls; simplest correct proof this test
+      // needs is the persisted outcome itself, asserted below.
+
+      const res = createRes();
+      await handleTaskConfirmationPost(
+        createReq({
+          taskId: 'task-1',
+          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          workerReply: 'I bought Turquoise instead.',
+        }),
+        res,
+      );
+
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'correction_required' }));
+      const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+      expect(patchBody.quality_review_status).toBe('correction_required');
+      // Correction limit budget IS consumed for a genuine correction, unlike
+      // the pre-action substitute_review path above.
+      expect(patchBody.quality_review_cycle_count).toBe(1);
+    });
+
+    it('12 — ordinary correct completion proof (approved, no worker reply) is completely unaffected', async () => {
+      runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Matches the reference.' });
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse([{ id: 'task-1', user_id: 'user-1', status: 'pending', description: 'plate the chicken', assigned_to: 'Christopher', image_path: 'task-images/u/t/photo.jpg' }]))
+        .mockResolvedValueOnce(jsonResponse([{ content: 'Please plate the chicken like the photo.' }]))
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse())
+        .mockResolvedValueOnce(emptyResponse());
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handleTaskConfirmationPost(
+        createReq({ taskId: 'task-1', proofImagePaths: ['task-images/u/t/proof2.jpg'] }),
+        res,
+      );
+
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'approved' }));
+    });
+  });
+
   it('Phase 8.1 — worker reply is stored on an approved outcome too (never required, but not discarded)', async () => {
     runQualityReviewMock.mockResolvedValue({ status: 'approved', note: 'Matches the reference.' });
     const fetchMock = vi

@@ -55,6 +55,7 @@
 import webpush from 'web-push';
 import { ownerNotification, prepareOwnerPushNotification } from './_owner-notifications.js';
 import { downloadImageAsBase64, runQualityReview, fetchHouseholdRulesText } from './_quality-review.js';
+import { isLikelyPreActionSubstitutionRequest } from './_staff-substitution-intent.js';
 import { markWhatsappDeliveryAccepted, markWhatsappDeliveryFailed, getMetaFailure } from './_whatsapp-delivery.js';
 import { sendMetaMessage, buildRoutineMessagePayload, buildOwnerDecisionTemplatePayload, buildDirectMessagePayload, normalizeTaskUuidForButton, markMessageAccepted, normalizeWhatsAppPhone } from './send-whatsapp-task.js';
 import { notifyOwnerOfTaskReview } from './_escalation-notify.js';
@@ -520,6 +521,27 @@ export async function handleTaskConfirmationPost(
         proofImagesBase64,
         workerReply,
       });
+
+      // Confirmation-page pre-action substitute proposal (2026-08-26 fix):
+      // the review call above has no way to know whether the assignee
+      // already acted or is asking permission before acting — it evaluates the
+      // photo + worker note purely as submitted evidence, so a same-
+      // category substitute with no covering household rule correctly (per
+      // its own contract) resolves to correction_required, the outcome
+      // designed for "acted without asking, send them back to redo it".
+      // When the worker note itself deterministically reads as a pre-action
+      // permission request (the same gate PR #337 uses for the WhatsApp
+      // text path, and PR #340 widened for the WhatsApp media path), that
+      // premise is wrong: the assignee is asking, not reporting. Reuse the
+      // EXISTING substitute_review lifecycle unchanged — no correction
+      // WhatsApp to the assignee, task stays pending, owner decides via
+      // Approve Alternative / Reject Alternative / Custom Instruction.
+      // Never applied to a genuine post-action report ("I bought Turquoise
+      // instead.") — that has no permission phrase and is correctly left as
+      // whatever runQualityReview decided.
+      if (review.status === 'correction_required' && isLikelyPreActionSubstitutionRequest(workerReply)) {
+        review = { ...review, status: 'substitute_review' };
+      }
     }
 
     if (review && review.status !== 'approved') {
