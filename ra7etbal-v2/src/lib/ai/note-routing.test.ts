@@ -52,6 +52,22 @@ describe("applyNoteRouting — Clear My Head / Talk to Carson Notes misrouting f
     expect(result.type).toBe("parked");
   });
 
+  it("'I have an idea for X' (model said action) → parked", () => {
+    const [result] = applyNoteRouting(
+      [item({ type: "action", description: "Try X" })],
+      "I have an idea for X",
+    );
+    expect(result.type).toBe("parked");
+  });
+
+  it("'Remember that I want to try X' is a note, not an active commitment", () => {
+    const [result] = applyNoteRouting(
+      [item({ type: "action", description: "Try X" })],
+      "Remember that I want to try X",
+    );
+    expect(result.type).toBe("parked");
+  });
+
   it("already-parked items are left alone (no-op, no new object identity needed)", () => {
     const original = item({ type: "parked", description: "Follow the Gemini plan" });
     const [result] = applyNoteRouting([original], "Note to follow Gemini plan");

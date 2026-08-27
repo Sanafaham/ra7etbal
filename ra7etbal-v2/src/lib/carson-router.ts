@@ -222,7 +222,7 @@ function matchCalendar(text: string): CandidateMatch | null {
 function matchMemory(text: string): CandidateMatch | null {
   // "remember that [fact]" — saving a durable preference or fact.
   // Distinct from "remember to [verb]" which is a reminder (handled above).
-  if (/\bremember\s+that\b/i.test(text)) {
+  if (/\bremember\s+that\b/i.test(text) && !hasExplicitNoteIntent(text)) {
     return {
       domain: "memory",
       confidence: 0.93,

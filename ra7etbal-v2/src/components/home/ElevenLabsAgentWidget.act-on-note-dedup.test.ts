@@ -35,7 +35,7 @@ describe("ElevenLabsAgentWidget — act_on_note dedup (dismissCarsonNote after s
     const taskBranch = block.slice(block.indexOf('if (action === "task")'), block.indexOf('if (action === "reminder")'));
     const createIndex = taskBranch.indexOf("await createTask(");
     const dismissIndex = taskBranch.indexOf("dismissCarsonNote(note.id)");
-    const returnIndex = taskBranch.indexOf('return "I\'ve got that on your list."');
+    const returnIndex = taskBranch.indexOf('return finish("I\'ve got that on your list.", "success"');
     const catchIndex = taskBranch.indexOf("} catch (err) {");
     expect(createIndex).toBeGreaterThan(-1);
     expect(dismissIndex).toBeGreaterThan(createIndex);
@@ -51,7 +51,7 @@ describe("ElevenLabsAgentWidget — act_on_note dedup (dismissCarsonNote after s
     );
     const createIndex = reminderBranch.indexOf("await createReminderTask(");
     const dismissIndex = reminderBranch.indexOf("dismissCarsonNote(note.id)");
-    const returnIndex = reminderBranch.indexOf("return `I'll remind you");
+    const returnIndex = reminderBranch.indexOf("return finish(`I'll remind you");
     expect(createIndex).toBeGreaterThan(-1);
     expect(dismissIndex).toBeGreaterThan(createIndex);
     expect(returnIndex).toBeGreaterThan(dismissIndex);
@@ -65,7 +65,7 @@ describe("ElevenLabsAgentWidget — act_on_note dedup (dismissCarsonNote after s
     );
     const createIndex = delegateBranch.indexOf("await createAndSendDelegation(");
     const dismissIndex = delegateBranch.indexOf("dismissCarsonNote(note.id)");
-    const returnIndex = delegateBranch.indexOf("return `${person.name} has it.");
+    const returnIndex = delegateBranch.indexOf("return finish(`${person.name} has it.");
     expect(createIndex).toBeGreaterThan(-1);
     expect(dismissIndex).toBeGreaterThan(createIndex);
     expect(returnIndex).toBeGreaterThan(dismissIndex);
@@ -98,6 +98,6 @@ describe("ElevenLabsAgentWidget — act_on_note dedup (dismissCarsonNote after s
 
   it("dismissCarsonNote is imported from carson-notes", () => {
     expect(SOURCE).toContain("dismissCarsonNote");
-    expect(SOURCE).toMatch(/import \{ saveCarsonNote, loadRecentNotes, dismissCarsonNote,/);
+    expect(SOURCE).toMatch(/import \{[\s\S]*?saveCarsonNote,[\s\S]*?loadRecentNotes,[\s\S]*?dismissCarsonNote,[\s\S]*?\} from "\.\.\/\.\.\/lib\/carson-notes";/);
   });
 });

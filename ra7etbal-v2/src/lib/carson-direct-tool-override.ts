@@ -39,6 +39,7 @@ const OVERRIDABLE_TOOL_NAMES = new Set([
   "create_automation",
   "execute_instruction",
   "control_task",
+  "act_on_note",
   "send_delegation",
   "save_note",
 ]);

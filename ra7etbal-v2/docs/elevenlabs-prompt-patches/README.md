@@ -25,6 +25,7 @@ This directory stores **patches only**: the specific, minimal additions needed w
 
 | Date | File | Summary | Status |
 |---|---|---|---|
+| 2026-08-27 | [2026-08-27-notes-todo-routing.md](2026-08-27-notes-todo-routing.md) | Minimal `save_note` / `create_todo` / `complete_todo` / `act_on_note` intent and saved-note-reference reconciliation | **NOT YET APPLIED** — apply only after the matching repository delta is deployed; no full-prompt replacement |
 | 2026-08-03 | [2026-08-03-commitment-history.md](2026-08-03-commitment-history.md) | `get_commitment_history` — full evidence-based history of one commitment (Historical Lookup Phase 1, Q4) | **Applied and production-verified 2026-08-04** — see `RA7ETBAL_STATE.md` |
 | 2026-08-04 | [2026-08-04-person-history.md](2026-08-04-person-history.md) | `get_person_history` — a person's overall commitment history, outcome counts + recent items (Historical Lookup Phase 2) | **Applied and production-verified 2026-08-10** — see `RA7ETBAL_STATE.md` (corrected here — this row previously said "PENDING", which was stale) |
 | 2026-08-11 | [2026-08-11-communication-history.md](2026-08-11-communication-history.md) | `get_communication_history` — chronological communication timeline for a person, read-only, not immutable (Workstream 4, Phase 1) | **PENDING** — code merged; tool not yet registered on the live agent, prompt not yet pasted |

@@ -29,6 +29,16 @@ function failureResult(overrides: Partial<DirectToolSuccessResult> = {}): Direct
 }
 
 describe("resolveCarsonDisplayMessage", () => {
+  it("uses a verified act_on_note failure instead of a fabricated conversion success", () => {
+    const failure = failureResult({
+      toolName: "act_on_note",
+      resultText: "I couldn't find a note matching \"Paris\".",
+      outcome: "failure",
+    });
+    expect(resolveCarsonDisplayMessage("Done. I turned that note into a reminder.", failure, NOW)).toBe(
+      "I couldn't find a note matching \"Paris\".",
+    );
+  });
   it("overrides a contradictory failure message with the successful create_todo result", () => {
     const result = resolveCarsonDisplayMessage(
       "I wasn't able to save that. Please try again.",

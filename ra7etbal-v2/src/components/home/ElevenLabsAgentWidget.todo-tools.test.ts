@@ -48,7 +48,7 @@ describe("ElevenLabsAgentWidget — To-do client tool registration", () => {
 
   it("defines a completeTodoTool implementation that calls the carson-todos completeTodo helper", () => {
     expect(SOURCE).toContain("const completeTodoTool = useCallback(");
-    expect(SOURCE).toMatch(/completeTodoTool[\s\S]{0,1200}await completeTodo\(/);
+    expect(SOURCE).toMatch(/completeTodoTool[\s\S]{0,2600}await completeTodo\(/);
   });
 
   it("execute_instruction fallback pipeline is also registered (shared extraction path for any to-do phrasing the dashboard routes there instead)", () => {
@@ -96,7 +96,7 @@ describe("ElevenLabsAgentWidget — To-do tools use defensive parameter parsing"
 // runs.
 describe("ElevenLabsAgentWidget — createTodoTool failure message", () => {
   it("returns the required clean retry message on failure, not a technical/support deflection", () => {
-    expect(SOURCE).toContain('return "I wasn\'t able to save that. Please say the to-do again.";');
+    expect(SOURCE).toContain('const resultText = "I wasn\'t able to save that. Please say the to-do again.";');
   });
 
   it("the createTodoTool catch block never mentions technical issues or support", () => {
@@ -104,6 +104,33 @@ describe("ElevenLabsAgentWidget — createTodoTool failure message", () => {
     expect(match).not.toBeNull();
     const block = match![0];
     expect(block.toLowerCase()).not.toMatch(/technical issue|contact support|support team|visibility into/);
+  });
+
+  it("records verified create_todo and complete_todo failures for truthful response override", () => {
+    const createBlock = SOURCE.match(/const createTodoTool = useCallback\([\s\S]{0,3000}?\n  \);/)?.[0] ?? "";
+    const completeBlock = SOURCE.match(/const completeTodoTool = useCallback\([\s\S]{0,2400}?\n  \);/)?.[0] ?? "";
+    expect(createBlock).toContain('toolName: "create_todo"');
+    expect(createBlock).toContain('outcome: "failure"');
+    expect(completeBlock).toContain('toolName: "complete_todo"');
+    expect(completeBlock).toContain('outcome: "failure"');
+  });
+});
+
+describe("ElevenLabsAgentWidget — act_on_note lookup and truthful result", () => {
+  const start = SOURCE.indexOf("const actOnNote = useCallback(");
+  const end = SOURCE.indexOf("const runDirectToolWithDiagnostic = useCallback(", start);
+  const block = SOURCE.slice(start, end);
+
+  it("uses the shared defensive note matcher instead of a one-way inline substring", () => {
+    expect(SOURCE).toContain("findNoteMatches");
+    expect(block).toContain("findNoteMatches(notesRef.current, q)");
+  });
+
+  it("records verified mutation successes and failures for response truthfulness", () => {
+    expect(block).toContain('toolName: "act_on_note"');
+    expect(block).toContain('outcome: "success" | "failure"');
+    expect(block).toContain('finish("I\'ve got that on your list.", "success"');
+    expect(block).toContain('Ask the user which note they mean.", "failure"');
   });
 });
 
