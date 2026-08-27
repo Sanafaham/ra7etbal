@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-27 (substitute-approval pre-action photo proposal defect — PR #340/#342/#344 all merged, deployed, canary verified; CODE COMPLETE, NOT YET CLOSED — real Christopher production acceptance test on /confirm still required. Separately, owner escalation message composition Repair #5 — PR #346 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED)
+Last updated: 2026-08-27 (substitute-approval pre-action photo proposal defect — PR #340/#342/#344 all merged, deployed, canary verified; CODE COMPLETE, NOT YET CLOSED — real Christopher production acceptance test on /confirm still required. Owner escalation message composition Repair #5 — PR #346 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED. Task-neutral substitute-review language Repair #4 — PR #351 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED. Separately recorded, not yet fixed: `approved_alternative_media_routing` — approved-alternative media delivered to the owner instead of the worker.)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -49,6 +49,39 @@ TDD: both fixes proven RED first (fix temporarily reverted, new test reproduced 
 - **Rollback boundary:** isolated normal `git revert` of merge SHA `7640434b308876497a0a5fa12fd423c142b41616` if ever required — no schema, data, or config migration involved. Not executed; recorded for reference only.
 - **Test protection:** `api/_escalation-notify.test.js`'s `describe('buildTaskReviewMessage — word-safe, non-duplicated composition', ...)` block (6 tests) directly protects every contract point: `'never cuts a word in half'` (no mid-word truncation / no malformed fragment), `'preserves the assignee's actual question -- the decision context survives shortening'` (assignee identity present, note understandable, approve/reject instruction present), `'does not repeat the task description -- the item name appears exactly once'` (no duplicate task wording), `'still shortens a genuinely excessive note, but only at a word boundary'` (word-safe composition for long notes), `'non-substitute review types are unaffected -- unrelated escalation behavior unchanged'`, and `'flows through to the real Meta template payload unmangled'` (end-to-end proof via `notifyOwnerOfTaskReview`). Decision-state semantics are unchanged by construction — Repair #5 touched only message composition (`buildTaskReviewMessage`), never `staff_escalation_owner_decisions`/`quality_substitute_decisions` write paths, and the full decision-matching/resolution suites (`_owner-whatsapp-routing.test.js`, `task-based-escalation-owner-decisions.test.js`) pass unchanged.
 - **Registry / Impact-Aware CI protection:** already existed, not duplicated. `carson-protected-registry.json`'s `owner_decision_lifecycle` capability (Tier 1, `protected_suite: true`) already maps `api/_escalation-notify.js:notifyOwnerOfTaskReview` and lists `api/_escalation-notify.test.js` and `api/task-based-escalation-owner-decisions.test.js` in its required `focused_tests`, gated by the required `carson-protected-behaviors` CI check. No registry or Impact-Aware CI change was needed or made.
+
+---
+
+### REPAIR #4 — TASK-NEUTRAL SUBSTITUTE LANGUAGE
+
+**STATUS: FIXED · PROTECTED · DEPLOYED · CANARY VERIFIED · LIVE PRODUCTION VERIFIED · OWNER ACCEPTED · LOCKED (2026-08-27)**
+
+**LOCK RULE: do not reopen or materially alter Repair #4 without new production evidence demonstrating a regression, or an explicitly authorized product change.**
+
+- **Implementation:** PR #351
+- **Merge SHA:** `aeb7445c471829d1eec1075b3edea70e5d6835a7`
+- **Production canary:** run `33100019285` — PASS
+- **Live owner acceptance:** 27 Aug 2026 — PASS
+- **Live acceptance evidence:** real production flow — original owner task "Make this for dinner tonight" with a pizza reference image; Christopher proposed a different pizza/alternative and asked for approval. Production owner-facing review correctly used task-neutral language equivalent to "Christopher is asking about using an alternative…". Verified: Christopher clearly identified; proposal/alternative meaning clear; Christopher's actual note/question preserved; owner approval/rejection requirement clear; no incorrect "buying"/"purchase" semantics used for the cooking task. Repair #5's protections also remained intact on this same message (no mid-word truncation, no malformed fragments, no unnecessary duplicated task wording, note understandable, approve/reject instruction complete).
+- **Protected contract:** substitute/alternative review language must not assume the underlying action is a purchase. Non-purchase tasks such as cooking must not be described using buy/buying/purchase/purchased semantics unless those concepts genuinely exist in the task. The worker's proposal and the owner-decision requirement must remain clear.
+- **A separate, unrelated post-approval defect was observed during this same live test — `approved_alternative_media_routing`** (approved-alternative media delivered to the owner instead of the worker, recorded separately via PR #353, merged to `main`). This is NOT a Repair #4 failure — Repair #4's scope is task-neutral substitute language, which passed in full. The routing defect is tracked independently above and remains unfixed.
+- **Rollback boundary:** isolated normal `git revert` of merge SHA `aeb7445c471829d1eec1075b3edea70e5d6835a7` if ever required — no schema, data, or config migration involved. Not executed; recorded for reference only.
+- **Test protection:** `api/task-confirm.test.js` — `'Repair #4 — task-neutral substitute language: a cooking substitution is never described as buying/purchasing'` (RED-proven against pre-fix code, now GREEN) and `'Repair #4 — task-neutral substitute language: a genuine purchase substitution remains understandable'` (non-regression guard for genuine purchase tasks). One pre-existing test's assertion, previously locked to the old purchase-specific phrase (`before buying|approval before`), was updated to a behavioral assertion since that exact phrasing was itself part of the defect.
+- **Registry / Impact-Aware CI protection:** already existed, not duplicated. `carson-protected-registry.json`'s `owner_decision_lifecycle` capability (Tier 1, `protected_suite: true`) already maps `api/task-confirm.js` and lists `api/task-confirm.test.js` in its required `focused_tests`, gated by the required `carson-protected-behaviors` CI check. No registry or Impact-Aware CI change was needed or made.
+
+---
+
+### Task-neutral substitute-review language — Repair #4 — background (2026-08-27)
+
+**Confirmed root cause:** `buildPreActionSubstituteReviewNote()` (`api/task-confirm.js`) hardcoded purchase-specific wording — "asking for approval before buying a substitute", "No purchase has been made yet" — regardless of the underlying task's actual nature. Real production evidence: task "Make this for lunch.", Christopher: "We only have these ingredients. Can I make this instead?" — Carson described this as asking for approval before *buying* a substitute, which is semantically wrong for a cooking task; nothing was being bought.
+
+**Fix (application-code only, one function, no schema/database/ElevenLabs/decision-state/Repair-#5 change):** no reliable task-type signal (buy vs. cook vs. other) exists at this boundary, so the note now uses task-neutral wording rather than a new task-classification architecture: `"{who} is asking about using an alternative for: {task}.{note} Nothing has been done yet — please review and approve or reject the alternative."` A genuine purchase substitution remains fully understandable with the same neutral phrasing.
+
+**TDD:** RED tests written first — a cooking-substitution fixture proving the old code produced "buying"/"purchase" language (confirmed failing against pre-fix code), and a purchase fixture proving understandability isn't degraded. One pre-existing test locked to the old purchase-specific phrase (`before buying|approval before`) updated to a behavioral assertion, since that exact phrasing was itself part of the defect.
+
+**Tests:** `task-confirm.test.js` 144/144 passing. Repair #5's protection suite (`_escalation-notify.test.js`) re-verified separately: 13/13 passing, untouched. Directly affected suites 283/287 (4 pre-existing skips). Full `npm run test:carson-protected`: 107/107 files, 2003/2010 tests, zero regressions. Typecheck and production build both clean. `impact-map --base=origin/main`: exit 0, no unmapped protected files.
+
+**Merged and deployed.** PR #351 merged to `main` as `aeb7445c471829d1eec1075b3edea70e5d6835a7`. GitHub Deployments API confirms `Production – ra7etbal-v2` (and `Production – ra7etbal-work`) deployments at this exact SHA, `state: success`; `www.ra7etbal.com` returns HTTP 200 with a `last-modified` timestamp matching the deploy time. `carson-production-canary` run `33100019285`: success.
 
 ---
 
