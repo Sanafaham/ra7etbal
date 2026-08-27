@@ -2152,13 +2152,20 @@ function buildWorkerCorrectionNote(review) {
  * on a page reload, the assignee) that a purchase already happened when
  * the whole point is that it has not. Fully deterministic — no LLM output
  * reused here — so it can never reproduce an accusatory phrase.
+ *
+ * Repair #4 (2026-08-27): this task/message boundary has no reliable
+ * task-type signal (buy vs. cook vs. other) to branch on, so the note is
+ * deliberately task-neutral rather than assuming purchase language for
+ * every substitution — a cooking substitution ("we only have these
+ * ingredients, can I make this instead?") is not a purchase, and must
+ * never be described as one.
  */
 function buildPreActionSubstituteReviewNote({ requestedItem, workerReply, assignedTo }) {
   const staffLabel = String(assignedTo || '').trim() || 'The assignee';
   const requested = String(requestedItem || '').trim() || 'the requested item';
   const note = String(workerReply || '').trim();
   const quoted = note ? ` Their note: "${note}"` : '';
-  return `${staffLabel} is asking for approval before buying a substitute for: ${requested}.${quoted} No purchase has been made yet — please review and approve or reject the alternative.`;
+  return `${staffLabel} is asking about using an alternative for: ${requested}.${quoted} Nothing has been done yet — please review and approve or reject the alternative.`;
 }
 
 // ── Quality Intelligence V1 helpers ───────────────────────────────────────────
