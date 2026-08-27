@@ -10,7 +10,13 @@ import { extractDurableFacts } from "../../lib/carson-fact-extract";
 import { loadUserMemory, upsertUserFacts } from "../../lib/carson-facts";
 import { loadRecentMemory, saveSessionMemory } from "../../lib/carson-memory";
 import { loadPersistentMemory, savePersistentInstruction } from "../../lib/carson-persistent-memory";
-import { saveCarsonNote, loadRecentNotes, dismissCarsonNote, type CarsonNote } from "../../lib/carson-notes";
+import {
+  saveCarsonNote,
+  loadRecentNotes,
+  dismissCarsonNote,
+  findNoteMatches,
+  type CarsonNote,
+} from "../../lib/carson-notes";
 import { createTodo, listActiveTodos, completeTodo, findTodoMatches, formatTodosForContext, type CarsonTodo } from "../../lib/carson-todos";
 import { getHouseholdRules } from "../../lib/household-rules";
 import { fetchAutomationDigest, buildAutomationStatusBlock } from "../../lib/automation-context";
@@ -3286,9 +3292,14 @@ export default function ElevenLabsAgentWidget({
   // ------------------------------------------------------------------
   const createTodoTool = useCallback(
     async (params: CreateTodoParams): Promise<string> => {
+      lastDirectToolSuccessRef.current = null;
       const trimmed = extractTodoTitleParam(params).trim();
       if (!trimmed) {
-        return "I did not receive a to-do title. Ask the user what to add.";
+        const resultText = "I did not receive a to-do title. Ask the user what to add.";
+        lastDirectToolSuccessRef.current = {
+          toolName: "create_todo", resultText, at: new Date().toISOString(), outcome: "failure",
+        };
+        return resultText;
       }
       const description = extractTodoDescriptionParam(params) ?? null;
 
@@ -3322,7 +3333,12 @@ export default function ElevenLabsAgentWidget({
         } catch {
           // diagnostic logging must never block the user-facing reply
         }
-        return "I wasn't able to save that. Please say the to-do again.";
+        const resultText = "I wasn't able to save that. Please say the to-do again.";
+        lastDirectToolSuccessRef.current = {
+          toolName: "create_todo", resultText, at: new Date().toISOString(), outcome: "failure",
+          inputSummary: { title: trimmed },
+        };
+        return resultText;
       }
     },
     [],
@@ -3336,15 +3352,25 @@ export default function ElevenLabsAgentWidget({
   // ------------------------------------------------------------------
   const completeTodoTool = useCallback(
     async (params: CompleteTodoParams): Promise<string> => {
+      lastDirectToolSuccessRef.current = null;
       const q = extractTodoQueryParam(params).trim();
       if (!q) {
-        return "I did not receive which to-do to complete. Ask the user which one they mean.";
+        const resultText = "I did not receive which to-do to complete. Ask the user which one they mean.";
+        lastDirectToolSuccessRef.current = {
+          toolName: "complete_todo", resultText, at: new Date().toISOString(), outcome: "failure",
+        };
+        return resultText;
       }
 
       const matches = findTodoMatches(todosRef.current, q);
 
       if (matches.length === 0) {
-        return `I couldn't find a to-do matching "${q}". Ask the user what it's called exactly.`;
+        const resultText = `I couldn't find a to-do matching "${q}". Ask the user what it's called exactly.`;
+        lastDirectToolSuccessRef.current = {
+          toolName: "complete_todo", resultText, at: new Date().toISOString(), outcome: "failure",
+          inputSummary: { query: q },
+        };
+        return resultText;
       }
 
       if (matches.length > 1) {
@@ -3352,7 +3378,12 @@ export default function ElevenLabsAgentWidget({
           .slice(0, 4)
           .map((t) => `"${t.title.slice(0, 45).trim()}${t.title.length > 45 ? "…" : ""}"`)
           .join(", ");
-        return `I found ${matches.length} to-dos matching "${q}": ${snippets}. Ask the user which one they mean.`;
+        const resultText = `I found ${matches.length} to-dos matching "${q}": ${snippets}. Ask the user which one they mean.`;
+        lastDirectToolSuccessRef.current = {
+          toolName: "complete_todo", resultText, at: new Date().toISOString(), outcome: "failure",
+          inputSummary: { query: q, matches: matches.length },
+        };
+        return resultText;
       }
 
       const todo = matches[0];
@@ -3369,7 +3400,12 @@ export default function ElevenLabsAgentWidget({
         };
         return resultText;
       } catch {
-        return "I couldn't mark that to-do complete right now. Please try again.";
+        const resultText = "I couldn't mark that to-do complete right now. Please try again.";
+        lastDirectToolSuccessRef.current = {
+          toolName: "complete_todo", resultText, at: new Date().toISOString(), outcome: "failure",
+          inputSummary: { title: todo.title },
+        };
+        return resultText;
       }
     },
     [],
@@ -3874,21 +3910,34 @@ export default function ElevenLabsAgentWidget({
       /** Required for delegate. Exact person name. */
       person_name?: string;
     }): Promise<string> => {
+      lastDirectToolSuccessRef.current = null;
+      const finish = (
+        resultText: string,
+        outcome: "success" | "failure",
+        inputSummary?: unknown,
+      ): string => {
+        lastDirectToolSuccessRef.current = {
+          toolName: "act_on_note",
+          resultText,
+          at: new Date().toISOString(),
+          outcome,
+          inputSummary,
+        };
+        return resultText;
+      };
       const { action } = params;
       const time_text = extractTimeTextParam(params);
       const person_name = params?.person_name ?? extractPersonNameParam(params, "person_name");
       const q = extractQueryParam(params).trim();
       if (!q) {
-        return "I did not receive a search term. Ask the user which note they mean.";
+        return finish("I did not receive a search term. Ask the user which note they mean.", "failure");
       }
 
       // ── Note lookup ──────────────────────────────────────────────────────────
-      const matches = notesRef.current.filter((n) =>
-        n.note.toLowerCase().includes(q.toLowerCase()),
-      );
+      const matches = findNoteMatches(notesRef.current, q);
 
       if (matches.length === 0) {
-        return `I couldn't find a note matching "${q}". Ask the user what the note says exactly.`;
+        return finish(`I couldn't find a note matching "${q}". Ask the user what the note says exactly.`, "failure", { query: q });
       }
 
       if (matches.length > 1) {
@@ -3896,12 +3945,12 @@ export default function ElevenLabsAgentWidget({
           .slice(0, 4)
           .map((n) => `"${n.note.slice(0, 45).trim()}${n.note.length > 45 ? "…" : ""}"`)
           .join(", ");
-        return `I found ${matches.length} notes matching "${q}": ${snippets}. Ask the user which one they mean.`;
+        return finish(`I found ${matches.length} notes matching "${q}": ${snippets}. Ask the user which one they mean.`, "failure", { query: q, matches: matches.length });
       }
 
       const note = matches[0];
       const authUserId = useAuthStore.getState().user?.id;
-      if (!authUserId) return "You are not signed in. Please sign in and try again.";
+      if (!authUserId) return finish("You are not signed in. Please sign in and try again.", "failure");
 
       // ── task ────────────────────────────────────────────────────────────────
       if (action === "task") {
@@ -3923,9 +3972,9 @@ export default function ElevenLabsAgentWidget({
           // task). Dismiss only after the task creation above succeeded —
           // never before, so a failed conversion always leaves the note intact.
           dismissCarsonNote(note.id).catch(() => {});
-          return "I've got that on your list.";
+          return finish("I've got that on your list.", "success", { action, noteId: note.id });
         } catch (err) {
-          return `Couldn't create the task. ${sanitizeCarsonErrorDetail(err)}`;
+          return finish(`Couldn't create the task. ${sanitizeCarsonErrorDetail(err)}`, "failure", { action, noteId: note.id });
         }
       }
 
@@ -3933,11 +3982,11 @@ export default function ElevenLabsAgentWidget({
       if (action === "reminder") {
         const phrase = time_text?.trim();
         if (!phrase) {
-          return "I need to know when to remind you. Ask the user for a time.";
+          return finish("I need to know when to remind you. Ask the user for a time.", "failure", { action, noteId: note.id });
         }
         const parsed = parseVoiceTime(phrase);
         if (parsed.error || !parsed.dueAt) {
-          return `I couldn't understand the time "${phrase}". Ask the user to say when they want the reminder.`;
+          return finish(`I couldn't understand the time "${phrase}". Ask the user to say when they want the reminder.`, "failure", { action, noteId: note.id });
         }
         try {
           const task = await createReminderTask({
@@ -3966,9 +4015,9 @@ export default function ElevenLabsAgentWidget({
             : d.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
           console.log("[act_on_note] reminder created:", task.id, parsed.dueAt);
           dismissCarsonNote(note.id).catch(() => {});
-          return `I'll remind you ${dateLabel} at ${timeStr}.`;
+          return finish(`I'll remind you ${dateLabel} at ${timeStr}.`, "success", { action, noteId: note.id, taskId: task.id });
         } catch (err) {
-          return `Couldn't set the reminder. ${sanitizeCarsonErrorDetail(err)}`;
+          return finish(`Couldn't set the reminder. ${sanitizeCarsonErrorDetail(err)}`, "failure", { action, noteId: note.id });
         }
       }
 
@@ -3976,7 +4025,7 @@ export default function ElevenLabsAgentWidget({
       if (action === "delegate") {
         const personNameInput = person_name?.trim();
         if (!personNameInput) {
-          return "I need to know who to delegate this to. Ask the user for a name.";
+          return finish("I need to know who to delegate this to. Ask the user for a name.", "failure", { action, noteId: note.id });
         }
 
         // Ensure people store is loaded.
@@ -3989,10 +4038,10 @@ export default function ElevenLabsAgentWidget({
           (p) => p.name.trim().toLowerCase() === personNameInput.toLowerCase(),
         );
         if (!person) {
-          return `I couldn't find "${personNameInput}" in your contacts. Ask the user to add them first.`;
+          return finish(`I couldn't find "${personNameInput}" in your contacts. Ask the user to add them first.`, "failure", { action, noteId: note.id });
         }
         if (!person.phone) {
-          return `${person.name} has no phone number saved. Ask the user to add one in People settings.`;
+          return finish(`${person.name} has no phone number saved. Ask the user to add one in People settings.`, "failure", { action, noteId: note.id });
         }
 
         try {
@@ -4007,9 +4056,9 @@ export default function ElevenLabsAgentWidget({
           sessionActionsRef.current.push(`Delegated note to ${person.name}: ${note.note}`);
           console.log("[act_on_note] delegation sent:", result.taskId, "→", person.name);
           dismissCarsonNote(note.id).catch(() => {});
-          return `${person.name} has it. I'll follow up if needed.`;
+          return finish(`${person.name} has it. I'll follow up if needed.`, "success", { action, noteId: note.id, taskId: result.taskId });
         } catch (err) {
-          return `Couldn't send the delegation. ${sanitizeCarsonErrorDetail(err)}`;
+          return finish(`Couldn't send the delegation. ${sanitizeCarsonErrorDetail(err)}`, "failure", { action, noteId: note.id });
         }
       }
 
@@ -4017,11 +4066,11 @@ export default function ElevenLabsAgentWidget({
       if (action === "calendar") {
         const phrase = time_text?.trim();
         if (!phrase) {
-          return "I need a date and time. Ask the user when to add this to the calendar.";
+          return finish("I need a date and time. Ask the user when to add this to the calendar.", "failure", { action, noteId: note.id });
         }
         const parsed = parseVoiceTime(phrase);
         if (parsed.error || !parsed.dueAt) {
-          return `I couldn't understand "${phrase}". Ask the user to say the date and time clearly.`;
+          return finish(`I couldn't understand "${phrase}". Ask the user to say the date and time clearly.`, "failure", { action, noteId: note.id });
         }
         const d = new Date(parsed.dueAt);
         const pad = (n: number) => String(n).padStart(2, "0");
@@ -4039,11 +4088,12 @@ export default function ElevenLabsAgentWidget({
         });
         if (sessionActionsRef.current.length > actionsBefore) {
           dismissCarsonNote(note.id).catch(() => {});
+          return finish(result, "success", { action, noteId: note.id });
         }
-        return result;
+        return finish(result, "failure", { action, noteId: note.id });
       }
 
-      return "I don't know how to perform that action on a note. Ask the user to clarify.";
+      return finish("I don't know how to perform that action on a note. Ask the user to clarify.", "failure", { action, noteId: note.id });
     },
     [displayName, createCalendarEvent],
   );

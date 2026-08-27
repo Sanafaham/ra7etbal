@@ -20,6 +20,8 @@ const NOTE_TRIGGER_PATTERNS: RegExp[] = [
   /\bnote\s+to\s+\w+/i,
   /\bsave\s+(this|that)\s+(note|idea|thought)\b/i,
   /\bremember\s+this\s+(idea|thought|information)\b/i,
+  /\bI\s+have\s+an\s+idea\b/i,
+  /\bremember\s+that\s+I\s+(?:want|would\s+like|plan|intend|might)\s+to\b/i,
   /\bhold\s+this\s+thought\b/i,
   /\badd\s+this\s+to\s+(my\s+)?notes\b/i,
 ];

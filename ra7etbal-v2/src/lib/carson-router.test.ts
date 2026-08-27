@@ -350,6 +350,14 @@ describe("Carson router — To-do vs Notes", () => {
     expect(result.primary_domain).toBe("note");
   });
 
+  it("'I have an idea for X' → note", () => {
+    expect(classify("I have an idea for X").primary_domain).toBe("note");
+  });
+
+  it("'Remember that I want to try X' → note, not durable memory", () => {
+    expect(classify("Remember that I want to try X").primary_domain).toBe("note");
+  });
+
   it("'Put dentist appointment on my calendar' → calendar", () => {
     const result = classify("Put dentist appointment on my calendar");
     expect(result.primary_domain).toBe("calendar");
