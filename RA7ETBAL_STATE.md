@@ -100,6 +100,28 @@ These are two separate contracts and must remain separately identifiable — a f
 
 **Status: recorded only. No implementation. No RED test written. No code, schema, database, or ElevenLabs change made.**
 
+### `approved_alternative_media_routing` — CONFIRMED PRODUCTION DEFECT, RECORDED ONLY, NOT YET FIXED (2026-08-27)
+
+**Protected behavior name for future work: `approved_alternative_media_routing`.**
+
+**Live production evidence:** the owner approved Christopher's proposed cooking alternative in the app. The approval itself succeeded — Christopher received the approval text ("Update on your task: Approved. You can go ahead. When done, tap View Task to confirm."). However, Christopher did NOT receive the approved alternative photo along with that approval. Instead, the OWNER received the substitute photo separately on WhatsApp, arriving by itself with no explanatory text or approval context — an orphan media message with no useful purpose for the owner, who had already made the decision.
+
+**Confirmed defect:** approved alternative media is routed to the wrong recipient. The system (1) sent Christopher only the approval text, (2) sent the approved alternative photo separately to the owner, (3) left the owner with an orphan media-only message. The media associated with an approved substitute/alternative must be delivered to the worker who needs the approved-alternative context, not back to the owner who already approved it.
+
+**Expected product contract:** when a worker proposes an alternative with attached media and the owner approves it — worker must receive the approval; worker must receive the approved alternative media; the media should be attached to, captioned with, or otherwise clearly tied to the worker-facing approval message so the worker can identify exactly which alternative was approved; the owner must NOT receive the worker-facing approved media as the only media recipient; the owner must NOT receive an unexplained orphan photo after approving. **Core protected rule: approved alternative media must follow the approval to the worker.**
+
+**Intended flow vs. current incorrect flow:**
+- Intended: worker proposes alternative + photo → owner reviews → owner approves → worker receives approval + approved alternative photo together or clearly connected.
+- Current (defective): worker proposes alternative + photo → owner reviews → owner approves → worker receives approval text only → owner receives orphan photo.
+
+**Negative control (must not be broken by any future fix):** this defect concerns POST-APPROVAL routing only. If the owner is supposed to receive a review image BEFORE approval (i.e. as part of deciding whether to approve), that pre-approval owner-review behavior is legitimate and must not be accidentally broken by a fix to this defect.
+
+**Explicitly separate from:** Repair #4 (task-neutral substitute-review language, PR #351 — must not be reopened or expanded to include this defect), Repair #5 (owner escalation message composition, PR #346 — LOCKED), photo specificity / image-derived task specificity, `consequential_deictic_reference_resolution`, natural owner-decision recognition, voice/display parity, ElevenLabs tool-registry drift, and escalation/follow-up delivery.
+
+**Future RED test contract (not implemented, not authorized yet):** given Christopher has an active `substitute_review`/alternative proposal, submitted an alternative photo, and the owner approves the alternative — expected: Christopher receives the approval text; Christopher receives the approved alternative image; the image is tied to the same approval flow; the worker can identify which alternative was approved; the owner does not receive the image as the only media recipient; the owner does not receive an orphan media-only message; no cross-recipient media-routing error occurs.
+
+**Status: recorded only. No implementation. No RED test written. No code, schema, database, or ElevenLabs change made. Repair #4 and Repair #5 not touched or reopened.**
+
 **Root cause:** any WhatsApp message carrying media was routed unconditionally into the completion-proof pipeline (`processInboundStaffEvidence` → `task-confirm.js` → `_quality-review.js`), regardless of what the caption said. PR #334's unauthorized-substitution classification correctly treats a same-category substitute photo with no covering household rule as `CORRECTION_REQUIRED` — but that pipeline has no way to know the "purchase" never happened; it was fed an input it was never designed to receive. PR #337's text-only task-linkage gate never participates — explicitly disabled whenever media is present. **Neither protected fix (#334 or #337) was reopened or rewritten** — evidence during implementation confirmed both are functioning exactly as designed for the inputs they were built for.
 
 **Fix, PR #340:** media-bearing messages now route into the completion-proof pipeline only when the caption does NOT deterministically look like a pre-action ask (`isLikelyPreActionSubstitutionRequest`, `api/_staff-substitution-intent.js` — the same gate PR #337 added, **widened this session** after this real test proved its original patterns too narrow: "Is it ok?" with no trailing "if", and "found only X" with no "instead"/"substitute" word — purely additive, every prior positive/negative case still holds). A matching caption routes through the existing `substitution_request` / owner-escalation machinery (`_staff-comms-engine.js` + `staff_escalation_owner_decisions`), unchanged.
