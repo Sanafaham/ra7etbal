@@ -53,6 +53,30 @@ TDD: both fixes proven RED first (fix temporarily reverted, new test reproduced 
 
 **Explicitly not started, per owner instruction:** Repair #4 (task-neutral substitute-language wording) and every other repair identified in the broader investigation (spoken/displayed consequential-response parity, photo-delegation specificity, natural owner-decision-language recognition beyond this fix, ElevenLabs tool-registry reconciliation) remain unauthorized and untouched.
 
+### `consequential_deictic_reference_resolution` — CONFIRMED PRODUCTION DEFECT, RECORDED ONLY, NOT YET FIXED (2026-08-27)
+
+**Protected behavior name for future work: `consequential_deictic_reference_resolution`.**
+
+**Production evidence:** the owner intended to attach a product photo to a delegation, but the photo did not successfully reach Carson (no valid image/object/session context was available). The owner then said "Can you ask Christopher to buy this?" — an unresolved deictic reference ("this") with nothing behind it. Carson executed anyway: it created a real task and sent Christopher "Hi Christopher, buy this.", then told the owner the delegation had been completed.
+
+**Expected product contract:** when the owner uses an unresolved deictic reference (this/that/these/those/it) inside a consequential request (buy/get/make/send/use/give/ask-to-handle "this", etc.) and Carson does not actually possess context that resolves the reference, Carson must not execute — no task, delegation, WhatsApp message, reminder, instruction, or other consequential action may be created from the unresolved reference. Carson must instead ask a concise clarification (e.g. "I don't see the photo. What should I ask Christopher to buy?"). **Core safety contract: no resolved referent = no consequential execution.**
+
+**Explicitly a separate contract from photo specificity (the already-recorded, still-open regression under the substitute-approval defect above and the broader investigation's Restoration 2 finding):**
+- **This defect (Defect A, deictic reference resolution):** Carson does not have the image/object/context at all, and executes anyway on an unresolved reference.
+- **Photo specificity (Defect B, separately tracked):** Carson does have the image/context, but the persisted task still degrades into generic wording ("buy this" / "please buy the item(s) in the attached photo") instead of preserving the specific resolved meaning (e.g. "TEREA Silver").
+
+These are two separate contracts and must remain separately identifiable — a fix for one must not be assumed to cover the other.
+
+**Also explicitly separate from:** Repair #5 (owner escalation message composition, PR #346 — merged, deployed, canary verified, live acceptance still pending), spoken/displayed consequential-response voice/UI parity, owner-decision-language recognition ("He can buy" and similar), task-neutral substitute wording (Repair #4, not started), and ElevenLabs tool-registry drift (all from the broader 2026-08-27 investigation, none authorized to implement).
+
+**Future RED test contract (not implemented, not authorized yet):**
+- Scenario 1 — missing referent: no attachment, no valid image/object/session context resolving "this"; owner says "Ask Christopher to buy this." Expected: no task, no delegation, no WhatsApp message, no consequential success response — Carson asks what "this" refers to or asks for the missing photo.
+- Scenario 2 — valid referent: a valid attached image/context is present and resolves to a specific product/object; owner says "Ask Christopher to buy this." Expected: execution may proceed, and the persisted task must preserve the specific resolved meaning — it must not remain merely "buy this" or "buy the item in the attached photo" (this second scenario is where Defect A's fix and Defect B's fix must both hold simultaneously).
+
+**Protection intent for future work:** any future change touching image/session context resolution, delegation construction, consequential execution gating, deictic-reference handling, or task persistence must not allow an unresolved reference to execute silently.
+
+**Status: recorded only. No implementation. No RED test written. No code, schema, database, or ElevenLabs change made.**
+
 **Root cause:** any WhatsApp message carrying media was routed unconditionally into the completion-proof pipeline (`processInboundStaffEvidence` → `task-confirm.js` → `_quality-review.js`), regardless of what the caption said. PR #334's unauthorized-substitution classification correctly treats a same-category substitute photo with no covering household rule as `CORRECTION_REQUIRED` — but that pipeline has no way to know the "purchase" never happened; it was fed an input it was never designed to receive. PR #337's text-only task-linkage gate never participates — explicitly disabled whenever media is present. **Neither protected fix (#334 or #337) was reopened or rewritten** — evidence during implementation confirmed both are functioning exactly as designed for the inputs they were built for.
 
 **Fix, PR #340:** media-bearing messages now route into the completion-proof pipeline only when the caption does NOT deterministically look like a pre-action ask (`isLikelyPreActionSubstitutionRequest`, `api/_staff-substitution-intent.js` — the same gate PR #337 added, **widened this session** after this real test proved its original patterns too narrow: "Is it ok?" with no trailing "if", and "found only X" with no "instead"/"substitute" word — purely additive, every prior positive/negative case still holds). A matching caption routes through the existing `substitution_request` / owner-escalation machinery (`_staff-comms-engine.js` + `staff_escalation_owner_decisions`), unchanged.
