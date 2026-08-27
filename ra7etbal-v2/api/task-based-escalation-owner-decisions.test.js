@@ -366,10 +366,23 @@ describe('buildTaskReviewMessage — message text', () => {
     expect(text).toMatch(/[Nn]o/);
   });
 
-  it('substitute_review with note: contains proposed substitute note', async () => {
+  it('substitute_review with note: identifies the assignee, the actual proposal, and that a decision is needed -- without repeating the task description', async () => {
     const text = await getMessageText('substitute_review', 'Buy TEREA sticks', 'Christopher', 'Buy Heets instead');
+    // 1. Worker/assignee identity present.
+    expect(text).toContain('Christopher');
+    // 2 & 5. Substitute/alternative meaning is clear and a decision is required
+    // -- phrasing is intentionally not locked to one exact copy, since this
+    // wording changed on purpose (Repair #5) to remove a duplicated task
+    // description; any wording naming a substitute/alternative and asking
+    // for approve/reject satisfies the contract.
+    expect(text).toMatch(/substitute|alternative/i);
+    expect(text).toMatch(/approve|reject|review/i);
+    // 3. The actual proposal/note content is present.
     expect(text).toContain('Buy Heets instead');
-    expect(text).toMatch(/proposing a substitute/i);
+    // 4. The task description is not unnecessarily duplicated -- it must
+    // not appear twice in the composed message.
+    const taskOccurrences = (text.match(/Buy TEREA sticks/g) || []).length;
+    expect(taskOccurrences).toBeLessThanOrEqual(1);
   });
 
   it('substitute_review without note: says proposing an alternative', async () => {

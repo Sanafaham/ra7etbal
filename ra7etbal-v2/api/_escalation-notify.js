@@ -694,14 +694,41 @@ async function failTaskReviewNotificationLease(
   }
 }
 
-function buildTaskReviewMessage({ reviewType, taskDescription, assignedTo, reviewNote }) {
-  const task = String(taskDescription || 'a task').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 80);
+// Shortens at the last complete word before maxLength instead of cutting
+// mid-word (confirmed production defect: a hard .slice(0, N) could produce
+// a malformed run-on like "...I only f Reply to approve..."). Appends an
+// ellipsis only when text was actually shortened, so a reader can tell the
+// message was trimmed rather than reading a truncated word as the end of
+// a sentence.
+function truncateWordSafe(text, maxLength) {
+  const trimmed = String(text || '');
+  if (trimmed.length <= maxLength) return trimmed;
+  const cut = trimmed.slice(0, maxLength);
+  const lastSpace = cut.lastIndexOf(' ');
+  const safe = lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+  return `${safe.trimEnd()}…`;
+}
+
+export function buildTaskReviewMessage({ reviewType, taskDescription, assignedTo, reviewNote }) {
+  const task = truncateWordSafe(String(taskDescription || 'a task').replace(/[\r\n\t]+/g, ' ').trim(), 80);
   const who = String(assignedTo || 'the staff member').replace(/[\r\n\t]+/g, ' ').trim();
-  const note = reviewNote ? String(reviewNote).replace(/[\r\n\t]+/g, ' ').trim().slice(0, 120) : null;
+  // Note budget is larger than the task-quote budget on purpose: a
+  // substitute_review note (buildPreActionSubstituteReviewNote,
+  // task-confirm.js) already restates the task name and puts the
+  // assignee's actual question near the end -- Meta's WhatsApp template
+  // body parameters comfortably support text well beyond 120 characters,
+  // and the decision-critical content Sana needs to read lives past that
+  // old cutoff.
+  const note = reviewNote
+    ? truncateWordSafe(String(reviewNote).replace(/[\r\n\t]+/g, ' ').trim(), 320)
+    : null;
 
   if (reviewType === 'substitute_review') {
+    // The note (when present) already names the item being substituted --
+    // re-quoting the task here would repeat it. Only fall back to quoting
+    // the task directly when there is no note to carry that context.
     return note
-      ? `${who} is proposing a substitute for "${task}": ${note} Reply to approve or reject.`
+      ? `${who} has a substitute to review: ${note} Reply to approve or reject.`
       : `${who} is proposing an alternative for "${task}". Reply to approve or reject.`;
   }
   if (reviewType === 'uncertain_proof') {
