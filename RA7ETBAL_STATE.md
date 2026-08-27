@@ -1,6 +1,6 @@
 # Ra7etBal Current State
 
-Last updated: 2026-08-27 (substitute-approval pre-action photo proposal defect — PR #340/#342/#344 all merged, deployed, canary verified; CODE COMPLETE, NOT YET CLOSED — real Christopher production acceptance test on /confirm still required. Separately, owner escalation message composition Repair #5 — PR #346 — also merged, deployed, canary verified; CODE COMPLETE, DEPLOYED, CANARY VERIFIED, LIVE OWNER ACCEPTANCE STILL REQUIRED)
+Last updated: 2026-08-27 (substitute-approval pre-action photo proposal defect — PR #340/#342/#344 all merged, deployed, canary verified; CODE COMPLETE, NOT YET CLOSED — real Christopher production acceptance test on /confirm still required. Separately, owner escalation message composition Repair #5 — PR #346 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED)
 
 This file is the operational source of truth for agents working in this repository. Update it whenever a task changes what is complete, protected, blocked, or next.
 
@@ -35,7 +35,24 @@ TDD: both fixes proven RED first (fix temporarily reverted, new test reproduced 
 
 **Historical stale-data status (re-inspected after deploy+canary, per instruction — NOT mutated):** `staff_escalation_owner_decisions` row `38e8ec33-fe90-41e9-ac8c-a1436ae21766` (task `578e6216-0ed5-4a39-863b-c91d649fba94`) still shows `status: 'open'` in the database, unchanged — the code fix does not touch existing data, only live matching behavior. It should no longer be reachable as a false-ambiguity candidate now that the fix is deployed, but this has not yet been re-verified with a live WhatsApp reply test. If historical reconciliation of this (and any other) stale row is wanted, that requires its own proposed, explicitly-approved cleanup — not yet proposed, not yet authorized, not yet performed.
 
-### Owner escalation message composition — Repair #5 — MERGED, DEPLOYED, CANARY VERIFIED — LIVE OWNER ACCEPTANCE STILL REQUIRED (2026-08-27)
+### REPAIR #5 — OWNER MESSAGE COMPOSITION
+
+**STATUS: FIXED · PROTECTED · DEPLOYED · CANARY VERIFIED · LIVE PRODUCTION VERIFIED · OWNER ACCEPTED · LOCKED (2026-08-27)**
+
+**LOCK RULE: do not reopen or materially alter Repair #5 without new production evidence of a regression, or an explicitly authorized product change.**
+
+- **Implementation:** PR #346
+- **Merge SHA:** `7640434b308876497a0a5fa12fd423c142b41616`
+- **Production canary:** run `33033978573` — PASS
+- **Live owner acceptance:** 27 Aug 2026 — PASS
+- **Live acceptance evidence:** real Christopher substitute-review owner WhatsApp escalation, personally inspected by the owner in live production (screenshot evidence provided). Verified: no mid-word truncation; no malformed partial-word output (e.g. "approval befo"); clear assignee identity; understandable proposal/note; complete approve/reject instruction; unnecessary task-description duplication removed.
+- **Rollback boundary:** isolated normal `git revert` of merge SHA `7640434b308876497a0a5fa12fd423c142b41616` if ever required — no schema, data, or config migration involved. Not executed; recorded for reference only.
+- **Test protection:** `api/_escalation-notify.test.js`'s `describe('buildTaskReviewMessage — word-safe, non-duplicated composition', ...)` block (6 tests) directly protects every contract point: `'never cuts a word in half'` (no mid-word truncation / no malformed fragment), `'preserves the assignee's actual question -- the decision context survives shortening'` (assignee identity present, note understandable, approve/reject instruction present), `'does not repeat the task description -- the item name appears exactly once'` (no duplicate task wording), `'still shortens a genuinely excessive note, but only at a word boundary'` (word-safe composition for long notes), `'non-substitute review types are unaffected -- unrelated escalation behavior unchanged'`, and `'flows through to the real Meta template payload unmangled'` (end-to-end proof via `notifyOwnerOfTaskReview`). Decision-state semantics are unchanged by construction — Repair #5 touched only message composition (`buildTaskReviewMessage`), never `staff_escalation_owner_decisions`/`quality_substitute_decisions` write paths, and the full decision-matching/resolution suites (`_owner-whatsapp-routing.test.js`, `task-based-escalation-owner-decisions.test.js`) pass unchanged.
+- **Registry / Impact-Aware CI protection:** already existed, not duplicated. `carson-protected-registry.json`'s `owner_decision_lifecycle` capability (Tier 1, `protected_suite: true`) already maps `api/_escalation-notify.js:notifyOwnerOfTaskReview` and lists `api/_escalation-notify.test.js` and `api/task-based-escalation-owner-decisions.test.js` in its required `focused_tests`, gated by the required `carson-protected-behaviors` CI check. No registry or Impact-Aware CI change was needed or made.
+
+---
+
+### Owner escalation message composition — Repair #5 — background (2026-08-27)
 
 **Follow-up production-reliability defect, found during a broader systematic-debugging investigation into several reported Carson regressions (voice/UI parity, photo-delegation specificity, natural owner-decision language, task-neutral substitute wording, owner escalation message quality, ElevenLabs tool registry). Owner authorized fixing exactly one confirmed, narrowly-scoped defect from that investigation — Repair #5 — before any of the other repairs; the rest remain unauthorized/not started.**
 
@@ -49,7 +66,7 @@ TDD: both fixes proven RED first (fix temporarily reverted, new test reproduced 
 
 **Merged and deployed.** PR #346 merged to `main` as `7640434`. GitHub Deployments API confirms a `Production – ra7etbal-v2` deployment at this exact SHA with state `success`; `www.ra7etbal.com` returns HTTP 200 with a `last-modified` timestamp matching the deploy time. (This session's connected Vercel MCP integration did not have direct API access to the `ra7etbal-v2` project to independently confirm the `aliasError: null` field the way prior sessions did — GitHub-Deployments-API + live-curl evidence was used instead.) `carson-production-canary` run `33033978573`: success.
 
-**NOT YET CLOSED — mandatory live owner acceptance test still required.** Trigger a real `substitute_review`/owner-decision notification with a long note and confirm on the actual WhatsApp message: no mid-word truncation, no malformed fragment (e.g. "approval befo"), no unnecessary duplicated task wording, the message clearly identifies who needs a decision, the proposal/request remains understandable, and the approve/reject instruction remains clear. This has not yet been performed.
+**CLOSED — live owner acceptance test performed and PASSED 27 Aug 2026.** See the STATUS block above for the full evidence summary and lock rule.
 
 **Explicitly not started, per owner instruction:** Repair #4 (task-neutral substitute-language wording) and every other repair identified in the broader investigation (spoken/displayed consequential-response parity, photo-delegation specificity, natural owner-decision-language recognition beyond this fix, ElevenLabs tool-registry reconciliation) remain unauthorized and untouched.
 
@@ -73,7 +90,7 @@ These are two separate contracts and must remain separately identifiable — a f
 
 **Positive production evidence — ESCALATION / FOLLOW-UP DELIVERY: LIVE PASS (2026-08-27).** A follow-up/escalation WhatsApp message successfully reached Christopher in live production. This proves follow-up delivery and escalation transport are working. This does NOT indicate the task wording itself is correct — task-context specificity (Test 1 and Test 2 above) remains broken; do not interpret successful escalation delivery as proof that the delegation/task text is correct.
 
-**Also explicitly separate from:** Repair #5 (owner escalation message composition, PR #346 — merged, deployed, canary verified, live acceptance still pending), spoken/displayed consequential-response voice/UI parity, owner-decision-language recognition ("He can buy" and similar), task-neutral substitute wording (Repair #4, not started), and ElevenLabs tool-registry drift (all from the broader 2026-08-27 investigation, none authorized to implement).
+**Also explicitly separate from:** Repair #5 (owner escalation message composition, PR #346 — FIXED, PROTECTED, DEPLOYED, CANARY VERIFIED, LIVE PRODUCTION VERIFIED, OWNER ACCEPTED, LOCKED), spoken/displayed consequential-response voice/UI parity, owner-decision-language recognition ("He can buy" and similar), task-neutral substitute wording (Repair #4, not started), and ElevenLabs tool-registry drift (all from the broader 2026-08-27 investigation, none authorized to implement).
 
 **Future RED test contract (not implemented, not authorized yet):**
 - Scenario 1 (Test 1) — missing referent: no attachment at all, no valid image/object/session context resolving "this"; owner says "Ask Christopher to buy this." Expected: no task, no delegation, no WhatsApp message, no consequential success response — Carson asks what "this" refers to or asks for the missing photo.
