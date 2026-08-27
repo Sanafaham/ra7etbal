@@ -1289,11 +1289,11 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
   // as a pre-action permission request, reusing the identical existing
   // substitute_review lifecycle proven by the sibling test above.
   describe('Confirmation-page pre-action substitute proposal — reinterprets correction_required as substitute_review', () => {
-    function mockSubstituteProposalFetchSequence() {
+    function mockSubstituteProposalFetchSequence(taskDescription = 'buy TEREA Silver') {
       return vi
         .fn()
         .mockResolvedValueOnce(jsonResponse([{
-          id: 'task-1', user_id: 'user-1', status: 'pending', description: 'buy TEREA Silver',
+          id: 'task-1', user_id: 'user-1', status: 'pending', description: taskDescription,
           assigned_to: 'Christopher', image_path: 'task-images/u/t/terea.jpg', quality_review_cycle_count: 0,
         }]))
         .mockResolvedValueOnce(jsonResponse([])) // no messages row
@@ -1389,7 +1389,87 @@ describe('Quality Intelligence V1 — task-confirm POST routing', () => {
       // neutrally, in the replacement text.
       expect(persistedNote).toContain('TEREA Silver');
       expect(persistedNote).toContain('I only found turquoise. Is it ok?');
-      expect(persistedNote).toMatch(/before buying|approval before/i);
+      // Task-neutral (Repair #4): asserts the note communicates that review/
+      // approval is required, without locking to purchase-specific wording
+      // ("before buying"/"approval before") -- that exact phrasing is itself
+      // part of the task-neutral-language defect Repair #4 fixes.
+      expect(persistedNote).toMatch(/review and approve|reject the alternative/i);
+      expect(persistedNote).not.toMatch(/already (bought|purchased)/i);
+    });
+
+    // Repair #4 (2026-08-27 production evidence): buildPreActionSubstituteReviewNote
+    // hardcoded purchase-specific wording ("asking for approval before
+    // buying a substitute", "No purchase has been made yet") even when the
+    // underlying task is not a purchase task. Production example: task "Make
+    // this for lunch.", Christopher: "We only have these ingredients. Can I
+    // make this instead?" -- Carson described this as asking for approval
+    // before BUYING a substitute, which is semantically wrong for a cooking
+    // task. Nothing was being bought.
+    it('Repair #4 — task-neutral substitute language: a cooking substitution is never described as buying/purchasing', async () => {
+      runQualityReviewMock.mockResolvedValue({
+        status: 'correction_required',
+        note: 'The requested dish was the salad, but a different dish was prepared instead.',
+      });
+      vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+      vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+      vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+      const fetchMock = mockSubstituteProposalFetchSequence('Make this for lunch.');
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handleTaskConfirmationPost(
+        createReq({
+          taskId: 'task-1',
+          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          workerReply: 'We only have these ingredients. Can I make this instead?',
+        }),
+        res,
+      );
+
+      const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+      const persistedNote = patchBody.quality_review_note;
+      const BANNED = [/\bbuy\b/i, /\bbuying\b/i, /\bpurchase\b/i, /\bpurchased\b/i];
+      for (const pattern of BANNED) {
+        expect(persistedNote).not.toMatch(pattern);
+      }
+      // Still clearly communicates: Christopher is proposing/asking about
+      // an alternative, what task it relates to, his actual note, and that
+      // owner review/approval is required.
+      expect(persistedNote).toContain('Christopher');
+      expect(persistedNote).toContain('Make this for lunch.');
+      expect(persistedNote).toContain('We only have these ingredients. Can I make this instead?');
+      expect(persistedNote).toMatch(/alternative/i);
+      expect(persistedNote).toMatch(/review and approve|reject the alternative/i);
+    });
+
+    it('Repair #4 — task-neutral substitute language: a genuine purchase substitution remains understandable', async () => {
+      runQualityReviewMock.mockResolvedValue({
+        status: 'correction_required',
+        note: "Hi Christopher, the requested item was TEREA Silver, but you've bought TEREA Turquoise instead.",
+      });
+      vi.stubEnv('VAPID_PUBLIC_KEY', 'vapid-public');
+      vi.stubEnv('VAPID_PRIVATE_KEY', 'vapid-private');
+      vi.stubEnv('VAPID_SUBJECT', 'mailto:owner@example.com');
+      const fetchMock = mockSubstituteProposalFetchSequence('Buy TEREA Silver.');
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = createRes();
+      await handleTaskConfirmationPost(
+        createReq({
+          taskId: 'task-1',
+          proofImagePaths: ['task-images/u/t/proof/0.jpg'],
+          workerReply: 'I only found Turquoise. Is it okay if I get this instead?',
+        }),
+        res,
+      );
+
+      const patchBody = JSON.parse(fetchMock.mock.calls[2][1].body);
+      const persistedNote = patchBody.quality_review_note;
+      expect(persistedNote).toContain('Christopher');
+      expect(persistedNote).toContain('Buy TEREA Silver.');
+      expect(persistedNote).toContain('I only found Turquoise. Is it okay if I get this instead?');
+      expect(persistedNote).toMatch(/alternative/i);
+      expect(persistedNote).toMatch(/review and approve|reject the alternative/i);
       expect(persistedNote).not.toMatch(/already (bought|purchased)/i);
     });
 
