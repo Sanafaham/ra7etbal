@@ -106,6 +106,10 @@ export function createCarsonTurnHandler({
       return res.status(cached.status).json({ ...cached, duplicate: true });
     }
 
+    // previousCapability/previousGroundingStatus: minimal, non-security
+    // conversational-continuity context only (see
+    // createAttentionReadCoordinator's own doc comment) — never trusted for
+    // identity, authorization, or in place of fresh retrieval.
     const ownerTurn = {
       accountId,
       authorization: req.headers?.authorization ?? req.headers?.Authorization ?? "",
@@ -113,6 +117,9 @@ export function createCarsonTurnHandler({
       turnId,
       transcript,
       legacyClaimed: req.body?.legacyClaimed === true,
+      previousCapability: typeof req.body?.previousCapability === "string" ? req.body.previousCapability : null,
+      previousGroundingStatus:
+        typeof req.body?.previousGroundingStatus === "string" ? req.body.previousGroundingStatus : null,
     };
 
     // Deterministic, model-free classification first (attention_summary_read).

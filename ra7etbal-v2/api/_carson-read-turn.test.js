@@ -210,3 +210,122 @@ describe("Carson deterministic attention-summary read coordinator (typed hard-gr
     expect(fetchEvidence).not.toHaveBeenCalled();
   });
 });
+
+describe("Carson attention follow-up continuation (2026-08-28 fix)", () => {
+  const GROUNDED_RESULT = {
+    evidence: { ok: true, code: "attention_read_succeeded", completeness: "full" },
+    text: "Also on your mind: buy groceries.",
+  };
+  const validContinuation = {
+    accountId: "account-a",
+    authorization: "Bearer session-a",
+    turnId: "turn-followup-1",
+    transcript: "What else?",
+    previousCapability: "attention_summary_read",
+    previousGroundingStatus: "grounded",
+  };
+
+  it("[2/3] admits a follow-up with valid continuation context and returns a fresh grounded result, not unsupported_intent", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const result = await coordinate(validContinuation);
+
+    expect(result.code).not.toBe("unsupported_intent");
+    expect(result).toMatchObject({
+      handled: true,
+      status: 200,
+      capability: "attention_summary_read",
+      groundingStatus: "grounded",
+      ownerResult: GROUNDED_RESULT.text,
+    });
+  });
+
+  it("[4] server independently re-verifies matchesAttentionFollowUp — a non-follow-up transcript is still rejected even with valid continuation fields", async () => {
+    const fetchEvidence = vi.fn();
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const result = await coordinate({
+      ...validContinuation,
+      transcript: "Order more cat food please",
+    });
+
+    expect(result).toEqual({ handled: false, status: 422, code: "unsupported_intent" });
+    expect(fetchEvidence).not.toHaveBeenCalled();
+  });
+
+  it("[5] previousCapability/previousGroundingStatus alone cannot turn arbitrary text into an attention request", async () => {
+    const fetchEvidence = vi.fn();
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const result = await coordinate({
+      ...validContinuation,
+      transcript: "Please transfer $500 to my landlord",
+    });
+
+    expect(result).toEqual({ handled: false, status: 422, code: "unsupported_intent" });
+    expect(fetchEvidence).not.toHaveBeenCalled();
+  });
+
+  it("[5b] an incomplete continuation claim (wrong capability or non-grounded prior status) does not admit a bare follow-up transcript", async () => {
+    const fetchEvidence = vi.fn();
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const wrongCapability = await coordinate({ ...validContinuation, previousCapability: "calendar_read" });
+    const notGrounded = await coordinate({ ...validContinuation, previousGroundingStatus: "failed" });
+    const missingBoth = await coordinate({
+      ...validContinuation,
+      previousCapability: undefined,
+      previousGroundingStatus: undefined,
+    });
+
+    for (const result of [wrongCapability, notGrounded, missingBoth]) {
+      expect(result).toEqual({ handled: false, status: 422, code: "unsupported_intent" });
+    }
+    expect(fetchEvidence).not.toHaveBeenCalled();
+  });
+
+  it("[6] performs a fresh retrieval for the follow-up — never reuses or replays prior evidence", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    await coordinate({
+      accountId: "account-a",
+      authorization: "Bearer session-a",
+      turnId: "turn-1",
+      transcript: "What needs my attention?",
+    }); // direct intent turn
+    await coordinate({ ...validContinuation, turnId: "turn-2" }); // follow-up turn
+
+    expect(fetchEvidence).toHaveBeenCalledTimes(2);
+  });
+
+  it("[7] continuation context never reaches or alters the retrieval call's identity/tenant scoping", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    await coordinate(validContinuation);
+
+    expect(fetchEvidence).toHaveBeenCalledWith({ accountId: "account-a", authorization: "Bearer session-a" });
+    const callArgs = fetchEvidence.mock.calls[0][0];
+    expect(callArgs).not.toHaveProperty("previousCapability");
+    expect(callArgs).not.toHaveProperty("previousGroundingStatus");
+  });
+
+  it("[9] a valid continuation whose fresh retrieval fails still fails closed to the honest fallback, never a fabricated answer", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue({
+      evidence: { ok: false, code: "attention_read_failed", completeness: "none" },
+      text: "I couldn't check what needs your attention right now — the live check didn't complete.",
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence });
+
+    const result = await coordinate(validContinuation);
+
+    expect(result).toMatchObject({
+      handled: true,
+      status: 502,
+      groundingStatus: "failed",
+      ownerResult: "I couldn't check what needs your attention right now — the live check didn't complete.",
+    });
+  });
+});

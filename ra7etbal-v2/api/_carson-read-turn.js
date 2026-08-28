@@ -1,4 +1,4 @@
-import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
+import { matchesAttentionIntent, matchesAttentionFollowUp } from "../shared/carson-attention-intent-classifier.js";
 
 const SUPPORTED_CAPABILITY = "calendar_read";
 const SUPPORTED_RANGES = new Set(["today", "tomorrow", "this_week", "next_week", "next_7_days", "next_10_days", "next_14_days", "next_30_days"]);
@@ -162,7 +162,19 @@ export function createAttentionReadCoordinator({ fetchEvidence }) {
     if (ownerTurn.legacyClaimed === true) {
       return { handled: false, status: 409, code: "ownership_collision" };
     }
-    if (!matchesAttentionIntent(ownerTurn.transcript)) {
+    // 2026-08-28 follow-up fix: a genuine continuation ("What else?") is
+    // admitted ONLY when BOTH hold — the server independently re-verifies
+    // the transcript itself against matchesAttentionFollowUp (the client's
+    // claim alone can never admit arbitrary text), AND the client asserts
+    // the immediately preceding turn was a grounded attention_summary_read.
+    // This is classification context only: it never supplies identity,
+    // never bypasses authentication/RLS below, and never substitutes for
+    // the fresh retrieval every admitted turn still performs.
+    const isValidFollowUpContinuation =
+      matchesAttentionFollowUp(ownerTurn.transcript) &&
+      ownerTurn.previousCapability === ATTENTION_CAPABILITY &&
+      ownerTurn.previousGroundingStatus === "grounded";
+    if (!matchesAttentionIntent(ownerTurn.transcript) && !isValidFollowUpContinuation) {
       return { handled: false, status: 422, code: "unsupported_intent" };
     }
 

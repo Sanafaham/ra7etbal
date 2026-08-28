@@ -7673,16 +7673,36 @@ export default function ElevenLabsAgentWidget({
       // corrected afterward the way carson-attention-intent-guard.ts still
       // does for voice (which cannot avoid the model generating a turn at
       // all). Voice is intentionally untouched by this block.
-      const typedAttentionIntent =
-        matchesAttentionIntent(savedMessage.content) ||
-        (matchesAttentionFollowUp(savedMessage.content) && lastTurnWasAttentionIntentRef.current);
+      const isTypedAttentionFollowUp =
+        matchesAttentionFollowUp(savedMessage.content) && lastTurnWasAttentionIntentRef.current;
+      const typedAttentionIntent = matchesAttentionIntent(savedMessage.content) || isTypedAttentionFollowUp;
       if (typedAttentionIntent) {
         sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
         let ownerResult: string = ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE;
+        let typedGroundingStatus: string | null = null;
         try {
           const { data: attentionSessionData } = await supabase.auth.getSession();
           const attentionJwt = attentionSessionData?.session?.access_token;
           if (attentionJwt) {
+            // 2026-08-28 follow-up fix: the server is stateless and has no
+            // memory of the prior turn, so a genuine follow-up ("What
+            // else?") needs the widget's own continuity signal to avoid
+            // being rejected as unsupported_intent. This is classification
+            // context ONLY — never an operational fact, never identity,
+            // never an authorization/bypass token. The server still
+            // independently re-checks matchesAttentionFollowUp() on the
+            // transcript itself (see api/_carson-read-turn.js) and always
+            // performs a fresh authenticated retrieval; this field can only
+            // ever cause a rejection to instead become a fresh, real
+            // attention_summary_read — it can never substitute for one.
+            // Only sent when the prior turn actually grounded
+            // (lastAttentionTurnWasGroundedRef) — a follow-up to a
+            // failed-to-ground turn is not represented as continuing a
+            // successful one.
+            const continuationContext =
+              isTypedAttentionFollowUp && lastAttentionTurnWasGroundedRef.current
+                ? { previousCapability: "attention_summary_read", previousGroundingStatus: "grounded" }
+                : {};
             const response = await fetch("/api/carson-turn", {
               method: "POST",
               headers: { "content-type": "application/json", authorization: `Bearer ${attentionJwt}` },
@@ -7690,11 +7710,15 @@ export default function ElevenLabsAgentWidget({
                 turnId: clientMessageId,
                 providerEventId: clientMessageId,
                 transcript: savedMessage.content,
+                ...continuationContext,
               }),
             });
             const result = await response.json().catch(() => null);
             if (result?.handled && typeof result.ownerResult === "string") {
               ownerResult = result.ownerResult;
+            }
+            if (typeof result?.groundingStatus === "string") {
+              typedGroundingStatus = result.groundingStatus;
             }
           }
         } catch {
@@ -7704,6 +7728,11 @@ export default function ElevenLabsAgentWidget({
           // unexpected server response.
         }
         lastTurnWasAttentionIntentRef.current = true;
+        // Mirrors the existing voice/onMessage semantics for this same ref
+        // (see the onMessage attention-routing guard above): only a truly
+        // grounded outcome for THIS turn marks the predecessor as grounded
+        // for the next follow-up's continuation-context decision.
+        lastAttentionTurnWasGroundedRef.current = typedGroundingStatus === "grounded";
         await persistLocalTypedAgentReply({
           replyToClientMessageId: clientMessageId,
           content: ownerResult,
