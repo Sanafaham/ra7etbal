@@ -1242,7 +1242,8 @@
         "shared/carson-unresolved-captures-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
         "shared/carson-attention-summary.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
         "shared/automation-support-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
-        "shared/carson-attention-intent-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)"
+        "shared/carson-attention-intent-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
+        "api/_carson-read-turn.js:isValidFollowUpContinuation / matchesAttentionFollowUp check (2026-08-28 fix — server-side follow-up continuation admission for attention_summary_read)"
       ],
       "shared_dependencies": [
         "api/google-calendar.js (existing account-authenticated read handler; normal callers remain functionally unchanged, while Stage 1 passes suppressCredentialCleanup=true so its read-only proof cannot clear revoked credentials)"
@@ -1263,7 +1264,8 @@
         "src/lib/carson-turn-client.test.ts",
         "api/_carson-attention-evidence.test.js",
         "src/components/home/ElevenLabsAgentWidget.typed-attention-hard-grounding.test.ts",
-        "src/lib/reminder-time-shared-parity.test.ts"
+        "src/lib/reminder-time-shared-parity.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.typed-attention-followup-continuation.test.ts"
       ],
       "protected_suite": true,
       "golden_journey_required": true,
@@ -1278,7 +1280,8 @@
         "The live ElevenLabs widget was not wired to this route in Stage 1 (calendar_read only). As of 2026-08-28, the TYPED channel is wired for attention_summary_read only (ElevenLabsAgentWidget.tsx sendTypedMessage) — voice and calendar_read both remain on their pre-existing paths, unchanged.",
         "Deduplication is bounded and process-local because Stage 1 is read-only. It prevents duplicate calls within one warm instance, including concurrent duplicate events, but is not durable across instances and is explicitly insufficient for future consequential actions.",
         "Calendar read and attention_summary_read (2026-08-28) are the only intents admitted. Every other intent is classified unsupported and remains with the existing conversational system; no inference should be made that writes, hosting, delegation, reminders, or messaging are ready for this boundary.",
-        "2026-08-28: attention_summary_read was wired into this route/coordinator specifically for the typed channel (ElevenLabsAgentWidget.tsx sendTypedMessage intercepts before conversation.sendUserMessage()). Voice is explicitly untouched and continues to rely solely on the existing client-side carson-attention-intent-guard.ts backstop. This is a deliberate, approved channel split — see RA7ETBAL_STATE.md for the architecture decision record — not a partial/incomplete rollout."
+        "2026-08-28: attention_summary_read was wired into this route/coordinator specifically for the typed channel (ElevenLabsAgentWidget.tsx sendTypedMessage intercepts before conversation.sendUserMessage()). Voice is explicitly untouched and continues to rely solely on the existing client-side carson-attention-intent-guard.ts backstop. This is a deliberate, approved channel split — see RA7ETBAL_STATE.md for the architecture decision record — not a partial/incomplete rollout.",
+        "2026-08-28 production regression fix: the initial typed hard-grounding delta rejected a genuine attention follow-up (\"What else?\") as unsupported_intent because the stateless server had no memory of the prior turn. Fixed narrowly: the widget sends previousCapability/previousGroundingStatus continuation context ONLY when the immediately preceding turn actually grounded (lastAttentionTurnWasGroundedRef); the server independently re-verifies matchesAttentionFollowUp on the transcript itself before honoring that context, and always performs a fresh authenticated retrieval regardless. The continuation fields carry zero identity/tenant/operational content and cannot substitute for real classification or retrieval. Confirmed by production canary before and after this fix."
       ]
     },
     {
@@ -1360,7 +1363,8 @@
         "shared/carson-unresolved-captures-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
         "shared/carson-attention-summary.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
         "shared/automation-support-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
-        "shared/carson-attention-intent-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)"
+        "shared/carson-attention-intent-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
+        "api/_carson-read-turn.js:isValidFollowUpContinuation (2026-08-28 fix, same as above)"
       ],
       "shared_dependencies": [
         "src/lib/tasks.ts:listTasks (existing, owner-scoped via RLS)",
@@ -1406,7 +1410,8 @@
         "api/_carson-read-turn.test.js",
         "api/carson-turn.test.js",
         "src/components/home/ElevenLabsAgentWidget.typed-attention-hard-grounding.test.ts",
-        "src/lib/reminder-time-shared-parity.test.ts"
+        "src/lib/reminder-time-shared-parity.test.ts",
+        "src/components/home/ElevenLabsAgentWidget.typed-attention-followup-continuation.test.ts"
       ],
       "protected_suite": false,
       "golden_journey_required": false,
