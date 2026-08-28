@@ -8016,7 +8016,11 @@ export default function ElevenLabsAgentWidget({
     <div
       className={
         (inline ? "" : "fixed z-40 right-4") +
-        (status === "connected" && channel === "text" ? " flex h-full min-h-0 w-full flex-col" : "")
+        (status === "connected" && channel === "text"
+          ? " flex h-full min-h-0 w-full flex-col"
+          : channel === "voice" && status !== "idle"
+            ? " flex h-full min-h-0 w-full flex-col items-center"
+            : "")
       }
       style={inline ? undefined : { top: "240px" }}
     >
@@ -8036,10 +8040,11 @@ export default function ElevenLabsAgentWidget({
       />
 
       {channel === "voice" && (
-        <div className="mb-3 w-full px-3 sm:px-5">
+        <div className={status === "idle" ? "mb-3 w-full px-3 sm:px-5" : "min-h-0 w-full flex-1 px-1 sm:px-5"}>
           <CarsonVisualCore
             state={visualState}
             active={isOpen}
+            immersive={status !== "idle"}
             getInputByteFrequencyData={getInputByteFrequencyData}
             getOutputByteFrequencyData={getOutputByteFrequencyData}
             getInputVolume={getInputVolume}
@@ -8055,14 +8060,19 @@ export default function ElevenLabsAgentWidget({
        * garbage-collected by iOS when the idle section unmounts.
        */}
       {(status === "idle" || channel === "voice") && pendingPhotoPreviews.length > 0 && (
-        <div className="mb-1.5 rounded-2xl border border-border bg-white/90 px-2.5 py-2 shadow-sm">
-          <div className="flex items-center gap-1.5">
+        <div className={
+          "mb-2 flex max-w-full items-center gap-2 rounded-full border px-2 py-1.5 shadow-sm backdrop-blur-md " +
+          (status === "idle"
+            ? "border-border bg-white/90"
+            : "border-white/10 bg-black/30")
+        }>
+          <div className="flex min-w-0 items-center gap-1.5">
             {pendingPhotoPreviews.map((photo, index) => (
               <div key={photo.id} className="relative">
                 <img
                   src={photo.previewUrl}
                   alt={`Attached photo ${index + 1}`}
-                  className="h-9 w-9 rounded-lg border border-border object-cover"
+                  className="h-8 w-8 rounded-full border border-white/15 object-cover"
                 />
                 <button
                   type="button"
@@ -8077,7 +8087,7 @@ export default function ElevenLabsAgentWidget({
               </div>
             ))}
           </div>
-          <span className="mt-1 block text-[11px] text-ink/55">
+          <span className={"truncate pr-1 text-[11px] " + (status === "idle" ? "text-ink/55" : "text-white/55")}>
             {pendingPhotoPreviews.length} photo{pendingPhotoPreviews.length === 1 ? "" : "s"}{" "}
             {status === "idle" ? "ready" : "attached"}
           </span>
@@ -8191,7 +8201,7 @@ export default function ElevenLabsAgentWidget({
       )}
 
       {status === "connected" && channel === "voice" && (
-        <div className="flex items-center gap-2">
+        <div className="grid w-full max-w-[360px] shrink-0 grid-cols-[2.75rem_minmax(0,1fr)_4.75rem] items-center gap-2 pb-[max(0.25rem,env(safe-area-inset-bottom))]">
           {/* Image attach button — lets the user attach a photo Carson asked
               for without ending the call. The file input is always mounted,
               so this is safe to show mid-session; handleImageFileChange
@@ -8215,10 +8225,10 @@ export default function ElevenLabsAgentWidget({
                   : "Attach photo"
             }
             className={
-              "flex h-10 w-10 items-center justify-center rounded-full border shadow-sm transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
+              "flex h-11 w-11 items-center justify-center rounded-full border shadow-sm backdrop-blur-md transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-45 " +
               (pendingPhotoPreviews.length > 0
                 ? "border-gold/40 bg-gold/10 text-gold"
-                : "border-charcoal/15 bg-warm-white text-ink/40 hover:border-charcoal/25 hover:text-ink/65")
+                : "border-white/15 bg-white/[0.07] text-white/55 hover:border-white/25 hover:text-white/80")
             }
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -8228,38 +8238,31 @@ export default function ElevenLabsAgentWidget({
             </svg>
           </button>
 
-          <button
-            type="button"
-            onClick={endCall}
-            aria-label="End call"
-            className="flex items-center gap-2.5 rounded-full border border-charcoal/20 bg-warm-white px-4 py-2.5 shadow-[0_4px_16px_-4px_rgba(20,20,20,0.28)] transition hover:bg-white active:scale-95"
+          <div
+            className="flex h-11 min-w-0 items-center justify-center gap-2 rounded-full border border-white/10 bg-white/[0.055] px-3 text-white/75 shadow-sm backdrop-blur-md"
+            aria-live="polite"
           >
             {mode === "speaking" ? (
               <PulsingDot color="bg-gold" />
             ) : (
               <PulsingDot color="bg-sage" />
             )}
-            {/* Truthful processing label: each state is driven by a real
-                event (transcript received / tool started / tool cleared /
-                mode change) — never a state without a backing event, and
-                never an artificial delay before the underlying work
-                proceeds. See turnPhase transitions in onMessage,
-                runDirectToolWithDiagnostic, execute_instruction,
-                create_automation, and onModeChange. */}
-            <span className="text-[13px] font-semibold text-charcoal">
-              {mode === "speaking"
-                ? "Speaking…"
-                : turnPhase === "acting"
-                  ? "Acting…"
-                  : turnPhase === "thinking"
-                    ? "Thinking…"
-                    : turnPhase === "heard"
-                      ? "Heard you"
-                      : "Listening…"}
+            <span className="truncate text-[11px] font-semibold uppercase tracking-[0.16em]">
+              {visualState === "complete"
+                ? "Handled"
+                : visualState === "error"
+                  ? "Cannot confirm"
+                  : visualState.charAt(0).toUpperCase() + visualState.slice(1)}
             </span>
-            <span className="ml-0.5 text-[11px] font-bold uppercase tracking-[0.16em] text-text">
-              End
-            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={endCall}
+            aria-label="End call"
+            className="flex h-11 items-center justify-center rounded-full border border-white/15 bg-white/[0.08] px-3 text-white shadow-sm backdrop-blur-md transition hover:bg-white/[0.13] active:scale-95"
+          >
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em]">End</span>
           </button>
         </div>
       )}
@@ -8357,7 +8360,7 @@ export default function ElevenLabsAgentWidget({
         </div>
       )}
 
-      {channel === "voice" && lastUserTranscript && (
+      {channel === "voice" && status !== "connected" && lastUserTranscript && (
         <p className="mt-1 max-w-[280px] truncate px-2 text-[11px] text-ink/45">
           Carson heard: “{lastUserTranscript}”
         </p>

@@ -7,6 +7,7 @@ import {
 interface CarsonVisualCoreProps {
   state: CarsonVisualState;
   active: boolean;
+  immersive?: boolean;
   getInputByteFrequencyData?: () => Uint8Array;
   getOutputByteFrequencyData?: () => Uint8Array;
   getInputVolume?: () => number;
@@ -36,6 +37,7 @@ function signalEnergy(data: Uint8Array | undefined, volume: number | undefined):
 export default function CarsonVisualCore({
   state,
   active,
+  immersive = false,
   getInputByteFrequencyData,
   getOutputByteFrequencyData,
   getInputVolume,
@@ -197,14 +199,23 @@ export default function CarsonVisualCore({
 
   return (
     <section
-      className="relative mx-auto flex w-full max-w-[420px] flex-col items-center overflow-hidden rounded-[28px] border border-white/10 bg-[#0b0e0e] px-4 pb-4 pt-3 shadow-[0_24px_80px_-36px_rgba(10,12,12,0.85)]"
+      className={
+        "relative mx-auto flex w-full flex-col items-center overflow-hidden " +
+        (immersive
+          ? "h-full max-w-[560px] bg-transparent px-2 pb-2 pt-0"
+          : "max-w-[420px] rounded-[28px] border border-white/10 bg-[#0b0e0e] px-4 pb-4 pt-3 shadow-[0_24px_80px_-36px_rgba(10,12,12,0.85)]")
+      }
       aria-label={`Carson is ${CARSON_VISUAL_LABELS[state].toLowerCase()}`}
       data-carson-visual-state={state}
     >
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_20%,rgba(173,151,103,0.10),transparent_48%),linear-gradient(180deg,rgba(255,255,255,0.025),transparent_38%)]" />
       <canvas
         ref={canvasRef}
-        className="relative h-[176px] w-full sm:h-[210px]"
+        className={
+          immersive
+            ? "relative min-h-[260px] w-full flex-1 sm:min-h-[320px]"
+            : "relative h-[176px] w-full sm:h-[210px]"
+        }
         aria-hidden="true"
       />
       <div className="relative -mt-1 flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.035] px-3 py-1.5 backdrop-blur-sm">
