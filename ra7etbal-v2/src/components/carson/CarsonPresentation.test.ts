@@ -26,8 +26,9 @@ describe("Carson V1 final presentation", () => {
 
   it("uses the single text-free portrait asset for faint app and immersive voice layers", () => {
     expect(appSource.match(/carson-ambient-portrait-v1\.jpg/g)).toHaveLength(2);
-    expect(appSource).toContain('opacity-[0.06]');
-    expect(appSource).toContain('opacity-[0.16]');
+    expect(appSource).toContain('opacity-[0.09]');
+    expect(appSource).toContain('bg-cream/25');
+    expect(appSource).toContain('opacity-[0.24]');
     expect(appSource).toContain('carsonChannel === "voice"');
   });
 });
