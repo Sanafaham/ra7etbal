@@ -13,77 +13,53 @@ function blockBetween(startNeedle: string, endNeedle: string): string {
 }
 
 /**
- * 2026-08-28 — narrow fix for a real production regression found by the
- * post-merge canary: the widget correctly recognized "What else?" as a
- * continuation of a grounded attention turn, but the stateless server
- * coordinator had no way to know that and rejected it as unsupported_intent,
- * falling back to the honest-but-wrong "couldn't check" message instead of
- * a fresh grounded answer.
- *
- * Fix: the widget sends minimal, non-security continuation context
- * (previousCapability/previousGroundingStatus) only when the immediately
- * preceding turn actually grounded — never for a failed predecessor, never
- * operational facts, never identity. See api/_carson-read-turn.test.js for
- * the server-side independent-verification proof.
+ * 2026-08-28 — updated for the Second Brain stateful reasoning correction:
+ * admission for a continuation is no longer gated on matchesAttentionFollowUp
+ * at all (see ElevenLabsAgentWidget.typed-attention-reasoning.test.ts for
+ * the reasoning-path tests themselves). This file keeps covering the
+ * conversation-state plumbing: what gets sent, when, and its trust level.
  */
-describe("ElevenLabsAgentWidget — typed attention follow-up continuation context", () => {
-  it("only builds continuation context for an actual follow-up whose predecessor actually grounded", () => {
+describe("ElevenLabsAgentWidget — typed attention conversation-state continuity", () => {
+  it("sends conversation-state continuation context only when there is active grounded attention context — never for a bare direct match alone", () => {
     const attentionBlock = blockBetween(
-      "const isTypedAttentionFollowUp =",
+      "const isDirectTypedAttentionIntent =",
       "// Final deterministic gate before the free-form typed model ever runs.",
     );
-    expect(attentionBlock).toContain(
-      "isTypedAttentionFollowUp && lastAttentionTurnWasGroundedRef.current",
+    const continuationIndex = attentionBlock.indexOf("const conversationStateContext =");
+    expect(continuationIndex).toBeGreaterThan(-1);
+    const snippet = attentionBlock.slice(continuationIndex, continuationIndex + 500);
+    expect(snippet).toContain("hasActiveGroundedAttentionContext");
+    expect(snippet).toContain(": {}");
+  });
+
+  it("the continuation context sent to the server carries only the four approved minimal fields — no operational facts, no identity", () => {
+    const attentionBlock = blockBetween(
+      "const conversationStateContext =",
+      "const response = await fetch",
     );
     expect(attentionBlock).toContain('previousCapability: "attention_summary_read"');
     expect(attentionBlock).toContain('previousGroundingStatus: "grounded"');
-  });
-
-  it("never sends continuation context for a direct (non-follow-up) attention request", () => {
-    const attentionBlock = blockBetween(
-      "const isTypedAttentionFollowUp =",
-      "// Final deterministic gate before the free-form typed model ever runs.",
-    );
-    // The continuation object is only non-empty when isTypedAttentionFollowUp
-    // is true — a direct match alone (matchesAttentionIntent) never sets it.
-    const continuationIndex = attentionBlock.indexOf("const continuationContext =");
-    expect(continuationIndex).toBeGreaterThan(-1);
-    const ternaryStart = attentionBlock.slice(continuationIndex, continuationIndex + 400);
-    expect(ternaryStart).toContain("isTypedAttentionFollowUp && lastAttentionTurnWasGroundedRef.current");
-    expect(ternaryStart).toContain(": {}");
-  });
-
-  it("tracks whether THIS turn actually grounded, from the server's real groundingStatus — not assumed", () => {
-    const attentionBlock = blockBetween(
-      "const isTypedAttentionFollowUp =",
-      "// Final deterministic gate before the free-form typed model ever runs.",
-    );
-    expect(attentionBlock).toContain("result?.groundingStatus");
-    expect(attentionBlock).toContain(
-      'lastAttentionTurnWasGroundedRef.current = typedGroundingStatus === "grounded";',
-    );
-  });
-
-  it("resets lastAttentionTurnWasGroundedRef at the same 3 session reset sites as before (no new/removed reset site)", () => {
-    const resets = SOURCE.split("lastAttentionTurnWasGroundedRef.current = false;").length - 1;
-    expect(resets).toBe(3);
-  });
-
-  it("the continuation context is built entirely from client-local refs — no operational facts, no identity fields", () => {
-    const attentionBlock = blockBetween(
-      "const continuationContext =",
-      "const response = await fetch",
-    );
-    // Only the two documented classification fields may appear in the object.
+    expect(attentionBlock).toContain("previouslySurfacedEvidenceIds: previouslySurfacedEvidenceIdsRef.current");
+    expect(attentionBlock).toContain("priorObjective: priorAttentionObjectiveRef.current");
     expect(attentionBlock).not.toMatch(/accountId|userId|user_id|task_id|email|phone/i);
+  });
+
+  it("resets lastAttentionTurnWasGroundedRef and the conversation-state refs at the same session lifecycle points (3 pre-existing reset sites), plus one new not_attention reset", () => {
+    const groundedResets = SOURCE.split("lastAttentionTurnWasGroundedRef.current = false;").length - 1;
+    const surfacedResets = SOURCE.split("previouslySurfacedEvidenceIdsRef.current = [];").length - 1;
+    const objectiveResets = SOURCE.split("priorAttentionObjectiveRef.current = null;").length - 1;
+    expect(groundedResets).toBe(4);
+    expect(surfacedResets).toBe(4);
+    expect(objectiveResets).toBe(4);
   });
 
   it("does not alter any voice-only (requestedChannel === \"voice\") code path", () => {
     const attentionBlock = blockBetween(
-      "const isTypedAttentionFollowUp =",
+      "const isDirectTypedAttentionIntent =",
       "// Final deterministic gate before the free-form typed model ever runs.",
     );
     expect(attentionBlock).not.toContain('requestedChannel === "voice"');
     expect(attentionBlock).not.toContain("setMicMuted");
+    expect(attentionBlock).not.toContain("connectionDelay");
   });
 });

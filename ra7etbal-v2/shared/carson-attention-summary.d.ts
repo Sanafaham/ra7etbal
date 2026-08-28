@@ -37,3 +37,21 @@ export function composeAttentionEvidence(input: {
 }): AttentionSummaryEvidence;
 
 export function renderAttentionSummary(evidence: AttentionSummaryEvidence): string;
+
+export type AttentionResponseIntent =
+  | "list"
+  | "prioritize"
+  | "filter_urgent"
+  | "explain"
+  | "nothing_new"
+  | "clarify"
+  | "not_attention";
+
+export interface AttentionDecision {
+  responseIntent: AttentionResponseIntent;
+  selectedEvidenceIds: string[];
+  rankedEvidenceIds?: string[];
+  needsClarification?: string | null;
+}
+
+export function renderAttentionDecision(evidence: AttentionSummaryEvidence, decision: AttentionDecision): string;

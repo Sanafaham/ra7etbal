@@ -7,7 +7,13 @@ const SOURCE = readFileSync(
   "utf-8",
 );
 
-const RESET_SITE_COUNT = 3;
+// 2026-08-28: a 4th reset site was added deliberately — the Second Brain
+// stateful reasoning admission block resets both refs (plus its own two
+// conversation-state refs) when the server returns a valid not_attention
+// decision, ending the active attention context immediately rather than
+// waiting for session teardown. See
+// ElevenLabsAgentWidget.typed-attention-reasoning.test.ts.
+const RESET_SITE_COUNT = 4;
 
 /**
  * 2026-08-25 production investigation, follow-up-turn fix: a failed-to-ground
