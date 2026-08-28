@@ -515,10 +515,9 @@ export default function App() {
       {showNav && (
         <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden" aria-hidden="true">
           <div
-            className="absolute inset-0 bg-cover bg-[center_22%] opacity-[0.09] grayscale-[0.22] blur-[0.6px] sm:bg-[center_18%]"
-            style={{ backgroundImage: "url('/carson-ambient-portrait-v1.jpg')" }}
+            className="absolute inset-0 bg-cover bg-[center_18%] opacity-[0.14] brightness-[1.05] contrast-[1.12] saturate-[0.78] sm:bg-[center_14%]"
+            style={{ backgroundImage: "url('/carson-ambient-subject-v1.png')" }}
           />
-          <div className="absolute inset-0 bg-cream/25" />
         </div>
       )}
       {/* ── Header ──────────────────────────────────────────────────────── */}
@@ -639,11 +638,12 @@ export default function App() {
       >
         {carsonCallStatus !== "idle" && carsonChannel === "voice" && (
           <div className="pointer-events-none absolute inset-0" aria-hidden="true">
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_58%_50%_at_50%_32%,rgba(191,171,126,0.08),transparent_74%)]" />
             <div
-              className="absolute inset-0 bg-cover bg-[center_12%] opacity-[0.24] grayscale-[0.28] blur-[0.8px] sm:bg-[center_18%]"
-              style={{ backgroundImage: "url('/carson-ambient-portrait-v1.jpg')" }}
+              className="absolute inset-0 bg-cover bg-[center_10%] opacity-[0.28] brightness-[0.92] contrast-[1.16] saturate-[0.72] sm:bg-[center_14%]"
+              style={{ backgroundImage: "url('/carson-ambient-subject-v1.png')" }}
             />
-            <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(6,9,9,0.64),rgba(7,10,10,0.82)_62%,rgba(7,10,10,0.96))]" />
+            <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,6,7,0.05),transparent_52%,rgba(5,6,7,0.58))]" />
           </div>
         )}
         {/* Drag handle — tap anywhere on the bar to close */}
