@@ -1,6 +1,11 @@
 import { Conversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import CarsonTypedChat from "./CarsonTypedChat";
+import CarsonVisualCore from "../carson/CarsonVisualCore";
+import {
+  deriveCarsonVisualState,
+  type CarsonVisualOutcome,
+} from "../carson/carson-visual-state";
 import { getCarsonCallUrl, getCarsonWhatsAppUrl } from "../../lib/carson-channels";
 import { supabase } from "../../lib/supabase";
 import { resizeImage, uploadTaskImage } from "../../lib/image-upload";
@@ -946,6 +951,7 @@ export default function ElevenLabsAgentWidget({
   const [channel, setChannel] = useState<CarsonChannel>("voice");
   const [mode, setMode] = useState<AgentMode>("listening");
   const [turnPhase, setTurnPhase] = useState<CarsonTurnPhase>("idle");
+  const [visualOutcome, setVisualOutcome] = useState<CarsonVisualOutcome>("none");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [sessionEndedMsg, setSessionEndedMsg] = useState<string | null>(null);
   const [audioDiagnosticsEnabled, setAudioDiagnosticsEnabled] = useState(
@@ -992,6 +998,7 @@ export default function ElevenLabsAgentWidget({
   const conversationRef = useRef<Awaited<
     ReturnType<typeof Conversation.startSession>
   > | null>(null);
+  const visualOutcomeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusRef = useRef<CallStatus>("idle");
   const sessionGenerationRef = useRef(0);
   const startInFlightRef = useRef(false);
@@ -1017,6 +1024,10 @@ export default function ElevenLabsAgentWidget({
   useEffect(() => {
     typedMessagesRef.current = typedMessages;
   }, [typedMessages]);
+
+  useEffect(() => () => {
+    if (visualOutcomeTimerRef.current) clearTimeout(visualOutcomeTimerRef.current);
+  }, []);
 
   const reconcileTypedHistory = useCallback(async (markInterrupted = false): Promise<CarsonTypedMessage[]> => {
     if (!authenticatedUserId) return [];
@@ -1438,6 +1449,54 @@ export default function ElevenLabsAgentWidget({
     });
   }, []);
 
+  const clearVisualOutcome = useCallback(() => {
+    if (visualOutcomeTimerRef.current) {
+      clearTimeout(visualOutcomeTimerRef.current);
+      visualOutcomeTimerRef.current = null;
+    }
+    setVisualOutcome("none");
+  }, []);
+
+  const showVisualOutcome = useCallback((outcome: Exclude<CarsonVisualOutcome, "none">) => {
+    if (visualOutcomeTimerRef.current) clearTimeout(visualOutcomeTimerRef.current);
+    setVisualOutcome(outcome);
+    visualOutcomeTimerRef.current = setTimeout(() => {
+      setVisualOutcome("none");
+      visualOutcomeTimerRef.current = null;
+    }, outcome === "complete" ? 1_800 : 2_600);
+  }, []);
+
+  const reflectVerifiedToolOutcome = useCallback((startedAt: string, actionCountBefore: number) => {
+    const recorded = lastDirectToolSuccessRef.current;
+    const belongsToThisCall = recorded && recorded.at >= startedAt;
+    if (belongsToThisCall && recorded.outcome === "failure") {
+      showVisualOutcome("error");
+      return;
+    }
+    // sessionActionsRef is appended only after a real persisted/sent action.
+    // Requiring it to advance prevents proposals and advisory tool responses
+    // from ever producing the visual completion transition.
+    if (sessionActionsRef.current.length > actionCountBefore) {
+      showVisualOutcome("complete");
+    }
+  }, [showVisualOutcome]);
+
+  const getInputByteFrequencyData = useCallback(
+    () => conversationRef.current?.getInputByteFrequencyData() ?? new Uint8Array(),
+    [],
+  );
+  const getOutputByteFrequencyData = useCallback(
+    () => conversationRef.current?.getOutputByteFrequencyData() ?? new Uint8Array(),
+    [],
+  );
+  const getInputVolume = useCallback(
+    () => conversationRef.current?.getInputVolume() ?? 0,
+    [],
+  );
+  const getOutputVolume = useCallback(
+    () => conversationRef.current?.getOutputVolume() ?? 0,
+    [],
+  );
   /**
    * save_note's outcome for the CURRENT user turn only — reset to null the
    * moment a new turn starts (a fresh voice transcript arrives, or a typed
@@ -4111,6 +4170,7 @@ export default function ElevenLabsAgentWidget({
     ): Promise<TResult> => {
       const startedAt = new Date().toISOString();
       const startedPerf = performance.now();
+      const actionCountBefore = sessionActionsRef.current.length;
       // Truthful processing state: this is the shared entry point for the
       // large majority of client tools, so setting/clearing "acting" here
       // once covers all of them without touching every clientTools
@@ -4143,6 +4203,7 @@ export default function ElevenLabsAgentWidget({
           // return is also a string). create_todo/complete_todo record their
           // own override-eligible success directly, only on their real
           // success path, right before returning.
+          reflectVerifiedToolOutcome(startedAt, actionCountBefore);
           return typeof result === "string" ? (sanitizeCarsonReplyText(result) as TResult) : result;
         } catch (err) {
           try {
@@ -4160,13 +4221,14 @@ export default function ElevenLabsAgentWidget({
           } catch (diagnosticErr) {
             console.warn("[carson_direct_tool:DIAGNOSTIC_ERROR]", diagnosticErr);
           }
+          showVisualOutcome("error");
           throw err;
         }
       } finally {
         setTurnPhase((prev) => (prev === "acting" ? "thinking" : prev));
       }
     },
-    [],
+    [reflectVerifiedToolOutcome, showVisualOutcome],
   );
 
   const guardCurrentVoiceCapture = useCallback((toolName: string): string | null => {
@@ -5725,6 +5787,7 @@ export default function ElevenLabsAgentWidget({
         ? describePhotosForCarson(sessionPhotosRef.current).catch(() => null)
         : Promise.resolve(null);
 
+    clearVisualOutcome();
     setStatus("connecting");
     setErrorMsg(null);
     setSessionEndedMsg(null);
@@ -6046,6 +6109,7 @@ export default function ElevenLabsAgentWidget({
             toolRanForCurrentTranscriptRef.current = true;
             const toolStartedPerf = performance.now();
             const toolStartedAt = new Date().toISOString();
+            const actionCountBefore = sessionActionsRef.current.length;
             const transcriptTiming = lastUserTranscriptTimingRef.current;
             const trace = createExecuteInstructionLatencyTrace({
               transcriptEventId: transcriptTiming?.eventId ?? null,
@@ -6062,6 +6126,7 @@ export default function ElevenLabsAgentWidget({
             try {
               const result = await executeInstruction(params);
               trace.outcome = "success";
+              reflectVerifiedToolOutcome(toolStartedAt, actionCountBefore);
               const canonicalResult = canonicalConsequentialResultRef.current;
               const isCurrentHostingResult = canonicalResult
                 && canonicalResult.toolName === "execute_instruction"
@@ -6076,6 +6141,7 @@ export default function ElevenLabsAgentWidget({
               trace.outcome = "error";
               console.error("[executeInstruction:catch]", err);
               const detail = sanitizeCarsonErrorDetail(err);
+              showVisualOutcome("error");
               return `Could not process that. ${detail}`;
             } finally {
               const toolCompletedPerf = performance.now();
@@ -6521,6 +6587,7 @@ export default function ElevenLabsAgentWidget({
           }
 
           if (role === "user") {
+            clearVisualOutcome();
             // New voice turn starting — a stale note-save outcome from an
             // earlier, unrelated turn must never be read as "this turn's"
             // result (see noteSaveOutcomeRef doc comment).
@@ -6909,6 +6976,7 @@ export default function ElevenLabsAgentWidget({
           conversationRef.current = null;
           startInFlightRef.current = false;
           clearCarsonSessionTimers();
+          clearVisualOutcome();
           currentTaskContextRef.current = null;
           setStatus("idle");
           setMode("listening");
@@ -6976,6 +7044,7 @@ export default function ElevenLabsAgentWidget({
           conversationRef.current = null;
           startInFlightRef.current = false;
           clearCarsonSessionTimers();
+          clearVisualOutcome();
           currentTaskContextRef.current = null;
           setStatus("error");
           clearTurnPhaseThinkingTimeout();
@@ -7934,6 +8003,13 @@ export default function ElevenLabsAgentWidget({
   // destination and its visibility switch are set (see lib/carson-channels).
   const carsonWhatsAppUrl = getCarsonWhatsAppUrl();
   const carsonCallUrl = getCarsonCallUrl();
+  const visualState = deriveCarsonVisualState({
+    status,
+    channel,
+    mode,
+    turnPhase,
+    outcome: visualOutcome,
+  });
 
   return (
     <div
@@ -7957,6 +8033,19 @@ export default function ElevenLabsAgentWidget({
         className="sr-only"
         aria-label="Attach photos"
       />
+
+      {channel === "voice" && (
+        <div className="mb-3 w-full px-3 sm:px-5">
+          <CarsonVisualCore
+            state={visualState}
+            active={isOpen}
+            getInputByteFrequencyData={getInputByteFrequencyData}
+            getOutputByteFrequencyData={getOutputByteFrequencyData}
+            getInputVolume={getInputVolume}
+            getOutputVolume={getOutputVolume}
+          />
+        </div>
+      )}
 
       {/*
        * Photo thumbnails — rendered whenever photos are queued, regardless of
