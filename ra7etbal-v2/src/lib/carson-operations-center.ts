@@ -19,17 +19,22 @@
 
 import { supabase } from "./supabase";
 import { listTasks } from "./tasks";
-import { buildMorningBrief, taskLabel } from "./morning-brief";
+import { buildMorningBrief } from "./morning-brief";
 import { fetchAutomationDigest } from "./automation-context";
 import { listOpenStaffEscalationsForNeedsYou } from "./staff-messages";
-import {
-  fetchUnresolvedCaptureCandidates,
-  classifyAttentionWorthyCaptures,
-  type UnresolvedCapture,
-} from "./carson-unresolved-captures";
+import { fetchUnresolvedCaptureCandidates, type UnresolvedCapture } from "./carson-unresolved-captures";
 import { markCarsonNotesSurfaced } from "./carson-notes";
 import { markCarsonTodosSurfaced } from "./carson-todos";
 import type { Task } from "../types/task";
+// PURE RELOCATION (2026-08-28, Second Brain typed hard-grounding slice):
+// evidence composition + rendering moved to shared/ so the server-side
+// attention read path calls the exact same functions after doing its own
+// (necessarily different) I/O. Re-exported so every existing caller's
+// import path (`./carson-operations-center`) and behavior are unchanged.
+import { composeAttentionEvidence, renderAttentionSummary } from "../../shared/carson-attention-summary.js";
+import type { AttentionItem, AttentionSummaryEvidence } from "../../shared/carson-attention-summary";
+export { renderAttentionSummary };
+export type { AttentionItem, AttentionSummaryEvidence };
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -289,30 +294,9 @@ export async function fetchOperationsSummary(): Promise<string> {
  * buckets, and inventing one here would fabricate a classification the
  * retrieved data does not support. Documented, not silently omitted.
  */
-export interface AttentionItem {
-  id: string;
-  label: string;
-  reason: string;
-}
-
-export interface AttentionSummaryEvidence {
-  ok: boolean;
-  code: "attention_read_succeeded" | "attention_read_partial" | "attention_auth_failed" | "attention_read_failed";
-  generatedAt: string;
-  completeness: "full" | "partial" | "none";
-  needsAttention: AttentionItem[];
-  waiting: AttentionItem[];
-  carsonCanHandle: AttentionItem[];
-  safeToIgnore: AttentionItem[];
-  /**
-   * Second Brain Phase 1 — unresolved Notes/To-dos the classifier judged
-   * worth mentioning (action-led wording + never surfaced before). See
-   * carson-unresolved-captures.ts for the retrieval/classification split.
-   * Distinct from needsAttention/waiting: these are self-owned captures,
-   * not tracked delegations or escalations awaiting someone else.
-   */
-  unresolvedCaptures: AttentionItem[];
-}
+// AttentionItem, AttentionSummaryEvidence, renderAttentionSummary: see
+// shared/carson-attention-summary.js — imported and re-exported above,
+// pure relocation, no behavior change.
 
 export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence> {
   const generatedAt = new Date().toISOString();
@@ -375,120 +359,32 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
 
   const digest = await digestPromise;
 
-  if (tasksFailed && needsYouFailed && capturesFailed) {
-    return { ok: false, code: "attention_read_failed", generatedAt, completeness: "none", ...empty };
-  }
+  const brief = tasks ? buildMorningBrief(tasks, [], now, digest.routineAutomationTaskIds) : null;
 
-  const needsAttention: AttentionItem[] = [];
-  const waiting: AttentionItem[] = [];
-  const unresolvedCaptures: AttentionItem[] = [];
+  const evidence = composeAttentionEvidence({
+    generatedAt,
+    brief,
+    tasksFailed,
+    needsYou,
+    needsYouFailed,
+    captureCandidates,
+    capturesFailed,
+  });
 
-  if (tasks) {
-    const brief = buildMorningBrief(tasks, [], now, digest.routineAutomationTaskIds);
-    for (const t of brief.overdueItems) {
-      needsAttention.push({ id: t.id, label: taskLabel(t.description, t.assigned_to), reason: "overdue" });
-    }
-    for (const t of brief.needsAttention) {
-      needsAttention.push({
-        id: t.id,
-        label: taskLabel(t.description, t.assigned_to),
-        reason: t.type === "reminder" ? "reminder due today" : "owner task",
-      });
-    }
-    for (const t of brief.waitingOn) {
-      waiting.push({
-        id: t.id,
-        label: taskLabel(t.description, t.assigned_to),
-        reason: t.escalated_at ? "escalated — needs your attention" : "awaiting confirmation",
-      });
-    }
-  }
-
-  if (needsYou) {
-    for (const e of needsYou) {
-      waiting.push({
-        id: e.id,
-        label: `${e.staffName}: ${e.escalationReason ?? "needs your decision"}`,
-        reason: "needs your decision",
-      });
-    }
-  }
-
-  if (captureCandidates) {
-    const selected = classifyAttentionWorthyCaptures(captureCandidates);
-    for (const c of selected) {
-      unresolvedCaptures.push({
-        id: c.id,
-        label: c.text,
-        reason: c.kind === "todo" ? "on your to-do list" : "a note you made",
-      });
-    }
-    // last_surfaced_at must mean "actually included in this rendered
-    // response" — never "merely retrieved." Only the classifier's selected
-    // subset qualifies; anything filtered out above is never marked, so it
-    // remains eligible to be genuinely surfaced later instead of silently
-    // disappearing. Best-effort, non-blocking: a failed write here must
-    // not fail the read the user is waiting on.
-    const noteIds = selected.filter((c) => c.kind === "note").map((c) => c.id);
-    const todoIds = selected.filter((c) => c.kind === "todo").map((c) => c.id);
+  // last_surfaced_at must mean "actually included in this rendered
+  // response" — never "merely retrieved." Only the classifier's selected
+  // subset qualifies; anything filtered out is never marked, so it remains
+  // eligible to be genuinely surfaced later instead of silently
+  // disappearing. Best-effort, non-blocking: a failed write here must not
+  // fail the read the user is waiting on.
+  if (evidence.selectedCaptureIds && evidence.selectedCaptureIds.length > 0) {
+    const noteIds = evidence.selectedCaptureIds.filter((c) => c.kind === "note").map((c) => c.id);
+    const todoIds = evidence.selectedCaptureIds.filter((c) => c.kind === "todo").map((c) => c.id);
     if (noteIds.length > 0) markCarsonNotesSurfaced(noteIds).catch(() => {});
     if (todoIds.length > 0) markCarsonTodosSurfaced(todoIds).catch(() => {});
   }
 
-  const completeness: AttentionSummaryEvidence["completeness"] =
-    tasksFailed || needsYouFailed || capturesFailed ? "partial" : "full";
-
-  return {
-    ok: true,
-    code: completeness === "partial" ? "attention_read_partial" : "attention_read_succeeded",
-    generatedAt,
-    completeness,
-    needsAttention,
-    waiting,
-    carsonCanHandle: [],
-    safeToIgnore: [],
-    unresolvedCaptures,
-  };
-}
-
-export function renderAttentionSummary(evidence: AttentionSummaryEvidence): string {
-  if (!evidence.ok) {
-    if (evidence.code === "attention_auth_failed") {
-      return "I couldn't check what needs your attention right now — not signed in.";
-    }
-    return "I couldn't check what needs your attention right now — the live check didn't complete.";
-  }
-
-  const partialNote =
-    evidence.completeness === "partial"
-      ? "I couldn't check everything just now, so this may be incomplete."
-      : "";
-
-  if (
-    evidence.needsAttention.length === 0 &&
-    evidence.waiting.length === 0 &&
-    evidence.unresolvedCaptures.length === 0
-  ) {
-    return partialNote
-      ? `Nothing needs your attention based on what I could check. ${partialNote}`
-      : "Nothing needs your attention right now.";
-  }
-
-  const lines: string[] = [];
-  if (evidence.needsAttention.length > 0) {
-    lines.push(`Needs your attention: ${evidence.needsAttention.map((i) => i.label).join("; ")}.`);
-  }
-  if (evidence.waiting.length > 0) {
-    lines.push(`Waiting: ${evidence.waiting.map((i) => `${i.label} (${i.reason})`).join("; ")}.`);
-  }
-  if (evidence.unresolvedCaptures.length > 0) {
-    lines.push(
-      `Also on your mind: ${evidence.unresolvedCaptures.map((i) => `${i.label} (${i.reason})`).join("; ")}.`,
-    );
-  }
-  if (partialNote) lines.push(partialNote);
-
-  return lines.join(" ");
+  return evidence;
 }
 
 export async function fetchAttentionSummary(): Promise<string> {

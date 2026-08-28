@@ -1,18 +1,11 @@
-export interface AutomationSupportFields {
-  automation_type?: string | null;
-  assignee_id?: string | null;
-  cadence_type?: string | null;
-}
-
-export function isUnsupportedRecurringWhatsappAutomation(row: AutomationSupportFields): boolean {
-  if (row.cadence_type === "once") return false;
-  return row.automation_type === "message" || Boolean(row.assignee_id);
-}
-
-export function isSupportedOperationalAutomation(row: AutomationSupportFields): boolean {
-  return !isUnsupportedRecurringWhatsappAutomation(row);
-}
-
-export function filterSupportedOperationalAutomations<T extends AutomationSupportFields>(rows: T[]): T[] {
-  return rows.filter(isSupportedOperationalAutomation);
-}
+// PURE RELOCATION (2026-08-28, Second Brain typed hard-grounding slice):
+// moved to shared/ so the server-side attention read path can reuse the
+// exact same routineAutomationTaskIds classification rules that
+// buildMorningBrief() depends on. Re-exported here so every existing
+// caller's import path (`./automation-support`) and behavior are unchanged.
+export {
+  isUnsupportedRecurringWhatsappAutomation,
+  isSupportedOperationalAutomation,
+  filterSupportedOperationalAutomations,
+} from "../../shared/automation-support-classifier.js";
+export type { AutomationSupportFields } from "../../shared/automation-support-classifier";

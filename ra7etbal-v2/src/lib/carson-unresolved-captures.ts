@@ -29,71 +29,21 @@
  * decision; flagged as a known limitation, not silently approximated.
  */
 
-import { loadUnresolvedNotes, type CarsonNote } from "./carson-notes";
-import { listActiveTodosWithSurfaceState, type CarsonTodo } from "./carson-todos";
-
-export interface UnresolvedCapture {
-  id: string;
-  kind: "note" | "todo";
-  /** note text, or todo title (+ description if present) */
-  text: string;
-  ageDays: number;
-  /** last_surfaced_at IS NULL — never included in a rendered attention response before */
-  neverSurfaced: boolean;
-  /**
-   * Action-oriented wording signal. To-dos are always true (the user
-   * explicitly categorized it as something to do, not a note). Notes are
-   * true only when the text leads with a recognized action verb — see
-   * ACTION_LEAD_PATTERN. This is a shallow, bounded heuristic, not
-   * semantic understanding — documented, not disguised.
-   */
-  actionable: boolean;
-}
-
-/**
- * Small, explicit, bounded list of leading action verbs. Deliberately not
- * an attempt at semantic classification — matches the same "verb-agnostic
- * but bounded, explicit list" convention already used elsewhere in this
- * codebase (e.g. morning-brief.ts's LABEL_PATTERNS). Case-insensitive,
- * matched only at the start of the trimmed note text.
- */
-const ACTION_LEAD_PATTERN =
-  /^(check|call|follow[\s-]?up|renew|confirm|book|pay|review|buy|email|text|message|cancel|schedule|arrange|sort out|deal with|sign|send|return|fix|finish|complete|submit|apply|chase|ask|order|reply|respond)\b/i;
-
-function isActionLedText(text: string): boolean {
-  return ACTION_LEAD_PATTERN.test(text.trim());
-}
-
-function ageInDays(createdAt: string, now: Date): number {
-  const created = new Date(createdAt).getTime();
-  if (Number.isNaN(created)) return 0;
-  return Math.max(0, Math.floor((now.getTime() - created) / 86_400_000));
-}
-
-function noteToCapture(note: CarsonNote, now: Date): UnresolvedCapture {
-  return {
-    id: note.id,
-    kind: "note",
-    text: note.note,
-    ageDays: ageInDays(note.created_at, now),
-    neverSurfaced: !note.last_surfaced_at,
-    actionable: isActionLedText(note.note),
-  };
-}
-
-function todoToCapture(todo: CarsonTodo, now: Date): UnresolvedCapture {
-  const text = todo.description ? `${todo.title} — ${todo.description}` : todo.title;
-  return {
-    id: todo.id,
-    kind: "todo",
-    text,
-    ageDays: ageInDays(todo.created_at, now),
-    neverSurfaced: !todo.last_surfaced_at,
-    // A to-do is, by the user's own explicit categorization, something to
-    // do — no wording heuristic needed or applied.
-    actionable: true,
-  };
-}
+import { loadUnresolvedNotes } from "./carson-notes";
+import { listActiveTodosWithSurfaceState } from "./carson-todos";
+// PURE RELOCATION (2026-08-28, Second Brain typed hard-grounding slice):
+// classification logic moved to shared/ so the server-side attention read
+// path can reuse the exact same rules. Only the Supabase retrieval below
+// stays browser-only. Re-exported so every existing caller's import path
+// (`./carson-unresolved-captures`) and behavior are unchanged.
+import {
+  noteToCapture,
+  todoToCapture,
+  classifyAttentionWorthyCaptures,
+  type UnresolvedCapture,
+} from "../../shared/carson-unresolved-captures-classifier.js";
+export { classifyAttentionWorthyCaptures };
+export type { UnresolvedCapture };
 
 /**
  * RETRIEVAL — every unresolved note and active to-do the owner has, mapped
@@ -114,29 +64,6 @@ export async function fetchUnresolvedCaptureCandidates(now = new Date()): Promis
   ];
 }
 
-/**
- * CLASSIFICATION — pure, deterministic, and the only place that decides
- * which unresolved captures are worth mentioning right now. Bounded output
- * (default 3) so a large backlog of old notes/todos can never flood a
- * single attention response — noise control is a hard requirement, not a
- * nice-to-have.
- *
- * Included only when: actionable AND neverSurfaced. Age is used only to
- * order among already-eligible candidates (oldest first) — never to
- * include or exclude one on its own, per the locked product correction
- * that age must not become the definition of relevance.
- *
- * Notes that don't match the action-wording heuristic (e.g. "Restaurant I
- * liked in Paris") are retrieved (Carson "knows" they exist — they remain
- * queryable via act_on_note's keyword lookup) but are deliberately not
- * included in this bounded, spoken-aloud list in Phase 1.
- */
-export function classifyAttentionWorthyCaptures(
-  candidates: UnresolvedCapture[],
-  maxItems = 3,
-): UnresolvedCapture[] {
-  return candidates
-    .filter((c) => c.actionable && c.neverSurfaced)
-    .sort((a, b) => b.ageDays - a.ageDays)
-    .slice(0, maxItems);
-}
+// classifyAttentionWorthyCaptures: see
+// shared/carson-unresolved-captures-classifier.js — imported and
+// re-exported above, pure relocation, no behavior change.
