@@ -1243,7 +1243,7 @@
         "shared/carson-attention-summary.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
         "shared/automation-support-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
         "shared/carson-attention-intent-classifier.js (2026-08-28 addition — pure classification/rendering logic shared between browser and server, extracted from src/lib/ counterparts with zero behavior change; see attention_summary_read for the full rationale)",
-        "api/_carson-read-turn.js:isValidFollowUpContinuation / matchesAttentionFollowUp check (2026-08-28 fix — server-side follow-up continuation admission for attention_summary_read)",
+        "api/_carson-read-turn.js:isValidFollowUpContinuation / matchesAttentionFollowUp check (2026-08-28 fix — server-side follow-up continuation admission for attention_summary_read) — SUPERSEDED 2026-08-28 by the stateful reasoning slice below: continuation admission is now hasActiveGroundedAttentionContext, and isValidFollowUpContinuation/matchesAttentionFollowUp is no longer called from the coordinator",
         "api/_carson-attention-reasoning.js:reasonOverOperationalEvidenceWithClaude / validateAttentionDecision (2026-08-28 addition — Second Brain stateful reasoning boundary, new file)",
         "shared/carson-attention-summary.js:renderAttentionDecision (2026-08-28 addition — deterministic renderer for a validated reasoning decision, additive alongside the unchanged renderAttentionSummary)"
       ],
@@ -1369,7 +1369,7 @@
         "shared/carson-attention-summary.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
         "shared/automation-support-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
         "shared/carson-attention-intent-classifier.js (2026-08-28 — relocated here as a pure, zero-behavior-change extraction so browser and server share exactly one implementation of this capability's classification/rendering rules; see src/lib/reminder-time-shared-parity.test.ts for the one documented exception, isReminderOverdue, duplicated only because reminder-time.ts has its own protected zero-import invariant)",
-        "api/_carson-read-turn.js:isValidFollowUpContinuation (2026-08-28 fix, same as above)"
+        "api/_carson-read-turn.js:isValidFollowUpContinuation (2026-08-28 fix, same as above) — SUPERSEDED 2026-08-28, see the stateful reasoning slice note above"
       ],
       "shared_dependencies": [
         "src/lib/tasks.ts:listTasks (existing, owner-scoped via RLS)",

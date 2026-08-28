@@ -118,21 +118,32 @@ export async function reasonOverOperationalEvidenceWithClaude(
     `Owner's new message: "${userMessage}"`,
   ].join("\n");
 
-  const response = await fetchImpl("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: process.env.CARSON_REASONING_MODEL ?? "claude-haiku-4-5-20251001",
-      max_tokens: 400,
-      tool_choice: { type: "tool", name: "decide_attention_response" },
-      tools: [buildToolSchema(evidenceIds)],
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+  // Bounded so a stalled provider call rejects in time for the coordinator's
+  // fallback path to run, instead of stalling until the platform's own
+  // function timeout silently drops the honest-fallback contract.
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  let response;
+  try {
+    response = await fetchImpl("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: process.env.CARSON_REASONING_MODEL ?? "claude-haiku-4-5-20251001",
+        max_tokens: 400,
+        tool_choice: { type: "tool", name: "decide_attention_response" },
+        tools: [buildToolSchema(evidenceIds)],
+        messages: [{ role: "user", content: prompt }],
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   const body = await response.json().catch(() => null);
   if (!response.ok || !body) throw new Error("Reasoning model request failed.");
   const toolUse = body.content?.find(
