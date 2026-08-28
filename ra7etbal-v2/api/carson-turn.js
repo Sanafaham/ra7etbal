@@ -141,7 +141,17 @@ export function createCarsonTurnHandler({
     const pendingResult = (async () => {
       const attentionResult = await coordinateAttention(ownerTurn);
       if (attentionResult.handled) return attentionResult;
-      return coordinateCalendar(ownerTurn);
+      const calendarResult = await coordinateCalendar(ownerTurn);
+      if (calendarResult.handled) return calendarResult;
+      // Neither coordinator claimed this turn. If the attention coordinator
+      // specifically classified it as not_attention (a genuine, meaningful
+      // decision from active grounded context — distinct from having no
+      // candidacy at all), that classification must survive to the caller:
+      // the typed widget only knows to fall through to the normal typed
+      // path on code:"not_attention", and calendar's own generic
+      // unsupported_intent rejection must not silently overwrite it.
+      if (attentionResult.code === "not_attention") return attentionResult;
+      return calendarResult;
     })();
 
     if (dedupKey) remember(dedupStore, dedupKey, pendingResult);

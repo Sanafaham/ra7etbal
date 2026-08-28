@@ -353,7 +353,7 @@ describe("Carson turn handler — Second Brain stateful reasoning admission (202
     expect(response.payload).toMatchObject({ handled: true, capability: "attention_summary_read", groundingStatus: "grounded" });
   });
 
-  it("not_attention falls through to the existing calendar/Claude path, which independently evaluates the same transcript", async () => {
+  it("not_attention is tried against the calendar/Claude path, and — when calendar ALSO finds nothing — the final response preserves code:\"not_attention\" (2026-08-28 composition fix) so the typed widget can perform its real client-side fall-through, instead of being silently overwritten by calendar's own generic unsupported_intent rejection", async () => {
     const interpretIntent = vi.fn().mockResolvedValue({ capability: "unsupported", range: "tomorrow" });
     const readCalendar = vi.fn();
     const fetchAttentionEvidence = vi.fn().mockResolvedValue({ evidence: EVIDENCE, text: "Needs your attention: call the dentist." });
@@ -372,11 +372,33 @@ describe("Carson turn handler — Second Brain stateful reasoning admission (202
 
     expect(fetchAttentionEvidence).toHaveBeenCalledOnce();
     expect(reasonOverEvidence).toHaveBeenCalledOnce();
-    // Fell through to the calendar/Claude coordinator, which itself found
-    // nothing to claim either — final result is unhandled, exactly what
-    // tells the typed widget to fall through to the normal chat path.
+    // Calendar is still genuinely tried (unchanged) — it just doesn't get
+    // the final say when it also finds nothing AND attention's own
+    // classification was the meaningful not_attention decision.
     expect(interpretIntent).toHaveBeenCalledOnce();
-    expect(response.payload).toMatchObject({ handled: false, code: "unsupported_intent" });
+    expect(response.payload).toMatchObject({ handled: false, status: 200, code: "not_attention" });
+  });
+
+  it("a real calendar request after active grounded attention context still gets calendar's own answer — calendar's handled:true result is never suppressed by attention's not_attention", async () => {
+    const interpretIntent = vi.fn().mockResolvedValue({ capability: "calendar_read", range: "tomorrow" });
+    const readCalendar = vi.fn().mockResolvedValue({ connected: true, events: [] });
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({ evidence: EVIDENCE, text: "Needs your attention: call the dentist." });
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "not_attention", selectedEvidenceIds: [] });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      interpretIntent,
+      readCalendar,
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req({ ...CONTINUATION_BODY, transcript: "What's on my calendar tomorrow?" }), response);
+
+    expect(reasonOverEvidence).toHaveBeenCalledOnce();
+    expect(readCalendar).toHaveBeenCalledOnce();
+    expect(response.payload).toMatchObject({ handled: true, capability: "calendar_read" });
   });
 
   it("a message with neither a direct match nor active context never invokes reasonOverEvidence", async () => {
@@ -393,6 +415,32 @@ describe("Carson turn handler — Second Brain stateful reasoning admission (202
     await handler(req(TURN), res());
     expect(reasonOverEvidence).not.toHaveBeenCalled();
     expect(fetchAttentionEvidence).not.toHaveBeenCalled();
+  });
+
+  it("a turn that is genuinely unsupported by both coordinators (no active context, not a calendar request) still returns calendar's generic unsupported_intent unchanged — the composition fix only preserves not_attention specifically, never masks this case", async () => {
+    const interpretIntent = vi.fn().mockResolvedValue({ capability: "unsupported", range: "tomorrow" });
+    const readCalendar = vi.fn();
+    const fetchAttentionEvidence = vi.fn();
+    const reasonOverEvidence = vi.fn();
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      interpretIntent,
+      readCalendar,
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req({ ...TURN, transcript: "Send Christopher a message." }), response);
+
+    // No active context and no direct match — attention never even reaches
+    // the reasoning model, so its own rejection is the original
+    // no-candidacy unsupported_intent, not a not_attention decision.
+    expect(reasonOverEvidence).not.toHaveBeenCalled();
+    expect(fetchAttentionEvidence).not.toHaveBeenCalled();
+    expect(interpretIntent).toHaveBeenCalledOnce();
+    expect(response.payload).toMatchObject({ handled: false, status: 422, code: "unsupported_intent" });
   });
 });
 
