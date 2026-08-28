@@ -379,6 +379,35 @@ describe("Carson turn handler — Second Brain stateful reasoning admission (202
     expect(response.payload).toMatchObject({ handled: false, status: 200, code: "not_attention" });
   });
 
+  it("a genuine calendar-side validation failure (invalid_owner_turn) is never masked by attention's not_attention — only calendar's generic unsupported_intent rejection may be overridden (CodeRabbit finding)", async () => {
+    const interpretIntent = vi.fn();
+    const readCalendar = vi.fn();
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({ evidence: EVIDENCE, text: "Needs your attention: call the dentist." });
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "not_attention", selectedEvidenceIds: [] });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      interpretIntent,
+      readCalendar,
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    // The attention coordinator's own shape check does not require
+    // providerEventId, so it proceeds all the way to a genuine not_attention
+    // decision; the calendar coordinator's shape check DOES require it, so
+    // it fails its own validation before ever calling interpretIntent.
+    await handler(
+      req({ ...CONTINUATION_BODY, transcript: "Send Christopher a message.", providerEventId: "" }),
+      response,
+    );
+
+    expect(reasonOverEvidence).toHaveBeenCalledOnce();
+    expect(interpretIntent).not.toHaveBeenCalled();
+    expect(response.payload).toMatchObject({ handled: false, status: 400, code: "invalid_owner_turn" });
+  });
+
   it("a real calendar request after active grounded attention context still gets calendar's own answer — calendar's handled:true result is never suppressed by attention's not_attention", async () => {
     const interpretIntent = vi.fn().mockResolvedValue({ capability: "calendar_read", range: "tomorrow" });
     const readCalendar = vi.fn().mockResolvedValue({ connected: true, events: [] });
