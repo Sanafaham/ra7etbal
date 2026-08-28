@@ -297,7 +297,9 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
 
     const result = await coordinate({ ...activeContext, transcript: "Which should I do first?" });
 
-    expect(result.ownerResult).toBe("In order: call the dentist; then pay the electricity bill.");
+    expect(result.ownerResult).toBe(
+      "In order: call the dentist (Overdue by 3 days); then pay the electricity bill (Due in 3 hours).",
+    );
   });
 
   it("[8-contrast] 'What can wait?' — contrast decision, selected and contrasted sets both authorized, visibly different from a plain list/urgent response", async () => {
@@ -311,7 +313,9 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
 
     const result = await coordinate({ ...activeContext, transcript: "What can wait?" });
 
-    expect(result.ownerResult).toBe("Waiting on others: Grace: kitchen cleaning. Overdue: call the dentist.");
+    expect(result.ownerResult).toBe(
+      "Waiting on others: Grace: kitchen cleaning. Overdue: call the dentist (Overdue by 3 days).",
+    );
     // Genuinely different shape from a plain "list" of the same selection —
     // both sets are visible, each under its own true category.
     expect(result.ownerResult).not.toBe(FALLBACK_RENDER);
@@ -413,6 +417,76 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
 
     expect(result.ownerResult).toBe(FALLBACK_RENDER);
     expect(result.groundingStatus).toBe("grounded");
+  });
+
+  it("['Anything overdue?' 1/5] selects and names the actual overdue items with due context when the reasoning model returns a valid decision", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "list",
+      selectedEvidenceIds: ["task-1"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...activeContext, transcript: "Anything overdue?" });
+
+    expect(result.ownerResult).toContain("call the dentist");
+    expect(result.ownerResult).toContain("Overdue by 3 days");
+    expect(result.surfacedEvidenceIds).toEqual(["task-1"]);
+  });
+
+  it("['Anything overdue?' 2/5] does not include unrelated Waiting/Later items when the model selects only the overdue item", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "list",
+      selectedEvidenceIds: ["task-1"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...activeContext, transcript: "Anything overdue?" });
+
+    expect(result.ownerResult).not.toContain("Grace");
+    expect(result.ownerResult).not.toContain("electricity bill");
+  });
+
+  it("['Anything overdue?' 3/5] a selected evidence id must validate against the authorized overdue set — an invented id is rejected, not surfaced", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "list",
+      selectedEvidenceIds: ["task-1", "invented-overdue-id"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...activeContext, transcript: "Anything overdue?" });
+
+    // Whole decision degrades to the safe deterministic fallback rather than
+    // surfacing a partially-invented selection.
+    expect(result.ownerResult).toBe(FALLBACK_RENDER);
+  });
+
+  it("['Anything overdue?' 4/5] the exact production failure shape — a tool call missing the required selectedEvidenceIds field entirely — still safely falls back to the deterministic render (2026-08-28 root cause: Anthropic strict mode omitted this field at schema scale; fixed in _carson-attention-reasoning.js by making all tool properties required)", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list" });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...activeContext, transcript: "Anything overdue?" });
+
+    expect(result.ownerResult).toBe(FALLBACK_RENDER);
+    expect(result.groundingStatus).toBe("grounded");
+  });
+
+  it("['Anything overdue?' 5/5] no overdue evidence retrieved means no invented overdue answer — the model's own empty selection is honored, never a fabricated item", async () => {
+    const emptyEvidence = { ...SAMPLE_EVIDENCE, overdueReminders: [] };
+    const fetchEvidence = vi.fn().mockResolvedValue({ evidence: emptyEvidence, text: "Needs your attention: nothing overdue." });
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "nothing_new",
+      selectedEvidenceIds: [],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...activeContext, transcript: "Anything overdue?" });
+
+    expect(result.ownerResult).toBe("Nothing else needs your attention beyond what I already mentioned.");
+    expect(result.surfacedEvidenceIds).toEqual([]);
   });
 
   it("[11b] fresh retrieval failing in the reasoning-gated path still fails closed honestly — the reasoning model is never even called", async () => {

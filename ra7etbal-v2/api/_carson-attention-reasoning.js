@@ -90,18 +90,39 @@ function buildToolSchema(evidenceIds) {
       "can wait vs what can't) — selectedEvidenceIds holds the primary answer set, contrastedEvidenceIds holds " +
       "the secondary set being contrasted against. Use 'rank' when asked to order/prioritize — " +
       "rankedEvidenceIds must be an ordering of selectedEvidenceIds. If the message is not about the owner's " +
-      "operational state at all (e.g. a new unrelated request), return responseIntent 'not_attention'.",
+      "operational state at all (e.g. a new unrelated request), return responseIntent 'not_attention'. " +
+      "You must always include every field below — use an empty array [] or null when a field does not " +
+      "apply to your decision; never omit a field.",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
         responseIntent: { type: "string", enum: RESPONSE_INTENTS },
         selectedEvidenceIds: { type: "array", items: { type: "string", enum: idEnum } },
-        rankedEvidenceIds: { type: "array", items: { type: "string", enum: idEnum } },
-        contrastedEvidenceIds: { type: "array", items: { type: "string", enum: idEnum } },
+        rankedEvidenceIds: { type: ["array", "null"], items: { type: "string", enum: idEnum } },
+        contrastedEvidenceIds: { type: ["array", "null"], items: { type: "string", enum: idEnum } },
         needsClarification: { type: ["string", "null"] },
       },
-      required: ["responseIntent", "selectedEvidenceIds"],
+      // ALL properties are required (2026-08-28 fix for a confirmed
+      // production failure): with only responseIntent/selectedEvidenceIds
+      // marked required, Anthropic's strict tool-output mode did not
+      // reliably enforce their presence at this schema size (a 22-item id
+      // enum repeated across three array properties) — the model returned
+      // a bare {"responseIntent":"list"} with selectedEvidenceIds entirely
+      // omitted, correctly rejected by validateAttentionDecision and
+      // correctly falling back, but too often to be useful. Making every
+      // property required (with the genuinely-optional ones typed
+      // nullable, the standard strict-mode pattern) forces the model to
+      // always emit selectedEvidenceIds, using null/[] for the rest when
+      // not applicable — validateAttentionDecision treats null the same
+      // as absent for the nullable fields.
+      required: [
+        "responseIntent",
+        "selectedEvidenceIds",
+        "rankedEvidenceIds",
+        "contrastedEvidenceIds",
+        "needsClarification",
+      ],
       additionalProperties: false,
     },
   };
@@ -192,7 +213,7 @@ export function validateAttentionDecision(decision, authorizedEvidence) {
   }
 
   let rankedEvidenceIds;
-  if (decision.rankedEvidenceIds !== undefined) {
+  if (decision.rankedEvidenceIds !== undefined && decision.rankedEvidenceIds !== null) {
     if (!Array.isArray(decision.rankedEvidenceIds)) return { ok: false };
     const selectedSet = new Set(decision.selectedEvidenceIds);
     const isValidRanking = decision.rankedEvidenceIds.every(
@@ -205,7 +226,7 @@ export function validateAttentionDecision(decision, authorizedEvidence) {
   }
 
   let contrastedEvidenceIds;
-  if (decision.contrastedEvidenceIds !== undefined) {
+  if (decision.contrastedEvidenceIds !== undefined && decision.contrastedEvidenceIds !== null) {
     if (!Array.isArray(decision.contrastedEvidenceIds)) return { ok: false };
     const isValidContrast = decision.contrastedEvidenceIds.every(
       (id) => typeof id === "string" && authorizedIds.has(id),
