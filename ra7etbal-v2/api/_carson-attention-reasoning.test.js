@@ -45,6 +45,31 @@ describe("reasonOverOperationalEvidenceWithClaude", () => {
     expect(idEnum).not.toContain("task-99");
   });
 
+  it("marks every tool property as required, with the genuinely-optional ones typed nullable (2026-08-28 fix — Anthropic's strict mode did not reliably enforce a partial-required schema at this size, and the model was observed in production returning only {responseIntent:\"list\"})", async () => {
+    process.env.ANTHROPIC_API_KEY = "test-key";
+    const fetchMock = vi.fn().mockResolvedValue(toolResponse({ responseIntent: "list", selectedEvidenceIds: ["task-1"] }));
+
+    await reasonOverOperationalEvidenceWithClaude(
+      { userMessage: "Anything overdue?", conversationState: {}, authorizedEvidence: EVIDENCE },
+      fetchMock,
+    );
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const schema = requestBody.tools[0].input_schema;
+    expect(schema.required).toEqual(
+      expect.arrayContaining([
+        "responseIntent",
+        "selectedEvidenceIds",
+        "rankedEvidenceIds",
+        "contrastedEvidenceIds",
+        "needsClarification",
+      ]),
+    );
+    expect(schema.required).toHaveLength(5);
+    expect(schema.properties.rankedEvidenceIds.type).toEqual(["array", "null"]);
+    expect(schema.properties.contrastedEvidenceIds.type).toEqual(["array", "null"]);
+  });
+
   it("includes conversation state and the categorized authorized evidence in the prompt, and never includes accountId/authorization (not part of the input contract at all)", async () => {
     process.env.ANTHROPIC_API_KEY = "test-key";
     const fetchMock = vi.fn().mockResolvedValue(toolResponse({ responseIntent: "not_attention", selectedEvidenceIds: [] }));
@@ -166,6 +191,23 @@ describe("validateAttentionDecision", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.decision.contrastedEvidenceIds).toBeUndefined();
+  });
+
+  it("treats explicit null rankedEvidenceIds/contrastedEvidenceIds the same as absent (2026-08-28 fix — the strict schema now forces the model to always include these keys, often as null)", () => {
+    const result = validateAttentionDecision(
+      { responseIntent: "list", selectedEvidenceIds: ["task-1"], rankedEvidenceIds: null, contrastedEvidenceIds: null, needsClarification: null },
+      EVIDENCE,
+    );
+    expect(result).toEqual({
+      ok: true,
+      decision: {
+        responseIntent: "list",
+        selectedEvidenceIds: ["task-1"],
+        rankedEvidenceIds: undefined,
+        contrastedEvidenceIds: undefined,
+        needsClarification: null,
+      },
+    });
   });
 
   it("trims and bounds needsClarification, defaulting to null when absent or empty", () => {

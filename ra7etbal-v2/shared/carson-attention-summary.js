@@ -273,6 +273,10 @@ function findEvidenceItem(evidence, id) {
   return allItems(evidence).find((item) => item.id === id) ?? null;
 }
 
+function describeItem(item) {
+  return item.dueDescription ? `${item.label} (${item.dueDescription})` : item.label;
+}
+
 function renderByCategory(items) {
   const byCategory = new Map();
   for (const item of items) {
@@ -282,7 +286,7 @@ function renderByCategory(items) {
   const sentences = [];
   for (const [category, group] of byCategory) {
     const label = CATEGORY_LABELS[category] ?? category;
-    sentences.push(`${label}: ${group.map((i) => i.label).join("; ")}.`);
+    sentences.push(`${label}: ${group.map(describeItem).join("; ")}.`);
   }
   return sentences.join(" ");
 }
@@ -320,7 +324,7 @@ export function renderAttentionDecision(evidence, decision) {
 
   if (responseIntent === "rank" && Array.isArray(rankedEvidenceIds) && rankedEvidenceIds.length > 0) {
     const ranked = rankedEvidenceIds.map((id) => findEvidenceItem(evidence, id)).filter(Boolean);
-    return `In order: ${ranked.map((item) => item.label).join("; then ")}.`;
+    return `In order: ${ranked.map(describeItem).join("; then ")}.`;
   }
 
   if (responseIntent === "contrast") {

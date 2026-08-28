@@ -281,12 +281,6 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
     // retrieved. It never sees accountId/authorization and cannot
     // influence retrieval or tenant scoping — it only classifies and
     // selects among ids already authorized above.
-    // TEMPORARY DIAGNOSTIC (2026-08-28, production reasoning-fallback
-    // investigation — remove once root cause is confirmed and fixed). Only
-    // a short technical reason string (error name/truncated message, or
-    // which validation step rejected the decision) — never user content,
-    // never the transcript, never evidence labels.
-    let reasoningFailureReason = null;
     let rawDecision;
     try {
       rawDecision = await reasonOverEvidence({
@@ -301,17 +295,11 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         },
         authorizedEvidence: evidence,
       });
-    } catch (err) {
+    } catch {
       rawDecision = null;
-      reasoningFailureReason = `threw:${err?.name ?? "Error"}:${String(err?.message ?? "").slice(0, 160)}`;
     }
 
     const validated = rawDecision ? validateAttentionDecision(rawDecision, evidence) : { ok: false };
-    if (!validated.ok && !reasoningFailureReason) {
-      reasoningFailureReason = rawDecision
-        ? `invalid_decision:${JSON.stringify(rawDecision).slice(0, 200)}`
-        : "no_decision";
-    }
 
     if (!validated.ok) {
       // Reasoning failed/returned invalid output, but fresh evidence IS
@@ -329,7 +317,6 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
         ownerResult: renderAttentionSummary(evidence),
         surfacedEvidenceIds: collectAllEvidenceIds(evidence),
         responseIntent: "list",
-        _reasoningDiagnostic: reasoningFailureReason,
       };
     }
 
