@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { isReminderOverdue as browserIsReminderOverdue } from "./reminder-time";
-import { isReminderOverdue as sharedIsReminderOverdue } from "../../shared/carson-morning-brief-classifier.js";
+import { isReminderOverdue as browserIsReminderOverdue, formatReminderDue as browserFormatReminderDue } from "./reminder-time";
+import {
+  isReminderOverdue as sharedIsReminderOverdue,
+  formatReminderDue as sharedFormatReminderDue,
+} from "../../shared/carson-morning-brief-classifier.js";
 
 /**
  * Documented exception (2026-08-28, Second Brain typed hard-grounding
@@ -49,5 +52,20 @@ describe("isReminderOverdue — reminder-time.ts vs shared/ parity", () => {
     expect(browserIsReminderOverdue(due, now)).toBe(false);
     expect(sharedIsReminderOverdue(due, now)).toBe(false);
     expect(browserIsReminderOverdue(due, now)).toBe(sharedIsReminderOverdue(due, now));
+  });
+});
+
+describe("formatReminderDue — reminder-time.ts vs shared/ parity (2026-08-28, structured operational evidence)", () => {
+  const now = new Date("2026-08-28T12:00:00.000Z");
+  const cases = [
+    new Date("2026-08-25T14:00:00.000Z").toISOString(), // days overdue
+    new Date("2026-08-28T11:50:00.000Z").toISOString(), // minutes overdue
+    new Date("2026-08-28T12:30:00.000Z").toISOString(), // due in minutes
+    new Date("2026-08-28T15:00:00.000Z").toISOString(), // due today, hours away
+    new Date("2026-08-29T09:00:00.000Z").toISOString(), // tomorrow
+    new Date("2026-09-10T09:00:00.000Z").toISOString(), // far future
+  ];
+  it.each(cases)("matches for due=%s", (due) => {
+    expect(browserFormatReminderDue(due, now)).toBe(sharedFormatReminderDue(due, now));
   });
 });

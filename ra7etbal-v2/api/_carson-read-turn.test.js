@@ -138,7 +138,17 @@ describe("Carson deterministic attention-summary read coordinator (typed hard-gr
 
   it("[1] classifies deterministically — no model call — and returns the grounded evidence server result verbatim", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue({
-      evidence: { ok: true, code: "attention_read_succeeded", completeness: "full", needsAttention: [], waiting: [], unresolvedCaptures: [] },
+      evidence: {
+        ok: true,
+        code: "attention_read_succeeded",
+        completeness: "full",
+        needsYou: [],
+        overdueReminders: [],
+        upcomingReminders: [],
+        waiting: [],
+        later: [],
+        unresolvedCaptures: [],
+      },
       text: "Needs your attention: call the dentist.",
     });
     const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence: unusedReasonOverEvidence });
@@ -226,14 +236,20 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
     ok: true,
     code: "attention_read_succeeded",
     completeness: "full",
-    needsAttention: [
-      { id: "task-1", label: "call the dentist", reason: "overdue" },
-      { id: "task-2", label: "pay the electricity bill", reason: "reminder due today" },
+    needsYou: [],
+    overdueReminders: [
+      { id: "task-1", label: "call the dentist", type: "reminder", status: "pending", dueAt: "2026-08-25T10:00:00.000Z", dueDescription: "Overdue by 3 days", assignee: null, category: "overdueReminders" },
     ],
-    waiting: [{ id: "task-3", label: "Grace: kitchen cleaning", reason: "awaiting confirmation" }],
+    upcomingReminders: [
+      { id: "task-2", label: "pay the electricity bill", type: "reminder", status: "pending", dueAt: "2026-08-28T18:00:00.000Z", dueDescription: "Due in 3 hours", assignee: null, category: "upcomingReminders" },
+    ],
+    waiting: [{ id: "task-3", label: "Grace: kitchen cleaning", type: "delegation", status: "pending", dueAt: null, dueDescription: null, assignee: "Grace", category: "waiting" }],
+    later: [],
     unresolvedCaptures: [],
   };
   const GROUNDED_RESULT = { evidence: SAMPLE_EVIDENCE, text: "Needs your attention: call the dentist; pay the electricity bill." };
+  const FALLBACK_RENDER =
+    "Nothing needs your direct decision right now. You do have 1 overdue reminder and 1 upcoming reminder and 1 thing you're waiting on.";
   const activeContext = {
     accountId: "account-a",
     authorization: "Bearer session-a",
@@ -273,7 +289,7 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
   it("[3] a genuinely novel phrasing with zero corresponding regex — 'Which should I do first?' — is handled through the same mechanism, with ranking", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
     const reasonOverEvidence = vi.fn().mockResolvedValue({
-      responseIntent: "prioritize",
+      responseIntent: "rank",
       selectedEvidenceIds: ["task-1", "task-2"],
       rankedEvidenceIds: ["task-1", "task-2"],
     });
@@ -284,18 +300,21 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
     expect(result.ownerResult).toBe("In order: call the dentist; then pay the electricity bill.");
   });
 
-  it("[3b] 'What can wait?' — same mechanism, filter_urgent intent, no phrase-specific code path", async () => {
+  it("[8-contrast] 'What can wait?' — contrast decision, selected and contrasted sets both authorized, visibly different from a plain list/urgent response", async () => {
     const fetchEvidence = vi.fn().mockResolvedValue(GROUNDED_RESULT);
     const reasonOverEvidence = vi.fn().mockResolvedValue({
-      responseIntent: "filter_urgent",
+      responseIntent: "contrast",
       selectedEvidenceIds: ["task-3"],
+      contrastedEvidenceIds: ["task-1"],
     });
     const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
 
     const result = await coordinate({ ...activeContext, transcript: "What can wait?" });
 
-    expect(result.ownerResult).toContain("Grace");
-    expect(result.ownerResult).not.toContain("dentist");
+    expect(result.ownerResult).toBe("Waiting on others: Grace: kitchen cleaning. Overdue: call the dentist.");
+    // Genuinely different shape from a plain "list" of the same selection —
+    // both sets are visible, each under its own true category.
+    expect(result.ownerResult).not.toBe(FALLBACK_RENDER);
   });
 
   it("[5] 'Why does that need me?' may reference an already-surfaced authorized id via explain", async () => {
@@ -308,7 +327,7 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
 
     const result = await coordinate({ ...activeContext, transcript: "Why does that need me?" });
 
-    expect(result.ownerResult).toBe("call the dentist needs your attention because it's overdue.");
+    expect(result.ownerResult).toBe("call the dentist is in Overdue — Overdue by 3 days.");
   });
 
   it("[6] a novel paraphrase not present in any regex is still handled via the reasoning layer given active context", async () => {
@@ -352,7 +371,7 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
     const result = await coordinate({ ...activeContext, transcript: "What else?" });
 
     expect(result).toMatchObject({ handled: true, status: 200, groundingStatus: "grounded" });
-    expect(result.ownerResult).toBe("Needs your attention: call the dentist; pay the electricity bill. Waiting: Grace: kitchen cleaning (awaiting confirmation).");
+    expect(result.ownerResult).toBe(FALLBACK_RENDER);
   });
 
   it("[9] malformed model output (missing required fields) falls back to the full deterministic render", async () => {
@@ -362,7 +381,7 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
 
     const result = await coordinate({ ...activeContext, transcript: "What else?" });
 
-    expect(result.ownerResult).toBe("Needs your attention: call the dentist; pay the electricity bill. Waiting: Grace: kitchen cleaning (awaiting confirmation).");
+    expect(result.ownerResult).toBe(FALLBACK_RENDER);
     expect(result.groundingStatus).toBe("grounded");
   });
 
@@ -373,7 +392,7 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
 
     const result = await coordinate({ ...activeContext, transcript: "What else?" });
 
-    expect(result.ownerResult).toBe("Needs your attention: call the dentist; pay the electricity bill. Waiting: Grace: kitchen cleaning (awaiting confirmation).");
+    expect(result.ownerResult).toBe(FALLBACK_RENDER);
     expect(result.groundingStatus).toBe("grounded");
   });
 

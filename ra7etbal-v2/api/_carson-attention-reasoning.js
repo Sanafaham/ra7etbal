@@ -1,30 +1,31 @@
 /**
- * Second Brain stateful reasoning boundary for attention_summary_read
- * (2026-08-28).
+ * Second Brain stateful reasoning boundary for structured operational
+ * evidence (2026-08-28, revised for the structured multi-category
+ * evidence contract — replaces the prior flat needsAttention/waiting
+ * version, same file/exports).
  *
  * reasonOverOperationalEvidence() is the provider-independent capability
  * contract: given the user's message, minimal non-authoritative
- * conversation state, and the FRESH, already RLS-authorized evidence for
- * this turn, it returns a structured decision about which evidence is
- * relevant and how to frame the response — never free-form operational
- * text. The default implementation below reuses the exact strict-tool-
- * output Anthropic pattern already proven in api/carson-turn.js's
- * interpretReadIntentWithClaude — same calling convention, same
- * dependency-injection shape (fetchImpl), so a different provider is a
- * drop-in adapter with the same input/output contract, not a rewrite of
- * this module's caller.
+ * conversation state, and the FRESH, already RLS-authorized structured
+ * evidence for this turn (needsYou/overdueReminders/upcomingReminders/
+ * waiting/later/unresolvedCaptures), it returns a structured decision
+ * about which evidence is relevant and how to frame the response — never
+ * free-form operational text. The default implementation below reuses the
+ * exact strict-tool-output Anthropic pattern already proven in
+ * api/carson-turn.js's interpretReadIntentWithClaude — same calling
+ * convention, same dependency-injection shape (fetchImpl).
  *
- * The model is NEVER the source of factual text. It only selects/ranks/
- * classifies over the evidence ids it was given — see
+ * The model is NEVER the source of factual text or category labels. It
+ * only selects/ranks/contrasts the evidence ids it was given — see
  * shared/carson-attention-summary.js's renderAttentionDecision() for the
  * deterministic renderer that turns a validated decision into the actual
- * response, using only each item's own already-known label/reason.
+ * response, using only each item's own already-known label/category.
  */
 
 const RESPONSE_INTENTS = [
   "list",
-  "prioritize",
-  "filter_urgent",
+  "rank",
+  "contrast",
   "explain",
   "nothing_new",
   "clarify",
@@ -33,26 +34,42 @@ const RESPONSE_INTENTS = [
 
 function collectEvidenceIds(evidence) {
   const items = [
-    ...(evidence.needsAttention ?? []),
+    ...(evidence.needsYou ?? []),
+    ...(evidence.overdueReminders ?? []),
+    ...(evidence.upcomingReminders ?? []),
     ...(evidence.waiting ?? []),
+    ...(evidence.later ?? []),
     ...(evidence.unresolvedCaptures ?? []),
   ];
   return items.map((item) => item.id);
 }
 
+const CATEGORY_HEADERS = {
+  needsYou: "Needs your decision",
+  overdueReminders: "Overdue",
+  upcomingReminders: "Coming up",
+  waiting: "Waiting on others",
+  later: "Other active items (not currently urgent)",
+  unresolvedCaptures: "On your mind (notes/to-dos)",
+};
+
 function describeEvidenceForModel(evidence) {
   const lines = [];
-  const section = (label, items) => {
+  const section = (category, items) => {
     if (!items?.length) return;
-    lines.push(`${label}:`);
+    lines.push(`${CATEGORY_HEADERS[category]}:`);
     for (const item of items) {
-      lines.push(`  - id=${item.id} | ${item.label} | reason: ${item.reason}`);
+      const dueBit = item.dueDescription ? ` | ${item.dueDescription}` : "";
+      lines.push(`  - id=${item.id} | ${item.label}${dueBit}`);
     }
   };
-  section("Needs attention", evidence.needsAttention);
-  section("Waiting", evidence.waiting);
-  section("On the owner's mind (notes/to-dos)", evidence.unresolvedCaptures);
-  if (lines.length === 0) lines.push("(no items currently need attention)");
+  section("needsYou", evidence.needsYou);
+  section("overdueReminders", evidence.overdueReminders);
+  section("upcomingReminders", evidence.upcomingReminders);
+  section("waiting", evidence.waiting);
+  section("later", evidence.later);
+  section("unresolvedCaptures", evidence.unresolvedCaptures);
+  if (lines.length === 0) lines.push("(no operational items currently on record)");
   return lines.join("\n");
 }
 
@@ -65,10 +82,15 @@ function buildToolSchema(evidenceIds) {
   return {
     name: "decide_attention_response",
     description:
-      "Decide how to respond to the owner's message about their operational attention items. " +
-      "You may only select, rank, or reference evidence ids that were supplied to you. " +
-      "Never invent an id. If the message is not about the attention/operational-state topic " +
-      "at all (e.g. a new unrelated request), return responseIntent 'not_attention'.",
+      "Decide how to respond to the owner's message about their operational state (Needs You decisions, " +
+      "overdue reminders, upcoming reminders, things waiting on others, other active items, or notes/to-dos). " +
+      "Each evidence item already carries its own true category — you select/rank/contrast ids, you never " +
+      "invent a category or a fact. You may only select, rank, or reference evidence ids that were supplied " +
+      "to you. Never invent an id. Use 'contrast' when the question asks for a genuine distinction (e.g. what " +
+      "can wait vs what can't) — selectedEvidenceIds holds the primary answer set, contrastedEvidenceIds holds " +
+      "the secondary set being contrasted against. Use 'rank' when asked to order/prioritize — " +
+      "rankedEvidenceIds must be an ordering of selectedEvidenceIds. If the message is not about the owner's " +
+      "operational state at all (e.g. a new unrelated request), return responseIntent 'not_attention'.",
     strict: true,
     input_schema: {
       type: "object",
@@ -76,6 +98,7 @@ function buildToolSchema(evidenceIds) {
         responseIntent: { type: "string", enum: RESPONSE_INTENTS },
         selectedEvidenceIds: { type: "array", items: { type: "string", enum: idEnum } },
         rankedEvidenceIds: { type: "array", items: { type: "string", enum: idEnum } },
+        contrastedEvidenceIds: { type: "array", items: { type: "string", enum: idEnum } },
         needsClarification: { type: ["string", "null"] },
       },
       required: ["responseIntent", "selectedEvidenceIds"],
@@ -112,15 +135,12 @@ export async function reasonOverOperationalEvidenceWithClaude(
     "Conversation state:",
     ...stateLines,
     "",
-    "Fresh, authorized evidence for THIS turn (the only facts you may use):",
+    "Fresh, authorized operational evidence for THIS turn (the only facts you may use — each item's category is already true and factual, do not relabel it):",
     describeEvidenceForModel(authorizedEvidence),
     "",
     `Owner's new message: "${userMessage}"`,
   ].join("\n");
 
-  // Bounded so a stalled provider call rejects in time for the coordinator's
-  // fallback path to run, instead of stalling until the platform's own
-  // function timeout silently drops the honest-fallback contract.
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   let response;
@@ -134,7 +154,7 @@ export async function reasonOverOperationalEvidenceWithClaude(
       },
       body: JSON.stringify({
         model: process.env.CARSON_REASONING_MODEL ?? "claude-haiku-4-5-20251001",
-        max_tokens: 400,
+        max_tokens: 500,
         tool_choice: { type: "tool", name: "decide_attention_response" },
         tools: [buildToolSchema(evidenceIds)],
         messages: [{ role: "user", content: prompt }],
@@ -184,11 +204,25 @@ export function validateAttentionDecision(decision, authorizedEvidence) {
     rankedEvidenceIds = isValidRanking ? decision.rankedEvidenceIds : undefined;
   }
 
+  let contrastedEvidenceIds;
+  if (decision.contrastedEvidenceIds !== undefined) {
+    if (!Array.isArray(decision.contrastedEvidenceIds)) return { ok: false };
+    const isValidContrast = decision.contrastedEvidenceIds.every(
+      (id) => typeof id === "string" && authorizedIds.has(id),
+    );
+    // Same soft-degrade philosophy as ranking — an invalid contrast set
+    // degrades to "no contrast" rather than rejecting the whole decision,
+    // since every id in it is still checked against the SAME authorized
+    // universe (never a separate, less-trusted set).
+    contrastedEvidenceIds = isValidContrast ? decision.contrastedEvidenceIds : undefined;
+  }
+
   if (
     decision.selectedEvidenceIds.length === 0 &&
     decision.responseIntent !== "nothing_new" &&
     decision.responseIntent !== "clarify" &&
-    decision.responseIntent !== "not_attention"
+    decision.responseIntent !== "not_attention" &&
+    !(decision.responseIntent === "contrast" && contrastedEvidenceIds?.length > 0)
   ) {
     return { ok: false };
   }
@@ -204,6 +238,7 @@ export function validateAttentionDecision(decision, authorizedEvidence) {
       responseIntent: decision.responseIntent,
       selectedEvidenceIds: decision.selectedEvidenceIds,
       rankedEvidenceIds,
+      contrastedEvidenceIds,
       needsClarification,
     },
   };

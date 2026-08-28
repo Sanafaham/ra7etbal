@@ -18,26 +18,27 @@ function blockBetween(startNeedle: string, endNeedle: string): string {
  * is no longer gated on a growing regex of follow-up phrasings.
  */
 describe("ElevenLabsAgentWidget — Second Brain stateful reasoning admission", () => {
-  it("[revised admission] a message is a candidate when EITHER it directly matches attention intent OR active grounded attention context exists — no follow-up regex required for the second case", () => {
+  it("[revised admission] every typed message reaching this point is sent to the server — admission (fast paths + Stage 1 semantic classification) is decided server-side, never by a client regex/context gate alone", () => {
     const attentionBlock = blockBetween(
       "const isDirectTypedAttentionIntent =",
       "// Final deterministic gate before the free-form typed model ever runs.",
     );
-    expect(attentionBlock).toContain(
-      "const typedAttentionCandidate = isDirectTypedAttentionIntent || hasActiveGroundedAttentionContext;",
-    );
+    expect(attentionBlock).toContain("const typedAttentionCandidate = true;");
     // The old regex-gated admission must not remain.
     expect(SOURCE).not.toContain(
       "matchesAttentionFollowUp(savedMessage.content) && lastTurnWasAttentionIntentRef.current",
     );
+    expect(SOURCE).not.toContain(
+      "const typedAttentionCandidate = isDirectTypedAttentionIntent || hasActiveGroundedAttentionContext;",
+    );
   });
 
-  it("[not_attention] a resolved not_attention decision does not persist a local reply and does not return — the turn falls through to the rest of sendTypedMessage unchanged", () => {
+  it("[not_attention] a resolved not_attention/unhandled decision does not persist a local reply and does not return — the turn falls through to the rest of sendTypedMessage unchanged", () => {
     const attentionBlock = blockBetween(
       "const isDirectTypedAttentionIntent =",
       "// Final deterministic gate before the free-form typed model ever runs.",
     );
-    expect(attentionBlock).toContain('result?.code === "not_attention"');
+    expect(attentionBlock).toContain('result?.handled === false');
     expect(attentionBlock).toContain("notAttention = true;");
     const notAttentionBranchIndex = attentionBlock.indexOf("if (notAttention) {");
     const elseBranchIndex = attentionBlock.indexOf("} else {", notAttentionBranchIndex);
