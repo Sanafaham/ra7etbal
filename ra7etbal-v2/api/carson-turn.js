@@ -1,7 +1,8 @@
 import googleCalendarHandler from "./google-calendar.js";
-import { createReadOnlyTurnCoordinator, createAttentionReadCoordinator } from "./_carson-read-turn.js";
+import { createReadOnlyTurnCoordinator, createAttentionReadCoordinator, ATTENTION_CAPABILITY } from "./_carson-read-turn.js";
 import { fetchAttentionSummaryForServer } from "./_carson-attention-evidence.js";
 import { reasonOverOperationalEvidenceWithClaude } from "./_carson-attention-reasoning.js";
+import { matchesAttentionIntent } from "../shared/carson-attention-intent-classifier.js";
 
 const MAX_DEDUP_ENTRIES = 200;
 const completedTurns = new Map();
@@ -58,6 +59,76 @@ export async function interpretReadIntentWithClaude(transcript, fetchImpl = fetc
   return toolUse.input;
 }
 
+/**
+ * Stage 1 semantic routing classifier (2026-08-28, structured Second Brain
+ * admission correction).
+ *
+ * ONLY runs for a typed turn that matched neither the deterministic
+ * matchesAttentionIntent fast path nor active grounded operational
+ * continuation — see createCarsonTurnHandler below. Intentionally coarse
+ * and binary: is this a novel natural-language operational-state question
+ * (Needs You / overdue / upcoming reminders / waiting / other active items),
+ * or not? It does NOT decide calendar vs. unrelated — a "not operational"
+ * result falls through to the existing, unchanged calendar coordinator,
+ * which runs its own classification exactly as it always has. This keeps
+ * natural-language understanding entirely in the reasoning/classification
+ * layer (never a client or server regex) without expanding into a large
+ * taxonomy or duplicating calendar's own intent logic.
+ *
+ * Receives ONLY the transcript — no tenant data, no evidence, no
+ * accountId/authorization — same input-privacy contract as
+ * interpretReadIntentWithClaude above.
+ */
+export async function classifyOperationalIntentWithClaude(transcript, fetchImpl = fetch) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("Anthropic API key is not configured.");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  let response;
+  try {
+    response = await fetchImpl("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: process.env.CARSON_READ_MODEL ?? "claude-haiku-4-5-20251001",
+        max_tokens: 80,
+        tool_choice: { type: "tool", name: "classify_operational_intent" },
+        tools: [{
+          name: "classify_operational_intent",
+          description:
+            "Classify whether the owner's message is a natural-language question about their own " +
+            "Ra7etBal operational state — things needing their decision, overdue reminders, upcoming " +
+            "reminders, things waiting on other people, or other active items (e.g. 'anything overdue?', " +
+            "'what am I waiting on?', 'do I need to deal with anything now?', 'what can wait?'). Use " +
+            "not_operational for anything else, including calendar questions and unrelated requests.",
+          strict: true,
+          input_schema: {
+            type: "object",
+            properties: {
+              classification: { type: "string", enum: ["operational_state_read", "not_operational"] },
+            },
+            required: ["classification"],
+            additionalProperties: false,
+          },
+        }],
+        messages: [{ role: "user", content: transcript }],
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+  const body = await response.json().catch(() => null);
+  if (!response.ok || !body) throw new Error("Claude classification request failed.");
+  const toolUse = body.content?.find((block) => block?.type === "tool_use" && block?.name === "classify_operational_intent");
+  if (!toolUse?.input?.classification) throw new Error("Claude returned no structured classification.");
+  return toolUse.input.classification;
+}
+
 export async function fetchAttentionEvidenceThroughServerPath({ authorization }) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
@@ -87,6 +158,7 @@ function remember(store, key, value) {
 export function createCarsonTurnHandler({
   authenticate = requireUser,
   interpretIntent = interpretReadIntentWithClaude,
+  classifyOperationalIntent = classifyOperationalIntentWithClaude,
   readCalendar = readCalendarThroughExistingHandler,
   fetchAttentionEvidence = fetchAttentionEvidenceThroughServerPath,
   reasonOverEvidence = reasonOverOperationalEvidenceWithClaude,
@@ -135,30 +207,62 @@ export function createCarsonTurnHandler({
       priorObjective: typeof req.body?.priorObjective === "string" ? req.body.priorObjective : null,
     };
 
-    // Deterministic, model-free classification first (attention_summary_read).
-    // Only when it doesn't match this class does the existing Claude-based
-    // calendar_read path run — unchanged for every non-attention transcript.
+    // Admission (2026-08-28, structured Second Brain admission correction):
+    //
+    // 1. Deterministic known-phrase fast path + active grounded operational
+    //    continuation — unchanged, zero model cost, handled entirely inside
+    //    coordinateAttention's own admission check.
+    // 2. Otherwise, ONE coarse Stage 1 semantic classification (transcript
+    //    only, no tenant data, no evidence) decides whether this novel
+    //    message is a natural-language operational-state question. This is
+    //    what lets a fresh-session question like "Anything overdue?" reach
+    //    the reasoning layer without ever needing a phrase-specific regex.
+    // 3. Exactly ONE coordinator runs per turn — the attention/operational
+    //    path when Stage 1 (or a fast path) admits it, otherwise the
+    //    existing, entirely unchanged calendar coordinator (which performs
+    //    its own classification exactly as it always has). This single-path
+    //    routing is also what makes the composition ambiguity fixed in
+    //    PR #363 impossible to reintroduce — no two coordinators are ever
+    //    both invoked for the same turn, so there is nothing left to
+    //    silently overwrite.
     const pendingResult = (async () => {
-      const attentionResult = await coordinateAttention(ownerTurn);
-      if (attentionResult.handled) return attentionResult;
-      const calendarResult = await coordinateCalendar(ownerTurn);
-      if (calendarResult.handled) return calendarResult;
-      // Neither coordinator claimed this turn. If the attention coordinator
-      // specifically classified it as not_attention (a genuine, meaningful
-      // decision from active grounded context — distinct from having no
-      // candidacy at all) AND calendar's own rejection is its generic
-      // "not for me either" (unsupported_intent), that not_attention
-      // classification must survive to the caller: the typed widget only
-      // knows to fall through to the normal typed path on
-      // code:"not_attention", and calendar's generic rejection must not
-      // silently overwrite it. But a genuine calendar-side validation
-      // failure (invalid_owner_turn, ownership_collision — a different,
-      // more fundamental problem with the request itself) must never be
-      // masked by an unrelated not_attention result (CodeRabbit finding).
-      if (attentionResult.code === "not_attention" && calendarResult.code === "unsupported_intent") {
-        return attentionResult;
+      const isDirectAttentionIntent = matchesAttentionIntent(ownerTurn.transcript);
+      const hasActiveGroundedAttentionContext =
+        ownerTurn.previousCapability === ATTENTION_CAPABILITY && ownerTurn.previousGroundingStatus === "grounded";
+
+      if (isDirectAttentionIntent || hasActiveGroundedAttentionContext) {
+        const attentionResult = await coordinateAttention(ownerTurn);
+        if (attentionResult.handled) return attentionResult;
+        // Fast-path admission (a regex match or "prior turn was grounded")
+        // doesn't itself rule out a genuine calendar question — still try
+        // calendar, and preserve not_attention distinctly when calendar
+        // also finds nothing (PR #363 fix, unchanged for this branch).
+        const calendarResult = await coordinateCalendar(ownerTurn);
+        if (calendarResult.handled) return calendarResult;
+        if (attentionResult.code === "not_attention" && calendarResult.code === "unsupported_intent") {
+          return attentionResult;
+        }
+        return calendarResult;
       }
-      return calendarResult;
+
+      let stage1Classification;
+      try {
+        stage1Classification = await classifyOperationalIntent(ownerTurn.transcript);
+      } catch {
+        // Fail closed to "not operational" — falls through to the existing
+        // calendar/unsupported handling below, never a free-form answer.
+        stage1Classification = "not_operational";
+      }
+
+      if (stage1Classification === "operational_state_read") {
+        // Stage 1 already ruled out calendar for this turn (its own coarse
+        // classification is exhaustive: operational vs. not) — no retry
+        // needed; a not_attention result here goes straight to the normal
+        // typed fall-through, since exactly one coordinator ever ran.
+        return coordinateAttention({ ...ownerTurn, stage1Admitted: true });
+      }
+
+      return coordinateCalendar(ownerTurn);
     })();
 
     if (dedupKey) remember(dedupStore, dedupKey, pendingResult);

@@ -29,6 +29,93 @@ export function isReminderOverdue(value, now = new Date()) {
   return !Number.isNaN(due.getTime()) && due.getTime() < now.getTime();
 }
 
+// ── formatReminderDue ─────────────────────────────────────────────────────
+// Same DELIBERATE EXCEPTION as isReminderOverdue above (2026-08-28,
+// structured Second Brain operational evidence) — duplicated, not imported,
+// because reminder-time.ts's zero-import invariant means it cannot be
+// imported from here, and this file cannot be imported from reminder-time.ts
+// either. Needed so evidence items carry a human dueDescription without a
+// new date-math implementation. Parity guarded by
+// src/lib/reminder-time-shared-parity.test.ts — update both together.
+export function formatReminderDue(value, now = new Date()) {
+  if (!value) return null;
+  const due = new Date(value);
+  if (Number.isNaN(due.getTime())) return null;
+
+  const diffMs = due.getTime() - now.getTime();
+  if (diffMs < 0) return formatOverdue(diffMs);
+
+  const minutes = Math.ceil(diffMs / 60_000);
+  if (minutes < 60) return `Due in ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+
+  const hours = Math.ceil(diffMs / 3_600_000);
+  if (isSameLocalDay(due, now) && hours <= 3) {
+    return `Due in ${hours} ${hours === 1 ? "hour" : "hours"}`;
+  }
+
+  if (isSameLocalDay(due, now)) {
+    return `Due today at ${formatTime(due)}`;
+  }
+
+  if (isTomorrow(due, now)) {
+    return `Tomorrow at ${formatTime(due)}`;
+  }
+
+  if (isWithinNextSixDays(due, now)) {
+    return `${formatWeekday(due)} at ${formatTime(due)}`;
+  }
+
+  return `${formatDate(due, now)} at ${formatTime(due)}`;
+}
+
+function formatOverdue(diffMs) {
+  const overdueMs = Math.abs(diffMs);
+  const minutes = Math.floor(overdueMs / 60_000);
+  if (minutes < 60) {
+    const value = Math.max(1, minutes);
+    return `Overdue by ${value} ${value === 1 ? "minute" : "minutes"}`;
+  }
+  const hours = Math.floor(overdueMs / 3_600_000);
+  if (hours < 24) {
+    return `Overdue by ${hours} ${hours === 1 ? "hour" : "hours"}`;
+  }
+  const days = Math.floor(overdueMs / 86_400_000);
+  return `Overdue by ${days} ${days === 1 ? "day" : "days"}`;
+}
+
+function isTomorrow(date, now) {
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  return isSameLocalDay(date, tomorrow);
+}
+
+function isWithinNextSixDays(date, now) {
+  const start = startOfLocalDay(now).getTime();
+  const target = startOfLocalDay(date).getTime();
+  const days = Math.floor((target - start) / 86_400_000);
+  return days > 1 && days <= 6;
+}
+
+function startOfLocalDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function formatTime(date) {
+  return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
+function formatWeekday(date) {
+  return date.toLocaleDateString(undefined, { weekday: "long" });
+}
+
+function formatDate(date, now = new Date()) {
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
 // ── isSameLocalDay (moved verbatim from morning-brief.ts) ───────────────────
 export function isSameLocalDay(a, b) {
   return (

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createCarsonTurnHandler,
   interpretReadIntentWithClaude,
+  classifyOperationalIntentWithClaude,
   readCalendarThroughExistingHandler,
 } from "./carson-turn.js";
 import { shouldClearRevokedCalendarCredentials } from "./google-calendar.js";
@@ -92,6 +93,33 @@ describe("Claude strict read intent", () => {
     process.env.ANTHROPIC_API_KEY = "test-key";
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ content: [{ type: "text", text: "Tomorrow is clear." }] }) });
     await expect(interpretReadIntentWithClaude(TURN.transcript, fetchMock)).rejects.toThrow("no structured intent");
+  });
+});
+
+describe("Stage 1 semantic routing classifier (2026-08-28)", () => {
+  it("forces a strict, binary schema tool call and returns the classification, receiving only the transcript (no tenant data)", async () => {
+    process.env.ANTHROPIC_API_KEY = "test-key";
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ content: [{ type: "tool_use", name: "classify_operational_intent", input: { classification: "operational_state_read" } }] }),
+    });
+    await expect(classifyOperationalIntentWithClaude("Anything overdue?", fetchMock)).resolves.toBe("operational_state_read");
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(requestBody.tool_choice).toEqual({ type: "tool", name: "classify_operational_intent" });
+    expect(requestBody.tools[0]).toMatchObject({ name: "classify_operational_intent", strict: true });
+    expect(requestBody.tools[0].input_schema.properties.classification.enum).toEqual(["operational_state_read", "not_operational"]);
+    expect(requestBody.messages).toEqual([{ role: "user", content: "Anything overdue?" }]);
+  });
+
+  it("rejects model prose without a structured classification", async () => {
+    process.env.ANTHROPIC_API_KEY = "test-key";
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ content: [{ type: "text", text: "Sure." }] }) });
+    await expect(classifyOperationalIntentWithClaude("hi", fetchMock)).rejects.toThrow("no structured classification");
+  });
+
+  it("throws when ANTHROPIC_API_KEY is not configured", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    await expect(classifyOperationalIntentWithClaude("hi", vi.fn())).rejects.toThrow("Anthropic API key is not configured.");
   });
 });
 
@@ -470,6 +498,165 @@ describe("Carson turn handler — Second Brain stateful reasoning admission (202
     expect(fetchAttentionEvidence).not.toHaveBeenCalled();
     expect(interpretIntent).toHaveBeenCalledOnce();
     expect(response.payload).toMatchObject({ handled: false, status: 422, code: "unsupported_intent" });
+  });
+});
+
+describe("Carson turn handler — Stage 1 admission correction (2026-08-28)", () => {
+  const EVIDENCE = {
+    ok: true,
+    code: "attention_read_succeeded",
+    completeness: "full",
+    needsYou: [],
+    overdueReminders: [{ id: "task-1", label: "call the dentist", type: "reminder", status: "pending", dueAt: null, dueDescription: "Overdue by 2 days", assignee: null, category: "overdueReminders" }],
+    upcomingReminders: [],
+    waiting: [],
+    later: [],
+    unresolvedCaptures: [],
+  };
+
+  it("[2] fresh-session novel operational wording (no attention regex match, no active context) reaches Stage 1 classification, is classified operational_state_read, and flows through fresh structured evidence into Stage 2 reasoning — never gated by a phrase-specific regex", async () => {
+    const classifyOperationalIntent = vi.fn().mockResolvedValue("operational_state_read");
+    const interpretIntent = vi.fn();
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({ evidence: EVIDENCE, text: "Needs your attention: call the dentist." });
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["task-1"] });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      classifyOperationalIntent,
+      interpretIntent,
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req({ ...TURN, transcript: "Anything overdue?" }), response);
+
+    expect(classifyOperationalIntent).toHaveBeenCalledOnce();
+    expect(classifyOperationalIntent).toHaveBeenCalledWith("Anything overdue?");
+    expect(interpretIntent).not.toHaveBeenCalled();
+    expect(fetchAttentionEvidence).toHaveBeenCalledOnce();
+    expect(reasonOverEvidence).toHaveBeenCalledOnce();
+    expect(reasonOverEvidence.mock.calls[0][0].authorizedEvidence).toEqual(EVIDENCE);
+    expect(response.payload).toMatchObject({ handled: true, capability: "attention_summary_read", groundingStatus: "grounded" });
+  });
+
+  it("[3] a fresh calendar query is Stage 1 classified calendar_read and the existing calendar coordinator handles it entirely unchanged", async () => {
+    const classifyOperationalIntent = vi.fn().mockResolvedValue("not_operational");
+    const interpretIntent = vi.fn().mockResolvedValue({ capability: "calendar_read", range: "tomorrow" });
+    const readCalendar = vi.fn().mockResolvedValue({ connected: true, events: [] });
+    const fetchAttentionEvidence = vi.fn();
+    const reasonOverEvidence = vi.fn();
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      classifyOperationalIntent,
+      interpretIntent,
+      readCalendar,
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req({ ...TURN, transcript: "What's on my calendar tomorrow?" }), response);
+
+    expect(classifyOperationalIntent).toHaveBeenCalledOnce();
+    expect(fetchAttentionEvidence).not.toHaveBeenCalled();
+    expect(reasonOverEvidence).not.toHaveBeenCalled();
+    expect(interpretIntent).toHaveBeenCalledOnce();
+    expect(readCalendar).toHaveBeenCalledOnce();
+    expect(response.payload).toMatchObject({ handled: true, capability: "calendar_read" });
+  });
+
+  it("[4] a fresh, genuinely unrelated request is Stage 1 classified not_operational, falls through calendar's own rejection, and never produces a false grounding-failure result", async () => {
+    const classifyOperationalIntent = vi.fn().mockResolvedValue("not_operational");
+    const interpretIntent = vi.fn().mockResolvedValue({ capability: "unsupported", range: "tomorrow" });
+    const fetchAttentionEvidence = vi.fn();
+    const reasonOverEvidence = vi.fn();
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      classifyOperationalIntent,
+      interpretIntent,
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req({ ...TURN, transcript: "Send Christopher a message." }), response);
+
+    expect(classifyOperationalIntent).toHaveBeenCalledOnce();
+    expect(fetchAttentionEvidence).not.toHaveBeenCalled();
+    expect(response.payload).toMatchObject({ handled: false, status: 422, code: "unsupported_intent" });
+    expect(response.payload.ownerResult).toBeUndefined();
+  });
+
+  it("[5] active grounded operational continuation uses the fast path and never invokes Stage 1 classification at all", async () => {
+    const classifyOperationalIntent = vi.fn();
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({ evidence: EVIDENCE, text: "Needs your attention: call the dentist." });
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "not_attention", selectedEvidenceIds: [] });
+    const interpretIntent = vi.fn().mockResolvedValue({ capability: "unsupported", range: "tomorrow" });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      classifyOperationalIntent,
+      interpretIntent,
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(
+      req({
+        turnId: "turn-continue",
+        providerEventId: "event-continue",
+        transcript: "Something totally novel",
+        previousCapability: "attention_summary_read",
+        previousGroundingStatus: "grounded",
+      }),
+      response,
+    );
+
+    expect(classifyOperationalIntent).not.toHaveBeenCalled();
+    expect(reasonOverEvidence).toHaveBeenCalledOnce();
+  });
+
+  it("[12] a fresh operational question gets the full structured evidence union (all six categories available), never a hard-coded category exclusion before reasoning", async () => {
+    const fullEvidence = {
+      ok: true,
+      code: "attention_read_succeeded",
+      completeness: "full",
+      needsYou: [{ id: "n1", label: "sign the lease", type: "decision", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "needsYou" }],
+      overdueReminders: [{ id: "o1", label: "call the dentist", type: "reminder", status: "pending", dueAt: null, dueDescription: "Overdue by 2 days", assignee: null, category: "overdueReminders" }],
+      upcomingReminders: [{ id: "u1", label: "pick up dry cleaning", type: "reminder", status: "pending", dueAt: null, dueDescription: "Due in 5 minutes", assignee: null, category: "upcomingReminders" }],
+      waiting: [{ id: "w1", label: "Grace: kitchen", type: "delegation", status: "pending", dueAt: null, dueDescription: null, assignee: "Grace", category: "waiting" }],
+      later: [{ id: "l1", label: "read that book", type: "reminder", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "later" }],
+      unresolvedCaptures: [],
+    };
+    const classifyOperationalIntent = vi.fn().mockResolvedValue("operational_state_read");
+    const fetchAttentionEvidence = vi.fn().mockResolvedValue({ evidence: fullEvidence, text: "..." });
+    const reasonOverEvidence = vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["u1"] });
+    const handler = createCarsonTurnHandler({
+      authenticate: vi.fn().mockResolvedValue("account-a"),
+      classifyOperationalIntent,
+      interpretIntent: vi.fn(),
+      fetchAttentionEvidence,
+      reasonOverEvidence,
+      dedupStore: new Map(),
+    });
+    const response = res();
+
+    await handler(req({ ...TURN, transcript: "Do I actually need to deal with anything now?" }), response);
+
+    const passedEvidence = reasonOverEvidence.mock.calls[0][0].authorizedEvidence;
+    expect(passedEvidence.needsYou.length).toBe(1);
+    expect(passedEvidence.overdueReminders.length).toBe(1);
+    expect(passedEvidence.upcomingReminders.length).toBe(1);
+    expect(passedEvidence.waiting.length).toBe(1);
+    expect(passedEvidence.later.length).toBe(1);
+    // The reasoning model, not deterministic code, selected which of these
+    // (here, the imminent upcoming reminder) genuinely matters — nothing
+    // was pre-excluded before it ever saw the evidence.
+    expect(response.payload.surfacedEvidenceIds).toEqual(["u1"]);
   });
 });
 

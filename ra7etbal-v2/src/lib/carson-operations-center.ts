@@ -19,7 +19,6 @@
 
 import { supabase } from "./supabase";
 import { listTasks } from "./tasks";
-import { buildMorningBrief } from "./morning-brief";
 import { fetchAutomationDigest } from "./automation-context";
 import { listOpenStaffEscalationsForNeedsYou } from "./staff-messages";
 import { fetchUnresolvedCaptureCandidates, type UnresolvedCapture } from "./carson-unresolved-captures";
@@ -301,10 +300,11 @@ export async function fetchOperationsSummary(): Promise<string> {
 export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence> {
   const generatedAt = new Date().toISOString();
   const empty = {
-    needsAttention: [] as AttentionItem[],
+    needsYou: [] as AttentionItem[],
+    overdueReminders: [] as AttentionItem[],
+    upcomingReminders: [] as AttentionItem[],
     waiting: [] as AttentionItem[],
-    carsonCanHandle: [] as AttentionItem[],
-    safeToIgnore: [] as AttentionItem[],
+    later: [] as AttentionItem[],
     unresolvedCaptures: [] as AttentionItem[],
   };
 
@@ -359,15 +359,15 @@ export async function fetchAttentionEvidence(): Promise<AttentionSummaryEvidence
 
   const digest = await digestPromise;
 
-  const brief = tasks ? buildMorningBrief(tasks, [], now, digest.routineAutomationTaskIds) : null;
-
   const evidence = composeAttentionEvidence({
     generatedAt,
-    brief,
+    now,
+    tasks,
     tasksFailed,
     needsYou,
     needsYouFailed,
     captureCandidates,
+    routineAutomationTaskIds: digest.routineAutomationTaskIds,
     capturesFailed,
   });
 

@@ -13,6 +13,8 @@ export interface MorningBriefData<TTask = unknown> {
 
 export function isReminderOverdue(value: string | null, now?: Date): boolean;
 
+export function formatReminderDue(value: string | null, now?: Date): string | null;
+
 export function isSameLocalDay(a: Date, b: Date): boolean;
 
 export function getDateValue(value: string | null): number;

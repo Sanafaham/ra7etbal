@@ -82,8 +82,8 @@ describe("fetchAttentionEvidenceForServer — security boundary", () => {
 
     expect(evidence.ok).toBe(true);
     expect(evidence.completeness).toBe("full");
-    expect(evidence.needsAttention.length).toBe(1);
-    expect(evidence.needsAttention[0].reason).toBe("overdue");
+    expect(evidence.overdueReminders.length).toBe(1);
+    expect(evidence.overdueReminders[0].category).toBe("overdueReminders");
   });
 
   it("degrades to a partial, honest result when one source fails — never silently drops to empty/all-clear", async () => {
@@ -106,7 +106,7 @@ describe("fetchAttentionEvidenceForServer — security boundary", () => {
 
     expect(evidence.ok).toBe(false);
     expect(evidence.code).toBe("attention_read_failed");
-    expect(evidence.needsAttention).toEqual([]);
+    expect(evidence.needsYou).toEqual([]);
     expect(evidence.waiting).toEqual([]);
   });
 

@@ -99,12 +99,13 @@ describe("ElevenLabsAgentWidget — typed attention hard-grounding boundary", ()
     expect(attentionBlock).toContain("do not re-answer, re-check, or reference searching/checking anything");
   });
 
-  it("marks a handled (non-not_attention) turn as attention-intent for the shared continuation gate, same lifecycle as voice", () => {
+  it("marks a handled turn as attention-intent for the shared continuation gate ONLY when the claimed capability is actually attention_summary_read (never for a claimed calendar_read or other capability)", () => {
     const attentionBlock = blockBetween(
       "const isDirectTypedAttentionIntent =",
       "// Final deterministic gate before the free-form typed model ever runs.",
     );
-    expect(attentionBlock).toContain("lastTurnWasAttentionIntentRef.current = true;");
+    expect(attentionBlock).toContain('const isAttentionCapability = resultCapability === "attention_summary_read";');
+    expect(attentionBlock).toContain("lastTurnWasAttentionIntentRef.current = isAttentionCapability;");
   });
 
   it("does not alter any voice-only (requestedChannel === \"voice\") code path", () => {

@@ -20,7 +20,6 @@
  * exact same functions src/lib/carson-operations-center.ts calls.
  */
 
-import { buildMorningBrief } from "../shared/carson-morning-brief-classifier.js";
 import { composeAttentionEvidence, renderAttentionSummary } from "../shared/carson-attention-summary.js";
 import { noteToCapture, todoToCapture } from "../shared/carson-unresolved-captures-classifier.js";
 import { isSupportedOperationalAutomation } from "../shared/automation-support-classifier.js";
@@ -210,16 +209,16 @@ export async function fetchAttentionEvidenceForServer({ supabaseUrl, anonKey, au
 
   const routineAutomationTaskIds = await routineIdsPromise;
 
-  const brief = tasks ? buildMorningBrief(tasks, [], now, routineAutomationTaskIds) : null;
-
   const evidence = composeAttentionEvidence({
     generatedAt,
-    brief,
+    now,
+    tasks,
     tasksFailed,
     needsYou,
     needsYouFailed,
     captureCandidates,
     capturesFailed,
+    routineAutomationTaskIds,
   });
 
   // Same "only mark what was truly surfaced" contract as the browser path
@@ -245,10 +244,11 @@ export async function fetchAttentionSummaryForServer(ctx) {
       code: "attention_read_failed",
       generatedAt,
       completeness: "none",
-      needsAttention: [],
+      needsYou: [],
+      overdueReminders: [],
+      upcomingReminders: [],
       waiting: [],
-      carsonCanHandle: [],
-      safeToIgnore: [],
+      later: [],
       unresolvedCaptures: [],
     };
     return { evidence, text: renderAttentionSummary(evidence) };

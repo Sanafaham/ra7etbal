@@ -7750,30 +7750,40 @@ export default function ElevenLabsAgentWidget({
         }
       }
 
-      // Second Brain stateful reasoning boundary (2026-08-28 correction).
-      // Admission is NOT gated on a growing regex of follow-up phrasings —
-      // that would mean adding a new pattern for every new way someone
-      // might continue the conversation, exactly what this layer exists to
-      // stop. Instead: a DIRECT match (matchesAttentionIntent) always
-      // admits deterministically, no model call. Once there is ACTIVE
-      // GROUNDED ATTENTION CONTEXT (the immediately preceding turn was a
-      // grounded attention_summary_read), ANY new typed message is a
-      // candidate — the server's reasoning model decides, from fresh
-      // evidence, whether it continues the topic or is unrelated
-      // (not_attention), never a client-side regex. The typed model is
-      // never given a chance to compose its own factual answer for this
-      // class: sendUserMessage() below is skipped for every admitted turn.
-      // Voice is intentionally untouched by this block.
+      // Second Brain stateful reasoning boundary (2026-08-28 admission
+      // correction). Admission is NOT gated on a growing regex of
+      // follow-up/topic phrasings, and NOT limited to a client-side
+      // regex/context check — that would mean adding a new pattern for
+      // every new way someone might ask an operational question, exactly
+      // what this layer exists to stop. Natural-language routing belongs to
+      // the server's Stage 1 semantic classifier (api/carson-turn.js), not
+      // a client regex. A DIRECT match (matchesAttentionIntent) and ACTIVE
+      // GROUNDED ATTENTION CONTEXT remain cheap client-tracked fast-path
+      // signals threaded through as conversation-state hints — but every
+      // typed message reaching this point is now sent to the server, which
+      // performs its own fast-path check, then (only on a miss) one coarse
+      // Stage 1 classification, then routes to the operational reasoning
+      // layer, the existing calendar coordinator, or a clean fall-through.
+      // The typed model is never given a chance to compose its own factual
+      // answer for anything the server actually claims: sendUserMessage()
+      // below is skipped for every claimed turn. Voice is untouched.
+      // No longer gates admission itself (the server re-derives it
+      // independently and decides via Stage 1) — but still used below as a
+      // local signal for the network/session-failure fallback decision:
+      // known-attention-shaped turns keep the original honest
+      // fail-closed contract on failure; novel Stage-1-only candidates
+      // fall through cleanly instead (see the catch block below).
       const isDirectTypedAttentionIntent = matchesAttentionIntent(savedMessage.content);
       const hasActiveGroundedAttentionContext =
         lastTurnWasAttentionIntentRef.current && lastAttentionTurnWasGroundedRef.current;
-      const typedAttentionCandidate = isDirectTypedAttentionIntent || hasActiveGroundedAttentionContext;
+      const typedAttentionCandidate = true;
       if (typedAttentionCandidate) {
         let ownerResult: string = ATTENTION_GROUNDING_UNAVAILABLE_MESSAGE;
         let typedGroundingStatus: string | null = null;
         let notAttention = false;
         let surfacedEvidenceIds: string[] = [];
         let responseIntent: string | null = null;
+        let resultCapability: string | null = null;
         try {
           const { data: attentionSessionData } = await supabase.auth.getSession();
           const attentionJwt = attentionSessionData?.session?.access_token;
@@ -7807,10 +7817,16 @@ export default function ElevenLabsAgentWidget({
               }),
             });
             const result = await response.json().catch(() => null);
-            if (result?.code === "not_attention") {
+            if (result?.handled === false) {
+              // Nothing claimed this turn (Stage 1 found no fast-path/
+              // operational/calendar match, or the reasoning model
+              // resolved a genuine not_attention) — fall through to the
+              // normal typed conversation exactly as if this block never
+              // ran.
               notAttention = true;
             } else if (result?.handled && typeof result.ownerResult === "string") {
               ownerResult = result.ownerResult;
+              if (typeof result.capability === "string") resultCapability = result.capability;
               if (Array.isArray(result.surfacedEvidenceIds)) surfacedEvidenceIds = result.surfacedEvidenceIds;
               if (typeof result.responseIntent === "string") responseIntent = result.responseIntent;
             }
@@ -7819,10 +7835,17 @@ export default function ElevenLabsAgentWidget({
             }
           }
         } catch {
-          // Fail closed to the honest fallback already set above — this
-          // question class must never fall through to a free-form model
-          // answer, whether the cause is no session, a network error, or an
-          // unexpected server response.
+          // Every typed message now reaches this block (2026-08-28 Stage 1
+          // correction), so a network/session failure here no longer means
+          // "this was definitely an attention question" the way it did when
+          // only regex/context-matched candidates got this far. Only fail
+          // closed to the honest attention-unavailable message when there
+          // was already local evidence this WAS an attention-shaped turn
+          // (matches the original, still-protected contract for that case);
+          // otherwise fall through to the normal typed path rather than
+          // showing a confusing, wrong "couldn't check what needs your
+          // attention" answer to an ordinary message (CodeRabbit finding).
+          notAttention = !isDirectTypedAttentionIntent && !hasActiveGroundedAttentionContext;
         }
 
         if (notAttention) {
@@ -7836,13 +7859,28 @@ export default function ElevenLabsAgentWidget({
           priorAttentionObjectiveRef.current = null;
         } else {
           sessionTranscriptRef.current.push({ role: "user", message: savedMessage.content });
-          lastTurnWasAttentionIntentRef.current = true;
+          // Attention-continuity refs are meaningful ONLY for the
+          // attention_summary_read capability — a claimed calendar_read
+          // result (or any other future capability this endpoint might
+          // claim) must never be mistaken for active grounded attention
+          // context on the next turn.
+          const isAttentionCapability = resultCapability === "attention_summary_read";
+          lastTurnWasAttentionIntentRef.current = isAttentionCapability;
           // Mirrors the existing voice/onMessage semantics for this same
           // ref (see the onMessage attention-routing guard above): only a
           // truly grounded outcome for THIS turn marks the predecessor as
           // grounded for the next turn's admission/continuation decision.
-          lastAttentionTurnWasGroundedRef.current = typedGroundingStatus === "grounded";
-          if (typedGroundingStatus === "grounded") {
+          lastAttentionTurnWasGroundedRef.current = isAttentionCapability && typedGroundingStatus === "grounded";
+          if (!isAttentionCapability) {
+            // A claimed non-attention result (e.g. calendar_read) ends any
+            // prior attention conversation just as cleanly as an explicit
+            // not_attention would — stale previously-surfaced-evidence
+            // context must not silently persist across an intervening
+            // unrelated turn (CodeRabbit finding).
+            previouslySurfacedEvidenceIdsRef.current = [];
+            priorAttentionObjectiveRef.current = null;
+          }
+          if (isAttentionCapability && typedGroundingStatus === "grounded") {
             // Accumulate across the whole conversation (deduped) — lets a
             // later "anything else?" reasoning call know everything already
             // mentioned so far, not just the immediately preceding turn.

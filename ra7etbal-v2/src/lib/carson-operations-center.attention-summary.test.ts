@@ -98,7 +98,7 @@ describe("fetchAttentionEvidence — auth", () => {
     const evidence = await fetchAttentionEvidence();
     expect(evidence.ok).toBe(false);
     expect(evidence.code).toBe("attention_auth_failed");
-    expect(evidence.needsAttention).toEqual([]);
+    expect(evidence.needsYou).toEqual([]);
     expect(evidence.waiting).toEqual([]);
   });
 
@@ -129,15 +129,16 @@ describe("fetchAttentionEvidence — empty verified state", () => {
     const evidence = await fetchAttentionEvidence();
     expect(evidence.ok).toBe(true);
     expect(evidence.completeness).toBe("full");
-    expect(evidence.needsAttention).toEqual([]);
+    expect(evidence.needsYou).toEqual([]);
     expect(evidence.waiting).toEqual([]);
     expect(renderAttentionSummary(evidence)).toMatch(/nothing needs your attention/i);
   });
 });
 
 describe("fetchAttentionEvidence — full retrieval, no fabrication", () => {
-  it("only includes items actually present in the retrieved tasks", async () => {
+  it("only includes items actually present in the retrieved tasks, filed under their true category", async () => {
     const owner = makeTask({ id: "t-owner", description: "Book the vet", assigned_to: null, type: "action" });
+    const decision = makeTask({ id: "t-decision", description: "Choose the venue", assigned_to: null, type: "decision" });
     const overdue = makeTask({
       id: "t-overdue",
       description: "Pay the internet bill",
@@ -151,19 +152,28 @@ describe("fetchAttentionEvidence — full retrieval, no fabrication", () => {
       assigned_to: "Ahmed",
       needs_follow_up: true,
     });
-    mocks.listTasks.mockResolvedValue([owner, overdue, waiting]);
+    mocks.listTasks.mockResolvedValue([owner, decision, overdue, waiting]);
 
     const evidence = await fetchAttentionEvidence();
     expect(evidence.ok).toBe(true);
     expect(evidence.completeness).toBe("full");
 
-    const needsIds = evidence.needsAttention.map((i) => i.id);
-    const waitIds = evidence.waiting.map((i) => i.id);
-    expect(needsIds).toContain("t-overdue");
-    expect(waitIds).toContain("t-wait");
+    // Needs You is canonical/narrow — only the "decision" type task qualifies.
+    expect(evidence.needsYou.map((i) => i.id)).toEqual(["t-decision"]);
+    expect(evidence.overdueReminders.map((i) => i.id)).toContain("t-overdue");
+    expect(evidence.waiting.map((i) => i.id)).toContain("t-wait");
+    // A routine, non-decision owner task is not Needs You — it's Later.
+    expect(evidence.later.map((i) => i.id)).toContain("t-owner");
     // No item id appears that wasn't in the retrieved task set.
-    for (const item of [...evidence.needsAttention, ...evidence.waiting]) {
-      expect(["t-owner", "t-overdue", "t-wait"]).toContain(item.id);
+    const allIds = [
+      ...evidence.needsYou,
+      ...evidence.overdueReminders,
+      ...evidence.upcomingReminders,
+      ...evidence.waiting,
+      ...evidence.later,
+    ].map((i) => i.id);
+    for (const id of allIds) {
+      expect(["t-owner", "t-decision", "t-overdue", "t-wait"]).toContain(id);
     }
   });
 
@@ -188,8 +198,8 @@ describe("fetchAttentionEvidence — full retrieval, no fabrication", () => {
     const routine = makeTask({ id: "t-routine", description: "Water the plants", type: "delegation", assigned_to: "Ahmed" });
     mocks.listTasks.mockResolvedValue([routine]);
     const evidence = await fetchAttentionEvidence();
-    // Routine, non-escalated delegation goes to waiting, not needsAttention.
-    expect(evidence.needsAttention).toEqual([]);
+    // Routine, non-escalated delegation goes to waiting, not needsYou.
+    expect(evidence.needsYou).toEqual([]);
     expect(evidence.waiting.map((i) => i.id)).toContain("t-routine");
   });
 });
@@ -302,7 +312,16 @@ describe("fetchAttentionEvidence — unresolved Notes/To-dos (Second Brain Phase
     mocks.classifyAttentionWorthyCaptures.mockReturnValue(candidates);
     const evidence = await fetchAttentionEvidence();
     expect(evidence.unresolvedCaptures).toEqual([
-      { id: "n1", label: "Check on Nimala's wedding invitation", reason: "a note you made" },
+      {
+        id: "n1",
+        label: "Check on Nimala's wedding invitation",
+        type: "note",
+        status: "pending",
+        dueAt: null,
+        dueDescription: null,
+        assignee: null,
+        category: "unresolvedCaptures",
+      },
     ]);
     expect(renderAttentionSummary(evidence)).toMatch(/Also on your mind.*Nimala/);
   });
@@ -312,7 +331,7 @@ describe("fetchAttentionEvidence — unresolved Notes/To-dos (Second Brain Phase
     mocks.fetchUnresolvedCaptureCandidates.mockResolvedValue(candidates);
     mocks.classifyAttentionWorthyCaptures.mockReturnValue(candidates);
     const evidence = await fetchAttentionEvidence();
-    expect(evidence.unresolvedCaptures[0].reason).toBe("on your to-do list");
+    expect(evidence.unresolvedCaptures[0].type).toBe("todo");
   });
 
   it("never includes a capture the classifier excluded — no fabrication beyond what classification selected", async () => {

@@ -1,44 +1,103 @@
 /**
- * Server/browser-safe attention-evidence composition and rendering.
+ * Server/browser-safe structured operational evidence composition and
+ * rendering.
  *
- * PURE RELOCATION from src/lib/carson-operations-center.ts (2026-08-28,
- * Second Brain typed hard-grounding slice) — no behavior change.
+ * 2026-08-28 — Structured Second Brain operational evidence (replaces the
+ * prior flat needsAttention/waiting shape). Root cause of the prior shape:
+ * a flat "needsAttention" bucket pre-filtered away everything except
+ * already-urgent items (overdue + due-today reminders), leaving the
+ * reasoning model with no genuine "can wait" candidates to contrast
+ * against — see the read-only investigation this session for full
+ * evidence. composeAttentionEvidence() now exposes Ra7etBal's actual
+ * canonical operational categories, reusing existing production
+ * classifiers exactly (never redefining their membership):
  *
- * composeAttentionEvidence() is the one shared place that turns already-
- * classified task buckets (from buildMorningBrief — see
- * carson-morning-brief-classifier.js), staff escalations, and unresolved
- * capture candidates into the final AttentionSummaryEvidence shape. Both
- * the browser (carson-operations-center.ts) and the server attention-read
- * path call this SAME function after doing their own (necessarily
- * different) I/O — this is what keeps the actual business rules single-
- * sourced. renderAttentionSummary() is a pure string builder with no LLM
- * step — it can never state an item that isn't present in the evidence it
- * was given.
+ *   - needsYou            — daily-brief.ts's isNeedsYouTask (via the
+ *                            shared duplicate, see carson-daily-brief-
+ *                            classifier.js) — the SAME "Needs You" the
+ *                            Home/Updates UI shows. Canonical, narrow.
+ *   - overdueReminders     — buildMorningBrief()'s overdueItems.
+ *   - upcomingReminders    — the same getUpcomingReminderTasks() window
+ *                            Updates' own "Upcoming reminders" uses
+ *                            (via a local port, see below).
+ *   - waiting               — daily-brief.ts's isWaitingTask (Home/Updates'
+ *                            own "Waiting"), plus open staff escalations
+ *                            (unchanged from the prior shape).
+ *   - later                 — daily-brief.ts's isLaterTask, minus anything
+ *                            already claimed by the categories above.
+ *   - unresolvedCaptures    — unchanged, independent Second Brain Phase 1
+ *                            source.
+ *
+ * No invented urgency/priority field. No "ownerActionRequired" boolean —
+ * there is no existing canonical signal for that (see fetchAttentionEvidence's
+ * own prior doc comment on carsonCanHandle/safeToIgnore, same reasoning).
+ * Each item carries only facts already true of it: id, label, type, status,
+ * dueAt, dueDescription (formatReminderDue(), reused verbatim), assignee,
+ * and which category it was actually filed under.
  */
 
-import { taskLabel } from "./carson-morning-brief-classifier.js";
+import { taskLabel, formatReminderDue } from "./carson-morning-brief-classifier.js";
+import { buildDailyBriefBuckets } from "./carson-daily-brief-classifier.js";
 import { classifyAttentionWorthyCaptures } from "./carson-unresolved-captures-classifier.js";
 
+const MS_14_DAYS = 14 * 24 * 60 * 60 * 1000;
+
 /**
- * Pure composition — takes buildMorningBrief()'s already-classified task
- * buckets plus the other two sources' raw results, and produces the exact
- * same AttentionSummaryEvidence shape carson-operations-center.ts's
- * fetchAttentionEvidence() produced inline before this extraction.
+ * Port of src/lib/updates-reminders.ts's getUpcomingReminderTasks() —
+ * same DELIBERATE DUPLICATION pattern as the other files in this slice
+ * (updates-reminders.ts is a small, browser-only Home/Updates UI file with
+ * no reason to be relocated). Same window (strictly future, within 14
+ * days), same exclusion of anything already claimed elsewhere.
+ */
+function getUpcomingReminderTasksDup(tasks, excludedIds, now) {
+  const nowMs = now.getTime();
+  return tasks.filter((t) => {
+    if (excludedIds.has(t.id)) return false;
+    if (t.archived_at != null) return false;
+    if (t.status !== "pending") return false;
+    if (t.type !== "reminder") return false;
+    if (!t.due_at) return false;
+    const dueMs = new Date(t.due_at).getTime();
+    if (Number.isNaN(dueMs)) return false;
+    return dueMs > nowMs && dueMs <= nowMs + MS_14_DAYS;
+  });
+}
+
+function toAttentionItem(t, category, now) {
+  return {
+    id: t.id,
+    label: taskLabel(t.description, t.assigned_to),
+    type: t.type,
+    status: t.status,
+    dueAt: t.due_at ?? null,
+    dueDescription: t.due_at ? formatReminderDue(t.due_at, now) : null,
+    assignee: t.assigned_to ?? null,
+    category,
+  };
+}
+
+/**
+ * Pure composition — takes plain Task[] (already RLS-scoped by the
+ * caller's own retrieval) plus the other two sources' raw results, and
+ * produces the structured multi-category evidence shape.
  */
 export function composeAttentionEvidence({
   generatedAt,
-  brief,
+  now,
+  tasks,
   tasksFailed,
-  needsYou,
+  needsYou: staffNeedsYou,
   needsYouFailed,
   captureCandidates,
   capturesFailed,
+  routineAutomationTaskIds,
 }) {
   const empty = {
-    needsAttention: [],
+    needsYou: [],
+    overdueReminders: [],
+    upcomingReminders: [],
     waiting: [],
-    carsonCanHandle: [],
-    safeToIgnore: [],
+    later: [],
     unresolvedCaptures: [],
   };
 
@@ -46,36 +105,54 @@ export function composeAttentionEvidence({
     return { ok: false, code: "attention_read_failed", generatedAt, completeness: "none", ...empty };
   }
 
-  const needsAttention = [];
+  const needsYou = [];
+  const overdueReminders = [];
+  const upcomingReminders = [];
   const waiting = [];
+  const later = [];
   const unresolvedCaptures = [];
 
-  if (brief) {
-    for (const t of brief.overdueItems) {
-      needsAttention.push({ id: t.id, label: taskLabel(t.description, t.assigned_to), reason: "overdue" });
-    }
-    for (const t of brief.needsAttention) {
-      needsAttention.push({
-        id: t.id,
-        label: taskLabel(t.description, t.assigned_to),
-        reason: t.type === "reminder" ? "reminder due today" : "owner task",
-      });
-    }
-    for (const t of brief.waitingOn) {
-      waiting.push({
-        id: t.id,
-        label: taskLabel(t.description, t.assigned_to),
-        reason: t.escalated_at ? "escalated — needs your attention" : "awaiting confirmation",
-      });
+  if (tasks) {
+    const daily = buildDailyBriefBuckets(tasks, now);
+    for (const t of daily.needsYou) needsYou.push(toAttentionItem(t, "needsYou", now));
+    for (const t of daily.waitingOnOthers) waiting.push(toAttentionItem(t, "waiting", now));
+
+    const claimedIds = new Set([...daily.needsYou, ...daily.waitingOnOthers].map((t) => t.id));
+
+    const overdueTasks = tasks.filter((t) => {
+      if (claimedIds.has(t.id)) return false;
+      if (routineAutomationTaskIds?.has(t.id)) return false;
+      if (t.archived_at != null) return false;
+      if (t.status !== "pending") return false;
+      return t.type === "reminder" && t.due_at && new Date(t.due_at).getTime() < now.getTime();
+    });
+    for (const t of overdueTasks) overdueReminders.push(toAttentionItem(t, "overdueReminders", now));
+    for (const t of overdueTasks) claimedIds.add(t.id);
+
+    const upcomingExcludedIds = routineAutomationTaskIds
+      ? new Set([...claimedIds, ...routineAutomationTaskIds])
+      : claimedIds;
+    const upcomingTasks = getUpcomingReminderTasksDup(tasks, upcomingExcludedIds, now);
+    for (const t of upcomingTasks) upcomingReminders.push(toAttentionItem(t, "upcomingReminders", now));
+    for (const t of upcomingTasks) claimedIds.add(t.id);
+
+    for (const t of daily.later) {
+      if (claimedIds.has(t.id)) continue;
+      later.push(toAttentionItem(t, "later", now));
     }
   }
 
-  if (needsYou) {
-    for (const e of needsYou) {
+  if (staffNeedsYou) {
+    for (const e of staffNeedsYou) {
       waiting.push({
         id: e.id,
         label: `${e.staffName}: ${e.escalationReason ?? "needs your decision"}`,
-        reason: "needs your decision",
+        type: "staff_escalation",
+        status: "pending",
+        dueAt: null,
+        dueDescription: null,
+        assignee: e.staffName ?? null,
+        category: "waiting",
       });
     }
   }
@@ -87,7 +164,12 @@ export function composeAttentionEvidence({
       unresolvedCaptures.push({
         id: c.id,
         label: c.text,
-        reason: c.kind === "todo" ? "on your to-do list" : "a note you made",
+        type: c.kind,
+        status: "pending",
+        dueAt: null,
+        dueDescription: null,
+        assignee: null,
+        category: "unresolvedCaptures",
       });
     }
   }
@@ -99,18 +181,34 @@ export function composeAttentionEvidence({
     code: completeness === "partial" ? "attention_read_partial" : "attention_read_succeeded",
     generatedAt,
     completeness,
-    needsAttention,
+    needsYou,
+    overdueReminders,
+    upcomingReminders,
     waiting,
-    carsonCanHandle: [],
-    safeToIgnore: [],
+    later,
     unresolvedCaptures,
-    // Exposed so a caller can persist last_surfaced_at for exactly the
-    // capture ids actually rendered — same "only mark what was truly
-    // surfaced" contract as before this extraction.
     selectedCaptureIds: selectedCaptures.map((c) => ({ id: c.id, kind: c.kind })),
   };
 }
 
+function allItems(evidence) {
+  return [
+    ...(evidence.needsYou ?? []),
+    ...(evidence.overdueReminders ?? []),
+    ...(evidence.upcomingReminders ?? []),
+    ...(evidence.waiting ?? []),
+    ...(evidence.later ?? []),
+    ...(evidence.unresolvedCaptures ?? []),
+  ];
+}
+
+/**
+ * Deterministic, narrow direct-query renderer. Preserves Needs You's
+ * canonical meaning: if it's empty, this NEVER dumps every reminder — it
+ * says so plainly and, where useful, mentions other categories only by
+ * count (their own truthful label, never folded into "needs your
+ * attention").
+ */
 export function renderAttentionSummary(evidence) {
   if (!evidence.ok) {
     if (evidence.code === "attention_auth_failed") {
@@ -124,26 +222,35 @@ export function renderAttentionSummary(evidence) {
       ? "I couldn't check everything just now, so this may be incomplete."
       : "";
 
-  if (
-    evidence.needsAttention.length === 0 &&
-    evidence.waiting.length === 0 &&
-    evidence.unresolvedCaptures.length === 0
-  ) {
+  const total = allItems(evidence).length;
+  if (total === 0) {
     return partialNote
       ? `Nothing needs your attention based on what I could check. ${partialNote}`
       : "Nothing needs your attention right now.";
   }
 
   const lines = [];
-  if (evidence.needsAttention.length > 0) {
-    lines.push(`Needs your attention: ${evidence.needsAttention.map((i) => i.label).join("; ")}.`);
+
+  if (evidence.needsYou.length > 0) {
+    lines.push(`Needs your decision: ${evidence.needsYou.map((i) => i.label).join("; ")}.`);
+  } else {
+    lines.push("Nothing needs your direct decision right now.");
   }
-  if (evidence.waiting.length > 0) {
-    lines.push(`Waiting: ${evidence.waiting.map((i) => `${i.label} (${i.reason})`).join("; ")}.`);
+
+  const countClause = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+  const otherCounts = [];
+  if (evidence.overdueReminders.length > 0) otherCounts.push(countClause(evidence.overdueReminders.length, "overdue reminder"));
+  if (evidence.upcomingReminders.length > 0) otherCounts.push(countClause(evidence.upcomingReminders.length, "upcoming reminder"));
+  if (evidence.waiting.length > 0) otherCounts.push(countClause(evidence.waiting.length, "thing you're waiting on"));
+  if (otherCounts.length > 0) {
+    lines.push(`You do have ${otherCounts.join(" and ")}.`);
   }
+
   if (evidence.unresolvedCaptures.length > 0) {
     lines.push(
-      `Also on your mind: ${evidence.unresolvedCaptures.map((i) => `${i.label} (${i.reason})`).join("; ")}.`,
+      `Also on your mind: ${evidence.unresolvedCaptures
+        .map((i) => `${i.label} (${i.type === "todo" ? "on your to-do list" : "a note you made"})`)
+        .join("; ")}.`,
     );
   }
   if (partialNote) lines.push(partialNote);
@@ -151,58 +258,82 @@ export function renderAttentionSummary(evidence) {
   return lines.join(" ");
 }
 
-// ── renderAttentionDecision — Second Brain stateful reasoning slice (2026-08-28) ──
+// ── renderAttentionDecision — Second Brain stateful reasoning (2026-08-28) ──
+
+const CATEGORY_LABELS = {
+  needsYou: "Needs your decision",
+  overdueReminders: "Overdue",
+  upcomingReminders: "Coming up",
+  waiting: "Waiting on others",
+  later: "Other active items",
+  unresolvedCaptures: "On your mind",
+};
+
+function findEvidenceItem(evidence, id) {
+  return allItems(evidence).find((item) => item.id === id) ?? null;
+}
+
+function renderByCategory(items) {
+  const byCategory = new Map();
+  for (const item of items) {
+    if (!byCategory.has(item.category)) byCategory.set(item.category, []);
+    byCategory.get(item.category).push(item);
+  }
+  const sentences = [];
+  for (const [category, group] of byCategory) {
+    const label = CATEGORY_LABELS[category] ?? category;
+    sentences.push(`${label}: ${group.map((i) => i.label).join("; ")}.`);
+  }
+  return sentences.join(" ");
+}
 
 /**
  * Deterministic renderer for a VALIDATED reasoning decision (see
- * api/_carson-attention-reasoning.js's validateAttentionDecision). This is
- * additive — renderAttentionSummary above is completely unchanged and
- * remains the base-case/fallback renderer. The model never supplies the
- * final text; it only selects/ranks/classifies which already-known
- * evidence (label/reason) to include, and this function is the only place
- * that turns that selection into a sentence. Callers must validate the
- * decision against the authorized evidence set BEFORE calling this — it
- * does not re-validate ids itself (that would duplicate the security
- * boundary in two places).
+ * api/_carson-attention-reasoning.js's validateAttentionDecision). The
+ * model never supplies final text or category labels — it only
+ * selects/ranks/contrasts ids; every label shown here comes from the
+ * evidence item's own already-known category/label/reason, never from
+ * the model.
  */
-function findEvidenceItem(evidence, id) {
-  const all = [
-    ...(evidence.needsAttention ?? []),
-    ...(evidence.waiting ?? []),
-    ...(evidence.unresolvedCaptures ?? []),
-  ];
-  return all.find((item) => item.id === id) ?? null;
-}
-
 export function renderAttentionDecision(evidence, decision) {
-  const { responseIntent, selectedEvidenceIds, rankedEvidenceIds, needsClarification } = decision;
+  const { responseIntent, selectedEvidenceIds, rankedEvidenceIds, contrastedEvidenceIds, needsClarification } = decision;
 
   if (responseIntent === "nothing_new") {
     return "Nothing else needs your attention beyond what I already mentioned.";
   }
 
   if (responseIntent === "clarify") {
-    return needsClarification
-      ? needsClarification.slice(0, 200)
-      : "Could you clarify what you'd like to know?";
+    return needsClarification ? needsClarification.slice(0, 200) : "Could you clarify what you'd like to know?";
   }
 
-  const orderedIds =
-    Array.isArray(rankedEvidenceIds) && rankedEvidenceIds.length > 0 ? rankedEvidenceIds : selectedEvidenceIds;
-  const items = orderedIds.map((id) => findEvidenceItem(evidence, id)).filter(Boolean);
+  const selectedItems = selectedEvidenceIds.map((id) => findEvidenceItem(evidence, id)).filter(Boolean);
 
-  if (items.length === 0) {
+  if (selectedItems.length === 0 && responseIntent !== "contrast") {
     return "Nothing matches that right now.";
   }
 
-  if (responseIntent === "explain" && items.length === 1) {
-    return `${items[0].label} needs your attention because it's ${items[0].reason}.`;
+  if (responseIntent === "explain" && selectedItems.length === 1) {
+    const item = selectedItems[0];
+    const reasonPhrase = item.dueDescription ?? (CATEGORY_LABELS[item.category] ?? item.category).toLowerCase();
+    return `${item.label} is in ${CATEGORY_LABELS[item.category] ?? item.category} — ${reasonPhrase}.`;
   }
 
-  if (responseIntent === "prioritize" && Array.isArray(rankedEvidenceIds) && rankedEvidenceIds.length > 0) {
-    return `In order: ${items.map((item) => item.label).join("; then ")}.`;
+  if (responseIntent === "rank" && Array.isArray(rankedEvidenceIds) && rankedEvidenceIds.length > 0) {
+    const ranked = rankedEvidenceIds.map((id) => findEvidenceItem(evidence, id)).filter(Boolean);
+    return `In order: ${ranked.map((item) => item.label).join("; then ")}.`;
   }
 
-  // list / filter_urgent / explain-with-multiple-items default.
-  return `${items.map((item) => `${item.label} (${item.reason})`).join("; ")}.`;
+  if (responseIntent === "contrast") {
+    const contrastedItems = Array.isArray(contrastedEvidenceIds)
+      ? contrastedEvidenceIds.map((id) => findEvidenceItem(evidence, id)).filter(Boolean)
+      : [];
+    const parts = [];
+    if (selectedItems.length > 0) parts.push(renderByCategory(selectedItems));
+    if (contrastedItems.length > 0) parts.push(renderByCategory(contrastedItems));
+    if (parts.length === 0) return "Nothing matches that right now.";
+    return parts.join(" ");
+  }
+
+  // list / explain-with-multiple-items default — grouped by true category.
+  return renderByCategory(selectedItems);
 }

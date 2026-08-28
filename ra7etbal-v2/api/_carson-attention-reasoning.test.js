@@ -5,9 +5,12 @@ const EVIDENCE = {
   ok: true,
   code: "attention_read_succeeded",
   completeness: "full",
-  needsAttention: [{ id: "task-1", label: "call the dentist", reason: "overdue" }],
-  waiting: [{ id: "task-2", label: "Grace: kitchen", reason: "awaiting confirmation" }],
-  unresolvedCaptures: [{ id: "task-3", label: "buy groceries", reason: "on your to-do list" }],
+  needsYou: [{ id: "task-1", label: "sign the lease", type: "decision", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "needsYou" }],
+  overdueReminders: [{ id: "task-2", label: "call the dentist", type: "reminder", status: "pending", dueAt: "2026-08-25T10:00:00.000Z", dueDescription: "Overdue by 3 days", assignee: null, category: "overdueReminders" }],
+  upcomingReminders: [{ id: "task-4", label: "pick up dry cleaning", type: "reminder", status: "pending", dueAt: "2026-09-05T10:00:00.000Z", dueDescription: "Friday at 10:00 AM", assignee: null, category: "upcomingReminders" }],
+  waiting: [{ id: "task-5", label: "Grace: kitchen", type: "delegation", status: "pending", dueAt: null, dueDescription: null, assignee: "Grace", category: "waiting" }],
+  later: [{ id: "task-6", label: "read that book", type: "reminder", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "later" }],
+  unresolvedCaptures: [{ id: "task-3", label: "buy groceries", type: "todo", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "unresolvedCaptures" }],
 };
 
 function toolResponse(input) {
@@ -18,31 +21,31 @@ function toolResponse(input) {
 }
 
 describe("reasonOverOperationalEvidenceWithClaude", () => {
-  it("forces a strict schema tool call, constrains selectable ids to the authorized evidence, and returns the structured input", async () => {
+  it("forces a strict schema tool call, constrains selectable ids to the authorized evidence across all categories, and returns the structured input", async () => {
     process.env.ANTHROPIC_API_KEY = "test-key";
     const fetchMock = vi.fn().mockResolvedValue(
-      toolResponse({ responseIntent: "list", selectedEvidenceIds: ["task-2"] }),
+      toolResponse({ responseIntent: "list", selectedEvidenceIds: ["task-5"] }),
     );
 
     const result = await reasonOverOperationalEvidenceWithClaude(
       {
-        userMessage: "What else?",
+        userMessage: "What am I waiting on?",
         conversationState: { priorCapability: "attention_summary_read", priorGroundingStatus: "grounded", previouslySurfacedEvidenceIds: ["task-1"], priorObjective: null },
         authorizedEvidence: EVIDENCE,
       },
       fetchMock,
     );
 
-    expect(result).toEqual({ responseIntent: "list", selectedEvidenceIds: ["task-2"] });
+    expect(result).toEqual({ responseIntent: "list", selectedEvidenceIds: ["task-5"] });
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(requestBody.tool_choice).toEqual({ type: "tool", name: "decide_attention_response" });
     expect(requestBody.tools[0]).toMatchObject({ name: "decide_attention_response", strict: true });
     const idEnum = requestBody.tools[0].input_schema.properties.selectedEvidenceIds.items.enum;
-    expect(idEnum).toEqual(expect.arrayContaining(["task-1", "task-2", "task-3"]));
-    expect(idEnum).not.toContain("task-4");
+    expect(idEnum).toEqual(expect.arrayContaining(["task-1", "task-2", "task-3", "task-4", "task-5", "task-6"]));
+    expect(idEnum).not.toContain("task-99");
   });
 
-  it("includes conversation state and the authorized evidence in the prompt, and never includes accountId/authorization (not part of the input contract at all)", async () => {
+  it("includes conversation state and the categorized authorized evidence in the prompt, and never includes accountId/authorization (not part of the input contract at all)", async () => {
     process.env.ANTHROPIC_API_KEY = "test-key";
     const fetchMock = vi.fn().mockResolvedValue(toolResponse({ responseIntent: "not_attention", selectedEvidenceIds: [] }));
 
@@ -58,6 +61,7 @@ describe("reasonOverOperationalEvidenceWithClaude", () => {
     const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     const promptText = requestBody.messages[0].content;
     expect(promptText).toContain("call the dentist");
+    expect(promptText).toContain("Overdue by 3 days");
     expect(promptText).toContain("reviewing attention list");
     expect(promptText).toContain("Send Christopher a message.");
     expect(promptText).not.toMatch(/accountId|authorization|Bearer/i);
@@ -85,11 +89,17 @@ describe("reasonOverOperationalEvidenceWithClaude", () => {
 });
 
 describe("validateAttentionDecision", () => {
-  it("accepts a well-formed decision referencing only authorized ids", () => {
-    const result = validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: ["task-1", "task-2"] }, EVIDENCE);
+  it("accepts a well-formed decision referencing only authorized ids across categories", () => {
+    const result = validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: ["task-1", "task-5"] }, EVIDENCE);
     expect(result).toEqual({
       ok: true,
-      decision: { responseIntent: "list", selectedEvidenceIds: ["task-1", "task-2"], rankedEvidenceIds: undefined, needsClarification: null },
+      decision: {
+        responseIntent: "list",
+        selectedEvidenceIds: ["task-1", "task-5"],
+        rankedEvidenceIds: undefined,
+        contrastedEvidenceIds: undefined,
+        needsClarification: null,
+      },
     });
   });
 
@@ -109,16 +119,22 @@ describe("validateAttentionDecision", () => {
     expect(validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: "task-1" }, EVIDENCE)).toEqual({ ok: false });
   });
 
-  it("requires a non-empty selection unless the intent is nothing_new/clarify/not_attention", () => {
+  it("requires a non-empty selection unless the intent is nothing_new/clarify/not_attention/a contrast with a contrasted set", () => {
     expect(validateAttentionDecision({ responseIntent: "list", selectedEvidenceIds: [] }, EVIDENCE)).toEqual({ ok: false });
     expect(validateAttentionDecision({ responseIntent: "nothing_new", selectedEvidenceIds: [] }, EVIDENCE).ok).toBe(true);
     expect(validateAttentionDecision({ responseIntent: "clarify", selectedEvidenceIds: [], needsClarification: "Which ones?" }, EVIDENCE).ok).toBe(true);
     expect(validateAttentionDecision({ responseIntent: "not_attention", selectedEvidenceIds: [] }, EVIDENCE).ok).toBe(true);
+    expect(
+      validateAttentionDecision(
+        { responseIntent: "contrast", selectedEvidenceIds: [], contrastedEvidenceIds: ["task-2"] },
+        EVIDENCE,
+      ).ok,
+    ).toBe(true);
   });
 
   it("degrades a ranking that references an id outside the selection to no ranking, without rejecting the whole decision", () => {
     const result = validateAttentionDecision(
-      { responseIntent: "prioritize", selectedEvidenceIds: ["task-1"], rankedEvidenceIds: ["task-1", "task-2"] },
+      { responseIntent: "rank", selectedEvidenceIds: ["task-1"], rankedEvidenceIds: ["task-1", "task-5"] },
       EVIDENCE,
     );
     expect(result.ok).toBe(true);
@@ -127,10 +143,29 @@ describe("validateAttentionDecision", () => {
 
   it("accepts a valid ranking that is a subset of the selection", () => {
     const result = validateAttentionDecision(
-      { responseIntent: "prioritize", selectedEvidenceIds: ["task-1", "task-2"], rankedEvidenceIds: ["task-2", "task-1"] },
+      { responseIntent: "rank", selectedEvidenceIds: ["task-1", "task-2"], rankedEvidenceIds: ["task-2", "task-1"] },
       EVIDENCE,
     );
     expect(result.decision.rankedEvidenceIds).toEqual(["task-2", "task-1"]);
+  });
+
+  it("accepts a valid contrast decision — selected and contrasted ids drawn from the same authorized universe", () => {
+    const result = validateAttentionDecision(
+      { responseIntent: "contrast", selectedEvidenceIds: ["task-4", "task-6"], contrastedEvidenceIds: ["task-2"] },
+      EVIDENCE,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.decision.selectedEvidenceIds).toEqual(["task-4", "task-6"]);
+    expect(result.decision.contrastedEvidenceIds).toEqual(["task-2"]);
+  });
+
+  it("degrades an invented contrastedEvidenceIds id to no contrast, without rejecting the whole decision", () => {
+    const result = validateAttentionDecision(
+      { responseIntent: "contrast", selectedEvidenceIds: ["task-6"], contrastedEvidenceIds: ["invented-id"] },
+      EVIDENCE,
+    );
+    expect(result.ok).toBe(true);
+    expect(result.decision.contrastedEvidenceIds).toBeUndefined();
   });
 
   it("trims and bounds needsClarification, defaulting to null when absent or empty", () => {

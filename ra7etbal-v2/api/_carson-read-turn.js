@@ -4,7 +4,7 @@ import { validateAttentionDecision } from "./_carson-attention-reasoning.js";
 
 const SUPPORTED_CAPABILITY = "calendar_read";
 const SUPPORTED_RANGES = new Set(["today", "tomorrow", "this_week", "next_week", "next_7_days", "next_10_days", "next_14_days", "next_30_days"]);
-const ATTENTION_CAPABILITY = "attention_summary_read";
+export const ATTENTION_CAPABILITY = "attention_summary_read";
 
 export const READ_CAPABILITY_REGISTRY = Object.freeze({
   [SUPPORTED_CAPABILITY]: Object.freeze({ permission: "read" }),
@@ -141,8 +141,11 @@ export function createReadOnlyTurnCoordinator({ interpretIntent, readCalendar })
 
 function collectAllEvidenceIds(evidence) {
   return [
-    ...(evidence.needsAttention ?? []),
+    ...(evidence.needsYou ?? []),
+    ...(evidence.overdueReminders ?? []),
+    ...(evidence.upcomingReminders ?? []),
     ...(evidence.waiting ?? []),
+    ...(evidence.later ?? []),
     ...(evidence.unresolvedCaptures ?? []),
   ].map((item) => item.id);
 }
@@ -200,8 +203,17 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
     const isDirectAttentionIntent = matchesAttentionIntent(ownerTurn.transcript);
     const hasActiveGroundedAttentionContext =
       ownerTurn.previousCapability === ATTENTION_CAPABILITY && ownerTurn.previousGroundingStatus === "grounded";
+    // Third admission path (2026-08-28 correction): the orchestration layer
+    // (api/carson-turn.js) may have already run a coarse, transcript-only
+    // Stage 1 semantic classification and determined this turn is a novel
+    // operational-state question with no regex/context match at all — set
+    // ownerTurn.stage1Admitted = true in that case. This coordinator still
+    // independently re-derives isDirectAttentionIntent/
+    // hasActiveGroundedAttentionContext itself either way; stage1Admitted is
+    // purely additive, never a substitute for those checks when applicable.
+    const stage1Admitted = ownerTurn.stage1Admitted === true;
 
-    if (!isDirectAttentionIntent && !hasActiveGroundedAttentionContext) {
+    if (!isDirectAttentionIntent && !hasActiveGroundedAttentionContext && !stage1Admitted) {
       return { handled: false, status: 422, code: "unsupported_intent" };
     }
 
@@ -315,6 +327,19 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       return { handled: false, status: 200, code: "not_attention" };
     }
 
+    // For a contrast decision, both the selected AND contrasted sets are
+    // actually rendered/shown to the owner (renderAttentionDecision renders
+    // both clauses) — surfacedEvidenceIds must reflect everything the owner
+    // actually saw, not just the primary selection, or a later "what else?"
+    // could re-surface an item already shown in the contrasted clause
+    // (CodeRabbit finding).
+    const surfacedEvidenceIds = Array.from(
+      new Set([
+        ...validated.decision.selectedEvidenceIds,
+        ...(validated.decision.contrastedEvidenceIds ?? []),
+      ]),
+    );
+
     return {
       handled: true,
       status: 200,
@@ -324,7 +349,7 @@ export function createAttentionReadCoordinator({ fetchEvidence, reasonOverEviden
       groundingStatus: "grounded",
       evidence,
       ownerResult: renderAttentionDecision(evidence, validated.decision),
-      surfacedEvidenceIds: validated.decision.selectedEvidenceIds,
+      surfacedEvidenceIds,
       responseIntent: validated.decision.responseIntent,
     };
   };
