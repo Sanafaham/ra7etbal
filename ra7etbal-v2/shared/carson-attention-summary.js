@@ -277,6 +277,10 @@ function describeItem(item) {
   return item.dueDescription ? `${item.label} (${item.dueDescription})` : item.label;
 }
 
+function hasComparableDueAt(item) {
+  return typeof item.dueAt === "string" && !Number.isNaN(new Date(item.dueAt).getTime());
+}
+
 function renderByCategory(items) {
   const byCategory = new Map();
   for (const item of items) {
@@ -300,7 +304,10 @@ function renderByCategory(items) {
  * the model.
  */
 export function renderAttentionDecision(evidence, decision) {
-  const { responseIntent, selectedEvidenceIds, rankedEvidenceIds, contrastedEvidenceIds, needsClarification } = decision;
+  // rankedEvidenceIds is intentionally not destructured here — kept on the
+  // decision contract for schema compatibility, but never used to author
+  // temporal order (see the rank branch below).
+  const { responseIntent, selectedEvidenceIds, contrastedEvidenceIds, needsClarification } = decision;
 
   if (responseIntent === "nothing_new") {
     return "Nothing else needs your attention beyond what I already mentioned.";
@@ -322,9 +329,21 @@ export function renderAttentionDecision(evidence, decision) {
     return `${item.label} is in ${CATEGORY_LABELS[item.category] ?? item.category} — ${reasonPhrase}.`;
   }
 
-  if (responseIntent === "rank" && Array.isArray(rankedEvidenceIds) && rankedEvidenceIds.length > 0) {
-    const ranked = rankedEvidenceIds.map((id) => findEvidenceItem(evidence, id)).filter(Boolean);
-    return `In order: ${ranked.map(describeItem).join("; then ")}.`;
+  // rankedEvidenceIds (the model's own proposed order) is NOT trusted as
+  // the temporal order — dueAt is an authorized fact already on the
+  // evidence, so precedence between dated items is computed here
+  // deterministically rather than left to model judgment (2026-08-28,
+  // Turn 3 canary: the model was observed producing an incoherent order
+  // once two items rounded to the same dueDescription bucket, e.g. two
+  // "Overdue by 3 days" items with different real dueAt values).
+  if (responseIntent === "rank") {
+    if (selectedItems.every(hasComparableDueAt)) {
+      const sorted = [...selectedItems].sort(
+        (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime(),
+      );
+      return `In order: ${sorted.map(describeItem).join("; then ")}.`;
+    }
+    return `I don't have a reliable way to put those in order — here's what's active: ${renderByCategory(selectedItems)}`;
   }
 
   if (responseIntent === "contrast") {

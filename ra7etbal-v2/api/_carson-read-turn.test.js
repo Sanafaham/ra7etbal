@@ -559,3 +559,169 @@ describe("Carson Second Brain stateful reasoning over grounded attention evidenc
     expect(fetchEvidence).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Carson rank ordering is deterministic by dueAt, never model-authored (2026-08-28 Turn 3 canary fix)", () => {
+  // Reproduces the exact production tie the Turn 3 canary surfaced: three
+  // items whose dueDescription all round to the same "Overdue by 3 days"
+  // bucket, but whose real dueAt values differ by hours.
+  const RANK_EVIDENCE = {
+    ok: true,
+    code: "attention_read_succeeded",
+    completeness: "full",
+    needsYou: [],
+    overdueReminders: [
+      { id: "r1", label: "call Loulya", type: "reminder", status: "pending", dueAt: "2026-08-25T14:14:23.686Z", dueDescription: "Overdue by 3 days", assignee: null, category: "overdueReminders" },
+      { id: "r2", label: "my mailbox", type: "reminder", status: "pending", dueAt: "2026-08-25T14:51:07.246Z", dueDescription: "Overdue by 3 days", assignee: null, category: "overdueReminders" },
+      { id: "r3", label: "my email", type: "reminder", status: "pending", dueAt: "2026-08-25T16:18:40.904Z", dueDescription: "Overdue by 3 days", assignee: null, category: "overdueReminders" },
+    ],
+    upcomingReminders: [],
+    // Deliberately NOT selected by the model in these tests — earliest
+    // dueAt of everything in evidence — to prove ranking never sorts the
+    // full evidence universe, only the model's own selected subset.
+    waiting: [
+      { id: "r-not-selected", label: "Grace: kitchen", type: "delegation", status: "pending", dueAt: "2026-01-01T00:00:00.000Z", dueDescription: "Overdue by a long time", assignee: "Grace", category: "waiting" },
+    ],
+    later: [],
+    unresolvedCaptures: [],
+  };
+  const RANK_GROUNDED_RESULT = { evidence: RANK_EVIDENCE, text: "Needs your attention: call Loulya; my mailbox; my email." };
+  const rankActiveContext = {
+    accountId: "account-a",
+    authorization: "Bearer session-a",
+    turnId: "turn-rank-1",
+    previousCapability: "attention_summary_read",
+    previousGroundingStatus: "grounded",
+    previouslySurfacedEvidenceIds: ["r1", "r2", "r3"],
+    priorObjective: "reviewing overdue reminders",
+  };
+
+  it("[rank 1/6] a deliberately wrong model-supplied rankedEvidenceIds order is ignored — final rendered order follows ascending dueAt", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RANK_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "rank",
+      selectedEvidenceIds: ["r1", "r2", "r3"],
+      // Deliberately backwards relative to the true dueAt order.
+      rankedEvidenceIds: ["r3", "r2", "r1"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...rankActiveContext, transcript: "Which one should I do first?" });
+
+    expect(result.ownerResult).toBe(
+      "In order: call Loulya (Overdue by 3 days); then my mailbox (Overdue by 3 days); then my email (Overdue by 3 days).",
+    );
+  });
+
+  it("[rank 2/6] items with identical rounded dueDescription are still correctly ordered by their exact dueAt (the exact Turn 3 production tie)", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RANK_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "rank",
+      selectedEvidenceIds: ["r2", "r3", "r1"],
+      rankedEvidenceIds: ["r2", "r3", "r1"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...rankActiveContext, transcript: "Which one should I do first?" });
+
+    // r1 (14:14:23) < r2 (14:51:07) < r3 (16:18:40) — despite all three
+    // sharing the identical "Overdue by 3 days" display string.
+    expect(result.ownerResult).toBe(
+      "In order: call Loulya (Overdue by 3 days); then my mailbox (Overdue by 3 days); then my email (Overdue by 3 days).",
+    );
+  });
+
+  it("[rank 3/6] only the model-selected authorized subset is sorted — an earlier-dueAt item that was never selected is not pulled into the order", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RANK_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "rank",
+      selectedEvidenceIds: ["r1", "r2"],
+      rankedEvidenceIds: ["r1", "r2"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...rankActiveContext, transcript: "Which one should I do first?" });
+
+    expect(result.ownerResult).toBe("In order: call Loulya (Overdue by 3 days); then my mailbox (Overdue by 3 days).");
+    expect(result.ownerResult).not.toContain("Grace");
+    expect(result.ownerResult).not.toContain("my email");
+  });
+
+  it("[rank 4/6] an invented evidence id inside a rank decision is still rejected by existing validation — falls back to the deterministic full render, never a fabricated order", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RANK_GROUNDED_RESULT);
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "rank",
+      selectedEvidenceIds: ["r1", "invented-id"],
+      rankedEvidenceIds: ["r1", "invented-id"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...rankActiveContext, transcript: "Which one should I do first?" });
+
+    // An invented id anywhere in selectedEvidenceIds rejects the WHOLE
+    // decision (not just that id) — falls back to the deterministic full
+    // render, same as the non-rank fallback behavior tested elsewhere.
+    expect(result.ownerResult).toBe(
+      "Nothing needs your direct decision right now. You do have 3 overdue reminders and 1 thing you're waiting on.",
+    );
+  });
+
+  it("[rank 5/6] a selected item with no comparable dueAt is never force-ranked — Carson states the honest limitation instead of inventing an order", async () => {
+    const mixedEvidence = {
+      ...RANK_EVIDENCE,
+      needsYou: [
+        { id: "n1", label: "sign the lease", type: "decision", status: "pending", dueAt: null, dueDescription: null, assignee: null, category: "needsYou" },
+      ],
+    };
+    const fetchEvidence = vi.fn().mockResolvedValue({ evidence: mixedEvidence, text: "..." });
+    const reasonOverEvidence = vi.fn().mockResolvedValue({
+      responseIntent: "rank",
+      selectedEvidenceIds: ["n1", "r1"],
+      rankedEvidenceIds: ["n1", "r1"],
+    });
+    const coordinate = createAttentionReadCoordinator({ fetchEvidence, reasonOverEvidence });
+
+    const result = await coordinate({ ...rankActiveContext, transcript: "Which one should I do first?" });
+
+    expect(result.ownerResult).toBe(
+      "I don't have a reliable way to put those in order — here's what's active: Needs your decision: sign the lease. Overdue: call Loulya (Overdue by 3 days).",
+    );
+  });
+
+  it("[rank 6/6] list/contrast/explain/nothing_new rendering is unaffected by the ranking fix", async () => {
+    const fetchEvidence = vi.fn().mockResolvedValue(RANK_GROUNDED_RESULT);
+
+    const listCoordinate = createAttentionReadCoordinator({
+      fetchEvidence,
+      reasonOverEvidence: vi.fn().mockResolvedValue({ responseIntent: "list", selectedEvidenceIds: ["r1"] }),
+    });
+    const listResult = await listCoordinate({ ...rankActiveContext, transcript: "What else?" });
+    expect(listResult.ownerResult).toBe("Overdue: call Loulya (Overdue by 3 days).");
+
+    const explainCoordinate = createAttentionReadCoordinator({
+      fetchEvidence,
+      reasonOverEvidence: vi.fn().mockResolvedValue({ responseIntent: "explain", selectedEvidenceIds: ["r1"] }),
+    });
+    const explainResult = await explainCoordinate({ ...rankActiveContext, transcript: "Why does that need me?" });
+    expect(explainResult.ownerResult).toBe("call Loulya is in Overdue — Overdue by 3 days.");
+
+    const nothingNewCoordinate = createAttentionReadCoordinator({
+      fetchEvidence,
+      reasonOverEvidence: vi.fn().mockResolvedValue({ responseIntent: "nothing_new", selectedEvidenceIds: [] }),
+    });
+    const nothingNewResult = await nothingNewCoordinate({ ...rankActiveContext, transcript: "Okay, and after that?" });
+    expect(nothingNewResult.ownerResult).toBe("Nothing else needs your attention beyond what I already mentioned.");
+
+    const contrastCoordinate = createAttentionReadCoordinator({
+      fetchEvidence,
+      reasonOverEvidence: vi.fn().mockResolvedValue({
+        responseIntent: "contrast",
+        selectedEvidenceIds: ["r1"],
+        contrastedEvidenceIds: ["r-not-selected"],
+      }),
+    });
+    const contrastResult = await contrastCoordinate({ ...rankActiveContext, transcript: "What can wait?" });
+    expect(contrastResult.ownerResult).toBe(
+      "Overdue: call Loulya (Overdue by 3 days). Waiting on others: Grace: kitchen (Overdue by a long time).",
+    );
+  });
+});
